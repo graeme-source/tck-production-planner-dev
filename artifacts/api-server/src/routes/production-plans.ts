@@ -9,6 +9,7 @@ import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag } f
 import { getFactoryNumberCoreMenuOnly, getShopifyFreezerSyncEnabled } from "../lib/inventory-sync";
 import { logFridgeStockChange, type FridgeChangeSource } from "../lib/fridge-stock-log";
 import { londonDateString, londonStartOfDay } from "../lib/london-time";
+import { computeDaySchedule, parseClock, formatClock, DEFAULT_START_TIME, DEFAULT_CHANGEOVER_SECONDS, DEFAULT_BUILDERS } from "@workspace/production-schedule";
 // Type-only import — purely compile-time, no runtime cost. The actual
 // PDF renderer (and the heavy @react-pdf/renderer dep tree it pulls in)
 // is loaded lazily inside the /lock-pdf endpoint via dynamic import,
@@ -4557,7 +4558,7 @@ router.get("/:id/kpi", async (req, res) => {
       .from(appSettingsTable)
       .where(eq(appSettingsTable.key, "default_lunch_minutes"));
     const configuredBreakMins = breakSetting ? Number(breakSetting.value) : 15;
-    const configuredLunchMins = lunchSetting ? Number(lunchSetting.value) : 45;
+    const configuredLunchMins = lunchSetting ? Number(lunchSetting.value) : 35;
     const hasLunch = breaksRows.some(b => b.breakType === "lunch" && b.endedAt);
     const hasSnackBreak = breaksRows.some(b => b.breakType !== "lunch" && b.endedAt);
     const breakMinutes = (hasLunch ? configuredLunchMins : 0) + (hasSnackBreak ? configuredBreakMins : 0);
@@ -4662,6 +4663,174 @@ router.get("/:id/kpi", async (req, res) => {
     activeMinutes: Math.round(activeMinutes),
     breakMinutes: Math.round(breakMinutes),
     batchesPerHour: Math.round(batchesPerHour * 10) / 10,
+  });
+});
+
+// GET /:id/schedule — forward-looking build timeline for the day.
+// Walks the calzone building line in orderPosition, predicting each recipe's
+// start/finish from its expected minutes-per-batch (split across the builders),
+// inserts break cards, and back-calculates each recipe's "get the meat in by"
+// time from its raw meat's cook+process lead time. The heavy lifting is the
+// pure @workspace/production-schedule engine, shared with the client so drag
+// edits recompute identically in the browser.
+router.get("/:id/schedule", async (req, res) => {
+  const planId = Number(req.params.id);
+  if (!Number.isFinite(planId)) { res.status(400).json({ error: "Invalid plan id" }); return; }
+
+  const [plan] = await db.select().from(productionPlansTable).where(eq(productionPlansTable.id, planId)).limit(1);
+  if (!plan) { res.status(404).json({ error: "Plan not found" }); return; }
+
+  // Plan items joined to recipe timing info, in build order.
+  const items = await db
+    .select({
+      planItemId: productionPlanItemsTable.id,
+      recipeId: recipesTable.id,
+      name: recipesTable.name,
+      category: recipesTable.category,
+      orderPosition: productionPlanItemsTable.orderPosition,
+      batchesTarget: productionPlanItemsTable.batchesTarget,
+      targetBuildSeconds: recipesTable.targetBuildSeconds,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+    })
+    .from(productionPlanItemsTable)
+    .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(eq(productionPlanItemsTable.planId, planId))
+    .orderBy(asc(productionPlanItemsTable.orderPosition), asc(productionPlanItemsTable.id));
+
+  // The timeline is the calzone building line (the two builders). Mac cheese is
+  // a separate station, tracked in packs, so it's excluded here.
+  const buildItems = items.filter(i => i.category !== MAC_CHEESE_CATEGORY && (i.batchesTarget ?? 0) > 0);
+
+  // Raw meats per recipe, resolved from each recipe's full ingredient tree
+  // (sub-recipes included) — the same source the Meat Cooking panels and the
+  // prep_meat station use, so the schedule always agrees with the cooking
+  // screen on which meats a recipe needs.
+  const meatsByRecipe = new Map<number, Array<{ rawMeatIngredientId: number; rawMeatName: string }>>();
+  const allMeatIds = new Set<number>();
+  for (const item of buildItems) {
+    const resolved = await resolveRecipeIngredients(item.recipeId, item.portionsPerBatch ?? 10, { skipToppings: true });
+    const agg = aggregateIngredients(resolved);
+    const meats = [...agg.values()].filter(i => i.category === "raw_meat");
+    meatsByRecipe.set(item.recipeId, meats.map(m => ({ rawMeatIngredientId: m.ingredientId, rawMeatName: m.ingredientName })));
+    meats.forEach(m => allMeatIds.add(m.ingredientId));
+  }
+  const meatInfoRows = allMeatIds.size
+    ? await db
+        .select({ id: ingredientsTable.id, meatProcessMinutes: ingredientsTable.meatProcessMinutes })
+        .from(ingredientsTable)
+        .where(inArray(ingredientsTable.id, [...allMeatIds]))
+    : [];
+  const processMinutesById = new Map(meatInfoRows.map(r => [r.id, r.meatProcessMinutes]));
+
+  // Settings.
+  const settingRows = await db
+    .select({ key: appSettingsTable.key, value: appSettingsTable.value })
+    .from(appSettingsTable)
+    .where(inArray(appSettingsTable.key, [
+      "building_start_time", "changeover_seconds", "builders_count",
+      "default_break_minutes", "default_lunch_minutes",
+      `schedule_break_anchors_${planId}`,
+    ]));
+  const settings = new Map(settingRows.map(s => [s.key, s.value]));
+
+  const startMinutes = parseClock(settings.get("building_start_time") ?? DEFAULT_START_TIME) ?? parseClock(DEFAULT_START_TIME)!;
+  const changeoverSeconds = Number(settings.get("changeover_seconds") ?? DEFAULT_CHANGEOVER_SECONDS) || DEFAULT_CHANGEOVER_SECONDS;
+  const buildersCount = Number(settings.get("builders_count") ?? DEFAULT_BUILDERS) || DEFAULT_BUILDERS;
+  const morningMins = Number(settings.get("default_break_minutes") ?? 15) || 15;
+  const lunchMins = Number(settings.get("default_lunch_minutes") ?? 35) || 35;
+
+  // Default anchors ~09:15 / ~12:15; a station drag persists per-plan overrides
+  // in app_settings (schedule_break_anchors_<planId> = {"morning":555,...}).
+  const breaks = [
+    { id: "morning", label: "Morning break", minutes: morningMins, anchorMinutes: 9 * 60 + 15 },
+    { id: "lunch", label: "Lunch", minutes: lunchMins, anchorMinutes: 12 * 60 + 15 },
+  ];
+  const savedAnchors = settings.get(`schedule_break_anchors_${planId}`);
+  if (savedAnchors) {
+    try {
+      const parsed = JSON.parse(savedAnchors) as Record<string, number>;
+      for (const br of breaks) {
+        if (Number.isFinite(parsed[br.id])) br.anchorMinutes = parsed[br.id];
+      }
+    } catch {
+      // Malformed saved anchors — fall back to defaults rather than 500.
+    }
+  }
+
+  const warnings: string[] = [];
+  const engineRecipes = buildItems.map(i => {
+    const minutesPerBatch = i.targetBuildSeconds != null ? i.targetBuildSeconds / 60 : 0;
+    if (i.targetBuildSeconds == null) warnings.push(`${i.name}: no build time set — shown as 0 min`);
+    const meats = (meatsByRecipe.get(i.recipeId) ?? [])
+      .filter(m => {
+        if (processMinutesById.get(m.rawMeatIngredientId) == null) {
+          warnings.push(`${i.name}: ${m.rawMeatName} has no cook+process time set`);
+          return false;
+        }
+        return true;
+      })
+      .map(m => ({
+        rawMeatIngredientId: m.rawMeatIngredientId,
+        rawMeatName: m.rawMeatName,
+        processMinutes: processMinutesById.get(m.rawMeatIngredientId) as number,
+      }));
+    return {
+      planItemId: i.planItemId,
+      recipeId: i.recipeId,
+      name: i.name,
+      batches: i.batchesTarget,
+      minutesPerBatch,
+      meats,
+    };
+  });
+
+  const schedule = computeDaySchedule(engineRecipes, { startMinutes, buildersCount, changeoverSeconds, breaks });
+
+  // Interleave recipes + breaks into a single ordered timeline, formatting all
+  // wall-clock times to "HH:MM" for the client.
+  const recipeRows = schedule.recipes.map(r => ({
+    type: "recipe" as const,
+    planItemId: r.planItemId,
+    recipeId: r.recipeId,
+    name: r.name,
+    start: formatClock(r.startMinutes),
+    finish: formatClock(r.finishMinutes),
+    startMinutes: r.startMinutes,
+    buildMinutes: r.buildMinutes,
+    meats: r.meats.map(m => ({
+      name: m.rawMeatName,
+      processMinutes: m.processMinutes,
+      cookStart: formatClock(m.cookStartMinutes),
+      cookStartMinutes: m.cookStartMinutes,
+      beforeShiftStart: m.beforeShiftStart,
+    })),
+  }));
+  const breakRows = schedule.breaks.map(b => ({
+    type: "break" as const,
+    id: b.id,
+    label: b.label,
+    minutes: b.minutes,
+    start: formatClock(b.startMinutes),
+    finish: formatClock(b.finishMinutes),
+    startMinutes: b.startMinutes,
+  }));
+  const timeline = [...recipeRows, ...breakRows].sort((a, b) => a.startMinutes - b.startMinutes);
+
+  res.json({
+    planId,
+    planName: plan.name,
+    planDate: plan.planDate,
+    startTime: formatClock(startMinutes),
+    endTime: formatClock(schedule.endMinutes),
+    changeoverSeconds,
+    buildersCount,
+    breaks: breaks.map(b => ({ id: b.id, label: b.label, minutes: b.minutes, anchorMinutes: b.anchorMinutes })),
+    timeline,
+    warnings: [...new Set(warnings)],
+    // Raw engine inputs so the client can recompute instantly when a break card
+    // is dragged, without another round-trip. Mirrors @workspace/production-schedule.
+    recipes: engineRecipes,
+    options: { startMinutes, buildersCount, changeoverSeconds },
   });
 });
 

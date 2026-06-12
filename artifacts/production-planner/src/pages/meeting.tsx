@@ -1220,6 +1220,24 @@ function ProductionPlanSlide({ data, slide, isPreviewing }: { data: DashboardDat
     staleTime: 60_000,
   });
 
+  // Predicted build-start time per recipe from the day-schedule engine (the
+  // same numbers the mixing station shows). Mac cheese runs on its own station
+  // so its rows just show "—".
+  const { data: sched } = useQuery<{ timeline: Array<{ type: string; recipeId?: number; start?: string }> }>({
+    queryKey: ["plan-schedule", data.todayPlan.id],
+    enabled: data.todayPlan.id != null,
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/production-plans/${data.todayPlan.id}/schedule`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
+  const startByRecipe = new Map<number, string>();
+  for (const row of sched?.timeline ?? []) {
+    if (row.type === "recipe" && row.recipeId != null && row.start) startByRecipe.set(row.recipeId, row.start);
+  }
+
   // Stock position per recipe. NEED = today's pack (dispatch2Qty); surplus
   // +ve = enough, -ve = short. Same maths the Short-on-pack slide used.
   const calcById = new Map<number, { have: number; need: number; surplus: number; tone: "ok" | "warn" | "bad" }>();
@@ -1272,7 +1290,7 @@ function ProductionPlanSlide({ data, slide, isPreviewing }: { data: DashboardDat
   const dispatchLabel = fmtDay(calc?.dispatchDates?.[1]);
   const deliveryLabel = fmtDay(calc?.deliveryDates?.[1]);
 
-  const cols = "grid-cols-[2.5rem_1fr_7rem_4.5rem_4.5rem_4.5rem]";
+  const cols = "grid-cols-[2.5rem_4.5rem_1fr_7rem_4.5rem_4.5rem_4.5rem]";
 
   return (
     <div>
@@ -1290,6 +1308,7 @@ function ProductionPlanSlide({ data, slide, isPreviewing }: { data: DashboardDat
           {/* Header */}
           <div className={cn("grid gap-3 px-5 py-2 bg-secondary/30 text-xs uppercase tracking-wide text-muted-foreground font-semibold", cols)}>
             <span>#</span>
+            <span>Start</span>
             <span>Recipe</span>
             <span className="text-right">Make</span>
             <span className="text-right leading-tight">
@@ -1329,6 +1348,9 @@ function ProductionPlanSlide({ data, slide, isPreviewing }: { data: DashboardDat
                   )}
                 >
                   <span className="text-2xl font-display font-bold tabular-nums text-muted-foreground">{r.seq ?? "–"}</span>
+                  <span className="text-2xl font-bold tabular-nums whitespace-nowrap">
+                    {startByRecipe.get(r.recipeId) ?? <span className="text-muted-foreground">—</span>}
+                  </span>
                   <div className="flex items-center gap-3 min-w-0">
                     <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: r.color ?? "hsl(var(--muted))" }} aria-hidden />
                     <span className="text-2xl font-semibold truncate">{r.recipeName}</span>

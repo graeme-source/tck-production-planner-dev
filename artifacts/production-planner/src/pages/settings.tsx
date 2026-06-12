@@ -9,7 +9,7 @@ import { PageHeader } from "@/components/page-header";
 import {
   Plus, Trash2, Edit2, Loader2, Users, ShieldCheck, Eye, Wrench,
   CheckCircle2, XCircle, KeyRound, Package, ChevronDown, ChevronUp,
-  Lock, Timer, BarChart2, Coffee, Truck, Mail, Warehouse,
+  Lock, Timer, BarChart2, Coffee, Clock, Truck, Mail, Warehouse,
   Camera, User, CircleDot, ToggleRight, Boxes, UtensilsCrossed,
   AlertTriangle, Scale, ThermometerSnowflake, BookOpen, Megaphone, CalendarDays,
   Copy, Check, IdCard, FileText, ExternalLink, Bell, RefreshCw, Smartphone, Thermometer,
@@ -1459,6 +1459,7 @@ export default function Settings() {
               {user?.role === "admin" && <IcePackSettingsSection />}
               {user?.role === "admin" && <PastaCookingSection />}
               {user?.role === "admin" && <BreakDefaultsSection />}
+              {user?.role === "admin" && <ScheduleDefaultsSection />}
               {user?.role === "admin" && <ApcServiceCodesSection />}
             </div>
           )}
@@ -3913,7 +3914,7 @@ function PrepDoughScheduleSection() {
 
 function BreakDefaultsSection() {
   const [breakMins, setBreakMins] = useState<string>("15");
-  const [lunchMins, setLunchMins] = useState<string>("45");
+  const [lunchMins, setLunchMins] = useState<string>("35");
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
@@ -3997,6 +3998,105 @@ function BreakDefaultsSection() {
               className="w-20 px-3 py-2 border border-border rounded-lg text-sm text-right"
             />
             <span className="text-sm text-muted-foreground">min</span>
+          </div>
+          <button
+            onClick={handleSave}
+            disabled={saving || !loaded}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Defaults that drive the day's production-schedule timeline: the building
+ *  start time and the changeover gap between recipes. The schedule reads these
+ *  to predict each recipe's start/finish and each meat's cook-start time. */
+function ScheduleDefaultsSection() {
+  const [startTime, setStartTime] = useState<string>("07:00");
+  const [changeoverSecs, setChangeoverSecs] = useState<string>("90");
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/app-settings/building_start_time", { credentials: "include" })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d?.value) setStartTime(d.value); }),
+      fetch("/api/app-settings/changeover_seconds", { credentials: "include" })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d?.value) setChangeoverSecs(d.value); }),
+    ]).finally(() => setLoaded(true));
+  }, []);
+
+  const handleSave = async () => {
+    const secs = Number(changeoverSecs);
+    if (!/^\d{1,2}:\d{2}$/.test(startTime) || !Number.isFinite(secs) || secs < 0) return;
+    setSaving(true);
+    try {
+      const [r1, r2] = await Promise.all([
+        fetch("/api/app-settings/building_start_time", {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ value: startTime }),
+        }),
+        fetch("/api/app-settings/changeover_seconds", {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ value: String(secs) }),
+        }),
+      ]);
+      if (!r1.ok || !r2.ok) throw new Error("Failed to save");
+      setSavedMsg("Saved");
+      setTimeout(() => setSavedMsg(null), 2000);
+    } catch {
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <Clock className="w-4 h-4 text-primary" /> Day Schedule
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            When the building line starts each day and how long a changeover takes between recipes. These drive the predicted start/finish and meat cook-start times on each plan's day schedule.
+          </p>
+        </div>
+        {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
+      </div>
+      <div className="rounded-2xl border border-border bg-card p-5">
+        <div className="flex flex-wrap items-center gap-6">
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium w-36">Building start</label>
+            <input
+              type="time"
+              value={startTime}
+              onChange={e => setStartTime(e.target.value)}
+              className="px-3 py-2 border border-border rounded-lg text-sm tabular-nums"
+            />
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium w-36">Changeover</label>
+            <input
+              type="number"
+              min="0"
+              max="600"
+              step="5"
+              value={changeoverSecs}
+              onChange={e => setChangeoverSecs(e.target.value)}
+              className="w-24 px-3 py-2 border border-border rounded-lg text-sm text-right"
+            />
+            <span className="text-sm text-muted-foreground">sec</span>
           </div>
           <button
             onClick={handleSave}

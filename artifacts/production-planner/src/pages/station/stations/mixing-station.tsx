@@ -10,7 +10,13 @@ import { useAuth } from "@/contexts/auth-context";
 import {
   ChevronUp, Plus, Minus, Check, CheckCircle2, PlayCircle, Loader2,
   GripVertical, Lock, RotateCcw, Package, ChevronRight, AlertTriangle,
+  Beef, Coffee, Utensils,
 } from "lucide-react";
+import {
+  computeDaySchedule, formatClock,
+  type ScheduleRecipeInput, type ScheduleBreakInput, type ScheduleOptions,
+  type ScheduledRecipe, type ScheduledBreak,
+} from "@workspace/production-schedule";
 
 // Sanity-check that the per-tin filling qty multiplied by tin count matches
 // the recipe-derived total (qty/portion × portions/batch × batches), allowing
@@ -398,6 +404,56 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
     .filter(it => !isMacCheese(it as any))
     .sort((a, b) => a.orderPosition - b.orderPosition);
 
+  // ── Day schedule (timing engine inputs) ─────────────────────────────────────
+  // The server supplies per-recipe expected build minutes + meat process times
+  // and the day options (start time, builders, changeover). The timeline itself
+  // is recomputed here from the CURRENT recipe order, so reordering a recipe or
+  // dragging a break card re-times the whole day instantly.
+  const [schedInputs, setSchedInputs] = useState<Map<number, ScheduleRecipeInput> | null>(null);
+  const [schedOptions, setSchedOptions] = useState<ScheduleOptions | null>(null);
+  const [schedBreaks, setSchedBreaks] = useState<ScheduleBreakInput[]>([]);
+  const [schedWarnings, setSchedWarnings] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetch(`/api/production-plans/${plan.id}/schedule`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!d) return;
+        setSchedInputs(new Map((d.recipes as ScheduleRecipeInput[]).map(r => [r.planItemId, r])));
+        setSchedOptions(d.options as ScheduleOptions);
+        setSchedBreaks(d.breaks as ScheduleBreakInput[]);
+        setSchedWarnings(d.warnings as string[]);
+      })
+      .catch(err => console.warn("[Mixing] schedule fetch failed:", err));
+  }, [plan.id]);
+
+  const schedule = (() => {
+    if (!schedInputs || !schedOptions) return null;
+    const ordered = items
+      .map(it => schedInputs.get(it.id))
+      .filter((r): r is ScheduleRecipeInput => !!r);
+    if (ordered.length === 0) return null;
+    return computeDaySchedule(ordered, { ...schedOptions, breaks: schedBreaks });
+  })();
+  const schedByItem = new Map<number, ScheduledRecipe>(
+    (schedule?.recipes ?? []).map(r => [r.planItemId, r]),
+  );
+  // The cooking panels are keyed by recipe (not plan item), so index both ways.
+  const schedByRecipeId = new Map<number, ScheduledRecipe>(
+    (schedule?.recipes ?? []).map(r => [r.recipeId, r]),
+  );
+
+  // Persist dragged break anchors per plan so the layout survives reloads and
+  // shows the same on every iPad. Station users are allowed to write this key.
+  const saveBreakAnchors = (breaks: ScheduleBreakInput[]) => {
+    const anchors = Object.fromEntries(breaks.map(b => [b.id, Math.round(b.anchorMinutes)]));
+    fetch(`/api/app-settings/schedule_break_anchors_${plan.id}`, {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: JSON.stringify(anchors) }),
+    }).catch(err => console.warn("[Mixing] break anchor save failed:", err));
+  };
+
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
   // A recipe is locked in place once the building station has started it
@@ -405,25 +461,74 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
   const isBuildingStarted = (it: ProductionPlanItem) => getStationCount(it, "building") > 0;
   const isOrderLocked = (it: ProductionPlanItem) => isBuildingStarted(it) || it.status === "complete";
 
+  // The tins list interleaves recipe rows with break cards at the position the
+  // engine placed them (or where the operator dragged them). Break-card ids are
+  // strings ("break-morning") so they can't collide with numeric item ids.
+  type TinRow = { kind: "recipe"; item: ProductionPlanItem } | { kind: "break"; br: ScheduledBreak };
+  const tinRows: TinRow[] = (() => {
+    const rows: TinRow[] = [];
+    const breaksAfter = new Map<number, ScheduledBreak[]>();
+    for (const b of schedule?.breaks ?? []) {
+      const list = breaksAfter.get(b.afterRecipeIndex) ?? [];
+      list.push(b);
+      breaksAfter.set(b.afterRecipeIndex, list);
+    }
+    (breaksAfter.get(-1) ?? []).forEach(br => rows.push({ kind: "break", br }));
+    const scheduledIds = (schedule?.recipes ?? []).map(r => r.planItemId);
+    let schedIdx = -1;
+    for (const it of items) {
+      rows.push({ kind: "recipe", item: it });
+      if (scheduledIds[schedIdx + 1] === it.id) {
+        schedIdx += 1;
+        (breaksAfter.get(schedIdx) ?? []).forEach(br => rows.push({ kind: "break", br }));
+      }
+    }
+    return rows;
+  })();
+  const rowId = (r: TinRow) => (r.kind === "recipe" ? r.item.id : `break-${r.br.id}`);
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    const oldIndex = items.findIndex(it => it.id === active.id);
-    const newIndex = items.findIndex(it => it.id === over.id);
+    const ids = tinRows.map(rowId);
+    const oldIndex = ids.indexOf(active.id as never);
+    const newIndex = ids.indexOf(over.id as never);
     if (oldIndex === -1 || newIndex === -1) return;
 
-    const movingItem = items[oldIndex];
+    const moving = tinRows[oldIndex];
 
-    if (isOrderLocked(movingItem)) return;
+    // Dragging a break card: re-anchor it to the start of the recipe it now
+    // sits above, recompute locally, and persist the anchor for everyone.
+    if (moving.kind === "break") {
+      if (!schedule) return;
+      const reordered = arrayMove(tinRows, oldIndex, newIndex);
+      const at = reordered.findIndex(r => rowId(r) === rowId(moving));
+      let anchor = schedule.endMinutes;
+      for (let i = at + 1; i < reordered.length; i++) {
+        const row = reordered[i];
+        if (row.kind === "recipe") {
+          const sched = schedByItem.get(row.item.id);
+          if (sched) { anchor = sched.startMinutes; break; }
+        }
+      }
+      const updated = schedBreaks.map(b => (b.id === moving.br.id ? { ...b, anchorMinutes: anchor } : b));
+      setSchedBreaks(updated);
+      saveBreakAnchors(updated);
+      return;
+    }
+
+    if (isOrderLocked(moving.item)) return;
+
+    const reordered = arrayMove(tinRows, oldIndex, newIndex);
+    const reorderedItems = reordered.filter((r): r is Extract<TinRow, { kind: "recipe" }> => r.kind === "recipe").map(r => r.item);
     const lockedCount = items.filter(isOrderLocked).length;
-    if (newIndex < lockedCount) {
+    if (reorderedItems.findIndex(it => it.id === moving.item.id) < lockedCount) {
       toast({ title: "Can't reorder", description: "Recipes already in production are fixed at the top.", variant: "destructive" });
       return;
     }
 
-    const reordered = arrayMove(items, oldIndex, newIndex);
-    const order = reordered.map((it, i) => ({ itemId: it.id, orderPosition: i + 1 }));
+    const order = reorderedItems.map((it, i) => ({ itemId: it.id, orderPosition: i + 1 }));
     updateOrder.mutate(
       { id: plan.id, data: { order } },
       {
@@ -793,12 +898,26 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                 }, 0);
                 const totalTraysForRecipe = rawMeatIngs.reduce((s, ing) => s + (ing.trayCount ?? 0), 0);
                 const recipeAllDone = totalTraysForRecipe > 0 && totalDoneForRecipe >= totalTraysForRecipe;
+                // Headline cook-start for the panel: the earliest "in oven by"
+                // across this recipe's meats (they almost always have just one).
+                const schedMeats = schedByRecipeId.get(recipe.recipeId)?.meats ?? [];
+                const earliestCookStart = schedMeats.length > 0
+                  ? schedMeats.reduce((min, m) => Math.min(min, m.cookStartMinutes), Infinity)
+                  : null;
                 return (
                   <div key={recipe.recipeId} className={cn("bg-card border-2 rounded-xl overflow-hidden transition-all", recipeAllDone ? "border-green-400 dark:border-green-600" : "border-border")}>
                     {/* Recipe header */}
                     <div className={cn("flex items-center justify-between px-4 py-3 border-b border-border", recipeAllDone ? "bg-green-50 dark:bg-green-900/20" : "bg-secondary/30")}>
                       <div>
-                        <p className="font-semibold text-lg">{recipe.recipeName}</p>
+                        <p className="font-bold text-2xl">
+                          {recipe.recipeName}
+                          {earliestCookStart != null && !recipeAllDone && (
+                            <span className="text-orange-600 dark:text-orange-400">
+                              {" — Start cooking meat at "}
+                              <span className="tabular-nums">{formatClock(earliestCookStart)}</span>
+                            </span>
+                          )}
+                        </p>
                         <div className="flex items-baseline gap-2 mt-0.5">
                           <span className="text-sm text-muted-foreground">{recipe.batchesTarget} batches</span>
                           <span className="text-xl font-extrabold tabular-nums leading-none">
@@ -844,6 +963,23 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                                 <p className="text-sm font-semibold tabular-nums text-red-600 dark:text-red-400">
                                   Target core temp: ≥{minTemp}°C
                                 </p>
+                                {(() => {
+                                  const schedMeat = schedByRecipeId.get(recipe.recipeId)?.meats
+                                    .find(m => m.rawMeatIngredientId === ing.ingredientId);
+                                  // Single-meat recipes carry the time in the
+                                  // panel header; repeat it per meat only when
+                                  // the recipe cooks several with their own times.
+                                  if (!schedMeat || allIngDone || rawMeatIngs.length < 2) return null;
+                                  return (
+                                    <p className="text-sm font-semibold tabular-nums text-orange-600 dark:text-orange-400">
+                                      In oven by {formatClock(schedMeat.cookStartMinutes)}
+                                      <span className="font-normal text-muted-foreground"> · {schedMeat.processMinutes}m cook + process</span>
+                                      {schedMeat.beforeShiftStart && (
+                                        <span className="ml-1.5 text-rose-600 dark:text-rose-400">before start of day</span>
+                                      )}
+                                    </p>
+                                  );
+                                })()}
                               </div>
                               {inOvenCount > 0 && (
                                 <p className="text-sm font-semibold text-orange-600 dark:text-orange-400">{inOvenCount} in oven</p>
@@ -983,13 +1119,30 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
 
       {mixingTab === "tins" && (
       <div>
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground mb-2 px-1">
-          {activeItemId ? "All Recipes" : "Click a recipe to start mixing"}
-        </h3>
+        <div className="flex items-center justify-between gap-2 mb-2 px-1">
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            {activeItemId ? "All Recipes" : "Click a recipe to start mixing"}
+          </h3>
+          {schedule && (
+            <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-primary/10 text-primary tabular-nums whitespace-nowrap">
+              {formatClock(schedule.startMinutes)} → finishes ~{formatClock(schedule.endMinutes)}
+            </span>
+          )}
+        </div>
+        {schedWarnings.length > 0 && (
+          <p className="text-xs text-amber-600 dark:text-amber-400 mb-2 px-1">
+            <AlertTriangle className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />
+            Times incomplete: {schedWarnings.join(" · ")}
+          </p>
+        )}
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={items.map(it => it.id)} strategy={verticalListSortingStrategy}>
+          <SortableContext items={tinRows.map(rowId)} strategy={verticalListSortingStrategy}>
             <div className="space-y-2">
-              {items.map(item => {
+              {tinRows.map(row => {
+                if (row.kind === "break") {
+                  return <SortableBreakCard key={`break-${row.br.id}`} br={row.br} />;
+                }
+                const item = row.item;
                 const mixingCount = getStationCount(item, "mixing");
                 const target = item.batchesTarget ?? 0;
                 const bpt = item.maxBatchesPerTin ?? 1;
@@ -1032,6 +1185,7 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                     completing={isActive && completing}
                     completeFailed={isActive && completeFailed}
                     onAutoComplete={() => handleAutoComplete(item)}
+                    sched={schedByItem.get(item.id) ?? null}
                   />
                 );
               })}
@@ -1070,9 +1224,12 @@ interface MixingOverviewRowProps {
   completing: boolean;
   completeFailed: boolean;
   onAutoComplete: () => void;
+  /** Predicted timing for this recipe from the day-schedule engine (null when
+   *  the recipe has no build time set or the schedule hasn't loaded). */
+  sched: ScheduledRecipe | null;
 }
 
-function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFillingItems, tinsComplete, tinsTarget, allTinsDone, progress, mixingCount, target, batchesPerTinEven, isOnBreak, isAdmin, onActivate, onAdd, onRemove, tinPending, filling, checkedIngredients, onToggleIngredient, completing, completeFailed, onAutoComplete }: MixingOverviewRowProps) {
+function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFillingItems, tinsComplete, tinsTarget, allTinsDone, progress, mixingCount, target, batchesPerTinEven, isOnBreak, isAdmin, onActivate, onAdd, onRemove, tinPending, filling, checkedIngredients, onToggleIngredient, completing, completeFailed, onAutoComplete, sched }: MixingOverviewRowProps) {
   const {
     attributes, listeners, setNodeRef,
     transform, transition, isDragging,
@@ -1144,6 +1301,11 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
               <h3 className={cn("font-semibold text-lg", isComplete ? "line-through text-muted-foreground" : "")}>
                 {item.recipeName ?? `Recipe #${item.recipeId}`}
               </h3>
+              {sched && (
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-secondary text-muted-foreground tabular-nums whitespace-nowrap flex-shrink-0">
+                  {formatClock(sched.startMinutes)}
+                </span>
+              )}
               {isComplete && <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
               {item.status === "in-progress" && !isComplete && <PlayCircle className="w-5 h-5 text-blue-500 flex-shrink-0" />}
               {hasFillingItems && (isActive
@@ -1166,6 +1328,29 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
 
               <span>{mixingCount} / {target} batches total</span>
             </div>
+
+            {sched && sched.meats.length > 0 && (
+              <div className="mt-1.5 space-y-0.5">
+                {sched.meats.map((m, i) => (
+                  <div key={i} className="flex items-center gap-1.5 text-sm flex-wrap">
+                    <Beef className="w-4 h-4 text-rose-500 flex-shrink-0" />
+                    <span className="text-muted-foreground">Start cooking</span>
+                    <span className="font-medium">{m.rawMeatName}</span>
+                    <span className="text-muted-foreground">by</span>
+                    <span className={cn(
+                      "font-bold tabular-nums",
+                      m.beforeShiftStart ? "text-rose-600 dark:text-rose-400" : "text-foreground",
+                    )}>
+                      {formatClock(m.cookStartMinutes)}
+                    </span>
+                    <span className="text-xs text-muted-foreground">({m.processMinutes}m cook + process)</span>
+                    {m.beforeShiftStart && (
+                      <span className="text-xs font-medium text-rose-600 dark:text-rose-400">before start of day</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0" onClick={e => e.stopPropagation()}>
@@ -1428,6 +1613,50 @@ export function ExtraPackControl({ planId, item, isOnBreak }: { planId: number; 
           </div>
         </div>
       )}
+    </div>
+  );
+}
+// ──────────────────────────────────────────────────────────────────────────────
+// Break card in the tins list — press-and-drag to move it earlier/later in the
+// running order. Recipes after it shift accordingly, and the new position is
+// saved per plan so every station sees the same day shape.
+// ──────────────────────────────────────────────────────────────────────────────
+function SortableBreakCard({ br }: { br: ScheduledBreak }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `break-${br.id}` });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+    zIndex: isDragging ? 50 : "auto",
+  };
+  const Icon = br.id === "lunch" ? Utensils : Coffee;
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        "flex items-center gap-3 rounded-xl border-2 border-dashed border-sky-300 dark:border-sky-700 bg-sky-50 dark:bg-sky-950/30 px-4 py-3 select-none",
+        isDragging && "shadow-xl",
+      )}
+    >
+      <div className="flex flex-col items-center w-6 flex-shrink-0">
+        <div
+          {...attributes}
+          {...listeners}
+          className="p-1 text-sky-400 hover:text-sky-600 cursor-grab active:cursor-grabbing touch-none"
+          title="Drag to move this break"
+        >
+          <GripVertical className="w-4 h-4" />
+        </div>
+      </div>
+      <Icon className="w-5 h-5 text-sky-600 flex-shrink-0" />
+      <div className="flex-1 min-w-0">
+        <span className="font-semibold text-sky-800 dark:text-sky-300">{br.label}</span>
+        <span className="text-sm text-muted-foreground ml-2">{br.minutes} min</span>
+      </div>
+      <span className="text-sm font-semibold tabular-nums text-sky-700 dark:text-sky-400 flex-shrink-0">
+        {formatClock(br.startMinutes)}–{formatClock(br.finishMinutes)}
+      </span>
     </div>
   );
 }

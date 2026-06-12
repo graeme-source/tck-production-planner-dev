@@ -114,6 +114,9 @@ importers:
       '@workspace/db':
         specifier: workspace:*
         version: link:../../lib/db
+      '@workspace/production-schedule':
+        specifier: workspace:*
+        version: link:../../lib/production-schedule
       bcryptjs:
         specifier: ^3.0.3
         version: 3.0.3
@@ -539,6 +542,9 @@ importers:
       '@workspace/business-days':
         specifier: workspace:*
         version: link:../../lib/business-days
+      '@workspace/production-schedule':
+        specifier: workspace:*
+        version: link:../../lib/production-schedule
       class-variance-authority:
         specifier: 'catalog:'
         version: 0.7.1
@@ -656,6 +662,8 @@ importers:
       drizzle-kit:
         specifier: ^0.31.9
         version: 0.31.10
+
+  lib/production-schedule: {}
 
   scripts:
     dependencies:

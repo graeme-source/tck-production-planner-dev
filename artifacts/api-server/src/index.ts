@@ -1628,6 +1628,33 @@ async function runStartupMigrations() {
         ON fridge_stock_changes (recipe_id, pack_size, created_at DESC)
     `);
 
+    // Production-schedule timeline — see lib/db/migrations/0022_add_meat_process_minutes.sql.
+    // Per-raw-meat total lead time (cook + processing) used to compute the
+    // "get the meat in by" time for each recipe on the day's timeline.
+    await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS meat_process_minutes integer`);
+    // Forward-planning settings: building start time + changeover gap.
+    await db.execute(sql`
+      INSERT INTO app_settings (key, value, updated_at) VALUES
+        ('building_start_time', '07:00', NOW()),
+        ('changeover_seconds', '90', NOW())
+      ON CONFLICT (key) DO NOTHING
+    `);
+    // Correct the lunch allowance 45 -> 35 once. Guarded so a later manual edit
+    // in Settings is never clobbered on subsequent boots.
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS _migrations_done (key TEXT PRIMARY KEY, done_at TIMESTAMP DEFAULT NOW())`);
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'default_lunch_minutes_35_v1') THEN
+          INSERT INTO app_settings (key, value, updated_at)
+          SELECT 'default_lunch_minutes', '35', NOW()
+          WHERE NOT EXISTS (SELECT 1 FROM app_settings WHERE key = 'default_lunch_minutes');
+          UPDATE app_settings SET value = '35', updated_at = NOW() WHERE key = 'default_lunch_minutes';
+          INSERT INTO _migrations_done (key) VALUES ('default_lunch_minutes_35_v1');
+        END IF;
+      END $$;
+    `);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

@@ -105,7 +105,7 @@ export async function computeBuilderBatchesPerHourForDay(dateIso: string): Promi
     db.select({ value: appSettingsTable.value }).from(appSettingsTable).where(eq(appSettingsTable.key, "default_lunch_minutes")).limit(1),
   ]);
   const configuredBreakMins = breakSetting[0]?.value ? Number(breakSetting[0].value) : 15;
-  const configuredLunchMins = lunchSetting[0]?.value ? Number(lunchSetting[0].value) : 45;
+  const configuredLunchMins = lunchSetting[0]?.value ? Number(lunchSetting[0].value) : 35;
 
   const finishedAfterLunch = londonHour(new Date(latest)) >= 13;
   const totalBreakMins = configuredBreakMins + (finishedAfterLunch ? configuredLunchMins : 0);

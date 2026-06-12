@@ -21,6 +21,13 @@ export const ingredientsTable = pgTable("ingredients", {
   rawMeatTrayCapacityKg: numeric("raw_meat_tray_capacity_kg", { precision: 10, scale: 4 }),
   minCookingTempC: numeric("min_cooking_temp_c", { precision: 5, scale: 2 }),
   estimatedCookTimeMin: integer("estimated_cook_time_min"),
+  // Total lead time, in minutes, from putting this raw meat in to cook until it
+  // is cooked AND processed and ready to go into a build (cook + processing +
+  // buffer as one number — e.g. 25 min cook + 15 min processing = 40). Used by
+  // the production-schedule timeline to tell the mixing-prep station the latest
+  // "get it in by" time for each recipe's meat. Distinct from estimatedCookTimeMin
+  // (cook only), which feeds the oven/HACCP flow.
+  meatProcessMinutes: integer("meat_process_minutes"),
   ovenTempC: integer("oven_temp_c"),
   steamPct: integer("steam_pct"),
   stockCheckEnabled: boolean("stock_check_enabled").notNull().default(false),

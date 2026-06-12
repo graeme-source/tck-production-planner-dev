@@ -6,7 +6,7 @@ import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
 
 const router: IRouter = Router();
 
-const STATION_KEY_PREFIXES = ["mozz_load_confirmed_", "checklist_done_", "station_assignment_"];
+const STATION_KEY_PREFIXES = ["mozz_load_confirmed_", "checklist_done_", "station_assignment_", "schedule_break_anchors_"];
 const MANAGER_KEY_PREFIXES = ["mac_cheese_extra_packs_"];
 
 async function requireAuthForWrite(req: Request, res: Response, next: NextFunction) {

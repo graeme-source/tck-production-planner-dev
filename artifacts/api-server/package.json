@@ -19,6 +19,7 @@
     "@workspace/api-zod": "workspace:*",
     "@workspace/business-days": "workspace:*",
     "@workspace/db": "workspace:*",
+    "@workspace/production-schedule": "workspace:*",
     "bcryptjs": "^3.0.3",
     "connect-pg-simple": "^10.0.0",
     "cookie-parser": "^1.4.7",

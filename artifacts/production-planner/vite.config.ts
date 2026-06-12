@@ -6,6 +6,10 @@ import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
 const port = Number(process.env.PORT) || 5173;
 const basePath = process.env.BASE_PATH || "/";
+// Where the dev server proxies /api and /storage. Defaults to the standard
+// local api-server; override (e.g. a parallel instance on another port) with
+// API_PROXY_TARGET without touching this file.
+const apiTarget = process.env.API_PROXY_TARGET || "http://localhost:3000";
 
 export default defineConfig({
   base: basePath,
@@ -45,11 +49,11 @@ export default defineConfig({
     allowedHosts: true,
     proxy: {
       "/api": {
-        target: "http://localhost:3000",
+        target: apiTarget,
         changeOrigin: true,
       },
       "/storage": {
-        target: "http://localhost:3000",
+        target: apiTarget,
         changeOrigin: true,
       },
     },

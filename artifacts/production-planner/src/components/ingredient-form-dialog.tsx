@@ -730,6 +730,16 @@ export function IngredientFormDialog({
                 </div>
               </div>
               <div>
+                <label className="text-sm font-medium mb-1 block">Cook + Process Time <span className="text-xs font-normal text-muted-foreground">(minutes)</span></label>
+                <div className="relative max-w-[160px]">
+                  <input type="number" step="1" min="1" {...register("meatProcessMinutes")} className={cn(numInputClass, "pr-12")} placeholder="e.g. 40" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">min</span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Total lead time before this meat can go into a build — cooking <em>plus</em> processing (e.g. 25 min cook + 15 min processing = 40). The day schedule uses this to tell the mixing-prep station the latest &ldquo;get it in by&rdquo; time for each recipe.
+                </p>
+              </div>
+              <div>
                 <label className="text-sm font-medium mb-1 block">Oven Temperature <span className="text-xs font-normal text-muted-foreground">(°C)</span></label>
                 <div className="relative max-w-[160px]">
                   <input type="number" step="1" min="0" max="500" {...register("ovenTempC")} className={cn(numInputClass, "pr-10")} placeholder="e.g. 180" />

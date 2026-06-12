@@ -63,7 +63,7 @@ router.get("/breaks", async (req, res) => {
     .where(eq(appSettingsTable.key, "default_lunch_minutes"));
 
   const defaultBreakMinutes = breakSetting ? Number(breakSetting.value) : 15;
-  const defaultLunchMinutes = lunchSetting ? Number(lunchSetting.value) : 45;
+  const defaultLunchMinutes = lunchSetting ? Number(lunchSetting.value) : 35;
 
   const records = rows.map((r) => {
     const durationMs = r.endedAt!.getTime() - r.startedAt.getTime();
@@ -463,7 +463,7 @@ router.get("/production-kpis", async (req, res) => {
       .from(appSettingsTable)
       .where(eq(appSettingsTable.key, "default_lunch_minutes"));
     const configuredBreakMins = breakSetting ? Number(breakSetting.value) : 15;
-    const configuredLunchMins = lunchSetting ? Number(lunchSetting.value) : 45;
+    const configuredLunchMins = lunchSetting ? Number(lunchSetting.value) : 35;
 
     const finishedAfterLunch = londonHour(latest) >= 13;
     const totalBreakMins = configuredBreakMins + (finishedAfterLunch ? configuredLunchMins : 0);
