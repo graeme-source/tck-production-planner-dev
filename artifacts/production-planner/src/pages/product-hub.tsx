@@ -133,7 +133,7 @@ function DeckPanel({ recipe }: { recipe: RecipeItem }) {
   const [data, setData] = useState<DeckData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<null | "plain" | "label">(null);
 
   useEffect(() => {
     setLoading(true);
@@ -149,8 +149,19 @@ function DeckPanel({ recipe }: { recipe: RecipeItem }) {
     if (!data) return;
     const plain = data.deckText.replace(/\*\*/g, "");
     navigator.clipboard.writeText(plain);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setCopied("plain");
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  // Label Live (the back-label printing software) renders <b> tags, so this
+  // variant keeps the allergen emphasis: the server marks every allergen as
+  // **X** in deckText, which goes onto the clipboard as <b>X</b>.
+  const copyForLabelLive = () => {
+    if (!data) return;
+    const tagged = data.deckText.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+    navigator.clipboard.writeText(tagged);
+    setCopied("label");
+    setTimeout(() => setCopied(null), 2000);
   };
 
   if (loading) return <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
@@ -165,9 +176,14 @@ function DeckPanel({ recipe }: { recipe: RecipeItem }) {
             .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
             .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
         }} />
-        <button onClick={copyDeck} className="mt-2 text-xs text-primary hover:underline flex items-center gap-1">
-          {copied ? <><Check className="w-3 h-3" /> Copied!</> : <><Copy className="w-3 h-3" /> Copy to clipboard</>}
-        </button>
+        <div className="mt-2 flex items-center gap-4">
+          <button onClick={copyDeck} className="text-xs text-primary hover:underline flex items-center gap-1">
+            {copied === "plain" ? <><Check className="w-3 h-3" /> Copied!</> : <><Copy className="w-3 h-3" /> Copy to clipboard</>}
+          </button>
+          <button onClick={copyForLabelLive} className="text-xs text-primary hover:underline flex items-center gap-1" title="Copies the deck with <b> tags around allergens, ready to paste into Label Live">
+            {copied === "label" ? <><Check className="w-3 h-3" /> Copied!</> : <><Copy className="w-3 h-3" /> Copy for Label Live</>}
+          </button>
+        </div>
       </div>
 
       {!data.isComplete && data.missingDeclarations && data.missingDeclarations.length > 0 && (
