@@ -10,7 +10,7 @@ import { useAuth } from "@/contexts/auth-context";
 import {
   ChevronUp, Plus, Minus, Check, CheckCircle2, PlayCircle, Loader2,
   GripVertical, Lock, RotateCcw, Package, ChevronRight, AlertTriangle,
-  Beef, Coffee, Utensils,
+  Beef, Coffee, Utensils, Eye, EyeOff,
 } from "lucide-react";
 import {
   computeDaySchedule, formatClock,
@@ -442,6 +442,35 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
   const schedByRecipeId = new Map<number, ScheduledRecipe>(
     (schedule?.recipes ?? []).map(r => [r.recipeId, r]),
   );
+
+  // Hide-completed toggle, shared by both tabs so the operator sets it once.
+  // Persisted per device — the iPad keeps the preference across reloads.
+  const [showCompleted, setShowCompleted] = useState<boolean>(() => {
+    try { return localStorage.getItem("mixing_show_completed") === "1"; } catch { return false; }
+  });
+  const toggleShowCompleted = () => setShowCompleted(prev => {
+    const next = !prev;
+    try { localStorage.setItem("mixing_show_completed", next ? "1" : "0"); } catch { /* private mode */ }
+    return next;
+  });
+
+  // A cooking panel is done when every tray of every raw meat is marked done.
+  const isCookingRecipeDone = (recipe: PrepRecipeDetail): boolean => {
+    const meats = recipe.ingredients.filter(i => i.isRawMeat && i.trayCount != null && i.trayCount > 0);
+    const total = meats.reduce((s, ing) => s + (ing.trayCount ?? 0), 0);
+    if (total === 0) return false;
+    const done = meats.reduce((s, ing) => {
+      const key = `${recipe.recipeId}-${ing.ingredientId}`;
+      return s + Object.values(trayStates[key] ?? {}).filter(st => st === 2).length;
+    }, 0);
+    return done >= total;
+  };
+
+  // A tins row is done when mixing has hit the batch target.
+  const isItemMixingComplete = (item: ProductionPlanItem): boolean => {
+    const target = item.batchesTarget ?? 0;
+    return target > 0 && getStationCount(item, "mixing") >= target;
+  };
 
   // Persist dragged break anchors per plan so the layout survives reloads and
   // shows the same on every iPad. Station users are allowed to write this key.
@@ -880,15 +909,33 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
       </div>
 
       {/* ── Cooking tab ── */}
-      {mixingTab === "cooking" && (
+      {mixingTab === "cooking" && (() => {
+        const allCooking = cookingRecipes.filter(r => r.trayCount != null && r.trayCount > 0);
+        const doneCooking = allCooking.filter(isCookingRecipeDone);
+        const visibleCooking = showCompleted ? allCooking : allCooking.filter(r => !isCookingRecipeDone(r));
+        return (
         <div className="space-y-4">
-          {cookingRecipes.filter(r => r.trayCount != null && r.trayCount > 0).length === 0 ? (
+          {doneCooking.length > 0 && (
+            <div className="flex justify-end">
+              <button
+                onClick={toggleShowCompleted}
+                className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-full border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+              >
+                {showCompleted ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                {showCompleted ? "Hide completed" : `Show completed (${doneCooking.length})`}
+              </button>
+            </div>
+          )}
+          {allCooking.length === 0 ? (
             <div className="bg-card border border-border rounded-xl p-6 text-center text-muted-foreground text-sm">
               No raw meat trays for this plan — cooking settings not yet configured on ingredients.
             </div>
+          ) : visibleCooking.length === 0 ? (
+            <div className="bg-card border border-border rounded-xl p-6 text-center text-muted-foreground text-sm">
+              ✓ All {allCooking.length} meat-cooking recipes done — use &ldquo;Show completed&rdquo; above to review them.
+            </div>
           ) : (
-            cookingRecipes
-              .filter(r => r.trayCount != null && r.trayCount > 0)
+            visibleCooking
               .map(recipe => {
                 const rawMeatIngs = recipe.ingredients.filter(i => i.isRawMeat && i.trayCount != null && i.trayCount > 0);
                 const marinades = recipe.marinades ?? [];
@@ -1115,19 +1162,36 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
             );
           })()}
         </div>
-      )}
+        );
+      })()}
 
-      {mixingTab === "tins" && (
+      {mixingTab === "tins" && (() => {
+        const doneTinRows = tinRows.filter(r => r.kind === "recipe" && isItemMixingComplete(r.item));
+        const visibleTinRows = showCompleted
+          ? tinRows
+          : tinRows.filter(r => r.kind === "break" || !isItemMixingComplete(r.item));
+        return (
       <div>
-        <div className="flex items-center justify-between gap-2 mb-2 px-1">
+        <div className="flex items-center justify-between gap-2 mb-2 px-1 flex-wrap">
           <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
             {activeItemId ? "All Recipes" : "Click a recipe to start mixing"}
           </h3>
-          {schedule && (
-            <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-primary/10 text-primary tabular-nums whitespace-nowrap">
-              {formatClock(schedule.startMinutes)} → finishes ~{formatClock(schedule.endMinutes)}
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {doneTinRows.length > 0 && (
+              <button
+                onClick={toggleShowCompleted}
+                className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+              >
+                {showCompleted ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                {showCompleted ? "Hide completed" : `Show completed (${doneTinRows.length})`}
+              </button>
+            )}
+            {schedule && (
+              <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-primary/10 text-primary tabular-nums whitespace-nowrap">
+                {formatClock(schedule.startMinutes)} → finishes ~{formatClock(schedule.endMinutes)}
+              </span>
+            )}
+          </div>
         </div>
         {schedWarnings.length > 0 && (
           <p className="text-xs text-amber-600 dark:text-amber-400 mb-2 px-1">
@@ -1136,9 +1200,11 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
           </p>
         )}
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={tinRows.map(rowId)} strategy={verticalListSortingStrategy}>
+          {/* Hidden completed rows stay in tinRows (handleDragEnd works on the
+              full list by id), only the render + sortable ids shrink. */}
+          <SortableContext items={visibleTinRows.map(rowId)} strategy={verticalListSortingStrategy}>
             <div className="space-y-2">
-              {tinRows.map(row => {
+              {visibleTinRows.map(row => {
                 if (row.kind === "break") {
                   return <SortableBreakCard key={`break-${row.br.id}`} br={row.br} />;
                 }
@@ -1193,7 +1259,8 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
           </SortableContext>
         </DndContext>
       </div>
-      )}
+        );
+      })()}
     </div>
     </>
   );
