@@ -443,16 +443,11 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
     (schedule?.recipes ?? []).map(r => [r.recipeId, r]),
   );
 
-  // Hide-completed toggle, shared by both tabs so the operator sets it once.
-  // Persisted per device — the iPad keeps the preference across reloads.
-  const [showCompleted, setShowCompleted] = useState<boolean>(() => {
-    try { return localStorage.getItem("mixing_show_completed") === "1"; } catch { return false; }
-  });
-  const toggleShowCompleted = () => setShowCompleted(prev => {
-    const next = !prev;
-    try { localStorage.setItem("mixing_show_completed", next ? "1" : "0"); } catch { /* private mode */ }
-    return next;
-  });
+  // Hide-completed toggle, shared by both tabs. Deliberately NOT persisted —
+  // every fresh load of the station starts with completed work hidden, and
+  // "Show completed" is a temporary peek for the current session only.
+  const [showCompleted, setShowCompleted] = useState(false);
+  const toggleShowCompleted = () => setShowCompleted(prev => !prev);
 
   // A cooking panel is done when every tray of every raw meat is marked done.
   const isCookingRecipeDone = (recipe: PrepRecipeDetail): boolean => {
