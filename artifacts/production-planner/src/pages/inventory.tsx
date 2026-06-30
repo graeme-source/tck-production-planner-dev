@@ -139,9 +139,18 @@ async function printKanban(ingredientId: number) {
 </style></head><body>
 
 <div class="no-print">
-  <button onclick="window.print()">Print Kanban Card</button>
-  <button onclick="window.close()">Close</button>
+  <button id="kanban-print">Print Kanban Card</button>
+  <button id="kanban-close">Close</button>
 </div>
+
+<!-- Wired via addEventListener, NOT onclick attributes: the popup inherits the
+     app's CSP, whose script-src-attr 'none' (helmet default) silently kills
+     inline handler attributes on production. Inline script blocks are fine
+     (script-src allows 'unsafe-inline'). -->
+<script>
+  document.getElementById("kanban-print").addEventListener("click", function () { window.print(); });
+  document.getElementById("kanban-close").addEventListener("click", function () { window.close(); });
+</script>
 
 <!-- FRONT SIDE -->
 <div class="page front">
