@@ -27,6 +27,7 @@ const router: IRouter = Router();
 
 const EIGHT_PACK_MATCH = "8 pack bag";
 const PRODUCTION_TAG = "production";
+const WHOLESALE_TAG = "wholesale";
 const DATE_TAG_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SCAN_DAYS_BACK = 30;
 const QUEUE_TTL_MS = 60_000;
@@ -60,6 +61,9 @@ function firstDateTag(tags: string): string | null {
 }
 function hasProductionTag(tags: string): boolean {
   return tags.split(",").map(t => t.trim().toLowerCase()).includes(PRODUCTION_TAG);
+}
+function hasWholesaleTag(tags: string): boolean {
+  return tags.split(",").map(t => t.trim().toLowerCase()).includes(WHOLESALE_TAG);
 }
 function is8PackLine(li: { variant_title: string | null }): boolean {
   return (li.variant_title ?? "").toLowerCase().includes(EIGHT_PACK_MATCH);
@@ -130,24 +134,33 @@ router.get("/queue", async (_req, res) => {
     const deliveryDates = deliveryDateOptions(today, 18); // ~3 weeks of Tue–Sat
     const plansByDate = await loadPlansByDate(addDays(today, -2), addDays(today, 25));
 
+    const mapLine = (li: { id: number; title: string | null; variant_title: string | null; quantity: number }) => {
+      const m = titleToRecipe.get((li.title ?? "").trim().toLowerCase()) ?? null;
+      return {
+        lineId: li.id,
+        productTitle: li.title,
+        variantTitle: li.variant_title,
+        quantity: li.quantity,
+        recipeId: m?.recipeId ?? null,
+        recipeName: m?.recipeName ?? null,
+      };
+    };
+
     const queueOrders = orders
       .filter(o => !hasProductionTag(o.tags))
-      .map(o => {
-        const lines = (o.line_items ?? []).filter(is8PackLine).map(li => {
-          const m = titleToRecipe.get((li.title ?? "").trim().toLowerCase()) ?? null;
-          return {
-            lineId: li.id,
-            productTitle: li.title,
-            variantTitle: li.variant_title,
-            quantity: li.quantity,
-            recipeId: m?.recipeId ?? null,
-            recipeName: m?.recipeName ?? null,
-          };
-        });
-        return { o, lines };
+      .flatMap(o => {
+        const eightPackLines = (o.line_items ?? []).filter(is8PackLine);
+        // An order qualifies if it contains 8-pack bags, OR it's tagged "wholesale".
+        // Orders that are wholesale AND have 8-pack bags are treated as 8-pack orders;
+        // the wholesale-only group is wholesale orders with NO 8-pack bags (2-packs etc).
+        if (eightPackLines.length === 0 && !hasWholesaleTag(o.tags)) return [];
+        const kind = eightPackLines.length > 0 ? ("eight_pack" as const) : ("wholesale_2pack" as const);
+        // 8-pack orders list only their 8-pack lines (those drive the plan). Wholesale-only
+        // orders list every line — they're tag-only, so we just show what's in the order.
+        const sourceLines = kind === "eight_pack" ? eightPackLines : (o.line_items ?? []);
+        return [{ o, kind, lines: sourceLines.map(mapLine) }];
       })
-      .filter(x => x.lines.length > 0)
-      .map(({ o, lines }) => {
+      .map(({ o, kind, lines }) => {
         const existingDateTag = firstDateTag(o.tags);
         const proposedDeliveryDate = existingDateTag && isDeliveryDay(existingDateTag)
           ? existingDateTag
@@ -155,7 +168,7 @@ router.get("/queue", async (_req, res) => {
         const customerName = o.shipping_address?.name
           || (o.customer ? `${o.customer.first_name ?? ""} ${o.customer.last_name ?? ""}`.trim() : "")
           || "";
-        return { orderId: o.id, name: o.name, customerName, tags: o.tags, existingDateTag, proposedDeliveryDate, lines };
+        return { orderId: o.id, name: o.name, customerName, tags: o.tags, kind, existingDateTag, proposedDeliveryDate, lines };
       })
       .sort((a, b) => (a.name < b.name ? 1 : -1)); // newest order name first
 
@@ -198,7 +211,26 @@ router.post("/process", async (req, res) => {
     if (hasProductionTag(order.tags)) { res.status(409).json({ error: "Order is already tagged 'production'." }); return; }
 
     const lines = (order.line_items ?? []).filter(is8PackLine);
-    if (lines.length === 0) { res.status(409).json({ error: "Order has no eight-pack bag lines." }); return; }
+    if (lines.length === 0) {
+      // No 8-pack bags → this is a wholesale tag-only order. Just tag it with the
+      // delivery date + production so it routes into the right despatch run. The 2-packs
+      // already reach the plan via the normal order sync, so we make no plan changes and
+      // don't require a plan to exist (per Graeme, 2026-06).
+      if (!hasWholesaleTag(order.tags)) {
+        res.status(409).json({ error: "Order has no eight-pack bag lines and is not tagged wholesale." });
+        return;
+      }
+      let updatedTags: string;
+      try {
+        updatedTags = await addTagsToOrder(orderId, order.tags, [deliveryDate, PRODUCTION_TAG]);
+      } catch (err) {
+        res.status(502).json({ error: `Failed to tag Shopify order — no changes made, safe to retry. (${err instanceof Error ? err.message : String(err)})` });
+        return;
+      }
+      queueCache = null; // reflect the change on the next poll
+      res.json({ ok: true, orderId, deliveryDate, tagOnly: true, tags: updatedTags, added: [] });
+      return;
+    }
 
     const despatchDate = despatchDateFor(deliveryDate);
     const plan = (await loadPlansByDate(despatchDate, despatchDate)).get(despatchDate);

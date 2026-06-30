@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { PackageCheck, Loader2, AlertTriangle, CheckCircle2, ArrowRight } from "lucide-react";
+import { PackageCheck, Loader2, AlertTriangle, CheckCircle2, ArrowRight, Store } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 
@@ -19,6 +19,7 @@ interface QueueOrder {
   name: string;
   customerName: string;
   tags: string;
+  kind: "eight_pack" | "wholesale_2pack";
   existingDateTag: string | null;
   proposedDeliveryDate: string;
   lines: QueueLine[];
@@ -58,10 +59,15 @@ function fmtNice(s: string): string {
 }
 
 type OrderStatus =
-  | { ok: true; planId: number; despatchDate: string }
+  | { ok: true; planId: number; despatchDate: string; tagOnly?: boolean }
   | { ok: false; reason: string };
 
 function evaluate(order: QueueOrder, deliveryDate: string, plans: Record<string, PlanInfo>): OrderStatus {
+  // Wholesale 2-pack-only orders are tag-only: no plan needed, always ready once a
+  // delivery day is chosen (the 2-packs reach the plan via the normal order sync).
+  if (order.kind === "wholesale_2pack") {
+    return { ok: true, planId: -1, despatchDate: addDaysStr(deliveryDate, -1), tagOnly: true };
+  }
   const despatchDate = addDaysStr(deliveryDate, -1);
   const plan = plans[despatchDate];
   if (!plan) return { ok: false, reason: `No production plan for ${fmtNice(despatchDate)} (despatch day)` };
@@ -99,6 +105,12 @@ export function EightPackOrdersBanner({ userRole }: { userRole?: string }) {
   if (!allowed || !data || data.orders.length === 0) return null;
 
   const count = data.orders.length;
+  const eightCount = data.orders.filter(o => o.kind === "eight_pack").length;
+  const wholesaleCount = count - eightCount;
+  const banner = [
+    eightCount > 0 ? `${eightCount} 8-pack` : null,
+    wholesaleCount > 0 ? `${wholesaleCount} wholesale` : null,
+  ].filter(Boolean).join(" + ");
 
   return (
     <div className="sticky top-0 z-20 -mx-6 px-6 pb-2 pt-0 bg-background/80 backdrop-blur-sm">
@@ -109,7 +121,7 @@ export function EightPackOrdersBanner({ userRole }: { userRole?: string }) {
         >
           <PackageCheck className="w-4 h-4 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
           <span className="text-sm font-semibold text-indigo-700 dark:text-indigo-300">
-            {count} order{count !== 1 ? "s" : ""} with 8-pack bags to process
+            {count} order{count !== 1 ? "s" : ""} to process <span className="font-normal text-indigo-600/70 dark:text-indigo-400/70">({banner})</span>
           </span>
           <span className="ml-auto flex items-center gap-1 text-xs font-medium text-indigo-600/70 dark:text-indigo-400/70">
             Review &amp; process <ArrowRight className="w-3.5 h-3.5" />
@@ -174,6 +186,8 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
 
   const remaining = data.orders.filter(o => !done.has(o.orderId));
   const readyCount = remaining.filter(o => evaluate(o, selected[o.orderId], data.plansByDespatchDate).ok).length;
+  const eightPackOrders = data.orders.filter(o => o.kind === "eight_pack");
+  const wholesaleOrders = data.orders.filter(o => o.kind === "wholesale_2pack");
 
   async function processAllReady() {
     for (const o of remaining) {
@@ -185,89 +199,117 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
     }
   }
 
+  const renderCard = (order: QueueOrder) => {
+    const isDone = done.has(order.orderId);
+    const delivery = selected[order.orderId];
+    const status = evaluate(order, delivery, data.plansByDespatchDate);
+    const isWholesale = order.kind === "wholesale_2pack";
+    // merge the proposed date into options if it's outside the standard window
+    const options = data.deliveryDates.includes(order.proposedDeliveryDate)
+      ? data.deliveryDates
+      : [order.proposedDeliveryDate, ...data.deliveryDates];
+    return (
+      <div
+        key={order.orderId}
+        className={cn(
+          "rounded-xl border p-3",
+          isDone ? "border-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20 opacity-70"
+            : status.ok ? "border-border bg-card"
+              : "border-amber-300 dark:border-amber-700 bg-amber-50/40 dark:bg-amber-950/10",
+        )}
+      >
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <div className="min-w-0">
+            <span className="font-semibold">{order.name}</span>
+            {order.customerName && <span className="text-sm text-muted-foreground ml-2">{order.customerName}</span>}
+            {order.existingDateTag && (
+              <span className="text-xs ml-2 px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">requested {fmtNice(order.existingDateTag)}</span>
+            )}
+          </div>
+          {isDone && <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
+        </div>
+
+        <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-sm mb-2">
+          {order.lines.map(l => (
+            <span key={l.lineId} className={cn(!isWholesale && l.recipeId == null && "text-amber-600 dark:text-amber-400")}>
+              <span className="font-bold tabular-nums">{l.quantity}×</span> {l.recipeName ?? l.productTitle ?? "?"}
+              {isWholesale
+                ? l.variantTitle && <span className="text-muted-foreground"> · {l.variantTitle}</span>
+                : l.recipeId == null && " (unrecognised)"}
+            </span>
+          ))}
+        </div>
+
+        {!isDone && (
+          <div className="flex items-center gap-3 flex-wrap">
+            <label className="text-sm text-muted-foreground">Deliver</label>
+            <select
+              value={delivery}
+              onChange={e => setSelected(prev => ({ ...prev, [order.orderId]: e.target.value }))}
+              className="px-2 py-1.5 border border-border rounded-lg text-sm bg-background"
+            >
+              {options.map(d => <option key={d} value={d}>{fmtNice(d)}</option>)}
+            </select>
+
+            {status.ok ? (
+              <span className="text-xs text-muted-foreground">
+                {status.tagOnly ? `→ tag ${fmtNice(delivery)} + production` : `→ ${fmtNice(status.despatchDate)} production`}
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400">
+                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" /> {status.reason}
+              </span>
+            )}
+
+            <button
+              onClick={() => processOrder(order)}
+              disabled={!status.ok || processing === order.orderId}
+              className="ml-auto flex items-center gap-1.5 text-sm px-3 py-1.5 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50"
+            >
+              {processing === order.orderId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PackageCheck className="w-3.5 h-3.5" />}
+              Process
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <PackageCheck className="w-5 h-5 text-indigo-500" /> Process 8-pack bag orders
+            <PackageCheck className="w-5 h-5 text-indigo-500" /> Process 8-pack &amp; wholesale orders
           </DialogTitle>
           <DialogDescription>
-            Pick a delivery day (Tue–Sat) for each order. Processing adds the bags to the despatch-day production plan and tags the order with the delivery date + <span className="font-medium">production</span>.
+            Pick a delivery day (Tue–Sat) for each order. <span className="font-medium">8-pack bag orders</span> add the bags to the despatch-day production plan; <span className="font-medium">wholesale 2-pack orders</span> are just tagged for despatch. Both get tagged with the delivery date + <span className="font-medium">production</span>.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3">
-          {data.orders.map(order => {
-            const isDone = done.has(order.orderId);
-            const delivery = selected[order.orderId];
-            const status = evaluate(order, delivery, data.plansByDespatchDate);
-            // merge the proposed date into options if it's outside the standard window
-            const options = data.deliveryDates.includes(order.proposedDeliveryDate)
-              ? data.deliveryDates
-              : [order.proposedDeliveryDate, ...data.deliveryDates];
-            return (
-              <div
-                key={order.orderId}
-                className={cn(
-                  "rounded-xl border p-3",
-                  isDone ? "border-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20 opacity-70"
-                    : status.ok ? "border-border bg-card"
-                      : "border-amber-300 dark:border-amber-700 bg-amber-50/40 dark:bg-amber-950/10",
-                )}
-              >
-                <div className="flex items-center justify-between gap-3 mb-2">
-                  <div className="min-w-0">
-                    <span className="font-semibold">{order.name}</span>
-                    {order.customerName && <span className="text-sm text-muted-foreground ml-2">{order.customerName}</span>}
-                    {order.existingDateTag && (
-                      <span className="text-xs ml-2 px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">requested {fmtNice(order.existingDateTag)}</span>
-                    )}
-                  </div>
-                  {isDone && <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
-                </div>
-
-                <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-sm mb-2">
-                  {order.lines.map(l => (
-                    <span key={l.lineId} className={cn(l.recipeId == null && "text-amber-600 dark:text-amber-400")}>
-                      <span className="font-bold tabular-nums">{l.quantity}×</span> {l.recipeName ?? l.productTitle ?? "?"}
-                      {l.recipeId == null && " (unrecognised)"}
-                    </span>
-                  ))}
-                </div>
-
-                {!isDone && (
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <label className="text-sm text-muted-foreground">Deliver</label>
-                    <select
-                      value={delivery}
-                      onChange={e => setSelected(prev => ({ ...prev, [order.orderId]: e.target.value }))}
-                      className="px-2 py-1.5 border border-border rounded-lg text-sm bg-background"
-                    >
-                      {options.map(d => <option key={d} value={d}>{fmtNice(d)}</option>)}
-                    </select>
-
-                    {status.ok ? (
-                      <span className="text-xs text-muted-foreground">→ {fmtNice(status.despatchDate)} production</span>
-                    ) : (
-                      <span className="flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400">
-                        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" /> {status.reason}
-                      </span>
-                    )}
-
-                    <button
-                      onClick={() => processOrder(order)}
-                      disabled={!status.ok || processing === order.orderId}
-                      className="ml-auto flex items-center gap-1.5 text-sm px-3 py-1.5 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50"
-                    >
-                      {processing === order.orderId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PackageCheck className="w-3.5 h-3.5" />}
-                      Process
-                    </button>
-                  </div>
-                )}
+        <div className="space-y-5">
+          {eightPackOrders.length > 0 && (
+            <section className="space-y-2.5">
+              <div className="flex items-center gap-2 pb-1 border-b border-indigo-200 dark:border-indigo-800">
+                <PackageCheck className="w-4 h-4 text-indigo-500 flex-shrink-0" />
+                <h3 className="text-sm font-semibold text-indigo-700 dark:text-indigo-300">8-pack bag orders</h3>
+                <span className="text-xs text-muted-foreground">{eightPackOrders.length}</span>
               </div>
-            );
-          })}
+              <div className="space-y-3">{eightPackOrders.map(renderCard)}</div>
+            </section>
+          )}
+
+          {wholesaleOrders.length > 0 && (
+            <section className="space-y-2.5">
+              <div className="flex items-center gap-2 pb-1 border-b border-teal-200 dark:border-teal-800">
+                <Store className="w-4 h-4 text-teal-600 dark:text-teal-400 flex-shrink-0" />
+                <h3 className="text-sm font-semibold text-teal-700 dark:text-teal-300">Wholesale 2-pack only orders</h3>
+                <span className="text-xs text-muted-foreground">{wholesaleOrders.length}</span>
+              </div>
+              <p className="text-xs text-muted-foreground">No 8-pack bags — processing just tags these with the delivery date + production. The production plan isn't changed.</p>
+              <div className="space-y-3">{wholesaleOrders.map(renderCard)}</div>
+            </section>
+          )}
         </div>
 
         {readyCount > 1 && (
