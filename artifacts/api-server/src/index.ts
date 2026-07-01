@@ -1748,6 +1748,16 @@ async function startup() {
     // until configured. Lean: one Govee fetch per cycle.
     const { startGoveePoller } = await import("./lib/govee-poller");
     startGoveePoller();
+
+    // System-updates feed for the morning-meeting slide. Computed once
+    // per deploy (this boot) and refreshed on a slow timer, then written
+    // to the DB so the slide is a pure DB read — no live git/GitHub call
+    // on the render path (which silently rate-limited in production and
+    // left the slide permanently empty). Fire-and-forget: the slide
+    // self-heals on first view if this hasn't landed yet.
+    const { refreshSystemUpdatesSnapshot } = await import("./routes/system-updates");
+    void refreshSystemUpdatesSnapshot();
+    setInterval(() => void refreshSystemUpdatesSnapshot(), 3 * 60 * 60_000).unref();
   } catch (err) {
     console.error(
       "Background startup tasks failed:",

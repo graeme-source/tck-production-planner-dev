@@ -39,12 +39,16 @@ interface CachedFeed {
   summary: string[] | null;
 }
 
-let cache: CachedFeed | null = null;
-const CACHE_TTL_MS = 5 * 60_000;
+// The rendered feed is computed once per deploy (and on a slow timer)
+// and persisted to a single-row `system_updates_snapshot` table. The
+// meeting slide reads from that row — never from a live git/GitHub call
+// — so it works identically in dev and prod and can't be knocked out by
+// GitHub rate limits or a missing .git in the container.
+const SNAPSHOT_ID = 1;
 
-// Summary cache keyed by the SHA-set of the last 24h commits. When
-// commits roll forward we miss this cache and call Claude again; if
-// the same set repeats (no new deploys) we serve the cached summary.
+// Summary cache keyed by the SHA-set of the summarised commits. Saves a
+// Claude call when the same commit set is summarised again (e.g. an
+// interval refresh with no new deploy).
 const summaryCache = new Map<string, string[]>();
 
 const FIELD_SEP = "\x1f"; // unit separator — unlikely to appear in commit text
@@ -60,67 +64,65 @@ interface SourceResult {
   range: (baselineSha: string) => Promise<Commit[] | null>;
 }
 
-async function loadCommits(): Promise<CachedFeed> {
+/** Build the feed from whichever source is available — local `git log`
+ *  in dev (where .git is on disk), GitHub's REST API in prod (where the
+ *  container ships no .git). Straight rolling windows: the whole last 7
+ *  days is the slide's content, with a 24h subset kept for callers that
+ *  still want it. No baseline/"since last meeting" guesswork — that logic
+ *  was the source of the empty-slide bug and the team just wants the
+ *  week's deploys. Reads master so the feed reflects what's live. */
+async function buildFeed(): Promise<CachedFeed> {
   const now = Date.now();
-  if (cache && now - cache.fetchedAt < CACHE_TTL_MS) return cache;
-
-  // Local `git log` works in dev where .git is on disk; GitHub's REST
-  // API covers production where the runtime container doesn't ship
-  // .git. Reads from master so the feed always reflects what's deployed.
   const src = (await loadCommitsFromLocalGit()) ?? (await loadCommitsFromGithub());
   if (!src) {
-    // Neither path worked. Cache the empty state briefly so we
-    // don't hammer either source on every dashboard refresh.
-    const empty: CachedFeed = { fetchedAt: now, available: false, last24h: [], last7Days: [], summary: null };
-    cache = empty;
-    return empty;
+    return { fetchedAt: now, available: false, last24h: [], last7Days: [], summary: null };
   }
-
-  const fresh = await commitsSinceLastMeeting(src);
-  const summary = await summariseLast24h(fresh);
-  const feed: CachedFeed = { fetchedAt: now, available: true, last24h: fresh, last7Days: src.last7Days, summary };
-  cache = feed;
-  return feed;
+  const summary = await summariseCommits(src.last7Days);
+  return { fetchedAt: now, available: true, last24h: src.last24h, last7Days: src.last7Days, summary };
 }
 
-/** "What shipped since yesterday's meeting?" — a pure author-date filter
- *  misses it: dev work committed days ago only reaches master (= live)
- *  when it's merged and deployed at night, by which point the commits
- *  look "old". So each time the feed is built we snapshot master's HEAD,
- *  and the slide shows every commit that became reachable since the most
- *  recent snapshot that's at least 20h old (≈ yesterday's meeting).
- *  Falls back to the 24h date window when there's no usable snapshot
- *  (first run, rebased history, DB hiccup). */
-async function commitsSinceLastMeeting(src: SourceResult): Promise<Commit[]> {
-  if (!src.headSha) return src.last24h;
+/** Read the persisted feed from the DB. Returns null if the snapshot
+ *  row (or table) doesn't exist yet — the caller triggers a build. */
+async function readSnapshot(): Promise<CachedFeed | null> {
   try {
+    const rows = toRows<{ payload: CachedFeed }>(await db.execute(sql`
+      SELECT payload FROM system_updates_snapshot WHERE id = ${SNAPSHOT_ID} LIMIT 1
+    `));
+    return rows[0]?.payload ?? null;
+  } catch {
+    return null; // table not created yet — first boot
+  }
+}
+
+/** Recompute the feed and persist it to the single-row snapshot table.
+ *  Called once per deploy (server boot) and on a slow interval. Guarded
+ *  so a transient source failure (GitHub rate limit, network blip) never
+ *  clobbers a previously-good snapshot with an empty one. Exported for
+ *  the startup wiring in index.ts. */
+export async function refreshSystemUpdatesSnapshot(): Promise<void> {
+  try {
+    const feed = await buildFeed();
+    if (!feed.available) {
+      const existing = await readSnapshot();
+      if (existing?.available) {
+        console.warn("[system-updates] refresh got no commits; keeping previous snapshot");
+        return;
+      }
+    }
     await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS system_updates_feed_state (
-        id serial PRIMARY KEY,
-        sha text NOT NULL,
-        seen_at timestamptz NOT NULL DEFAULT now()
+      CREATE TABLE IF NOT EXISTS system_updates_snapshot (
+        id integer PRIMARY KEY,
+        payload jsonb NOT NULL,
+        refreshed_at timestamptz NOT NULL DEFAULT now()
       )
     `);
-    const baselineRows = toRows<{ sha: string }>(await db.execute(sql`
-      SELECT sha FROM system_updates_feed_state
-      WHERE seen_at <= now() - interval '20 hours'
-      ORDER BY seen_at DESC LIMIT 1
-    `));
-    const newestRows = toRows<{ sha: string }>(await db.execute(sql`
-      SELECT sha FROM system_updates_feed_state ORDER BY seen_at DESC LIMIT 1
-    `));
-    if (newestRows[0]?.sha !== src.headSha) {
-      await db.execute(sql`INSERT INTO system_updates_feed_state (sha) VALUES (${src.headSha})`);
-      await db.execute(sql`DELETE FROM system_updates_feed_state WHERE seen_at < now() - interval '30 days'`);
-    }
-
-    const baseline = baselineRows[0]?.sha;
-    if (!baseline) return src.last24h;
-    if (baseline === src.headSha) return []; // nothing deployed since yesterday
-    return (await src.range(baseline)) ?? src.last24h;
+    await db.execute(sql`
+      INSERT INTO system_updates_snapshot (id, payload, refreshed_at)
+      VALUES (${SNAPSHOT_ID}, ${JSON.stringify(feed)}::jsonb, now())
+      ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, refreshed_at = now()
+    `);
   } catch (err) {
-    console.warn("[system-updates] feed state failed:", err instanceof Error ? err.message : err);
-    return src.last24h;
+    console.warn("[system-updates] snapshot refresh failed:", err instanceof Error ? err.message : err);
   }
 }
 
@@ -274,12 +276,12 @@ async function githubCompareRange(baselineSha: string): Promise<Commit[] | null>
   }
 }
 
-/** Ask Claude Haiku for a short, plain-English summary of the last
- *  24h of commits — the kitchen audience doesn't care about commit
- *  subjects, they care about "what's actually different today?"
- *  Returns null when there's nothing to summarise or Claude isn't
- *  configured; the slide falls back to the raw commit list. */
-async function summariseLast24h(commits: Commit[]): Promise<string[] | null> {
+/** Ask Claude Haiku for a short, plain-English summary of the past
+ *  week's commits — the kitchen audience doesn't care about commit
+ *  subjects, they care about "what's actually changed?" Returns null
+ *  when there's nothing to summarise or Claude isn't configured; the
+ *  slide falls back to the raw commit list. */
+async function summariseCommits(commits: Commit[]): Promise<string[] | null> {
   if (commits.length === 0) return null;
   if (!isClaudeConfigured()) return null;
 
@@ -297,9 +299,9 @@ async function summariseLast24h(commits: Commit[]): Promise<string[] | null> {
     .join("\n\n")
     .slice(0, 8_000);
 
-  const prompt = `You're summarising what changed in the TCK Production Planner since yesterday's morning meeting for the kitchen team.
+  const prompt = `You're summarising what changed in the TCK Production Planner over the past week for the kitchen team.
 
-The audience: cooks and shift managers, not developers. They want to know "what's different today?" — what bugs got fixed, what new features they can use, what numbers will now look different. They do not care about code, schemas, refactors, or commit hygiene.
+The audience: cooks and shift managers, not developers. They want to know "what's different now?" — what bugs got fixed, what new features they can use, what numbers will now look different. They do not care about code, schemas, refactors, or commit hygiene.
 
 Rules:
 - Output 3-6 short bullet points. One sentence each, plain English, present tense ("Packing speed now matches the Analytics page").
@@ -426,8 +428,18 @@ router.get("/", async (_req: Request, res: Response) => {
       });
       return;
     }
-    // No curated entry — fall back to the commit feed.
-    res.json(await loadCommits());
+    // No curated entry — serve the persisted commit-feed snapshot. It's
+    // refreshed at deploy time and on a timer, so this is a pure DB read
+    // (no live git/GitHub call on the render path). If the snapshot is
+    // somehow missing (very first boot before the startup refresh lands),
+    // build it once inline so the slide self-heals rather than showing
+    // an empty state.
+    let snapshot = await readSnapshot();
+    if (!snapshot) {
+      await refreshSystemUpdatesSnapshot();
+      snapshot = await readSnapshot();
+    }
+    res.json(snapshot ?? { available: false, last24h: [], last7Days: [], summary: null });
   } catch (err) {
     console.error("[system-updates] handler failed:", err);
     res.status(500).json({ error: "Failed to load system updates" });

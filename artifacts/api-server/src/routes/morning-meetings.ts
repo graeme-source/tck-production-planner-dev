@@ -44,6 +44,8 @@ import {
   computePackingOrdersPerHourForDay,
 } from "../lib/yesterday-kpis";
 import { getPreviousDispatchDayAsync } from "./production-plans";
+import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
+import type Anthropic from "@anthropic-ai/sdk";
 
 const router: IRouter = Router();
 
@@ -52,13 +54,15 @@ const router: IRouter = Router();
 const photoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 const GRATITUDE_IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif"];
 
-/** Picks this week's principle and the default example for today
- *  within that principle (rotates by weekday). The week index is
- *  computed from the curriculum anchor stored in app_settings
- *  (`lean_curriculum_start_date`), so the rotation starts at
- *  week 1 on the anchor date rather than being pinned to the
- *  calendar week of the year. Host can override on the meeting
- *  slide via configJson.exampleId. */
+/** Picks today's default lesson. Rotates freely through EVERY active
+ *  example, one per calendar day, ordered by principle week then example
+ *  position — so the whole library is cycled through before any lesson
+ *  repeats. (It used to lock onto this week's principle and only vary by
+ *  weekday, which is why the same handful kept coming round.) The day
+ *  index is measured from the curriculum anchor in app_settings
+ *  (`lean_curriculum_start_date`) so every device agrees and the pick is
+ *  stable for a given day. Host can still override on the meeting slide
+ *  via configJson.exampleId / the library picker. */
 async function getTodayPrincipleAndExample() {
   const now = new Date();
 
@@ -70,28 +74,17 @@ async function getTodayPrincipleAndExample() {
   const anchorIso = anchorRow?.value ?? londonDateString();
   const anchor = new Date(`${anchorIso}T00:00:00`);
   const daysSinceAnchor = Math.max(0, Math.floor((now.getTime() - anchor.getTime()) / 86_400_000));
-  const weekIndex = Math.floor(daysSinceAnchor / 7);
 
-  const principles = await db
-    .select()
-    .from(leanPrinciplesTable)
-    .where(eq(leanPrinciplesTable.isActive, true))
-    .orderBy(asc(leanPrinciplesTable.weekPosition));
-  if (principles.length === 0) return { principle: null, example: null };
-  const principle = principles[weekIndex % principles.length];
-
-  const examples = await db
-    .select()
+  const rows = await db
+    .select({ example: leanExamplesTable, principle: leanPrinciplesTable })
     .from(leanExamplesTable)
-    .where(and(eq(leanExamplesTable.principleId, principle.id), eq(leanExamplesTable.isActive, true)))
-    .orderBy(asc(leanExamplesTable.orderPosition));
-  if (examples.length === 0) return { principle, example: null };
-  // Monday = 1 .. Sunday = 0 from Date.getDay(). Use weekday-1 so the
-  // first example shows Monday, second Tuesday, etc. Wraps on the
-  // weekend so weekend hosts still see an example.
-  const weekday = ((now.getDay() + 6) % 7);
-  const example = examples[weekday % examples.length];
-  return { principle, example };
+    .innerJoin(leanPrinciplesTable, eq(leanPrinciplesTable.id, leanExamplesTable.principleId))
+    .where(and(eq(leanExamplesTable.isActive, true), eq(leanPrinciplesTable.isActive, true)))
+    .orderBy(asc(leanPrinciplesTable.weekPosition), asc(leanExamplesTable.orderPosition));
+  if (rows.length === 0) return { principle: null, example: null };
+
+  const picked = rows[daysSinceAnchor % rows.length];
+  return { principle: picked.principle, example: picked.example };
 }
 
 /** Backwards-compat shim — returns the legacy lean_lessons-shaped row
@@ -711,6 +704,142 @@ router.put("/lessons/:id", async (req: Request, res: Response) => {
     .returning();
   if (!updated) { res.status(404).json({ error: "Lesson not found" }); return; }
   res.json(updated);
+});
+
+// ── AI lesson generation ────────────────────────────────────────────
+// The host types a topic on the Lesson slide ("total ownership as in
+// Lean Made Simple by Ryan Tiani") and we generate a full three-block
+// lesson in the house style, save it as a permanent example under the
+// catch-all "On-demand lessons" principle (so it joins the daily
+// rotation + library picker forever), and return it shaped like the
+// dashboard lesson so the slide can switch to it immediately.
+
+const ON_DEMAND_PRINCIPLE_TITLE = "On-demand lessons";
+
+const LESSON_TOOL: Anthropic.Tool = {
+  name: "emit_lesson",
+  description: "Return the finished lean lesson in the required three-block format.",
+  input_schema: {
+    type: "object",
+    properties: {
+      title: { type: "string", description: "Short lesson title, e.g. 'Total Ownership'. No week number." },
+      summary: { type: "string", description: "One punchy sentence capturing the core idea." },
+      explanationMd: { type: "string", description: "Markdown for 'what it means' — host prep. 2-4 short paragraphs, **bold** the key term. No headings." },
+      whatToShowMd: { type: "string", description: "Markdown for the slide the team sees: a short **bold heading**, 3-5 tight bullets or a small table, then a line starting '**Today's question:**' or '**Today:**'. No headings (#)." },
+      deliveryNotesMd: { type: "string", description: "Markdown: a '**Talking points:**' list of 2-3 bullets, then a final line starting '**Prompt:**' with a question to ask the room." },
+    },
+    required: ["title", "summary", "explanationMd", "whatToShowMd", "deliveryNotesMd"],
+  },
+};
+
+const LESSON_SYSTEM = `You write daily "lean lesson" cards for the morning stand-up at The Calzone Kitchen, a UK artisan food business that makes calzones and macaroni cheese. The team practises Two Second Lean (Paul Akers) and draws on Lean Made Simple (Ryan Tiani).
+
+Write ONE lesson on the topic the user gives you, in this exact house style:
+- Plain, warm, practical British English. Short sentences. No corporate jargon.
+- Always ground the idea in a concrete KITCHEN example (calzones, dough, ovens, packing, fridges, kanban cards, marinades).
+- Keep it short — the whole thing is read aloud in 2-3 minutes.
+- Never use H1/H2 markdown headings (#). Use **bold** and bullet lists only.
+- If the topic names a book or author, honour that framing in the explanation.
+
+Return the lesson by calling the emit_lesson tool. Do not write anything outside the tool call.`;
+
+router.post("/lessons/generate", async (req: Request, res: Response) => {
+  if (!isClaudeConfigured()) {
+    res.status(503).json({ error: "AI is not configured (missing ANTHROPIC_API_KEY)." });
+    return;
+  }
+  const { topic } = req.body as { topic?: string };
+  if (!topic || !topic.trim()) {
+    res.status(400).json({ error: "A topic is required." });
+    return;
+  }
+
+  try {
+    const client = getClaudeClient();
+    const response = await client.messages.create({
+      model: CLAUDE_MODELS.sonnet,
+      max_tokens: 2048,
+      system: LESSON_SYSTEM,
+      tools: [LESSON_TOOL],
+      tool_choice: { type: "tool", name: "emit_lesson" },
+      messages: [{ role: "user", content: `Topic: ${topic.trim()}` }],
+    });
+
+    const toolUse = response.content.find(
+      (b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === "emit_lesson",
+    );
+    if (!toolUse) {
+      res.status(502).json({ error: "The AI didn't return a lesson. Try rephrasing the topic." });
+      return;
+    }
+    const gen = toolUse.input as {
+      title: string; summary: string; explanationMd: string;
+      whatToShowMd: string; deliveryNotesMd: string;
+    };
+
+    // Find or create the catch-all "On-demand lessons" principle, placed
+    // at the end of the week order so it never displaces the curriculum.
+    let [principle] = await db
+      .select()
+      .from(leanPrinciplesTable)
+      .where(eq(leanPrinciplesTable.title, ON_DEMAND_PRINCIPLE_TITLE))
+      .limit(1);
+    if (!principle) {
+      const [lastPrinciple] = await db
+        .select({ wp: leanPrinciplesTable.weekPosition })
+        .from(leanPrinciplesTable)
+        .orderBy(desc(leanPrinciplesTable.weekPosition))
+        .limit(1);
+      [principle] = await db
+        .insert(leanPrinciplesTable)
+        .values({
+          weekPosition: (lastPrinciple?.wp ?? 0) + 1,
+          title: ON_DEMAND_PRINCIPLE_TITLE,
+          summary: "Lessons generated on demand by the host. Each one joins the daily rotation.",
+          isActive: true,
+        })
+        .returning();
+    }
+
+    const [lastExample] = await db
+      .select({ op: leanExamplesTable.orderPosition })
+      .from(leanExamplesTable)
+      .where(eq(leanExamplesTable.principleId, principle.id))
+      .orderBy(desc(leanExamplesTable.orderPosition))
+      .limit(1);
+    const [example] = await db
+      .insert(leanExamplesTable)
+      .values({
+        principleId: principle.id,
+        orderPosition: (lastExample?.op ?? -1) + 1,
+        title: gen.title,
+        summary: gen.summary,
+        explanationMd: gen.explanationMd,
+        whatToShowMd: gen.whatToShowMd,
+        deliveryNotesMd: gen.deliveryNotesMd,
+        isActive: true,
+      })
+      .returning();
+
+    res.status(201).json({
+      id: example.id,
+      weekNumber: principle.weekPosition,
+      title: example.title,
+      summary: example.summary,
+      explanationMd: example.explanationMd,
+      whatToShowMd: example.whatToShowMd,
+      deliveryNotesMd: example.deliveryNotesMd,
+      videoUrl: example.videoUrl,
+      diagram: example.diagram ?? null,
+      imageUrl: example.imageUrl ?? null,
+      principleId: principle.id,
+      principleTitle: principle.title,
+    });
+  } catch (err) {
+    console.error("[morning-meetings] lesson generate failed:", err);
+    const message = err instanceof Error ? err.message : "Unknown error";
+    res.status(500).json({ error: `Lesson generation failed: ${message}` });
+  }
 });
 
 // ── Meeting slide CRUD ──────────────────────────────────────────────

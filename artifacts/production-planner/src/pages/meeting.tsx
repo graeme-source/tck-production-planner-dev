@@ -1621,7 +1621,6 @@ function SystemUpdatesSlide({ slide }: { slide: MeetingSlide }) {
     staleTime: 5 * 60_000,
   });
 
-  const last24 = data?.last24h ?? [];
   const summary = data?.summary ?? null;
   const last7 = data?.last7Days ?? [];
   const updateTitle = data?.updateTitle ?? null;
@@ -1658,16 +1657,17 @@ function SystemUpdatesSlide({ slide }: { slide: MeetingSlide }) {
         </div>
       ) : !data?.available ? (
         <div className="glass-panel rounded-2xl p-6 text-2xl text-muted-foreground">
-          No system updates yet — add one in Settings → System Updates.
+          No system updates to show right now.
         </div>
-      ) : last24.length === 0 ? (
+      ) : last7.length === 0 ? (
         <div className="glass-panel rounded-2xl p-8 text-3xl text-muted-foreground italic text-center">
-          No changes shipped since yesterday's meeting.
+          No changes shipped in the last 7 days.
         </div>
       ) : (
-        // Fallback: raw commit subjects when no curated entry / AI summary.
+        // Fallback: raw commit subjects for the week when Claude isn't
+        // configured to write the plain-English summary.
         <div className="glass-panel rounded-2xl overflow-hidden">
-          {last24.map((c, i) => (
+          {last7.map((c, i) => (
             <div key={c.sha} className={cn("px-6 py-4 text-2xl leading-snug", i > 0 && "border-t border-border/50")}>
               {c.subject}
             </div>
@@ -1675,9 +1675,10 @@ function SystemUpdatesSlide({ slide }: { slide: MeetingSlide }) {
         </div>
       )}
 
-      {/* Last 7 days — collapsible context, only present when the git/commit
-          feed is the source (curated entries don't carry commit history). */}
-      {!isLoading && last7.length > 0 && (
+      {/* Last 7 days — collapsible detail behind the plain-English summary.
+          Hidden when the summary is absent, since the fallback above already
+          lists the week's commits (no point showing them twice). */}
+      {!isLoading && summary && summary.length > 0 && last7.length > 0 && (
         <div className="mt-6">
           <button
             type="button"
@@ -1860,17 +1861,7 @@ function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSli
   // doesn't reset it.
   const queryClient = useQueryClient();
   const meetingId = data.meeting?.id ?? null;
-  const principleId = data.lesson?.principleId ?? null;
-
-  const { data: examples = [] } = useQuery<Array<{ id: number; title: string; summary: string }>>({
-    queryKey: ["lesson-alts", principleId],
-    queryFn: async () => {
-      if (!principleId) return [];
-      const res = await fetch(`${BASE}/api/morning-meetings/principles/${principleId}/examples`, { credentials: "include" });
-      return res.ok ? res.json() : [];
-    },
-    enabled: !!principleId,
-  });
+  const [topic, setTopic] = useState("");
 
   const setOverride = useMutation({
     mutationFn: async (exampleId: number | null) => {
@@ -1887,8 +1878,9 @@ function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSli
     },
   });
 
-  // Every active example across all weeks — powers one-tap Shuffle.
-  const { data: allExamples = [] } = useQuery<Array<{ id: number; title: string; principleTitle: string }>>({
+  // Every active example across all weeks — powers one-tap Shuffle and
+  // the full library picker.
+  const { data: allExamples = [] } = useQuery<Array<{ id: number; title: string; principleTitle: string; weekPosition: number }>>({
     queryKey: ["lesson-all-examples"],
     queryFn: async () => {
       const res = await fetch(`${BASE}/api/morning-meetings/examples`, { credentials: "include" });
@@ -1896,11 +1888,61 @@ function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSli
     },
   });
 
+  // Group the library by principle so the picker stays readable as the
+  // pool grows past 40 lessons.
+  const groupedExamples = useMemo(() => {
+    const groups = new Map<string, Array<{ id: number; title: string }>>();
+    for (const ex of allExamples) {
+      const key = ex.principleTitle ?? "Other";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push({ id: ex.id, title: ex.title });
+    }
+    return Array.from(groups.entries());
+  }, [allExamples]);
+
   const shuffle = () => {
     const pool = allExamples.filter(ex => ex.id !== data.lesson?.id);
     if (pool.length === 0) return;
     const pick = pool[Math.floor(Math.random() * pool.length)];
     setOverride.mutate(pick.id);
+  };
+
+  // Host types a topic → AI writes a lesson in the house style, saves it
+  // to the library, and the slide switches straight to it.
+  const generate = useMutation({
+    mutationFn: async (t: string) => {
+      const res = await fetch(`${BASE}/api/morning-meetings/lessons/generate`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topic: t }),
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.error || "Generation failed");
+      }
+      return res.json() as Promise<{ id: number }>;
+    },
+    onSuccess: async (lesson) => {
+      if (meetingId) {
+        await fetch(`${BASE}/api/morning-meetings/${meetingId}/example`, {
+          method: "PUT", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ exampleId: lesson.id }),
+        });
+      }
+      setTopic("");
+      queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["lesson-all-examples"] });
+      toast({ title: "Lesson ready", description: "Generated and added to your library." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Couldn't generate lesson", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const submitTopic = () => {
+    const t = topic.trim();
+    if (t && !generate.isPending) generate.mutate(t);
   };
 
   if (!data.lesson) {
@@ -1941,28 +1983,64 @@ function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSli
         </div>
       )}
       {meetingId && (
-        <div className="mt-5 flex flex-wrap items-center gap-3">
-          <button
-            onClick={shuffle}
-            disabled={setOverride.isPending || allExamples.length < 2}
-            className="inline-flex items-center gap-2 rounded-xl bg-purple-500/15 text-purple-700 dark:text-purple-300 px-4 py-2 text-sm font-semibold hover:bg-purple-500/25 disabled:opacity-50"
-          >
-            <Shuffle className="w-4 h-4" /> Shuffle lesson
-          </button>
-          {examples.length > 1 && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span>or pick from this week:</span>
-              <select
-                value={data.lesson.id}
-                onChange={e => setOverride.mutate(Number(e.target.value))}
-                className="bg-background border border-border rounded-lg px-2 py-1 text-xs"
+        <div className="mt-6 space-y-4">
+          {/* Ask the AI for a lesson on any topic */}
+          <div className="rounded-2xl border border-purple-500/30 bg-purple-500/5 p-4">
+            <label className="flex items-center gap-2 text-sm font-semibold text-purple-700 dark:text-purple-300 mb-2">
+              <Sparkles className="w-4 h-4" /> Ask for a lesson
+            </label>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="text"
+                value={topic}
+                onChange={e => setTopic(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") submitTopic(); }}
+                disabled={generate.isPending}
+                placeholder='e.g. "total ownership, as in Lean Made Simple by Ryan Tiani"'
+                className="flex-1 bg-background border border-border rounded-xl px-3 py-2 text-sm disabled:opacity-50"
+              />
+              <button
+                onClick={submitTopic}
+                disabled={generate.isPending || !topic.trim()}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-purple-600 text-white px-4 py-2 text-sm font-semibold hover:bg-purple-700 disabled:opacity-50"
               >
-                {examples.map(ex => (
-                  <option key={ex.id} value={ex.id}>{ex.title}</option>
-                ))}
-              </select>
+                {generate.isPending
+                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Writing…</>
+                  : <><Sparkles className="w-4 h-4" /> Generate</>}
+              </button>
             </div>
-          )}
+            <p className="mt-2 text-xs text-muted-foreground">
+              Saved to your library and shown now. Joins the daily rotation from then on.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={shuffle}
+              disabled={setOverride.isPending || allExamples.length < 2}
+              className="inline-flex items-center gap-2 rounded-xl bg-purple-500/15 text-purple-700 dark:text-purple-300 px-4 py-2 text-sm font-semibold hover:bg-purple-500/25 disabled:opacity-50"
+            >
+              <Shuffle className="w-4 h-4" /> Shuffle lesson
+            </button>
+            {allExamples.length > 1 && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span>or pick from the library:</span>
+                <select
+                  value={data.lesson.id}
+                  onChange={e => setOverride.mutate(Number(e.target.value))}
+                  className="bg-background border border-border rounded-lg px-2 py-1 text-xs max-w-[60vw]"
+                >
+                  {groupedExamples.map(([principleTitle, items]) => (
+                    <optgroup key={principleTitle} label={principleTitle}>
+                      {items.map(ex => (
+                        <option key={ex.id} value={ex.id}>{ex.title}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

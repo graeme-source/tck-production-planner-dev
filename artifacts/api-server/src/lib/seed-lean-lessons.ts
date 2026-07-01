@@ -491,6 +491,702 @@ The test of a 3S culture isn't how it looks right after a deep clean. It's how i
 ];
 
 /**
+ * Curriculum expansion — a deep bench of lean lessons so the daily
+ * rotation runs for months before anything repeats. Each entry becomes
+ * one principle (weekPosition) carrying a single example with the same
+ * three-block content shape as the originals. Drawn from Two Second Lean
+ * (Paul Akers) and Lean Made Simple (Ryan Tiani), all grounded in the
+ * kitchen. Seeded idempotently in Step 2e — ON CONFLICT (week_position)
+ * leaves any admin edits intact.
+ */
+const ADDITIONAL_LESSONS: LessonSeed[] = [
+  {
+    weekNumber: 14,
+    title: "Total Ownership",
+    summary: "It's mine to sort. No \"not my job\", no waiting to be told.",
+    explanationMd: `In **Lean Made Simple**, Ryan Tiani puts *total ownership* at the heart of a lean culture: when you see a problem, **it becomes yours** — to fix, or to make sure the right person does.
+
+The opposite is "that's not my job." A spill someone walks past. An empty roll of labels no one flags. A dull knife passed to the next shift. Each one is a small refusal to own.
+
+Ownership isn't about blame — it's the opposite. It means **you don't wait for permission** to make things better. You see it, you own it, you act or you escalate. A kitchen where everyone owns everything has no cracks for problems to fall through.`,
+    whatToShowMd: `**Total Ownership — it's mine to sort**
+
+- See a problem → it's now *yours*
+- Fix it, or make sure the right person does
+- No "not my job", no waiting to be told
+- Ownership ≠ blame — it's permission to act
+
+**Today's question:** what did you walk past yesterday that you could have owned?`,
+    deliveryNotesMd: `**Talking points:**
+- Tell a story of someone here who owned something that wasn't strictly theirs.
+- "Not my job" is one of the most expensive sentences in any kitchen.
+- Owning a problem can just mean flagging it loudly — escalation is ownership too.
+
+**Prompt:** "Name one thing in the building that currently belongs to nobody. Who'll own it?"`,
+  },
+  {
+    weekNumber: 15,
+    title: "Go and See — the Gemba",
+    summary: "The truth is on the floor, not in the office. Go look.",
+    explanationMd: `**Gemba** means "the real place" — where the work actually happens. Lean says the best decisions are made *there*, watching the real thing, not guessing from a desk or a spreadsheet.
+
+If a step is slow, don't theorise — stand at the bench and watch it run three times. You'll see the truth in minutes: the reach that's too far, the fridge door that sticks, the queue that builds at the ovens.
+
+Going to the gemba also shows respect: it says *I trust what you see doing this job every day.*`,
+    whatToShowMd: `**Go and See — the Gemba**
+
+- Gemba = "the real place", where work happens
+- Don't guess from the office — go and watch
+- Watch a step run 2-3 times; the waste shows itself
+- It respects the people doing the work
+
+**Today's question:** what problem are we *guessing* about that we could just go and watch?`,
+    deliveryNotesMd: `**Talking points:**
+- The answer to most "why is this slow?" questions is visible in 5 minutes of watching.
+- Managers who never leave the office make decisions on stale information.
+- Invite the team: pull me to the gemba any time something looks off.
+
+**Prompt:** "Pick one slow step. Who'll go and watch it run today?"`,
+  },
+  {
+    weekNumber: 16,
+    title: "Customer-Defined Value",
+    summary: "Value is only what the customer would happily pay for. The rest is waste.",
+    explanationMd: `Lean starts with one brutal question: **what would the customer actually pay for?** That — and only that — is *value*. Everything else is waste, even if it feels like work.
+
+The customer pays for a perfect calzone, well-made, on time. They do **not** pay for us walking to the far fridge ten times, re-stacking trays, or remaking a split one.
+
+This reframes every task. Before you do something, ask: *does this add what the customer values, or am I just busy?* Busy isn't the same as valuable.`,
+    whatToShowMd: `**Customer-Defined Value**
+
+- Value = what the customer would gladly pay for
+- A perfect calzone, on time — yes
+- Walking, re-stacking, remakes — no (that's waste)
+- Busy ≠ valuable
+
+**Today's question:** name one thing you do daily that the customer would *not* pay for.`,
+    deliveryNotesMd: `**Talking points:**
+- Most of a working day is non-value steps — that's normal, and it's the gold to go after.
+- The point isn't to work harder, it's to cut the steps the customer doesn't value.
+- Quality the customer can taste = value. Effort they can't = candidate for the bin.
+
+**Prompt:** "If the customer watched your station for an hour, which bits would make them think 'why are they doing that?'"`,
+  },
+  {
+    weekNumber: 17,
+    title: "One-Piece Flow",
+    summary: "Move one at a time, finished, rather than big batches that pile up.",
+    explanationMd: `**Flow** means work moves smoothly from step to step with as little waiting as possible. The ideal is **one-piece flow** — one item moving through, complete, rather than huge batches sitting between stations.
+
+Big batches *feel* efficient — "I'll fill fifty, then build fifty." But batches hide problems (you don't spot a fault until item 50), create piles of half-done work, and clog the bench.
+
+Smaller batches mean problems show up fast, less work-in-progress sits around, and the line keeps moving instead of lurching.`,
+    whatToShowMd: `**One-Piece Flow**
+
+- Move work step-to-step, not in big piles
+- Big batches *feel* fast but hide faults
+- Smaller batches → problems show up sooner
+- Less half-done work clogging the bench
+
+**Today's question:** where do we build the biggest pile of half-finished work?`,
+    deliveryNotesMd: `**Talking points:**
+- Batch of 50 = you find the fault on number 50, after making 50 wrong.
+- Piles between stations are inventory waste — and they hide the queue building up.
+- We won't go to a literal batch of one, but smaller and steadier beats big and lumpy.
+
+**Prompt:** "Where does product pile up waiting for the next step? Could that pile be smaller?"`,
+  },
+  {
+    weekNumber: 18,
+    title: "Pull, Not Push",
+    summary: "Make what the next step actually needs, when it needs it — not what's easy to push.",
+    explanationMd: `In a **push** system, each station makes as much as it can and shoves it downstream. In a **pull** system, you only make what the next step is **ready to take**.
+
+Push creates piles: a station races ahead, and product stacks up waiting at the next bench, going cold or getting in the way. Pull keeps the whole line in step — you produce to the real signal of demand, not to "keeping busy."
+
+A kanban card is a pull signal: empty space says "make more," full says "stop." Pull stops us drowning the next station in work it can't use yet.`,
+    whatToShowMd: `**Pull, Not Push**
+
+- Push = make all you can, shove it downstream
+- Pull = make only what the next step is ready for
+- Push builds piles; pull keeps the line in step
+- The signal to make = real demand, not "look busy"
+
+**Today's question:** where do we push product onto a station that isn't ready for it?`,
+    deliveryNotesMd: `**Talking points:**
+- Racing ahead at your station can actually slow the whole line by burying the next one.
+- "I was being productive" can still create waste if it's the wrong thing at the wrong time.
+- Kanban cards are pull in action — make to the empty space, not to a guess.
+
+**Prompt:** "Where does one station get ahead and bury the next? How would we signal 'ready'?"`,
+  },
+  {
+    weekNumber: 19,
+    title: "Just-in-Time",
+    summary: "The right thing, in the right amount, exactly when it's needed.",
+    explanationMd: `**Just-in-Time (JIT)** is making or supplying exactly what's needed, in the amount needed, at the moment it's needed — no sooner, no more.
+
+Make too early and you get piles of work-in-progress and stock tying up space and going off. Make too late and the line stalls. JIT is the narrow path between the two.
+
+In the kitchen it's marinades ready as building starts, dough sheeted just ahead of building, ingredients pulled for today's plan — not a fridge full of "just in case" that turns into waste.`,
+    whatToShowMd: `**Just-in-Time**
+
+- Right thing, right amount, right moment
+- Too early → piles, stock going off
+- Too late → the line stalls
+- The aim: smooth supply, minimal "just in case"
+
+**Today's question:** what do we prep too early and end up wasting?`,
+    deliveryNotesMd: `**Talking points:**
+- "Just in case" is comforting but it's inventory waste — and it hides real demand.
+- JIT only works if the upstream step is reliable, so it drives quality too.
+- We're not chasing zero stock — we're chasing *no waste from making too early*.
+
+**Prompt:** "Where do we make 'just in case' and bin the leftovers? Could we make it later?"`,
+  },
+  {
+    weekNumber: 20,
+    title: "Takt Time — the pace of demand",
+    summary: "The heartbeat the kitchen should run to, set by what the customer needs.",
+    explanationMd: `**Takt time** is the steady pace you'd need to run at to exactly meet demand — total time available ÷ how many you need to make. It's the kitchen's **heartbeat**.
+
+If we need 240 calzones in an 8-hour day, that's one every 2 minutes. Run faster and you build piles ahead of the next step; slower and you fall behind dispatch.
+
+Knowing the takt turns "are we doing okay?" into a clear number. You can glance at the clock and the count and instantly know if you're ahead, behind, or bang on pace.`,
+    whatToShowMd: `**Takt Time — the pace of demand**
+
+- Takt = time available ÷ units needed
+- It's the kitchen's heartbeat
+- Faster → piles; slower → behind dispatch
+- Turns "are we okay?" into a number
+
+**Today's question:** do you know the pace your station needs to hit today?`,
+    deliveryNotesMd: `**Talking points:**
+- Work out today's takt out loud: target ÷ hours = one every X minutes.
+- Running ahead of takt isn't winning if it buries the next station.
+- A visible count vs. clock lets anyone see the pace at a glance.
+
+**Prompt:** "What's today's target, and what pace does that mean per hour?"`,
+  },
+  {
+    weekNumber: 21,
+    title: "Muda, Mura, Muri — the three enemies",
+    summary: "Waste, unevenness, and overburden. Beat all three, not just waste.",
+    explanationMd: `Lean fights **three** enemies, not one:
+
+- **Muda** — waste: anything the customer wouldn't pay for (the 8 wastes).
+- **Mura** — unevenness: a frantic morning then a dead afternoon; lumpy, stop-start work.
+- **Muri** — overburden: people or equipment pushed too hard, which causes breakdowns and mistakes.
+
+They feed each other. **Mura** (a lumpy plan) creates **muri** (a mad rush to catch up), which creates **muda** (mistakes, remakes, injuries). Smooth the unevenness and a lot of the waste and strain vanish on their own.`,
+    whatToShowMd: `**The three enemies**
+
+| | |
+|---|---|
+| **Muda** | waste — what the customer won't pay for |
+| **Mura** | unevenness — lumpy, stop-start work |
+| **Muri** | overburden — people/kit pushed too hard |
+
+Mura → Muri → Muda. They feed each other.
+
+**Today's question:** which one bites us hardest — waste, unevenness, or overburden?`,
+    deliveryNotesMd: `**Talking points:**
+- Most teams only chase muda (waste) and ignore the lumpiness that causes it.
+- A peak-and-trough day is mura — and it's exhausting and error-prone.
+- Smoothing the plan is often the biggest single win available.
+
+**Prompt:** "When in the day do we go from dead to frantic? What makes it so lumpy?"`,
+  },
+  {
+    weekNumber: 22,
+    title: "PDCA — the improvement cycle",
+    summary: "Plan a small change, Do it, Check what happened, Act on what you learned.",
+    explanationMd: `**PDCA** is the loop behind every good improvement:
+
+- **Plan** — decide a small change and what you expect.
+- **Do** — try it, small and quick.
+- **Check** — did it actually work? Look at the result honestly.
+- **Act** — keep it and standardise, or bin it and try again.
+
+Most failed "improvements" skip **Check** — we change something, assume it worked, and move on. PDCA forces honesty: did it really help, or did it just feel better? Then you go round again. Small loops, often.`,
+    whatToShowMd: `**PDCA — the improvement cycle**
+
+- **Plan** a small change + what you expect
+- **Do** it, small and fast
+- **Check** — did it really work?
+- **Act** — keep & standardise, or try again
+
+Round and round, small and often.
+
+**Today's question:** what's an improvement we made but never *checked*?`,
+    deliveryNotesMd: `**Talking points:**
+- The skipped step is almost always Check — we assume, we don't measure.
+- Small loops beat one big project — you learn faster and risk less.
+- "Act" means lock in the win (standardise) so it doesn't slip back.
+
+**Prompt:** "Pick one change we made recently. Did we ever check it actually worked?"`,
+  },
+  {
+    weekNumber: 23,
+    title: "A3 Thinking — one page to solve a problem",
+    summary: "Background, problem, root cause, plan, check — all on one sheet.",
+    explanationMd: `An **A3** is a single sheet of paper (the A3 size) used to think a problem all the way through: what's the background, what *exactly* is the problem, what's the root cause, what's the plan, and how will we know it worked.
+
+The power isn't the paper — it's the **discipline of fitting it on one page.** You can't waffle. You're forced to be clear about the real problem and the real cause before jumping to a fix.
+
+We don't need formal A3s every day, but the *thinking* applies to any struggle: define it sharply, find the root, plan, check.`,
+    whatToShowMd: `**A3 Thinking**
+
+One page, in order:
+- Background → why it matters
+- Problem → exactly what's wrong
+- Root cause → the real why
+- Plan → what we'll do
+- Check → how we'll know it worked
+
+**Today's question:** are we fixing symptoms because we never defined the real problem?`,
+    deliveryNotesMd: `**Talking points:**
+- Fitting it on one page kills waffle and forces clarity.
+- Half the battle is stating the problem precisely — most are stated too vaguely.
+- You don't need the form; you need the order: problem → cause → plan → check.
+
+**Prompt:** "Take our biggest recurring struggle — can anyone state the *exact* problem in one sentence?"`,
+  },
+  {
+    weekNumber: 24,
+    title: "Quick Changeover (SMED)",
+    summary: "Cut the time lost switching from one job to the next.",
+    explanationMd: `**SMED** — Single-Minute Exchange of Die — is about slashing the time lost **switching** from one product or task to the next. Every changeover is time the line isn't producing.
+
+The trick: split the switch into what you can prep **while the current job still runs** (external) versus what can only happen once you stop (internal). Move as much as possible to "while running." Have the next job's ingredients, trays and tools ready *before* you finish the current one.
+
+A changeover that drops from 15 minutes to 3 is pure found time, every single switch.`,
+    whatToShowMd: `**Quick Changeover (SMED)**
+
+- Changeover = time the line isn't producing
+- Prep what you can *while the current job runs*
+- Only the unavoidable bit happens after you stop
+- 15 min → 3 min = found time, every switch
+
+**Today's question:** what's our slowest change-over between products?`,
+    deliveryNotesMd: `**Talking points:**
+- Watch a changeover: how much faffing could've been done beforehand?
+- "Get the next job ready while this one finishes" is the whole secret.
+- Small setup times let us run smaller batches — which helps flow too.
+
+**Prompt:** "Which switch between jobs costs us most time? What could we set up in advance?"`,
+  },
+  {
+    weekNumber: 25,
+    title: "Jidoka — build quality in",
+    summary: "Stop the moment something's wrong. Never pass a defect on.",
+    explanationMd: `**Jidoka** means *automation with a human touch* — but its heart is simple: **stop the moment something goes wrong**, and don't pass a defect down the line.
+
+The expensive mistake is carrying on. A split calzone built, wrapped, packed and dispatched costs ten times what it costs to catch at the bench. Quality is **built in at each step**, not inspected at the end.
+
+So the rule is: if it's not right, stop. Fix it or flag it. A stopped line that surfaces a problem is cheaper than a flowing line quietly making scrap.`,
+    whatToShowMd: `**Jidoka — build quality in**
+
+- See something wrong → stop, don't pass it on
+- Catch it at the bench, not at dispatch
+- Quality is built in at each step, not inspected at the end
+- A stop that surfaces a problem beats quiet scrap
+
+**Today's question:** where do we currently pass on a "not quite right" and hope?`,
+    deliveryNotesMd: `**Talking points:**
+- A defect caught at the bench is pennies; caught by the customer it's the relationship.
+- Stopping to fix feels like it slows us — it's far cheaper than the remake downstream.
+- Build quality in: every station checks its own work before it moves on.
+
+**Prompt:** "Where do we 'let it go and hope'? What would 'stop and fix' look like there?"`,
+  },
+  {
+    weekNumber: 26,
+    title: "Andon — pull the cord",
+    summary: "Call for help the instant you hit a problem. Asking is strong, not weak.",
+    explanationMd: `**Andon** is the signal a worker uses to say *"I've hit a problem, I need help — now."* On a Toyota line it's a cord you pull that lights a board and brings help running.
+
+The deep idea: **surfacing a problem immediately is celebrated, not punished.** The worst thing isn't stopping for help — it's struggling in silence while scrap piles up or a small issue becomes a big one.
+
+We have our own andon — the issue log, a shout to a manager. The culture matters more than the tool: *pulling the cord must always be the right call.*`,
+    whatToShowMd: `**Andon — pull the cord**
+
+- Hit a problem → signal for help *now*
+- Surfacing problems early is celebrated
+- Struggling in silence is the real failure
+- Our andon = the issue log / shout a manager
+
+**Today's question:** is it genuinely safe here to stop and shout for help?`,
+    deliveryNotesMd: `**Talking points:**
+- Thank anyone who raised an issue this week — by name.
+- A problem flagged at minute one is tiny; flagged at minute sixty it's a crisis.
+- If people don't pull the cord, ask why — usually they fear the reaction.
+
+**Prompt:** "Last time something went wrong, did you feel able to stop and ask? What would help?"`,
+  },
+  {
+    weekNumber: 27,
+    title: "Heijunka — level the load",
+    summary: "Spread the work evenly so the day isn't a rush then a lull.",
+    explanationMd: `**Heijunka** means *levelling* — smoothing the work so it flows evenly instead of arriving in lumps. A level day is calmer, safer and produces better quality than a peak-and-trough one.
+
+Unlevelled work — everything due at once, then nothing — forces overburden (muri) and waste (muda). People rush, mistakes creep in, equipment gets hammered, then sits idle.
+
+Levelling can mean staggering when products start, mixing the order of jobs through the day, or smoothing how orders hit the bench — so the load is steady from open to close.`,
+    whatToShowMd: `**Heijunka — level the load**
+
+- Spread work evenly, no lumps
+- Level day = calmer, safer, better quality
+- Lumpy day = rush → mistakes → idle → repeat
+- Stagger starts, mix the order, smooth the flow
+
+**Today's question:** what time of day are we slammed, and what time are we idle?`,
+    deliveryNotesMd: `**Talking points:**
+- A flat, steady day beats a heroic morning and a dead afternoon.
+- Levelling is often a planning change, not a working-harder change.
+- Smoothing the peaks protects both people and equipment.
+
+**Prompt:** "If we could move one job to a quieter part of the day, which would it be?"`,
+  },
+  {
+    weekNumber: 28,
+    title: "Kanban — the pull signal",
+    summary: "A simple card or space that says 'make/order more' at exactly the right moment.",
+    explanationMd: `A **kanban** is a simple visual signal that triggers replenishment: when stock drops to the card, you order or make more. No spreadsheets, no guessing — the card *is* the instruction.
+
+It works because it's **visual and self-managing.** An empty space or a flipped card shouts "top me up" without anyone having to remember or calculate. It paces supply to real use (pull), not to a forecast.
+
+We already use kanban for ordering. The same idea works anywhere: a min/max line on a shelf, a card behind the last tray — anything that makes "time to refill" obvious at a glance.`,
+    whatToShowMd: `**Kanban — the pull signal**
+
+- A card/space that says "make or order more"
+- Visual + self-managing — no remembering
+- Triggers on real use, not a forecast
+- Empty space shouts "top me up"
+
+**Today's question:** what do we run out of that a simple kanban would fix?`,
+    deliveryNotesMd: `**Talking points:**
+- Point at the kanban cards we already use — that's the principle in action.
+- The best signal needs zero thinking: you just *see* it's time.
+- It applies to tools and consumables, not just ingredients.
+
+**Prompt:** "What do we keep running out of unexpectedly? Where would a card or min-line help?"`,
+  },
+  {
+    weekNumber: 29,
+    title: "Quality at the Source",
+    summary: "Each person checks their own work, so no defect travels.",
+    explanationMd: `**Quality at the source** means the person doing a step is responsible for getting it right *there* — not relying on a final inspector to catch problems at the end.
+
+Inspection at the end is slow, expensive and demoralising: you've already built the fault into everything. Catching it at the source means one item, one moment, fixed before it spreads.
+
+It also builds pride and ownership: *my station, my standard.* When everyone owns the quality of their own work, the whole line gets reliable — and the "final check" becomes a formality, not a safety net.`,
+    whatToShowMd: `**Quality at the Source**
+
+- Check your own work *as you do it*
+- End-inspection is slow, costly, too late
+- Catch a fault at one item, not after a hundred
+- "My station, my standard"
+
+**Today's question:** what do we currently rely on a *final* check to catch?`,
+    deliveryNotesMd: `**Talking points:**
+- A final inspector is a sign quality isn't built in upstream.
+- Catching your own slip is quicker and cheaper than anyone downstream catching it.
+- This is ownership made concrete — your work leaves your bench right.
+
+**Prompt:** "What's one thing you could check at your own station before it moves on?"`,
+  },
+  {
+    weekNumber: 30,
+    title: "Lower the Water Level",
+    summary: "Too much stock hides problems. Reduce it and the rocks appear.",
+    explanationMd: `Picture a boat on water, with rocks below. The **water is your inventory** — raw stock, half-done work, buffers. High water hides the rocks (the problems). Everything looks fine because the piles cover for every hiccup.
+
+Lower the water — carry less stock — and the rocks start to show: the unreliable supplier, the slow changeover, the step that keeps jamming. That's uncomfortable, but those rocks were always there. Now you can actually fix them.
+
+So excess inventory isn't safety — it's a blindfold. Carefully lowering it is how you *find* the problems worth solving.`,
+    whatToShowMd: `**Lower the Water Level**
+
+- Inventory = water; problems = rocks beneath
+- High stock hides every hiccup
+- Lower it → the real problems surface
+- Excess stock is a blindfold, not safety
+
+**Today's question:** where do we keep a big buffer that's hiding a problem?`,
+    deliveryNotesMd: `**Talking points:**
+- Big buffers feel safe but they let real problems hide for months.
+- Don't slash stock recklessly — lower it a bit, see what breaks, fix that.
+- The discomfort of a surfaced problem is the point.
+
+**Prompt:** "What pile do we keep 'just in case'? What problem might it be covering up?"`,
+  },
+  {
+    weekNumber: 31,
+    title: "The True Cost of Overproduction",
+    summary: "Making more than today's order is the worst waste — it breeds all the others.",
+    explanationMd: `Of the eight wastes, **overproduction** is the one lean treats as the worst — because it *creates* the others. Make more than the customer ordered today and you now have extra inventory, extra motion to store it, extra waiting, and often extra defects (it sits and spoils).
+
+It's seductive because it feels productive — "we got ahead!" But ahead of *what*? Product no one ordered is just cost dressed up as achievement.
+
+Make to today's actual plan. Getting ahead by making tomorrow's guess fills the fridge with risk, not value.`,
+    whatToShowMd: `**The True Cost of Overproduction**
+
+- Making more than ordered = the *worst* waste
+- It breeds the others: inventory, motion, waiting, spoilage
+- Feels productive — but ahead of *what*?
+- Make to today's plan, not tomorrow's guess
+
+**Today's question:** where do we make more than the order, just to feel ahead?`,
+    deliveryNotesMd: `**Talking points:**
+- "We got ahead" is only a win if someone actually ordered it.
+- Overproduction is sneaky because it looks like hard work and good intentions.
+- Every extra unit drags storage, handling and spoilage behind it.
+
+**Prompt:** "Where do we make extra 'to be safe'? What does that extra actually cost us?"`,
+  },
+  {
+    weekNumber: 32,
+    title: "Servant Leadership",
+    summary: "The leader's job is to clear the path so the team can do great work.",
+    explanationMd: `In a lean culture the leader is **upside down**: not the person barking orders, but the person whose job is to **remove the obstacles** in the team's way and give them what they need to succeed.
+
+The question a servant leader asks all day is *"what's stopping you doing great work, and how do I clear it?"* Broken kit, missing tools, an unclear plan, a daft process — the leader's job is to go and fix those.
+
+It's not soft. It's demanding: it means the leader is accountable for the *conditions*, and the team is trusted with the *work*.`,
+    whatToShowMd: `**Servant Leadership**
+
+- Leader's job = clear the path, not bark orders
+- Daily question: "what's stopping you, and how do I fix it?"
+- Removes obstacles: kit, tools, unclear plans
+- Accountable for *conditions*; team owns the *work*
+
+**Today's question (for the host):** what's one obstacle I could clear for you today?`,
+    deliveryNotesMd: `**Talking points:**
+- Ask the room directly: what's slowing you that I should be fixing?
+- A leader's best output is a team with nothing in their way.
+- This flips "managing" from telling to enabling.
+
+**Prompt:** "Tell me one thing that gets in your way most days. I'll own clearing it."`,
+  },
+  {
+    weekNumber: 33,
+    title: "The Daily Huddle",
+    summary: "A short, sharp stand-up beats long meetings — exactly what we're doing now.",
+    explanationMd: `The **daily huddle** — a short, standing meeting at the start of the day — is the engine of a lean culture. It's *this*: ten minutes to align on the plan, surface struggles, learn one thing, and say thanks.
+
+Why daily and short? Because problems caught today are cheap; problems left a week are dear. And because a quick daily rhythm beats a long monthly meeting nobody remembers.
+
+It only works if it stays **sharp**: start on time, keep it standing, keep it focused, finish on time. A huddle that drags becomes a thing people dread instead of value.`,
+    whatToShowMd: `**The Daily Huddle**
+
+- Short, standing, same time every day
+- Align on the plan, surface struggles, learn, thank
+- Daily + short beats long + occasional
+- Problems caught today are cheap
+
+**Today's question:** is this huddle sharp and useful, or does it drag?`,
+    deliveryNotesMd: `**Talking points:**
+- This meeting *is* the lesson — point at it.
+- Ask honestly: what would make this 10 minutes more useful to you?
+- Protect the format: on time, standing, focused, finished on time.
+
+**Prompt:** "What's one thing we could change about this meeting to make it more useful?"`,
+  },
+  {
+    weekNumber: 34,
+    title: "Catchball — goals that go both ways",
+    summary: "Pass goals and ideas back and forth until they're realistic and shared.",
+    explanationMd: `**Catchball** is the lean way of setting goals: instead of targets thrown down from the top, a goal is **tossed back and forth** — leader to team to leader — like a ball, until it's both ambitious *and* realistic, and everyone genuinely owns it.
+
+A target dictated from above gets nodded at and ignored. A target the team helped shape gets believed in. The "catch" is the team pushing back with reality from the floor — *that won't work because…, but this would.*
+
+It's slower to set a goal this way. It's far faster to actually hit it.`,
+    whatToShowMd: `**Catchball — goals both ways**
+
+- Goals tossed back and forth, not thrown down
+- Leader proposes → team reshapes → repeat
+- Ends ambitious *and* realistic *and* owned
+- Floor reality beats a number from above
+
+**Today's question:** which of our targets did the floor actually help shape?`,
+    deliveryNotesMd: `**Talking points:**
+- A goal handed down is obeyed; a goal shaped together is believed.
+- The team's pushback isn't resistance — it's the reality check that makes it work.
+- Invite challenge to targets openly; that's the catch coming back.
+
+**Prompt:** "Here's a target I'm thinking about — throw it back. What's wrong with it from where you stand?"`,
+  },
+  {
+    weekNumber: 35,
+    title: "Hansei — honest reflection",
+    summary: "Look back honestly at what went wrong, without excuses, to do better.",
+    explanationMd: `**Hansei** is honest reflection — the discipline of looking back at what didn't go well and owning it squarely, *even when things basically went fine.*
+
+It's not beating yourself up, and it's not blame. It's the grown-up habit of saying "here's what I'd do differently" without excuses or defensiveness. Toyota does hansei even after a success — *especially* after a success, because that's when complacency creeps in.
+
+A team that can reflect honestly improves fast. A team that explains away every problem is doomed to repeat it.`,
+    whatToShowMd: `**Hansei — honest reflection**
+
+- Look back honestly, own it, no excuses
+- Not blame, not beating yourself up
+- Do it even after things go *well*
+- "Here's what I'd do differently"
+
+**Today's question:** what went okay yesterday that could honestly have gone better?`,
+    deliveryNotesMd: `**Talking points:**
+- Model it: share something *you'd* do differently, plainly, no defensiveness.
+- Reflecting after a good day is the real skill — that's when we get sloppy.
+- Honest beats comfortable; excuses guarantee a repeat.
+
+**Prompt:** "Think about yesterday. One thing you'd do differently — no excuses?"`,
+  },
+  {
+    weekNumber: 36,
+    title: "Coaching, Not Telling",
+    summary: "Ask questions that help people see it themselves — it sticks far better.",
+    explanationMd: `When someone hits a problem, the fast move is to **tell** them the answer. The lean move is to **coach** — ask the questions that help them work it out themselves.
+
+Telling fixes today's problem and creates dependence. Coaching ("what do you think is causing it?", "what would you try?") builds someone who can solve the next ten problems without you. It's slower once, faster forever.
+
+This isn't only for managers. Anyone showing a new starter the ropes can ask instead of dictate — and watch how much faster it sticks when they reach the answer themselves.`,
+    whatToShowMd: `**Coaching, Not Telling**
+
+- Telling = fast today, dependence tomorrow
+- Coaching = ask questions, they work it out
+- "What's causing it? What would you try?"
+- Slower once, faster forever
+
+**Today's question:** when did you last *tell* someone the answer you could have asked them toward?`,
+    deliveryNotesMd: `**Talking points:**
+- Telling feels efficient but it stops people thinking.
+- A good question ("what would you try?") teaches; an answer just patches.
+- New-starter training is the easiest place to practise asking over dictating.
+
+**Prompt:** "Next time someone asks you 'what do I do?', try a question back. What would you ask?"`,
+  },
+  {
+    weekNumber: 37,
+    title: "Problems Are Treasure",
+    summary: "A surfaced problem is a gift — it's the next improvement, found.",
+    explanationMd: `Toyota has a saying: **"problems are treasure."** Every problem you can see is a chance to improve — a gift, not a failure. The danger isn't the problem you found; it's the ten you can't see.
+
+This flips the instinct to hide mistakes. In a treasure culture, the person who surfaces a problem is the hero, because they've just handed everyone the next improvement. Hidden problems fester; surfaced ones get fixed.
+
+So we *want* the struggles slide full. An empty problem log doesn't mean no problems — it usually means people have stopped telling us.`,
+    whatToShowMd: `**Problems Are Treasure**
+
+- A visible problem = the next improvement, found
+- The danger is the problems you *can't* see
+- Surfacing one makes you the hero, not the culprit
+- An empty problem log = people stopped telling us
+
+**Today's question:** what problem do you know about that we haven't written down?`,
+    deliveryNotesMd: `**Talking points:**
+- Reframe it out loud: finding a problem is winning, not losing.
+- Thank the people who raised struggles — they handed us improvements.
+- A quiet problem log is a warning sign, not a victory.
+
+**Prompt:** "What's one problem you've noticed but never mentioned? Let's treasure it — what is it?"`,
+  },
+  {
+    weekNumber: 38,
+    title: "Batch Size of One",
+    summary: "The smaller the batch, the faster problems show and the smoother the flow.",
+    explanationMd: `The ideal batch in lean is **one** — make one, finish it, move it on. We rarely reach a literal one, but every step *toward* smaller batches pays off.
+
+Big batches delay feedback (you find the fault late), tie up space and cash, and make the line lurch. Halve a batch and problems show up twice as fast, work flows more smoothly, and changeovers force you to get good at switching quickly (which is its own win).
+
+So whenever you catch yourself thinking "I'll do a big run to be efficient," ask: would a smaller run actually flow better and surface problems sooner?`,
+    whatToShowMd: `**Batch Size of One**
+
+- Ideal batch = one; smaller is always closer
+- Big batch → late feedback, piles, lurching
+- Smaller batch → faster feedback, smoother flow
+- "Big run = efficient" is often a trap
+
+**Today's question:** where do we do a big run that a smaller one would flow better?`,
+    deliveryNotesMd: `**Talking points:**
+- The efficiency of a big batch is usually an illusion once you count the piles.
+- Smaller batches are scary only if changeovers are slow — so fix those (see SMED).
+- Find the fault at item 2, not item 200.
+
+**Prompt:** "Where do we batch big 'for efficiency'? What would a smaller batch cost or save?"`,
+  },
+  {
+    weekNumber: 39,
+    title: "Spaghetti Diagrams — map the motion",
+    summary: "Draw the path you actually walk. The tangle reveals the wasted steps.",
+    explanationMd: `A **spaghetti diagram** is dead simple: draw a plan of the area, then trace the *actual path* a person (or a product) walks during a task. The line ends up looking like spaghetti — and that tangle is your motion waste, made visible.
+
+We don't notice our own walking; it feels like just doing the job. But trace it and you'll see the same trip to the far fridge fifteen times, the criss-cross between two benches, the detour round a badly-placed bin.
+
+Once the tangle is on paper, the fix is usually obvious: move the thing closer, reorder the steps, relocate the bin.`,
+    whatToShowMd: `**Spaghetti Diagrams**
+
+- Draw the area, trace the path you actually walk
+- The tangle = motion waste, made visible
+- We don't notice our own walking
+- Tangle on paper → fix is usually obvious
+
+**Today's question:** which task sends you back and forth across the kitchen most?`,
+    deliveryNotesMd: `**Talking points:**
+- Offer to trace one job this week — it's eye-opening every time.
+- The fix is nearly always "move the thing closer" or "reorder the steps."
+- Motion feels like work but it's pure waste — the customer doesn't pay for our steps.
+
+**Prompt:** "Which job has you walking the most? Let's map it and cut the trips."`,
+  },
+  {
+    weekNumber: 40,
+    title: "Why We Improve — more time for what matters",
+    summary: "Lean isn't about squeezing people. It's about freeing time and removing frustration.",
+    explanationMd: `It's worth saying plainly: **we don't do lean to squeeze more out of people.** Paul Akers is clear — the point is to remove the frustrating, pointless, exhausting parts of work so the day is *better*, and there's more time for what actually matters.
+
+Every bit of walking, hunting for tools, redoing work and waiting around that we remove is time and energy handed back — to do good work calmly, to go home less knackered, to grow the business so there's more for everyone.
+
+If "improvement" ever feels like it's just making people run faster, we've lost the plot. It should make the work *lighter*.`,
+    whatToShowMd: `**Why We Improve**
+
+- Not to squeeze people — to make work *better*
+- Remove the frustrating, pointless, tiring bits
+- Time and energy handed back to the team
+- If it feels like "run faster", we've lost the plot
+
+**Today's question:** what frustrating part of your day would you most love gone?`,
+    deliveryNotesMd: `**Talking points:**
+- Be explicit: this is about removing frustration, not cracking the whip.
+- The wins go back to the team — calmer days, less wasted effort.
+- If anyone feels lean = speed-up, address it head on. That's a culture risk.
+
+**Prompt:** "What's the single most frustrating, time-wasting part of your day? That's our target."`,
+  },
+  {
+    weekNumber: 41,
+    title: "Standardise the Win — hold the gain",
+    summary: "An improvement isn't done until it's the new normal everyone follows.",
+    explanationMd: `Making an improvement is only half the job. If it isn't **standardised** — written down, shown, made the new normal — it quietly slips back to the old way within weeks. The win evaporates.
+
+The lean sequence is: improve, then **lock it in** as the new standard, then improve again from there. Without the lock-in step, you're forever re-fixing the same things, sliding back down the hill you just climbed.
+
+So when something works, don't just celebrate — capture it. Update the SOP, retrain, make it the obvious default. *Then* go find the next improvement.`,
+    whatToShowMd: `**Standardise the Win**
+
+- An improvement not locked in slips back in weeks
+- Sequence: improve → standardise → improve again
+- No lock-in = forever re-fixing the same thing
+- Capture it: update the SOP, retrain, make it default
+
+**Today's question:** what improvement did we make that's quietly slipped back?`,
+    deliveryNotesMd: `**Talking points:**
+- The slide-back is silent — one day you notice you're doing the old way again.
+- Standardising is the boring step that protects all the exciting ones.
+- Celebrate a win by capturing it, not just by cheering it.
+
+**Prompt:** "Name an improvement we made that's drifted back. How do we lock it in for good?"`,
+  },
+];
+
+/**
  * The 12 seeded slide rows for the default Morning Meeting template.
  * Matches the slide order the runner used to hardcode in the frontend.
  * For yesterday_kpis the host's selected KPIs default to the three the
@@ -658,6 +1354,34 @@ A calzone made two seconds faster, a tool given a home, one less walk to the fri
         SELECT 1 FROM lean_examples WHERE principle_id = ${compoundId} AND title = 'The Power of Compound Improvements'
       )
     `);
+  }
+
+  // Step 2e: the curriculum expansion — a deep bench of lessons so the
+  // daily rotation runs for months before repeating. Each becomes a
+  // principle (week_position) with one starter example. Idempotent:
+  // ON CONFLICT (week_position) keeps admin edits, and the example is
+  // only inserted when the principle has none yet.
+  for (const l of ADDITIONAL_LESSONS) {
+    await db.execute(sql`
+      INSERT INTO lean_principles (week_position, title, summary, is_active)
+      VALUES (${l.weekNumber}, ${l.title}, ${l.summary}, TRUE)
+      ON CONFLICT (week_position) DO NOTHING
+    `);
+    const principleRows = await db.execute<{ id: number }>(sql`
+      SELECT id FROM lean_principles WHERE week_position = ${l.weekNumber}
+    `);
+    const principleId = (principleRows.rows ?? principleRows)[0]?.id;
+    if (!principleId) continue;
+    const existing = await db.execute<{ count: number }>(sql`
+      SELECT COUNT(*)::int AS count FROM lean_examples WHERE principle_id = ${principleId}
+    `);
+    const existingCount = Number((existing.rows ?? existing)[0]?.count ?? 0);
+    if (existingCount === 0) {
+      await db.execute(sql`
+        INSERT INTO lean_examples (principle_id, order_position, title, summary, explanation_md, what_to_show_md, delivery_notes_md, is_active)
+        VALUES (${principleId}, 0, ${l.title}, ${l.summary}, ${l.explanationMd}, ${l.whatToShowMd}, ${l.deliveryNotesMd}, TRUE)
+      `);
+    }
   }
 
   // Step 3: ensure there's a default meeting template with the 12
