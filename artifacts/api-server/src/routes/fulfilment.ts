@@ -969,7 +969,13 @@ interface GqlOrderNode {
   };
 }
 
-router.post("/process-fulfilled-today", requireManagerOrAdmin, async (_req: Request, res: Response) => {
+// "Update Factory Number" — decrements production-fridge stock from today's
+// fulfilled orders. Deliberately open to ANY logged-in user (not just
+// managers): packers need to run this from the packing station. Login is
+// still required via the global auth guard in routes/index.ts. The action is
+// idempotent — already-processed orders are skipped via a Shopify tag — so
+// there's no harm in a viewer triggering it.
+router.post("/process-fulfilled-today", async (_req: Request, res: Response) => {
   try {
     const midnightIso = londonMidnightTodayUtc();
 
