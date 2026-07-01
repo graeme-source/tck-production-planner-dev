@@ -86,14 +86,15 @@ async function updateStorageLocation(id: number, data: { name: string; zone: str
   return json;
 }
 
-async function deleteStorageLocation(id: number): Promise<void> {
-  const res = await fetch(`${BASE}/api/storage-locations/${id}`, {
+async function deleteStorageLocation(id: number, force = false): Promise<void> {
+  const url = `${BASE}/api/storage-locations/${id}${force ? "?force=true" : ""}`;
+  const res = await fetch(url, {
     method: "DELETE",
     credentials: "include",
   });
   if (!res.ok) {
     const json = await res.json().catch(() => ({}));
-    throw new Error((json as { error?: string }).error ?? "Failed to delete location");
+    throw new Error((json as { message?: string; error?: string }).message ?? (json as { error?: string }).error ?? "Failed to delete location");
   }
 }
 
@@ -1023,7 +1024,7 @@ export default function StockControl() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: deleteStorageLocation,
+    mutationFn: ({ id, force }: { id: number; force?: boolean }) => deleteStorageLocation(id, force),
     onSuccess: () => { invalidate(); setDeleteId(null); setMutationError(null); },
     onError: (err: unknown) => setMutationError(err instanceof Error ? err.message : String(err)),
   });
@@ -1135,7 +1136,6 @@ export default function StockControl() {
                 const colors = zoneColors(loc.zone);
                 const qty = Math.round(loc.items.reduce((s, i) => s + i.qty, 0));
                 const isSelected = loc.key === selectedKey;
-                const isUserLoc = loc.key.startsWith("sl_");
                 const locDbId = loc.dbId;
                 const isEditing = managing && editingId !== null && editingId === locDbId;
                 const isDeleting = managing && deleteId !== null && deleteId === locDbId;
@@ -1174,20 +1174,27 @@ export default function StockControl() {
                 }
 
                 if (isDeleting) {
+                  const hasStock = qty > 0;
                   return (
                     <div key={loc.key} className="px-3 py-3 border-b border-border/40 bg-destructive/5">
                       <p className="text-xs font-medium text-destructive mb-1">Delete "{loc.label}"?</p>
-                      <p className="text-xs text-muted-foreground mb-2">This cannot be undone.</p>
+                      {hasStock ? (
+                        <p className="text-xs text-destructive/90 mb-2">
+                          This fridge holds <b>{qty.toLocaleString()}</b> pack{qty !== 1 ? "s" : ""} of stock — deleting it also clears those stock records. This cannot be undone.
+                        </p>
+                      ) : (
+                        <p className="text-xs text-muted-foreground mb-2">This cannot be undone.</p>
+                      )}
                       {mutationError && <p className="text-xs text-destructive mb-1">{mutationError}</p>}
                       <div className="flex gap-1.5">
                         <button onClick={() => { setDeleteId(null); setMutationError(null); }} className="flex-1 px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg">Cancel</button>
                         <button
                           disabled={deleteMutation.isPending}
-                          onClick={() => deleteMutation.mutate(locDbId!)}
+                          onClick={() => deleteMutation.mutate({ id: locDbId!, force: hasStock })}
                           className="flex-1 px-2.5 py-1 text-xs bg-destructive text-destructive-foreground rounded-lg font-medium hover:bg-destructive/90 disabled:opacity-50 flex items-center justify-center gap-1"
                         >
                           {deleteMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
-                          Delete
+                          {hasStock ? "Delete anyway" : "Delete"}
                         </button>
                       </div>
                     </div>
@@ -1244,15 +1251,13 @@ export default function StockControl() {
                             >
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
-                            {isUserLoc && (
-                              <button
-                                onClick={() => { setDeleteId(locDbId); setEditingId(null); setAddingLoc(false); setMutationError(null); }}
-                                className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
-                                title="Delete"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
+                            <button
+                              onClick={() => { setDeleteId(locDbId); setEditingId(null); setAddingLoc(false); setMutationError(null); }}
+                              className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
+                              title="Delete"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </>
                         ) : (
                           <span title="No database record for this location" className="p-1.5 text-muted-foreground/40">

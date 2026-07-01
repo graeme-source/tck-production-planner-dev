@@ -12,7 +12,7 @@
 //   • if alerts are on, evaluate sustained breaches and notify (email + push)
 
 import { db, goveeSensorsTable, goveeReadingsTable, storageLocationsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getAllReadings, isGoveeConfigured, type GoveeReading } from "../services/govee";
 import { getGoveeSettings, type GoveeSettings } from "./govee-settings";
 import { sendEmail } from "./email";
@@ -27,6 +27,50 @@ const breachStartByDevice = new Map<string, number>();
 // device → epoch ms we last sent an alert (cooldown so we don't re-nag).
 const lastAlertByDevice = new Map<string, number>();
 const ALERT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour between repeat alerts per device
+// Devices we've already sent an "offline / check the battery" push for. Latched
+// so we notify once per outage, then re-arm when the sensor comes back.
+const offlineAlertedByDevice = new Set<string>();
+
+function londonTime(d: Date): string {
+  return d.toLocaleString("en-GB", {
+    timeZone: "Europe/London", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
+  });
+}
+
+/** Push "sensor stopped reporting" alerts. A dead battery (or dropped WiFi /
+ *  unplugged unit) stops fresh readings; Govee gives us no battery level, so
+ *  the reliable signal is "no live reading for staleMinutes". Push only, once
+ *  per outage. */
+async function evaluateOfflineAlerts(
+  sensors: Array<{ device: string; locationName: string | null; lastOnlineAt: Date | null }>,
+  settings: GoveeSettings,
+): Promise<void> {
+  if (settings.alertRecipientUserIds.length === 0) return; // nobody to push to
+  const now = Date.now();
+  const staleMs = settings.staleMinutes * 60 * 1000;
+
+  for (const s of sensors) {
+    const lastOnlineMs = s.lastOnlineAt ? s.lastOnlineAt.getTime() : null;
+    const stale = lastOnlineMs == null || now - lastOnlineMs > staleMs;
+
+    if (!stale) {
+      offlineAlertedByDevice.delete(s.device); // recovered → re-arm
+      continue;
+    }
+    if (offlineAlertedByDevice.has(s.device)) continue; // already told them this outage
+
+    offlineAlertedByDevice.add(s.device);
+    const label = s.locationName ?? s.device;
+    const sinceTxt = lastOnlineMs ? londonTime(new Date(lastOnlineMs)) : "an unknown time";
+    console.warn(`[govee] OFFLINE ${label}: no live reading since ${sinceTxt}`);
+    sendPushToUsers(settings.alertRecipientUserIds, {
+      title: `🔌 ${label} sensor offline`,
+      body: `No reading since ${sinceTxt} — check or replace its battery.`,
+      url: "/reports?tab=haccp",
+      tag: `govee-offline-${s.device}`,
+    }).catch((err) => console.error("[govee] offline push failed:", err));
+  }
+}
 
 function thresholdFor(zone: string | null, settings: GoveeSettings): number | null {
   if (zone === "freezer") return settings.freezerMaxC;
@@ -35,6 +79,7 @@ function thresholdFor(zone: string | null, settings: GoveeSettings): number | nu
 }
 
 async function cacheReading(reading: GoveeReading): Promise<void> {
+  const readingAt = new Date(reading.fetchedAt);
   await db
     .insert(goveeSensorsTable)
     .values({
@@ -44,7 +89,8 @@ async function cacheReading(reading: GoveeReading): Promise<void> {
       lastTemperatureC: reading.temperatureC != null ? String(reading.temperatureC) : null,
       lastHumidityPercent: reading.humidityPercent,
       lastOnline: reading.online,
-      lastReadingAt: new Date(reading.fetchedAt),
+      lastReadingAt: readingAt,
+      lastOnlineAt: reading.online ? readingAt : null,
     })
     .onConflictDoUpdate({
       target: goveeSensorsTable.device,
@@ -52,7 +98,11 @@ async function cacheReading(reading: GoveeReading): Promise<void> {
         lastTemperatureC: reading.temperatureC != null ? String(reading.temperatureC) : null,
         lastHumidityPercent: reading.humidityPercent,
         lastOnline: reading.online,
-        lastReadingAt: new Date(reading.fetchedAt),
+        lastReadingAt: readingAt,
+        // Only advance the freshness clock while the sensor is actually
+        // online; keep the previous value when it's offline so we can tell
+        // how long it's been dark.
+        lastOnlineAt: reading.online ? readingAt : sql`${goveeSensorsTable.lastOnlineAt}`,
         updatedAt: new Date(),
       },
     });
@@ -156,6 +206,7 @@ async function runCycle(): Promise<void> {
         enabled: goveeSensorsTable.enabled,
         locationName: storageLocationsTable.name,
         zone: storageLocationsTable.zone,
+        lastOnlineAt: goveeSensorsTable.lastOnlineAt,
       })
       .from(goveeSensorsTable)
       .leftJoin(storageLocationsTable, eq(goveeSensorsTable.storageLocationId, storageLocationsTable.id));
@@ -169,6 +220,16 @@ async function runCycle(): Promise<void> {
         temperatureC: readingByDevice.get(m.device)?.temperatureC ?? null,
       }));
     await evaluateAlerts(sensors, settings);
+
+    // Offline / "check the battery" alerts — any enabled sensor (mapped or not).
+    await evaluateOfflineAlerts(
+      mapped.filter((m) => m.enabled).map((m) => ({
+        device: m.device,
+        locationName: m.locationName,
+        lastOnlineAt: m.lastOnlineAt,
+      })),
+      settings,
+    );
   }
 }
 

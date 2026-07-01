@@ -47,6 +47,7 @@ async function adminOnly(req: Request, res: Response, next: NextFunction) {
 
 /** Upsert a discovered sensor + cache its latest reading. */
 async function cacheReading(reading: GoveeLiveReading): Promise<void> {
+  const readingAt = new Date(reading.fetchedAt);
   await db
     .insert(goveeSensorsTable)
     .values({
@@ -56,7 +57,8 @@ async function cacheReading(reading: GoveeLiveReading): Promise<void> {
       lastTemperatureC: reading.temperatureC != null ? String(reading.temperatureC) : null,
       lastHumidityPercent: reading.humidityPercent,
       lastOnline: reading.online,
-      lastReadingAt: new Date(reading.fetchedAt),
+      lastReadingAt: readingAt,
+      lastOnlineAt: reading.online ? readingAt : null,
     })
     .onConflictDoUpdate({
       target: goveeSensorsTable.device,
@@ -65,7 +67,10 @@ async function cacheReading(reading: GoveeLiveReading): Promise<void> {
         lastTemperatureC: reading.temperatureC != null ? String(reading.temperatureC) : null,
         lastHumidityPercent: reading.humidityPercent,
         lastOnline: reading.online,
-        lastReadingAt: new Date(reading.fetchedAt),
+        lastReadingAt: readingAt,
+        // Only advance the freshness clock while online; keep the prior value
+        // when offline so the tile can show how long it's been dark.
+        lastOnlineAt: reading.online ? readingAt : sql`${goveeSensorsTable.lastOnlineAt}`,
         updatedAt: new Date(),
       },
     });
@@ -117,6 +122,7 @@ router.get("/live", async (_req: Request, res: Response) => {
       lastHumidityPercent: goveeSensorsTable.lastHumidityPercent,
       lastOnline: goveeSensorsTable.lastOnline,
       lastReadingAt: goveeSensorsTable.lastReadingAt,
+      lastOnlineAt: goveeSensorsTable.lastOnlineAt,
       locationName: storageLocationsTable.name,
       zone: storageLocationsTable.zone,
     })
@@ -124,10 +130,18 @@ router.get("/live", async (_req: Request, res: Response) => {
     .leftJoin(storageLocationsTable, eq(goveeSensorsTable.storageLocationId, storageLocationsTable.id))
     .where(eq(goveeSensorsTable.enabled, true));
 
+  const staleMs = settings.staleMinutes * 60_000;
+  const now = Date.now();
   const sensors = sensorRows.map((s) => {
     const temperatureC = s.lastTemperatureC != null ? Number(s.lastTemperatureC) : null;
     const threshold = thresholdFor(s.zone, settings);
     const breaching = temperatureC != null && threshold != null && temperatureC > threshold;
+    // Stale = the sensor isn't currently reporting, so the temperature shown
+    // is a frozen last-known value. Covers a dead battery, dropped WiFi, or an
+    // unplugged unit — anything that stops fresh data arriving.
+    const online = s.lastOnline ?? null;
+    const lastOnlineMs = s.lastOnlineAt ? s.lastOnlineAt.getTime() : null;
+    const stale = online === false || lastOnlineMs == null || (now - lastOnlineMs) > staleMs;
     return {
       device: s.device,
       name: s.locationName ?? s.name,
@@ -137,10 +151,12 @@ router.get("/live", async (_req: Request, res: Response) => {
       zone: s.zone ?? null,
       temperatureC,
       humidityPercent: s.lastHumidityPercent ?? null,
-      online: s.lastOnline ?? null,
+      online,
       thresholdC: threshold,
       breaching,
       readingAt: s.lastReadingAt ? s.lastReadingAt.toISOString() : null,
+      lastOnlineAt: s.lastOnlineAt ? s.lastOnlineAt.toISOString() : null,
+      stale,
     };
   });
 
@@ -329,7 +345,7 @@ router.put("/settings", adminOnly, async (req: Request, res: Response) => {
   const patch: Partial<GoveeSettings> = {};
   const bools: Array<keyof GoveeSettings> = ["enabled", "tileEnabled", "historyEnabled", "alertsEnabled", "checklistAssistEnabled"];
   for (const k of bools) if (typeof body[k] === "boolean") (patch as Record<string, unknown>)[k] = body[k];
-  const nums: Array<keyof GoveeSettings> = ["fridgeMaxC", "freezerMaxC", "pollMinutes", "alertBreachMinutes"];
+  const nums: Array<keyof GoveeSettings> = ["fridgeMaxC", "freezerMaxC", "pollMinutes", "alertBreachMinutes", "staleMinutes"];
   for (const k of nums) if (typeof body[k] === "number" && Number.isFinite(body[k])) (patch as Record<string, unknown>)[k] = body[k];
   if (typeof body.alertEmail === "string") patch.alertEmail = body.alertEmail.trim();
   if (Array.isArray(body.alertRecipientUserIds)) {

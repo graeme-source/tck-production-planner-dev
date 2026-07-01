@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import {
   CheckCircle2, Circle, ClipboardCheck, Plus, Undo2, Loader2, XCircle,
-  Sun, Sparkles, Moon, ChevronDown, ChevronUp, GripVertical, Trash2, Pencil, Eye, EyeOff,
+  Sun, Sparkles, Moon, ChevronDown, ChevronUp, GripVertical, Trash2, Pencil, Eye, EyeOff, AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -863,6 +863,9 @@ function LocationTemperatures({ data, planId, kind }: { data: unknown[]; planId:
   const [saving, setSaving] = useState<Record<number, boolean>>({});
   // Live Govee sensor reading per storage location (when checklist-assist is on).
   const [sensorTemps, setSensorTemps] = useState<Record<number, number>>({});
+  // Locations whose sensor is stale/offline — we must NOT prefill a frozen
+  // reading here; staff read the unit by hand and see a warning instead.
+  const [staleSensorLocs, setStaleSensorLocs] = useState<Record<number, boolean>>({});
   const [assistOn, setAssistOn] = useState(false);
 
   const isClosing = kind === "closing";
@@ -885,10 +888,16 @@ function LocationTemperatures({ data, planId, kind }: { data: unknown[]; planId:
       .then(d => {
         if (cancelled || !d || !d.enabled || !d.checklistAssistEnabled) return;
         const map: Record<number, number> = {};
+        const stale: Record<number, boolean> = {};
         for (const s of d.sensors ?? []) {
-          if (s.storageLocationId != null && s.temperatureC != null) map[s.storageLocationId] = s.temperatureC;
+          if (s.storageLocationId == null) continue;
+          // A stale sensor's reading is frozen — never prefill it; flag it so
+          // staff read the actual unit instead of confirming a dead value.
+          if (s.stale) { stale[s.storageLocationId] = true; continue; }
+          if (s.temperatureC != null) map[s.storageLocationId] = s.temperatureC;
         }
         setSensorTemps(map);
+        setStaleSensorLocs(stale);
         setAssistOn(true);
       })
       .catch(() => {});
@@ -980,6 +989,11 @@ function LocationTemperatures({ data, planId, kind }: { data: unknown[]; planId:
                 >
                   Sensor: {sensorTemps[item.storageLocationId].toFixed(1)}°C — use
                 </button>
+              )}
+              {assistOn && staleSensorLocs[item.storageLocationId] && (
+                <p className="text-xs text-red-600 dark:text-red-400 flex items-center gap-1 mt-0.5">
+                  <AlertTriangle className="w-3 h-3 shrink-0" /> Sensor offline — read the unit by hand
+                </p>
               )}
             </div>
             <div className="flex items-center gap-1.5 shrink-0">

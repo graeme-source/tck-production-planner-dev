@@ -19,6 +19,13 @@ if (Number.isNaN(port) || port <= 0) {
 }
 
 async function seedStorageLocations() {
+  // Seed the built-in fridges only on a brand-new install (empty table).
+  // Users can now delete any location, so re-inserting missing names on
+  // every boot would resurrect fridges they'd deliberately removed.
+  const existing = await db.execute<{ count: number }>(sql`SELECT COUNT(*)::int AS count FROM storage_locations`);
+  const count = Number((existing.rows ?? existing)[0]?.count ?? 0);
+  if (count > 0) return;
+
   const SYSTEM_LOCATIONS = [
     { name: "Prep Fridge", zone: "fridge" },
     { name: "Raw Meat Fridge", zone: "fridge" },
@@ -30,8 +37,7 @@ async function seedStorageLocations() {
   for (const loc of SYSTEM_LOCATIONS) {
     await db.execute(sql`
       INSERT INTO storage_locations (name, zone, is_system)
-      SELECT ${loc.name}, ${loc.zone}, TRUE
-      WHERE NOT EXISTS (SELECT 1 FROM storage_locations WHERE name = ${loc.name})
+      VALUES (${loc.name}, ${loc.zone}, TRUE)
     `);
   }
 }
@@ -1592,6 +1598,9 @@ async function runStartupMigrations() {
       )
     `);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_govee_readings_device_time ON govee_readings (device, recorded_at)`);
+    // True freshness clock — advances only while the sensor is online, so a
+    // dead battery leaves it frozen (see govee schema). Additive.
+    await db.execute(sql`ALTER TABLE govee_sensors ADD COLUMN IF NOT EXISTS last_online_at TIMESTAMP`);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS push_subscriptions (
         id           SERIAL PRIMARY KEY,

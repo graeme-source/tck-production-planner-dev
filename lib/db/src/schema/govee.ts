@@ -33,7 +33,13 @@ export const goveeSensorsTable = pgTable("govee_sensors", {
   lastTemperatureC: numeric("last_temperature_c", { precision: 5, scale: 1 }),
   lastHumidityPercent: integer("last_humidity_percent"),
   lastOnline: boolean("last_online"),
+  // When we last *polled* this sensor — advances every cycle regardless of
+  // whether the sensor is actually reporting.
   lastReadingAt: timestamp("last_reading_at"),
+  // When the sensor was last actually online/reporting. Only advances while
+  // online=true, so it's the true freshness clock: a dead battery leaves this
+  // frozen while lastReadingAt keeps ticking. Powers the stale/offline warning.
+  lastOnlineAt: timestamp("last_online_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

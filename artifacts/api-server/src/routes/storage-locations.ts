@@ -1,8 +1,9 @@
 import { Router, type IRouter } from "express";
-import { db, storageLocationsTable, storageRacksTable, ingredientStorageLocationsTable } from "@workspace/db";
-import { eq, asc } from "drizzle-orm";
+import { db, storageLocationsTable, storageRacksTable, ingredientStorageLocationsTable, stockEntriesTable } from "@workspace/db";
+import { eq, asc, and, gt, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { validate } from "../middleware/validate";
+import { stockKeyForLocation } from "../lib/storage-location-defs";
 
 const router: IRouter = Router();
 
@@ -50,11 +51,38 @@ router.put("/:id", validate(UpdateLocationBody), async (req, res) => {
   res.json({ ...row, createdAt: row.createdAt.toISOString(), racks });
 });
 
+// Any location can be deleted — including the built-in fridges — so users
+// can tidy up duplicates and rename/reorganise freely. The one guard rail:
+// if a location currently holds stock we refuse unless `force=true`, so a
+// fridge full of stock can't be wiped by a stray tap. On a forced delete we
+// also clear that location's stock rows, otherwise the stock-control screen
+// would re-summon the fridge as an undeletable ghost. Racks and ingredient
+// assignments fall away via ON DELETE CASCADE.
 router.delete("/:id", async (req, res) => {
   const id = Number(req.params.id);
-  const existing = await db.select().from(storageLocationsTable).where(eq(storageLocationsTable.id, id));
-  if (!existing.length) { res.status(404).json({ error: "Not found" }); return; }
-  if (existing[0].isSystem) { res.status(400).json({ error: "Cannot delete system storage locations" }); return; }
+  const [existing] = await db.select().from(storageLocationsTable).where(eq(storageLocationsTable.id, id));
+  if (!existing) { res.status(404).json({ error: "Not found" }); return; }
+
+  const force = req.query.force === "true" || req.body?.force === true;
+  const stockKey = stockKeyForLocation(existing);
+
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(stockEntriesTable)
+    .where(and(eq(stockEntriesTable.location, stockKey), gt(stockEntriesTable.quantity, "0")));
+
+  if (count > 0 && !force) {
+    res.status(409).json({
+      error: "has_stock",
+      stockCount: count,
+      message: `"${existing.name}" still holds ${count} stock ${count === 1 ? "entry" : "entries"}.`,
+    });
+    return;
+  }
+
+  if (count > 0) {
+    await db.delete(stockEntriesTable).where(eq(stockEntriesTable.location, stockKey));
+  }
   await db.delete(storageLocationsTable).where(eq(storageLocationsTable.id, id));
   res.status(204).send();
 });

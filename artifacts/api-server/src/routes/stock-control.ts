@@ -2,17 +2,9 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { db, stockEntriesTable, recipesTable, ingredientsTable, storageLocationsTable } from "@workspace/db";
 import { productionPlanItemsTable, productionPlansTable } from "@workspace/db";
 import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { LOCATION_DEFS } from "../lib/storage-location-defs";
 
 const router: IRouter = Router();
-
-const LOCATION_DEFS = [
-  { key: "production_fridge",  label: "Production Fridge",  zone: "fridge",   icon: "fridge",   itemTypes: ["recipe"] },
-  { key: "production_freezer", label: "Production Freezer", zone: "freezer",  icon: "freezer",  itemTypes: ["recipe"] },
-  { key: "prep_fridge",        label: "Prep Fridge",        zone: "fridge",   icon: "fridge",   itemTypes: ["ingredient"] },
-  { key: "raw_meat_fridge",    label: "Raw Meat Fridge",    zone: "fridge",   icon: "fridge",   itemTypes: ["ingredient"] },
-  { key: "raw_freezer",        label: "Raw Freezer",        zone: "freezer",  icon: "freezer",  itemTypes: ["ingredient"] },
-  { key: "dry_store",          label: "Dry Store",          zone: "ambient",  icon: "ambient",  itemTypes: ["ingredient"] },
-] as const;
 
 interface AggItem {
   stockEntryIds: number[];
@@ -104,13 +96,18 @@ router.get("/", async (_req, res) => {
   }>();
 
   for (const def of LOCATION_DEFS) {
+    // Only surface a built-in fridge while its DB row still exists. Once a
+    // user deletes it (now allowed), it drops off the screen instead of
+    // lingering as an undeletable ghost. Any stock still keyed to it is
+    // re-added below via the fallback so nothing silently vanishes.
     const dbLoc = systemByLabel.get(def.label.toLowerCase());
+    if (!dbLoc) continue;
     locationMap.set(def.key, {
       key: def.key,
-      label: dbLoc?.name ?? def.label,
-      zone: dbLoc?.zone ?? def.zone,
+      label: dbLoc.name,
+      zone: dbLoc.zone,
       icon: def.icon,
-      dbId: dbLoc?.id ?? null,
+      dbId: dbLoc.id,
       totalPacks: 0,
       items: [],
     });

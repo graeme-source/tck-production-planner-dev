@@ -19,6 +19,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { FreshnessBadge } from "@/components/govee-freshness";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -1098,7 +1099,7 @@ function isReadingSafe(zone: "fridge" | "freezer", temp: number): boolean {
 // calendar so spotting missing readings is glanceable: each fridge/freezer
 // gets an AM (opening) and PM (closing) slot per day. Cooked-core readings
 // sit in a collapsible section below the day detail.
-interface GoveeHistorySensor { device: string; name: string; zone: string | null; thresholdC: number | null; }
+interface GoveeHistorySensor { device: string; name: string; zone: string | null; thresholdC: number | null; stale?: boolean; lastOnlineAt?: string | null; }
 interface GoveeHistoryPoint { temperatureC: number | null; humidityPercent: number | null; online: boolean; recordedAt: string; }
 
 // Cold-chain history from the Govee sensors. Lists each mapped sensor, a time
@@ -1116,8 +1117,8 @@ function GoveeSensorHistoryTab() {
       .then(r => r.json())
       .then(d => {
         setEnabled(Boolean(d.enabled));
-        const list: GoveeHistorySensor[] = (d.sensors ?? []).map((s: { device: string; name: string; zone: string | null; thresholdC: number | null }) => ({
-          device: s.device, name: s.name, zone: s.zone, thresholdC: s.thresholdC,
+        const list: GoveeHistorySensor[] = (d.sensors ?? []).map((s: { device: string; name: string; zone: string | null; thresholdC: number | null; stale?: boolean; lastOnlineAt?: string | null }) => ({
+          device: s.device, name: s.name, zone: s.zone, thresholdC: s.thresholdC, stale: s.stale, lastOnlineAt: s.lastOnlineAt,
         }));
         setSensors(list);
         if (list.length > 0) setDevice(prev => prev || list[0].device);
@@ -1188,7 +1189,14 @@ function GoveeSensorHistoryTab() {
             </button>
           ))}
         </div>
+        {selected && <FreshnessBadge sensor={selected} className="ml-auto" />}
       </div>
+      {selected?.stale && (
+        <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-sm text-red-700 dark:text-red-300">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          This sensor has stopped reporting — the current reading is a frozen last-known value. Check or replace its battery.
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[{ label: "Current", v: current }, { label: "Min", v: min }, { label: "Max", v: max }, { label: "Average", v: avg }].map(stat => (

@@ -28,6 +28,9 @@ export interface GoveeSettings {
   pollMinutes: number;
   /** A unit must breach continuously for this long before an alert fires. */
   alertBreachMinutes: number;
+  /** A sensor with no live (online) reading for this long is "stale" — the tile
+   *  greys out and an offline/"check the battery" alert fires. */
+  staleMinutes: number;
 }
 
 const KEYS = {
@@ -42,6 +45,7 @@ const KEYS = {
   alertRecipientUserIds: "govee_alert_recipient_user_ids",
   pollMinutes: "govee_poll_minutes",
   alertBreachMinutes: "govee_alert_breach_minutes",
+  staleMinutes: "govee_stale_minutes",
 } as const;
 
 const DEFAULTS: GoveeSettings = {
@@ -58,6 +62,7 @@ const DEFAULTS: GoveeSettings = {
   alertRecipientUserIds: [],
   pollMinutes: 10,
   alertBreachMinutes: 20,
+  staleMinutes: 60,
 };
 
 function parseBool(v: string | undefined, fallback: boolean): boolean {
@@ -98,6 +103,7 @@ export async function getGoveeSettings(): Promise<GoveeSettings> {
       : DEFAULTS.alertRecipientUserIds,
     pollMinutes: Math.max(2, parseNum(map.get(KEYS.pollMinutes), DEFAULTS.pollMinutes)),
     alertBreachMinutes: Math.max(0, parseNum(map.get(KEYS.alertBreachMinutes), DEFAULTS.alertBreachMinutes)),
+    staleMinutes: Math.max(5, parseNum(map.get(KEYS.staleMinutes), DEFAULTS.staleMinutes)),
   };
 }
 

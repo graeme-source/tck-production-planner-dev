@@ -12,6 +12,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { compareItemsForDisplay } from "@/pages/station/shared/constants";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
+import { FreshnessBadge } from "@/components/govee-freshness";
 
 interface AndonIssueSummary {
   id: number;
@@ -737,6 +738,7 @@ interface GoveeLiveSensor {
   device: string; name: string; locationName: string | null; zone: string | null;
   temperatureC: number | null; humidityPercent: number | null; online: boolean | null;
   thresholdC: number | null; breaching: boolean; readingAt: string | null;
+  lastOnlineAt: string | null; stale: boolean;
 }
 
 // Live fridge/freezer temperatures from the Govee sensors. Renders nothing
@@ -770,17 +772,29 @@ function GoveeTempTile() {
         {sensors.map((s) => (
           <div
             key={s.device}
-            className={`rounded-xl p-3 border ${s.breaching ? "border-red-500/50 bg-red-500/10" : "border-border bg-card"}`}
+            className={`rounded-xl p-3 border ${
+              s.stale
+                ? "border-red-500/50 bg-red-500/10"
+                : s.breaching
+                ? "border-red-500/50 bg-red-500/10"
+                : "border-border bg-card"
+            }`}
           >
             <p className="text-sm font-medium truncate">{s.name}</p>
-            <p className={`text-2xl font-display font-bold leading-tight ${s.breaching ? "text-red-500" : "text-foreground"}`}>
+            {/* When stale, the number is a frozen last-known value — dim it so it
+                can't be read as a live temperature. */}
+            <p className={`text-2xl font-display font-bold leading-tight ${
+              s.stale ? "text-muted-foreground/50" : s.breaching ? "text-red-500" : "text-foreground"
+            }`}>
               {s.temperatureC != null ? `${s.temperatureC.toFixed(1)}°C` : "—"}
             </p>
-            <p className="text-xs text-muted-foreground">
-              {s.humidityPercent != null ? `${s.humidityPercent}% RH` : ""}
-              {s.online === false ? " · offline" : ""}
-              {s.breaching ? " · over range" : ""}
-            </p>
+            <FreshnessBadge sensor={s} className="mt-0.5" />
+            {(s.humidityPercent != null || s.breaching) && !s.stale && (
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {s.humidityPercent != null ? `${s.humidityPercent}% RH` : ""}
+                {s.breaching ? " · over range" : ""}
+              </p>
+            )}
           </div>
         ))}
       </div>
