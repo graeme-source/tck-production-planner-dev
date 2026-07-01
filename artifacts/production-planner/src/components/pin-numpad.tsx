@@ -130,7 +130,7 @@ export function PinNumpad({
           }
           return (
             <button
-              key={digit}
+              key={idx}
               onClick={() => handleDigit(digit)}
               disabled={isDisabled}
               className={cn(
