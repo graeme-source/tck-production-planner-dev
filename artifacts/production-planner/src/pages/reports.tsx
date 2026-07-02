@@ -313,6 +313,8 @@ export default function Reports() {
   const rawTab = new URLSearchParams(search).get("tab");
   const rawHaccpSub = new URLSearchParams(search).get("haccp");
   const issueIdParam = new URLSearchParams(search).get("issueId");
+  // Sensor deep-linked from the dashboard fridge/freezer tile.
+  const deviceParam = new URLSearchParams(search).get("device");
   // Backward compat: legacy "andon" redirects to "issues", "packing-speed"
   // redirects to "kpis" (now a subsection there), the old top-level
   // "batch-weights" tab now lives under HACCP → Cooling & Weights, and
@@ -524,7 +526,7 @@ export default function Reports() {
               {haccpSubTab === "evidence" && <HaccpTab fromDate={fromDate} toDate={toDate} />}
               {haccpSubTab === "temperatures" && <TemperatureRecordsTab />}
               {haccpSubTab === "cooling-weights" && <BatchWeightsTab fromDate={fromDate} toDate={toDate} />}
-              {haccpSubTab === "sensors" && <GoveeSensorHistoryTab />}
+              {haccpSubTab === "sensors" && <GoveeSensorHistoryTab initialDevice={deviceParam} />}
             </>
           )}
           {activeTab === "risk-assessments" && <RiskAssessmentsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
@@ -1104,7 +1106,7 @@ interface GoveeHistoryPoint { temperatureC: number | null; humidityPercent: numb
 
 // Cold-chain history from the Govee sensors. Lists each mapped sensor, a time
 // range, summary stats and a lightweight SVG trend line — no chart library.
-function GoveeSensorHistoryTab() {
+function GoveeSensorHistoryTab({ initialDevice }: { initialDevice?: string | null }) {
   const [sensors, setSensors] = useState<GoveeHistorySensor[]>([]);
   const [enabled, setEnabled] = useState(true);
   const [device, setDevice] = useState<string>("");
@@ -1124,7 +1126,12 @@ function GoveeSensorHistoryTab() {
           device: s.device, name: s.name, zone: s.zone, thresholdC: s.thresholdC, stale: s.stale, lastOnlineAt: s.lastOnlineAt,
         }));
         setSensors(list);
-        if (list.length > 0) setDevice(prev => prev || list[0].device);
+        if (list.length > 0) {
+          // Prefer the device deep-linked from the dashboard tile (if it's a
+          // real mapped sensor); otherwise fall back to the first one.
+          setDevice(prev => prev
+            || (initialDevice && list.some(s => s.device === initialDevice) ? initialDevice : list[0].device));
+        }
       })
       .catch(() => {})
       .finally(() => setLoading(false));

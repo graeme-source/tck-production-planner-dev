@@ -761,7 +761,7 @@ function GoveeTempTile() {
   if (sensors.length === 0) return null;
 
   return (
-    <Link href="/reports?tab=haccp" className="glass-panel rounded-2xl p-4 mt-6 block hover-lift cursor-pointer">
+    <div className="glass-panel rounded-2xl p-4 mt-6">
       <div className="flex items-center justify-between mb-3">
         <h3 className="font-display font-bold text-lg flex items-center gap-2">
           <Thermometer className="w-5 h-5 text-cyan-500" /> Fridge &amp; Freezer
@@ -770,12 +770,12 @@ function GoveeTempTile() {
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {sensors.map((s) => (
-          <div
+          // Each tile deep-links straight to that sensor's history graph.
+          <Link
             key={s.device}
-            className={`rounded-xl p-3 border ${
-              s.stale
-                ? "border-red-500/50 bg-red-500/10"
-                : s.breaching
+            href={`/reports?tab=haccp&haccp=sensors&device=${encodeURIComponent(s.device)}`}
+            className={`block rounded-xl p-3 border hover-lift cursor-pointer ${
+              s.stale || s.breaching
                 ? "border-red-500/50 bg-red-500/10"
                 : "border-border bg-card"
             }`}
@@ -795,10 +795,10 @@ function GoveeTempTile() {
                 {s.breaching ? " · over range" : ""}
               </p>
             )}
-          </div>
+          </Link>
         ))}
       </div>
-    </Link>
+    </div>
   );
 }
 
