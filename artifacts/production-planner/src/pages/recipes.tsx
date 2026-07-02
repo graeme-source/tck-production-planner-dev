@@ -1520,6 +1520,7 @@ type RecipeItem = {
   packSize: number; rrp: number; packagingCost: number; labourCost: number;
   rawMaterialCostPerBatch: number; costPerPortion: number; packIngredientCost: number;
   totalPackCost: number; grossMargin: number | null;
+  isCoreMenu?: boolean;
 };
 
 interface NutritionalsData {
@@ -1857,7 +1858,8 @@ export default function Recipes() {
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [viewMode, setViewMode] = useState<"cards" | "table">("cards");
+  const [coreMenuOnly, setCoreMenuOnly] = useState(false);
+  const [viewMode, setViewMode] = useState<"cards" | "table">("table");
   type SortKey = "name" | "category" | "rrp" | "packCost" | "grossProfit" | "gpm";
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -1944,6 +1946,7 @@ export default function Recipes() {
 
   // Shared filter for both card and table views.
   const filteredRecipes = (recipes ?? []).filter(r => {
+    if (coreMenuOnly && !(r as RecipeItem).isCoreMenu) return false;
     if (categoryFilter !== "all" && r.category !== categoryFilter) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
@@ -2048,6 +2051,20 @@ export default function Recipes() {
               <option key={cat} value={cat}>{cat}</option>
             ))}
           </select>
+          <button
+            type="button"
+            onClick={() => setCoreMenuOnly(v => !v)}
+            aria-pressed={coreMenuOnly}
+            className={cn(
+              "text-sm rounded-lg px-3 py-1.5 border font-medium transition-colors",
+              coreMenuOnly
+                ? "bg-primary text-primary-foreground border-primary"
+                : "bg-card text-muted-foreground border-border hover:text-foreground hover:border-primary/50"
+            )}
+            title="Show only core menu items"
+          >
+            Core menu only
+          </button>
         </div>
       </div>
 
