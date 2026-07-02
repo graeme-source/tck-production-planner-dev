@@ -1111,6 +1111,9 @@ function GoveeSensorHistoryTab() {
   const [hours, setHours] = useState<number>(24);
   const [points, setPoints] = useState<GoveeHistoryPoint[]>([]);
   const [loading, setLoading] = useState(true);
+  // Index of the point the user is hovering on the chart (null = not hovering).
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const chartRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {
     fetch(`${BASE}/api/govee/live`, { credentials: "include" })
@@ -1145,18 +1148,32 @@ function GoveeSensorHistoryTab() {
   const current = points.length ? points[0].temperatureC : null;
   const threshold = selected?.thresholdC ?? null;
 
-  // Build an SVG polyline (oldest → newest left-to-right).
+  // Build a labelled line chart (oldest → newest left-to-right) with a
+  // temperature Y-axis and time X-axis. Margins leave room for the axis
+  // labels; the polyline + hover crosshair live in the inner plot area.
   const chrono = [...points].reverse().filter(p => p.temperatureC != null);
-  const W = 600, H = 140, PAD = 8;
+  const W = 760, H = 260;
+  const M = { top: 12, right: 14, bottom: 30, left: 46 };
+  const plotW = W - M.left - M.right;
+  const plotH = H - M.top - M.bottom;
   const lo = min != null ? Math.min(min, threshold ?? min) - 1 : 0;
   const hi = max != null ? Math.max(max, threshold ?? max) + 1 : 1;
   const span = hi - lo || 1;
-  const pointsAttr = chrono.map((p, i) => {
-    const x = PAD + (chrono.length <= 1 ? 0 : (i / (chrono.length - 1)) * (W - 2 * PAD));
-    const y = PAD + (1 - ((p.temperatureC! - lo) / span)) * (H - 2 * PAD);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(" ");
-  const thresholdY = threshold != null ? PAD + (1 - ((threshold - lo) / span)) * (H - 2 * PAD) : null;
+  const xAt = (i: number) => M.left + (chrono.length <= 1 ? 0 : (i / (chrono.length - 1)) * plotW);
+  const yAt = (t: number) => M.top + (1 - (t - lo) / span) * plotH;
+  const pointsAttr = chrono.map((p, i) => `${xAt(i).toFixed(1)},${yAt(p.temperatureC!).toFixed(1)}`).join(" ");
+  const thresholdY = threshold != null ? yAt(threshold) : null;
+
+  // ~5 evenly-spaced temperature gridlines and time labels.
+  const yTicks = Array.from({ length: 5 }, (_, k) => lo + (span * k) / 4);
+  const timeFmt = hours <= 24 ? "HH:mm" : "d MMM";
+  const xTicks = chrono.length > 1
+    ? Array.from({ length: Math.min(6, chrono.length) }, (_, k) => {
+        const i = Math.round((k * (chrono.length - 1)) / Math.min(5, chrono.length - 1));
+        return { i, label: format(new Date(chrono[i].recordedAt), timeFmt) };
+      })
+    : [];
+  const hovered = hoverIdx != null && chrono[hoverIdx] ? chrono[hoverIdx] : null;
 
   if (loading && sensors.length === 0) {
     return <div className="flex items-center gap-2 text-muted-foreground py-8"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>;
@@ -1209,45 +1226,76 @@ function GoveeSensorHistoryTab() {
         ))}
       </div>
 
-      {chrono.length > 1 && (
+      {chrono.length > 1 ? (
         <div className="bg-card border border-border rounded-xl p-3">
-          <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
-            {thresholdY != null && (
-              <line x1={PAD} x2={W - PAD} y1={thresholdY} y2={thresholdY} stroke="currentColor" strokeDasharray="4 4" className="text-red-400" strokeWidth="1" />
+          {/* Readout — the exact reading under the cursor/finger. */}
+          <div className="mb-2 min-h-[20px] text-sm">
+            {hovered ? (
+              <span className="font-medium tabular-nums">
+                <span className="text-cyan-600 dark:text-cyan-400">●</span>{" "}
+                {format(new Date(hovered.recordedAt), "d MMM HH:mm")}
+                {" · "}
+                <span className={cn(threshold != null && hovered.temperatureC != null && hovered.temperatureC > threshold && "text-red-500")}>
+                  {hovered.temperatureC != null ? `${hovered.temperatureC.toFixed(1)}°C` : "—"}
+                </span>
+                {hovered.humidityPercent != null ? ` · ${hovered.humidityPercent}% RH` : ""}
+                {!hovered.online ? " · offline" : ""}
+              </span>
+            ) : (
+              <span className="text-xs text-muted-foreground">Hover or tap the chart to read the temperature at any time.</span>
             )}
+          </div>
+          <svg
+            ref={chartRef}
+            viewBox={`0 0 ${W} ${H}`}
+            className="w-full h-auto touch-none select-none"
+            onMouseMove={e => {
+              const rect = chartRef.current?.getBoundingClientRect();
+              if (!rect || rect.width === 0) return;
+              const plotFrac = (((e.clientX - rect.left) / rect.width) * W - M.left) / plotW;
+              setHoverIdx(Math.round(Math.max(0, Math.min(1, plotFrac)) * (chrono.length - 1)));
+            }}
+            onMouseLeave={() => setHoverIdx(null)}
+            onTouchMove={e => {
+              const rect = chartRef.current?.getBoundingClientRect();
+              const touch = e.touches[0];
+              if (!rect || rect.width === 0 || !touch) return;
+              const plotFrac = (((touch.clientX - rect.left) / rect.width) * W - M.left) / plotW;
+              setHoverIdx(Math.round(Math.max(0, Math.min(1, plotFrac)) * (chrono.length - 1)));
+            }}
+          >
+            {/* Y axis — temperature gridlines + labels */}
+            {yTicks.map((t, k) => (
+              <g key={`y${k}`}>
+                <line x1={M.left} x2={W - M.right} y1={yAt(t)} y2={yAt(t)} stroke="currentColor" className="text-border" strokeWidth="1" />
+                <text x={M.left - 6} y={yAt(t) + 3.5} textAnchor="end" className="fill-muted-foreground" fontSize="11">{t.toFixed(1)}°</text>
+              </g>
+            ))}
+            {/* X axis — time labels */}
+            {xTicks.map((tk, k) => (
+              <text key={`x${k}`} x={xAt(tk.i)} y={H - 9} textAnchor="middle" className="fill-muted-foreground" fontSize="11">{tk.label}</text>
+            ))}
+            {/* Safe-ceiling threshold */}
+            {thresholdY != null && (
+              <line x1={M.left} x2={W - M.right} y1={thresholdY} y2={thresholdY} stroke="currentColor" strokeDasharray="4 4" className="text-red-400" strokeWidth="1" />
+            )}
+            {/* Temperature line */}
             <polyline points={pointsAttr} fill="none" stroke="currentColor" className="text-cyan-500" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+            {/* Hover crosshair + dot */}
+            {hovered && hovered.temperatureC != null && (
+              <g>
+                <line x1={xAt(hoverIdx!)} x2={xAt(hoverIdx!)} y1={M.top} y2={M.top + plotH} stroke="currentColor" className="text-muted-foreground/50" strokeWidth="1" />
+                <circle cx={xAt(hoverIdx!)} cy={yAt(hovered.temperatureC)} r="4" className="fill-cyan-500 stroke-card" strokeWidth="1.5" />
+              </g>
+            )}
           </svg>
-          {threshold != null && <p className="text-xs text-muted-foreground mt-1">Dashed line = safe ceiling ({threshold}°C)</p>}
+          {threshold != null && <p className="text-xs text-muted-foreground mt-1">Dashed red line = safe ceiling ({threshold}°C)</p>}
+        </div>
+      ) : (
+        <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground text-sm">
+          No readings recorded yet for this range.
         </div>
       )}
-
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="max-h-[360px] overflow-y-auto">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-card border-b border-border">
-              <tr className="text-left text-muted-foreground">
-                <th className="px-4 py-2 font-medium">Time</th>
-                <th className="px-4 py-2 font-medium">Temp</th>
-                <th className="px-4 py-2 font-medium">Humidity</th>
-              </tr>
-            </thead>
-            <tbody>
-              {points.length === 0 ? (
-                <tr><td colSpan={3} className="px-4 py-6 text-center text-muted-foreground">No readings recorded yet for this range.</td></tr>
-              ) : points.map((p, i) => {
-                const breaching = threshold != null && p.temperatureC != null && p.temperatureC > threshold;
-                return (
-                  <tr key={i} className="border-b border-border/50 last:border-0">
-                    <td className="px-4 py-2 tabular-nums text-muted-foreground">{format(new Date(p.recordedAt), "d MMM HH:mm")}</td>
-                    <td className={cn("px-4 py-2 tabular-nums font-medium", breaching && "text-red-500")}>{p.temperatureC != null ? `${p.temperatureC.toFixed(1)}°C` : "—"}{!p.online ? " (offline)" : ""}</td>
-                    <td className="px-4 py-2 tabular-nums text-muted-foreground">{p.humidityPercent != null ? `${p.humidityPercent}%` : "—"}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
     </div>
   );
 }
