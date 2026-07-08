@@ -468,7 +468,14 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
   }
   const canPickAnyDate = role === "admin" || role === "manager";
 
-  if (!canPickAnyDate) {
+  // An item-less plan is a "day plan" — it exists so checklists, packing and
+  // dispatch can run on days without production (e.g. Saturday pack day, a
+  // shutdown Monday with dispatch only). Those must be openable by anyone on
+  // any day of the week, so the weekday guard only applies to real
+  // production plans (plans with items).
+  const isDayPlan = !items || items.length === 0;
+
+  if (!canPickAnyDate && !isDayPlan) {
     if (dayOfWeek === 0 || dayOfWeek === 6) {
       res.status(400).json({ error: "Production plans can only be scheduled on weekdays (Monday–Friday)." });
       return;
@@ -477,6 +484,10 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
       res.status(400).json({ error: "Production plans cannot be scheduled for past dates." });
       return;
     }
+  }
+  if (!canPickAnyDate && isDayPlan && !isTodayOrFuture(planDate)) {
+    res.status(400).json({ error: "Day plans cannot be created for past dates." });
+    return;
   }
   const batchNumber = julianBatchNumber(dateObj);
 

@@ -125,6 +125,8 @@ router.get("/live", async (_req: Request, res: Response) => {
       lastOnlineAt: goveeSensorsTable.lastOnlineAt,
       locationName: storageLocationsTable.name,
       zone: storageLocationsTable.zone,
+      locTempMinC: storageLocationsTable.tempMinC,
+      locTempMaxC: storageLocationsTable.tempMaxC,
     })
     .from(goveeSensorsTable)
     .leftJoin(storageLocationsTable, eq(goveeSensorsTable.storageLocationId, storageLocationsTable.id))
@@ -134,8 +136,14 @@ router.get("/live", async (_req: Request, res: Response) => {
   const now = Date.now();
   const sensors = sensorRows.map((s) => {
     const temperatureC = s.lastTemperatureC != null ? Number(s.lastTemperatureC) : null;
-    const threshold = thresholdFor(s.zone, settings);
-    const breaching = temperatureC != null && threshold != null && temperatureC > threshold;
+    // Per-location safety band (set in Stock Control) wins over the
+    // zone-wide default ceiling; the zone default has no floor.
+    const threshold = s.locTempMaxC != null ? Number(s.locTempMaxC) : thresholdFor(s.zone, settings);
+    const minC = s.locTempMinC != null ? Number(s.locTempMinC) : null;
+    const breaching = temperatureC != null && (
+      (threshold != null && temperatureC > threshold) ||
+      (minC != null && temperatureC < minC)
+    );
     // Stale = the sensor isn't currently reporting, so the temperature shown
     // is a frozen last-known value. Covers a dead battery, dropped WiFi, or an
     // unplugged unit — anything that stops fresh data arriving.
@@ -153,6 +161,7 @@ router.get("/live", async (_req: Request, res: Response) => {
       humidityPercent: s.lastHumidityPercent ?? null,
       online,
       thresholdC: threshold,
+      minC,
       breaching,
       readingAt: s.lastReadingAt ? s.lastReadingAt.toISOString() : null,
       lastOnlineAt: s.lastOnlineAt ? s.lastOnlineAt.toISOString() : null,

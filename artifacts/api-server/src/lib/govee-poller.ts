@@ -108,27 +108,32 @@ async function cacheReading(reading: GoveeReading): Promise<void> {
     });
 }
 
-function alertEmailHtml(locationName: string, tempC: number, thresholdC: number): string {
+function alertEmailHtml(locationName: string, tempC: number, thresholdC: number, safeRange?: string): string {
   return `
     <div style="font-family:system-ui,sans-serif;max-width:480px">
       <h2 style="color:#b91c1c;margin:0 0 8px">⚠️ Temperature alert</h2>
       <p style="font-size:16px;margin:0 0 4px"><strong>${locationName}</strong> is out of range.</p>
       <p style="font-size:28px;font-weight:700;margin:8px 0">${tempC.toFixed(1)}°C
-        <span style="font-size:14px;font-weight:400;color:#6b7280">(safe ≤ ${thresholdC}°C)</span></p>
+        <span style="font-size:14px;font-weight:400;color:#6b7280">(${safeRange ?? `safe ≤ ${thresholdC}°C`})</span></p>
       <p style="font-size:13px;color:#6b7280">Check the unit and the load. This alert repeats at most hourly while it stays out of range.</p>
     </div>`;
 }
 
 async function evaluateAlerts(
-  sensors: Array<{ device: string; locationName: string | null; zone: string | null; temperatureC: number | null }>,
+  sensors: Array<{ device: string; locationName: string | null; zone: string | null; temperatureC: number | null; locTempMinC: number | null; locTempMaxC: number | null }>,
   settings: GoveeSettings,
 ): Promise<void> {
   const now = Date.now();
   const breachWindowMs = settings.alertBreachMinutes * 60 * 1000;
 
   for (const s of sensors) {
-    const threshold = thresholdFor(s.zone, settings);
-    const breaching = s.temperatureC != null && threshold != null && s.temperatureC > threshold;
+    // Per-location safety band (set in Stock Control) beats zone defaults;
+    // a location floor also alerts on too-cold.
+    const threshold = s.locTempMaxC ?? thresholdFor(s.zone, settings);
+    const breaching = s.temperatureC != null && (
+      (threshold != null && s.temperatureC > threshold) ||
+      (s.locTempMinC != null && s.temperatureC < s.locTempMinC)
+    );
 
     if (!breaching) {
       breachStartByDevice.delete(s.device);
@@ -145,23 +150,25 @@ async function evaluateAlerts(
     lastAlertByDevice.set(s.device, now);
     const label = s.locationName ?? s.device;
     const tempC = s.temperatureC!;
-    const thr = threshold!;
-    console.warn(`[govee] ALERT ${label}: ${tempC}°C > ${thr}°C (sustained)`);
+    const tooCold = s.locTempMinC != null && tempC < s.locTempMinC;
+    const thr = tooCold ? s.locTempMinC! : threshold!;
+    const safeRange = tooCold ? `safe ≥ ${thr}°C` : `safe ≤ ${thr}°C`;
+    console.warn(`[govee] ALERT ${label}: ${tempC}°C ${tooCold ? "<" : ">"} ${thr}°C (sustained)`);
 
     // Email
     if (settings.alertEmail) {
       sendEmail({
         to: settings.alertEmail,
         subject: `⚠️ ${label} temperature alert: ${tempC.toFixed(1)}°C`,
-        html: alertEmailHtml(label, tempC, thr),
-        text: `${label} is out of range: ${tempC.toFixed(1)}°C (safe ≤ ${thr}°C). Check the unit.`,
+        html: alertEmailHtml(label, tempC, thr, safeRange),
+        text: `${label} is out of range: ${tempC.toFixed(1)}°C (${safeRange}). Check the unit.`,
       }).catch((err) => console.error("[govee] alert email failed:", err));
     }
     // Push
     if (settings.alertRecipientUserIds.length > 0) {
       sendPushToUsers(settings.alertRecipientUserIds, {
         title: `⚠️ ${label}: ${tempC.toFixed(1)}°C`,
-        body: `Out of range (safe ≤ ${thr}°C). Check the unit.`,
+        body: `Out of range (${safeRange}). Check the unit.`,
         url: "/reports?tab=haccp",
         tag: `govee-${s.device}`,
       }).catch((err) => console.error("[govee] alert push failed:", err));
@@ -206,6 +213,8 @@ async function runCycle(): Promise<void> {
         enabled: goveeSensorsTable.enabled,
         locationName: storageLocationsTable.name,
         zone: storageLocationsTable.zone,
+        locTempMinC: storageLocationsTable.tempMinC,
+        locTempMaxC: storageLocationsTable.tempMaxC,
         lastOnlineAt: goveeSensorsTable.lastOnlineAt,
       })
       .from(goveeSensorsTable)
@@ -218,6 +227,8 @@ async function runCycle(): Promise<void> {
         locationName: m.locationName,
         zone: m.zone,
         temperatureC: readingByDevice.get(m.device)?.temperatureC ?? null,
+        locTempMinC: m.locTempMinC != null ? Number(m.locTempMinC) : null,
+        locTempMaxC: m.locTempMaxC != null ? Number(m.locTempMaxC) : null,
       }));
     await evaluateAlerts(sensors, settings);
 

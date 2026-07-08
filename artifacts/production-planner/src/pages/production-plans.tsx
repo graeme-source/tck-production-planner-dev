@@ -4681,8 +4681,12 @@ interface PlansListProps {
 
 function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurrentDate, selectedDate, setSelectedDate }: PlansListProps) {
   const { data: plans, isLoading } = useListProductionPlans();
-  const { deletePlan } = useAppMutations();
+  const { deletePlan, createPlan } = useAppMutations();
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
+  // "day" = prep/pack/dispatch day without production (checklists etc.);
+  // "mac" = mac & cheese-only production. Both create an item-less plan for
+  // the selected date, then route to the right place.
+  const [creatingDayPlan, setCreatingDayPlan] = useState<null | "day" | "mac">(null);
   const { state: listAuthState } = useAuth();
   const listUserRole = listAuthState.status === "authenticated" ? listAuthState.user.role : undefined;
   const canEditPlanList = listUserRole === "admin" || listUserRole === "manager";
@@ -4743,6 +4747,33 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
   const selectedDayPlans = plansByDate[selectedDateKey] ?? [];
   const selectedPrepWork = prepWorkByDate[selectedDateKey] ?? [];
   const selectedDoughWork = doughWorkByDate[selectedDateKey] ?? [];
+
+  const openDayWithoutProduction = (kind: "day" | "mac") => {
+    setCreatingDayPlan(kind);
+    createPlan.mutate(
+      {
+        data: {
+          planDate: selectedDateKey,
+          // Pin prep/dough to the same day so this plan doesn't spawn
+          // synthetic "prep day for…" cards on other days.
+          prepDate: selectedDateKey,
+          doughDate: selectedDateKey,
+          name: kind === "mac" ? "Mac & Cheese Production" : "Prep & Pack Day",
+          status: "active",
+          items: [],
+        },
+      },
+      {
+        onSuccess: (plan) => {
+          // Mac & cheese goes straight to its station, which opens on the
+          // "Add Macaroni Cheese to this Plan" form for an empty plan.
+          if (kind === "mac") navigate(`/plans/${plan.id}/station/macaroni_cheese`);
+          else onViewPlan(plan.id);
+        },
+        onSettled: () => setCreatingDayPlan(null),
+      },
+    );
+  };
 
   const prevWeek = () => setCurrentDate(addDays(currentDate, -7));
   const nextWeek = () => setCurrentDate(addDays(currentDate, 7));
@@ -4938,20 +4969,46 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
           </div>
         )}
 
-        {selectedDayPlans.length === 0 && selectedPrepWork.length === 0 && selectedDoughWork.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border bg-card flex flex-col items-center justify-center py-14 text-muted-foreground">
-            <CalendarDays className="w-10 h-10 mb-3 opacity-20" />
+        {selectedDayPlans.length === 0 ? (
+          <div className={cn(
+            "rounded-2xl border border-dashed border-border bg-card flex flex-col items-center justify-center text-muted-foreground",
+            selectedPrepWork.length === 0 && selectedDoughWork.length === 0 ? "py-14" : "py-8",
+          )}>
+            {selectedPrepWork.length === 0 && selectedDoughWork.length === 0 && (
+              <CalendarDays className="w-10 h-10 mb-3 opacity-20" />
+            )}
             <p className="text-sm font-medium">No production plan for this day</p>
-            <p className="text-xs mt-1 opacity-70">Select another day or create a new plan</p>
-            <button
-              onClick={onCreatePlan}
-              className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover-lift flex items-center gap-1.5"
-            >
-              <Plus className="w-4 h-4" />
-              Create Plan
-            </button>
+            <p className="text-xs mt-1 opacity-70">Create a plan, or open the day for checks and packing without production</p>
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-2 px-4">
+              <button
+                onClick={onCreatePlan}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover-lift flex items-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" />
+                Create Plan
+              </button>
+              <button
+                onClick={() => openDayWithoutProduction("day")}
+                disabled={creatingDayPlan !== null}
+                className="px-4 py-2 border border-border bg-background hover:bg-secondary/60 rounded-xl text-sm font-medium flex items-center gap-1.5 text-foreground disabled:opacity-50"
+              >
+                {creatingDayPlan === "day" ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardList className="w-4 h-4" />}
+                Prep / Pack day (no production)
+              </button>
+              <button
+                onClick={() => openDayWithoutProduction("mac")}
+                disabled={creatingDayPlan !== null}
+                className="px-4 py-2 border border-border bg-background hover:bg-secondary/60 rounded-xl text-sm font-medium flex items-center gap-1.5 text-foreground disabled:opacity-50"
+              >
+                {creatingDayPlan === "mac" ? <Loader2 className="w-4 h-4 animate-spin" /> : <UtensilsCrossed className="w-4 h-4" />}
+                Mac &amp; Cheese only
+              </button>
+            </div>
+            <p className="text-[11px] mt-3 opacity-60 max-w-sm text-center px-4">
+              Opening the day gives access to every station's checklists, packing and dispatch — you can still add Mac &amp; Cheese or a full plan later.
+            </p>
           </div>
-        ) : selectedDayPlans.length === 0 ? null : (
+        ) : (
           <div className="grid gap-3">
             {selectedDayPlans.map(plan => {
               const statusConfig = STATUS_CONFIG[plan.status as keyof typeof STATUS_CONFIG] ?? STATUS_CONFIG.draft;

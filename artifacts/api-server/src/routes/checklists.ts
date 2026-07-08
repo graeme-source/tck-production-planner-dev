@@ -26,9 +26,10 @@ type ChecklistCompletion = typeof checklistCompletionsTable.$inferSelect;
 
 const router: IRouter = Router();
 
-// Deleting a template cascades to its completion history, so a stray tap
-// wipes a HACCP audit trail (this happened to the mixing AM fridge-temp
-// check in July 2026). Only admins may delete templates.
+// Hard-deleting a template cascades to its completion history, so a stray
+// tap wipes a HACCP audit trail (this happened to the mixing AM fridge-temp
+// check in July 2026). Regular deletes are soft (is_active=false, restorable);
+// permanent deletion stays admin-only.
 async function adminOnly(req: Request, res: Response, next: NextFunction) {
   if (req.session.userRole === "admin") { next(); return; }
   if (req.session.userId && !req.session.userRole) {
@@ -142,7 +143,23 @@ router.put("/templates/:id", async (req: Request, res: Response) => {
   res.json(row);
 });
 
-router.delete("/templates/:id", adminOnly, async (req: Request, res: Response) => {
+// Soft delete: deactivate the template so it stops appearing on checklists
+// but keeps its completion history (HACCP audit trail) and can be restored
+// from the template manager. Any user may do this — the team manages their
+// own station checklists.
+router.delete("/templates/:id", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  const [row] = await db.update(checklistTemplatesTable)
+    .set({ isActive: false })
+    .where(eq(checklistTemplatesTable.id, id))
+    .returning();
+  if (!row) { res.status(404).json({ error: "Template not found" }); return; }
+  res.json({ success: true, deactivated: true });
+});
+
+// Permanent delete (admin-only): removes the template AND all its completion
+// history. Only for genuine cleanup of deactivated templates.
+router.delete("/templates/:id/permanent", adminOnly, async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   const [row] = await db.delete(checklistTemplatesTable).where(eq(checklistTemplatesTable.id, id)).returning();
   if (!row) { res.status(404).json({ error: "Template not found" }); return; }
@@ -924,6 +941,8 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
         id: storageLocationsTable.id,
         name: storageLocationsTable.name,
         zone: storageLocationsTable.zone,
+        tempMinC: storageLocationsTable.tempMinC,
+        tempMaxC: storageLocationsTable.tempMaxC,
       })
       .from(storageLocationsTable)
       .where(inArray(storageLocationsTable.zone, ["fridge", "freezer"]))
@@ -942,6 +961,8 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
         storageLocationId: loc.id,
         locationName: loc.name,
         zone: loc.zone,
+        tempMinC: loc.tempMinC != null ? Number(loc.tempMinC) : null,
+        tempMaxC: loc.tempMaxC != null ? Number(loc.tempMaxC) : null,
         openingTemperatureC: rec?.openingTemperatureC != null ? Number(rec.openingTemperatureC) : null,
         closingTemperatureC: rec?.closingTemperatureC != null ? Number(rec.closingTemperatureC) : null,
         openingRecordedAt: rec?.openingRecordedAt?.toISOString() ?? null,

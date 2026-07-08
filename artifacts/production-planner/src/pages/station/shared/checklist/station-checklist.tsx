@@ -282,13 +282,14 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
 
   const handleDeleteTemplate = (item: ChecklistItem) => {
     if (item.type !== "template") return;
-    // Deleting a recurring template also wipes its entire completion history
-    // (HACCP audit trail) — make absolutely sure this isn't a stray tap.
-    if (!window.confirm(`Delete the recurring task "${item.title}" and ALL its past completion records? This cannot be undone.`)) return;
+    // Soft delete — the server deactivates the template (history is kept and
+    // it can be restored from Edit Templates). The confirm guards against the
+    // stray taps that silently removed HACCP checks in the past.
+    if (!window.confirm(`Remove "${item.title}" from this checklist?\n\nIts past records are kept and it can be restored from Edit Templates.`)) return;
     runOneoff(async (signal) => {
       await guardedFetch(`${BASE}/api/checklists/templates/${item.id}`, { method: "DELETE", signal });
       if (selectedItemKey && selectedItemKey === itemKey(item)) setSelectedItemKey(null);
-      toast({ title: "Recurring task deleted" });
+      toast({ title: "Task removed", description: "Restore it anytime from Edit Templates." });
     });
   };
 
@@ -303,17 +304,15 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
             <span className="text-sm text-muted-foreground">{summary.done}/{summary.total} complete</span>
           </div>
           <div className="flex items-center gap-2">
-            {isAdmin && (
-              <button
-                onClick={() => setAdminMode(!adminMode)}
-                className={cn(
-                  "text-xs px-2.5 py-1 rounded-lg font-medium transition-colors",
-                  adminMode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/60",
-                )}
-              >
-                {adminMode ? "Done Editing" : "Edit Templates"}
-              </button>
-            )}
+            <button
+              onClick={() => setAdminMode(!adminMode)}
+              className={cn(
+                "text-xs px-2.5 py-1 rounded-lg font-medium transition-colors",
+                adminMode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/60",
+              )}
+            >
+              {adminMode ? "Done Editing" : "Edit Templates"}
+            </button>
             <button
               onClick={() => setAddingItem(!addingItem)}
               className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -724,6 +723,16 @@ function itemKey(item: { type: string; id: number; category: string }): string {
   return `${item.type}:${item.id}:${item.category}`;
 }
 
+/** "just now" / "4 min ago" / "09:12" — how old a live sensor reading is,
+ *  so staff can spot a reading that isn't actually live. */
+function readingAgeLabel(iso: string): string {
+  const ageMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(ageMs / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 // ─── Dynamic Data Display ────────────────────────────────────────────
 
 // Shared shape returned by the server for both first_pack_batch_numbers
@@ -862,10 +871,21 @@ interface LocationTempRow {
   storageLocationId: number;
   locationName: string;
   zone: string;
+  // Per-location safe band from Stock Control (null = zone default).
+  tempMinC: number | null;
+  tempMaxC: number | null;
   openingTemperatureC: number | null;
   closingTemperatureC: number | null;
   openingRecordedAt: string | null;
   closingRecordedAt: string | null;
+}
+
+interface LiveSensorReading {
+  temperatureC: number;
+  readingAt: string | null;
+  // Effective ceiling/floor resolved server-side (location band, else zone default).
+  thresholdC: number | null;
+  minC: number | null;
 }
 
 function LocationTemperatures({ data, planId, kind }: { data: unknown[]; planId: number; kind: "opening" | "closing" }) {
@@ -873,7 +893,7 @@ function LocationTemperatures({ data, planId, kind }: { data: unknown[]; planId:
   const [values, setValues] = useState<Record<number, string>>({});
   const [saving, setSaving] = useState<Record<number, boolean>>({});
   // Live Govee sensor reading per storage location (when checklist-assist is on).
-  const [sensorTemps, setSensorTemps] = useState<Record<number, number>>({});
+  const [sensorTemps, setSensorTemps] = useState<Record<number, LiveSensorReading>>({});
   // Locations whose sensor is stale/offline — we must NOT prefill a frozen
   // reading here; staff read the unit by hand and see a warning instead.
   const [staleSensorLocs, setStaleSensorLocs] = useState<Record<number, boolean>>({});
@@ -898,14 +918,21 @@ function LocationTemperatures({ data, planId, kind }: { data: unknown[]; planId:
       .then(r => (r.ok ? r.json() : null))
       .then(d => {
         if (cancelled || !d || !d.enabled || !d.checklistAssistEnabled) return;
-        const map: Record<number, number> = {};
+        const map: Record<number, LiveSensorReading> = {};
         const stale: Record<number, boolean> = {};
         for (const s of d.sensors ?? []) {
           if (s.storageLocationId == null) continue;
           // A stale sensor's reading is frozen — never prefill it; flag it so
           // staff read the actual unit instead of confirming a dead value.
           if (s.stale) { stale[s.storageLocationId] = true; continue; }
-          if (s.temperatureC != null) map[s.storageLocationId] = s.temperatureC;
+          if (s.temperatureC != null) {
+            map[s.storageLocationId] = {
+              temperatureC: s.temperatureC,
+              readingAt: s.readingAt ?? null,
+              thresholdC: s.thresholdC ?? null,
+              minC: s.minC ?? null,
+            };
+          }
         }
         setSensorTemps(map);
         setStaleSensorLocs(stale);
@@ -926,7 +953,7 @@ function LocationTemperatures({ data, planId, kind }: { data: unknown[]; planId:
         const recorded = isClosing ? item.closingTemperatureC : item.openingTemperatureC;
         const sensor = sensorTemps[item.storageLocationId];
         if (recorded == null && (next[item.storageLocationId] == null || next[item.storageLocationId] === "") && sensor != null) {
-          next[item.storageLocationId] = String(sensor);
+          next[item.storageLocationId] = String(sensor.temperatureC);
           changed = true;
         }
       }
@@ -976,6 +1003,19 @@ function LocationTemperatures({ data, planId, kind }: { data: unknown[]; planId:
         const contextLine = isClosing
           ? (item.openingTemperatureC != null ? `Opening: ${item.openingTemperatureC.toFixed(1)}°C` : null)
           : null;
+        const sensor: LiveSensorReading | undefined = sensorTemps[item.storageLocationId];
+        // Safe band: per-location values from Stock Control win; the sensor's
+        // server-resolved threshold covers the zone-default fallback.
+        const bandMax = item.tempMaxC ?? sensor?.thresholdC ?? null;
+        const bandMin = item.tempMinC ?? sensor?.minC ?? null;
+        const outOfBand = (t: number) =>
+          (bandMax != null && t > bandMax) || (bandMin != null && t < bandMin);
+        const sensorOut = sensor != null && outOfBand(sensor.temperatureC);
+        const typed = val !== "" ? parseFloat(val) : null;
+        const typedOut = typed != null && !Number.isNaN(typed) && outOfBand(typed);
+        const bandLabel = bandMin != null || bandMax != null
+          ? `safe ${bandMin != null ? `${bandMin}` : ""}${bandMin != null && bandMax != null ? " to " : bandMin != null ? "+" : "≤ "}${bandMax != null ? `${bandMax}` : ""}°C`
+          : null;
         return (
           <div key={item.storageLocationId} className={cn(
             "flex items-center gap-3 p-3 rounded-xl border transition-colors",
@@ -985,6 +1025,7 @@ function LocationTemperatures({ data, planId, kind }: { data: unknown[]; planId:
               <p className="text-sm font-semibold truncate">{item.locationName}</p>
               <p className="text-xs text-muted-foreground capitalize">
                 {item.zone}
+                {bandLabel ? ` · ${bandLabel}` : ""}
                 {contextLine ? ` · ${contextLine}` : ""}
               </p>
               {isSaved && (
@@ -992,13 +1033,19 @@ function LocationTemperatures({ data, planId, kind }: { data: unknown[]; planId:
                   <CheckCircle2 className="w-3 h-3" /> Recorded
                 </p>
               )}
-              {assistOn && sensorTemps[item.storageLocationId] != null && (
+              {assistOn && sensor != null && (
                 <button
                   type="button"
-                  onClick={() => setValues(v => ({ ...v, [item.storageLocationId]: String(sensorTemps[item.storageLocationId]) }))}
-                  className="text-xs text-cyan-600 dark:text-cyan-400 hover:underline mt-0.5"
+                  onClick={() => setValues(v => ({ ...v, [item.storageLocationId]: String(sensor.temperatureC) }))}
+                  className={cn(
+                    "text-xs mt-0.5 flex items-center gap-1 font-medium hover:underline",
+                    sensorOut ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400",
+                  )}
                 >
-                  Sensor: {sensorTemps[item.storageLocationId].toFixed(1)}°C — use
+                  {sensorOut && <AlertTriangle className="w-3 h-3 shrink-0" />}
+                  Sensor: {sensor.temperatureC.toFixed(1)}°C
+                  {sensor.readingAt ? ` · ${readingAgeLabel(sensor.readingAt)}` : ""}
+                  {" — use"}
                 </button>
               )}
               {assistOn && staleSensorLocs[item.storageLocationId] && (
@@ -1012,7 +1059,12 @@ function LocationTemperatures({ data, planId, kind }: { data: unknown[]; planId:
                 type="number"
                 step="0.1"
                 inputMode="decimal"
-                className="w-20 px-2 py-1.5 text-sm text-center font-mono font-bold border border-border rounded-lg bg-background tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30"
+                className={cn(
+                  "w-20 px-2 py-1.5 text-sm text-center font-mono font-bold border rounded-lg bg-background tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30",
+                  typedOut
+                    ? "border-red-400 dark:border-red-700 text-red-600 dark:text-red-400"
+                    : "border-border",
+                )}
                 value={val}
                 onChange={e => setValues(v => ({ ...v, [item.storageLocationId]: e.target.value }))}
                 onKeyDown={e => { if (e.key === "Enter") saveTemp(item.storageLocationId); }}

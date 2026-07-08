@@ -13,6 +13,10 @@ export const storageLocationsTable = pgTable("storage_locations", {
   name: text("name").notNull(),
   zone: text("zone").notNull().default("fridge"),
   isSystem: boolean("is_system").notNull().default(false),
+  // Safe temperature band for this unit, editable in Stock Control. When
+  // null, the zone-wide Govee defaults apply (fridge ≤5°C, freezer ≤−18°C).
+  tempMinC: numeric("temp_min_c", { precision: 5, scale: 1 }),
+  tempMaxC: numeric("temp_max_c", { precision: 5, scale: 1 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

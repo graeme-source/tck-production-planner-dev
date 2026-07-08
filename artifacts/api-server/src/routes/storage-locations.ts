@@ -10,12 +10,12 @@ const router: IRouter = Router();
 const CreateLocationBody = z.object({
   name: z.string().min(1),
   zone: z.enum(["fridge", "freezer", "ambient"]),
+  // Safe temperature band (°C). Null/omitted = use zone-wide defaults.
+  tempMinC: z.number().finite().nullish(),
+  tempMaxC: z.number().finite().nullish(),
 });
 
-const UpdateLocationBody = z.object({
-  name: z.string().min(1),
-  zone: z.enum(["fridge", "freezer", "ambient"]),
-});
+const UpdateLocationBody = CreateLocationBody;
 
 const CreateRackBody = z.object({
   locationId: z.number().int().positive(),
@@ -36,8 +36,14 @@ router.get("/", async (_req, res) => {
 });
 
 router.post("/", validate(CreateLocationBody), async (req, res) => {
-  const { name, zone } = req.body;
-  const [row] = await db.insert(storageLocationsTable).values({ name, zone, isSystem: false }).returning();
+  const { name, zone, tempMinC, tempMaxC } = req.body;
+  const [row] = await db.insert(storageLocationsTable).values({
+    name,
+    zone,
+    isSystem: false,
+    tempMinC: tempMinC != null ? String(tempMinC) : null,
+    tempMaxC: tempMaxC != null ? String(tempMaxC) : null,
+  }).returning();
   res.status(201).json({ ...row, createdAt: row.createdAt.toISOString(), racks: [] });
 });
 
@@ -45,8 +51,15 @@ router.put("/:id", validate(UpdateLocationBody), async (req, res) => {
   const id = Number(req.params.id);
   const existing = await db.select().from(storageLocationsTable).where(eq(storageLocationsTable.id, id));
   if (!existing.length) { res.status(404).json({ error: "Not found" }); return; }
-  const { name, zone } = req.body;
-  const [row] = await db.update(storageLocationsTable).set({ name, zone }).where(eq(storageLocationsTable.id, id)).returning();
+  const { name, zone, tempMinC, tempMaxC } = req.body;
+  const [row] = await db.update(storageLocationsTable).set({
+    name,
+    zone,
+    // Only touch the temp band when the client sends the keys — explicit null
+    // clears back to zone defaults, omitted leaves the stored value alone.
+    ...(tempMinC !== undefined ? { tempMinC: tempMinC != null ? String(tempMinC) : null } : {}),
+    ...(tempMaxC !== undefined ? { tempMaxC: tempMaxC != null ? String(tempMaxC) : null } : {}),
+  }).where(eq(storageLocationsTable.id, id)).returning();
   const racks = await db.select().from(storageRacksTable).where(eq(storageRacksTable.locationId, id));
   res.json({ ...row, createdAt: row.createdAt.toISOString(), racks });
 });

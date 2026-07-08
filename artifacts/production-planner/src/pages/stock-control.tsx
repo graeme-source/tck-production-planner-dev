@@ -27,6 +27,8 @@ interface StockLocation {
   zone: string;
   icon: string;
   dbId: number | null;
+  tempMinC: number | null;
+  tempMaxC: number | null;
   totalPacks: number;
   items: StockItem[];
 }
@@ -62,7 +64,7 @@ async function fetchStorageLocations(): Promise<StorageLocation[]> {
   return res.json();
 }
 
-async function createStorageLocation(data: { name: string; zone: string }): Promise<StorageLocation> {
+async function createStorageLocation(data: { name: string; zone: string; tempMinC: number | null; tempMaxC: number | null }): Promise<StorageLocation> {
   const res = await fetch(`${BASE}/api/storage-locations`, {
     method: "POST",
     credentials: "include",
@@ -74,7 +76,7 @@ async function createStorageLocation(data: { name: string; zone: string }): Prom
   return json;
 }
 
-async function updateStorageLocation(id: number, data: { name: string; zone: string }): Promise<StorageLocation> {
+async function updateStorageLocation(id: number, data: { name: string; zone: string; tempMinC: number | null; tempMaxC: number | null }): Promise<StorageLocation> {
   const res = await fetch(`${BASE}/api/storage-locations/${id}`, {
     method: "PUT",
     credentials: "include",
@@ -995,9 +997,9 @@ export default function StockControl() {
   const [selectedKey, setSelectedKey] = useState<string>("production_fridge");
   const [managing, setManaging] = useState(false);
   const [addingLoc, setAddingLoc] = useState(false);
-  const [addForm, setAddForm] = useState({ name: "", zone: "fridge" });
+  const [addForm, setAddForm] = useState({ name: "", zone: "fridge", tempMin: "", tempMax: "" });
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState({ name: "", zone: "fridge" });
+  const [editForm, setEditForm] = useState({ name: "", zone: "fridge", tempMin: "", tempMax: "" });
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
 
@@ -1013,12 +1015,12 @@ export default function StockControl() {
 
   const createMutation = useMutation({
     mutationFn: createStorageLocation,
-    onSuccess: () => { invalidate(); setAddingLoc(false); setAddForm({ name: "", zone: "fridge" }); setMutationError(null); },
+    onSuccess: () => { invalidate(); setAddingLoc(false); setAddForm({ name: "", zone: "fridge", tempMin: "", tempMax: "" }); setMutationError(null); },
     onError: (err: unknown) => setMutationError(err instanceof Error ? err.message : String(err)),
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, ...data }: { id: number; name: string; zone: string }) => updateStorageLocation(id, data),
+    mutationFn: ({ id, ...data }: { id: number; name: string; zone: string; tempMinC: number | null; tempMaxC: number | null }) => updateStorageLocation(id, data),
     onSuccess: () => { invalidate(); setEditingId(null); setMutationError(null); },
     onError: (err: unknown) => setMutationError(err instanceof Error ? err.message : String(err)),
   });
@@ -1117,12 +1119,32 @@ export default function StockControl() {
                   >
                     {ZONE_OPTIONS.map(z => <option key={z.value} value={z.value}>{z.label}</option>)}
                   </select>
+                  {addForm.zone !== "ambient" && (
+                    <div>
+                      <p className="text-[10px] font-medium text-muted-foreground mb-1">Safe temp range °C (optional)</p>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="number" step="0.5" inputMode="decimal" placeholder="Min"
+                          className="w-full px-2.5 py-1.5 text-xs bg-background border border-border rounded-lg focus:outline-none tabular-nums"
+                          value={addForm.tempMin}
+                          onChange={e => setAddForm(f => ({ ...f, tempMin: e.target.value }))}
+                        />
+                        <span className="text-xs text-muted-foreground">to</span>
+                        <input
+                          type="number" step="0.5" inputMode="decimal" placeholder="Max"
+                          className="w-full px-2.5 py-1.5 text-xs bg-background border border-border rounded-lg focus:outline-none tabular-nums"
+                          value={addForm.tempMax}
+                          onChange={e => setAddForm(f => ({ ...f, tempMax: e.target.value }))}
+                        />
+                      </div>
+                    </div>
+                  )}
                   {mutationError && <p className="text-xs text-destructive">{mutationError}</p>}
                   <div className="flex gap-1.5 justify-end">
                     <button onClick={() => { setAddingLoc(false); setMutationError(null); }} className="px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg">Cancel</button>
                     <button
                       disabled={!addForm.name.trim() || createMutation.isPending}
-                      onClick={() => createMutation.mutate(addForm)}
+                      onClick={() => createMutation.mutate({ name: addForm.name, zone: addForm.zone, tempMinC: addForm.tempMin.trim() === "" ? null : parseFloat(addForm.tempMin), tempMaxC: addForm.tempMax.trim() === "" ? null : parseFloat(addForm.tempMax) })}
                       className="px-2.5 py-1 text-xs bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1"
                     >
                       {createMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
@@ -1157,12 +1179,32 @@ export default function StockControl() {
                       >
                         {ZONE_OPTIONS.map(z => <option key={z.value} value={z.value}>{z.label}</option>)}
                       </select>
+                      {editForm.zone !== "ambient" && (
+                        <div>
+                          <p className="text-[10px] font-medium text-muted-foreground mb-1">Safe temp range °C (blank = default)</p>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="number" step="0.5" inputMode="decimal" placeholder="Min"
+                              className="w-full px-2.5 py-1.5 text-xs bg-background border border-border rounded-lg focus:outline-none tabular-nums"
+                              value={editForm.tempMin}
+                              onChange={e => setEditForm(f => ({ ...f, tempMin: e.target.value }))}
+                            />
+                            <span className="text-xs text-muted-foreground">to</span>
+                            <input
+                              type="number" step="0.5" inputMode="decimal" placeholder="Max"
+                              className="w-full px-2.5 py-1.5 text-xs bg-background border border-border rounded-lg focus:outline-none tabular-nums"
+                              value={editForm.tempMax}
+                              onChange={e => setEditForm(f => ({ ...f, tempMax: e.target.value }))}
+                            />
+                          </div>
+                        </div>
+                      )}
                       {mutationError && <p className="text-xs text-destructive">{mutationError}</p>}
                       <div className="flex gap-1.5 justify-end">
                         <button onClick={() => { setEditingId(null); setMutationError(null); }} className="px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg">Cancel</button>
                         <button
                           disabled={!editForm.name.trim() || updateMutation.isPending}
-                          onClick={() => updateMutation.mutate({ id: editingId!, ...editForm })}
+                          onClick={() => updateMutation.mutate({ id: editingId!, name: editForm.name, zone: editForm.zone, tempMinC: editForm.tempMin.trim() === "" ? null : parseFloat(editForm.tempMin), tempMaxC: editForm.tempMax.trim() === "" ? null : parseFloat(editForm.tempMax) })}
                           className="px-2.5 py-1 text-xs bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1"
                         >
                           {updateMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
@@ -1225,7 +1267,11 @@ export default function StockControl() {
                         <p className={cn("text-sm font-medium leading-tight truncate", isSelected && "text-foreground")}>
                           {loc.label}
                         </p>
-                        <p className="text-xs text-muted-foreground capitalize">{loc.zone}</p>
+                        <p className="text-xs text-muted-foreground capitalize">
+                          {loc.zone}
+                          {(loc.tempMinC != null || loc.tempMaxC != null) &&
+                            ` · ${loc.tempMinC != null ? `${loc.tempMinC}` : "≤"}${loc.tempMinC != null && loc.tempMaxC != null ? " to " : " "}${loc.tempMaxC != null ? `${loc.tempMaxC}` : ""}°C`}
+                        </p>
                       </div>
                       {!managing && (
                         <div className="shrink-0 text-right">
@@ -1245,7 +1291,7 @@ export default function StockControl() {
                         {locDbId !== null ? (
                           <>
                             <button
-                              onClick={() => { setEditingId(locDbId); setEditForm({ name: loc.label, zone: loc.zone }); setAddingLoc(false); setDeleteId(null); setMutationError(null); }}
+                              onClick={() => { setEditingId(locDbId); setEditForm({ name: loc.label, zone: loc.zone, tempMin: loc.tempMinC != null ? String(loc.tempMinC) : "", tempMax: loc.tempMaxC != null ? String(loc.tempMaxC) : "" }); setAddingLoc(false); setDeleteId(null); setMutationError(null); }}
                               className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary/60 rounded-lg transition-colors"
                               title="Edit"
                             >

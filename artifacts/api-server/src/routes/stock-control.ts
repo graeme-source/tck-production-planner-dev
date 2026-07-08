@@ -91,6 +91,8 @@ router.get("/", async (_req, res) => {
     zone: string;
     icon: string;
     dbId: number | null;
+    tempMinC: number | null;
+    tempMaxC: number | null;
     totalPacks: number;
     items: AggItem[];
   }>();
@@ -108,6 +110,8 @@ router.get("/", async (_req, res) => {
       zone: dbLoc.zone,
       icon: def.icon,
       dbId: dbLoc.id,
+      tempMinC: dbLoc.tempMinC != null ? Number(dbLoc.tempMinC) : null,
+      tempMaxC: dbLoc.tempMaxC != null ? Number(dbLoc.tempMaxC) : null,
       totalPacks: 0,
       items: [],
     });
@@ -121,6 +125,8 @@ router.get("/", async (_req, res) => {
       zone: ul.zone,
       icon: ul.zone === "freezer" ? "freezer" : ul.zone === "fridge" ? "fridge" : "ambient",
       dbId: ul.id,
+      tempMinC: ul.tempMinC != null ? Number(ul.tempMinC) : null,
+      tempMaxC: ul.tempMaxC != null ? Number(ul.tempMaxC) : null,
       totalPacks: 0,
       items: [],
     });
@@ -148,6 +154,8 @@ router.get("/", async (_req, res) => {
         zone: "unknown",
         icon: "ambient",
         dbId: null,
+        tempMinC: null,
+        tempMaxC: null,
         totalPacks: 0,
         items: [],
       };

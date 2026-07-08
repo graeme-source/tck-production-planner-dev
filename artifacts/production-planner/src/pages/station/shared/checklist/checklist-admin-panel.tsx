@@ -8,11 +8,12 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   Plus, Trash2, GripVertical, Loader2, Save, X,
-  Sun, Sparkles, Moon, ChevronDown,
+  Sun, Sparkles, Moon, ChevronDown, ArchiveRestore,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
+import { useAuth } from "@/contexts/auth-context";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -49,7 +50,10 @@ interface Props {
 }
 
 export function ChecklistAdminPanel({ stationType, onClose }: Props) {
+  const { state: authState } = useAuth();
+  const isAdmin = authState.status === "authenticated" && authState.user.role === "admin";
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [showDeactivated, setShowDeactivated] = useState(false);
   const [loading, setLoading] = useState(true);
   const [activeCategory, setActiveCategory] = useState<Category>("opening");
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -81,7 +85,10 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
 
   useEffect(() => { fetchTemplates(); }, [stationType]);
 
-  const filtered = templates.filter(t => t.category === activeCategory);
+  const filtered = templates.filter(t => t.category === activeCategory && t.isActive);
+  // Soft-deleted templates for this category — kept so they can be restored
+  // (removal only deactivates; history is preserved).
+  const deactivated = templates.filter(t => t.category === activeCategory && !t.isActive);
 
   const resetForm = () => {
     setFormTitle("");
@@ -146,12 +153,36 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
 
   const handleDelete = (id: number) => {
     const t = templates.find(x => x.id === id);
-    // Deleting a template also wipes its completion history (HACCP records).
-    if (!window.confirm(`Delete "${t?.title ?? "this task"}" and ALL its past completion records? This cannot be undone.`)) return;
+    // Soft delete — deactivates only; history is kept and it's restorable below.
+    if (!window.confirm(`Remove "${t?.title ?? "this task"}" from this checklist?\n\nIts past records are kept and it can be restored from the Removed list.`)) return;
     runDelete(async (signal) => {
       await guardedFetch(`${BASE}/api/checklists/templates/${id}`, { method: "DELETE", signal });
-      toast({ title: "Template deleted" });
+      toast({ title: "Task removed", description: "Restore it anytime from the Removed list." });
       if (editingId === id) resetForm();
+      fetchTemplates();
+    });
+  };
+
+  const handleRestore = (id: number) => {
+    runDelete(async (signal) => {
+      await guardedFetch(`${BASE}/api/checklists/templates/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: true }),
+        signal,
+      });
+      toast({ title: "Task restored" });
+      fetchTemplates();
+    });
+  };
+
+  // Admin-only: irreversible — removes the template AND its completion history.
+  const handlePermanentDelete = (id: number) => {
+    const t = templates.find(x => x.id === id);
+    if (!window.confirm(`Permanently delete "${t?.title ?? "this task"}" and ALL its past completion records? This CANNOT be undone.`)) return;
+    runDelete(async (signal) => {
+      await guardedFetch(`${BASE}/api/checklists/templates/${id}/permanent`, { method: "DELETE", signal });
+      toast({ title: "Template permanently deleted" });
       fetchTemplates();
     });
   };
@@ -208,7 +239,7 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
         {(["opening", "cleaning", "closing"] as const).map(cat => {
           const meta = CATEGORY_META[cat];
           const Icon = meta.icon;
-          const count = templates.filter(t => t.category === cat).length;
+          const count = templates.filter(t => t.category === cat && t.isActive).length;
           return (
             <button
               key={cat}
@@ -248,6 +279,49 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
           <p className="text-sm text-muted-foreground text-center py-4">
             No {activeCategory} check templates yet. Add one below.
           </p>
+        )}
+
+        {/* Removed (soft-deleted) templates — restorable by anyone; permanent
+            deletion is admin-only. */}
+        {deactivated.length > 0 && (
+          <div className="border border-dashed border-border rounded-lg">
+            <button
+              onClick={() => setShowDeactivated(!showDeactivated)}
+              className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              <span>Removed ({deactivated.length})</span>
+              <ChevronDown className={cn("w-3.5 h-3.5 transition-transform", showDeactivated && "rotate-180")} />
+            </button>
+            {showDeactivated && (
+              <div className="px-3 pb-2 space-y-1.5">
+                {deactivated.map(t => (
+                  <div key={t.id} className="flex items-center gap-2 px-3 py-2 border border-border/60 rounded-lg bg-secondary/20">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm truncate text-muted-foreground line-through">{t.title}</p>
+                    </div>
+                    <button
+                      onClick={() => handleRestore(t.id)}
+                      disabled={deleteBusy}
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/20"
+                    >
+                      <ArchiveRestore className="w-3.5 h-3.5" />
+                      Restore
+                    </button>
+                    {isAdmin && (
+                      <button
+                        onClick={() => handlePermanentDelete(t.id)}
+                        disabled={deleteBusy}
+                        title="Permanently delete (admin)"
+                        className="p-1.5 rounded-lg text-muted-foreground/50 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
 
         {/* Add button */}
