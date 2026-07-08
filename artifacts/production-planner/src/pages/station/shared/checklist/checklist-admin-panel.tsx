@@ -145,6 +145,9 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
   };
 
   const handleDelete = (id: number) => {
+    const t = templates.find(x => x.id === id);
+    // Deleting a template also wipes its completion history (HACCP records).
+    if (!window.confirm(`Delete "${t?.title ?? "this task"}" and ALL its past completion records? This cannot be undone.`)) return;
     runDelete(async (signal) => {
       await guardedFetch(`${BASE}/api/checklists/templates/${id}`, { method: "DELETE", signal });
       toast({ title: "Template deleted" });

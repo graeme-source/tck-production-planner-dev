@@ -1,4 +1,4 @@
-import { Router, type IRouter, type Request, type Response } from "express";
+import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import {
   db,
   checklistTemplatesTable,
@@ -25,6 +25,21 @@ import { londonDateString } from "../lib/london-time";
 type ChecklistCompletion = typeof checklistCompletionsTable.$inferSelect;
 
 const router: IRouter = Router();
+
+// Deleting a template cascades to its completion history, so a stray tap
+// wipes a HACCP audit trail (this happened to the mixing AM fridge-temp
+// check in July 2026). Only admins may delete templates.
+async function adminOnly(req: Request, res: Response, next: NextFunction) {
+  if (req.session.userRole === "admin") { next(); return; }
+  if (req.session.userId && !req.session.userRole) {
+    const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
+    if (user) {
+      req.session.userRole = user.role as "admin" | "manager" | "viewer";
+      if (user.role === "admin") { next(); return; }
+    }
+  }
+  res.status(403).json({ error: "Admin access required" });
+}
 
 
 // Shared checklists: stations on the left share a single checklist stored
@@ -127,7 +142,7 @@ router.put("/templates/:id", async (req: Request, res: Response) => {
   res.json(row);
 });
 
-router.delete("/templates/:id", async (req: Request, res: Response) => {
+router.delete("/templates/:id", adminOnly, async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   const [row] = await db.delete(checklistTemplatesTable).where(eq(checklistTemplatesTable.id, id)).returning();
   if (!row) { res.status(404).json({ error: "Template not found" }); return; }

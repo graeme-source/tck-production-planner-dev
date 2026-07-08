@@ -282,6 +282,9 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
 
   const handleDeleteTemplate = (item: ChecklistItem) => {
     if (item.type !== "template") return;
+    // Deleting a recurring template also wipes its entire completion history
+    // (HACCP audit trail) — make absolutely sure this isn't a stray tap.
+    if (!window.confirm(`Delete the recurring task "${item.title}" and ALL its past completion records? This cannot be undone.`)) return;
     runOneoff(async (signal) => {
       await guardedFetch(`${BASE}/api/checklists/templates/${item.id}`, { method: "DELETE", signal });
       if (selectedItemKey && selectedItemKey === itemKey(item)) setSelectedItemKey(null);
@@ -300,15 +303,17 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
             <span className="text-sm text-muted-foreground">{summary.done}/{summary.total} complete</span>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => setAdminMode(!adminMode)}
-              className={cn(
-                "text-xs px-2.5 py-1 rounded-lg font-medium transition-colors",
-                adminMode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/60",
-              )}
-            >
-              {adminMode ? "Done Editing" : "Edit Templates"}
-            </button>
+            {isAdmin && (
+              <button
+                onClick={() => setAdminMode(!adminMode)}
+                className={cn(
+                  "text-xs px-2.5 py-1 rounded-lg font-medium transition-colors",
+                  adminMode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/60",
+                )}
+              >
+                {adminMode ? "Done Editing" : "Edit Templates"}
+              </button>
+            )}
             <button
               onClick={() => setAddingItem(!addingItem)}
               className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -485,17 +490,19 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                                 <span className="text-xs text-amber-500 font-medium">one-off</span>
                               )}
                             </div>
-                            <div
-                              className="flex-shrink-0 p-1.5 rounded-lg text-muted-foreground/40 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
-                              role="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (item.type === "oneoff") handleDeleteOneoff(item);
-                                else handleDeleteTemplate(item);
-                              }}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </div>
+                            {(item.type === "oneoff" || isAdmin) && (
+                              <div
+                                className="flex-shrink-0 p-1.5 rounded-lg text-muted-foreground/40 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
+                                role="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (item.type === "oneoff") handleDeleteOneoff(item);
+                                  else handleDeleteTemplate(item);
+                                }}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </div>
+                            )}
                           </button>
                         );
                       })}
@@ -607,16 +614,18 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                         <Undo2 className="w-4 h-4" />
                         Undo completion
                       </button>
-                      <button
-                        onClick={() => {
-                          if (selectedItem.type === "oneoff") handleDeleteOneoff(selectedItem);
-                          else handleDeleteTemplate(selectedItem);
-                        }}
-                        className="flex items-center gap-2 text-sm text-muted-foreground hover:text-red-500 transition-colors"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                        Delete
-                      </button>
+                      {(selectedItem.type === "oneoff" || isAdmin) && (
+                        <button
+                          onClick={() => {
+                            if (selectedItem.type === "oneoff") handleDeleteOneoff(selectedItem);
+                            else handleDeleteTemplate(selectedItem);
+                          }}
+                          className="flex items-center gap-2 text-sm text-muted-foreground hover:text-red-500 transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          Delete
+                        </button>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -649,16 +658,18 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                           <XCircle className="w-4 h-4" />
                           Mark Incomplete
                         </button>
-                        <button
-                          onClick={() => {
-                            if (selectedItem.type === "oneoff") handleDeleteOneoff(selectedItem);
-                            else handleDeleteTemplate(selectedItem);
-                          }}
-                          className="flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-red-500 transition-colors pt-1"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                          Delete task
-                        </button>
+                        {(selectedItem.type === "oneoff" || isAdmin) && (
+                          <button
+                            onClick={() => {
+                              if (selectedItem.type === "oneoff") handleDeleteOneoff(selectedItem);
+                              else handleDeleteTemplate(selectedItem);
+                            }}
+                            className="flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-red-500 transition-colors pt-1"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                            Delete task
+                          </button>
+                        )}
                       </>
                     ) : (
                       <>
