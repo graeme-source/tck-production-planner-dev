@@ -38,7 +38,7 @@ import { ImprovementAttachments } from "@/components/improvement-attachments";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-interface MeetingSlide {
+export interface MeetingSlide {
   id: number;
   kind: string;
   title: string;
@@ -47,7 +47,7 @@ interface MeetingSlide {
   configJson: Record<string, unknown> | null;
 }
 
-interface DashboardData {
+export interface DashboardData {
   today: string;
   yesterday: string;
   tomorrow: string;
@@ -85,7 +85,7 @@ interface DashboardData {
   gratitude: Array<{ id: number; fromName: string; toName: string | null; content: string }>;
 }
 
-async function fetchDashboard(): Promise<DashboardData> {
+export async function fetchDashboard(): Promise<DashboardData> {
   const res = await fetch(`${BASE}/api/morning-meetings/dashboard`, { credentials: "include" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
@@ -1225,7 +1225,7 @@ function HeaderInfo({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ProductionPlanSlide({ data, slide, isPreviewing }: { data: DashboardData; slide: MeetingSlide; isPreviewing: boolean }) {
+export function ProductionPlanSlide({ data, slide, isPreviewing }: { data: DashboardData; slide: MeetingSlide; isPreviewing: boolean }) {
   // In a live meeting the pack is today's; in a preview of tomorrow's
   // meeting it's tomorrow's. Matches the old Short-on-pack behaviour.
   const effectivePlanDate = isPreviewing ? data.tomorrow : data.today;

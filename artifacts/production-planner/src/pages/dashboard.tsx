@@ -545,10 +545,11 @@ export default function Dashboard() {
         <StatCard
           title="Current Factory Number"
           value={stockControlData == null ? "…" : (stockControlData.productionFridgeTotal ?? 0).toLocaleString()}
+          subtitle="Tap for pack report"
           icon={Thermometer}
           color="text-cyan-500"
           bg="bg-cyan-500/10"
-          href="/stock-control"
+          href="/pack-report"
         />
         <StatCard
           title="Start Morning Meeting"
