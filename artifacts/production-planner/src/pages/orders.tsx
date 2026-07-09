@@ -399,6 +399,42 @@ export default function Orders() {
     else sessionStorage.setItem(`orders_movedLines_${selectedPlanId}`, JSON.stringify(next));
   }, [selectedPlanId]);
 
+  // Lines the operator deleted from a draft order this round. Without this,
+  // placing ANY order refetches the calc and resurrects deleted lines under
+  // their suppliers. Persisted per plan; cleared per item when the operator
+  // manually re-adds it (kanban pull or "+ Add item").
+  const [removedLines, setRemovedLines] = useState<Record<number, true>>({});
+  useEffect(() => {
+    if (!selectedPlanId) { setRemovedLines({}); return; }
+    const raw = sessionStorage.getItem(`orders_removedLines_${selectedPlanId}`);
+    if (!raw) { setRemovedLines({}); return; }
+    try {
+      const ids = JSON.parse(raw) as number[];
+      const next: Record<number, true> = {};
+      for (const id of ids) if (Number.isFinite(id)) next[id] = true;
+      setRemovedLines(next);
+    } catch {
+      setRemovedLines({});
+    }
+  }, [selectedPlanId]);
+  const persistRemovedLines = useCallback((next: Record<number, true>) => {
+    if (!selectedPlanId) return;
+    const ids = Object.keys(next).map(Number);
+    if (ids.length === 0) sessionStorage.removeItem(`orders_removedLines_${selectedPlanId}`);
+    else sessionStorage.setItem(`orders_removedLines_${selectedPlanId}`, JSON.stringify(ids));
+  }, [selectedPlanId]);
+  // Every manual add path calls this so a re-added item stops being
+  // suppressed and behaves like any other line again.
+  const clearRemovedMark = useCallback((ingredientId: number) => {
+    setRemovedLines(prev => {
+      if (!prev[ingredientId]) return prev;
+      const next = { ...prev };
+      delete next[ingredientId];
+      persistRemovedLines(next);
+      return next;
+    });
+  }, [persistRemovedLines]);
+
   // The line being dragged right now — rendered as a floating chip via
   // DragOverlay so the operator sees what they're carrying between cards.
   const [activeDrag, setActiveDrag] = useState<{ line: EditableLine; fromSupplierId: number } | null>(null);
@@ -536,6 +572,13 @@ export default function Orders() {
         }
       }
 
+      // Operator-deleted lines stay deleted across refetches. Manual re-adds
+      // clear the mark at add time, so this filter can be unconditional.
+      for (const sidStr of Object.keys(next)) {
+        const sid = Number(sidStr);
+        next[sid] = next[sid].filter(l => !(l.ingredientId > 0 && removedLines[l.ingredientId]));
+      }
+
       return next;
     });
     setExpandedSuppliers(prev => {
@@ -543,7 +586,7 @@ export default function Orders() {
       for (const s of calculated.suppliers) next.add(s.supplier.id);
       return next;
     });
-  }, [calculated, movedLines]);
+  }, [calculated, movedLines, removedLines]);
 
   const { data: kanbanIngredients = [] } = useQuery<KanbanIngredient[]>({
     queryKey: ["kanbans-ingredients-for-orders"],
@@ -727,7 +770,30 @@ export default function Orders() {
       const next = lines.filter(l => l.ingredientId !== ingredientId);
       return { ...prev, [supplierId]: next };
     });
-  }, []);
+    // Real ingredients regenerate from the calc on every refetch (e.g. after
+    // placing another supplier's order) — mark them removed so they STAY
+    // removed until manually re-added. Misc lines (negative synthetic ids)
+    // never regenerate, so no mark needed.
+    if (ingredientId > 0) {
+      setRemovedLines(prev => {
+        const next = { ...prev, [ingredientId]: true as const };
+        persistRemovedLines(next);
+        return next;
+      });
+      // A removed line shouldn't keep a drag-move routing either.
+      setMovedLines(prev => {
+        if (prev[ingredientId] == null) return prev;
+        const next = { ...prev };
+        delete next[ingredientId];
+        persistMovedLines(next);
+        return next;
+      });
+      toast({
+        title: "Item removed from this order",
+        description: "It won't be re-added automatically this round. Use \u201c+ Add item\u201d to bring it back.",
+      });
+    }
+  }, [persistRemovedLines, persistMovedLines]);
 
   // Remove a previously-pulled kanban from the pending order. Used when the
   // operator pulled one by accident — tapping the same item again drops the
@@ -804,6 +870,7 @@ export default function Orders() {
       // that PO's lines into view so the operator can resubmit with the new
       // kanban item included, rather than losing the addition.
       reopenPlacedOrderIfAny(supplierId);
+      clearRemovedMark(kanban.ingredientId);
       setEditableLines(prev => {
         const existing = prev[supplierId] ?? [];
         const alreadyHas = existing.some(l => l.ingredientId === kanban.ingredientId);
@@ -907,6 +974,7 @@ export default function Orders() {
     // item to a supplier whose order already went through should see the
     // previous lines and be able to resubmit with the addition.
     reopenPlacedOrderIfAny(supplierId);
+    clearRemovedMark(ingredient.id);
     const packWeight = Number(ingredient.packWeight) || 1;
     const costPerPack = Number(ingredient.costPerPack) || 0;
     const newLine: EditableLine = {
