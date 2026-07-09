@@ -958,10 +958,10 @@ export default function Fulfilment() {
     // APC off → no shipment to create, no label to print. The picker
     // just scans items and presses Complete; the backend fulfils
     // Shopify without tracking and the existing fridge-decrement
-    // logic runs as normal.
+    // logic runs as normal. printStatus stays "idle" so the header
+    // doesn't claim a label was printed when nothing was.
     if (!apcEnabled) {
       setCreatingShipment(false);
-      setPrintStatus("done");
       return;
     }
 
@@ -1365,7 +1365,7 @@ export default function Fulfilment() {
     return (
       <div className="space-y-6">
         {configStatus?.testMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
-        <PageHeader title="Order Packing Live" description="APC order scanning and label printing." />
+        <PageHeader title="Order Packing Live" description={apcEnabled ? "APC order scanning and label printing." : "Scan orders into the box — couriers booked manually."} />
         <div className="glass-panel p-8 rounded-2xl border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20">
           <div className="flex items-start gap-4">
             <AlertCircle className="w-8 h-8 text-amber-600 flex-shrink-0 mt-0.5" />
@@ -1419,7 +1419,7 @@ export default function Fulfilment() {
     return (
       <div className="space-y-4">
         <PageHeader title={activeOrder.name} description={customerName} />
-        {isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
+        {apcEnabled && isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
 
         <div className="flex items-center gap-3">
           <button onClick={() => setView("picking")} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
@@ -1616,7 +1616,10 @@ export default function Fulfilment() {
     );
   }
 
-  if (view === "confirm" && activeOrder && shipment) {
+  // With APC off there is no shipment object — the completion screen still
+  // shows (minus the consignment number) so the packer gets the same
+  // celebration + auto-advance rhythm either way.
+  if (view === "confirm" && activeOrder && (shipment || !apcEnabled)) {
     const hasNext = unfulfilledOrders.filter(o => o.id !== activeOrder.id).length > 0;
     const isTestMode = configStatus?.testMode ?? false;
     return (
@@ -1631,24 +1634,26 @@ export default function Fulfilment() {
             onCancel={() => setPendingPickOrder(null)}
           />
         )}
-        {isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
-        <PageHeader title="Order Packing Live" description="APC order scanning and label printing." />
+        {apcEnabled && isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
+        <PageHeader title="Order Packing Live" description={apcEnabled ? "APC order scanning and label printing." : "Scan orders into the box — couriers booked manually."} />
         <div className="glass-panel p-8 rounded-2xl border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 text-center">
           <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto mb-4" />
           <h2 className="text-2xl font-bold text-green-800 dark:text-green-200 mb-1">Order Complete!</h2>
           <p className="text-green-700 dark:text-green-300 mb-4">
             {activeOrder.name} — {activeOrder.shipping_address?.name ?? activeOrder.customer?.first_name}
           </p>
-          <div className="inline-flex items-center gap-2 bg-green-100 dark:bg-green-900/50 px-5 py-3 rounded-xl mb-6">
-            <Truck className="w-5 h-5 text-green-600" />
-            <span className="font-mono font-bold text-green-800 dark:text-green-200 text-lg">{shipment.consignmentNumber}</span>
-          </div>
+          {shipment && (
+            <div className="inline-flex items-center gap-2 bg-green-100 dark:bg-green-900/50 px-5 py-3 rounded-xl mb-6">
+              <Truck className="w-5 h-5 text-green-600" />
+              <span className="font-mono font-bold text-green-800 dark:text-green-200 text-lg">{shipment.consignmentNumber}</span>
+            </div>
+          )}
           <p className="text-sm text-green-600 dark:text-green-400 mb-6">
             {activeOrder.shipping_address?.address1}, {activeOrder.shipping_address?.city}, {activeOrder.shipping_address?.zip}
           </p>
           {hasNext && (
             <p className="text-xs text-green-600/70 dark:text-green-400/70 mb-3 animate-pulse">
-              Auto-advancing to next order in 4 s…
+              Auto-advancing to next order…
             </p>
           )}
           <div className="flex gap-3 justify-center">
@@ -1690,7 +1695,7 @@ export default function Fulfilment() {
             onCancel={() => setPendingPickOrder(null)}
           />
         )}
-        {isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
+        {apcEnabled && isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
         <div className="flex items-center gap-3">
           <button onClick={goBack} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
             <ArrowLeft className="w-5 h-5" />
@@ -2074,7 +2079,7 @@ export default function Fulfilment() {
     const isTestMode = configStatus?.testMode ?? false;
     return (
       <div className="space-y-6">
-        {isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
+        {apcEnabled && isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
         <PageHeader
           title="Order Packing Live"
           description="Select a dispatch date to start picking."
@@ -2146,7 +2151,7 @@ export default function Fulfilment() {
                       <span className="flex items-center gap-1"><Package className="w-3.5 h-3.5" /> {group.orderCount} unfulfilled</span>
                       <span>{group.totalItems} items</span>
                       <span>{weightKg} kg</span>
-                      {group.postcodeIssues > 0 && (
+                      {apcEnabled && group.postcodeIssues > 0 && (
                         <span className="flex items-center gap-1 text-red-600 dark:text-red-400 font-medium">
                           <ShieldAlert className="w-3.5 h-3.5" />
                           {group.postcodeIssues} postcode {group.postcodeIssues === 1 ? "issue" : "issues"}
@@ -2173,7 +2178,9 @@ export default function Fulfilment() {
         )}
 
         {/* APC Service Check — validates postcodes against the correct service
-            code for the delivery date, using the codes configured in Settings. */}
+            code for the delivery date, using the codes configured in Settings.
+            Hidden entirely while APC is switched off. */}
+        {apcEnabled && (
         <details className="text-sm">
           <summary className="cursor-pointer font-medium text-foreground hover:text-primary transition-colors select-none">
             APC Service Check
@@ -2268,6 +2275,7 @@ export default function Fulfilment() {
             )}
           </div>
         </details>
+        )}
 
         {/* Manual override for dates without a dispatch tag */}
         <details className="text-sm text-muted-foreground">
@@ -2298,7 +2306,7 @@ export default function Fulfilment() {
 
   return (
     <div className="space-y-6">
-      {isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
+      {apcEnabled && isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
 
       {/* Live-mode confirmation dialog — appears when operator selects an order */}
       {pendingPickOrder && (
@@ -2547,7 +2555,10 @@ export default function Fulfilment() {
             const hasUnassigned = order.line_items.some(i => !i.location && i.sku);
             const weightKg = ((order.total_weight ?? 0) / 1000).toFixed(2);
             const tags = order.tags.split(",").map(t => t.trim()).filter(Boolean);
-            const postcodeIssue = postcodeIssueMap.get(order.id);
+            // Postcode coverage only gates picking when the app creates the
+            // APC consignment. APC off = couriers booked manually, so a
+            // stale failed check must never block the scanner.
+            const postcodeIssue = apcEnabled ? postcodeIssueMap.get(order.id) : undefined;
             const isBlocked = !!postcodeIssue;
 
             return (

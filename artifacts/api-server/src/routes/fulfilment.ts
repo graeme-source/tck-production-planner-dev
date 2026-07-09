@@ -633,7 +633,11 @@ router.post("/tag-dispatch", requireManagerOrAdmin, async (req: Request, res: Re
     let postcodeCheck: { available: boolean; reason?: string; serviceCode: string } | undefined;
     const tags = order.tags.split(",").map(t => t.trim());
     const dateTag = tags.find(t => DATE_TAG_RE.test(t));
-    if (isApcConfigured() && dateTag) {
+    // Postcode coverage only matters when the app is creating APC
+    // consignments. With apc_enabled=false the operator books couriers
+    // manually, so don't call APC at all (and don't record blocking rows).
+    const apcEnabledForTagging = (await getAppSetting("apc_enabled")) !== "false";
+    if (apcEnabledForTagging && isApcConfigured() && dateTag) {
       postcodeCheck = await validateOrderPostcode(order, dateTag);
     }
 
@@ -686,11 +690,14 @@ router.post("/tag-dispatch-bulk", requireManagerOrAdmin, async (req: Request, re
 
     let tagged = 0;
     const postcodeIssues: Array<{ orderName: string; reason: string }> = [];
+    // Same gate as /tag-dispatch: only pre-validate postcodes when the app
+    // itself will create the APC consignments.
+    const apcEnabledForTagging = (await getAppSetting("apc_enabled")) !== "false";
     for (const order of toTag) {
       await addTagToOrder(order.id, order.tags, "dispatch");
       tagged++;
 
-      if (isApcConfigured()) {
+      if (apcEnabledForTagging && isApcConfigured()) {
         const check = await validateOrderPostcode(order, tag);
         if (!check.available) {
           postcodeIssues.push({ orderName: order.name, reason: check.reason ?? "Service not available" });
