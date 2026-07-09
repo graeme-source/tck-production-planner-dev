@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -29,7 +29,12 @@ import {
   Mail,
   MessageCircle,
   Users,
+  GripVertical,
 } from "lucide-react";
+import {
+  DndContext, DragOverlay, PointerSensor, useSensor, useSensors,
+  useDraggable, useDroppable, pointerWithin, type DragEndEvent, type DragStartEvent,
+} from "@dnd-kit/core";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -164,6 +169,69 @@ type KanbanIngredient = {
   supplierName: string | null;
   secondarySupplierId: number | null;
 };
+
+// ── Drag & drop: move a line to a different supplier's order ─────────
+// Each ingredient row carries a grip handle (drag source) and every pending
+// supplier card is a drop target. Dropping a row on another card removes it
+// from its current order and adds it to that supplier's order.
+
+/** Table row wrapper that makes the line draggable via a leading grip cell.
+ *  Only the grip carries the drag listeners so the checkbox / number inputs
+ *  in the rest of the row keep working normally. */
+function DraggableLineRow({
+  dragId,
+  dragDisabled,
+  className,
+  children,
+}: {
+  dragId: string;
+  dragDisabled: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  const { setNodeRef, attributes, listeners, isDragging } = useDraggable({ id: dragId, disabled: dragDisabled });
+  return (
+    <tr ref={setNodeRef} className={cn(className, isDragging && "opacity-30")}>
+      <td className="p-1 pl-2 w-8">
+        {!dragDisabled && (
+          <button
+            type="button"
+            {...attributes}
+            {...listeners}
+            className="p-1.5 rounded cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground touch-none"
+            title="Drag onto another supplier to order it from them instead"
+            aria-label="Drag to another supplier"
+          >
+            <GripVertical className="w-4 h-4" />
+          </button>
+        )}
+      </td>
+      {children}
+    </tr>
+  );
+}
+
+/** Wraps a pending supplier card as a drop target; highlights while a
+ *  dragged row hovers over it. */
+function DroppableSupplierCard({
+  supplierId,
+  className,
+  children,
+}: {
+  supplierId: number;
+  className?: string;
+  children: ReactNode;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: `supplier-${supplierId}` });
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(className, isOver && "ring-2 ring-primary border-primary/50 bg-primary/5")}
+    >
+      {children}
+    </div>
+  );
+}
 
 // How many to order for a line, in the same unit shown on screen (packs /
 // bottles / base unit). Mirrors the order-quantity cell in the table.
@@ -309,6 +377,33 @@ export default function Orders() {
   // operator can't drop an order accidentally.
   const [dismissConfirm, setDismissConfirm] = useState<{ supplierId: number; supplierName: string } | null>(null);
 
+  // Drag-and-drop "order from elsewhere" overrides: ingredientId → the
+  // supplier the operator dragged it to. Applied after every calc merge so a
+  // refetch doesn't resurrect the line under its original supplier, and
+  // persisted per plan (sessionStorage) so a refresh keeps the routing.
+  const [movedLines, setMovedLines] = useState<Record<number, number>>({});
+  useEffect(() => {
+    if (!selectedPlanId) { setMovedLines({}); return; }
+    const raw = sessionStorage.getItem(`orders_movedLines_${selectedPlanId}`);
+    if (!raw) { setMovedLines({}); return; }
+    try {
+      const parsed = JSON.parse(raw) as Record<number, number>;
+      setMovedLines(parsed && typeof parsed === "object" ? parsed : {});
+    } catch {
+      setMovedLines({});
+    }
+  }, [selectedPlanId]);
+  const persistMovedLines = useCallback((next: Record<number, number>) => {
+    if (!selectedPlanId) return;
+    if (Object.keys(next).length === 0) sessionStorage.removeItem(`orders_movedLines_${selectedPlanId}`);
+    else sessionStorage.setItem(`orders_movedLines_${selectedPlanId}`, JSON.stringify(next));
+  }, [selectedPlanId]);
+
+  // The line being dragged right now — rendered as a floating chip via
+  // DragOverlay so the operator sees what they're carrying between cards.
+  const [activeDrag, setActiveDrag] = useState<{ line: EditableLine; fromSupplierId: number } | null>(null);
+  const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+
   // "+ Add Supplier Order" dialog — picks any supplier, even ones the calc
   // didn't suggest. Adds an empty card the operator can fill via the existing
   // "+ Add item" / Misc flow.
@@ -419,6 +514,28 @@ export default function Orders() {
         if (preserved.length > 0) next[sid] = preserved;
       }
 
+      // Re-apply drag-and-drop supplier moves: the calc always regenerates a
+      // required line under its primary supplier, so RELOCATE it to wherever
+      // the operator dragged it. Doing a physical move (not just a filter)
+      // means the routing also survives a full page reload, where the
+      // in-memory moved copy is gone and only the sessionStorage override
+      // remains. Dedup guard covers the in-session case where the moved
+      // isManual copy already sits on the destination.
+      for (const [ingIdStr, targetSid] of Object.entries(movedLines)) {
+        const ingId = Number(ingIdStr);
+        for (const sidStr of Object.keys(next)) {
+          const sid = Number(sidStr);
+          if (sid === targetSid) continue;
+          const idx = next[sid].findIndex(l => l.ingredientId === ingId && !l.isMisc);
+          if (idx === -1) continue;
+          const [line] = next[sid].splice(idx, 1);
+          const targetArr = next[targetSid] ?? (next[targetSid] = []);
+          if (!targetArr.some(l => l.ingredientId === ingId)) {
+            targetArr.push({ ...line, isManual: true, supplierPartNumber: null });
+          }
+        }
+      }
+
       return next;
     });
     setExpandedSuppliers(prev => {
@@ -426,7 +543,7 @@ export default function Orders() {
       for (const s of calculated.suppliers) next.add(s.supplier.id);
       return next;
     });
-  }, [calculated]);
+  }, [calculated, movedLines]);
 
   const { data: kanbanIngredients = [] } = useQuery<KanbanIngredient[]>({
     queryKey: ["kanbans-ingredients-for-orders"],
@@ -1151,6 +1268,72 @@ export default function Orders() {
     },
   });
 
+  // Move a line from one supplier's draft order to another (drag & drop).
+  const moveLineToSupplier = useCallback((ingredientId: number, fromSid: number, toSid: number) => {
+    if (fromSid === toSid) return;
+    setEditableLines(prev => {
+      const fromArr = prev[fromSid] ?? [];
+      const line = fromArr.find(l => l.ingredientId === ingredientId);
+      if (!line) return prev;
+      const toArr = prev[toSid] ?? [];
+      if (toArr.some(l => l.ingredientId === ingredientId)) {
+        // Destination already has this ingredient — just remove the source copy.
+        return { ...prev, [fromSid]: fromArr.filter(l => l.ingredientId !== ingredientId) };
+      }
+      const moved: EditableLine = {
+        ...line,
+        // isManual keeps the line alive on the destination across calc
+        // refetches (see the preservation logic in the merge effect).
+        isManual: true,
+        // The part number belongs to the old supplier — don't quote it to the new one.
+        supplierPartNumber: null,
+      };
+      return {
+        ...prev,
+        [fromSid]: fromArr.filter(l => l.ingredientId !== ingredientId),
+        [toSid]: [...toArr, moved],
+      };
+    });
+    // Calc-driven lines regenerate under their primary supplier on every
+    // refetch, so remember the routing override. Dragging back to the
+    // original supplier clears it instead.
+    if (ingredientId > 0) {
+      const calcSupplierId = calculated?.suppliers.find(so =>
+        so.lines.some(l => l.ingredientId === ingredientId)
+      )?.supplier.id ?? null;
+      setMovedLines(prev => {
+        const next = { ...prev };
+        if (calcSupplierId != null && calcSupplierId === toSid) delete next[ingredientId];
+        else next[ingredientId] = toSid;
+        persistMovedLines(next);
+        return next;
+      });
+    }
+    setExpandedSuppliers(prev => new Set([...prev, toSid]));
+  }, [persistMovedLines, calculated]);
+
+  function handleLineDragStart(event: DragStartEvent) {
+    const m = String(event.active.id).match(/^line-(-?\d+)-(-?\d+)$/);
+    if (!m) return;
+    const sid = Number(m[1]);
+    const ing = Number(m[2]);
+    const line = (editableLines[sid] ?? []).find(l => l.ingredientId === ing);
+    if (line) setActiveDrag({ line, fromSupplierId: sid });
+  }
+
+  function handleLineDragEnd(event: DragEndEvent) {
+    const drag = activeDrag;
+    setActiveDrag(null);
+    if (!drag || !event.over) return;
+    const overId = String(event.over.id);
+    if (!overId.startsWith("supplier-")) return;
+    const toSid = Number(overId.slice("supplier-".length));
+    if (!Number.isFinite(toSid) || toSid === drag.fromSupplierId) return;
+    const toName = allPendingSuppliers.find(x => x.supplier.id === toSid)?.supplier.name ?? "the other supplier";
+    moveLineToSupplier(drag.line.ingredientId, drag.fromSupplierId, toSid);
+    toast({ title: "Item moved", description: `${drag.line.ingredientName} \u2192 ${toName}` });
+  }
+
   const estimatedCost = (supplierLines: EditableLine[]) =>
     supplierLines.reduce((sum, l) => sum + l.editedPacks * l.costPerPack, 0);
 
@@ -1159,6 +1342,13 @@ export default function Orders() {
   );
 
   return (
+    <DndContext
+      sensors={dndSensors}
+      collisionDetection={pointerWithin}
+      onDragStart={handleLineDragStart}
+      onDragEnd={handleLineDragEnd}
+      onDragCancel={() => setActiveDrag(null)}
+    >
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
@@ -1340,7 +1530,10 @@ export default function Orders() {
         const lines = showNonRequired ? allLines : orderableLines;
         // If the toggle is off and every line for this supplier is non-required,
         // skip the supplier card entirely — otherwise you'd see empty cards.
-        if (!showNonRequired && orderableLines.length === 0) return null;
+        // Exception: cards the operator explicitly added via "+ Add supplier
+        // order" stay visible even while empty, so they can receive
+        // dragged-in lines (e.g. to undo a drag that emptied a card).
+        if (!showNonRequired && orderableLines.length === 0 && !kanbanOnlySupplierInfo[so.supplier.id]) return null;
         const allChecked = orderableLines.length > 0 && orderableLines.every(l => l.checked);
         const checkedCount = orderableLines.filter(l => l.checked).length;
         const nonRequiredCount = allLines.length - orderableLines.length;
@@ -1365,8 +1558,8 @@ export default function Orders() {
           : null;
 
         return (
-          <div key={so.supplier.id} className={cn(
-            "rounded-xl border bg-card overflow-hidden",
+          <DroppableSupplierCard key={so.supplier.id} supplierId={so.supplier.id} className={cn(
+            "rounded-xl border bg-card overflow-hidden transition-colors",
             isReopened ? "border-amber-500/40 ring-1 ring-amber-500/20" : "border-border"
           )}>
             <button
@@ -1434,6 +1627,7 @@ export default function Orders() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-border bg-secondary/30">
+                        <th className="p-1 w-8"></th>
                         <th className="p-3 text-left w-10"></th>
                         <th className="p-3 text-left font-medium text-muted-foreground">Ingredient</th>
                         <th className="p-3 text-right font-medium text-muted-foreground">In Stock</th>
@@ -1456,8 +1650,10 @@ export default function Orders() {
                         const idx = allLines.findIndex(l => l.ingredientId === line.ingredientId);
                         const isNonOrderable = !!line.belowRequirement && !line.isKanban && !line.isManual;
                         return (
-                        <tr
+                        <DraggableLineRow
                           key={line.ingredientId}
+                          dragId={`line-${so.supplier.id}-${line.ingredientId}`}
+                          dragDisabled={isNonOrderable}
                           className={cn(
                             "border-b border-border/50 transition-colors",
                             isNonOrderable ? "opacity-60 bg-secondary/10" :
@@ -1578,11 +1774,11 @@ export default function Orders() {
                               <Trash2 className="w-4 h-4" />
                             </button>
                           </td>
-                        </tr>
+                        </DraggableLineRow>
                         );
                       })}
                       <tr className="bg-secondary/5">
-                        <td colSpan={lines.some(l => l.costPerPack > 0) ? 10 : 9} className="p-2">
+                        <td colSpan={lines.some(l => l.costPerPack > 0) ? 11 : 10} className="p-2">
                           <button
                             type="button"
                             onClick={() => { setAddItemDialog({ supplierId: so.supplier.id, supplierName: so.supplier.name }); setAddItemSearch(""); }}
@@ -1731,7 +1927,7 @@ export default function Orders() {
                 </div>
               </div>
             )}
-          </div>
+          </DroppableSupplierCard>
         );
       })}
 
@@ -2335,5 +2531,15 @@ export default function Orders() {
         </DialogContent>
       </Dialog>
     </div>
+    <DragOverlay dropAnimation={null}>
+      {activeDrag && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl border-2 border-primary bg-card shadow-xl text-sm font-semibold pointer-events-none">
+          <GripVertical className="w-4 h-4 text-muted-foreground" />
+          {activeDrag.line.ingredientName}
+          <span className="text-xs font-normal text-muted-foreground">drop on a supplier</span>
+        </div>
+      )}
+    </DragOverlay>
+    </DndContext>
   );
 }
