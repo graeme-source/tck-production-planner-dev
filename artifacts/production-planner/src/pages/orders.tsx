@@ -168,6 +168,8 @@ type KanbanIngredient = {
   supplierId: number | null;
   supplierName: string | null;
   secondarySupplierId: number | null;
+  supplierPartNumber: string | null;
+  orderingUrl: string | null;
 };
 
 // ── Drag & drop: move a line to a different supplier's order ─────────
@@ -842,6 +844,7 @@ export default function Orders() {
         : kanban.kanbanUnit === "bottle" ? "bottles"
         : kanban.kanbanUnit === "pallet" ? "pallets"
         : (kanban.ingredientUnit ?? "kg");
+      const supplierId = effectiveSupplierIdFor(kanban)!;
       const newLine: EditableLine = {
         ingredientId: kanban.ingredientId,
         ingredientName: kanban.ingredientName ?? "Unknown",
@@ -851,17 +854,19 @@ export default function Orders() {
         surplusTarget: 0,
         packWeight,
         costPerPack: kanban.costPerPack ?? 0,
-        supplierPartNumber: null,
+        // The part number belongs to the primary supplier — only quote it
+        // when the kanban is actually being ordered from them.
+        supplierPartNumber: supplierId === kanban.supplierId ? (kanban.supplierPartNumber ?? null) : null,
         orderQty: qty,
         packsToOrder: qty,
         isKanban: true,
+        orderingUrl: kanban.orderingUrl ?? null,
         lastStockCheckAt: null,
         checked: false,
         editedPacks: qty,
         editedStock: 0,
         stockDirty: false,
       };
-      const supplierId = effectiveSupplierIdFor(kanban)!;
       const supplierName =
         allSuppliers.find(s => s.id === supplierId)?.name
         ?? (supplierId === kanban.supplierId ? kanban.supplierName : null)

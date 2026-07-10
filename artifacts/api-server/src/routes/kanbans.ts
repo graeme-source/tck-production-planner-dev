@@ -128,6 +128,10 @@ router.get("/ingredients", async (_req, res) => {
       supplierId: ingredientsTable.supplierId,
       supplierName: suppliersTable.name,
       secondarySupplierId: ingredientsTable.secondarySupplierId,
+      // Carried through to order lines built from the Add Kanbans dialog so
+      // they show the ordering link + part number like calc-generated lines.
+      supplierPartNumber: ingredientsTable.supplierPartNumber,
+      orderingUrl: ingredientsTable.orderingUrl,
     })
     .from(ingredientsTable)
     .leftJoin(suppliersTable, eq(ingredientsTable.supplierId, suppliersTable.id))
@@ -146,6 +150,8 @@ router.get("/ingredients", async (_req, res) => {
     supplierId: r.supplierId,
     supplierName: r.supplierName ?? null,
     secondarySupplierId: r.secondarySupplierId,
+    supplierPartNumber: r.supplierPartNumber ?? null,
+    orderingUrl: r.orderingUrl ?? null,
   })));
 });
 
