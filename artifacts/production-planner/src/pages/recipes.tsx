@@ -6,7 +6,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
 import { IngredientCombobox } from "@/components/ingredient-combobox";
-import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, QrCode, Filter, Scale, LayoutGrid, Table2, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
+import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, Check, QrCode, Filter, Scale, LayoutGrid, Table2, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -1647,6 +1647,7 @@ function RecipeIngredientDeckPanel({ id, active = true, refreshKey }: { id: numb
   const [data, setData] = useState<DeckData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState<null | "plain" | "label">(null);
 
   useEffect(() => {
     if (!active) return;
@@ -1663,6 +1664,20 @@ function RecipeIngredientDeckPanel({ id, active = true, refreshKey }: { id: numb
     if (!data) return;
     const plain = data.deckText.replace(/\*\*/g, "");
     navigator.clipboard.writeText(plain);
+    setCopied("plain");
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  // Label Live (the back-label printing software) renders <b> tags, so this
+  // variant keeps the allergen emphasis: the server marks every allergen as
+  // **X** in deckText, which goes onto the clipboard as <b>X</b>. Mirrors
+  // the same button on the Product Hub deck panel.
+  const copyForLabelLive = () => {
+    if (!data) return;
+    const tagged = data.deckText.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+    navigator.clipboard.writeText(tagged);
+    setCopied("label");
+    setTimeout(() => setCopied(null), 2000);
   };
 
   if (loading) return <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
@@ -1675,7 +1690,14 @@ function RecipeIngredientDeckPanel({ id, active = true, refreshKey }: { id: numb
         <p className="text-sm leading-relaxed" dangerouslySetInnerHTML={{
           __html: data.deckText.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
         }} />
-        <button type="button" onClick={copyDeck} className="mt-2 text-xs text-primary hover:underline">Copy to clipboard</button>
+        <div className="mt-2 flex items-center gap-4">
+          <button type="button" onClick={copyDeck} className="text-xs text-primary hover:underline flex items-center gap-1">
+            {copied === "plain" ? <><Check className="w-3 h-3" /> Copied!</> : <><Copy className="w-3 h-3" /> Copy to clipboard</>}
+          </button>
+          <button type="button" onClick={copyForLabelLive} className="text-xs text-primary hover:underline flex items-center gap-1" title="Copies the deck with <b> tags around allergens, ready to paste into Label Live">
+            {copied === "label" ? <><Check className="w-3 h-3" /> Copied!</> : <><Copy className="w-3 h-3" /> Copy for Label Live</>}
+          </button>
+        </div>
       </div>
 
       {data.allergens.length > 0 && (
