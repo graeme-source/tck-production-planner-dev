@@ -1228,7 +1228,16 @@ function HeaderInfo({ children }: { children: React.ReactNode }) {
 export function ProductionPlanSlide({ data, slide, isPreviewing }: { data: DashboardData; slide: MeetingSlide; isPreviewing: boolean }) {
   // In a live meeting the pack is today's; in a preview of tomorrow's
   // meeting it's tomorrow's. Matches the old Short-on-pack behaviour.
-  const effectivePlanDate = isPreviewing ? data.tomorrow : data.today;
+  //
+  // From 3pm London the day's pack has already gone out, so the useful
+  // question becomes "am I short for TOMORROW's pack" — the dispatch
+  // column flips forward for the rest of the day (dashboard Pack Report;
+  // the morning meeting itself always runs before 3pm so is unaffected).
+  const londonHour = Number(
+    new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", hour12: false }).format(new Date()),
+  );
+  const showTomorrowPack = !isPreviewing && londonHour >= 15;
+  const effectivePlanDate = isPreviewing || showTomorrowPack ? data.tomorrow : data.today;
 
   const { data: calc, isLoading } = useQuery<{ recipes: CalcRecipeRow[]; dispatchDates: string[]; deliveryDates: string[] }>({
     queryKey: ["production-plan-calc", effectivePlanDate],
@@ -1335,7 +1344,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing }: { data: Dashb
               <HeaderInfo>What's counted in the fridge right now — we pack from this before making anything new.</HeaderInfo>
             </span>
             <span className="text-center">
-              Going out in today's pack
+              Going out in {showTomorrowPack ? "tomorrow's" : "today's"} pack
               <HeaderInfo>Covers the pack going out: dispatch {dispatchLabel} · delivery {deliveryLabel}.</HeaderInfo>
             </span>
             <span className="text-center">The difference</span>

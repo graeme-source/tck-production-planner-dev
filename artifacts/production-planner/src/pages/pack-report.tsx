@@ -14,14 +14,24 @@ import {
 // vs what the next dispatch needs — red = short, amber = tight — without
 // having to start a meeting.
 
-const REPORT_SLIDE: MeetingSlide = {
-  id: 0,
-  kind: "short_on_pack",
-  title: "Today's Pack — Stock vs Dispatch",
-  orderPosition: 0,
-  contentMd: null,
-  configJson: null,
-};
+// After 3pm London the slide flips to tomorrow's dispatch (see
+// ProductionPlanSlide), so the page title follows suit.
+function isAfter3pmLondon(): boolean {
+  return Number(
+    new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", hour12: false }).format(new Date()),
+  ) >= 15;
+}
+
+function reportSlide(): MeetingSlide {
+  return {
+    id: 0,
+    kind: "short_on_pack",
+    title: `${isAfter3pmLondon() ? "Tomorrow's" : "Today's"} Pack — Stock vs Dispatch`,
+    orderPosition: 0,
+    contentMd: null,
+    configJson: null,
+  };
+}
 
 export default function PackReport() {
   const { data, isLoading, error } = useQuery({
@@ -61,7 +71,7 @@ export default function PackReport() {
         // here so recipe names fit an iPad in portrait without touching the
         // shared component.
         <div className="[&_.text-2xl]:text-lg [&_.text-4xl]:text-2xl">
-          <ProductionPlanSlide data={data} slide={REPORT_SLIDE} isPreviewing={false} />
+          <ProductionPlanSlide data={data} slide={reportSlide()} isPreviewing={false} />
         </div>
       )}
     </div>
