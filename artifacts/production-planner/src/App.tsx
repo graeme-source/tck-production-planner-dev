@@ -14,6 +14,7 @@ import { PullToRefresh } from "@/components/pull-to-refresh";
 import Dashboard from "@/pages/dashboard";
 import MeetingPage from "@/pages/meeting";
 import PackReport from "@/pages/pack-report";
+import LabelLiveTest from "@/pages/label-live-test";
 import Ingredients from "@/pages/ingredients";
 import Inventory from "@/pages/inventory";
 import ToolsPage from "@/pages/tools";
@@ -128,6 +129,7 @@ function Router() {
             <Switch>
               <Route path="/" component={Dashboard} />
               <Route path="/pack-report" component={PackReport} />
+              <Route path="/label-live-test" component={LabelLiveTest} />
               <Route path="/inventory" component={Inventory} />
               <Route path="/inventory/tools" component={ToolsPage} />
               <Route path="/inventory/tools/label-stock-check" component={LabelStockCheck} />
