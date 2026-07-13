@@ -672,6 +672,27 @@ router.delete("/:id", async (req, res) => {
 // ── Recipe → Shopify variant mapping CRUD ────────────────────────────────────
 // Multiple Shopify variants can map to the same recipe.
 
+// Which pinned Label LIVE design prints this recipe's ingredient-deck
+// label (designs differ per recipe — deck length and extra info vary).
+// Null clears the mapping. The design name must match the design pinned
+// to Label LIVE's Home screen on the printing PC.
+router.put("/:id/label-design", async (req, res) => {
+  const parsed = RecipeIdParams.safeParse({ id: req.params.id });
+  if (!parsed.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
+  const raw = (req.body as { designName?: unknown } | undefined)?.designName;
+  if (raw !== null && raw !== undefined && typeof raw !== "string") {
+    res.status(400).json({ error: "designName must be a string or null" });
+    return;
+  }
+  const designName = typeof raw === "string" && raw.trim() !== "" ? raw.trim() : null;
+  const [row] = await db.update(recipesTable)
+    .set({ labelLiveDesignName: designName })
+    .where(eq(recipesTable.id, parsed.data.id))
+    .returning({ id: recipesTable.id, labelLiveDesignName: recipesTable.labelLiveDesignName });
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  res.json(row);
+});
+
 router.get("/:id/shopify-mapping", async (req, res) => {
   const parsed = RecipeIdParams.safeParse({ id: req.params.id });
   if (!parsed.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }

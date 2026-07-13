@@ -23,6 +23,10 @@ export const recipesTable = pgTable("recipes", {
   tinSize: text("tin_size"),
   maxBatchesPerTin: integer("max_batches_per_tin"),
   sopUrl: text("sop_url"),
+  // Name of the pinned Label LIVE design used when printing this recipe's
+  // ingredient-deck label via the labellive:// URL scheme. Null = no label
+  // printing mapped yet.
+  labelLiveDesignName: text("label_live_design_name"),
   fillWeightGrams: numeric("fill_weight_grams", { precision: 10, scale: 2 }),
   baseType: text("base_type"),
   baseWeightGrams: numeric("base_weight_grams", { precision: 10, scale: 2 }),

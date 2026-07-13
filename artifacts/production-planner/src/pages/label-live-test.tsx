@@ -49,17 +49,40 @@ function buildPrintUrl(designName: string, vars: Record<string, string>): string
   return `labellive://print?design=${encodeURIComponent(designName)}&variables=${encodeURIComponent(pairs)}&printer=Preview&window=show&copies=1`;
 }
 
-const MARGHERITA_RECIPE_ID = 1;
-
 export default function LabelLiveTest() {
   const [designName, setDesignName] = useState(() => localStorage.getItem("labellive_test_design") ?? "tck-deck-test");
   useEffect(() => { localStorage.setItem("labellive_test_design", designName); }, [designName]);
   const [copied, setCopied] = useState<string | null>(null);
+  const [recipeId, setRecipeId] = useState<number>(1); // Margherita
+
+  const { data: recipes } = useQuery<Array<{ id: number; name: string }>>({
+    queryKey: ["recipes-for-label-test"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/recipes`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load recipes");
+      return res.json();
+    },
+  });
+
+  // Recipe detail carries the per-recipe Label LIVE design mapping (set in
+  // the recipe editor). When present it auto-fills the design box below.
+  const { data: recipeDetail } = useQuery<{ labelLiveDesignName?: string | null }>({
+    queryKey: ["recipe-detail-for-label-test", recipeId],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/recipes/${recipeId}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load recipe");
+      return res.json();
+    },
+  });
+  const mappedDesign = recipeDetail?.labelLiveDesignName ?? null;
+  useEffect(() => {
+    if (mappedDesign) setDesignName(mappedDesign);
+  }, [mappedDesign]);
 
   const { data: deck, isLoading, error } = useQuery<DeckResponse>({
-    queryKey: ["ingredient-deck", MARGHERITA_RECIPE_ID],
+    queryKey: ["ingredient-deck", recipeId],
     queryFn: async () => {
-      const res = await fetch(`${BASE}/api/recipes/${MARGHERITA_RECIPE_ID}/ingredient-deck`, { credentials: "include" });
+      const res = await fetch(`${BASE}/api/recipes/${recipeId}/ingredient-deck`, { credentials: "include" });
       const d = await res.json();
       if (d.error) throw new Error(d.error);
       return d;
@@ -96,13 +119,28 @@ export default function LabelLiveTest() {
       />
 
       <div className="rounded-xl border border-border bg-card p-4 space-y-2">
-        <label className="text-sm font-semibold">Label LIVE design name</label>
+        <label className="text-sm font-semibold">Recipe</label>
+        <select
+          value={recipeId}
+          onChange={e => setRecipeId(Number(e.target.value))}
+          className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background"
+        >
+          {(recipes ?? [{ id: 1, name: "Margherita" }]).map(r => (
+            <option key={r.id} value={r.id}>{r.name}</option>
+          ))}
+        </select>
+        <label className="text-sm font-semibold block pt-1">Label LIVE design name</label>
         <input
           value={designName}
           onChange={e => setDesignName(e.target.value)}
           className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background font-mono"
           placeholder="tck-deck-test"
         />
+        {mappedDesign ? (
+          <p className="text-xs text-emerald-600 dark:text-emerald-400">Auto-filled from this recipe's saved mapping ({mappedDesign}). You can override it for this test.</p>
+        ) : (
+          <p className="text-xs text-amber-600 dark:text-amber-400">This recipe has no saved Label LIVE design yet — set one in Edit Recipe → Ingredient Deck once the test passes.</p>
+        )}
         <p className="text-xs text-muted-foreground leading-relaxed">
           One-time setup in Label LIVE on this PC: create a design → Data tab → add variables
           <code className="mx-1 px-1 bg-secondary rounded">DECK</code> and
@@ -138,7 +176,7 @@ export default function LabelLiveTest() {
 
       {/* Test 2 — live Margherita deck */}
       <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-        <h3 className="font-semibold flex items-center gap-2"><Tag className="w-4 h-4 text-primary" /> Test 2 — Live Margherita deck</h3>
+        <h3 className="font-semibold flex items-center gap-2"><Tag className="w-4 h-4 text-primary" /> Test 2 — Live deck for the selected recipe</h3>
         {isLoading && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /> Loading live deck…</div>}
         {error != null && <p className="text-sm text-destructive">Failed to load deck: {(error as Error).message}</p>}
         {deck && (
@@ -166,7 +204,7 @@ export default function LabelLiveTest() {
                 href={margheritaUrl ?? "#"}
                 className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:bg-primary/90"
               >
-                <Printer className="w-4 h-4" /> Send Margherita deck to Label LIVE
+                <Printer className="w-4 h-4" /> Send this deck to Label LIVE
               </a>
               <button
                 onClick={() => margheritaUrl && copyUrl(margheritaUrl, "marg")}
