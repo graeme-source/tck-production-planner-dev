@@ -233,6 +233,15 @@ function useByDateStatus(dateStr: string): "ok" | "warning" | "expired" {
   return "ok";
 }
 
+
+// Stable identifier for a stock row. Rows injected by the server for
+// zero-stock core recipes have no stock-entry ids yet — key those by the
+// negative recipe/ingredient id so React keys and bulk-edit values can't
+// collide with real (positive) stock-entry ids.
+function rowKeyOf(item: StockItem): number {
+  return item.stockEntryIds[0] ?? -(item.recipeId ?? item.ingredientId ?? 0);
+}
+
 function ZoneIcon({ zone, className }: { zone: string; className?: string }) {
   if (zone === "freezer") return <Snowflake className={className} />;
   if (zone === "fridge") return <Thermometer className={className} />;
@@ -345,11 +354,30 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
     try {
       const ops: Promise<void>[] = [];
       for (const item of location.items) {
-        const primaryId = item.stockEntryIds[0];
+        const primaryId = rowKeyOf(item);
         const raw = bulkValues[primaryId];
         const parsed = raw !== undefined ? parseFloat(raw) : NaN;
         const qtyChanged = !isNaN(parsed) && parsed >= 0 && parsed !== item.qty;
         const hasDuplicates = item.stockEntryIds.length > 1;
+
+        // Zero-stock core recipes injected by the server have no stock entry
+        // yet — any entered value (including an explicit 0, which refreshes
+        // the stock-check timestamp) creates a fresh snapshot entry.
+        if (item.stockEntryIds.length === 0) {
+          if (raw !== undefined && !isNaN(parsed) && parsed >= 0) {
+            ops.push(
+              createStockEntry({
+                recipeId: item.recipeId,
+                ingredientId: item.ingredientId,
+                itemType: item.type,
+                quantity: parsed,
+                unit: item.unit,
+                location: location.key,
+              })
+            );
+          }
+          continue;
+        }
 
         if (qtyChanged) {
           ops.push(
@@ -452,7 +480,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
   });
 
   const startEdit = (item: StockItem) => {
-    setEditingEntryId(item.stockEntryIds[0]);
+    setEditingEntryId(rowKeyOf(item));
     setEditQty(String(item.qty));
     setEditUnit(item.unit);
     setDeletingEntryId(null);
@@ -463,6 +491,19 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
   const saveEdit = (item: StockItem) => {
     const qty = parseFloat(editQty);
     if (isNaN(qty) || qty < 0) { setStockError("Please enter a valid quantity"); return; }
+    // Injected zero-stock core recipe with no entry yet — create a snapshot.
+    if (item.stockEntryIds.length === 0) {
+      createMutation.mutate({
+        recipeId: item.recipeId,
+        ingredientId: item.ingredientId,
+        itemType: item.type,
+        quantity: qty,
+        unit: editUnit.trim() || item.unit,
+        location: location.key,
+      });
+      setEditingEntryId(null);
+      return;
+    }
     for (const extraId of item.stockEntryIds.slice(1)) {
       deleteMutation.mutate(extraId);
     }
@@ -509,7 +550,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                 {Math.round(
                   bulkEdit
                     ? location.items.reduce((s, i) => {
-                        const v = parseFloat(bulkValues[i.stockEntryIds[0]] ?? String(i.qty));
+                        const v = parseFloat(bulkValues[rowKeyOf(i)] ?? String(i.qty));
                         return s + (isNaN(v) ? i.qty : v);
                       }, 0)
                     : totalQty
@@ -652,7 +693,8 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
             {location.items.map((item, idx) => {
               const barWidth = Math.max(3, (item.qty / maxQty) * 100);
               const pct = totalQty > 0 ? Math.round((item.qty / totalQty) * 100) : 0;
-              const primaryId = item.stockEntryIds[0];
+              const primaryId = rowKeyOf(item);
+              const hasEntries = item.stockEntryIds.length > 0;
               const isEditing = editingEntryId === primaryId;
               const isDeleting = deletingEntryId === primaryId;
 
@@ -818,7 +860,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                           <Pencil className="w-3.5 h-3.5" />
                         </button>
                         <button
-                          onClick={() => { setDeletingEntryId(primaryId); setEditingEntryId(null); setAddingStock(false); setStockError(null); }}
+                          onClick={() => { if (!hasEntries) return; setDeletingEntryId(primaryId); setEditingEntryId(null); setAddingStock(false); setStockError(null); }}
                           className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
                           title="Remove stock entry"
                         >

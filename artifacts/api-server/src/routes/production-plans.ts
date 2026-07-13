@@ -707,8 +707,15 @@ router.get("/calculate", async (req, res) => {
     // sitting on the wonky rack waiting to move. Without the wonky / freezer
     // subtractions, recipes with wonkies were stuck reading "still N to wrap"
     // forever — those packs were never going to land in the fridge.
+    // fridgeEightPackQty counts BAGS (8 portions each), while targetPacks
+    // and every other term here are 2-pack units — so each bag must be
+    // converted to pack-equivalents (8 portions / packSize). Counting bags
+    // 1-for-1 understated what was already wrapped by 3 packs per bag, which
+    // inflated remaining-wrapping and therefore the predicted end-of-day
+    // factory number on heavy bagging days (the 8-pack wholesale problem).
+    const bagPackEquiv = (row.fridgeEightPackQty ?? 0) * (8 / packSize);
     const accountedFor = (row.fridgeQty ?? 0)
-      + (row.fridgeEightPackQty ?? 0)
+      + bagPackEquiv
       + (row.freezerQty ?? 0)
       + (row.wonlyCount ?? 0);
     const remaining = row.wrappingComplete

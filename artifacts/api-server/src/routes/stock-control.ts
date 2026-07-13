@@ -20,7 +20,7 @@ interface AggItem {
 }
 
 router.get("/", async (_req, res) => {
-  const rows = await db
+  const allRows = await db
     .select({
       id: stockEntriesTable.id,
       location: stockEntriesTable.location,
@@ -30,9 +30,17 @@ router.get("/", async (_req, res) => {
       quantity: stockEntriesTable.quantity,
       unit: stockEntriesTable.unit,
       checkedAt: stockEntriesTable.checkedAt,
+      packSize: stockEntriesTable.packSize,
     })
     .from(stockEntriesTable)
     .orderBy(desc(stockEntriesTable.checkedAt));
+
+  // 8-pack bag rows are NOT stock — bags are made to order and leave the
+  // building the same day (wrapping still logs them, nothing decrements
+  // them). Without this filter a freshly-wrapped bag row is the NEWEST
+  // entry for its recipe and the latest-row snapshot below would display
+  // the BAG count as that recipe's factory number.
+  const rows = allRows.filter(r => !(r.itemType === "recipe" && Number(r.packSize) === 8));
 
   // Use latest entry per item+location as the current stock level (snapshot model).
   // Each stock entry represents the cumulative quantity at that point in time.
@@ -202,6 +210,35 @@ router.get("/", async (_req, res) => {
       };
       aggMap.set(aggKey, item);
       locEntry.items.push(item);
+    }
+  }
+
+  // Core-menu recipes must ALWAYS appear in the production-fridge panel,
+  // even at zero stock, so the team can record a count (incl. an explicit 0)
+  // for product that gets wrapped later in the day. Previously a recipe
+  // whose latest reading hit 0 vanished from Update Factory Number and the
+  // subsequent wrapping had nowhere to be recorded.
+  const fridgeLoc = locationMap.get("production_fridge");
+  if (fridgeLoc) {
+    const coreRecipes = await db
+      .select({ id: recipesTable.id, name: recipesTable.name, color: recipesTable.color })
+      .from(recipesTable)
+      .where(eq(recipesTable.isCoreMenu, true));
+    const present = new Set(fridgeLoc.items.filter(i => i.type === "recipe").map(i => i.recipeId));
+    for (const r of coreRecipes) {
+      if (present.has(r.id)) continue;
+      fridgeLoc.items.push({
+        stockEntryIds: [],
+        id: r.id,
+        name: r.name,
+        color: r.color ?? null,
+        qty: 0,
+        unit: "packs",
+        type: "recipe",
+        recipeId: r.id,
+        ingredientId: null,
+        orderPosition: recipeOrder.get(r.id) ?? 9999,
+      });
     }
   }
 
