@@ -677,6 +677,7 @@ router.get("/calculate", async (req, res) => {
       batchesTarget: productionPlanItemsTable.batchesTarget,
       fridgeQty: productionPlanItemsTable.fridgeQty,
       fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
+      eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
       freezerQty: productionPlanItemsTable.freezerQty,
       wonlyCount: productionPlanItemsTable.wonlyCount,
       wonlyTotal: productionPlanItemsTable.wonlyTotal,
@@ -707,20 +708,30 @@ router.get("/calculate", async (req, res) => {
     // sitting on the wonky rack waiting to move. Without the wonky / freezer
     // subtractions, recipes with wonkies were stuck reading "still N to wrap"
     // forever — those packs were never going to land in the fridge.
-    // fridgeEightPackQty counts BAGS (8 portions each), while targetPacks
-    // and every other term here are 2-pack units — so each bag must be
-    // converted to pack-equivalents (8 portions / packSize). Counting bags
-    // 1-for-1 understated what was already wrapped by 3 packs per bag, which
-    // inflated remaining-wrapping and therefore the predicted end-of-day
-    // factory number on heavy bagging days (the 8-pack wholesale problem).
-    const bagPackEquiv = (row.fridgeEightPackQty ?? 0) * (8 / packSize);
+    // The predicted end-of-day factory number counts 2-PACKS ONLY, so every
+    // 8-pack bag — planned or already wrapped — must come off the remaining
+    // wrapping. Bag counters are in BAGS (8 portions each) while targetPacks
+    // and the other terms are 2-pack units, hence the (8 / packSize)
+    // conversion (a bag = 4 two-packs for calzones).
+    //
+    //   eightPackBagCount   = bags PLANNED for this item (set on the plan
+    //                         before production — the operator's allocation)
+    //   fridgeEightPackQty  = bags actually wrapped so far
+    //
+    // Bags still to come are excluded up front so the prediction is right
+    // from the moment the plan carries a bag allocation, not only after the
+    // bagging physically happens (bagging often runs after the next day's
+    // plan is created). If the team bags MORE than planned, actuals win.
+    const bagEquiv = 8 / packSize;
+    const bagsWrapped = row.fridgeEightPackQty ?? 0;
+    const bagsStillToCome = Math.max(0, (row.eightPackBagCount ?? 0) - bagsWrapped);
     const accountedFor = (row.fridgeQty ?? 0)
-      + bagPackEquiv
+      + bagsWrapped * bagEquiv
       + (row.freezerQty ?? 0)
       + (row.wonlyCount ?? 0);
     const remaining = row.wrappingComplete
       ? 0
-      : Math.max(0, targetPacks - accountedFor);
+      : Math.max(0, targetPacks - accountedFor - bagsStillToCome * bagEquiv);
     remainingWrappingPacksToday[row.recipeId] = (remainingWrappingPacksToday[row.recipeId] ?? 0) + remaining;
   }
 
