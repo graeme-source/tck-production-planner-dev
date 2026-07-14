@@ -693,6 +693,35 @@ router.get("/calculate", async (req, res) => {
       inArray(productionPlansTable.status, ["active", "prep", "building"]),
     ));
 
+  // ─── 8-pack bags planned on the plan being created/edited ─────────
+  // Bags are made FROM the same batches as the 2-packs (36 batches = 360
+  // portions; 36 bags = 288 of those portions), so every bag allocated to
+  // THIS plan removes 8 portions' worth of 2-pack stock from what the day
+  // actually yields. Without this the projection counts the whole batch
+  // output as 2-packs and overstates availability by up to 4 packs per bag.
+  //
+  // Distinct from the todayPlanItems query above, which feeds the
+  // end-of-TODAY prediction (estimatedFactoryNumber). This is the next term
+  // along: what the plan's OWN production will leave behind.
+  //
+  // Any status — the allocation is set on the plan before production, and a
+  // plan that doesn't exist yet (a genuinely new plan) simply yields no rows,
+  // so bags default to 0 and behaviour is unchanged for a fresh plan.
+  const targetPlanItems = await db
+    .select({
+      recipeId: productionPlanItemsTable.recipeId,
+      eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
+    })
+    .from(productionPlanItemsTable)
+    .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
+    .where(eq(productionPlansTable.planDate, planDate));
+
+  const plannedBagsByRecipe: Record<number, number> = {};
+  for (const row of targetPlanItems) {
+    if (row.recipeId == null) continue;
+    plannedBagsByRecipe[row.recipeId] = (plannedBagsByRecipe[row.recipeId] ?? 0) + (row.eightPackBagCount ?? 0);
+  }
+
   const remainingWrappingPacksToday: Record<number, number> = {};
   for (const row of todayPlanItems) {
     if (row.recipeId == null) continue;
@@ -1065,6 +1094,12 @@ router.get("/calculate", async (req, res) => {
     const packSize = Number(r.packSize) || 1;
     const packsPerBatch = portionsPerBatch / packSize;
 
+    // A bag holds 8 portions, so it costs (8 / packSize) 2-packs of stock —
+    // 4 for calzones. Derived, never hard-coded, so a product with a
+    // different packSize stays correct.
+    const plannedBags = plannedBagsByRecipe[recipeId] ?? 0;
+    const bagPackEquivalents = plannedBags * (8 / packSize);
+
     const fridgeStock = latestStock[recipeId] ?? fridgeStockFromPlans[recipeId] ?? 0;
 
     const recipeDptPercent = totalDptPacksSold > 0 ? ((r.packsSold ?? 0) / totalDptPacksSold) * 100 : 0;
@@ -1151,6 +1186,12 @@ router.get("/calculate", async (req, res) => {
       remainingFulfilmentPacksToday: Math.round(fulRemain),
       prevProduction,
       estimatedFactoryNumber: Math.round(estimatedFactoryNumber),
+      // 8-pack bags allocated to THIS plan, and the 2-pack-equivalent stock
+      // they consume (a bag is 8 portions; packSize 2 → 4 packs per bag).
+      // The client needs both: the raw count to show "− N to bags", and the
+      // equivalent so its live recompute matches this endpoint exactly.
+      eightPackBagCount: plannedBags,
+      bagPackEquivalents: Math.round(bagPackEquivalents),
       dispatch1Qty,
       dispatch2Qty,
       dispatch3Qty,
@@ -1200,7 +1241,15 @@ router.get("/calculate", async (req, res) => {
     const tinCount = maxBatchesPerTin && suggestedBatches > 0
       ? Math.ceil(suggestedBatches / maxBatchesPerTin) : null;
 
-    const nextFactoryNumber = r.estimatedFactoryNumber + (suggestedBatches * r.packsPerBatch) - (r.dispatch2Qty + r.dispatch3Qty);
+    // Packs the plan yields, MINUS the portion of that output going out as
+    // 8-pack wholesale bags, minus the dispatches still to leave. Counting
+    // the bagged output as 2-pack stock overstated availability by 4 packs
+    // per bag (144 packs on a 36-bag Margherita day).
+    const nextFactoryNumber = Math.max(0,
+      r.estimatedFactoryNumber
+      + (suggestedBatches * r.packsPerBatch)
+      - r.bagPackEquivalents
+      - (r.dispatch2Qty + r.dispatch3Qty));
 
     return {
       ...r,

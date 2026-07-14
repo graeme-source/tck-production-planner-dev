@@ -149,6 +149,11 @@ interface PlanItem {
   manualSalesPacks?: number;
   portionsPerBatch: number;
   packsPerBatch: number;
+  packSize: number;
+  // 8-pack bags allocated to THIS plan. The bags are made from the same
+  // batches as the 2-packs, so their portions never reach 2-pack stock and
+  // must come off the projected factory number.
+  eightPackBagCount: number;
   sopUrl: string | null;
   isFromDpt: boolean;
   fridgeStock: number;
@@ -172,12 +177,30 @@ interface PlanItem {
   totalSpecialCount: number;
 }
 
+/** 2-pack stock consumed by this item's 8-pack bags. A bag is 8 portions, so
+ *  it costs (8 / packSize) packs — 4 for a calzone. Derived from packSize
+ *  rather than hard-coded, and mirrors `bagPackEquivalents` on the server.
+ *  Both formulas must agree: the backend value is what loads, this one is
+ *  what recomputes live as the operator edits the batch target. */
+function bagPackEquivalents(item: PlanItem): number {
+  const packSize = item.packSize || 2;
+  return (item.eightPackBagCount ?? 0) * (8 / packSize);
+}
+
+/** Packs this item leaves in the fridge: what it makes, less what goes out as
+ *  wholesale bags, less the dispatches still to leave. */
 function computeNextFactory(item: PlanItem): number {
-  return item.estimatedFactoryNumber + (item.batchesTarget * item.packsPerBatch) - (item.dispatch2Qty + item.dispatch3Qty);
+  return Math.max(0,
+    item.estimatedFactoryNumber
+    + (item.batchesTarget * item.packsPerBatch)
+    - bagPackEquivalents(item)
+    - (item.dispatch2Qty + item.dispatch3Qty));
 }
 
 function computeStockWarning(item: PlanItem): "ok" | "low" | "short" {
-  const afterProduction = item.estimatedFactoryNumber + (item.batchesTarget * item.packsPerBatch);
+  const afterProduction = item.estimatedFactoryNumber
+    + (item.batchesTarget * item.packsPerBatch)
+    - bagPackEquivalents(item);
   const surplus = afterProduction - (item.dispatch2Qty + item.dispatch3Qty);
   if (surplus < 0) return "short";
   if (surplus <= 10) return "low";
@@ -398,6 +421,25 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
           style={item.recipeColor ? { color: item.recipeColor, borderColor: item.recipeColor } : undefined}
           className="w-16 px-1.5 py-1 bg-background border-2 rounded-lg text-base font-bold text-center focus-ring disabled:opacity-40 tabular-nums"
         />
+        {/* Bags are made from these same batches, so their portions never
+            become 2-pack stock. Spell the deduction out — otherwise the net
+            figure looks like a bug rather than the truth (36 bags swallow
+            144 of Margherita's 180 packs). */}
+        {(() => {
+          const bagEquiv = bagPackEquivalents(item);
+          if (bagEquiv <= 0 || !item.included) return null;
+          const gross = item.batchesTarget * item.packsPerBatch;
+          const net = Math.max(0, gross - bagEquiv);
+          return (
+            <div
+              className="text-[9px] leading-tight mt-0.5 text-indigo-600 dark:text-indigo-400 tabular-nums"
+              title={`${gross} packs made, less ${bagEquiv} pack-equivalents going out as ${item.eightPackBagCount} × 8-pack bag(s) = ${net} 2-packs into the fridge`}
+            >
+              {gross} − {bagEquiv} to bags
+              <div className="font-semibold">= {net} packs</div>
+            </div>
+          );
+        })()}
       </td>
       <td className="py-2 px-1.5 text-right">
         <button
@@ -699,6 +741,10 @@ interface CalcRecipe {
   remainingFulfilmentPacksToday?: number;
   prevProduction: number;
   estimatedFactoryNumber: number;
+  // 8-pack bags planned on the plan being created/edited, and the 2-pack
+  // stock they consume. Both come from /calculate.
+  eightPackBagCount?: number;
+  bagPackEquivalents?: number;
   dispatch1Qty: number;
   dispatch2Qty: number;
   dispatch3Qty: number;
@@ -1209,6 +1255,8 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
         salesPercent: r.salesPercent,
         portionsPerBatch: r.portionsPerBatch,
         packsPerBatch: r.packsPerBatch,
+        packSize: r.packSize,
+        eightPackBagCount: r.eightPackBagCount ?? 0,
         sopUrl: r.sopUrl,
         isFromDpt: true,
         // Seed with predicted end-of-today fridge stock so the DPT
@@ -1479,6 +1527,8 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       salesPercent: 0,
       portionsPerBatch,
       packsPerBatch: portionsPerBatch / packSize,
+      packSize,
+      eightPackBagCount: 0,
       sopUrl: recipe.sopUrl ?? null,
       isFromDpt: false,
       fridgeStock: 0,
@@ -2135,6 +2185,11 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       salesPercent: 0,
       portionsPerBatch: it.portionsPerBatch ?? 10,
       packsPerBatch: (it.portionsPerBatch ?? 10),
+      packSize: 2,
+      // The generated ProductionPlanItem type predates this column, though the
+      // API does return it. Narrowed rather than left untyped; the /calculate
+      // merge below overwrites it with the authoritative value anyway.
+      eightPackBagCount: (it as { eightPackBagCount?: number }).eightPackBagCount ?? 0,
       sopUrl: it.sopUrl ?? null,
       isFromDpt: false,
       fridgeStock: 0,
@@ -2187,6 +2242,10 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
         salesPercent: calc.salesPercent,
         portionsPerBatch: calc.portionsPerBatch,
         packsPerBatch: calc.packsPerBatch,
+        packSize: calc.packSize,
+        // Bag allocation comes from /calculate (which reads the plan being
+        // edited), so the projection deducts it on a saved plan too.
+        eightPackBagCount: calc.eightPackBagCount ?? it.eightPackBagCount ?? 0,
         maxBatchesPerTin: calc.maxBatchesPerTin ?? it.maxBatchesPerTin,
         tinSize: calc.tinSize ?? it.tinSize,
         sopUrl: calc.sopUrl ?? it.sopUrl,
