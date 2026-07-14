@@ -58,3 +58,11 @@ Thumbs.db
 # Imported SOP archive (PDFs + page renders + extracted photos) — kept
 # locally for reference, data lives in the DB. Do not commit (hundreds of MB).
 attached_assets/sop-archive/
+
+# Local production database dumps (pg_dump output). Hundreds of MB and they
+# contain live customer data — never commit these.
+backups-local/
+
+# Work-in-progress spec-sheet drafts and the data-gap worksheet. Deliverables
+# for review, not source; the data itself lives in the DB.
+spec-sheets-wip/
