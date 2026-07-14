@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
-import { db, recipesTable, recipeIngredientsTable, recipeSubRecipesTable, recipeMeatMarinadesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, appSettingsTable, kanbanItemsTable, productionPlansTable, productionPlanItemsTable } from "@workspace/db";
+import { db, recipesTable, recipeIngredientsTable, recipeSubRecipesTable, recipeMeatMarinadesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, appSettingsTable, kanbanItemsTable, productionPlansTable, productionPlanItemsTable, productSpecificationsTable, companyProfileTable, skuBarcodesTable } from "@workspace/db";
 import { eq, inArray, ne, and, gte } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
@@ -20,6 +20,9 @@ function requireAdmin(req: Request, res: Response, next: NextFunction) {
 }
 
 const RecipeIdParams = z.object({ id: z.coerce.number().int().positive() });
+
+// One microbiological criterion row as stored in product_specifications.micro_criteria (jsonb).
+type ProductSpecMicro = { organism?: string; target?: string; maximum?: string; lastTestDate?: string; lastTestLab?: string; lastTestResult?: string };
 const ShopifyMappingBody = z.object({
   shopifyVariantId: z.string().min(1, "shopifyVariantId is required"),
   shopifyProductTitle: z.string().nullish(),
@@ -852,6 +855,7 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
   servings: number;
   packSize: number;
   missingNutritionals: string[];
+  missingNutritionalDetail: Array<{ ingredientId: number; name: string; missing: string[] }>;
   missingDeclarations: string[];
 }> {
   const [recipe] = await db.select().from(recipesTable).where(eq(recipesTable.id, recipeId));
@@ -910,12 +914,51 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
     .from(recipeSubRecipesTable)
     .where(eq(recipeSubRecipesTable.recipeId, recipeId));
 
-  for (const sr of subRecipeLinks) {
-    const srQuantityG = Number(sr.quantity);
-    const [subRecipe] = await db.select().from(subRecipesTable).where(eq(subRecipesTable.id, sr.subRecipeId));
-    if (!subRecipe) continue;
+  // Add one ingredient's contribution into `items`, merging by ingredient so an
+  // ingredient reached via several paths is counted once with summed weight.
+  const addItem = (
+    row: {
+      ingredientId: number; name: string; labelDeclaration: string | null;
+      allergens: unknown; energyKj: unknown; energyKcal: unknown; fat: unknown;
+      saturates: unknown; carbohydrate: unknown; sugars: unknown; protein: unknown;
+      fibre: unknown; salt: unknown;
+    },
+    quantityG: number,
+  ) => {
+    const num = (v: unknown) => (v != null ? Number(v) : null);
+    const existing = items.find(it => it.ingredientId === row.ingredientId);
+    if (existing) {
+      existing.quantityG += quantityG;
+      return;
+    }
+    items.push({
+      ingredientId: row.ingredientId,
+      name: row.name,
+      quantityG,
+      labelDeclaration: row.labelDeclaration,
+      allergens: (row.allergens as string[] | null) ?? [],
+      nutrients: {
+        energyKj: num(row.energyKj), energyKcal: num(row.energyKcal), fat: num(row.fat),
+        saturates: num(row.saturates), carbohydrate: num(row.carbohydrate), sugars: num(row.sugars),
+        fibre: num(row.fibre), protein: num(row.protein), salt: num(row.salt),
+      },
+    });
+  };
+
+  // Walk a sub-recipe to ANY depth, scaling each level's quantities by how much
+  // of that sub-recipe is actually used. Previously this only descended one
+  // level, so ingredients inside a nested sub-recipe (e.g. Tomato Base ->
+  // Normal Base Dry Mix) were absent from the totals entirely — understating
+  // nutrition and making them impossible to report as missing.
+  // `ancestorPath` guards against a cyclic definition (A -> B -> A).
+  const walkSubRecipe = async (subRecipeId: number, usedG: number, ancestorPath: number[]): Promise<void> => {
+    if (ancestorPath.includes(subRecipeId)) return; // cycle — stop descending
+    const [subRecipe] = await db.select().from(subRecipesTable).where(eq(subRecipesTable.id, subRecipeId));
+    if (!subRecipe) return;
 
     const srYield = Number(subRecipe.yield) || 1;
+    const scaleFactor = usedG / srYield;
+    const path = [...ancestorPath, subRecipeId];
 
     const srIngs = await db
       .select({
@@ -936,50 +979,56 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
       })
       .from(subRecipeIngredientsTable)
       .innerJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
-      .where(eq(subRecipeIngredientsTable.subRecipeId, sr.subRecipeId));
+      .where(eq(subRecipeIngredientsTable.subRecipeId, subRecipeId));
 
-    const scaleFactor = srQuantityG / srYield;
+    for (const si of srIngs) addItem(si, Number(si.quantity) * scaleFactor);
 
-    for (const si of srIngs) {
-      const existingIdx = items.findIndex(it => it.ingredientId === si.ingredientId);
-      const scaledQty = Number(si.quantity) * scaleFactor;
+    // Descend into nested sub-recipes, scaling their used weight the same way.
+    const nested = await db
+      .select({
+        componentSubRecipeId: subRecipeSubRecipesTable.componentSubRecipeId,
+        quantity: subRecipeSubRecipesTable.quantity,
+      })
+      .from(subRecipeSubRecipesTable)
+      .where(eq(subRecipeSubRecipesTable.subRecipeId, subRecipeId));
 
-      if (existingIdx >= 0) {
-        items[existingIdx].quantityG += scaledQty;
-      } else {
-        items.push({
-          ingredientId: si.ingredientId,
-          name: si.name,
-          quantityG: scaledQty,
-          labelDeclaration: si.labelDeclaration,
-          allergens: (si.allergens as string[] | null) ?? [],
-          nutrients: {
-            energyKj: si.energyKj != null ? Number(si.energyKj) : null,
-            energyKcal: si.energyKcal != null ? Number(si.energyKcal) : null,
-            fat: si.fat != null ? Number(si.fat) : null,
-            saturates: si.saturates != null ? Number(si.saturates) : null,
-            carbohydrate: si.carbohydrate != null ? Number(si.carbohydrate) : null,
-            sugars: si.sugars != null ? Number(si.sugars) : null,
-            fibre: si.fibre != null ? Number(si.fibre) : null,
-            protein: si.protein != null ? Number(si.protein) : null,
-            salt: si.salt != null ? Number(si.salt) : null,
-          },
-        });
-      }
+    for (const nl of nested) {
+      await walkSubRecipe(nl.componentSubRecipeId, Number(nl.quantity) * scaleFactor, path);
     }
+  };
+
+  for (const sr of subRecipeLinks) {
+    await walkSubRecipe(sr.subRecipeId, Number(sr.quantity), []);
   }
 
   const totalWeightG = items.reduce((sum, i) => sum + i.quantityG, 0);
 
+  // An ingredient counts as "missing nutritionals" if ANY per-100g value is
+  // absent, not only when every one is. A partially-filled ingredient still
+  // silently understates whichever nutrients it lacks, so the panel must not
+  // be treated as complete until every value on every ingredient is present.
   const missingNutritionals = items
-    .filter(i => NUTRIENT_KEYS.every(k => i.nutrients[k] === null))
+    .filter(i => NUTRIENT_KEYS.some(k => i.nutrients[k] === null))
     .map(i => i.name);
+
+  // Which specific nutrients are absent, per ingredient — so the UI can say
+  // "Mozzarella: fat, saturates" rather than just naming the ingredient.
+  const missingNutritionalDetail = items
+    .filter(i => NUTRIENT_KEYS.some(k => i.nutrients[k] === null))
+    .map(i => ({
+      ingredientId: i.ingredientId,
+      name: i.name,
+      missing: NUTRIENT_KEYS.filter(k => i.nutrients[k] === null),
+    }));
 
   const missingDeclarations = items
     .filter(i => !i.labelDeclaration)
     .map(i => i.name);
 
-  return { items, totalWeightG, cookingLossPercent, portionsPerBatch, servings, packSize, missingNutritionals, missingDeclarations };
+  return {
+    items, totalWeightG, cookingLossPercent, portionsPerBatch, servings, packSize,
+    missingNutritionals, missingNutritionalDetail, missingDeclarations,
+  };
 }
 
 router.get("/:id/nutritionals", async (req, res) => {
@@ -987,7 +1036,7 @@ router.get("/:id/nutritionals", async (req, res) => {
   if (!parsed.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
 
   try {
-    const { items, totalWeightG, cookingLossPercent, portionsPerBatch, servings, packSize, missingNutritionals, missingDeclarations } =
+    const { items, totalWeightG, cookingLossPercent, portionsPerBatch, servings, packSize, missingNutritionals, missingNutritionalDetail, missingDeclarations } =
       await gatherRecipeIngredients(parsed.data.id);
 
     const cookedWeightG = totalWeightG * (1 - cookingLossPercent / 100);
@@ -1042,6 +1091,7 @@ router.get("/:id/nutritionals", async (req, res) => {
       completeness: {
         totalIngredients: items.length,
         missingNutritionals,
+        missingNutritionalDetail,
         missingDeclarations,
         isComplete: missingNutritionals.length === 0 && missingDeclarations.length === 0,
       },
@@ -1052,6 +1102,42 @@ router.get("/:id/nutritionals", async (req, res) => {
     res.status(500).json({ error: msg });
   }
 });
+
+/** True when a declaration lists several components but never names the compound
+ *  ingredient they belong to — e.g. "Pork, Salt, Paprika" instead of
+ *  "Chorizo (Pork, Salt, Paprika)". A correctly wrapped declaration has no
+ *  top-level comma before its first bracket, and that bracket closes at the very
+ *  end, so the whole string is one "Name (...)" group. Single-component
+ *  declarations ("Salt", "Basil") need no wrapper and are never flagged. */
+export function declarationNeedsWrapper(declaration: string): boolean {
+  const s = declaration.trim().replace(/\.+$/, "").trim();
+  if (!s) return false;
+
+  const firstBracket = s.indexOf("(");
+  // Wrapped iff nothing before the first bracket contains a comma AND that
+  // bracket's match is the final character.
+  let wrapped = false;
+  if (firstBracket !== -1 && !s.slice(0, firstBracket).includes(",")) {
+    let depth = 0;
+    for (let j = firstBracket; j < s.length; j++) {
+      if (s[j] === "(") depth++;
+      else if (s[j] === ")") {
+        depth--;
+        if (depth === 0) { wrapped = j === s.length - 1; break; }
+      }
+    }
+  }
+  if (wrapped) return false;
+
+  // Not wrapped — only a problem if it's actually a multi-component list.
+  let depth = 0;
+  for (const ch of s) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    else if (ch === "," && depth === 0) return true; // top-level comma => compound
+  }
+  return false;
+}
 
 const ALLERGEN_DISPLAY: Record<string, string> = {
   celery: "Celery",
@@ -1242,14 +1328,33 @@ router.get("/:id/ingredient-deck", async (req, res) => {
       labelDeclaration: string | null;
       allergens: string[];
       isQuid: boolean;
-    }> = directIngs.map(i => ({
-      ingredientId: i.ingredientId,
-      name: i.name,
-      quantityG: toGrams(Number(i.quantity), i.unit ?? "g"),
-      labelDeclaration: i.labelDeclaration,
-      allergens: (i.allergens as string[] | null) ?? [],
-      isQuid: i.quid ?? false,
-    }));
+    }> = [];
+    // A recipe may list the same ingredient on several lines (e.g. BBQ sauce
+    // both in the filling mix and on top, rosemary in the mix and as a
+    // topping). A legal ingredients declaration must name each ingredient
+    // ONCE, with its weights combined — so merge by ingredient here and sum
+    // the quantities. QUID applies to the merged total if any line is flagged.
+    {
+      const byIngredient = new Map<number, (typeof directItems)[number]>();
+      for (const i of directIngs) {
+        const grams = toGrams(Number(i.quantity), i.unit ?? "g");
+        const existing = byIngredient.get(i.ingredientId);
+        if (existing) {
+          existing.quantityG += grams;
+          existing.isQuid = existing.isQuid || (i.quid ?? false);
+        } else {
+          byIngredient.set(i.ingredientId, {
+            ingredientId: i.ingredientId,
+            name: i.name,
+            quantityG: grams,
+            labelDeclaration: i.labelDeclaration,
+            allergens: (i.allergens as string[] | null) ?? [],
+            isQuid: i.quid ?? false,
+          });
+        }
+      }
+      directItems.push(...byIngredient.values());
+    }
 
     interface SubRecipeGroup {
       subRecipeId: number;
@@ -1413,6 +1518,18 @@ router.get("/:id/ingredient-deck", async (req, res) => {
       ...subRecipeGroups.flatMap(g => g.ingredients.filter(i => !i.labelDeclaration).map(i => i.name)),
     ];
 
+    // A compound ingredient's declaration must name the ingredient and bracket
+    // its components — "Chorizo (Pork, Salt, ...)". Several were stored as a
+    // bare component list, which the deck then concatenates into a run-on that
+    // never says which ingredient those components belong to. Flag them so the
+    // operator fixes the declaration rather than shipping an unlawful label.
+    const unwrappedDeclarations = [
+      ...directItems,
+      ...subRecipeGroups.flatMap(g => g.ingredients),
+    ]
+      .filter(i => i.labelDeclaration && declarationNeedsWrapper(i.labelDeclaration))
+      .map(i => i.name);
+
     const [mayContainRow] = await db
       .select({ value: appSettingsTable.value })
       .from(appSettingsTable)
@@ -1426,12 +1543,163 @@ router.get("/:id/ingredient-deck", async (req, res) => {
       allergens: allergenDisplayList,
       mayContainStatement,
       missingDeclarations: [...new Set(missingDeclarations)],
-      isComplete: missingDeclarations.length === 0,
+      unwrappedDeclarations: [...new Set(unwrappedDeclarations)],
+      isComplete: missingDeclarations.length === 0 && unwrappedDeclarations.length === 0,
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg === "Recipe not found") { res.status(404).json({ error: msg }); return; }
     res.status(500).json({ error: msg });
+  }
+});
+
+// BRC-style finished-product specification sheet (PDF), for trade buyers.
+// Reuses the ingredient-deck and nutritionals endpoints over loopback (same
+// pattern as the production-plan lock-pdf) so the allergen/QUID/nutrition
+// content always matches what the app computes, and pulls the buyer-facing
+// detail from product_specifications + company_profile.
+router.get("/:id/spec-sheet.pdf", requireAdmin, async (req, res) => {
+  const parsed = RecipeIdParams.safeParse({ id: req.params.id });
+  if (!parsed.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
+  const recipeId = parsed.data.id;
+
+  try {
+    const [recipe] = await db.select().from(recipesTable).where(eq(recipesTable.id, recipeId));
+    if (!recipe) { res.status(404).json({ error: "Recipe not found" }); return; }
+
+    const [specRow] = await db.select().from(productSpecificationsTable).where(eq(productSpecificationsTable.recipeId, recipeId));
+    const [company] = await db.select().from(companyProfileTable).where(eq(companyProfileTable.id, 1));
+
+    // Best-effort barcode: match a Shopify SKU row by product title.
+    const [barcodeRow] = await db
+      .select({ barcode: skuBarcodesTable.barcode })
+      .from(skuBarcodesTable)
+      .where(sql`lower(${skuBarcodesTable.productTitle}) = lower(${recipe.name.trim()})`)
+      .limit(1);
+
+    // Cook CCPs: any ingredient used by this recipe (directly, via a
+    // sub-recipe, or as a marinaded raw meat) that carries a minimum cooking
+    // temperature.
+    const ccpRows = await db.execute<{ name: string; min_cooking_temp_c: string | null }>(sql`
+      WITH RECURSIVE subs AS (
+        SELECT sub_recipe_id FROM recipe_sub_recipes WHERE recipe_id = ${recipeId}
+        UNION
+        SELECT srs.component_sub_recipe_id FROM sub_recipe_sub_recipes srs JOIN subs s ON srs.sub_recipe_id = s.sub_recipe_id
+      ),
+      used AS (
+        SELECT ingredient_id FROM recipe_ingredients WHERE recipe_id = ${recipeId}
+        UNION SELECT raw_meat_ingredient_id FROM recipe_meat_marinades WHERE recipe_id = ${recipeId}
+        UNION SELECT sri.ingredient_id FROM sub_recipe_ingredients sri JOIN subs s ON sri.sub_recipe_id = s.sub_recipe_id
+      )
+      SELECT DISTINCT i.name, i.min_cooking_temp_c
+      FROM used u JOIN ingredients i ON i.id = u.ingredient_id
+      WHERE i.min_cooking_temp_c IS NOT NULL
+      ORDER BY i.name
+    `);
+    const cookCcps = (ccpRows.rows ?? ccpRows as unknown as Array<{ name: string; min_cooking_temp_c: string | null }>).map(r => ({
+      ingredientName: r.name,
+      minCookingTempC: r.min_cooking_temp_c != null ? Number(r.min_cooking_temp_c) : null,
+    }));
+
+    // Loopback the two derived-data endpoints, forwarding the session cookie.
+    const port = process.env["PORT"];
+    const cookie = req.headers.cookie ?? "";
+    const fetchJson = async <T>(path: string): Promise<T | null> => {
+      if (!port) return null;
+      try {
+        const resp = await fetch(`http://127.0.0.1:${port}${path}`, { headers: { cookie } });
+        if (!resp.ok) return null;
+        return (await resp.json()) as T;
+      } catch { return null; }
+    };
+
+    const [deckResp, nutriResp] = await Promise.all([
+      fetchJson<{ ingredients: Array<{ declaration: string; percentage: number }>; deckText: string; allergens: string[]; mayContainStatement: string | null; missingDeclarations: string[] }>(`/api/recipes/${recipeId}/ingredient-deck`),
+      fetchJson<{ per100g: Record<string, number | null>; perPortion: Record<string, number | null>; portionWeightG: number; declaredPackWeightG: number; packSize: number; completeness: { missingNutritionals: string[] } }>(`/api/recipes/${recipeId}/nutritionals`),
+    ]);
+
+    const missing: string[] = [];
+    if (!specRow) missing.push("product spec not yet entered");
+    if (!company?.legalBusinessName) missing.push("company details");
+    if (deckResp?.missingDeclarations?.length) missing.push(`${deckResp.missingDeclarations.length} ingredient declaration(s)`);
+    if (nutriResp?.completeness?.missingNutritionals?.length) missing.push(`${nutriResp.completeness.missingNutritionals.length} ingredient nutritionals`);
+    if (!specRow?.storageInstructions) missing.push("storage instructions");
+    if (!specRow?.usageInstructions) missing.push("cooking instructions");
+    if (!specRow?.microCriteria || (specRow.microCriteria as unknown[]).length === 0) missing.push("micro results");
+    // Net weight can only be stated once the recipe carries fill/base weights;
+    // without them the nutritionals endpoint's portion weight is not a real
+    // finished-product weight and must not reach a buyer's spec.
+    if (recipe.fillWeightGrams == null || recipe.baseWeightGrams == null) missing.push("declared net weight (recipe fill/base weights unset)");
+    if (!specRow?.packagingSpec) missing.push("packaging spec");
+    if (!specRow?.organolepticStandards) missing.push("organoleptic standards");
+
+    const { renderProductSpecPdf } = await import("../pdf/product-spec-pdf.js");
+    const pdf = await renderProductSpecPdf({
+      recipe: {
+        id: recipe.id,
+        name: recipe.name,
+        description: recipe.description,
+        category: recipe.category,
+        dietaryCategory: recipe.dietaryCategory,
+        shelfLifeDays: recipe.shelfLifeDays,
+      },
+      spec: specRow ? {
+        legalName: specRow.legalName,
+        productDescription: specRow.productDescription,
+        intendedUse: specRow.intendedUse,
+        storageInstructions: specRow.storageInstructions,
+        usageInstructions: specRow.usageInstructions,
+        mayContainOverride: specRow.mayContainOverride,
+        packagingSpec: specRow.packagingSpec ?? null,
+        organolepticStandards: specRow.organolepticStandards ?? null,
+        microCriteria: (specRow.microCriteria as ProductSpecMicro[] | null) ?? null,
+        dietarySuitability: specRow.dietarySuitability,
+        specVersion: specRow.specVersion,
+        specStatus: specRow.specStatus,
+        preparedBy: specRow.preparedBy,
+        approvedBy: specRow.approvedBy,
+        approvedAt: specRow.approvedAt ? specRow.approvedAt.toISOString() : null,
+      } : null,
+      company: company ? {
+        legalBusinessName: company.legalBusinessName,
+        tradingName: company.tradingName,
+        siteAddress: company.siteAddress,
+        fboRegistrationNumber: company.fboRegistrationNumber,
+        localAuthority: company.localAuthority,
+        certificationStatus: company.certificationStatus,
+        technicalContactName: company.technicalContactName,
+        technicalContactEmail: company.technicalContactEmail,
+        technicalContactPhone: company.technicalContactPhone,
+        emergencyContact: company.emergencyContact,
+      } : null,
+      deck: deckResp ? {
+        entries: deckResp.ingredients ?? [],
+        deckText: deckResp.deckText ?? "",
+        allergens: deckResp.allergens ?? [],
+        mayContainStatement: deckResp.mayContainStatement ?? null,
+      } : null,
+      nutrition: nutriResp ? {
+        per100g: nutriResp.per100g,
+        perPortion: nutriResp.perPortion,
+        portionWeightG: nutriResp.portionWeightG,
+        declaredPackWeightG: nutriResp.declaredPackWeightG,
+        packSize: nutriResp.packSize,
+        complete: (nutriResp.completeness?.missingNutritionals?.length ?? 0) === 0,
+        missingCount: nutriResp.completeness?.missingNutritionals?.length ?? 0,
+      } : null,
+      barcode: barcodeRow?.barcode ?? null,
+      cookCcps,
+      missing,
+      generatedAt: new Date().toISOString(),
+    });
+
+    const safeName = recipe.name.trim().replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="tck-spec-${safeName}.pdf"`);
+    res.send(pdf);
+  } catch (err) {
+    console.error("spec-sheet render error:", err);
+    res.status(500).json({ error: "Failed to render specification sheet" });
   }
 });
 

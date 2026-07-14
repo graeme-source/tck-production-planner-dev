@@ -64,6 +64,10 @@ export const ingredientsTable = pgTable("ingredients", {
   salt: numeric("salt", { precision: 10, scale: 2 }),
   labelDeclaration: text("label_declaration"),
   allergens: jsonb("allergens").$type<string[]>().default([]),
+  // Country (or countries, comma-separated) of origin for product-spec
+  // sheets, e.g. "Italy" or "UK, Ireland". Free text — buyer specs accept
+  // "EU/non-EU" style declarations too.
+  countryOfOrigin: text("country_of_origin"),
   // True when any of the per-100g nutritional values came from the
   // name-only AI estimate flow (no supplier URL, Claude guessed from the
   // name + category). Surfaced as a ✨ chip in the form so operators know

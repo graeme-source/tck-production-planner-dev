@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import {
   Loader2, ClipboardList, Beaker, AlertTriangle, Copy, Check, Tag, Settings2, Printer, Calculator,
+  CheckCircle2,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { BundleCalculator } from "@/components/bundle-calculator";
@@ -23,7 +24,11 @@ type NutritionalsData = {
   perPortion: Record<string, number | null>;
   completeness: {
     isComplete: boolean;
+    totalIngredients: number;
     missingNutritionals: string[];
+    // Per-ingredient breakdown of exactly which nutrients are absent. Covers
+    // every ingredient in the tree, including those nested inside sub-recipes.
+    missingNutritionalDetail?: { ingredientId: number; name: string; missing: string[] }[];
     missingDeclarations: string[];
   };
 };
@@ -35,6 +40,9 @@ type DeckData = {
   mayContainStatement: string | null;
   isComplete: boolean;
   missingDeclarations: string[];
+  // Compound ingredients whose declaration lists components without naming the
+  // ingredient itself — e.g. "Pork, Salt" instead of "Chorizo (Pork, Salt)".
+  unwrappedDeclarations?: string[];
   ingredients: {
     type?: "ingredient" | "compound";
     name: string;
@@ -56,6 +64,10 @@ const NUTRIENT_LABELS: Record<string, string> = {
 const NUTRIENT_UNITS: Record<string, string> = {
   energyKj: "kJ", energyKcal: "kcal",
 };
+
+// How many per-100g values a fully-populated ingredient carries. Used to tell
+// "this ingredient has no data at all" apart from "it's missing a couple".
+const NUTRIENT_KEY_COUNT = Object.keys(NUTRIENT_LABELS).length;
 
 function NutritionalsPanel({ recipe }: { recipe: RecipeItem }) {
   const [data, setData] = useState<NutritionalsData | null>(null);
@@ -114,15 +126,43 @@ function NutritionalsPanel({ recipe }: { recipe: RecipeItem }) {
         </tbody>
       </table>
 
-      {!data.completeness.isComplete && (
-        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 space-y-1">
-          <p className="text-sm font-medium text-amber-800 dark:text-amber-200 flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> Incomplete Data</p>
-          {data.completeness.missingNutritionals.length > 0 && (
-            <p className="text-xs text-amber-700 dark:text-amber-300">Missing nutritionals: {data.completeness.missingNutritionals.join(", ")}</p>
+      {!data.completeness.isComplete ? (
+        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 space-y-2">
+          <p className="text-sm font-medium text-amber-800 dark:text-amber-200 flex items-center gap-1">
+            <AlertTriangle className="w-4 h-4" /> Incomplete data — figures above are understated
+          </p>
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            Checked all {data.completeness.totalIngredients} ingredients, including those nested inside sub-recipes.
+            Any nutrient below counts as zero in the totals, so this panel is not safe to publish until every value is filled.
+          </p>
+          {data.completeness.missingNutritionalDetail && data.completeness.missingNutritionalDetail.length > 0 && (
+            <div className="space-y-0.5">
+              <p className="text-xs font-medium text-amber-800 dark:text-amber-200">Missing nutritionals:</p>
+              {data.completeness.missingNutritionalDetail.map(m => (
+                <p key={m.ingredientId} className="text-xs text-amber-700 dark:text-amber-300 pl-2">
+                  <span className="font-medium">{m.name}</span>
+                  {" — "}
+                  {m.missing.length === NUTRIENT_KEY_COUNT
+                    ? "no nutritional data at all"
+                    : `missing ${m.missing.map(k => (NUTRIENT_LABELS[k] ?? k).trim().toLowerCase()).join(", ")}`}
+                </p>
+              ))}
+            </div>
           )}
           {data.completeness.missingDeclarations.length > 0 && (
-            <p className="text-xs text-amber-700 dark:text-amber-300">Missing label declarations: {data.completeness.missingDeclarations.join(", ")}</p>
+            <p className="text-xs text-amber-700 dark:text-amber-300">
+              <span className="font-medium">Missing label declarations:</span> {data.completeness.missingDeclarations.join(", ")}
+            </p>
           )}
+        </div>
+      ) : (
+        <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-lg p-3">
+          <p className="text-sm font-medium text-emerald-800 dark:text-emerald-200 flex items-center gap-1">
+            <CheckCircle2 className="w-4 h-4" /> Complete — all {data.completeness.totalIngredients} ingredients have full nutritional data
+          </p>
+          <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-0.5">
+            Includes every ingredient nested inside sub-recipes. Safe to publish.
+          </p>
         </div>
       )}
     </div>
@@ -186,12 +226,25 @@ function DeckPanel({ recipe }: { recipe: RecipeItem }) {
         </div>
       </div>
 
-      {!data.isComplete && data.missingDeclarations && data.missingDeclarations.length > 0 && (
+      {data.missingDeclarations && data.missingDeclarations.length > 0 && (
         <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
           <p className="text-sm font-medium text-amber-800 dark:text-amber-200 flex items-center gap-1">
             <AlertTriangle className="w-4 h-4" /> Missing label declarations
           </p>
           <p className="text-xs text-amber-700 dark:text-amber-300 mt-1">{data.missingDeclarations.join(", ")}</p>
+        </div>
+      )}
+
+      {data.unwrappedDeclarations && data.unwrappedDeclarations.length > 0 && (
+        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
+          <p className="text-sm font-medium text-amber-800 dark:text-amber-200 flex items-center gap-1">
+            <AlertTriangle className="w-4 h-4" /> Compound ingredients not named
+          </p>
+          <p className="text-xs text-amber-700 dark:text-amber-300 mt-1">
+            {data.unwrappedDeclarations.join(", ")} — {data.unwrappedDeclarations.length === 1 ? "this declaration lists" : "these declarations list"}
+            {" "}components without naming the ingredient they belong to, so they run together in the deck above.
+            Edit to the form <span className="font-mono">Chorizo (Pork, Salt, Paprika…)</span>.
+          </p>
         </div>
       )}
 
