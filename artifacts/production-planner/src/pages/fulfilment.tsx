@@ -11,7 +11,7 @@ import { useLocation } from "wouter";
 import {
   Package, Scan, CheckCircle2, AlertCircle, ChevronRight, Printer,
   RefreshCw, MapPin, SkipForward, RotateCcw, XCircle, Loader2,
-  ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X,
+  ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -32,6 +32,77 @@ interface LineItem {
   barcode: string | null;
   imageUrl: string | null;
   recipeColor: string | null;
+}
+
+type BoxCategory = "small box" | "large box" | "wholesale" | "other";
+
+/** A row of tri-state filter chips. Green = include, red = exclude, plain =
+ *  ignored. Used for both order tags and products so the two behave identically. */
+function FilterChipRow({ label, items, include, exclude, onToggle, emptyText }: {
+  label: string;
+  items: { key: string; label: string }[];
+  include: Set<string>;
+  exclude: Set<string>;
+  onToggle: (key: string) => void;
+  emptyText: string;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+      {items.length === 0 ? (
+        <p className="text-xs text-muted-foreground italic">{emptyText}</p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {items.map(({ key, label: text }) => {
+            const inc = include.has(key);
+            const exc = exclude.has(key);
+            return (
+              <button
+                key={key}
+                onClick={() => onToggle(key)}
+                title={inc ? "Included — tap to exclude" : exc ? "Excluded — tap to clear" : "Tap to include"}
+                className={cn(
+                  "px-2.5 py-1 rounded-lg text-xs font-medium border transition-all max-w-[240px] truncate",
+                  inc && "bg-emerald-100 dark:bg-emerald-900/40 border-emerald-400 text-emerald-800 dark:text-emerald-200",
+                  exc && "bg-red-100 dark:bg-red-900/40 border-red-400 text-red-800 dark:text-red-200 line-through",
+                  !inc && !exc && "bg-secondary/60 border-transparent text-muted-foreground hover:bg-secondary hover:text-foreground",
+                )}
+              >
+                {inc && "+ "}{exc && "− "}{text}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The box-category tags, kept out of the generic tag chips so they aren't
+ *  offered twice (they already have their own multi-select row). */
+const BOX_CATEGORIES: string[] = ["small box", "large box", "wholesale"];
+
+/** Cycle a chip through untouched → include → exclude → untouched, keeping the
+ *  two sets mutually exclusive so a tag can never be both. */
+function cycleChip(
+  key: string,
+  include: Set<string>,
+  exclude: Set<string>,
+  setInclude: (s: Set<string>) => void,
+  setExclude: (s: Set<string>) => void,
+) {
+  const inc = new Set(include);
+  const exc = new Set(exclude);
+  if (inc.has(key)) {            // included → excluded
+    inc.delete(key);
+    exc.add(key);
+  } else if (exc.has(key)) {     // excluded → untouched
+    exc.delete(key);
+  } else {                       // untouched → included
+    inc.add(key);
+  }
+  setInclude(inc);
+  setExclude(exc);
 }
 
 interface ShopifyOrder {
@@ -296,12 +367,15 @@ async function createShipment(orderId: number, tag: string, dispatchDate?: strin
   return data;
 }
 
-async function bulkTagDispatch(tag: string, category: string): Promise<{ tagged: number; total: number }> {
+/** Tags exactly the orders the operator has filtered to. We send explicit ids
+ *  rather than a category, because the wave can be filtered by several box
+ *  categories plus tags and products — which the server can't reconstruct. */
+async function bulkTagDispatch(tag: string, orderIds: number[]): Promise<{ tagged: number; total: number }> {
   const res = await fetch(`${BASE}/api/fulfilment/tag-dispatch-bulk`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tag, category }),
+    body: JSON.stringify({ tag, orderIds }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Failed to tag orders");
@@ -750,7 +824,16 @@ export default function Fulfilment() {
   const [barcodeInput, setBarcodeInput] = useState("");
   const [flashItem, setFlashItem] = useState<string | null>(null);
   const [flashWrong, setFlashWrong] = useState(false);
-  const [boxFilter, setBoxFilter] = useState<"small box" | "large box" | "wholesale" | "all">("small box");
+  // Box categories are multi-select now: the operator can pick a wave of
+  // Small + Large together. An empty set means "no category constraint".
+  // Defaults to Small Box, matching the team's existing muscle memory.
+  const [boxFilter, setBoxFilter] = useState<Set<BoxCategory>>(new Set<BoxCategory>(["small box"]));
+  // Tri-state chips: a tag/product is either untouched, included, or excluded.
+  const [includeTags, setIncludeTags] = useState<Set<string>>(new Set());
+  const [excludeTags, setExcludeTags] = useState<Set<string>>(new Set());
+  const [includeProducts, setIncludeProducts] = useState<Set<string>>(new Set());
+  const [excludeProducts, setExcludeProducts] = useState<Set<string>>(new Set());
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [pendingPickOrder, setPendingPickOrder] = useState<ShopifyOrder | null>(null);
   const barcodeRef = useRef<HTMLInputElement>(null);
   const itemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
@@ -850,13 +933,102 @@ export default function Fulfilment() {
     return "other";
   }
 
-  const filteredUnfulfilled = boxFilter === "all"
-    ? unfulfilledOrders
-    : unfulfilledOrders.filter(o => getOrderCategory(o) === boxFilter);
+  // ── Wave filters ───────────────────────────────────────────────────────
+  // The operator narrows the day's orders to the wave they want to pick, then
+  // cycles through ONLY that wave. Three independent axes, all ANDed:
+  //   • box categories  — multi-select (pick Small AND Large together)
+  //   • order tags      — include / exclude any Shopify order tag
+  //   • products        — include / exclude any product present in the orders
+  //
+  // Include is OR within an axis ("any of these tags"), exclude always wins.
+  // Excluding a product drops the WHOLE ORDER — you can't half-pick an order
+  // and ship it short.
+  const orderTagList = (o: ShopifyOrder) =>
+    o.tags.split(",").map(t => t.trim().toLowerCase()).filter(Boolean);
 
-  const filteredUntagged = boxFilter === "all"
-    ? untaggedOrders
-    : untaggedOrders.filter(o => getOrderCategory(o) === boxFilter);
+  /** Stable key for a line item. SKU is the operator-facing identity; fall
+   *  back to variant id, then title, so an item without a SKU is still
+   *  filterable rather than silently unfilterable. */
+  const productKey = (li: { sku?: string | null; variant_id?: number | null; title: string }) =>
+    (li.sku && li.sku.trim()) || (li.variant_id != null ? `variant:${li.variant_id}` : `title:${li.title}`);
+
+  const orderProductKeys = (o: ShopifyOrder) => new Set((o.line_items ?? []).map(productKey));
+
+  function passesFilters(o: ShopifyOrder): boolean {
+    const tags = orderTagList(o);
+    const products = orderProductKeys(o);
+
+    // Box category: empty selection = no category constraint (all).
+    if (boxFilter.size > 0 && !boxFilter.has(getOrderCategory(o))) return false;
+
+    // Exclusions win over everything.
+    if ([...excludeTags].some(t => tags.includes(t))) return false;
+    if ([...excludeProducts].some(p => products.has(p))) return false;
+
+    // Inclusions: must match at least one of each non-empty set.
+    if (includeTags.size > 0 && ![...includeTags].some(t => tags.includes(t))) return false;
+    if (includeProducts.size > 0 && ![...includeProducts].some(p => products.has(p))) return false;
+
+    return true;
+  }
+
+  const filteredUnfulfilled = unfulfilledOrders.filter(passesFilters);
+  const filteredUntagged = untaggedOrders.filter(passesFilters);
+
+  // Every tag / product actually present in today's orders — the operator only
+  // ever sees things that are really there, so no typing and no stale options.
+  const availableTags = [...new Set(
+    allUnfulfilledOrders.flatMap(orderTagList).filter(t => t !== "dispatch" && !BOX_CATEGORIES.includes(t)),
+  )].sort();
+
+  const availableProducts = (() => {
+    const seen = new Map<string, { title: string; variantTitle: string | null; sku: string }>();
+    for (const o of allUnfulfilledOrders) {
+      for (const li of o.line_items ?? []) {
+        const key = productKey(li);
+        if (!seen.has(key)) {
+          seen.set(key, { title: li.title, variantTitle: li.variant_title ?? null, sku: li.sku ?? "" });
+        }
+      }
+    }
+    // Several SKUs can share a title — and sometimes the same variant name too
+    // (Shopify duplicates, subscription vs one-off listings). Two identical
+    // chips would be impossible to choose between, so escalate the qualifier
+    // until the label is unique: title → + variant → + SKU.
+    const count = (fn: (p: { title: string; variantTitle: string | null; sku: string }) => string) => {
+      const m = new Map<string, number>();
+      for (const p of seen.values()) m.set(fn(p), (m.get(fn(p)) ?? 0) + 1);
+      return m;
+    };
+    const byTitle = count(p => p.title);
+    const byTitleVariant = count(p => `${p.title}|${p.variantTitle ?? ""}`);
+
+    return [...seen.entries()]
+      .map(([key, p]) => {
+        let label = p.title;
+        if ((byTitle.get(p.title) ?? 0) > 1) {
+          if (p.variantTitle) label = `${p.title} · ${p.variantTitle}`;
+          // Still not unique even with the variant? Fall back to the SKU, which
+          // is guaranteed distinct — an unlabelled duplicate chip is worse than
+          // an ugly one.
+          if ((byTitleVariant.get(`${p.title}|${p.variantTitle ?? ""}`) ?? 0) > 1 && p.sku) {
+            label = `${label} · ${p.sku}`;
+          }
+        }
+        return { key, label };
+      })
+      .sort((a, b) => a.label.localeCompare(b.label));
+  })();
+
+  const filtersActive = includeTags.size > 0 || excludeTags.size > 0
+    || includeProducts.size > 0 || excludeProducts.size > 0;
+
+  function clearFilters() {
+    setIncludeTags(new Set());
+    setExcludeTags(new Set());
+    setIncludeProducts(new Set());
+    setExcludeProducts(new Set());
+  }
 
   const boxCounts = {
     "small box": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "small box").length,
@@ -997,9 +1169,11 @@ export default function Fulfilment() {
       // Pre-queue AND background-print the next unfulfilled order's label.
       // Only in test mode — in live mode we must not create a real APC consignment
       // without the operator explicitly confirming the next order first.
+      // Look ahead within the filtered wave — otherwise we'd pre-print a label
+      // for an order the operator isn't going to pick next.
       if (configStatus?.testMode) {
-        const currentPos = unfulfilledOrders.findIndex(o => o.id === order.id);
-        const nextOrder = unfulfilledOrders[currentPos + 1];
+        const currentPos = filteredUnfulfilled.findIndex(o => o.id === order.id);
+        const nextOrder = filteredUnfulfilled[currentPos + 1];
         if (nextOrder) preQueueNextOrder(nextOrder.id);
       }
     } catch (err: any) {
@@ -1204,10 +1378,13 @@ export default function Fulfilment() {
   }
 
   function advanceToNext() {
-    // Find next unfulfilled order that isn't the one just completed.
+    // Cycle within the FILTERED wave, not the whole day. Previously this read
+    // `unfulfilledOrders`, so after the first order the cycle silently escaped
+    // whatever filter the operator had set (the screen even defaults to Small
+    // Box) and dropped them into an unrelated order.
     // After refetch, the completed order is removed from the list, so we
     // pick the first remaining order.
-    const remaining = unfulfilledOrders.filter(o => o.id !== activeOrder?.id);
+    const remaining = filteredUnfulfilled.filter(o => o.id !== activeOrder?.id);
     const nextOrder = remaining[0];
     if (nextOrder) {
       // Route through handleOrderSelect so that live-mode confirmation dialog
@@ -1620,7 +1797,7 @@ export default function Fulfilment() {
   // shows (minus the consignment number) so the packer gets the same
   // celebration + auto-advance rhythm either way.
   if (view === "confirm" && activeOrder && (shipment || !apcEnabled)) {
-    const hasNext = unfulfilledOrders.filter(o => o.id !== activeOrder.id).length > 0;
+    const hasNext = filteredUnfulfilled.filter(o => o.id !== activeOrder.id).length > 0;
     const isTestMode = configStatus?.testMode ?? false;
     return (
       <div className="space-y-6">
@@ -2435,21 +2612,26 @@ export default function Fulfilment() {
             {unfulfilledOrders.length} ready to pack &middot; {untaggedOrders.length} awaiting approval &middot; {progress ? progress.totalFulfilled : fulfilledOrders.length} fulfilled
           </p>
 
-          <div className="flex gap-2 flex-wrap">
+          {/* Box categories — multi-select, so a wave can be Small + Large. */}
+          <div className="flex gap-2 flex-wrap items-center">
             {([
-              { key: "small box" as const, label: "Small Box", color: "bg-blue-500" },
-              { key: "large box" as const, label: "Large Box", color: "bg-indigo-500" },
-              { key: "wholesale" as const, label: "Wholesale", color: "bg-amber-500" },
-              { key: "all" as const, label: "All Orders", color: "bg-gray-500" },
+              { key: "small box" as const, label: "Small Box" },
+              { key: "large box" as const, label: "Large Box" },
+              { key: "wholesale" as const, label: "Wholesale" },
+              { key: "other" as const, label: "Other" },
             ] as const).map(tab => {
-              const count = tab.key === "all" ? allUnfulfilledOrders.length : boxCounts[tab.key];
-              if (tab.key !== "all" && count === 0) return null;
-              const active = boxFilter === tab.key;
-              const tagged = tab.key === "all" ? unfulfilledOrders.length : taggedCounts[tab.key];
+              const count = boxCounts[tab.key];
+              if (count === 0) return null;
+              const active = boxFilter.has(tab.key);
+              const tagged = taggedCounts[tab.key];
               return (
                 <button
                   key={tab.key}
-                  onClick={() => setBoxFilter(tab.key)}
+                  onClick={() => {
+                    const next = new Set(boxFilter);
+                    if (next.has(tab.key)) next.delete(tab.key); else next.add(tab.key);
+                    setBoxFilter(next);
+                  }}
                   className={cn(
                     "px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2",
                     active
@@ -2465,7 +2647,78 @@ export default function Fulfilment() {
                 </button>
               );
             })}
+            <button
+              onClick={() => setBoxFilter(new Set())}
+              className={cn(
+                "px-4 py-2 rounded-xl text-sm font-medium transition-all",
+                boxFilter.size === 0
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground"
+              )}
+            >
+              All Boxes
+            </button>
+
+            <button
+              onClick={() => setFiltersOpen(v => !v)}
+              className={cn(
+                "ml-auto px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2",
+                filtersActive
+                  ? "bg-indigo-600 text-white shadow-sm"
+                  : "bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground"
+              )}
+            >
+              <Filter className="w-4 h-4" />
+              Tags & Products
+              {filtersActive && (
+                <span className="text-xs px-1.5 py-0.5 rounded-full bg-white/20 tabular-nums">
+                  {includeTags.size + excludeTags.size + includeProducts.size + excludeProducts.size}
+                </span>
+              )}
+            </button>
           </div>
+
+          {/* How many orders this wave will actually cycle through. */}
+          <p className="text-sm text-muted-foreground">
+            Picking <span className="font-semibold text-foreground tabular-nums">{filteredUnfulfilled.length}</span>
+            {" "}of {unfulfilledOrders.length} dispatch-tagged orders
+            {filtersActive && <span className="text-indigo-600 dark:text-indigo-400"> · filters active</span>}
+          </p>
+
+          {filtersOpen && (
+            <div className="glass-panel p-4 rounded-2xl border border-border space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">
+                  Tap once to <span className="text-emerald-600 dark:text-emerald-400 font-medium">include</span>,
+                  again to <span className="text-red-600 dark:text-red-400 font-medium">exclude</span>, again to clear.
+                  Excluding a product removes the whole order from the wave.
+                </p>
+                {filtersActive && (
+                  <button onClick={clearFilters} className="text-xs text-primary hover:underline flex-shrink-0 ml-3">
+                    Clear all
+                  </button>
+                )}
+              </div>
+
+              <FilterChipRow
+                label="Order tags"
+                items={availableTags.map(t => ({ key: t, label: t }))}
+                include={includeTags}
+                exclude={excludeTags}
+                onToggle={k => cycleChip(k, includeTags, excludeTags, setIncludeTags, setExcludeTags)}
+                emptyText="No other tags on today's orders."
+              />
+
+              <FilterChipRow
+                label="Products"
+                items={availableProducts}
+                include={includeProducts}
+                exclude={excludeProducts}
+                onToggle={k => cycleChip(k, includeProducts, excludeProducts, setIncludeProducts, setExcludeProducts)}
+                emptyText="No products found on today's orders."
+              />
+            </div>
+          )}
 
           {filteredUntagged.length > 0 && (
             <div className="glass-panel p-4 rounded-2xl border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20 space-y-3">
@@ -2473,7 +2726,8 @@ export default function Fulfilment() {
                 <div className="flex items-center gap-2">
                   <Tag className="w-4 h-4 text-amber-600" />
                   <span className="font-semibold text-sm text-amber-900 dark:text-amber-200">
-                    {filteredUntagged.length} {boxFilter === "all" ? "" : boxFilter + " "}{filteredUntagged.length === 1 ? "order" : "orders"} awaiting approval
+                    {filteredUntagged.length} {filteredUntagged.length === 1 ? "order" : "orders"} awaiting approval
+                    {(boxFilter.size > 0 || filtersActive) && <span className="font-normal"> (matching your filters)</span>}
                   </span>
                 </div>
                 <button
@@ -2484,7 +2738,7 @@ export default function Fulfilment() {
                   {bulkTagging ? (
                     <><Loader2 className="w-4 h-4 animate-spin" /> Tagging…</>
                   ) : (
-                    <><Tag className="w-4 h-4" /> Tag {boxFilter === "all" ? "All" : boxFilter === "small box" ? "Small Box" : boxFilter === "large box" ? "Large Box" : boxFilter === "wholesale" ? "Wholesale" : "Other"} Orders for Dispatch</>
+                    <><Tag className="w-4 h-4" /> Tag {filteredUntagged.length} Order{filteredUntagged.length === 1 ? "" : "s"} for Dispatch</>
                   )}
                 </button>
                 {showBulkTagConfirm && (
@@ -2499,7 +2753,7 @@ export default function Fulfilment() {
                       setShowBulkTagConfirm(false);
                       setBulkTagging(true);
                       try {
-                        await bulkTagDispatch(queryTag, boxFilter);
+                        await bulkTagDispatch(queryTag, filteredUntagged.map(o => o.id));
                         refetch();
                         refetchProgress();
                         refetchTags();

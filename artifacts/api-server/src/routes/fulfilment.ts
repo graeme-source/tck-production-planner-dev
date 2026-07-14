@@ -660,13 +660,24 @@ router.post("/tag-dispatch", requireManagerOrAdmin, async (req: Request, res: Re
 });
 
 router.post("/tag-dispatch-bulk", requireManagerOrAdmin, async (req: Request, res: Response) => {
-  const { tag, category } = req.body as { tag?: string; category?: string };
-  if (!tag || !category) {
-    res.status(400).json({ error: "tag and category are required" });
+  // `orderIds` is the precise path: the picking screen can filter by multiple
+  // box categories, arbitrary order tags and products, and the server cannot
+  // re-derive that from a single `category` string. When the client sends the
+  // ids it has actually filtered to, we tag exactly those — what the operator
+  // sees is what gets tagged. `category` remains for older callers.
+  const { tag, category, orderIds } = req.body as {
+    tag?: string; category?: string; orderIds?: number[];
+  };
+  if (!tag) {
+    res.status(400).json({ error: "tag is required" });
+    return;
+  }
+  if (!orderIds && !category) {
+    res.status(400).json({ error: "orderIds or category is required" });
     return;
   }
   const validCategories = ["small box", "large box", "wholesale", "other", "all"];
-  if (!validCategories.includes(category)) {
+  if (!orderIds && category && !validCategories.includes(category)) {
     res.status(400).json({ error: `Invalid category. Must be one of: ${validCategories.join(", ")}` });
     return;
   }
@@ -678,15 +689,20 @@ router.post("/tag-dispatch-bulk", requireManagerOrAdmin, async (req: Request, re
       !o.tags.split(",").map(t => t.trim()).includes("dispatch")
     );
 
-    const toTag = category === "all"
-      ? untagged
-      : untagged.filter(o => {
-          const tags = o.tags.split(",").map(t => t.trim().toLowerCase());
-          if (category === "wholesale") return tags.includes("wholesale");
-          if (category === "large box") return tags.includes("large box");
-          if (category === "small box") return tags.includes("small box");
-          return !tags.includes("wholesale") && !tags.includes("large box") && !tags.includes("small box");
-        });
+    // Even when ids are supplied, only ever tag orders that are genuinely
+    // untagged and unfulfilled *within this date tag* — a stale or hand-crafted
+    // id can't reach an order outside the day being picked.
+    const toTag = orderIds
+      ? untagged.filter(o => orderIds.includes(o.id))
+      : category === "all"
+        ? untagged
+        : untagged.filter(o => {
+            const tags = o.tags.split(",").map(t => t.trim().toLowerCase());
+            if (category === "wholesale") return tags.includes("wholesale");
+            if (category === "large box") return tags.includes("large box");
+            if (category === "small box") return tags.includes("small box");
+            return !tags.includes("wholesale") && !tags.includes("large box") && !tags.includes("small box");
+          });
 
     let tagged = 0;
     const postcodeIssues: Array<{ orderName: string; reason: string }> = [];
