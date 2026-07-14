@@ -1225,7 +1225,22 @@ function HeaderInfo({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function ProductionPlanSlide({ data, slide, isPreviewing }: { data: DashboardData; slide: MeetingSlide; isPreviewing: boolean }) {
+/** Which stock figure the "have" column shows.
+ *  - "actual"    — what is physically in the fridge right now (the default;
+ *                  what the morning meeting and the pack report have always
+ *                  shown, and what people are used to trusting).
+ *  - "predicted" — end-of-today factory number: fridge now + what wrapping
+ *                  still has to push in − what fulfilment still has to pull
+ *                  out. The number the Create Plan screen leads with, i.e.
+ *                  where the fridge actually lands by close of play. */
+export type PackStockMode = "actual" | "predicted";
+
+export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "actual" }: {
+  data: DashboardData;
+  slide: MeetingSlide;
+  isPreviewing: boolean;
+  stockMode?: PackStockMode;
+}) {
   // In a live meeting the pack is today's; in a preview of tomorrow's
   // meeting it's tomorrow's. Matches the old Short-on-pack behaviour.
   //
@@ -1271,7 +1286,11 @@ export function ProductionPlanSlide({ data, slide, isPreviewing }: { data: Dashb
   // +ve = enough, -ve = short. Same maths the Short-on-pack slide used.
   const calcById = new Map<number, { have: number; need: number; surplus: number; tone: "ok" | "warn" | "bad" }>();
   for (const r of calc?.recipes ?? []) {
-    const have = r.fridgeStock;
+    // "actual" is deliberately the default: the team reads this table to answer
+    // "can I pack the next dispatch from what's in the fridge right now". The
+    // predicted view answers a different question — where we'll land by close
+    // of play — and is opt-in via the toggle on the pack report.
+    const have = stockMode === "predicted" ? r.predictedFridgeStock : r.fridgeStock;
     const need = r.dispatch2Qty;
     const surplus = have - need;
     // Red when short (negative spare); amber when only 0–10 spare;
@@ -1340,8 +1359,12 @@ export function ProductionPlanSlide({ data, slide, isPreviewing }: { data: Dashb
             <span>Start</span>
             <span>Recipe</span>
             <span className="text-center">
-              What's in stock
-              <HeaderInfo>What's counted in the fridge right now — we pack from this before making anything new.</HeaderInfo>
+              {stockMode === "predicted" ? "Predicted end of day" : "What's in stock"}
+              <HeaderInfo>
+                {stockMode === "predicted"
+                  ? "Where the fridge lands by close of play: what's in it now, plus what wrapping still has to push in, minus what fulfilment still has to pull out. Not what you can pack from right now."
+                  : "What's counted in the fridge right now — we pack from this before making anything new."}
+              </HeaderInfo>
             </span>
             <span className="text-center">
               Going out in {showTomorrowPack ? "tomorrow's" : "today's"} pack
@@ -1508,6 +1531,17 @@ interface CalcRecipeRow {
   color: string | null;
   isCoreMenu: boolean;
   fridgeStock: number;
+  // Predicted end-of-today fridge stock: what's in the fridge NOW, plus what
+  // the wrapping station still has to push in, minus what fulfilment still has
+  // to pull out — clamped at zero.
+  //
+  // NOT `estimatedFactoryNumber`: that falls back to a legacy formula
+  // (stock − dispatch + previous production) for non-core recipes, which can
+  // go negative (Honey Chipotle reads −62 with nothing left to wrap). This
+  // field is the one that always means what the column claims it means.
+  predictedFridgeStock: number;
+  remainingWrappingPacksToday: number;
+  remainingFulfilmentPacksToday: number;
   dispatch1Qty: number;
   dispatch2Qty: number;
   dispatch3Qty: number;
