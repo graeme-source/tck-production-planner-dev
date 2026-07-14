@@ -401,7 +401,11 @@ export function IngredientFormDialog({
         { key: "brand" as const, label: "Brand", display: scraped.brand ?? "—" },
         { key: "packSize" as const, label: "Pack size", display: scraped.packSize != null ? String(scraped.packSize) : "—" },
         { key: "packUnit" as const, label: "Unit", display: scraped.packUnit ?? "—" },
-        { key: "costPerPack" as const, label: "Cost per pack", display: scraped.costPerPack != null ? `£${scraped.costPerPack.toFixed(2)}` : "—" },
+        // Coerce rather than calling .toFixed() straight off the payload: the
+        // scrape is AI-extracted, so a price can still arrive as "£12.50".
+        // The server normalises it now, but a hard crash here blanks the whole
+        // page, so don't rely on that alone.
+        { key: "costPerPack" as const, label: "Cost per pack", display: Number.isFinite(Number(scraped.costPerPack)) && scraped.costPerPack != null ? `£${Number(scraped.costPerPack).toFixed(2)}` : "—" },
         { key: "supplierPartNumber" as const, label: "Supplier part no.", display: scraped.supplierPartNumber ?? "—" },
         { key: "ingredients" as const, label: "Ingredient declaration", display: scraped.ingredients ?? "—" },
         { key: "allergens" as const, label: "Allergens", display: scraped.allergens.length ? scraped.allergens.join(", ") : "—" },

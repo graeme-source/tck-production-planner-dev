@@ -154,6 +154,62 @@ interface ScrapedFields {
   salt: number | null;
 }
 
+/** The tool's input_schema asks for numbers, but a model can still hand back
+ *  "£12.50", "12.50" or "1,250" — a supplier page shows prices as text, and the
+ *  schema is a request, not a guarantee. Previously the tool output was passed
+ *  to the client with a bare `as ScrapedFields` cast, so a string price reached
+ *  the browser and `costPerPack.toFixed(2)` threw, blanking the whole page.
+ *  Coerce every numeric field here instead of trusting the model. */
+function toNumberOrNull(v: unknown): number | null {
+  if (v == null) return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string") {
+    // Strip currency symbols, thousands separators and stray unit text ("£12.50/kg").
+    const cleaned = v.replace(/[^0-9.\-]/g, "");
+    if (cleaned === "" || cleaned === "-" || cleaned === ".") return null;
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function toStringOrNull(v: unknown): string | null {
+  if (v == null) return null;
+  if (typeof v === "string") return v.trim() === "" ? null : v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  return null;
+}
+
+/** Normalise whatever the model returned into a ScrapedFields the client can
+ *  rely on. Never throws — a malformed field becomes null rather than taking
+ *  the scrape (or the page) down. */
+export function normaliseScrapedFields(raw: unknown): ScrapedFields {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const allergens = Array.isArray(r["allergens"])
+    ? (r["allergens"] as unknown[]).map(a => toStringOrNull(a)).filter((a): a is string => a !== null)
+    : [];
+  return {
+    name: toStringOrNull(r["name"]),
+    brand: toStringOrNull(r["brand"]),
+    packSize: toNumberOrNull(r["packSize"]),
+    packUnit: toStringOrNull(r["packUnit"]),
+    costPerPack: toNumberOrNull(r["costPerPack"]),
+    supplierPartNumber: toStringOrNull(r["supplierPartNumber"]),
+    ingredients: toStringOrNull(r["ingredients"]),
+    allergens,
+    notes: toStringOrNull(r["notes"]),
+    energyKj: toNumberOrNull(r["energyKj"]),
+    energyKcal: toNumberOrNull(r["energyKcal"]),
+    fat: toNumberOrNull(r["fat"]),
+    saturates: toNumberOrNull(r["saturates"]),
+    carbohydrate: toNumberOrNull(r["carbohydrate"]),
+    sugars: toNumberOrNull(r["sugars"]),
+    protein: toNumberOrNull(r["protein"]),
+    fibre: toNumberOrNull(r["fibre"]),
+    salt: toNumberOrNull(r["salt"]),
+  };
+}
+
 router.post("/scrape-url", async (req: Request, res: Response) => {
   if (!isClaudeConfigured()) {
     res.status(503).json({ error: "Scraping requires the Anthropic API key. Ask an admin to set ANTHROPIC_API_KEY." });
@@ -236,7 +292,7 @@ ${distilled}`,
     if (!toolUse || toolUse.type !== "tool_use") {
       throw new Error("Claude did not return a tool_use block");
     }
-    extracted = toolUse.input as ScrapedFields;
+    extracted = normaliseScrapedFields(toolUse.input);
   } catch (err) {
     console.error("[ingredient-scrape] Claude extraction failed:", err);
     const msg = err instanceof Error ? err.message : String(err);
