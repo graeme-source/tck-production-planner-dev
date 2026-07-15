@@ -218,22 +218,42 @@ function TodayPlanRecipes({ planId }: { planId: number }) {
 const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
 
 /** Returns separate totals so calzone batches (10-portion batches) aren't
- *  conflated with mac cheese packs (1 mac batch = 1 pack). */
-async function fetchTodayBatchCount(planIds: number[]): Promise<{ calzoneBatches: number; macPacks: number }> {
-  if (planIds.length === 0) return { calzoneBatches: 0, macPacks: 0 };
-  let calzoneBatches = 0;
-  let macPacks = 0;
+ *  conflated with mac cheese packs (1 mac batch = 1 pack). Also sums how far
+ *  the day has actually got — batches built past the building tables and
+ *  flavours marked wrapped — purely so the dashboard cards can show at-a-glance
+ *  progress bars. */
+async function fetchTodayBatchCount(planIds: number[]): Promise<{
+  calzoneBatches: number;
+  macPacks: number;
+  calzoneBuilt: number;
+  flavoursTotal: number;
+  flavoursWrapped: number;
+}> {
+  const empty = { calzoneBatches: 0, macPacks: 0, calzoneBuilt: 0, flavoursTotal: 0, flavoursWrapped: 0 };
+  if (planIds.length === 0) return empty;
+  const totals = { ...empty };
   for (const id of planIds) {
     const res = await fetch(`${BASE}/api/production-plans/${id}`, { credentials: "include" });
     if (!res.ok) continue;
     const plan = await res.json();
     for (const it of plan.items ?? []) {
       const target = it.batchesTarget ?? 0;
-      if (it.recipeCategory === MAC_CHEESE_CATEGORY) macPacks += target;
-      else calzoneBatches += target;
+      const sc = it.stationCompletions ?? {};
+      const built = (sc.building_1 ?? 0) + (sc.building_2 ?? 0);
+      if (it.recipeCategory === MAC_CHEESE_CATEGORY) {
+        totals.macPacks += target;
+      } else {
+        totals.calzoneBatches += target;
+        // Cap per item so extra packs can't push the day past its total
+        totals.calzoneBuilt += Math.min(built, target);
+      }
+      if (target > 0) {
+        totals.flavoursTotal++;
+        if (it.wrappingComplete) totals.flavoursWrapped++;
+      }
     }
   }
-  return { calzoneBatches, macPacks };
+  return totals;
 }
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -258,13 +278,17 @@ async function fetchWeeklyOrders(weekStart: string) {
   return (data.days ?? data) as { date: string; deliveryDate: string; day: string; orderCount: number; fulfilledCount: number; unfulfilledCount: number; packCount: number }[];
 }
 
-async function fetchTodayDeliveriesCount(): Promise<number> {
+/** Deliveries expected today, split into arrived (received / partially
+ *  received — same rule the Deliveries page uses) vs still to come. */
+async function fetchTodayDeliveriesCount(): Promise<{ total: number; arrived: number }> {
   const today = new Date().toISOString().split("T")[0];
   const res = await fetch(`${BASE}/api/deliveries/weekly?weekOf=${today}`, { credentials: "include" });
-  if (!res.ok) return 0;
+  if (!res.ok) return { total: 0, arrived: 0 };
   const data = await res.json();
   const orders = data.orders ?? data ?? [];
-  return orders.filter((o: any) => o.expectedDeliveryDate === today).length;
+  const todays = orders.filter((o: any) => o.expectedDeliveryDate === today);
+  const arrived = todays.filter((o: any) => o.status === "received" || o.status === "partially_received").length;
+  return { total: todays.length, arrived };
 }
 
 const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
@@ -525,6 +549,12 @@ export default function Dashboard() {
           color="text-primary"
           bg="bg-primary/10"
           href={todayPlans.length > 0 ? `/plans?planId=${todayPlans[0].id}` : "/plans"}
+          progress={!batchesLoading && (totalBatches?.calzoneBatches ?? 0) > 0 ? {
+            done: totalBatches!.calzoneBuilt,
+            total: totalBatches!.calzoneBatches,
+            label: "built",
+            barClass: "bg-primary",
+          } : undefined}
         />
         <StatCard
           title="Dispatching Today"
@@ -533,14 +563,26 @@ export default function Dashboard() {
           color="text-blue-500"
           bg="bg-blue-500/10"
           href="/dispatches"
+          progress={todayIndex >= 0 && (weeklyOrders![todayIndex].orderCount ?? 0) > 0 ? {
+            done: weeklyOrders![todayIndex].fulfilledCount,
+            total: weeklyOrders![todayIndex].orderCount,
+            label: "fulfilled",
+            barClass: "bg-blue-500",
+          } : undefined}
         />
         <StatCard
           title="Deliveries Arriving"
-          value={(todayDeliveriesCount ?? 0).toString()}
+          value={(todayDeliveriesCount?.total ?? 0).toString()}
           icon={PackageCheck}
           color="text-emerald-500"
           bg="bg-emerald-500/10"
           href="/deliveries"
+          progress={(todayDeliveriesCount?.total ?? 0) > 0 ? {
+            done: todayDeliveriesCount!.arrived,
+            total: todayDeliveriesCount!.total,
+            label: "arrived",
+            barClass: "bg-emerald-500",
+          } : undefined}
         />
         <StatCard
           title="Current Factory Number"
@@ -550,6 +592,12 @@ export default function Dashboard() {
           color="text-cyan-500"
           bg="bg-cyan-500/10"
           href="/pack-report"
+          progress={!batchesLoading && (totalBatches?.flavoursTotal ?? 0) > 0 ? {
+            done: totalBatches!.flavoursWrapped,
+            total: totalBatches!.flavoursTotal,
+            label: "flavours wrapped",
+            barClass: "bg-cyan-500",
+          } : undefined}
         />
         <StatCard
           title="Start Morning Meeting"
@@ -803,7 +851,15 @@ function GoveeTempTile() {
   );
 }
 
-function StatCard({ title, value, subtitle, icon: Icon, color, bg, href }: any) {
+/** Optional at-a-glance progress under the headline number. Purely visual —
+ *  `done / total` with a slim bar so nobody has to click into the card to see
+ *  where the day is up to. `barClass` matches the card's accent colour. */
+type StatProgress = { done: number; total: number; label: string; barClass: string };
+
+function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, progress }: any & { progress?: StatProgress }) {
+  const pct = progress && progress.total > 0
+    ? Math.min(100, Math.round((progress.done / progress.total) * 100))
+    : 0;
   return (
     <Link href={href} className="h-full">
       <div className="glass-panel p-4 rounded-2xl hover-lift cursor-pointer group h-full flex flex-col items-center text-center gap-2 min-h-[140px]">
@@ -814,6 +870,19 @@ function StatCard({ title, value, subtitle, icon: Icon, color, bg, href }: any) 
         <h3 className="text-3xl font-display font-bold leading-none">{value}</h3>
         {subtitle && (
           <p className="text-xs text-muted-foreground leading-snug">{subtitle}</p>
+        )}
+        {progress && progress.total > 0 && (
+          <div className="w-full mt-auto pt-1">
+            <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${pct >= 100 ? "bg-emerald-500" : progress.barClass}`}
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground mt-1 tabular-nums leading-snug">
+              {progress.done} / {progress.total} {progress.label}
+            </p>
+          </div>
         )}
       </div>
     </Link>
