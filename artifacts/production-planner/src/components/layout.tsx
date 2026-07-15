@@ -653,23 +653,24 @@ export function Layout({ children }: { children: ReactNode }) {
       <StandardsSopsDialog open={sopsOpen} onClose={() => setSopsOpen(false)} currentStationType={null} />
       <NotificationFlash />
 
-      {isFounder && (
-        <>
-          <FoundersAssistant open={assistantOpen} onClose={() => setAssistantOpen(false)} />
-          {!assistantOpen && (
-            <button
-              type="button"
-              onClick={() => setAssistantOpen(true)}
-              className="fixed bottom-20 right-5 z-30 flex items-center gap-2 px-4 h-12 rounded-full bg-orange-500 text-white shadow-lg shadow-orange-500/30 hover:bg-orange-600 active:scale-95 transition-all"
-              aria-label={`Ask ${ASSISTANT_NAME}`}
-              title={`Ask ${ASSISTANT_NAME}`}
-            >
-              <Bot className="w-5 h-5" />
-              <span className="text-sm font-semibold">Ask {ASSISTANT_NAME}</span>
-            </button>
-          )}
-        </>
-      )}
+      {/* Caz is available to every logged-in user. The founder additionally
+          gets recipe-design + memory powers; staff get a read-only look-up
+          assistant (enforced server-side, not just here). */}
+      <>
+        <FoundersAssistant open={assistantOpen} onClose={() => setAssistantOpen(false)} isFounder={isFounder} />
+        {!assistantOpen && (
+          <button
+            type="button"
+            onClick={() => setAssistantOpen(true)}
+            className="fixed bottom-20 right-5 z-30 flex items-center gap-2 px-4 h-12 rounded-full bg-orange-500 text-white shadow-lg shadow-orange-500/30 hover:bg-orange-600 active:scale-95 transition-all"
+            aria-label={`Ask ${ASSISTANT_NAME}`}
+            title={`Ask ${ASSISTANT_NAME}`}
+          >
+            <Bot className="w-5 h-5" />
+            <span className="text-sm font-semibold">Ask {ASSISTANT_NAME}</span>
+          </button>
+        )}
+      </>
     </div>
   );
 }

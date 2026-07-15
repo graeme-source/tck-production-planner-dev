@@ -115,20 +115,26 @@ interface ThreadDetail extends ThreadSummary {
   messages: Array<{ id: number; role: Role; content: MessageContent; createdAt: string }>;
 }
 
-const WELCOME_TEXT =
+// Founder gets the recipe-design pitch; everyone else gets the read-only
+// look-up assistant (which is all the server will let them do anyway).
+const FOUNDER_WELCOME =
   "Hey, I'm Caz. Ask me anything — design a recipe, look up costs, sanity-check a margin, or just talk through an idea. I'll remember important things across sessions and can propose recipe drafts for you to Save.";
+const STAFF_WELCOME =
+  "Hi, I'm Caz. Ask me anything about the app — recipes, ingredients, allergens, today's production plan, how much of something goes per tray, what's in stock. I can look things up but I can't change anything.";
 
-function welcomeMessage(): Message {
-  return { id: 0, role: "assistant", content: WELCOME_TEXT };
+function welcomeMessage(isFounder: boolean): Message {
+  return { id: 0, role: "assistant", content: isFounder ? FOUNDER_WELCOME : STAFF_WELCOME };
 }
 
 interface FoundersAssistantProps {
   open: boolean;
   onClose: () => void;
+  /** Founder gets recipe-design + memory tools; everyone else is read-only. */
+  isFounder: boolean;
 }
 
-export function FoundersAssistant({ open, onClose }: FoundersAssistantProps) {
-  const [messages, setMessages] = useState<Message[]>([welcomeMessage()]);
+export function FoundersAssistant({ open, onClose, isFounder }: FoundersAssistantProps) {
+  const [messages, setMessages] = useState<Message[]>([welcomeMessage(isFounder)]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -231,7 +237,8 @@ export function FoundersAssistant({ open, onClose }: FoundersAssistantProps) {
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => { loadMemory(); }, [loadMemory]);
+  // Memory is founder-only; the endpoint 403s for staff, so don't even call it.
+  useEffect(() => { if (isFounder) loadMemory(); }, [loadMemory, isFounder]);
   useEffect(() => { loadThreads(); }, [loadThreads]);
 
   useEffect(() => {
@@ -388,7 +395,7 @@ export function FoundersAssistant({ open, onClose }: FoundersAssistantProps) {
 
   const newConversation = () => {
     if (streaming) return;
-    setMessages([welcomeMessage()]);
+    setMessages([welcomeMessage(isFounder)]);
     setActiveThreadId(null);
     setError(null);
     setToolEvents([]);
@@ -401,7 +408,7 @@ export function FoundersAssistant({ open, onClose }: FoundersAssistantProps) {
       if (!res.ok) throw new Error(`Load failed (${res.status})`);
       const detail: ThreadDetail = await res.json();
       const msgs: Message[] = detail.messages.length === 0
-        ? [welcomeMessage()]
+        ? [welcomeMessage(isFounder)]
         : detail.messages.map(m => ({ id: nextIdRef.current++, role: m.role, content: m.content as MessageContent }));
       setMessages(msgs);
       setActiveThreadId(id);
@@ -422,7 +429,7 @@ export function FoundersAssistant({ open, onClose }: FoundersAssistantProps) {
       setThreads(prev => prev.filter(t => t.id !== id));
       if (activeThreadId === id) {
         setActiveThreadId(null);
-        setMessages([welcomeMessage()]);
+        setMessages([welcomeMessage(isFounder)]);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete");
@@ -553,15 +560,17 @@ export function FoundersAssistant({ open, onClose }: FoundersAssistantProps) {
                 >
                   <MessagesSquare className="w-4 h-4" />
                 </button>
-                <button
-                  type="button"
-                  onClick={openMemoryDrawer}
-                  className="p-1.5 hover:bg-secondary rounded"
-                  aria-label="Memory"
-                  title="Memory"
-                >
-                  <BookOpen className="w-4 h-4" />
-                </button>
+                {isFounder && (
+                  <button
+                    type="button"
+                    onClick={openMemoryDrawer}
+                    className="p-1.5 hover:bg-secondary rounded"
+                    aria-label="Memory"
+                    title="Memory"
+                  >
+                    <BookOpen className="w-4 h-4" />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={newConversation}
@@ -777,7 +786,9 @@ export function FoundersAssistant({ open, onClose }: FoundersAssistantProps) {
                 addFiles(images);
               }
             }}
-            placeholder="Describe a recipe, drop in a photo, or paste an image… (Shift+Enter for new line)"
+            placeholder={isFounder
+              ? "Describe a recipe, drop in a photo, or paste an image… (Shift+Enter for new line)"
+              : "Ask about recipes, prep, stock, allergens… (Shift+Enter for new line)"}
             rows={2}
             className="flex-1 resize-none px-3 py-2 border border-border rounded-xl text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 max-h-40"
             disabled={streaming}

@@ -1,18 +1,56 @@
 import express, { Router, type IRouter, type Request, type Response } from "express";
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import { db, appSettingsTable } from "@workspace/db";
-import { eq, desc, asc } from "drizzle-orm";
+import { db, appSettingsTable, usersTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 import {
-  ALL_TOOL_DEFINITIONS,
+  RECIPE_TOOL_DEFINITIONS,
+  PROPOSAL_TOOL_DEFINITIONS,
   PROPOSAL_TOOL_NAMES,
+  RECIPE_TOOL_NAMES,
   executeRecipeTool,
 } from "../lib/ai/recipe-designer-tools";
+import {
+  CAZ_TOOL_DEFINITIONS,
+  CAZ_TOOL_NAMES,
+  CAZ_TOOL_PAGE_KEYS,
+  executeCazTool,
+} from "../lib/ai/caz-tools";
+import { getPageMinRoles, roleMeets, type Role } from "../lib/page-access";
+import { londonDateString } from "../lib/london-time";
 import type Anthropic from "@anthropic-ai/sdk";
 
 const router: IRouter = Router();
+
+const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
+
+/** Who is chatting: their id, role, and whether they're the founder (who keeps
+ *  the recipe-design + memory powers everyone else doesn't get). */
+async function resolveRequester(req: Request): Promise<{ userId: number; role: Role; isFounder: boolean }> {
+  const userId = req.session.userId as number;
+  const [u] = await db
+    .select({ role: usersTable.role, email: usersTable.email })
+    .from(usersTable)
+    .where(eq(usersTable.id, userId));
+  return {
+    userId,
+    role: (u?.role ?? "viewer") as Role,
+    isFounder: u?.email === FOUNDER_EMAIL,
+  };
+}
+
+/** The read tools this role may use — a tool gated by a page key is only
+ *  offered if the user meets that page's min-role, so Caz mirrors exactly what
+ *  the person can already see in the app. */
+async function allowedReadTools(role: Role): Promise<Anthropic.Tool[]> {
+  const pageRoles = await getPageMinRoles();
+  return [...RECIPE_TOOL_DEFINITIONS, ...CAZ_TOOL_DEFINITIONS].filter(t => {
+    const pageKey = CAZ_TOOL_PAGE_KEYS[t.name];
+    return !pageKey || roleMeets(role, pageRoles.get(pageKey));
+  });
+}
 
 const PROMPTS_DIR = resolve(import.meta.dirname, "../prompts");
 
@@ -94,6 +132,27 @@ ${MEXICAN_BOX}
 
 ${TEST_BOX_TOOL}`;
 
+// Read-only assistant for everyone else on the team. Same name (Caz), but no
+// recipe-design or memory powers — it answers questions from live data and
+// cannot change anything.
+const CAZ_PROMPT = `You are Caz, the assistant inside The Calzone Kitchen's Production Planner app. You help the team by answering questions about what the app knows: recipes, ingredients, allergens, costs, sub-recipes, today's and other days' production plans, prep quantities (how much of each thing per tray/batch), and stock / factory numbers.
+
+## What you can and can't do
+You are READ-ONLY. You look things up and explain them. You cannot change recipes, plans, stock, tags or settings, and you cannot take any action (no tagging orders, no raising issues, no edits). If someone asks you to change something, tell them plainly that you can only look things up, and point them to the right screen to make the change themselves.
+
+You only have tools for operational data. You have NO access to staff records, HR, training, contact details or anything personal — if asked, say that's not something you can see.
+
+Some tools may be unavailable to the person you're talking to because of their access level. If you don't have a tool for what's asked, say you can't see that rather than guessing.
+
+## Tone & response style
+Be a helpful, plain-spoken colleague. Short and direct — lead with the answer. Use **bold** for the key number. No markdown headings. Don't narrate tool use ("let me check…") — just answer. Don't surface internal IDs (recipe/ingredient ids); use names.
+
+When someone asks a prep question like "how much BBQ sauce per tray for BBQ Pulled Pork today", give the per-tray figure first, then the total if useful. Always answer from the tools, not from memory — call them silently and reply with the real number.
+
+For allergen questions, use get_recipe_allergens (one call — it walks the whole ingredient tree including sub-recipes). Don't assemble allergens from get_recipe. If the tool reports incomplete declarations, give the allergens you have but note that the ingredient data for that product isn't fully complete, so it should be double-checked against the pack.
+
+Really — do not narrate ("let me pull up…", "I need to check…"). Call the tool and give the answer.`;
+
 // Allow image attachments — bump the json body limit on this router only.
 const largeJson = express.json({ limit: "30mb" });
 
@@ -160,12 +219,22 @@ function summarizeUserContent(content: string | AnthropicContentBlock[]): string
 
 // ─── Memory endpoints ──────────────────────────────────────────────────────
 
-router.get("/memory", async (_req, res) => {
+// Memory is founder-only (recipe-design working notes). Now that the router is
+// open to all staff, these two endpoints guard themselves.
+async function founderOnly(req: Request, res: Response): Promise<boolean> {
+  const { isFounder } = await resolveRequester(req);
+  if (!isFounder) { res.status(403).json({ error: "Founder access required" }); return false; }
+  return true;
+}
+
+router.get("/memory", async (req, res) => {
+  if (!(await founderOnly(req, res))) return;
   const value = await getMemory();
   res.json({ value });
 });
 
 router.put("/memory", async (req, res) => {
+  if (!(await founderOnly(req, res))) return;
   const value = typeof req.body?.value === "string" ? req.body.value : null;
   if (value === null) { res.status(400).json({ error: "value (string) is required" }); return; }
   await setMemory(value);
@@ -173,12 +242,23 @@ router.put("/memory", async (req, res) => {
 });
 
 // ─── Thread persistence ────────────────────────────────────────────────────
+// Threads are private per user: everyone sees only their own conversations.
+// `user_id` is added by a startup migration and existing rows are backfilled
+// to the founder (they were all the founder's before Caz opened up).
 
-router.get("/threads", async (_req, res) => {
+async function threadOwnedBy(threadId: number, userId: number): Promise<boolean> {
+  if (!Number.isFinite(threadId)) return false;
+  const r = await db.execute(sql`SELECT 1 FROM recipe_chat_threads WHERE id = ${threadId} AND user_id = ${userId}`);
+  return ((r as unknown as { rows: unknown[] }).rows).length > 0;
+}
+
+router.get("/threads", async (req, res) => {
+  const userId = req.session.userId as number;
   const rows = await db.execute(sql`
     SELECT t.id, t.title, t.created_at, t.updated_at,
       (SELECT COUNT(*) FROM recipe_chat_messages m WHERE m.thread_id = t.id) AS message_count
     FROM recipe_chat_threads t
+    WHERE t.user_id = ${userId}
     ORDER BY t.updated_at DESC
     LIMIT 100
   `);
@@ -193,11 +273,12 @@ router.get("/threads", async (_req, res) => {
 });
 
 router.post("/threads", async (req, res) => {
+  const userId = req.session.userId as number;
   const title = typeof req.body?.title === "string" && req.body.title.trim()
     ? req.body.title.trim()
     : "New conversation";
   const result = await db.execute(sql`
-    INSERT INTO recipe_chat_threads (title) VALUES (${title}) RETURNING id, title, created_at, updated_at
+    INSERT INTO recipe_chat_threads (title, user_id) VALUES (${title}, ${userId}) RETURNING id, title, created_at, updated_at
   `);
   const row = (result as unknown as { rows: Array<{ id: number; title: string; created_at: Date; updated_at: Date }> }).rows[0];
   res.status(201).json({
@@ -212,6 +293,7 @@ router.post("/threads", async (req, res) => {
 router.get("/threads/:id", async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  if (!(await threadOwnedBy(id, req.session.userId as number))) { res.status(404).json({ error: "Not found" }); return; }
   const tRes = await db.execute(sql`SELECT id, title, created_at, updated_at FROM recipe_chat_threads WHERE id = ${id}`);
   const trow = (tRes as unknown as { rows: Array<{ id: number; title: string; created_at: Date; updated_at: Date }> }).rows[0];
   if (!trow) { res.status(404).json({ error: "Not found" }); return; }
@@ -234,6 +316,7 @@ router.get("/threads/:id", async (req, res) => {
 router.patch("/threads/:id", async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  if (!(await threadOwnedBy(id, req.session.userId as number))) { res.status(404).json({ error: "Not found" }); return; }
   const title = typeof req.body?.title === "string" && req.body.title.trim() ? req.body.title.trim() : null;
   if (!title) { res.status(400).json({ error: "title (non-empty string) required" }); return; }
   await db.execute(sql`UPDATE recipe_chat_threads SET title = ${title}, updated_at = NOW() WHERE id = ${id}`);
@@ -243,6 +326,7 @@ router.patch("/threads/:id", async (req, res) => {
 router.delete("/threads/:id", async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  if (!(await threadOwnedBy(id, req.session.userId as number))) { res.status(404).json({ error: "Not found" }); return; }
   await db.execute(sql`DELETE FROM recipe_chat_threads WHERE id = ${id}`);
   res.status(204).end();
 });
@@ -297,9 +381,29 @@ router.post("/chat", largeJson, async (req: Request, res: Response) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
 
+  const requester = await resolveRequester(req);
+
+  // Build the tool set for THIS user. Everyone gets the read tools their role
+  // permits; only the founder gets the write-proposal tools (recipe drafts,
+  // memory updates). So for staff there is physically no tool that can change
+  // anything — read-only is structural, not just prompted.
+  const readTools = await allowedReadTools(requester.role);
+  const tools: Anthropic.Tool[] = requester.isFounder
+    ? [...readTools, ...PROPOSAL_TOOL_DEFINITIONS]
+    : readTools;
+  // Give Caz today's date so relative dates ("today", "tomorrow", "15 July")
+  // resolve to the right year — the model doesn't otherwise know the date, and
+  // its tools all default to "today".
+  const datedPrompt = `Today's date is ${londonDateString()} (Europe/London). When the user gives a date without a year, assume the current or nearest upcoming one.\n\n`;
+  const systemPrompt = datedPrompt + (requester.isFounder ? STATIC_PROMPT : CAZ_PROMPT);
+
+  // Only persist to a thread the requester owns — never write into someone
+  // else's conversation via a passed-in id.
+  const ownsThread = threadId ? await threadOwnedBy(Number(threadId), requester.userId) : false;
+
   // Persist the latest user message at start of turn
   const lastUser = typedMessages[typedMessages.length - 1];
-  if (threadId && lastUser?.role === "user") {
+  if (threadId && ownsThread && lastUser?.role === "user") {
     try {
       const stored = typeof lastUser.content === "string"
         ? lastUser.content
@@ -311,8 +415,9 @@ router.post("/chat", largeJson, async (req: Request, res: Response) => {
     }
   }
 
-  const memory = await getMemory();
-  const memoryBlock = `## Current Memory\n\n${memory}`;
+  // Memory is a founder-only concept; staff chats don't carry it.
+  const memoryBlock = requester.isFounder ? `## Current Memory\n\n${await getMemory()}` : null;
+  const cazCtx = { cookie: req.headers.cookie ?? "", port: process.env["PORT"] };
 
   const client = getClaudeClient();
   const conversation: Anthropic.MessageParam[] = typedMessages.map(m => ({
@@ -328,10 +433,10 @@ router.post("/chat", largeJson, async (req: Request, res: Response) => {
         model: CLAUDE_MODELS.sonnet,
         max_tokens: 4096,
         system: [
-          { type: "text", text: STATIC_PROMPT, cache_control: { type: "ephemeral" } },
-          { type: "text", text: memoryBlock },
+          { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } },
+          ...(memoryBlock ? [{ type: "text" as const, text: memoryBlock }] : []),
         ],
-        tools: ALL_TOOL_DEFINITIONS,
+        tools,
         messages: conversation,
       });
 
@@ -344,7 +449,7 @@ router.post("/chat", largeJson, async (req: Request, res: Response) => {
       conversation.push({ role: "assistant", content: final.content });
 
       if (final.stop_reason !== "tool_use") {
-        if (threadId && assistantTextAcc.trim()) {
+        if (threadId && ownsThread && assistantTextAcc.trim()) {
           try { await persistMessage(threadId, "assistant", assistantTextAcc); }
           catch (err) { console.error("[recipe-designer] failed to persist assistant msg:", err); }
         }
@@ -357,8 +462,23 @@ router.post("/chat", largeJson, async (req: Request, res: Response) => {
         (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
       );
 
+      const pageRoles = await getPageMinRoles();
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
       for (const use of toolUses) {
+        // Belt-and-braces: proposal tools are founder-only, and every read tool
+        // is re-checked against the caller's page permission at execution time,
+        // even though the offered tool list already excluded disallowed ones.
+        if (PROPOSAL_TOOL_NAMES.has(use.name) && !requester.isFounder) {
+          toolResults.push({ type: "tool_result", tool_use_id: use.id, content: "Not permitted.", is_error: true });
+          continue;
+        }
+        const pageKey = CAZ_TOOL_PAGE_KEYS[use.name];
+        if (pageKey && !roleMeets(requester.role, pageRoles.get(pageKey))) {
+          toolResults.push({ type: "tool_result", tool_use_id: use.id, content: "You don't have access to that data.", is_error: true });
+          send("tool_call", { name: use.name, status: "error" });
+          continue;
+        }
+
         if (PROPOSAL_TOOL_NAMES.has(use.name)) {
           if (use.name === "propose_memory_update") {
             const input = use.input as { newContent?: string; reason?: string };
@@ -384,9 +504,13 @@ router.post("/chat", largeJson, async (req: Request, res: Response) => {
           continue;
         }
 
-        // Data tools — execute against DB
+        // Data tools — execute against DB / loopback.
         send("tool_call", { name: use.name, status: "running" });
-        const exec = await executeRecipeTool(use.name, use.input);
+        const exec = CAZ_TOOL_NAMES.has(use.name)
+          ? await executeCazTool(use.name, use.input, cazCtx)
+          : RECIPE_TOOL_NAMES.has(use.name)
+            ? await executeRecipeTool(use.name, use.input)
+            : { content: `Unknown tool: ${use.name}`, isError: true };
         toolResults.push({
           type: "tool_result",
           tool_use_id: use.id,

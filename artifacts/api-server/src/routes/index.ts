@@ -160,14 +160,11 @@ router.use("/bundles", requireAdminOrManager, bundlesRouter);
 router.use("/training", requireAdminOrManager, trainingRouter);
 router.use("/govee", goveeRouter);
 
-const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
-async function requireFounder(req: Request, res: Response, next: NextFunction) {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const [user] = await db.select({ email: usersTable.email }).from(usersTable).where(eq(usersTable.id, req.session.userId));
-  if (user?.email === FOUNDER_EMAIL) { next(); return; }
-  res.status(403).json({ error: "Founder access required" });
-}
-router.use("/recipe-designer", requireFounder, recipeDesignerRouter);
+// Caz assistant. Open to ALL logged-in staff — the route itself gives each
+// user only the read tools their role permits, and reserves recipe-design /
+// memory writes for the founder (was mounted behind requireFounder before Caz
+// opened up; the founder gate now lives inside the route per-capability).
+router.use("/recipe-designer", recipeDesignerRouter);
 
 router.post("/backup/trigger", requireAdmin, (_req: Request, res: Response) => {
   res.json({ status: "started", message: "Backup triggered" });

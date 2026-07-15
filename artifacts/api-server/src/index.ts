@@ -84,6 +84,14 @@ async function runStartupMigrations() {
       )
     `);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_recipe_chat_messages_thread ON recipe_chat_messages (thread_id, id)`);
+    // Caz opened to all staff — threads become private per user. Existing rows
+    // predate this and were all the founder's, so backfill them to that user.
+    await db.execute(sql`ALTER TABLE recipe_chat_threads ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES app_users(id) ON DELETE CASCADE`);
+    await db.execute(sql`
+      UPDATE recipe_chat_threads SET user_id = (SELECT id FROM app_users WHERE email = 'graeme@thecalzonekitchen.co.uk' LIMIT 1)
+      WHERE user_id IS NULL
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_recipe_chat_threads_user ON recipe_chat_threads (user_id, updated_at DESC)`);
     // Recipe dietary category (meat / vegetarian) — drives oven-defaults overlay.
     await db.execute(sql`ALTER TABLE recipes ADD COLUMN IF NOT EXISTS dietary_category TEXT`);
     // Seed oven-defaults app_settings keys (sane starting values; admin edits in Settings).
