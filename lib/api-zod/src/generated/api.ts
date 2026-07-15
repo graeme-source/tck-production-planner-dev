@@ -202,7 +202,7 @@ export const ListIngredientsResponseItem = zod.object({
     ),
   kanbanEnabled: zod.boolean().optional(),
   kanbanQuantity: zod.number().optional(),
-  prepCountPerPortion: zod.number().int().nullish(),
+  prepCountPerPortion: zod.number().nullish(),
   isPasta: zod.boolean().optional(),
   createdAt: zod.string(),
 });
@@ -263,7 +263,7 @@ export const GetIngredientResponse = zod.object({
     ),
   kanbanEnabled: zod.boolean().optional(),
   kanbanQuantity: zod.number().optional(),
-  prepCountPerPortion: zod.number().int().nullish(),
+  prepCountPerPortion: zod.number().nullish(),
   isPasta: zod.boolean().optional(),
   createdAt: zod.string(),
 });
@@ -320,7 +320,7 @@ export const UpdateIngredientResponse = zod.object({
     ),
   kanbanEnabled: zod.boolean().optional(),
   kanbanQuantity: zod.number().optional(),
-  prepCountPerPortion: zod.number().int().nullish(),
+  prepCountPerPortion: zod.number().nullish(),
   isPasta: zod.boolean().optional(),
   createdAt: zod.string(),
 });
@@ -347,6 +347,16 @@ export const ListSubRecipesResponseItem = zod.object({
     .number()
     .nullish()
     .describe("Computed cost per yield unit"),
+  isBase: zod
+    .boolean()
+    .nullish()
+    .describe("Marks a base\/sauce sub-recipe (Bases & Sauces station)"),
+  expandInPrep: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Whether prep lists expand this sub-recipe into its component ingredients",
+    ),
   createdAt: zod.string(),
 });
 export const ListSubRecipesResponse = zod.array(ListSubRecipesResponseItem);
@@ -361,6 +371,7 @@ export const CreateSubRecipeBody = zod.object({
   yieldUnit: zod.string(),
   notes: zod.string().nullish(),
   shelfLifeDays: zod.number().nullish(),
+  isBase: zod.boolean().nullish(),
   expandInPrep: zod.boolean().optional(),
   ingredients: zod.array(
     zod.object({
@@ -399,6 +410,16 @@ export const GetSubRecipeResponse = zod
       .number()
       .nullish()
       .describe("Computed cost per yield unit"),
+    isBase: zod
+      .boolean()
+      .nullish()
+      .describe("Marks a base\/sauce sub-recipe (Bases & Sauces station)"),
+    expandInPrep: zod
+      .boolean()
+      .optional()
+      .describe(
+        "Whether prep lists expand this sub-recipe into its component ingredients",
+      ),
     createdAt: zod.string(),
   })
   .and(
@@ -451,6 +472,7 @@ export const UpdateSubRecipeBody = zod.object({
   yieldUnit: zod.string(),
   notes: zod.string().nullish(),
   shelfLifeDays: zod.number().nullish(),
+  isBase: zod.boolean().nullish(),
   expandInPrep: zod.boolean().optional(),
   ingredients: zod.array(
     zod.object({
@@ -481,6 +503,16 @@ export const UpdateSubRecipeResponse = zod.object({
     .number()
     .nullish()
     .describe("Computed cost per yield unit"),
+  isBase: zod
+    .boolean()
+    .nullish()
+    .describe("Marks a base\/sauce sub-recipe (Bases & Sauces station)"),
+  expandInPrep: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Whether prep lists expand this sub-recipe into its component ingredients",
+    ),
   createdAt: zod.string(),
 });
 
@@ -542,6 +574,18 @@ export const ListRecipesResponseItem = zod.object({
   packIngredientCost: zod.number(),
   totalPackCost: zod.number(),
   grossMargin: zod.number().nullish(),
+  color: zod
+    .string()
+    .nullish()
+    .describe("Hex colour used to identify the recipe"),
+  isCoreMenu: zod
+    .boolean()
+    .optional()
+    .describe("Whether this recipe is on the core menu"),
+  isCurrentSpecial: zod
+    .boolean()
+    .optional()
+    .describe("Whether this recipe is the current Calzone Club Special"),
   createdAt: zod.string(),
 });
 export const ListRecipesResponse = zod.array(ListRecipesResponseItem);
@@ -676,6 +720,18 @@ export const GetRecipeResponse = zod
     packIngredientCost: zod.number(),
     totalPackCost: zod.number(),
     grossMargin: zod.number().nullish(),
+    color: zod
+      .string()
+      .nullish()
+      .describe("Hex colour used to identify the recipe"),
+    isCoreMenu: zod
+      .boolean()
+      .optional()
+      .describe("Whether this recipe is on the core menu"),
+    isCurrentSpecial: zod
+      .boolean()
+      .optional()
+      .describe("Whether this recipe is the current Calzone Club Special"),
     createdAt: zod.string(),
   })
   .and(
@@ -831,6 +887,18 @@ export const UpdateRecipeResponse = zod.object({
   packIngredientCost: zod.number(),
   totalPackCost: zod.number(),
   grossMargin: zod.number().nullish(),
+  color: zod
+    .string()
+    .nullish()
+    .describe("Hex colour used to identify the recipe"),
+  isCoreMenu: zod
+    .boolean()
+    .optional()
+    .describe("Whether this recipe is on the core menu"),
+  isCurrentSpecial: zod
+    .boolean()
+    .optional()
+    .describe("Whether this recipe is the current Calzone Club Special"),
   createdAt: zod.string(),
 });
 
@@ -937,6 +1005,29 @@ export const GetProductionPlanResponse = zod
           fillWeightGrams: zod.number().nullish(),
           baseType: zod.string().nullish(),
           baseWeightGrams: zod.number().nullish(),
+          extraPacksBuilt: zod
+            .number()
+            .describe(
+              "Extra packs built beyond the planned batches (output = batchesComplete × packsPerBatch + extraPacksBuilt)",
+            ),
+          wrappingComplete: zod.boolean(),
+          fridgeQty: zod.number(),
+          freezerQty: zod.number(),
+          recipeColor: zod
+            .string()
+            .nullish()
+            .describe("Hex colour of the recipe (joined from recipes table)"),
+          mixingTinOverride: zod.number().nullish(),
+          stationCompletions: zod
+            .record(zod.string(), zod.number())
+            .optional()
+            .describe("Batch completion counts keyed by station type"),
+          builderMarkedCompleteAt: zod
+            .date()
+            .nullish()
+            .describe(
+              "ISO timestamp set when the Building station builder explicitly marks the recipe complete before hitting batchesTarget. Null while the recipe is still in flight.",
+            ),
         }),
       ),
     }),
@@ -1032,6 +1123,29 @@ export const UpdateProductionPlanItemResponse = zod.object({
   fillWeightGrams: zod.number().nullish(),
   baseType: zod.string().nullish(),
   baseWeightGrams: zod.number().nullish(),
+  extraPacksBuilt: zod
+    .number()
+    .describe(
+      "Extra packs built beyond the planned batches (output = batchesComplete × packsPerBatch + extraPacksBuilt)",
+    ),
+  wrappingComplete: zod.boolean(),
+  fridgeQty: zod.number(),
+  freezerQty: zod.number(),
+  recipeColor: zod
+    .string()
+    .nullish()
+    .describe("Hex colour of the recipe (joined from recipes table)"),
+  mixingTinOverride: zod.number().nullish(),
+  stationCompletions: zod
+    .record(zod.string(), zod.number())
+    .optional()
+    .describe("Batch completion counts keyed by station type"),
+  builderMarkedCompleteAt: zod
+    .date()
+    .nullish()
+    .describe(
+      "ISO timestamp set when the Building station builder explicitly marks the recipe complete before hitting batchesTarget. Null while the recipe is still in flight.",
+    ),
 });
 
 /**
@@ -1179,12 +1293,46 @@ export const GetStationKpiQueryParams = zod.object({
 });
 
 export const GetStationKpiResponse = zod.object({
-  batchesCompleted: zod.number(),
+  batchesCompleted: zod
+    .number()
+    .describe(
+      "Calzone batches completed today (excludes mac cheese on building stations)",
+    ),
   activeMinutes: zod.number(),
-  breakMinutes: zod.number(),
-  batchesPerHour: zod.number(),
-  macPacksCompleted: zod.number().optional(),
-  macPacksPerHour: zod.number().optional(),
+  breakMinutes: zod
+    .number()
+    .describe(
+      "Standard break minutes deducted (Settings break\/lunch lengths, deducted when the production window spans them)",
+    ),
+  batchesPerHour: zod
+    .number()
+    .describe(
+      "Team calzone batches per hour — the standard method (first→last completion minus spanned standard breaks)",
+    ),
+  yourBatchesCompleted: zod
+    .number()
+    .optional()
+    .describe(
+      "Calzone batches completed by the session user. Only populated for building stations.",
+    ),
+  yourActiveMinutes: zod
+    .number()
+    .optional()
+    .describe(
+      "Session user's active minutes (same standard method). Only populated for building stations.",
+    ),
+  yourBatchesPerHour: zod
+    .number()
+    .optional()
+    .describe(
+      "Session user's calzone batches per hour, same method as the team number. Only populated for building stations.",
+    ),
+  macPacksCompleted: zod
+    .number()
+    .optional()
+    .describe(
+      "Mac cheese packs completed today (count only — mac has no per-hour KPI). Only populated for building stations.",
+    ),
 });
 
 /**

@@ -17,106 +17,50 @@ import {
   db,
   batchCompletionsTable,
   productionPlanItemsTable,
-  productionPlansTable,
   recipesTable,
-  appSettingsTable,
 } from "@workspace/db";
-import { and, eq, gte, lte, sql, inArray } from "drizzle-orm";
-import { londonEndOfDay, londonHour } from "./london-time";
+import { and, eq, gte, lte, sql, ne } from "drizzle-orm";
+import { londonStartOfDay, londonEndOfDay } from "./london-time";
+import { getStandardBreakConfig, computeBatchesPerHour } from "./batches-per-hour";
 import { getOrdersByTag } from "../services/shopify";
 
 const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
 
 /**
- * Builder batches/hour for a single day, matching the calculation
- * the Analytics page uses on /api/reports/production-kpis.
- *
- * Active minutes = wallclock from earliest to latest building
- * completion minus a fixed break allowance. The morning break is
- * always deducted; the lunch break is only deducted when production
- * ran past 13:00 London — most days the team finishes before lunch
- * and never stops for it, so deducting it would understate the rate.
- *
- * Total batches = sum of building completions per plan item, each
- * capped at the plan item's batchesTarget. Mac & cheese packs are
- * deliberately excluded so calzone batches and mac packs can't
- * distort each other's BPH.
+ * Builder batches/hour for a single day — the standard method from
+ * lib/batches-per-hour: calzone building completions only (mac cheese
+ * ignored entirely), first→last completion window, standard break
+ * lengths deducted when the window spans them.
  */
 export async function computeBuilderBatchesPerHourForDay(dateIso: string): Promise<{
   totalBatches: number;
   activeMinutes: number;
   batchesPerHour: number | null;
 }> {
-  const dayStart = new Date(`${dateIso}T00:00:00`);
-  const dayEnd = londonEndOfDay(new Date(`${dateIso}T00:00:00`));
+  // Noon UTC is unambiguously the right London date in both GMT and BST.
+  const anchor = new Date(`${dateIso}T12:00:00Z`);
+  const dayStart = londonStartOfDay(anchor);
+  const dayEnd = londonEndOfDay(anchor);
 
   const completions = await db
-    .select({
-      planItemId: batchCompletionsTable.planItemId,
-      stationType: batchCompletionsTable.stationType,
-      completedAt: batchCompletionsTable.completedAt,
-      planId: productionPlanItemsTable.planId,
-      recipeCategory: recipesTable.category,
-      batchesTarget: productionPlanItemsTable.batchesTarget,
-    })
+    .select({ completedAt: batchCompletionsTable.completedAt })
     .from(batchCompletionsTable)
     .innerJoin(productionPlanItemsTable, eq(batchCompletionsTable.planItemId, productionPlanItemsTable.id))
-    .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
     .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
     .where(and(
       gte(batchCompletionsTable.completedAt, dayStart),
       lte(batchCompletionsTable.completedAt, dayEnd),
       sql`${batchCompletionsTable.stationType} IN ('building_1','building_2')`,
+      ne(recipesTable.category, MAC_CHEESE_CATEGORY),
     ));
 
-  if (completions.length === 0) {
-    return { totalBatches: 0, activeMinutes: 0, batchesPerHour: null };
-  }
-
-  // Sum calzone completions per plan item, capped at the target so
-  // "extra" batches don't inflate the rate.
-  const calzonePerItem = new Map<number, number>();
-  const calzoneTargets = new Map<number, number>();
-  for (const c of completions) {
-    if (c.recipeCategory === MAC_CHEESE_CATEGORY) continue; // mac packs excluded
-    calzonePerItem.set(c.planItemId, (calzonePerItem.get(c.planItemId) ?? 0) + 1);
-    if (!calzoneTargets.has(c.planItemId)) calzoneTargets.set(c.planItemId, c.batchesTarget ?? 0);
-  }
-  let totalBatches = 0;
-  for (const [itemId, built] of calzonePerItem) {
-    totalBatches += Math.min(built, calzoneTargets.get(itemId) ?? 0);
-  }
-  if (totalBatches === 0) {
-    return { totalBatches: 0, activeMinutes: 0, batchesPerHour: null };
-  }
-
-  // Wallclock spans earliest → latest building completion (any
-  // recipe — including mac, which still consumed staff time).
-  const times = completions.map(c => c.completedAt.getTime());
-  const earliest = Math.min(...times);
-  const latest = Math.max(...times);
-  const wallClockMinutes = Math.round((latest - earliest) / 60_000);
-
-  // Fixed break allowance: morning break always comes off; lunch only
-  // when the last batch finished after 13:00 London (otherwise the team
-  // wrapped up before lunch and never took it).
-  const [breakSetting, lunchSetting] = await Promise.all([
-    db.select({ value: appSettingsTable.value }).from(appSettingsTable).where(eq(appSettingsTable.key, "default_break_minutes")).limit(1),
-    db.select({ value: appSettingsTable.value }).from(appSettingsTable).where(eq(appSettingsTable.key, "default_lunch_minutes")).limit(1),
-  ]);
-  const configuredBreakMins = breakSetting[0]?.value ? Number(breakSetting[0].value) : 15;
-  const configuredLunchMins = lunchSetting[0]?.value ? Number(lunchSetting[0].value) : 35;
-
-  const finishedAfterLunch = londonHour(new Date(latest)) >= 13;
-  const totalBreakMins = configuredBreakMins + (finishedAfterLunch ? configuredLunchMins : 0);
-
-  const activeMinutes = Math.max(0, wallClockMinutes - totalBreakMins);
-  if (activeMinutes < 1) {
-    return { totalBatches, activeMinutes, batchesPerHour: null };
-  }
-
-  const batchesPerHour = Math.round((totalBatches / (activeMinutes / 60)) * 10) / 10;
-  return { totalBatches, activeMinutes, batchesPerHour };
+  const breakConfig = await getStandardBreakConfig();
+  const result = computeBatchesPerHour(completions.map(c => c.completedAt), breakConfig);
+  return {
+    totalBatches: result.batches,
+    activeMinutes: result.activeMinutes,
+    batchesPerHour: result.batchesPerHour,
+  };
 }
 
 /**

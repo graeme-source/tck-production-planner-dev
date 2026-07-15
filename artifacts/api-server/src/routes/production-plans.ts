@@ -9,6 +9,7 @@ import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag } f
 import { getFactoryNumberCoreMenuOnly, getShopifyFreezerSyncEnabled } from "../lib/inventory-sync";
 import { logFridgeStockChange, type FridgeChangeSource } from "../lib/fridge-stock-log";
 import { londonDateString, londonStartOfDay } from "../lib/london-time";
+import { getStandardBreakConfig, computeBatchesPerHour } from "../lib/batches-per-hour";
 import { computeDaySchedule, parseClock, formatClock, DEFAULT_START_TIME, DEFAULT_CHANGEOVER_SECONDS, DEFAULT_BUILDERS } from "@workspace/production-schedule";
 // Type-only import — purely compile-time, no runtime cost. The actual
 // PDF renderer (and the heavy @react-pdf/renderer dep tree it pulls in)
@@ -4571,9 +4572,6 @@ router.get("/:id/kpi", async (req, res) => {
   const calzoneBatchesTarget = planItems
     .filter(i => i.category !== MAC_CHEESE_CATEGORY)
     .reduce((s, i) => s + (Number(i.batchesTarget) || 0), 0);
-  const macPacksTarget = planItems
-    .filter(i => i.category === MAC_CHEESE_CATEGORY)
-    .reduce((s, i) => s + (Number(i.batchesTarget) || 0), 0);
   if (itemIds.length === 0) {
     res.json({ batchesCompleted: 0, activeMinutes: 0, breakMinutes: 0, batchesPerHour: 0, macPacksCompleted: 0, macPacksPerHour: 0 });
     return;
@@ -4585,11 +4583,11 @@ router.get("/:id/kpi", async (req, res) => {
 
   if (isBuilding) {
     // Team-level for building: all batches from both lines, all users.
-    // planItemId is included so we can bucket calzone vs mac cheese.
+    // planItemId is included so we can split calzone from mac cheese.
     const completions = await db.select({
       planItemId: batchCompletionsTable.planItemId,
       completedAt: batchCompletionsTable.completedAt,
-      startedAt: batchCompletionsTable.startedAt,
+      userId: batchCompletionsTable.userId,
     })
       .from(batchCompletionsTable)
       .where(
@@ -4600,79 +4598,38 @@ router.get("/:id/kpi", async (req, res) => {
         )
       );
 
-    // All building breaks today (all users) — to find the longest per break type
-    const breaksRows = await db.select({
-      breakType: stationBreaksTable.breakType,
-      startedAt: stationBreaksTable.startedAt,
-      endedAt: stationBreaksTable.endedAt,
-    })
-      .from(stationBreaksTable)
-      .where(
-        and(
-          eq(stationBreaksTable.planId, planId),
-          sql`${stationBreaksTable.stationType} IN ('building_1', 'building_2')`,
-          sql`started_at >= ${today.toISOString()} AND started_at < ${tomorrow.toISOString()}`,
+    // The BPH KPI is calzone-only — mac cheese is a separate product line
+    // and doesn't count as a batch or extend the window. Only a raw pack
+    // count is reported for the progress line.
+    const calzone = completions.filter(c => !macItemIds.has(c.planItemId));
+    const batchesCompleted = calzone.length;
+    const macPacksCompleted = completions.length - batchesCompleted;
+
+    // Standard method (lib/batches-per-hour): first→last calzone completion,
+    // standard break lengths deducted when the window spans them. Live: the
+    // window runs to "now" until the day's calzone target is met, then
+    // freezes at the last completion so BPH stops decaying during tidy-up.
+    const breakConfig = await getStandardBreakConfig();
+    const allDone = calzoneBatchesTarget > 0 && batchesCompleted >= calzoneBatchesTarget;
+    const liveOpts = allDone ? {} : { liveNow: new Date() };
+    const team = computeBatchesPerHour(calzone.map(c => c.completedAt), breakConfig, liveOpts);
+    const yours = sessionUserId != null
+      ? computeBatchesPerHour(
+          calzone.filter(c => c.userId === sessionUserId).map(c => c.completedAt),
+          breakConfig,
+          liveOpts,
         )
-      );
-
-    // Split by category. 1 mac cheese batch_completion row = 1 pack
-    // (mac items have portionsPerBatch=2, packsPerBatch=1).
-    let batchesCompleted = 0; // calzone only
-    let macPacksCompleted = 0;
-    for (const c of completions) {
-      if (macItemIds.has(c.planItemId)) macPacksCompleted++;
-      else batchesCompleted++;
-    }
-
-    // Deduct the admin-configured break durations (Settings → Break / Lunch minutes)
-    // for each break type that was recorded. Keeps BPH predictable regardless of
-    // how long breaks actually ran over.
-    const [breakSetting] = await db
-      .select({ value: appSettingsTable.value })
-      .from(appSettingsTable)
-      .where(eq(appSettingsTable.key, "default_break_minutes"));
-    const [lunchSetting] = await db
-      .select({ value: appSettingsTable.value })
-      .from(appSettingsTable)
-      .where(eq(appSettingsTable.key, "default_lunch_minutes"));
-    const configuredBreakMins = breakSetting ? Number(breakSetting.value) : 15;
-    const configuredLunchMins = lunchSetting ? Number(lunchSetting.value) : 35;
-    const hasLunch = breaksRows.some(b => b.breakType === "lunch" && b.endedAt);
-    const hasSnackBreak = breaksRows.some(b => b.breakType !== "lunch" && b.endedAt);
-    const breakMinutes = (hasLunch ? configuredLunchMins : 0) + (hasSnackBreak ? configuredBreakMins : 0);
-
-    // Shared denominator: time between the first and last batch *completion* —
-    // matches the on-floor mental model ("we made 10 batches between 9am and
-    // 10am"). startedAt was previously used here but inflated the window by
-    // the time spent building the first batch. When every planned batch is
-    // done, freeze the clock at the last completion so the KPI locks in and
-    // doesn't keep decaying while staff tidy up or move on.
-    let activeMinutes = 0;
-    if (completions.length > 1) {
-      const earliest = completions.reduce((min, c) => (
-        c.completedAt < min ? c.completedAt : min
-      ), completions[0].completedAt);
-      const latest = completions.reduce((max, c) => (
-        c.completedAt > max ? c.completedAt : max
-      ), completions[0].completedAt);
-      const allDone = calzoneBatchesTarget + macPacksTarget > 0
-        && batchesCompleted >= calzoneBatchesTarget
-        && macPacksCompleted >= macPacksTarget;
-      const clockCeiling = allDone ? latest.getTime() : new Date().getTime();
-      const totalElapsedMinutes = (clockCeiling - earliest.getTime()) / 60000;
-      activeMinutes = Math.max(0, totalElapsedMinutes - breakMinutes);
-    }
-
-    const batchesPerHour = activeMinutes > 0 ? (batchesCompleted / (activeMinutes / 60)) : 0;
-    const macPacksPerHour = activeMinutes > 0 ? (macPacksCompleted / (activeMinutes / 60)) : 0;
+      : null;
 
     res.json({
       batchesCompleted,
-      activeMinutes: Math.round(activeMinutes),
-      breakMinutes: Math.round(breakMinutes),
-      batchesPerHour: Math.round(batchesPerHour * 10) / 10,
+      activeMinutes: team.activeMinutes,
+      breakMinutes: team.breakMinutesDeducted,
+      batchesPerHour: team.batchesPerHour ?? 0,
+      yourBatchesCompleted: yours?.batches ?? 0,
+      yourActiveMinutes: yours?.activeMinutes ?? 0,
+      yourBatchesPerHour: yours?.batchesPerHour ?? 0,
       macPacksCompleted,
-      macPacksPerHour: Math.round(macPacksPerHour * 10) / 10,
     });
     return;
   }

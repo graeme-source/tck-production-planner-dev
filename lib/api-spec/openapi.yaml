@@ -1726,6 +1726,11 @@ components:
           type: boolean
         kanbanQuantity:
           type: number
+        prepCountPerPortion:
+          type: integer
+          nullable: true
+        isPasta:
+          type: boolean
         createdAt:
           type: string
       required:
@@ -1919,6 +1924,13 @@ components:
           type: number
           nullable: true
           description: Computed cost per yield unit
+        isBase:
+          type: boolean
+          nullable: true
+          description: Marks a base/sauce sub-recipe (Bases & Sauces station)
+        expandInPrep:
+          type: boolean
+          description: Whether prep lists expand this sub-recipe into its component ingredients
         createdAt:
           type: string
       required:
@@ -1950,6 +1962,8 @@ components:
         packWeight:
           type: number
           nullable: true
+        hideFromPrep:
+          type: boolean
       required:
         - id
         - ingredientId
@@ -2030,6 +2044,11 @@ components:
         shelfLifeDays:
           type: integer
           nullable: true
+        isBase:
+          type: boolean
+          nullable: true
+        expandInPrep:
+          type: boolean
         ingredients:
           type: array
           items:
@@ -2039,6 +2058,8 @@ components:
                 type: integer
               quantity:
                 type: number
+              hideFromPrep:
+                type: boolean
             required:
               - ingredientId
               - quantity
@@ -2134,6 +2155,16 @@ components:
         grossMargin:
           type: number
           nullable: true
+        color:
+          type: string
+          nullable: true
+          description: Hex colour used to identify the recipe
+        isCoreMenu:
+          type: boolean
+          description: Whether this recipe is on the core menu
+        isCurrentSpecial:
+          type: boolean
+          description: Whether this recipe is the current Calzone Club Special
         createdAt:
           type: string
       required:
@@ -2463,6 +2494,27 @@ components:
         baseWeightGrams:
           type: number
           nullable: true
+        extraPacksBuilt:
+          type: integer
+          description: Extra packs built beyond the planned batches (output = batchesComplete × packsPerBatch + extraPacksBuilt)
+        wrappingComplete:
+          type: boolean
+        fridgeQty:
+          type: integer
+        freezerQty:
+          type: integer
+        recipeColor:
+          type: string
+          nullable: true
+          description: Hex colour of the recipe (joined from recipes table)
+        mixingTinOverride:
+          type: integer
+          nullable: true
+        stationCompletions:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Batch completion counts keyed by station type
         builderMarkedCompleteAt:
           type: string
           format: date-time
@@ -2479,6 +2531,10 @@ components:
         - batchesTarget
         - batchesComplete
         - wonlyCount
+        - extraPacksBuilt
+        - wrappingComplete
+        - fridgeQty
+        - freezerQty
 
     ProductionPlan:
       type: object
@@ -3196,15 +3252,22 @@ components:
           type: integer
         breakMinutes:
           type: integer
+          description: Standard break minutes deducted (Settings break/lunch lengths, deducted when the production window spans them)
         batchesPerHour:
           type: number
-          description: Calzone batches per hour (excludes mac cheese on building stations)
+          description: Team calzone batches per hour — the standard method (first→last completion minus spanned standard breaks)
+        yourBatchesCompleted:
+          type: integer
+          description: Calzone batches completed by the session user. Only populated for building stations.
+        yourActiveMinutes:
+          type: integer
+          description: Session user's active minutes (same standard method). Only populated for building stations.
+        yourBatchesPerHour:
+          type: number
+          description: Session user's calzone batches per hour, same method as the team number. Only populated for building stations.
         macPacksCompleted:
           type: integer
-          description: Mac cheese packs completed today. Only populated for building stations.
-        macPacksPerHour:
-          type: number
-          description: Mac cheese packs per hour. Only populated for building stations.
+          description: Mac cheese packs completed today (count only — mac has no per-hour KPI). Only populated for building stations.
       required:
         - batchesCompleted
         - activeMinutes

@@ -47,6 +47,8 @@ export interface Ingredient {
     rawMeatTrayCapacityKg?: number | null;
     kanbanEnabled?: boolean;
     kanbanQuantity?: number;
+    prepCountPerPortion?: number | null;
+    isPasta?: boolean;
     createdAt: string;
 }
 export interface CreateIngredient {
@@ -112,9 +114,12 @@ export interface SubRecipe {
     yieldUnit: string;
     notes?: string | null;
     shelfLifeDays?: number | null;
-    isBase?: boolean | null;
     /** Computed cost per yield unit */
     costPerYieldUnit?: number | null;
+    /** Marks a base/sauce sub-recipe (Bases & Sauces station) */
+    isBase?: boolean | null;
+    /** Whether prep lists expand this sub-recipe into its component ingredients */
+    expandInPrep?: boolean;
     createdAt: string;
 }
 export interface SubRecipeIngredient {
@@ -126,6 +131,7 @@ export interface SubRecipeIngredient {
     processingRatio?: number | null;
     costPerPack?: number | null;
     packWeight?: number | null;
+    hideFromPrep?: boolean;
 }
 export interface SubRecipeComponent {
     id: number;
@@ -147,6 +153,7 @@ export type SubRecipeDetail = SubRecipe & {
 export type CreateSubRecipeIngredientsItem = {
     ingredientId: number;
     quantity: number;
+    hideFromPrep?: boolean;
 };
 export type CreateSubRecipeSubRecipeComponentsItem = {
     componentSubRecipeId: number;
@@ -160,6 +167,7 @@ export interface CreateSubRecipe {
     notes?: string | null;
     shelfLifeDays?: number | null;
     isBase?: boolean | null;
+    expandInPrep?: boolean;
     ingredients: CreateSubRecipeIngredientsItem[];
     subRecipeComponents?: CreateSubRecipeSubRecipeComponentsItem[];
 }
@@ -177,6 +185,8 @@ export interface Recipe {
     labourCost: number;
     /** Number of portions produced per batch (e.g. 10 for calzones) */
     portionsPerBatch: number;
+    /** Target time to build one batch of this recipe, in seconds. Drives the countdown timer inside the BATCH BUILT button on the building station. Null = fall back to the building_timer_default_seconds app setting. */
+    targetBuildSeconds?: number | null;
     /** Default tin size for this recipe */
     tinSize?: string | null;
     /** Maximum batches per tin */
@@ -191,17 +201,17 @@ export interface Recipe {
     baseType?: string | null;
     /** Weight of base per builder in grams */
     baseWeightGrams?: number | null;
+    rawMaterialCostPerBatch: number;
+    costPerPortion: number;
+    packIngredientCost: number;
+    totalPackCost: number;
+    grossMargin?: number | null;
     /** Hex colour used to identify the recipe */
     color?: string | null;
     /** Whether this recipe is on the core menu */
     isCoreMenu?: boolean;
     /** Whether this recipe is the current Calzone Club Special */
     isCurrentSpecial?: boolean;
-    rawMaterialCostPerBatch: number;
-    costPerPortion: number;
-    packIngredientCost: number;
-    totalPackCost: number;
-    grossMargin?: number | null;
     createdAt: string;
 }
 export interface RecipeIngredient {
@@ -240,12 +250,25 @@ export type CreateRecipeIngredientsItem = {
     quantity: number;
     marinadeForIngredientId?: number | null;
     includeInFillingMix?: boolean;
+    isTopping?: boolean;
+    quid?: boolean;
+    showInPrep?: boolean;
+    mixingOverage?: number;
 };
 export type CreateRecipeSubRecipesItem = {
     subRecipeId: number;
     quantity: number;
     marinadeForIngredientId?: number | null;
     includeInFillingMix?: boolean;
+    isTopping?: boolean;
+    quid?: boolean;
+    showInPrep?: boolean;
+    mixingOverage?: number;
+};
+export type CreateRecipeMarinadesItem = {
+    rawMeatIngredientId: number;
+    marinadeIngredientId: number;
+    gramsPerKg: number;
 };
 export interface CreateRecipe {
     name: string;
@@ -260,6 +283,8 @@ export interface CreateRecipe {
     labourCost?: number;
     /** Number of portions produced per batch (e.g. 10 for calzones) */
     portionsPerBatch?: number;
+    /** Target time to build one batch of this recipe, in seconds. */
+    targetBuildSeconds?: number | null;
     tinSize?: string | null;
     maxBatchesPerTin?: number | null;
     sopUrl?: string | null;
@@ -270,8 +295,10 @@ export interface CreateRecipe {
     color?: string | null;
     isCoreMenu?: boolean;
     isCurrentSpecial?: boolean;
+    cookingLossPercent?: number | null;
     ingredients: CreateRecipeIngredientsItem[];
     subRecipes: CreateRecipeSubRecipesItem[];
+    marinades?: CreateRecipeMarinadesItem[];
 }
 export interface CategoryDefault {
     id: number;
@@ -291,31 +318,45 @@ export declare const ProductionPlanItemStatus: {
     readonly "in-progress": "in-progress";
     readonly complete: "complete";
 };
+/**
+ * Batch completion counts keyed by station type
+ */
+export type ProductionPlanItemStationCompletions = {
+    [key: string]: number;
+};
 export interface ProductionPlanItem {
     id: number;
     planId: number;
     recipeId: number;
     recipeName: string;
+    recipeCategory?: string | null;
     portionsPerBatch: number;
+    /** Target seconds per batch for this recipe (joined from recipes table). Null falls back to the global default. */
+    targetBuildSeconds?: number | null;
     notes?: string | null;
     status: ProductionPlanItemStatus;
     orderPosition: number;
     batchesTarget: number;
     batchesComplete: number;
     wonlyCount: number;
-    extraPacksBuilt: number;
-    wrappingComplete: boolean;
-    fridgeQty: number;
-    freezerQty: number;
     tinSize?: string | null;
     maxBatchesPerTin?: number | null;
     sopUrl?: string | null;
     fillWeightGrams?: number | null;
     baseType?: string | null;
     baseWeightGrams?: number | null;
+    /** Extra packs built beyond the planned batches (output = batchesComplete × packsPerBatch + extraPacksBuilt) */
+    extraPacksBuilt: number;
+    wrappingComplete: boolean;
+    fridgeQty: number;
+    freezerQty: number;
+    /** Hex colour of the recipe (joined from recipes table) */
     recipeColor?: string | null;
     mixingTinOverride?: number | null;
-    stationCompletions?: Record<string, number>;
+    /** Batch completion counts keyed by station type */
+    stationCompletions?: ProductionPlanItemStationCompletions;
+    /** ISO timestamp set when the Building station builder explicitly marks the recipe complete before hitting batchesTarget. Null while the recipe is still in flight. */
+    builderMarkedCompleteAt?: string | null;
 }
 export type ProductionPlanStatus = (typeof ProductionPlanStatus)[keyof typeof ProductionPlanStatus];
 export declare const ProductionPlanStatus: {
@@ -645,13 +686,18 @@ export interface StationKpi {
     /** Calzone batches completed today (excludes mac cheese on building stations) */
     batchesCompleted: number;
     activeMinutes: number;
+    /** Standard break minutes deducted (Settings break/lunch lengths, deducted when the production window spans them) */
     breakMinutes: number;
-    /** Calzone batches per hour (excludes mac cheese on building stations) */
+    /** Team calzone batches per hour — the standard method (first→last completion minus spanned standard breaks) */
     batchesPerHour: number;
-    /** Mac cheese packs completed today. Only populated for building stations. */
+    /** Calzone batches completed by the session user. Only populated for building stations. */
+    yourBatchesCompleted?: number;
+    /** Session user's active minutes (same standard method). Only populated for building stations. */
+    yourActiveMinutes?: number;
+    /** Session user's calzone batches per hour, same method as the team number. Only populated for building stations. */
+    yourBatchesPerHour?: number;
+    /** Mac cheese packs completed today (count only — mac has no per-hour KPI). Only populated for building stations. */
     macPacksCompleted?: number;
-    /** Mac cheese packs per hour. Only populated for building stations. */
-    macPacksPerHour?: number;
 }
 export type UpdateUserRole = (typeof UpdateUserRole)[keyof typeof UpdateUserRole];
 export declare const UpdateUserRole: {

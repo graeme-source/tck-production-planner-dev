@@ -50,6 +50,8 @@ export interface Ingredient {
   rawMeatTrayCapacityKg?: number | null;
   kanbanEnabled?: boolean;
   kanbanQuantity?: number;
+  prepCountPerPortion?: number | null;
+  isPasta?: boolean;
   createdAt: string;
 }
 
@@ -123,6 +125,10 @@ export interface SubRecipe {
   shelfLifeDays?: number | null;
   /** Computed cost per yield unit */
   costPerYieldUnit?: number | null;
+  /** Marks a base/sauce sub-recipe (Bases & Sauces station) */
+  isBase?: boolean | null;
+  /** Whether prep lists expand this sub-recipe into its component ingredients */
+  expandInPrep?: boolean;
   createdAt: string;
 }
 
@@ -135,6 +141,7 @@ export interface SubRecipeIngredient {
   processingRatio?: number | null;
   costPerPack?: number | null;
   packWeight?: number | null;
+  hideFromPrep?: boolean;
 }
 
 export interface SubRecipeComponent {
@@ -159,6 +166,7 @@ export type SubRecipeDetail = SubRecipe & {
 export type CreateSubRecipeIngredientsItem = {
   ingredientId: number;
   quantity: number;
+  hideFromPrep?: boolean;
 };
 
 export type CreateSubRecipeSubRecipeComponentsItem = {
@@ -173,6 +181,8 @@ export interface CreateSubRecipe {
   yieldUnit: string;
   notes?: string | null;
   shelfLifeDays?: number | null;
+  isBase?: boolean | null;
+  expandInPrep?: boolean;
   ingredients: CreateSubRecipeIngredientsItem[];
   subRecipeComponents?: CreateSubRecipeSubRecipeComponentsItem[];
 }
@@ -212,6 +222,12 @@ export interface Recipe {
   packIngredientCost: number;
   totalPackCost: number;
   grossMargin?: number | null;
+  /** Hex colour used to identify the recipe */
+  color?: string | null;
+  /** Whether this recipe is on the core menu */
+  isCoreMenu?: boolean;
+  /** Whether this recipe is the current Calzone Club Special */
+  isCurrentSpecial?: boolean;
   createdAt: string;
 }
 
@@ -330,6 +346,11 @@ export const ProductionPlanItemStatus = {
   complete: "complete",
 } as const;
 
+/**
+ * Batch completion counts keyed by station type
+ */
+export type ProductionPlanItemStationCompletions = { [key: string]: number };
+
 export interface ProductionPlanItem {
   id: number;
   planId: number;
@@ -351,6 +372,16 @@ export interface ProductionPlanItem {
   fillWeightGrams?: number | null;
   baseType?: string | null;
   baseWeightGrams?: number | null;
+  /** Extra packs built beyond the planned batches (output = batchesComplete × packsPerBatch + extraPacksBuilt) */
+  extraPacksBuilt: number;
+  wrappingComplete: boolean;
+  fridgeQty: number;
+  freezerQty: number;
+  /** Hex colour of the recipe (joined from recipes table) */
+  recipeColor?: string | null;
+  mixingTinOverride?: number | null;
+  /** Batch completion counts keyed by station type */
+  stationCompletions?: ProductionPlanItemStationCompletions;
   /** ISO timestamp set when the Building station builder explicitly marks the recipe complete before hitting batchesTarget. Null while the recipe is still in flight. */
   builderMarkedCompleteAt?: string | null;
 }
@@ -738,13 +769,18 @@ export interface StationKpi {
   /** Calzone batches completed today (excludes mac cheese on building stations) */
   batchesCompleted: number;
   activeMinutes: number;
+  /** Standard break minutes deducted (Settings break/lunch lengths, deducted when the production window spans them) */
   breakMinutes: number;
-  /** Calzone batches per hour (excludes mac cheese on building stations) */
+  /** Team calzone batches per hour — the standard method (first→last completion minus spanned standard breaks) */
   batchesPerHour: number;
-  /** Mac cheese packs completed today. Only populated for building stations. */
+  /** Calzone batches completed by the session user. Only populated for building stations. */
+  yourBatchesCompleted?: number;
+  /** Session user's active minutes (same standard method). Only populated for building stations. */
+  yourActiveMinutes?: number;
+  /** Session user's calzone batches per hour, same method as the team number. Only populated for building stations. */
+  yourBatchesPerHour?: number;
+  /** Mac cheese packs completed today (count only — mac has no per-hour KPI). Only populated for building stations. */
   macPacksCompleted?: number;
-  /** Mac cheese packs per hour. Only populated for building stations. */
-  macPacksPerHour?: number;
 }
 
 export type UpdateUserRole =

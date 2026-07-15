@@ -43,6 +43,19 @@ export function londonHour(date: Date = new Date()): number {
   return Number.parseInt(HOUR_FORMATTER.format(date), 10);
 }
 
+const HOUR_MINUTE_FORMATTER = new Intl.DateTimeFormat("en-GB", {
+  timeZone: LONDON_TZ,
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+/** Minutes since London midnight (0-1439) of the given instant. */
+export function londonMinuteOfDay(date: Date = new Date()): number {
+  const [h, m] = HOUR_MINUTE_FORMATTER.format(date).split(":");
+  return Number.parseInt(h, 10) * 60 + Number.parseInt(m, 10);
+}
+
 /** UTC instant equal to 00:00:00 London on the given date. */
 export function londonStartOfDay(date: Date = new Date()): Date {
   return londonDayBoundary(date, 0);

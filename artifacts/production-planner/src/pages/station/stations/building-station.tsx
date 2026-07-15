@@ -899,21 +899,12 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   const combinedDone = totalBatchesDone + totalMacPacksDone;
   const overallProgress = combinedTarget > 0 ? Math.round((combinedDone / combinedTarget) * 100) : 0;
 
-  // KPI calculations for daily progress card. When every planned batch is
-  // built, freeze the clock at the last completion so per-user BPH stops
-  // decaying through tidy-up / breaks at end of day. Mirrors the server-side
-  // freeze in /api/production-plans/:id/kpi.
-  const allBuiltOut = combinedTarget > 0 && combinedDone >= combinedTarget;
-  const now = new Date();
-  const localClockCeiling = allBuiltOut && lastBatchAt ? lastBatchAt : now;
-  const localActiveMinutes = sessionStartedAt
-    ? Math.max(0, differenceInMinutes(localClockCeiling, sessionStartedAt) - totalBreakMinutes - activeBreakMinutes)
-    : 0;
-  const localBph = localActiveMinutes > 0 ? sessionBatches / (localActiveMinutes / 60) : 0;
+  // Team and per-user BPH both come from /api/production-plans/:id/kpi
+  // (polled every 5s) — the one standard calculation in the server's
+  // lib/batches-per-hour. No local session maths, so what a builder sees
+  // here matches Analytics and the morning meeting exactly.
   const teamBph = serverKpi?.batchesPerHour ?? 0;
-  const teamMacPph = serverKpi?.macPacksPerHour ?? 0;
-  // Use local for "you" since serverKpi is per-user already
-  const yourBph = localActiveMinutes > 0 ? localBph : 0;
+  const yourBph = serverKpi?.yourBatchesPerHour ?? 0;
 
   const bphColor = (bph: number) =>
     targetBph && minBph
@@ -949,8 +940,8 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
           />
         </div>
 
-        {/* KPI: Team batches/hr + Team mac packs/hr + You batches/hr */}
-        {(teamBph > 0 || teamMacPph > 0 || yourBph > 0) && (
+        {/* KPI: Team batches/hr + You batches/hr — calzone only, standard method */}
+        {(teamBph > 0 || yourBph > 0) && (
           <div className="flex items-center gap-4 mt-3 pt-3 border-t border-border/50 flex-wrap">
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground font-medium">Team:</span>
@@ -958,17 +949,6 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                 {teamBph.toFixed(1)}/hr
               </span>
             </div>
-            {teamMacPph > 0 && (
-              <>
-                <div className="w-px h-5 bg-border/60" />
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground font-medium">Mac packs:</span>
-                  <span className="text-lg font-bold tabular-nums text-foreground">
-                    {teamMacPph.toFixed(1)}/hr
-                  </span>
-                </div>
-              </>
-            )}
             <div className="w-px h-5 bg-border/60" />
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground font-medium">You:</span>

@@ -55,62 +55,69 @@ interface BreakReportData {
   defaults: { breakMinutes: number; lunchMinutes: number };
 }
 
+type KpiStatus = "above" | "on-target" | "below" | "unknown";
+
 interface KpiOverview {
   totalBatches: number;
-  totalMacPacks?: number;
   totalActiveMinutes: number;
-  overallBph: number;
-  macPacksPerHour?: number;
-  wallClockMinutes: number;
+  overallBph: number | null;
   uniqueDays: number;
   avgBatchesPerDay: number;
   productionStartTime: string | null;
   productionFinishTime: string | null;
-}
-
-interface StationSummary {
-  station: string;
-  label: string;
-  totalBatches: number;
-  avgBph: number;
-  sessionCount: number;
+  wallClockMinutes: number;
   targetBph: number | null;
   minBph: number | null;
 }
 
-interface KpiUserSummary {
+interface KpiBuilder {
   userId: number;
   userName: string;
   totalBatches: number;
-  avgBph: number;
   totalActiveMinutes: number;
-  sessionCount: number;
-  stations: string[];
+  daysWorked: number;
+  bph: number | null;
+  status: KpiStatus;
 }
 
-interface DailySession {
-  date: string;
-  station: string;
-  stationLabel: string;
-  userId: number | null;
+interface KpiDayBuilder {
+  userId: number;
   userName: string;
+  batches: number;
+  activeMinutes: number;
+  breakMinutesDeducted: number;
+  bph: number | null;
+  status: KpiStatus;
+}
+
+interface KpiDay {
+  date: string;
   planId: number;
   planName: string;
-  batchCount: number;
+  batches: number;
+  windowStart: string | null;
+  windowEnd: string | null;
+  wallClockMinutes: number;
+  morningBreakDeducted: boolean;
+  lunchBreakDeducted: boolean;
+  breakMinutesDeducted: number;
   activeMinutes: number;
-  breakMinutes: number;
-  bph: number;
-  targetBph: number | null;
-  minBph: number | null;
-  status: "above" | "on-target" | "below" | "unknown";
+  bph: number | null;
+  status: KpiStatus;
   recipes: Array<{ name: string; count: number }>;
+  builders: KpiDayBuilder[];
 }
 
 interface KpiReportData {
   overview: KpiOverview;
-  stationSummaries: StationSummary[];
-  userSummaries: KpiUserSummary[];
-  dailySessions: DailySession[];
+  breakConfig: {
+    morningMinutes: number;
+    lunchMinutes: number;
+    morningAnchorMinutes: number;
+    lunchAnchorMinutes: number;
+  };
+  builders: KpiBuilder[];
+  dailyDetail: KpiDay[];
 }
 
 const STATION_LABELS: Record<string, string> = {
@@ -578,11 +585,8 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
     });
   };
 
-  const groupedByDate = new Map<string, DailySession[]>();
-  for (const ds of data.dailySessions) {
-    if (!groupedByDate.has(ds.date)) groupedByDate.set(ds.date, []);
-    groupedByDate.get(ds.date)!.push(ds);
-  }
+  const fmtMins = (mins: number) =>
+    mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
 
   return (
     <>
@@ -598,116 +602,62 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
           label="Finish Time"
           value={data.overview.productionFinishTime ? format(new Date(data.overview.productionFinishTime), "HH:mm") : "—"}
           sub={data.overview.wallClockMinutes > 0
-            ? `${Math.floor(data.overview.wallClockMinutes / 60)}h ${data.overview.wallClockMinutes % 60}m wall clock`
+            ? `${fmtMins(data.overview.wallClockMinutes)} wall clock`
             : "No data"}
         />
         <SummaryCard
           icon={<Layers className="w-5 h-5 text-blue-600" />}
           label="Total Batches"
           value={String(data.overview.totalBatches)}
-          sub={(data.overview.totalMacPacks ?? 0) > 0
-            ? `Calzone batches · +${data.overview.totalMacPacks} mac packs`
-            : "Both builders combined"}
+          sub="Calzone batches only"
         />
         <SummaryCard
           icon={<Activity className="w-5 h-5 text-violet-600" />}
           label="Batches / Hour"
-          value={String(data.overview.overallBph)}
-          sub={(data.overview.macPacksPerHour ?? 0) > 0
-            ? `Calzone · mac packs: ${data.overview.macPacksPerHour}/hr`
-            : "Both building tables added"}
+          value={data.overview.overallBph != null ? String(data.overview.overallBph) : "—"}
+          sub={data.overview.targetBph != null ? `Target ${data.overview.targetBph}/hr` : "Start→finish minus standard breaks"}
         />
         <SummaryCard
           icon={<Timer className="w-5 h-5 text-amber-600" />}
           label="Active Time"
-          value={data.overview.totalActiveMinutes >= 60
-            ? `${Math.floor(data.overview.totalActiveMinutes / 60)}h ${data.overview.totalActiveMinutes % 60}m`
-            : `${data.overview.totalActiveMinutes}m`}
-          sub="Start to finish minus breaks"
+          value={fmtMins(data.overview.totalActiveMinutes)}
+          sub={`Minus standard breaks (${data.breakConfig.morningMinutes}m + ${data.breakConfig.lunchMinutes}m lunch)`}
         />
       </div>
 
-      {data.stationSummaries.length > 0 && (
+      {data.builders.length > 0 && (
         <div>
           <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
-            <Activity className="w-4 h-4 text-primary" /> Station Performance
+            <Users className="w-4 h-4 text-primary" /> Builders
+            <span className="text-xs text-muted-foreground font-normal">same calculation as the team number</span>
           </h2>
           <div className="rounded-2xl border border-border bg-card overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-secondary/30 text-muted-foreground text-xs">
                 <tr>
-                  <th className="px-4 py-3 font-medium text-left">Station</th>
-                  <th className="px-4 py-3 font-medium text-center">Total Batches</th>
-                  <th className="px-4 py-3 font-medium text-center">Avg BPH</th>
-                  <th className="px-4 py-3 font-medium text-center">Target BPH</th>
-                  <th className="px-4 py-3 font-medium text-center">Min BPH</th>
-                  <th className="px-4 py-3 font-medium text-center">Sessions</th>
+                  <th className="px-4 py-3 font-medium text-left">Builder</th>
+                  <th className="px-4 py-3 font-medium text-center">Batches</th>
+                  <th className="px-4 py-3 font-medium text-center">BPH</th>
+                  <th className="px-4 py-3 font-medium text-center">Active Time</th>
+                  <th className="px-4 py-3 font-medium text-center">Days</th>
                   <th className="px-4 py-3 font-medium text-center">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/50">
-                {data.stationSummaries.map(ss => {
-                  const status = ss.targetBph !== null && ss.minBph !== null
-                    ? ss.avgBph >= ss.targetBph ? "above"
-                      : ss.avgBph >= ss.minBph ? "on-target"
-                      : "below"
-                    : "unknown";
-                  return (
-                    <tr key={ss.station} className="hover:bg-secondary/10 transition-colors">
-                      <td className="px-4 py-3 font-medium">{ss.label}</td>
-                      <td className="px-4 py-3 text-center tabular-nums font-semibold">{ss.totalBatches}</td>
-                      <td className={cn("px-4 py-3 text-center tabular-nums font-bold", bphColor(status))}>
-                        {ss.avgBph}
-                      </td>
-                      <td className="px-4 py-3 text-center tabular-nums text-muted-foreground">
-                        {ss.targetBph ?? "—"}
-                      </td>
-                      <td className="px-4 py-3 text-center tabular-nums text-muted-foreground">
-                        {ss.minBph ?? "—"}
-                      </td>
-                      <td className="px-4 py-3 text-center tabular-nums">{ss.sessionCount}</td>
-                      <td className="px-4 py-3 text-center">
-                        <StatusBadge status={status} />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {data.userSummaries.length > 0 && (
-        <div>
-          <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
-            <Users className="w-4 h-4 text-primary" /> User Productivity
-          </h2>
-          <div className="rounded-2xl border border-border bg-card overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-secondary/30 text-muted-foreground text-xs">
-                <tr>
-                  <th className="px-4 py-3 font-medium text-left">User</th>
-                  <th className="px-4 py-3 font-medium text-center">Total Batches</th>
-                  <th className="px-4 py-3 font-medium text-center">Avg BPH</th>
-                  <th className="px-4 py-3 font-medium text-center">Active Time</th>
-                  <th className="px-4 py-3 font-medium text-center">Sessions</th>
-                  <th className="px-4 py-3 font-medium text-left">Stations</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/50">
-                {data.userSummaries.map(us => (
-                  <tr key={us.userId} className="hover:bg-secondary/10 transition-colors">
-                    <td className="px-4 py-3 font-medium">{us.userName}</td>
-                    <td className="px-4 py-3 text-center tabular-nums font-semibold">{us.totalBatches}</td>
-                    <td className="px-4 py-3 text-center tabular-nums font-bold text-primary">{us.avgBph}</td>
-                    <td className="px-4 py-3 text-center tabular-nums text-muted-foreground">
-                      {us.totalActiveMinutes >= 60
-                        ? `${Math.floor(us.totalActiveMinutes / 60)}h ${us.totalActiveMinutes % 60}m`
-                        : `${us.totalActiveMinutes}m`}
+                {data.builders.map(b => (
+                  <tr key={b.userId} className="hover:bg-secondary/10 transition-colors">
+                    <td className="px-4 py-3 font-medium">{b.userName}</td>
+                    <td className="px-4 py-3 text-center tabular-nums font-semibold">{b.totalBatches}</td>
+                    <td className={cn("px-4 py-3 text-center tabular-nums font-bold", bphColor(b.status))}>
+                      {b.bph ?? "—"}
                     </td>
-                    <td className="px-4 py-3 text-center tabular-nums">{us.sessionCount}</td>
-                    <td className="px-4 py-3 text-muted-foreground text-xs">{us.stations.join(", ")}</td>
+                    <td className="px-4 py-3 text-center tabular-nums text-muted-foreground">
+                      {fmtMins(b.totalActiveMinutes)}
+                    </td>
+                    <td className="px-4 py-3 text-center tabular-nums">{b.daysWorked}</td>
+                    <td className="px-4 py-3 text-center">
+                      <StatusBadge status={b.status} />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -720,86 +670,92 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
         <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
           <Clock className="w-4 h-4 text-primary" /> Daily Detail
         </h2>
-        {data.dailySessions.length === 0 ? (
+        {data.dailyDetail.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-border p-8 text-center text-muted-foreground">
             <TrendingUp className="w-8 h-8 mx-auto mb-2 opacity-40" />
             <p className="font-medium">No production data found for this period</p>
           </div>
         ) : (
           <div className="space-y-2">
-            {Array.from(groupedByDate.entries()).map(([date, sessions]) => {
-              const isExpanded = expandedDates.has(date);
-              const dayTotal = sessions.reduce((s, ds) => s + ds.batchCount, 0);
-              const dayStations = new Set(sessions.map(s => s.stationLabel)).size;
+            {data.dailyDetail.map(day => {
+              const isExpanded = expandedDates.has(day.date);
               return (
-                <div key={date} className="rounded-2xl border border-border bg-card overflow-hidden">
+                <div key={day.date} className="rounded-2xl border border-border bg-card overflow-hidden">
                   <button
-                    onClick={() => toggleDate(date)}
+                    onClick={() => toggleDate(day.date)}
                     className="w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary/10 transition-colors"
                   >
                     {isExpanded
                       ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                       : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                     }
-                    <span className="font-semibold text-sm">{format(new Date(date + "T00:00:00"), "EEE dd MMM yyyy")}</span>
+                    <span className="font-semibold text-sm">{format(new Date(day.date + "T00:00:00"), "EEE dd MMM yyyy")}</span>
                     <span className="text-xs text-muted-foreground ml-2">
-                      {dayTotal} batch{dayTotal !== 1 ? "es" : ""} · {dayStations} station{dayStations !== 1 ? "s" : ""}
+                      {day.batches} batch{day.batches !== 1 ? "es" : ""}
+                      {day.windowStart && day.windowEnd && (
+                        <> · {format(new Date(day.windowStart), "HH:mm")}–{format(new Date(day.windowEnd), "HH:mm")}</>
+                      )}
                     </span>
-                    <div className="ml-auto flex items-center gap-2">
-                      {sessions.some(s => s.status === "below") && (
-                        <span className="w-2 h-2 rounded-full bg-red-500" />
-                      )}
-                      {sessions.some(s => s.status === "above") && (
-                        <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                      )}
+                    <div className="ml-auto flex items-center gap-3">
+                      <span className={cn("text-sm font-bold tabular-nums", bphColor(day.status))}>
+                        {day.bph != null ? `${day.bph}/hr` : "—"}
+                      </span>
+                      <StatusBadge status={day.status} />
                     </div>
                   </button>
                   {isExpanded && (
-                    <div className="border-t border-border">
-                      <table className="w-full text-sm">
-                        <thead className="bg-secondary/20 text-muted-foreground text-xs">
-                          <tr>
-                            <th className="px-4 py-2 font-medium text-left">Station</th>
-                            <th className="px-4 py-2 font-medium text-left">User</th>
-                            <th className="px-4 py-2 font-medium text-left">Plan</th>
-                            <th className="px-4 py-2 font-medium text-center">Batches</th>
-                            <th className="px-4 py-2 font-medium text-center">Active</th>
-                            <th className="px-4 py-2 font-medium text-center">Break</th>
-                            <th className="px-4 py-2 font-medium text-center">BPH</th>
-                            <th className="px-4 py-2 font-medium text-center">Target</th>
-                            <th className="px-4 py-2 font-medium text-center">Status</th>
-                            <th className="px-4 py-2 font-medium text-left">Recipes</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-border/30">
-                          {sessions.map((ds, i) => (
-                            <tr key={i} className="hover:bg-secondary/5 transition-colors">
-                              <td className="px-4 py-2 font-medium">{ds.stationLabel}</td>
-                              <td className="px-4 py-2 text-muted-foreground">{ds.userName}</td>
-                              <td className="px-4 py-2 text-muted-foreground text-xs truncate max-w-[120px]">{ds.planName}</td>
-                              <td className="px-4 py-2 text-center tabular-nums font-semibold">{ds.batchCount}</td>
-                              <td className="px-4 py-2 text-center tabular-nums text-muted-foreground">
-                                {ds.activeMinutes >= 60
-                                  ? `${Math.floor(ds.activeMinutes / 60)}h ${ds.activeMinutes % 60}m`
-                                  : `${ds.activeMinutes}m`}
-                              </td>
-                              <td className="px-4 py-2 text-center tabular-nums text-muted-foreground">{ds.breakMinutes}m</td>
-                              <td className={cn("px-4 py-2 text-center tabular-nums font-bold", bphColor(ds.status))}>
-                                {ds.bph}
-                              </td>
-                              <td className="px-4 py-2 text-center tabular-nums text-muted-foreground text-xs">
-                                {ds.targetBph ?? "—"}
-                              </td>
-                              <td className="px-4 py-2 text-center">
-                                <StatusBadge status={ds.status} />
-                              </td>
-                              <td className="px-4 py-2 text-xs text-muted-foreground">
-                                {ds.recipes.map(r => `${r.name} (${r.count})`).join(", ")}
-                              </td>
+                    <div className="border-t border-border px-4 py-3 space-y-3">
+                      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted-foreground">
+                        <span className="inline-flex items-center gap-1">
+                          <Clock className="w-3.5 h-3.5" /> Wall clock {fmtMins(day.wallClockMinutes)}
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <Coffee className="w-3.5 h-3.5" />
+                          {day.morningBreakDeducted ? `Morning break −${data.breakConfig.morningMinutes}m` : "Morning break not spanned"}
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <Utensils className="w-3.5 h-3.5" />
+                          {day.lunchBreakDeducted ? `Lunch −${data.breakConfig.lunchMinutes}m` : "Finished before lunch"}
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <Timer className="w-3.5 h-3.5" /> Active {fmtMins(day.activeMinutes)}
+                        </span>
+                      </div>
+                      {day.builders.length > 0 && (
+                        <table className="w-full text-sm">
+                          <thead className="bg-secondary/20 text-muted-foreground text-xs">
+                            <tr>
+                              <th className="px-3 py-2 font-medium text-left">Builder</th>
+                              <th className="px-3 py-2 font-medium text-center">Batches</th>
+                              <th className="px-3 py-2 font-medium text-center">Active</th>
+                              <th className="px-3 py-2 font-medium text-center">Breaks</th>
+                              <th className="px-3 py-2 font-medium text-center">BPH</th>
+                              <th className="px-3 py-2 font-medium text-center">Status</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody className="divide-y divide-border/30">
+                            {day.builders.map(b => (
+                              <tr key={b.userId} className="hover:bg-secondary/5 transition-colors">
+                                <td className="px-3 py-2 font-medium">{b.userName}</td>
+                                <td className="px-3 py-2 text-center tabular-nums font-semibold">{b.batches}</td>
+                                <td className="px-3 py-2 text-center tabular-nums text-muted-foreground">{fmtMins(b.activeMinutes)}</td>
+                                <td className="px-3 py-2 text-center tabular-nums text-muted-foreground">{b.breakMinutesDeducted}m</td>
+                                <td className={cn("px-3 py-2 text-center tabular-nums font-bold", bphColor(b.status))}>
+                                  {b.bph ?? "—"}
+                                </td>
+                                <td className="px-3 py-2 text-center">
+                                  <StatusBadge status={b.status} />
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                      {day.recipes.length > 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          {day.recipes.map(r => `${r.name} (${r.count})`).join(", ")}
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>

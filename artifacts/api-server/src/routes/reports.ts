@@ -13,16 +13,12 @@ import {
 } from "@workspace/db";
 import { eq, and, gte, lte, sql, isNotNull, inArray } from "drizzle-orm";
 import { getOrdersByTag } from "../services/shopify";
-import { londonDateString, londonEndOfDay, londonHour } from "../lib/london-time";
+import { londonDateString, londonEndOfDay } from "../lib/london-time";
+import { getStandardBreakConfig, computeBatchesPerHour, aggregateBph } from "../lib/batches-per-hour";
 
-// Recipe category name for macaroni cheese products. Mac cheese completions are
-// split out from calzone completions in KPI reports (1 mac batch_completion
-// row = 1 pack because portionsPerBatch=2, packsPerBatch=1).
+// Recipe category name for macaroni cheese products. Mac cheese is a separate
+// product line and is excluded from the batches-per-hour KPI entirely.
 const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
-// Synthetic station type used in KPI reports to represent mac cheese packs
-// built at the building tables. Lets mac packs appear as their own row in
-// station summaries and daily sessions alongside building_1/building_2.
-const MAC_CHEESE_PACKS_STATION = "mac_cheese_packs";
 
 const router: IRouter = Router();
 
@@ -120,473 +116,216 @@ router.get("/breaks", async (req, res) => {
   });
 });
 
+// ── Production KPIs (builder batches/hour) ─────────────────────────────────
+// One calculation, defined in lib/batches-per-hour: calzone building
+// completions only (mac cheese ignored entirely), window = first→last
+// completion per London day, standard break lengths deducted when the
+// window spans them. The same function produces the team number, each
+// builder's number, and each day's number — they can no longer diverge.
 router.get("/production-kpis", async (req, res) => {
   try {
-  const { from, to } = req.query;
+    const { from, to } = req.query;
 
-  if (from && isNaN(new Date(String(from)).getTime())) {
-    res.status(400).json({ error: "Invalid 'from' date" });
-    return;
-  }
-  if (to && isNaN(new Date(String(to)).getTime())) {
-    res.status(400).json({ error: "Invalid 'to' date" });
-    return;
-  }
-
-  const completionConditions: any[] = [];
-  if (from) completionConditions.push(sql`${batchCompletionsTable.completedAt} >= ${new Date(String(from)).toISOString()}`);
-  if (to) {
-    completionConditions.push(sql`${batchCompletionsTable.completedAt} <= ${londonEndOfDay(new Date(String(to))).toISOString()}`);
-  }
-
-  const completions = await db
-    .select({
-      id: batchCompletionsTable.id,
-      planItemId: batchCompletionsTable.planItemId,
-      stationType: batchCompletionsTable.stationType,
-      userId: batchCompletionsTable.userId,
-      startedAt: batchCompletionsTable.startedAt,
-      completedAt: batchCompletionsTable.completedAt,
-      planId: productionPlanItemsTable.planId,
-      recipeId: productionPlanItemsTable.recipeId,
-      recipeName: recipesTable.name,
-      recipeCategory: recipesTable.category,
-      planDate: productionPlansTable.planDate,
-      planName: productionPlansTable.name,
-      userName: usersTable.name,
-    })
-    .from(batchCompletionsTable)
-    .innerJoin(productionPlanItemsTable, eq(batchCompletionsTable.planItemId, productionPlanItemsTable.id))
-    .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
-    .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
-    .leftJoin(usersTable, eq(batchCompletionsTable.userId, usersTable.id))
-    .where(completionConditions.length > 0 ? and(...completionConditions) : undefined)
-    .orderBy(sql`${batchCompletionsTable.completedAt} DESC`);
-
-  // For a completion, the station row it contributes to in session/station
-  // summaries. Mac cheese items built at building tables get routed to a
-  // synthetic "mac_cheese_packs" pseudo-station so calzone batches and mac
-  // packs can't distort each other's BPH.
-  const effectiveStation = (c: { stationType: string; recipeCategory: string | null }) => {
-    if (c.recipeCategory === MAC_CHEESE_CATEGORY && (c.stationType === "building_1" || c.stationType === "building_2")) {
-      return MAC_CHEESE_PACKS_STATION;
+    if (from && isNaN(new Date(String(from)).getTime())) {
+      res.status(400).json({ error: "Invalid 'from' date" });
+      return;
     }
-    return c.stationType;
-  };
-
-  const timingStandards = await db.select().from(timingStandardsTable);
-  const standardsMap = new Map(timingStandards.map(t => [t.stationType, {
-    target: Number(t.targetBatchesPerHour),
-    min: Number(t.minBatchesPerHour),
-    label: t.stationLabel,
-  }]));
-  // The synthetic mac cheese pseudo-station has no timing_standards row, so
-  // provide a default label. Thresholds stay null (no color coding) until we
-  // explicitly configure them.
-  standardsMap.set(MAC_CHEESE_PACKS_STATION, { target: 0, min: 0, label: "Mac Cheese Packs" });
-
-  const breakConditions: any[] = [isNotNull(stationBreaksTable.endedAt)];
-  if (from) breakConditions.push(sql`${stationBreaksTable.startedAt} >= ${new Date(String(from)).toISOString()}`);
-  if (to) {
-    breakConditions.push(sql`${stationBreaksTable.startedAt} <= ${londonEndOfDay(new Date(String(to))).toISOString()}`);
-  }
-
-  const breaks = await db
-    .select({
-      planId: stationBreaksTable.planId,
-      stationType: stationBreaksTable.stationType,
-      userId: stationBreaksTable.userId,
-      breakType: stationBreaksTable.breakType,
-      startedAt: stationBreaksTable.startedAt,
-      endedAt: stationBreaksTable.endedAt,
-    })
-    .from(stationBreaksTable)
-    .where(and(...breakConditions));
-
-  type SessionKey = string;
-  function makeKey(date: string, station: string, userId: number | null, planId: number): SessionKey {
-    return `${date}|${station}|${userId ?? 0}|${planId}`;
-  }
-
-  const sessionMap = new Map<SessionKey, {
-    date: string;
-    station: string;
-    userId: number | null;
-    userName: string;
-    batchCount: number;
-    earliestAt: Date;
-    latestAt: Date;
-    breakMinutes: number;
-    planId: number;
-    planName: string;
-    recipes: Map<string, number>;
-  }>();
-
-  for (const c of completions) {
-    // Builders-only BPH: skip everything except the two building lines so the
-    // Daily Detail table doesn't show fake throughput for stations we no
-    // longer track (mixing, dough_sheeting, ovens, wrapping, packing, etc.).
-    if (c.stationType !== "building_1" && c.stationType !== "building_2") continue;
-    const date = c.planDate ?? c.completedAt.toISOString().slice(0, 10);
-    const station = effectiveStation(c);
-    const key = makeKey(date, station, c.userId, c.planId);
-    if (!sessionMap.has(key)) {
-      sessionMap.set(key, {
-        date,
-        station,
-        userId: c.userId,
-        userName: c.userName ?? "Unknown",
-        batchCount: 0,
-        earliestAt: c.completedAt,
-        latestAt: c.completedAt,
-        breakMinutes: 0,
-        planId: c.planId,
-        planName: c.planName,
-        recipes: new Map(),
-      });
-    }
-    const s = sessionMap.get(key)!;
-    s.batchCount++;
-    // Window = first to last *completion*. Matches the on-floor mental model
-    // ("we made 10 batches between 9am and 10am") instead of including the
-    // build time of the first batch.
-    if (c.completedAt < s.earliestAt) s.earliestAt = c.completedAt;
-    if (c.completedAt > s.latestAt) s.latestAt = c.completedAt;
-    s.recipes.set(c.recipeName, (s.recipes.get(c.recipeName) ?? 0) + 1);
-  }
-
-  for (const b of breaks) {
-    if (!b.endedAt) continue;
-    const date = b.startedAt.toISOString().slice(0, 10);
-    const mins = Math.max(0, (b.endedAt.getTime() - b.startedAt.getTime()) / 60000);
-    // Breaks taken on a building table apply to both the calzone session and
-    // the mac cheese session (same builder, same break window).
-    const candidateStations = (b.stationType === "building_1" || b.stationType === "building_2")
-      ? [b.stationType, MAC_CHEESE_PACKS_STATION]
-      : [b.stationType];
-    for (const st of candidateStations) {
-      const s = sessionMap.get(makeKey(date, st, b.userId, b.planId));
-      if (s) s.breakMinutes += mins;
-    }
-  }
-
-  const dailySessions: Array<{
-    date: string;
-    station: string;
-    stationLabel: string;
-    userId: number | null;
-    userName: string;
-    planId: number;
-    planName: string;
-    batchCount: number;
-    activeMinutes: number;
-    breakMinutes: number;
-    bph: number;
-    targetBph: number | null;
-    minBph: number | null;
-    status: "above" | "on-target" | "below" | "unknown";
-    recipes: Array<{ name: string; count: number }>;
-  }> = [];
-
-  for (const s of sessionMap.values()) {
-    // Need at least two completions to span a window. A single completion has
-    // no first-to-last gap so it can't produce a meaningful BPH.
-    const totalElapsed = s.batchCount > 1
-      ? Math.max(0, (s.latestAt.getTime() - s.earliestAt.getTime()) / 60000)
-      : 0;
-    const activeMinutes = Math.max(0, totalElapsed - s.breakMinutes);
-    const bph = activeMinutes > 0 ? s.batchCount / (activeMinutes / 60) : 0;
-    const standard = standardsMap.get(s.station);
-    const targetBph = standard?.target ?? null;
-    const minBph = standard?.min ?? null;
-    let status: "above" | "on-target" | "below" | "unknown" = "unknown";
-    if (targetBph !== null && minBph !== null) {
-      if (bph >= targetBph) status = "above";
-      else if (bph >= minBph) status = "on-target";
-      else status = "below";
+    if (to && isNaN(new Date(String(to)).getTime())) {
+      res.status(400).json({ error: "Invalid 'to' date" });
+      return;
     }
 
-    dailySessions.push({
-      date: s.date,
-      station: s.station,
-      stationLabel: standard?.label ?? s.station,
-      userId: s.userId,
-      userName: s.userName,
-      planId: s.planId,
-      planName: s.planName,
-      batchCount: s.batchCount,
-      activeMinutes: Math.round(activeMinutes),
-      breakMinutes: Math.round(s.breakMinutes),
-      bph: Math.round(bph * 10) / 10,
-      targetBph,
-      minBph,
-      status,
-      recipes: Array.from(s.recipes.entries()).map(([name, count]) => ({ name, count })),
-    });
-  }
+    const conditions: any[] = [
+      sql`${batchCompletionsTable.stationType} IN ('building_1','building_2')`,
+      // IS DISTINCT FROM so a NULL category still counts as "not mac cheese"
+      sql`${recipesTable.category} IS DISTINCT FROM ${MAC_CHEESE_CATEGORY}`,
+    ];
+    if (from) conditions.push(sql`${batchCompletionsTable.completedAt} >= ${new Date(String(from)).toISOString()}`);
+    if (to) conditions.push(sql`${batchCompletionsTable.completedAt} <= ${londonEndOfDay(new Date(String(to))).toISOString()}`);
 
-  dailySessions.sort((a, b) => b.date.localeCompare(a.date) || a.station.localeCompare(b.station));
-
-  const stationSummary = new Map<string, {
-    label: string;
-    totalBatches: number;
-    totalActiveMinutes: number;
-    sessionCount: number;
-    targetBph: number | null;
-    minBph: number | null;
-  }>();
-  for (const ds of dailySessions) {
-    if (!stationSummary.has(ds.station)) {
-      stationSummary.set(ds.station, {
-        label: ds.stationLabel,
-        totalBatches: 0,
-        totalActiveMinutes: 0,
-        sessionCount: 0,
-        targetBph: ds.targetBph,
-        minBph: ds.minBph,
-      });
-    }
-    const ss = stationSummary.get(ds.station)!;
-    ss.totalBatches += ds.batchCount;
-    ss.totalActiveMinutes += ds.activeMinutes;
-    ss.sessionCount++;
-  }
-
-  const userSummary = new Map<number, {
-    name: string;
-    totalBatches: number;
-    totalActiveMinutes: number;
-    sessionCount: number;
-    stations: Set<string>;
-  }>();
-  for (const ds of dailySessions) {
-    if (!ds.userId) continue;
-    if (!userSummary.has(ds.userId)) {
-      userSummary.set(ds.userId, {
-        name: ds.userName,
-        totalBatches: 0,
-        totalActiveMinutes: 0,
-        sessionCount: 0,
-        stations: new Set(),
-      });
-    }
-    const us = userSummary.get(ds.userId)!;
-    us.totalBatches += ds.batchCount;
-    us.totalActiveMinutes += ds.activeMinutes;
-    us.sessionCount++;
-    us.stations.add(ds.stationLabel);
-  }
-
-  // Overview KPIs only count building tables (the real production throughput).
-  const building1Sessions = dailySessions.filter(ds => ds.station === "building_1");
-  const building2Sessions = dailySessions.filter(ds => ds.station === "building_2");
-
-  const sumMinutes = (xs: typeof dailySessions) => xs.reduce((s, ds) => s + ds.activeMinutes, 0);
-
-  const building1Minutes = sumMinutes(building1Sessions);
-  const building2Minutes = sumMinutes(building2Sessions);
-  const totalActiveMinutes = building1Minutes + building2Minutes;
-
-  // Source of truth for "Total Batches": calzone building completions per
-  // recipe, capped at batchesTarget per recipe so inflated completions can't
-  // exceed what was actually planned. Mac cheese completions are tracked
-  // separately as packs (totalMacPacks) since 1 mac batch = 1 pack.
-  const buildingCompletionsByItem = new Map<number, number>();
-  const macPacksCompletionsByItem = new Map<number, number>();
-  for (const c of completions) {
-    if (c.stationType !== "building_1" && c.stationType !== "building_2") continue;
-    if (c.recipeCategory === MAC_CHEESE_CATEGORY) {
-      macPacksCompletionsByItem.set(c.planItemId, (macPacksCompletionsByItem.get(c.planItemId) ?? 0) + 1);
-    } else {
-      buildingCompletionsByItem.set(c.planItemId, (buildingCompletionsByItem.get(c.planItemId) ?? 0) + 1);
-    }
-  }
-
-  // Look up batchesTarget + extraPacksBuilt per plan item to cap calzone
-  // completions and accumulate mac packs.
-  const planIds = [...new Set(completions.map(c => c.planId))];
-  let totalBatches = 0;
-  let totalMacPacks = 0;
-  if (planIds.length > 0) {
-    const planItemRows = await db
+    const completions = await db
       .select({
-        id: productionPlanItemsTable.id,
-        batchesTarget: productionPlanItemsTable.batchesTarget,
-        extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt,
-        portionsPerBatch: recipesTable.portionsPerBatch,
-        category: recipesTable.category,
+        completedAt: batchCompletionsTable.completedAt,
+        userId: batchCompletionsTable.userId,
+        userName: usersTable.name,
+        planId: productionPlanItemsTable.planId,
+        planDate: productionPlansTable.planDate,
+        planName: productionPlansTable.name,
+        recipeName: recipesTable.name,
       })
-      .from(productionPlanItemsTable)
+      .from(batchCompletionsTable)
+      .innerJoin(productionPlanItemsTable, eq(batchCompletionsTable.planItemId, productionPlanItemsTable.id))
       .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
-      .where(inArray(productionPlanItemsTable.planId, planIds));
+      .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
+      .leftJoin(usersTable, eq(batchCompletionsTable.userId, usersTable.id))
+      .where(and(...conditions));
 
-    for (const pi of planItemRows) {
-      if (pi.category === MAC_CHEESE_CATEGORY) {
-        // Mac packs: cap at target (1 mac batch_completion row = 1 pack)
-        const target = pi.batchesTarget ?? 0;
-        const built = macPacksCompletionsByItem.get(pi.id) ?? 0;
-        totalMacPacks += Math.min(built, target);
-      } else {
-        const target = pi.batchesTarget ?? 0;
-        const built = buildingCompletionsByItem.get(pi.id) ?? 0;
-        totalBatches += Math.min(built, target);
-      }
-    }
-  }
+    const breakConfig = await getStandardBreakConfig();
 
-  // overallBph calculated after productionActiveMinutes is computed below
+    // Target/min thresholds: the two building lines share one standard —
+    // building_1's row is the canonical one.
+    const timingStandards = await db.select().from(timingStandardsTable);
+    const buildingStandard =
+      timingStandards.find(t => t.stationType === "building_1") ??
+      timingStandards.find(t => t.stationType === "building_2");
+    const targetBph = buildingStandard ? Number(buildingStandard.targetBatchesPerHour) || null : null;
+    const minBph = buildingStandard ? Number(buildingStandard.minBatchesPerHour) || null : null;
+    const statusFor = (bph: number | null): "above" | "on-target" | "below" | "unknown" => {
+      if (bph == null || targetBph == null || minBph == null) return "unknown";
+      if (bph >= targetBph) return "above";
+      if (bph >= minBph) return "on-target";
+      return "below";
+    };
 
-  // Production start/finish from earliest and latest building completion timestamps
-  const buildingCompletions = completions.filter(c => c.stationType === "building_1" || c.stationType === "building_2");
-  let productionStartTime: string | null = null;
-  let productionFinishTime: string | null = null;
-  let wallClockMinutes = 0;
-  let productionActiveMinutes = 0;
-  if (buildingCompletions.length > 0) {
-    const times = buildingCompletions.map(c => c.completedAt.getTime());
-    const earliest = new Date(Math.min(...times));
-    const latest = new Date(Math.max(...times));
-    productionStartTime = earliest.toISOString();
-    productionFinishTime = latest.toISOString();
-    wallClockMinutes = Math.round((latest.getTime() - earliest.getTime()) / 60000);
-
-    // Fixed break allowance (Settings → Break / Lunch minutes): the morning
-    // break always comes off; lunch only when production ran past 13:00 London.
-    // Most days the team finishes before lunch and never stops for it, so
-    // deducting it would understate the rate. Matches the morning-meeting calc.
-    const [breakSetting] = await db
-      .select({ value: appSettingsTable.value })
-      .from(appSettingsTable)
-      .where(eq(appSettingsTable.key, "default_break_minutes"));
-    const [lunchSetting] = await db
-      .select({ value: appSettingsTable.value })
-      .from(appSettingsTable)
-      .where(eq(appSettingsTable.key, "default_lunch_minutes"));
-    const configuredBreakMins = breakSetting ? Number(breakSetting.value) : 15;
-    const configuredLunchMins = lunchSetting ? Number(lunchSetting.value) : 35;
-
-    const finishedAfterLunch = londonHour(latest) >= 13;
-    const totalBreakMins = configuredBreakMins + (finishedAfterLunch ? configuredLunchMins : 0);
-    productionActiveMinutes = Math.round(Math.max(0, wallClockMinutes - totalBreakMins));
-  }
-
-  // Cap per-builder and per-user station summaries for building stations
-  // (calzone) and the mac_cheese_packs pseudo-station so they match the
-  // capped totals above. Each category caps independently.
-  if ((totalBatches > 0 || totalMacPacks > 0) && planIds.length > 0) {
-    const planItemTargets = new Map<number, number>();
-    const piRows = await db
-      .select({ id: productionPlanItemsTable.id, batchesTarget: productionPlanItemsTable.batchesTarget })
-      .from(productionPlanItemsTable)
-      .where(inArray(productionPlanItemsTable.planId, planIds));
-    for (const pi of piRows) planItemTargets.set(pi.id, pi.batchesTarget ?? 0);
-
-    // Count per effective station per plan item (calzone goes to building_*,
-    // mac cheese goes to mac_cheese_packs).
-    const stationItemCounts = new Map<string, Map<number, number>>();
-    const userItemCounts = new Map<number, Map<number, { count: number; isMac: boolean }>>();
+    // Group by London day (planDate when set — plans are day-scoped).
+    type DayGroup = {
+      planId: number;
+      planName: string;
+      times: Date[];
+      recipes: Map<string, number>;
+      users: Map<number, { name: string; times: Date[] }>;
+    };
+    const dayMap = new Map<string, DayGroup>();
     for (const c of completions) {
-      if (c.stationType !== "building_1" && c.stationType !== "building_2") continue;
-      const station = effectiveStation(c);
-      if (!stationItemCounts.has(station)) stationItemCounts.set(station, new Map());
-      const sic = stationItemCounts.get(station)!;
-      sic.set(c.planItemId, (sic.get(c.planItemId) ?? 0) + 1);
-      if (c.userId) {
-        if (!userItemCounts.has(c.userId)) userItemCounts.set(c.userId, new Map());
-        const uic = userItemCounts.get(c.userId)!;
-        const prev = uic.get(c.planItemId);
-        uic.set(c.planItemId, {
-          count: (prev?.count ?? 0) + 1,
-          isMac: c.recipeCategory === MAC_CHEESE_CATEGORY,
-        });
+      const date = c.planDate ?? londonDateString(c.completedAt);
+      let g = dayMap.get(date);
+      if (!g) {
+        g = { planId: c.planId, planName: c.planName, times: [], recipes: new Map(), users: new Map() };
+        dayMap.set(date, g);
+      }
+      g.times.push(c.completedAt);
+      g.recipes.set(c.recipeName, (g.recipes.get(c.recipeName) ?? 0) + 1);
+      if (c.userId != null) {
+        let u = g.users.get(c.userId);
+        if (!u) {
+          u = { name: c.userName ?? "Unknown", times: [] };
+          g.users.set(c.userId, u);
+        }
+        u.times.push(c.completedAt);
       }
     }
 
-    // Cap each station's per-item count at its share of the target. For
-    // mac_cheese_packs, the "totalForItem" source is macPacksCompletionsByItem
-    // (not buildingCompletionsByItem).
-    for (const [station, itemCounts] of stationItemCounts) {
-      const totalByItem = station === MAC_CHEESE_PACKS_STATION
-        ? macPacksCompletionsByItem
-        : buildingCompletionsByItem;
-      let cappedTotal = 0;
-      for (const [itemId, count] of itemCounts) {
-        const totalForItem = totalByItem.get(itemId) ?? count;
-        const target = planItemTargets.get(itemId) ?? count;
-        const cappedTarget = Math.min(totalForItem, target);
-        cappedTotal += totalForItem > 0 ? Math.round((count / totalForItem) * cappedTarget) : 0;
-      }
-      const ss = stationSummary.get(station);
-      if (ss) ss.totalBatches = cappedTotal;
+    const dayResults = new Map<string, ReturnType<typeof computeBatchesPerHour>>();
+    const dailyDetail: Array<{
+      date: string;
+      planId: number;
+      planName: string;
+      batches: number;
+      windowStart: string | null;
+      windowEnd: string | null;
+      wallClockMinutes: number;
+      morningBreakDeducted: boolean;
+      lunchBreakDeducted: boolean;
+      breakMinutesDeducted: number;
+      activeMinutes: number;
+      bph: number | null;
+      status: "above" | "on-target" | "below" | "unknown";
+      recipes: Array<{ name: string; count: number }>;
+      builders: Array<{
+        userId: number;
+        userName: string;
+        batches: number;
+        activeMinutes: number;
+        breakMinutesDeducted: number;
+        bph: number | null;
+        status: "above" | "on-target" | "below" | "unknown";
+      }>;
+    }> = [];
+
+    // Per-builder accumulation across the range — same method, the
+    // builder's own first→last completion window each day.
+    const builderTotals = new Map<number, {
+      name: string;
+      totalBatches: number;
+      totalActiveMinutes: number;
+      daysWorked: number;
+    }>();
+
+    for (const [date, g] of dayMap) {
+      const day = computeBatchesPerHour(g.times, breakConfig);
+      dayResults.set(date, day);
+
+      const builders = Array.from(g.users.entries()).map(([userId, u]) => {
+        const r = computeBatchesPerHour(u.times, breakConfig);
+        const bt = builderTotals.get(userId) ?? { name: u.name, totalBatches: 0, totalActiveMinutes: 0, daysWorked: 0 };
+        bt.totalBatches += r.batches;
+        bt.totalActiveMinutes += r.activeMinutes;
+        bt.daysWorked++;
+        builderTotals.set(userId, bt);
+        return {
+          userId,
+          userName: u.name,
+          batches: r.batches,
+          activeMinutes: r.activeMinutes,
+          breakMinutesDeducted: r.breakMinutesDeducted,
+          bph: r.batchesPerHour,
+          status: statusFor(r.batchesPerHour),
+        };
+      }).sort((a, b) => b.batches - a.batches);
+
+      dailyDetail.push({
+        date,
+        planId: g.planId,
+        planName: g.planName,
+        batches: day.batches,
+        windowStart: day.windowStartAt?.toISOString() ?? null,
+        windowEnd: day.windowEndAt?.toISOString() ?? null,
+        wallClockMinutes: day.wallClockMinutes,
+        morningBreakDeducted: day.morningBreakDeducted,
+        lunchBreakDeducted: day.lunchBreakDeducted,
+        breakMinutesDeducted: day.breakMinutesDeducted,
+        activeMinutes: day.activeMinutes,
+        bph: day.batchesPerHour,
+        status: statusFor(day.batchesPerHour),
+        recipes: Array.from(g.recipes.entries()).map(([name, count]) => ({ name, count })),
+        builders,
+      });
     }
 
-    // Cap each user's building counts. Calzone and mac contributions are
-    // both summed into totalBatches since the userSummary doesn't split —
-    // the stationSummary is where the split is surfaced.
-    for (const [userId, itemCounts] of userItemCounts) {
-      let cappedTotal = 0;
-      for (const [itemId, { count, isMac }] of itemCounts) {
-        const totalByItem = isMac ? macPacksCompletionsByItem : buildingCompletionsByItem;
-        const totalForItem = totalByItem.get(itemId) ?? count;
-        const target = planItemTargets.get(itemId) ?? count;
-        const cappedTarget = Math.min(totalForItem, target);
-        cappedTotal += totalForItem > 0 ? Math.round((count / totalForItem) * cappedTarget) : 0;
-      }
-      const us = userSummary.get(userId);
-      if (us) us.totalBatches = cappedTotal;
-    }
-  }
+    dailyDetail.sort((a, b) => b.date.localeCompare(a.date));
 
-  // Rebuild summaries with capped counts
-  const stationSummariesFinal = Array.from(stationSummary.entries()).map(([station, ss]) => ({
-    station,
-    label: ss.label,
-    totalBatches: ss.totalBatches,
-    avgBph: ss.totalActiveMinutes > 0
-      ? Math.round((ss.totalBatches / (ss.totalActiveMinutes / 60)) * 10) / 10
-      : 0,
-    sessionCount: ss.sessionCount,
-    targetBph: ss.targetBph,
-    minBph: ss.minBph,
-  }));
+    const overall = aggregateBph(Array.from(dayResults.values()));
+    const latestDay = dailyDetail[0] ?? null;
 
-  const userSummariesFinal = Array.from(userSummary.entries()).map(([userId, us]) => ({
-    userId,
-    userName: us.name,
-    totalBatches: us.totalBatches,
-    avgBph: us.totalActiveMinutes > 0
-      ? Math.round((us.totalBatches / (us.totalActiveMinutes / 60)) * 10) / 10
-      : 0,
-    totalActiveMinutes: us.totalActiveMinutes,
-    sessionCount: us.sessionCount,
-    stations: Array.from(us.stations),
-  }));
+    const builders = Array.from(builderTotals.entries()).map(([userId, bt]) => ({
+      userId,
+      userName: bt.name,
+      totalBatches: bt.totalBatches,
+      totalActiveMinutes: bt.totalActiveMinutes,
+      daysWorked: bt.daysWorked,
+      bph: bt.totalActiveMinutes >= 1
+        ? Math.round((bt.totalBatches / (bt.totalActiveMinutes / 60)) * 10) / 10
+        : null,
+      status: statusFor(bt.totalActiveMinutes >= 1
+        ? Math.round((bt.totalBatches / (bt.totalActiveMinutes / 60)) * 10) / 10
+        : null),
+    })).sort((a, b) => b.totalBatches - a.totalBatches);
 
-  // BPH = total batches ÷ production active hours (wall clock minus breaks).
-  // Calzones and mac packs share the same denominator — same team worked
-  // both during the production window.
-  const overallBph = productionActiveMinutes > 0
-    ? Math.round((totalBatches / (productionActiveMinutes / 60)) * 10) / 10
-    : 0;
-  const macPacksPerHour = productionActiveMinutes > 0
-    ? Math.round((totalMacPacks / (productionActiveMinutes / 60)) * 10) / 10
-    : 0;
-
-  res.json({
-    overview: {
-      totalBatches,
-      totalMacPacks,
-      totalActiveMinutes: productionActiveMinutes,
-      wallClockMinutes,
-      overallBph,
-      macPacksPerHour,
-      productionStartTime,
-      productionFinishTime,
-    },
-    stationSummaries: stationSummariesFinal,
-    userSummaries: userSummariesFinal,
-    dailySessions,
-  });
+    res.json({
+      overview: {
+        totalBatches: overall.totalBatches,
+        totalActiveMinutes: overall.totalActiveMinutes,
+        overallBph: overall.batchesPerHour,
+        uniqueDays: dailyDetail.length,
+        avgBatchesPerDay: dailyDetail.length > 0
+          ? Math.round((overall.totalBatches / dailyDetail.length) * 10) / 10
+          : 0,
+        // Start/finish cards show the most recent day in the range.
+        productionStartTime: latestDay?.windowStart ?? null,
+        productionFinishTime: latestDay?.windowEnd ?? null,
+        wallClockMinutes: latestDay?.wallClockMinutes ?? 0,
+        targetBph,
+        minBph,
+      },
+      breakConfig: {
+        morningMinutes: breakConfig.morning.minutes,
+        lunchMinutes: breakConfig.lunch.minutes,
+        morningAnchorMinutes: breakConfig.morning.anchorMinutes,
+        lunchAnchorMinutes: breakConfig.lunch.anchorMinutes,
+      },
+      builders,
+      dailyDetail,
+    });
   } catch (err) {
     console.error("[production-kpis] error:", err);
     res.status(500).json({ error: "Failed to compute production KPIs" });
