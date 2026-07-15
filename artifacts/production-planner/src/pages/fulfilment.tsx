@@ -185,10 +185,16 @@ function playTone(opts: { frequency: number; duration: number; type?: Oscillator
   return ctx;
 }
 
+// Bright two-note rising chime (A5 → E6) with a long tail — loud and long
+// enough to register over kitchen noise, but short enough not to drag when
+// scanning several items back-to-back. Was a single quiet 0.15s blip that was
+// easy to miss on the packing floor.
 function playScanSuccess() {
   try {
-    const ctx = playTone({ frequency: 880, duration: 0.15, type: "sine", gain: 0.2 });
-    setTimeout(() => ctx.close(), 200);
+    const ctx = new AudioContext();
+    playTone({ ctx, frequency: 880, duration: 0.3, type: "sine", gain: 0.45 });
+    playTone({ ctx, frequency: 1318.51, duration: 0.5, type: "sine", gain: 0.45, startAt: 0.11 });
+    setTimeout(() => ctx.close(), 800);
   } catch (err) {
     console.warn("[Fulfilment] AudioContext not available:", err);
   }
@@ -278,16 +284,23 @@ function speakName(name: string) {
   }
 }
 
-// Triumphant rising arpeggio (C5 → E5 → G5 → C6) — clearly distinct from
-// the per-scan beep and audible across the kitchen.
+// Order-complete fanfare: rising arpeggio (C5 → E5 → G5 → C6) landing on a
+// held C-major chord (~1.6s total). Much longer and fuller than the two-note
+// scan chime, so "item picked" and "order done" are unmistakable across the
+// kitchen even without looking at the screen.
 function playOrderComplete() {
   try {
     const ctx = new AudioContext();
     const notes = [523.25, 659.25, 783.99, 1046.50];
     notes.forEach((freq, i) => {
-      playTone({ ctx, frequency: freq, duration: 0.22, type: "triangle", gain: 0.45, startAt: i * 0.12 });
+      playTone({ ctx, frequency: freq, duration: 0.26, type: "triangle", gain: 0.5, startAt: i * 0.14 });
     });
-    setTimeout(() => ctx.close(), 1200);
+    // Held closing chord (C6 + E6 + G6) — the "ta-daa" that makes completion
+    // obviously different from a scan.
+    [1046.50, 1318.51, 1567.98].forEach(freq => {
+      playTone({ ctx, frequency: freq, duration: 1.0, type: "triangle", gain: 0.35, startAt: 0.56 });
+    });
+    setTimeout(() => ctx.close(), 2000);
   } catch (err) {
     console.warn("[Fulfilment] AudioContext not available:", err);
   }
