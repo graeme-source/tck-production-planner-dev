@@ -17,6 +17,7 @@ import {
   db,
   batchCompletionsTable,
   productionPlanItemsTable,
+  productionPlansTable,
   recipesTable,
 } from "@workspace/db";
 import { and, eq, gte, lte, sql, ne } from "drizzle-orm";
@@ -43,9 +44,13 @@ export async function computeBuilderBatchesPerHourForDay(dateIso: string): Promi
   const dayEnd = londonEndOfDay(anchor);
 
   const completions = await db
-    .select({ completedAt: batchCompletionsTable.completedAt })
+    .select({
+      completedAt: batchCompletionsTable.completedAt,
+      buildingFinishedAt: productionPlansTable.buildingFinishedAt,
+    })
     .from(batchCompletionsTable)
     .innerJoin(productionPlanItemsTable, eq(batchCompletionsTable.planItemId, productionPlanItemsTable.id))
+    .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
     .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
     .where(and(
       gte(batchCompletionsTable.completedAt, dayStart),
@@ -55,7 +60,8 @@ export async function computeBuilderBatchesPerHourForDay(dateIso: string): Promi
     ));
 
   const breakConfig = await getStandardBreakConfig();
-  const result = computeBatchesPerHour(completions.map(c => c.completedAt), breakConfig);
+  const finishedAt = completions.find(c => c.buildingFinishedAt != null)?.buildingFinishedAt ?? null;
+  const result = computeBatchesPerHour(completions.map(c => c.completedAt), breakConfig, { finishedAt });
   return {
     totalBatches: result.batches,
     activeMinutes: result.activeMinutes,

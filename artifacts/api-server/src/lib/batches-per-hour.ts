@@ -87,16 +87,26 @@ const EMPTY: BphResult = {
 
 /**
  * completedAts must all fall on the same London day (callers group by day
- * first). liveNow extends the window to "now" for the in-day view; while
- * now sits inside a spanned break, only the elapsed part of that break is
- * deducted so the live number holds steady instead of sagging mid-break —
- * once the break's scheduled end passes, this converges on exactly the
- * historical rule.
+ * first).
+ *
+ * finishedAt is the builder-confirmed "Mark building finished" timestamp —
+ * when present it IS the end of the window (clamped to at least the last
+ * completion, in case someone pressed it early and kept building). This is
+ * what makes the lunch decision truthful: finishing at 12:30 and then going
+ * to lunch never deducts the lunch, because the window provably ended
+ * before the lunch break's end.
+ *
+ * liveNow extends the window to "now" for the in-day view while the button
+ * hasn't been pressed; while now sits inside a spanned break, only the
+ * elapsed part of that break is deducted so the live number holds steady
+ * instead of sagging mid-break — once the break's scheduled end passes,
+ * this converges on exactly the historical rule. finishedAt wins over
+ * liveNow.
  */
 export function computeBatchesPerHour(
   completedAts: Date[],
   config: StandardBreakConfig,
-  opts: { liveNow?: Date } = {},
+  opts: { liveNow?: Date; finishedAt?: Date | null } = {},
 ): BphResult {
   if (completedAts.length === 0) return EMPTY;
 
@@ -107,7 +117,8 @@ export function computeBatchesPerHour(
     if (t < startMs) startMs = t;
     if (t > lastCompletionMs) lastCompletionMs = t;
   }
-  const endMs = Math.max(lastCompletionMs, opts.liveNow?.getTime() ?? lastCompletionMs);
+  const ceilingMs = opts.finishedAt?.getTime() ?? opts.liveNow?.getTime() ?? lastCompletionMs;
+  const endMs = Math.max(lastCompletionMs, ceilingMs);
 
   const windowStartAt = new Date(startMs);
   const windowEndAt = new Date(endMs);
@@ -119,7 +130,7 @@ export function computeBatchesPerHour(
   const deductionFor = (br: StandardBreak): number => {
     if (startMin >= br.anchorMinutes) return 0; // started after the break — nothing to span
     if (endMin >= br.anchorMinutes + br.minutes) return br.minutes; // produced past the break's end
-    if (opts.liveNow && endMin > br.anchorMinutes) return endMin - br.anchorMinutes; // live, mid-break
+    if (opts.liveNow && !opts.finishedAt && endMin > br.anchorMinutes) return endMin - br.anchorMinutes; // live, mid-break
     return 0;
   };
 

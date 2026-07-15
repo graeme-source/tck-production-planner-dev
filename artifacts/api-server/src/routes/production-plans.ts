@@ -4607,17 +4607,27 @@ router.get("/:id/kpi", async (req, res) => {
 
     // Standard method (lib/batches-per-hour): first→last calzone completion,
     // standard break lengths deducted when the window spans them. Live: the
-    // window runs to "now" until the day's calzone target is met, then
-    // freezes at the last completion so BPH stops decaying during tidy-up.
+    // window runs to "now" until a builder taps "Mark building finished",
+    // which pins the end of the window (and therefore the lunch decision).
+    const [planRow] = await db
+      .select({ buildingFinishedAt: productionPlansTable.buildingFinishedAt })
+      .from(productionPlansTable)
+      .where(eq(productionPlansTable.id, planId))
+      .limit(1);
+    const finishedAt = planRow?.buildingFinishedAt ?? null;
+
     const breakConfig = await getStandardBreakConfig();
-    const allDone = calzoneBatchesTarget > 0 && batchesCompleted >= calzoneBatchesTarget;
-    const liveOpts = allDone ? {} : { liveNow: new Date() };
-    const team = computeBatchesPerHour(calzone.map(c => c.completedAt), breakConfig, liveOpts);
+    const teamOpts = finishedAt ? { finishedAt } : { liveNow: new Date() };
+    const team = computeBatchesPerHour(calzone.map(c => c.completedAt), breakConfig, teamOpts);
+    // "You" uses the builder's own completions. Once building is marked
+    // finished their number freezes at their own last batch (the marker
+    // shouldn't stretch an individual's window with team time).
+    const yourOpts = finishedAt ? {} : { liveNow: new Date() };
     const yours = sessionUserId != null
       ? computeBatchesPerHour(
           calzone.filter(c => c.userId === sessionUserId).map(c => c.completedAt),
           breakConfig,
-          liveOpts,
+          yourOpts,
         )
       : null;
 
@@ -4630,6 +4640,7 @@ router.get("/:id/kpi", async (req, res) => {
       yourActiveMinutes: yours?.activeMinutes ?? 0,
       yourBatchesPerHour: yours?.batchesPerHour ?? 0,
       macPacksCompleted,
+      buildingFinishedAt: finishedAt ? finishedAt.toISOString() : null,
     });
     return;
   }
@@ -4699,6 +4710,47 @@ router.get("/:id/kpi", async (req, res) => {
     breakMinutes: Math.round(breakMinutes),
     batchesPerHour: Math.round(batchesPerHour * 10) / 10,
   });
+});
+
+// POST /:id/building-finished — builder confirms the last batch is built and
+// building has stopped. Pins the end of the production window for the
+// batches-per-hour KPI and decides the lunch deduction (finish before the
+// lunch window's end = no lunch deducted). Idempotent: pressing twice keeps
+// the first timestamp.
+router.post("/:id/building-finished", async (req, res) => {
+  const planId = Number(req.params.id);
+  if (!Number.isFinite(planId)) { res.status(400).json({ error: "Invalid plan id" }); return; }
+  const sessionUserId = (req.session as { userId?: number }).userId ?? null;
+
+  const [existing] = await db
+    .select({ id: productionPlansTable.id, buildingFinishedAt: productionPlansTable.buildingFinishedAt })
+    .from(productionPlansTable)
+    .where(eq(productionPlansTable.id, planId))
+    .limit(1);
+  if (!existing) { res.status(404).json({ error: "Plan not found" }); return; }
+
+  if (existing.buildingFinishedAt) {
+    res.json({ buildingFinishedAt: existing.buildingFinishedAt.toISOString() });
+    return;
+  }
+
+  const now = new Date();
+  await db
+    .update(productionPlansTable)
+    .set({ buildingFinishedAt: now, buildingFinishedByUserId: sessionUserId })
+    .where(eq(productionPlansTable.id, planId));
+  res.json({ buildingFinishedAt: now.toISOString() });
+});
+
+// DELETE /:id/building-finished — undo an accidental press (building resumed).
+router.delete("/:id/building-finished", async (req, res) => {
+  const planId = Number(req.params.id);
+  if (!Number.isFinite(planId)) { res.status(400).json({ error: "Invalid plan id" }); return; }
+  await db
+    .update(productionPlansTable)
+    .set({ buildingFinishedAt: null, buildingFinishedByUserId: null })
+    .where(eq(productionPlansTable.id, planId));
+  res.json({ buildingFinishedAt: null });
 });
 
 // GET /:id/schedule — forward-looking build timeline for the day.

@@ -176,6 +176,10 @@ async function runStartupMigrations() {
     await db.execute(sql`
       ALTER TABLE recipes ADD COLUMN IF NOT EXISTS is_current_special BOOLEAN NOT NULL DEFAULT FALSE
     `);
+    // "Mark building finished" — authoritative end of the production window
+    // for the batches-per-hour KPI and the lunch-deduction decision.
+    await db.execute(sql`ALTER TABLE production_plans ADD COLUMN IF NOT EXISTS building_finished_at TIMESTAMP`);
+    await db.execute(sql`ALTER TABLE production_plans ADD COLUMN IF NOT EXISTS building_finished_by_user_id INTEGER`);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS oven_events (
         id SERIAL PRIMARY KEY,

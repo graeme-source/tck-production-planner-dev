@@ -923,6 +923,12 @@ export const ListProductionPlansResponseItem = zod.object({
   notes: zod.string().nullish(),
   status: zod.enum(["draft", "active", "prep", "building", "complete"]),
   batchNumber: zod.number().nullish(),
+  buildingFinishedAt: zod
+    .date()
+    .nullish()
+    .describe(
+      'Set when a builder taps \"Mark building finished\" — authoritative end of the day\'s production window for the BPH KPI.',
+    ),
   createdAt: zod.string(),
   totalBatchesTarget: zod.number(),
   itemCount: zod.number(),
@@ -973,6 +979,12 @@ export const GetProductionPlanResponse = zod
     notes: zod.string().nullish(),
     status: zod.enum(["draft", "active", "prep", "building", "complete"]),
     batchNumber: zod.number().nullish(),
+    buildingFinishedAt: zod
+      .date()
+      .nullish()
+      .describe(
+        'Set when a builder taps \"Mark building finished\" — authoritative end of the day\'s production window for the BPH KPI.',
+      ),
     createdAt: zod.string(),
     totalBatchesTarget: zod.number(),
     itemCount: zod.number(),
@@ -1072,6 +1084,12 @@ export const UpdateProductionPlanResponse = zod.object({
   notes: zod.string().nullish(),
   status: zod.enum(["draft", "active", "prep", "building", "complete"]),
   batchNumber: zod.number().nullish(),
+  buildingFinishedAt: zod
+    .date()
+    .nullish()
+    .describe(
+      'Set when a builder taps \"Mark building finished\" — authoritative end of the day\'s production window for the BPH KPI.',
+    ),
   createdAt: zod.string(),
   totalBatchesTarget: zod.number(),
   itemCount: zod.number(),
@@ -1333,6 +1351,34 @@ export const GetStationKpiResponse = zod.object({
     .describe(
       "Mac cheese packs completed today (count only — mac has no per-hour KPI). Only populated for building stations.",
     ),
+  buildingFinishedAt: zod
+    .date()
+    .nullish()
+    .describe(
+      "When a builder marked building finished (pins the KPI window end). Only populated for building stations.",
+    ),
+});
+
+/**
+ * @summary Mark building finished for the day (pins the BPH window end)
+ */
+export const MarkBuildingFinishedParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const MarkBuildingFinishedResponse = zod.object({
+  buildingFinishedAt: zod.date().nullable(),
+});
+
+/**
+ * @summary Undo an accidental building-finished press
+ */
+export const UnmarkBuildingFinishedParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UnmarkBuildingFinishedResponse = zod.object({
+  buildingFinishedAt: zod.date().nullable(),
 });
 
 /**

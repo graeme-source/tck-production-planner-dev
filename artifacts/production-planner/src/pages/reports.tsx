@@ -97,6 +97,7 @@ interface KpiDay {
   batches: number;
   windowStart: string | null;
   windowEnd: string | null;
+  finishSource: "marked" | "last-batch";
   wallClockMinutes: number;
   morningBreakDeducted: boolean;
   lunchBreakDeducted: boolean;
@@ -719,6 +720,10 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
                         </span>
                         <span className="inline-flex items-center gap-1">
                           <Timer className="w-3.5 h-3.5" /> Active {fmtMins(day.activeMinutes)}
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          {day.finishSource === "marked" ? "Finish marked by builder" : "Finish = last batch (not marked)"}
                         </span>
                       </div>
                       {day.builders.length > 0 && (

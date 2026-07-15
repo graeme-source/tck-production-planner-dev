@@ -865,6 +865,56 @@ paths:
               schema:
                 $ref: "#/components/schemas/StationKpi"
 
+  /production-plans/{id}/building-finished:
+    post:
+      operationId: markBuildingFinished
+      tags: [productionPlans]
+      summary: Mark building finished for the day (pins the BPH window end)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Building finished timestamp (existing one if already set)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  buildingFinishedAt:
+                    type: string
+                    format: date-time
+                    nullable: true
+                required:
+                  - buildingFinishedAt
+    delete:
+      operationId: unmarkBuildingFinished
+      tags: [productionPlans]
+      summary: Undo an accidental building-finished press
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Cleared
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  buildingFinishedAt:
+                    type: string
+                    format: date-time
+                    nullable: true
+                required:
+                  - buildingFinishedAt
+
   /production-plans/{id}/station-activity:
     get:
       operationId: getStationActivity
@@ -2554,6 +2604,11 @@ components:
         batchNumber:
           type: integer
           nullable: true
+        buildingFinishedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Set when a builder taps "Mark building finished" — authoritative end of the day's production window for the BPH KPI.
         createdAt:
           type: string
         totalBatchesTarget:
@@ -3268,6 +3323,11 @@ components:
         macPacksCompleted:
           type: integer
           description: Mac cheese packs completed today (count only — mac has no per-hour KPI). Only populated for building stations.
+        buildingFinishedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When a builder marked building finished (pins the KPI window end). Only populated for building stations.
       required:
         - batchesCompleted
         - activeMinutes

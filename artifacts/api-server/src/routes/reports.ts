@@ -151,6 +151,7 @@ router.get("/production-kpis", async (req, res) => {
         planId: productionPlanItemsTable.planId,
         planDate: productionPlansTable.planDate,
         planName: productionPlansTable.name,
+        buildingFinishedAt: productionPlansTable.buildingFinishedAt,
         recipeName: recipesTable.name,
       })
       .from(batchCompletionsTable)
@@ -181,6 +182,7 @@ router.get("/production-kpis", async (req, res) => {
     type DayGroup = {
       planId: number;
       planName: string;
+      finishedAt: Date | null;
       times: Date[];
       recipes: Map<string, number>;
       users: Map<number, { name: string; times: Date[] }>;
@@ -190,7 +192,7 @@ router.get("/production-kpis", async (req, res) => {
       const date = c.planDate ?? londonDateString(c.completedAt);
       let g = dayMap.get(date);
       if (!g) {
-        g = { planId: c.planId, planName: c.planName, times: [], recipes: new Map(), users: new Map() };
+        g = { planId: c.planId, planName: c.planName, finishedAt: c.buildingFinishedAt ?? null, times: [], recipes: new Map(), users: new Map() };
         dayMap.set(date, g);
       }
       g.times.push(c.completedAt);
@@ -213,6 +215,7 @@ router.get("/production-kpis", async (req, res) => {
       batches: number;
       windowStart: string | null;
       windowEnd: string | null;
+      finishSource: "marked" | "last-batch";
       wallClockMinutes: number;
       morningBreakDeducted: boolean;
       lunchBreakDeducted: boolean;
@@ -242,7 +245,7 @@ router.get("/production-kpis", async (req, res) => {
     }>();
 
     for (const [date, g] of dayMap) {
-      const day = computeBatchesPerHour(g.times, breakConfig);
+      const day = computeBatchesPerHour(g.times, breakConfig, { finishedAt: g.finishedAt });
       dayResults.set(date, day);
 
       const builders = Array.from(g.users.entries()).map(([userId, u]) => {
@@ -270,6 +273,7 @@ router.get("/production-kpis", async (req, res) => {
         batches: day.batches,
         windowStart: day.windowStartAt?.toISOString() ?? null,
         windowEnd: day.windowEndAt?.toISOString() ?? null,
+        finishSource: g.finishedAt ? ("marked" as const) : ("last-batch" as const),
         wallClockMinutes: day.wallClockMinutes,
         morningBreakDeducted: day.morningBreakDeducted,
         lunchBreakDeducted: day.lunchBreakDeducted,

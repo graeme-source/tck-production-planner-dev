@@ -5,6 +5,8 @@ import {
   useUpdateProductionPlanItem,
   useListTimingStandards,
   useGetStationKpi,
+  useMarkBuildingFinished,
+  useUnmarkBuildingFinished,
   getGetProductionPlanQueryKey,
   getGetStationKpiQueryKey,
   getGetStationActivityQueryKey,
@@ -26,7 +28,7 @@ import { toast } from "@/hooks/use-toast";
 import { useBuildTimerConfig } from "@/hooks/use-build-timer-config";
 import { useBatchBuildTimer } from "@/hooks/use-batch-build-timer";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 // ExtraPackControl removed — replaced by inline PackAdjustment
 import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
@@ -906,6 +908,39 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   const teamBph = serverKpi?.batchesPerHour ?? 0;
   const yourBph = serverKpi?.yourBatchesPerHour ?? 0;
 
+  // "Mark building finished" — the builder-confirmed end of the day's
+  // production window. Until it's pressed the KPI clock keeps running, so
+  // the number decays after the last batch; pressing it pins the finish
+  // time and decides whether the lunch break gets deducted.
+  const buildingFinishedAt = plan.buildingFinishedAt ?? serverKpi?.buildingFinishedAt ?? null;
+  const allBuiltOut = combinedTarget > 0 && combinedDone >= combinedTarget;
+  const [finishPromptDismissed, setFinishPromptDismissed] = useState(false);
+  const invalidateFinishState = () => {
+    queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+    queryClient.invalidateQueries({ queryKey: getGetStationKpiQueryKey(plan.id, { stationType }) });
+  };
+  const markFinished = useMarkBuildingFinished({
+    mutation: {
+      onSuccess: () => {
+        invalidateFinishState();
+        toast({ title: "Building finished — KPI locked in. Nice work!" });
+      },
+      onError: () => toast({ title: "Couldn't mark building finished", variant: "destructive" }),
+    },
+  });
+  const unmarkFinished = useUnmarkBuildingFinished({
+    mutation: {
+      onSuccess: () => {
+        invalidateFinishState();
+        setFinishPromptDismissed(true); // don't instantly re-open the prompt they just undid
+        toast({ title: "Building resumed — KPI clock running again" });
+      },
+    },
+  });
+  // Blocking prompt the moment the last flavour is built (after the
+  // extra-packs dialog for that recipe closes) so finishing can't be missed.
+  const showFinishPrompt = allBuiltOut && !buildingFinishedAt && !extraPromptItem && !finishPromptDismissed;
+
   const bphColor = (bph: number) =>
     targetBph && minBph
       ? bph >= targetBph ? "text-emerald-600 dark:text-emerald-400"
@@ -968,7 +1003,89 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
           </div>
         )}
 
+        {/* Building-finished banner: unmissable once everything is built */}
+        {allBuiltOut && !buildingFinishedAt && (
+          <button
+            onClick={() => markFinished.mutate({ id: plan.id })}
+            disabled={markFinished.isPending}
+            className="w-full mt-3 h-16 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xl flex items-center justify-center gap-3 shadow-lg animate-pulse"
+          >
+            {markFinished.isPending
+              ? <Loader2 className="w-6 h-6 animate-spin" />
+              : <CheckCircle2 className="w-7 h-7" />}
+            Mark building finished
+          </button>
+        )}
+        {buildingFinishedAt && (
+          <div className="w-full mt-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 px-4 py-3 flex items-center gap-3">
+            <CheckCircle2 className="w-6 h-6 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+            <span className="font-semibold text-emerald-800 dark:text-emerald-200">
+              Building finished at {format(parseISO(buildingFinishedAt), "HH:mm")}
+            </span>
+            <button
+              onClick={() => unmarkFinished.mutate({ id: plan.id })}
+              disabled={unmarkFinished.isPending}
+              className="ml-auto text-sm font-medium text-emerald-700 dark:text-emerald-300 underline underline-offset-2"
+            >
+              Undo
+            </button>
+          </div>
+        )}
+
       </div>
+
+      {/* Finish prompt — appears the moment the last flavour is built so the
+          builder can't carry on without confirming the day is done. */}
+      <Dialog open={showFinishPrompt} onOpenChange={(open) => { if (!open) setFinishPromptDismissed(true); }}>
+        <DialogContent
+          className="max-w-md mx-auto"
+          onPointerDownOutside={e => e.preventDefault()}
+          onEscapeKeyDown={e => e.preventDefault()}
+        >
+          <div className="text-center space-y-4 py-2">
+            <CheckCircle2 className="w-14 h-14 text-emerald-500 mx-auto" />
+            <DialogTitle className="text-2xl font-bold">That's everything built!</DialogTitle>
+            <div className="rounded-xl bg-secondary/40 p-4 space-y-1 text-left">
+              <div className="flex justify-between text-base">
+                <span className="text-muted-foreground">Calzone batches</span>
+                <span className="font-bold tabular-nums">{totalBatchesDone} / {totalBatchesTarget}</span>
+              </div>
+              {totalMacPacksTarget > 0 && (
+                <div className="flex justify-between text-base">
+                  <span className="text-muted-foreground">Mac packs</span>
+                  <span className="font-bold tabular-nums">{totalMacPacksDone} / {totalMacPacksTarget}</span>
+                </div>
+              )}
+              {teamBph > 0 && (
+                <div className="flex justify-between text-base">
+                  <span className="text-muted-foreground">Team batches/hr</span>
+                  <span className={cn("font-bold tabular-nums", bphColor(teamBph))}>{teamBph.toFixed(1)}</span>
+                </div>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Tap the button to lock in today's finish time — do this before you
+              tidy up or head to lunch so the batches-per-hour stays accurate.
+            </p>
+            <button
+              onClick={() => markFinished.mutate({ id: plan.id })}
+              disabled={markFinished.isPending}
+              className="w-full h-16 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xl flex items-center justify-center gap-3"
+            >
+              {markFinished.isPending
+                ? <Loader2 className="w-6 h-6 animate-spin" />
+                : <CheckCircle2 className="w-7 h-7" />}
+              Mark building finished
+            </button>
+            <button
+              onClick={() => setFinishPromptDismissed(true)}
+              className="w-full h-10 text-sm text-muted-foreground underline underline-offset-2"
+            >
+              Not yet — still building extras
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Extra packs prompt — overlay dialog when a recipe just finished */}
       <Dialog open={!!extraPromptItem} onOpenChange={(open) => { if (!open) setExtraPromptItemId(null); }}>

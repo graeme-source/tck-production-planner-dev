@@ -21,6 +21,12 @@ export const productionPlansTable = pgTable("production_plans", {
   notes: text("notes"),
   status: text("status").notNull().default("draft"),
   batchNumber: integer("batch_number"),
+  // Set when a builder taps "Mark building finished" after the last batch.
+  // This is the authoritative end of the production window for the
+  // batches-per-hour KPI (and the lunch-deduction decision) — without it the
+  // KPI falls back to the last batch completion.
+  buildingFinishedAt: timestamp("building_finished_at"),
+  buildingFinishedByUserId: integer("building_finished_by_user_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

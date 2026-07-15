@@ -373,6 +373,8 @@ export interface ProductionPlan {
     notes?: string | null;
     status: ProductionPlanStatus;
     batchNumber?: number | null;
+    /** Set when a builder taps "Mark building finished" — authoritative end of the day's production window for the BPH KPI. */
+    buildingFinishedAt?: string | null;
     createdAt: string;
     totalBatchesTarget: number;
     itemCount: number;
@@ -698,6 +700,8 @@ export interface StationKpi {
     yourBatchesPerHour?: number;
     /** Mac cheese packs completed today (count only — mac has no per-hour KPI). Only populated for building stations. */
     macPacksCompleted?: number;
+    /** When a builder marked building finished (pins the KPI window end). Only populated for building stations. */
+    buildingFinishedAt?: string | null;
 }
 export type UpdateUserRole = (typeof UpdateUserRole)[keyof typeof UpdateUserRole];
 export declare const UpdateUserRole: {
@@ -761,6 +765,12 @@ export type EndStationBreakBody = {
 };
 export type GetStationKpiParams = {
     stationType: string;
+};
+export type MarkBuildingFinished200 = {
+    buildingFinishedAt: string | null;
+};
+export type UnmarkBuildingFinished200 = {
+    buildingFinishedAt: string | null;
 };
 /**
  * Map of stationType to distinct user count today

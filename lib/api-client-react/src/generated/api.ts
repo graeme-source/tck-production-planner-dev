@@ -56,6 +56,7 @@ import type {
   ListSalesEntriesParams,
   ListStationBreaksParams,
   ListStockItemsParams,
+  MarkBuildingFinished200,
   ProductionPlan,
   ProductionPlanDetail,
   ProductionPlanItem,
@@ -70,6 +71,7 @@ import type {
   SubRecipeDetail,
   Supplier,
   TimingStandard,
+  UnmarkBuildingFinished200,
   UpdateDptSetting,
   UpdateProductionPlan,
   UpdateProductionPlanItemBody,
@@ -3557,6 +3559,177 @@ export function useGetStationKpi<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Mark building finished for the day (pins the BPH window end)
+ */
+export const getMarkBuildingFinishedUrl = (id: number) => {
+  return `/api/production-plans/${id}/building-finished`;
+};
+
+export const markBuildingFinished = async (
+  id: number,
+  options?: RequestInit,
+): Promise<MarkBuildingFinished200> => {
+  return customFetch<MarkBuildingFinished200>(getMarkBuildingFinishedUrl(id), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getMarkBuildingFinishedMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof markBuildingFinished>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof markBuildingFinished>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["markBuildingFinished"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof markBuildingFinished>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return markBuildingFinished(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type MarkBuildingFinishedMutationResult = NonNullable<
+  Awaited<ReturnType<typeof markBuildingFinished>>
+>;
+
+export type MarkBuildingFinishedMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Mark building finished for the day (pins the BPH window end)
+ */
+export const useMarkBuildingFinished = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof markBuildingFinished>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof markBuildingFinished>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getMarkBuildingFinishedMutationOptions(options));
+};
+
+/**
+ * @summary Undo an accidental building-finished press
+ */
+export const getUnmarkBuildingFinishedUrl = (id: number) => {
+  return `/api/production-plans/${id}/building-finished`;
+};
+
+export const unmarkBuildingFinished = async (
+  id: number,
+  options?: RequestInit,
+): Promise<UnmarkBuildingFinished200> => {
+  return customFetch<UnmarkBuildingFinished200>(
+    getUnmarkBuildingFinishedUrl(id),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export const getUnmarkBuildingFinishedMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof unmarkBuildingFinished>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof unmarkBuildingFinished>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["unmarkBuildingFinished"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof unmarkBuildingFinished>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return unmarkBuildingFinished(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UnmarkBuildingFinishedMutationResult = NonNullable<
+  Awaited<ReturnType<typeof unmarkBuildingFinished>>
+>;
+
+export type UnmarkBuildingFinishedMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Undo an accidental building-finished press
+ */
+export const useUnmarkBuildingFinished = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof unmarkBuildingFinished>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof unmarkBuildingFinished>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getUnmarkBuildingFinishedMutationOptions(options));
+};
 
 /**
  * @summary Get active user counts per station today
