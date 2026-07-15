@@ -1488,30 +1488,30 @@ async function runStartupMigrations() {
     // Morning meeting — reorder slides + rename "Special Prep" →
     // "Test Product Prep" and "Local Delivery" → "Local Despatch" on
     // the default template (and on any future cloned meetings that
-    // still carry the legacy titles). Inserts the system_updates
-    // slide after the operational "first things first" block.
-    // Idempotent.
+    // still carry the legacy titles). Idempotent.
+    //
+    // System Updates slide REMOVED (2026-07-15, Graeme): the slide never
+    // reliably showed fresh content on prod, so it's pulled from the template
+    // and from meetings that haven't run yet. One-time guarded delete — the
+    // slide used to be seeded right here on every boot, so a plain data
+    // delete would have been resurrected at the next deploy. Guarding (rather
+    // than deleting unconditionally) also means a manual re-add through the
+    // template editor sticks, if it ever comes back.
     await db.execute(sql`
-      INSERT INTO template_slides (template_id, kind, title, order_position)
-      SELECT mt.id, 'system_updates', 'System Updates', 7
-      FROM meeting_templates mt
-      WHERE mt.is_default = true
-        AND NOT EXISTS (
-          SELECT 1 FROM template_slides ts
-          WHERE ts.template_id = mt.id AND ts.kind = 'system_updates'
-        )
-    `);
-    await db.execute(sql`
-      INSERT INTO meeting_slides (meeting_id, kind, title, order_position)
-      SELECT mm.id, 'system_updates', 'System Updates', 7
-      FROM morning_meetings mm
-      WHERE NOT EXISTS (
-        SELECT 1 FROM meeting_slides ms
-        WHERE ms.meeting_id = mm.id AND ms.kind = 'system_updates'
-      )
-      AND EXISTS (
-        SELECT 1 FROM meeting_slides ms WHERE ms.meeting_id = mm.id
-      )
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'remove_system_updates_slide_v1') THEN
+          DELETE FROM template_slides WHERE kind = 'system_updates';
+          -- Only from meetings that haven't run yet (ended_at NULL) — meetings
+          -- already held keep their slide list as a historical record.
+          DELETE FROM meeting_slides ms
+          USING morning_meetings mm
+          WHERE ms.meeting_id = mm.id
+            AND ms.kind = 'system_updates'
+            AND mm.ended_at IS NULL;
+          INSERT INTO _migrations_done (key) VALUES ('remove_system_updates_slide_v1');
+        END IF;
+      END $$;
     `);
     await db.execute(sql`
       UPDATE template_slides ts
@@ -1523,7 +1523,6 @@ async function runStartupMigrations() {
         ('special_prep', 3, 'Test Product Prep'),
         ('local_delivery', 5, 'Local Despatch'),
         ('bag_orders', 6, 'Bag Orders'),
-        ('system_updates', 7, 'System Updates'),
         ('yesterday_kpis', 8, 'Yesterday''s Numbers'),
         ('new_sops', 9, 'New & Updated SOPs'),
         ('struggles', 10, 'Improvements Required'),
@@ -1544,7 +1543,6 @@ async function runStartupMigrations() {
         ('special_prep', 3, 'Test Product Prep'),
         ('local_delivery', 5, 'Local Despatch'),
         ('bag_orders', 6, 'Bag Orders'),
-        ('system_updates', 7, 'System Updates'),
         ('yesterday_kpis', 8, 'Yesterday''s Numbers'),
         ('new_sops', 9, 'New & Updated SOPs'),
         ('struggles', 10, 'Improvements Required'),
