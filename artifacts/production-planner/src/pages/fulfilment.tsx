@@ -821,7 +821,6 @@ export default function Fulfilment() {
   // present). Lets us collapse duplicate line items into a single row with
   // an `×N` badge, then track scan progress within that row.
   const [pickedCounts, setPickedCounts] = useState<Map<string, number>>(new Map());
-  const [barcodeInput, setBarcodeInput] = useState("");
   const [flashItem, setFlashItem] = useState<string | null>(null);
   const [flashWrong, setFlashWrong] = useState(false);
   // Box categories are multi-select now: the operator can pick a wave of
@@ -1116,7 +1115,7 @@ export default function Fulfilment() {
   async function startPicking(order: ShopifyOrder) {
     setActiveOrder(order);
     setPickedCounts(new Map());
-    setBarcodeInput("");
+    if (barcodeRef.current) barcodeRef.current.value = ""; // clear the scan field for the new order
     setShipment(null);
     setShipmentError(null);
     setPrintStatus("idle");
@@ -1250,7 +1249,15 @@ export default function Fulfilment() {
 
   function handleBarcodeSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const input = barcodeInput.trim().toLowerCase();
+    // The scan field is UNCONTROLLED — read straight from the DOM. A hardware
+    // scanner types a full 13/15-digit barcode in a few milliseconds then sends
+    // Enter. A controlled React input can't keep up with that burst: rapid
+    // setState calls are batched and React clobbers the DOM value back to a
+    // stale state, so the field ends up holding only the first few digits — the
+    // "submits a 5-digit fragment" bug. Leaving the input uncontrolled lets the
+    // scanner fill it untouched; we read and clear it via the ref.
+    const raw = barcodeRef.current?.value ?? "";
+    const input = raw.trim().toLowerCase();
     if (!input) return;
 
     // Only rows that still need picks — once a row is fully picked, scanning
@@ -1284,13 +1291,13 @@ export default function Fulfilment() {
       });
       setFlashItem(match._groupKey);
       setTimeout(() => setFlashItem(null), 800);
-      setBarcodeInput("");
     } else {
       playScanWrong();
       setFlashWrong(true);
       setTimeout(() => setFlashWrong(false), 600);
-      setBarcodeInput("");
     }
+    // Clear via the DOM — the field is uncontrolled — ready for the next scan.
+    if (barcodeRef.current) barcodeRef.current.value = "";
   }
 
   // Each tap adds one to that row, then wraps back to zero — same logic
@@ -2096,10 +2103,11 @@ export default function Fulfilment() {
         <form onSubmit={handleBarcodeSubmit} hidden={creatingShipment || !!shipmentError}>
           <div className={`relative transition-all ${flashWrong ? "ring-2 ring-destructive rounded-xl" : ""}`}>
             <Scan className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground pointer-events-none" />
+            {/* Uncontrolled on purpose — see handleBarcodeSubmit. A controlled
+                value can't keep up with a scanner's burst and truncates. */}
             <input
               ref={barcodeRef}
-              value={barcodeInput}
-              onChange={e => setBarcodeInput(e.target.value)}
+              defaultValue=""
               placeholder="Scan barcode or type SKU…"
               className="w-full pl-12 pr-4 py-4 text-lg bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono"
               autoComplete="off"
