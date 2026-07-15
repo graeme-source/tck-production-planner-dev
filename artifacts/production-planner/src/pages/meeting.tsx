@@ -1316,8 +1316,14 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
     };
   });
 
-  // 2) Core recipes we're short on but NOT making today.
-  const shortNotPlanned: ProductionPlanRow[] = (calc?.recipes ?? [])
+  // 2) Core recipes NOT being made today. Previously this only listed ones
+  // already short (surplus < 0), which hid exactly the rows you need for
+  // risk-assessment — a core item selling from the fridge with no production
+  // today (The Don on a non-Don day) was invisible until it had already run
+  // out. Show every core recipe with stock on hand or packs going out; only
+  // genuinely dormant ones (nothing in the fridge, nothing to dispatch) stay
+  // hidden to keep the table tight. Worst position first.
+  const notPlanned: ProductionPlanRow[] = (calc?.recipes ?? [])
     .filter(r => r.isCoreMenu && !plannedIds.has(r.recipeId))
     .map(r => ({
       recipeId: r.recipeId,
@@ -1329,10 +1335,10 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
       unit: "batches" as const,
       stock: calcById.get(r.recipeId) ?? null,
     }))
-    .filter(r => r.stock !== null && r.stock.surplus < 0)
+    .filter(r => r.stock !== null && (r.stock.have > 0 || r.stock.need > 0))
     .sort((a, b) => (a.stock!.surplus) - (b.stock!.surplus));
 
-  const rows = [...plannedRows, ...shortNotPlanned];
+  const rows = [...plannedRows, ...notPlanned];
 
   const fmtDay = (iso?: string) => iso ? format(new Date(`${iso}T00:00:00`), "EEE d MMM") : "—";
   const dispatchLabel = fmtDay(calc?.dispatchDates?.[1]);
@@ -1388,7 +1394,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
               <div key={r.recipeId}>
                 {firstUnplanned && (
                   <div className="px-5 py-1.5 bg-secondary/40 text-[11px] uppercase tracking-wide text-muted-foreground font-semibold border-t border-border/50">
-                    Short, but not on today's plan
+                    In the fridge, but not on today's plan
                   </div>
                 )}
                 <div
