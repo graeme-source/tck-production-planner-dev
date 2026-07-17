@@ -490,9 +490,50 @@ export default function Dashboard() {
 
   const todayDispatches = dispatches?.filter(d => d.dispatchDate === todayStr) || [];
 
+  // Live team batches/hr for today's build — the same standard number the
+  // building station shows (calzone-only, lib/batches-per-hour), so the
+  // kitchen dashboard always has the day's pace in view.
+  const { data: buildKpi } = useQuery({
+    queryKey: ["dashboard-build-kpi", todayPlanIds[0]],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/production-plans/${todayPlanIds[0]}/kpi?stationType=building_1`, { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json() as Promise<{ batchesPerHour?: number }>;
+    },
+    enabled: todayPlanIds.length > 0,
+    refetchInterval: 30000,
+  });
+  const teamBph = buildKpi?.batchesPerHour ?? 0;
+
+  // Packing pace for today's dispatch — orders/hr from Shopify fulfilment
+  // timestamps, the same number as the packing station's "Packed today" tile.
+  const { data: packingSpeed } = useQuery({
+    queryKey: ["dashboard-packing-speed", todayStr],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/reports/packing-speed?from=${todayStr}&to=${todayStr}`, { credentials: "include" });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return (data.dailyRows?.[0] ?? null) as { ordersPerHour: number | null; count: number } | null;
+    },
+    refetchInterval: 60000,
+  });
+  const packingOph = packingSpeed?.ordersPerHour ?? 0;
+
+  // The "Dispatching Today" card is pinned to the REAL current week, not the
+  // weekly panel's selection — getDefaultWeekOffset rolls the panel to next
+  // week from Friday 3pm, which used to blank this card for the rest of the
+  // day. Today's card must reflect today until midnight. Same query key
+  // family, so on offset 0 it dedupes with the panel's fetch.
+  const currentWeekStartStr = format(currentMonday, "yyyy-MM-dd");
+  const { data: currentWeekOrders, isLoading: currentWeekLoading } = useQuery({
+    queryKey: ["shopify-weekly-orders-dashboard", currentWeekStartStr],
+    queryFn: () => fetchWeeklyOrders(currentWeekStartStr),
+    staleTime: 5 * 60 * 1000,
+  });
+
   const todayTag = format(today, "yyyy-MM-dd");
-  const todayIndex = weeklyOrders?.findIndex(d => d.date === todayTag) ?? -1;
-  const todayShopifyOrderCount = todayIndex >= 0 ? weeklyOrders![todayIndex].orderCount : null;
+  const todayIndex = currentWeekOrders?.findIndex(d => d.date === todayTag) ?? -1;
+  const todayShopifyOrderCount = todayIndex >= 0 ? currentWeekOrders![todayIndex].orderCount : null;
 
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
@@ -542,9 +583,10 @@ export default function Dashboard() {
         <StatCard
           title="Total Batches Today"
           value={batchesLoading ? "…" : (totalBatches?.calzoneBatches ?? 0).toString()}
-          subtitle={!batchesLoading && (totalBatches?.macPacks ?? 0) > 0
-            ? `+ ${totalBatches!.macPacks} mac packs`
-            : undefined}
+          subtitle={batchesLoading ? undefined : [
+            teamBph > 0 ? `${teamBph.toFixed(1)} batches/hr` : null,
+            (totalBatches?.macPacks ?? 0) > 0 ? `+ ${totalBatches!.macPacks} mac packs` : null,
+          ].filter(Boolean).join(" · ") || undefined}
           icon={ChefHat}
           color="text-primary"
           bg="bg-primary/10"
@@ -558,14 +600,15 @@ export default function Dashboard() {
         />
         <StatCard
           title="Dispatching Today"
-          value={weeklyLoading ? "…" : (todayShopifyOrderCount ?? todayDispatches.length).toString()}
+          value={currentWeekLoading ? "…" : (todayShopifyOrderCount ?? todayDispatches.length).toString()}
+          subtitle={packingOph > 0 ? `${packingOph.toFixed(1)} orders/hr packed` : undefined}
           icon={Truck}
           color="text-blue-500"
           bg="bg-blue-500/10"
           href="/dispatches"
-          progress={todayIndex >= 0 && (weeklyOrders![todayIndex].orderCount ?? 0) > 0 ? {
-            done: weeklyOrders![todayIndex].fulfilledCount,
-            total: weeklyOrders![todayIndex].orderCount,
+          progress={todayIndex >= 0 && (currentWeekOrders![todayIndex].orderCount ?? 0) > 0 ? {
+            done: currentWeekOrders![todayIndex].fulfilledCount,
+            total: currentWeekOrders![todayIndex].orderCount,
             label: "fulfilled",
             barClass: "bg-blue-500",
           } : undefined}
