@@ -505,6 +505,13 @@ export default function Orders() {
       const calcSupplierIds = new Set(calculated.suppliers.map(s => s.supplier.id));
 
       for (const so of calculated.suppliers) {
+        // A reopened placed order is being edited: its card mirrors the PO,
+        // not the calc. Freeze it — the hydrated PO lines carry none of the
+        // manual/misc/kanban flags, so the merge below would wipe them.
+        if (reopenedPlacedOrders[so.supplier.id]) {
+          next[so.supplier.id] = prev[so.supplier.id] ?? [];
+          continue;
+        }
         const existing = prev[so.supplier.id] ?? [];
         const calcIngIds = new Set(so.lines.map(l => l.ingredientId));
         // Preserve operator-added lines that the API doesn't know about:
@@ -548,6 +555,13 @@ export default function Orders() {
       for (const sidStr of Object.keys(prev)) {
         const sid = Number(sidStr);
         if (calcSupplierIds.has(sid)) continue;
+        // Same freeze as above: a reopened PO's supplier may not appear in
+        // the calc at all (nothing currently required) — keep its lines
+        // verbatim instead of dropping the hydrated PO lines.
+        if (reopenedPlacedOrders[sid]) {
+          next[sid] = prev[sid] ?? [];
+          continue;
+        }
         const preserved = (prev[sid] ?? []).filter(l => l.isManual || l.isMisc || l.isKanban);
         if (preserved.length > 0) next[sid] = preserved;
       }
@@ -564,6 +578,8 @@ export default function Orders() {
         for (const sidStr of Object.keys(next)) {
           const sid = Number(sidStr);
           if (sid === targetSid) continue;
+          // Never pull lines out of a reopened PO being edited.
+          if (reopenedPlacedOrders[sid]) continue;
           const idx = next[sid].findIndex(l => l.ingredientId === ingId && !l.isMisc);
           if (idx === -1) continue;
           const [line] = next[sid].splice(idx, 1);
@@ -578,6 +594,9 @@ export default function Orders() {
       // clear the mark at add time, so this filter can be unconditional.
       for (const sidStr of Object.keys(next)) {
         const sid = Number(sidStr);
+        // Removal marks are about the pending calc round — they must not
+        // silently drop lines that exist on a reopened placed order.
+        if (reopenedPlacedOrders[sid]) continue;
         next[sid] = next[sid].filter(l => !(l.ingredientId > 0 && removedLines[l.ingredientId]));
       }
 
@@ -588,7 +607,7 @@ export default function Orders() {
       for (const s of calculated.suppliers) next.add(s.supplier.id);
       return next;
     });
-  }, [calculated, movedLines, removedLines]);
+  }, [calculated, movedLines, removedLines, reopenedPlacedOrders]);
 
   const { data: kanbanIngredients = [] } = useQuery<KanbanIngredient[]>({
     queryKey: ["kanbans-ingredients-for-orders"],
@@ -658,7 +677,12 @@ export default function Orders() {
     if (reopenedPlacedOrders[supplierId]) return; // already reopened — no-op
 
     setEditableLines(prev => {
-      const existing = prev[supplierId] ?? [];
+      // The reopened card represents the placed PO, so start from the PO's
+      // lines and keep only operator-added locals (kanban/manual/misc) from
+      // whatever was pending. Keeping the calc-suggested lines here made the
+      // edit view show the whole suggested shopping list instead of the
+      // order's actual items — and resubmit would then replace the PO with it.
+      const existing = (prev[supplierId] ?? []).filter(l => l.isManual || l.isMisc || l.isKanban);
       const existingIngredientIds = new Set(existing.map(l => l.ingredientId));
       // Misc lines from the API have ingredientId = null; give each a unique
       // synthetic negative id so React keys stay stable and downstream code
