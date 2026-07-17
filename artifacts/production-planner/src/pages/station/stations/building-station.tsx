@@ -915,6 +915,10 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   const buildingFinishedAt = plan.buildingFinishedAt ?? serverKpi?.buildingFinishedAt ?? null;
   const allBuiltOut = combinedTarget > 0 && combinedDone >= combinedTarget;
   const [finishPromptDismissed, setFinishPromptDismissed] = useState(false);
+  // Confirmation gate for finishing while batches are still outstanding —
+  // e.g. a short day where the last flavour ran out of filling. The button is
+  // always available, but mid-production it must be deliberate.
+  const [confirmEarlyFinish, setConfirmEarlyFinish] = useState(false);
   const invalidateFinishState = () => {
     queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
     queryClient.invalidateQueries({ queryKey: getGetStationKpiQueryKey(plan.id, { stationType }) });
@@ -1003,12 +1007,19 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
           </div>
         )}
 
-        {/* Building-finished banner: unmissable once everything is built */}
-        {allBuiltOut && !buildingFinishedAt && (
+        {/* Building-finished button: always available so a short day can still
+            be closed out. Unmissable pulsing green once everything is built;
+            mid-production it's a quieter outline and asks for confirmation. */}
+        {!buildingFinishedAt && (
           <button
-            onClick={() => markFinished.mutate({ id: plan.id })}
+            onClick={() => allBuiltOut ? markFinished.mutate({ id: plan.id }) : setConfirmEarlyFinish(true)}
             disabled={markFinished.isPending}
-            className="w-full mt-3 h-16 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xl flex items-center justify-center gap-3 shadow-lg animate-pulse"
+            className={cn(
+              "w-full mt-3 h-16 rounded-xl font-bold text-xl flex items-center justify-center gap-3 transition-all",
+              allBuiltOut
+                ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg animate-pulse"
+                : "border-2 border-emerald-600/60 text-emerald-700 dark:text-emerald-400 bg-background hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+            )}
           >
             {markFinished.isPending
               ? <Loader2 className="w-6 h-6 animate-spin" />
@@ -1082,6 +1093,58 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
               className="w-full h-10 text-sm text-muted-foreground underline underline-offset-2"
             >
               Not yet — still building extras
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Early-finish confirmation — the button was pressed while batches are
+          still outstanding (e.g. short on the last flavour). Make sure closing
+          production for the day is deliberate. */}
+      <Dialog open={confirmEarlyFinish} onOpenChange={setConfirmEarlyFinish}>
+        <DialogContent className="max-w-md mx-auto">
+          <div className="text-center space-y-4 py-2">
+            <AlertTriangle className="w-14 h-14 text-amber-500 mx-auto" />
+            <DialogTitle className="text-2xl font-bold">Close production for the day?</DialogTitle>
+            <div className="rounded-xl bg-secondary/40 p-4 space-y-1 text-left">
+              <div className="flex justify-between text-base">
+                <span className="text-muted-foreground">Calzone batches</span>
+                <span className="font-bold tabular-nums">{totalBatchesDone} / {totalBatchesTarget}</span>
+              </div>
+              {totalMacPacksTarget > 0 && (
+                <div className="flex justify-between text-base">
+                  <span className="text-muted-foreground">Mac packs</span>
+                  <span className="font-bold tabular-nums">{totalMacPacksDone} / {totalMacPacksTarget}</span>
+                </div>
+              )}
+              {combinedTarget - combinedDone > 0 && (
+                <div className="flex justify-between text-base">
+                  <span className="text-muted-foreground">Still to build</span>
+                  <span className="font-bold tabular-nums text-amber-600 dark:text-amber-400">
+                    {combinedTarget - combinedDone}
+                  </span>
+                </div>
+              )}
+            </div>
+            <p className="text-base text-muted-foreground">
+              Not everything on the plan is built. This locks in today's finish
+              time and ends building for the day.
+            </p>
+            <button
+              onClick={() => { setConfirmEarlyFinish(false); markFinished.mutate({ id: plan.id }); }}
+              disabled={markFinished.isPending}
+              className="w-full h-16 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xl flex items-center justify-center gap-3"
+            >
+              {markFinished.isPending
+                ? <Loader2 className="w-6 h-6 animate-spin" />
+                : <CheckCircle2 className="w-7 h-7" />}
+              Yes — close production
+            </button>
+            <button
+              onClick={() => setConfirmEarlyFinish(false)}
+              className="w-full h-12 rounded-xl border border-border text-base font-medium hover:bg-secondary"
+            >
+              Keep building
             </button>
           </div>
         </DialogContent>
