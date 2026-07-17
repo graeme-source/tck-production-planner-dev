@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, stationChangeoversTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, prepDeferralsTable, prepTinOverridesTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable, batchWeightRecordsTable, temperatureRecordsTable } from "@workspace/db";
+import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, stationChangeoversTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, prepDeferralsTable, prepTinOverridesTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable, batchWeightRecordsTable, temperatureRecordsTable, productionPlanExtraDoughTable } from "@workspace/db";
 import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as drizzleSum, ne, isNotNull, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
@@ -5529,6 +5529,70 @@ router.post("/:id/add-recipe", async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Extra/test dough on a plan — ad-hoc dough added to a specific production day
+// (e.g. a recipe trial). Rows are per-plan, unlike the global daily extra/snack
+// balls in app_settings. The dough station's /dough-prep response folds these
+// into the balling list and the mixing totals for whichever day preps this
+// plan's dough. A "ball" is one piece of the given gram weight.
+// ──────────────────────────────────────────────────────────────────────────────
+router.get("/:id/extra-dough", async (req, res) => {
+  const planId = Number(req.params.id);
+  const rows = await db
+    .select()
+    .from(productionPlanExtraDoughTable)
+    .where(eq(productionPlanExtraDoughTable.planId, planId))
+    .orderBy(asc(productionPlanExtraDoughTable.id));
+  res.json(rows);
+});
+
+// Deliberately not role-gated (unlike add-recipe): the dough station operator
+// adds test dough in real time from the station, same trust level as
+// batch-completions.
+router.post("/:id/extra-dough", async (req, res) => {
+  const planId = Number(req.params.id);
+  const ballCount = Number(req.body?.ballCount);
+  const ballWeightG = Math.round(Number(req.body?.ballWeightG));
+  const label = typeof req.body?.label === "string" && req.body.label.trim() !== ""
+    ? req.body.label.trim().slice(0, 60)
+    : "Test dough";
+  if (!Number.isInteger(ballCount) || ballCount < 1 || ballCount > 200) {
+    res.status(400).json({ error: "Body must contain { ballCount } as a positive integer" });
+    return;
+  }
+  if (!Number.isFinite(ballWeightG) || ballWeightG < 1 || ballWeightG > 30000) {
+    res.status(400).json({ error: "Body must contain { ballWeightG } in grams (1–30000)" });
+    return;
+  }
+
+  const [plan] = await db
+    .select({ id: productionPlansTable.id, status: productionPlansTable.status })
+    .from(productionPlansTable)
+    .where(eq(productionPlansTable.id, planId));
+  if (!plan) { res.status(404).json({ error: "Plan not found" }); return; }
+  if (plan.status === "complete") {
+    res.status(409).json({ error: "Cannot add dough to a completed plan." });
+    return;
+  }
+
+  const [created] = await db
+    .insert(productionPlanExtraDoughTable)
+    .values({ planId, label, ballCount, ballWeightG, createdByUserId: req.session.userId ?? null })
+    .returning();
+  res.status(201).json(created);
+});
+
+router.delete("/:id/extra-dough/:extraId", async (req, res) => {
+  const planId = Number(req.params.id);
+  const extraId = Number(req.params.extraId);
+  const [deleted] = await db
+    .delete(productionPlanExtraDoughTable)
+    .where(and(eq(productionPlanExtraDoughTable.id, extraId), eq(productionPlanExtraDoughTable.planId, planId)))
+    .returning({ id: productionPlanExtraDoughTable.id });
+  if (!deleted) { res.status(404).json({ error: "Extra dough entry not found" }); return; }
+  res.json({ deleted: deleted.id });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
 // PATCH /:id/items/:itemId/batches-target — adjust batches target by ±1
 // Used to top up an active plan without resetting prep state. Admin/manager
 // only — viewers see the controls disabled until the table is unlocked.
@@ -5818,7 +5882,17 @@ router.get("/:id/dough-prep", async (req, res) => {
   const extraPackBallWeightG = getSetting("daily_extra_pack_ball_weight_g", 230);
   const snackBallCount      = getSetting("daily_snack_ball_count", 1);
   const snackBallWeightG    = getSetting("daily_snack_ball_weight_g", 200);
-  const extraBallsKg = (extraPackBallCount * extraPackBallWeightG + snackBallCount * snackBallWeightG) / 1000;
+
+  // Per-plan extra/test dough (added from the plan detail page) — folded into
+  // the balling list and the mixing totals exactly like the global extras.
+  const customExtraDough = await db
+    .select()
+    .from(productionPlanExtraDoughTable)
+    .where(eq(productionPlanExtraDoughTable.planId, targetPlanId))
+    .orderBy(asc(productionPlanExtraDoughTable.id));
+  const customExtraKg = customExtraDough.reduce((s, r) => s + (r.ballCount * r.ballWeightG) / 1000, 0);
+
+  const extraBallsKg = (extraPackBallCount * extraPackBallWeightG + snackBallCount * snackBallWeightG) / 1000 + customExtraKg;
 
   // ── 3. Get plan items for the target plan ──
   const planItems = await db
@@ -6081,6 +6155,7 @@ router.get("/:id/dough-prep", async (req, res) => {
     extraBalls: {
       extraPack: { count: extraPackBallCount, weightG: extraPackBallWeightG },
       snack: { count: snackBallCount, weightG: snackBallWeightG },
+      custom: customExtraDough.map(r => ({ id: r.id, label: r.label, count: r.ballCount, weightG: r.ballWeightG })),
       totalKg: Math.round(extraBallsKg * 1000) / 1000,
     },
   });

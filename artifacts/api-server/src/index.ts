@@ -1718,6 +1718,20 @@ async function runStartupMigrations() {
       )
     `);
 
+    // Per-plan extra/test dough — see lib/db/migrations/0026_add_plan_extra_dough.sql.
+    // Added from the plan detail page; surfaced on the dough station balling view.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS production_plan_extra_dough (
+        id SERIAL PRIMARY KEY,
+        plan_id INTEGER NOT NULL REFERENCES production_plans(id) ON DELETE CASCADE,
+        label TEXT NOT NULL DEFAULT 'Test dough',
+        ball_count INTEGER NOT NULL,
+        ball_weight_g INTEGER NOT NULL,
+        created_by_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

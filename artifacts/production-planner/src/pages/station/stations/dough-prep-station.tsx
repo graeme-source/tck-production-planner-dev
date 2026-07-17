@@ -16,6 +16,7 @@ import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { ClientError } from "@/lib/with-retry";
 import { BreakTracker } from "../shared/break-tracker";
+import { AddDoughToPlanDialog } from "@/components/add-dough-to-plan-dialog";
 import { PrepDateBanner, PrepDraftBanner, toastDraftBlocked } from "../shared/prep-helpers";
 import { getStationCount, compareItemsForDisplay } from "../shared/constants";
 
@@ -63,6 +64,8 @@ interface DoughPrepData {
   extraBalls?: {
     extraPack: { count: number; weightG: number };
     snack: { count: number; weightG: number };
+    // Per-plan extra/test dough added from the plan detail page.
+    custom?: Array<{ id: number; label: string; count: number; weightG: number }>;
     totalKg: number;
   };
 }
@@ -234,7 +237,7 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
   const traysDone = ballCount / BALLS_PER_TRAY;
 
   // Extra ball derived data (used in both compact panel and full balling view)
-  type ExtraItem = { key: string; label: string; weightG: number; type: "extraPack" | "snack" };
+  type ExtraItem = { key: string; label: string; weightG: number; type: "extraPack" | "snack" | "custom"; entryId?: number };
   const extraBallsData = doughData?.extraBalls;
   const extraItems: ExtraItem[] = [];
   if (extraBallsData) {
@@ -244,9 +247,20 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
     for (let i = 0; i < extraBallsData.snack.count; i++) {
       extraItems.push({ key: `snack_${i}`, label: `Snack Ball ${extraBallsData.snack.count > 1 ? i + 1 : ""}`.trim(), weightG: extraBallsData.snack.weightG, type: "snack" });
     }
+    for (const c of extraBallsData.custom ?? []) {
+      for (let i = 0; i < c.count; i++) {
+        extraItems.push({ key: `custom_${c.id}_${i}`, label: c.count > 1 ? `${c.label} ${i + 1}` : c.label, weightG: c.weightG, type: "custom", entryId: c.id });
+      }
+    }
   }
   const extraPackItems = extraItems.filter(e => e.type === "extraPack");
   const snackItems = extraItems.filter(e => e.type === "snack");
+  const customGroups = (extraBallsData?.custom ?? []).map(c => ({
+    id: c.id,
+    label: c.label,
+    weightG: c.weightG,
+    items: extraItems.filter(e => e.type === "custom" && e.entryId === c.id),
+  }));
   const extraPackDone = extraPackItems.filter(e => extraTicks[e.key]).length;
   const snackDone = snackItems.filter(e => extraTicks[e.key]).length;
   const addExtraType = (group: ExtraItem[]) => {
@@ -257,6 +271,11 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
     const last = [...group].reverse().find(e => extraTicks[e.key]);
     if (last) toggleExtraTick(last.key);
   };
+
+  // Real-time extra/test dough — the operator can add dough from the station
+  // without going back to the plan page. Targets the plan being prepped
+  // (trackingPlanId = the next day's plan in D-1 mode).
+  const [addDoughOpen, setAddDoughOpen] = useState(false);
 
   const [addingBalls, setAddingBalls] = useState(false);
   const addBalls = async (count: number) => {
@@ -394,6 +413,15 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
           <div className="flex items-center gap-3">
             <span className="text-2xl font-bold font-display">{overallPct}%</span>
             <button
+              onClick={() => setAddDoughOpen(true)}
+              disabled={isOnBreak}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/40 disabled:opacity-50 transition-all"
+              title="Add extra/test dough to this production"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add dough
+            </button>
+            <button
               onClick={() => setActiveView("overview")}
               className={cn(
                 "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
@@ -422,6 +450,7 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
         <DoughOverview
           doughData={doughData}
           items={items}
+          trackingItems={trackingItems}
           completedMixes={completedMixes}
           mixCount={mixCount}
           ballCount={ballCount}
@@ -548,6 +577,25 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
                       Snack ({snackDone}/{snackItems.length})
                     </button>
                   )}
+
+                  {customGroups.map(g => {
+                    const done = g.items.filter(e => extraTicks[e.key]).length;
+                    return (
+                      <button
+                        key={g.id}
+                        onClick={(e) => { e.stopPropagation(); addExtraType(g.items); }}
+                        disabled={isOnBreak || done >= g.items.length}
+                        className={cn(
+                          "h-14 px-4 rounded-xl text-lg font-bold border-2 transition-all",
+                          done >= g.items.length
+                            ? "border-emerald-300 bg-emerald-50/50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
+                            : "border-border bg-background hover:bg-secondary/60 active:scale-95 disabled:opacity-50"
+                        )}
+                      >
+                        {g.label} {g.weightG}g ({done}/{g.items.length})
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -604,6 +652,13 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
           </button>
         </>
       )}
+
+      <AddDoughToPlanDialog
+        planId={trackingPlanId}
+        open={addDoughOpen}
+        onClose={() => setAddDoughOpen(false)}
+        onChanged={refetchDough}
+      />
     </div>
   );
 }
@@ -808,7 +863,7 @@ function DoughBallingView({
   toggleTick: (key: string) => void;
 }) {
   const extraBalls = doughData.extraBalls;
-  const extraItems: Array<{ key: string; label: string; weightG: number; type: "extraPack" | "snack" }> = [];
+  const extraItems: Array<{ key: string; label: string; weightG: number; type: "extraPack" | "snack" | "custom"; entryId?: number }> = [];
   if (extraBalls) {
     for (let i = 0; i < extraBalls.extraPack.count; i++) {
       extraItems.push({ key: `extraPack_${i}`, label: `Extra Pack Ball ${extraBalls.extraPack.count > 1 ? i + 1 : ""}`.trim(), weightG: extraBalls.extraPack.weightG, type: "extraPack" });
@@ -816,11 +871,22 @@ function DoughBallingView({
     for (let i = 0; i < extraBalls.snack.count; i++) {
       extraItems.push({ key: `snack_${i}`, label: `Snack Ball ${extraBalls.snack.count > 1 ? i + 1 : ""}`.trim(), weightG: extraBalls.snack.weightG, type: "snack" });
     }
+    for (const c of extraBalls.custom ?? []) {
+      for (let i = 0; i < c.count; i++) {
+        extraItems.push({ key: `custom_${c.id}_${i}`, label: c.count > 1 ? `${c.label} ${i + 1}` : c.label, weightG: c.weightG, type: "custom", entryId: c.id });
+      }
+    }
   }
   const allExtraTicked = extraItems.length > 0 && extraItems.every(e => extraTicks[e.key]);
 
   const extraPackItems = extraItems.filter(e => e.type === "extraPack");
   const snackItems = extraItems.filter(e => e.type === "snack");
+  const customGroups = (extraBalls?.custom ?? []).map(c => ({
+    id: c.id,
+    label: c.label,
+    weightG: c.weightG,
+    items: extraItems.filter(e => e.type === "custom" && e.entryId === c.id),
+  }));
   const extraPackDone = extraPackItems.filter(e => extraTicks[e.key]).length;
   const snackDone = snackItems.filter(e => extraTicks[e.key]).length;
 
@@ -998,6 +1064,45 @@ function DoughBallingView({
                 )}
               </div>
             )}
+
+            {/* Per-plan extra/test dough controls */}
+            {customGroups.length > 0 && (
+              <div className="flex gap-3 items-stretch w-full flex-wrap">
+                {customGroups.map(g => {
+                  const done = g.items.filter(e => extraTicks[e.key]).length;
+                  return (
+                    <div key={g.id} className="flex-1 min-w-[240px] flex flex-col gap-2">
+                      <div className="flex gap-3 items-stretch">
+                        <button
+                          onClick={() => removeExtraType(g.items)}
+                          disabled={done === 0 || isOnBreak}
+                          className="w-14 flex items-center justify-center rounded-2xl border-2 border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-all"
+                        >
+                          <Minus className="w-6 h-6" />
+                        </button>
+                        <button
+                          onClick={() => addExtraType(g.items)}
+                          disabled={isOnBreak || done >= g.items.length}
+                          className={cn(
+                            "flex-1 h-16 rounded-2xl text-xl font-bold border-2 transition-all",
+                            done >= g.items.length
+                              ? "border-emerald-300 bg-emerald-50/50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400"
+                              : isOnBreak
+                              ? "border-border bg-background text-muted-foreground opacity-50"
+                              : "border-border bg-background hover:bg-secondary/60 active:scale-95"
+                          )}
+                        >
+                          Add {g.label} {g.weightG}g
+                        </button>
+                      </div>
+                      <p className="text-lg text-muted-foreground text-center">
+                        {done} of {g.items.length}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         ) : (
           <div className="flex items-center justify-center gap-3 text-emerald-600">
@@ -1103,11 +1208,14 @@ function DoughBallingView({
 }
 
 function DoughOverview({
-  doughData, items, completedMixes, mixCount,
+  doughData, items, trackingItems, completedMixes, mixCount,
   ballCount, totalBallsNeeded, overallPct, totalComplete,
 }: {
   doughData: DoughPrepData;
   items: ProductionPlanItem[];
+  // The items dough prep is tracked against — next day's plan items in D-1
+  // mode, this plan's items in direct/current mode.
+  trackingItems: ProductionPlanItem[] | NonNullable<DoughPrepData["nextPlanItems"]>;
   completedMixes: Set<number>;
   mixCount: number;
   ballCount: number;

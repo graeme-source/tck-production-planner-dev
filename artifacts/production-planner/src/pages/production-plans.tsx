@@ -29,6 +29,7 @@ import {
   Menu, MoreHorizontal, Lock, Unlock, SlidersHorizontal,
 } from "lucide-react";
 import { AddRecipeToPlanDialog } from "@/components/add-recipe-to-plan-dialog";
+import { AddDoughToPlanDialog } from "@/components/add-dough-to-plan-dialog";
 import { toast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, addDays, parseISO, isWeekend, isToday, startOfWeek, isSameDay, formatDistanceToNow } from "date-fns";
@@ -3888,6 +3889,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   // adjust batches and 8-pack bag counts on an active plan without resetting it.
   const [itemsTableUnlocked, setItemsTableUnlocked] = useState(false);
   const [addRecipeOpen, setAddRecipeOpen] = useState(false);
+  const [addDoughOpen, setAddDoughOpen] = useState(false);
   const itemsEditable = canEditPlan && itemsTableUnlocked;
   const [, navigate] = useLocation();
   const { data: stationActivity } = useGetStationActivity(planId, {
@@ -4369,6 +4371,22 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
               >
                 <Plus className="w-3.5 h-3.5" /> Add recipe
               </button>
+            )}
+            {canEditPlan && plan.status !== "complete" && (
+              <button
+                onClick={() => setAddDoughOpen(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:bg-secondary/50 transition-colors"
+                title="Add extra/test dough to this day's production"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add dough
+              </button>
+            )}
+            {canEditPlan && (
+              <AddDoughToPlanDialog
+                planId={plan.id}
+                open={addDoughOpen}
+                onClose={() => setAddDoughOpen(false)}
+              />
             )}
             {canEditPlan && (
               <AddRecipeToPlanDialog

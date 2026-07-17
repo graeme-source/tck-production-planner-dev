@@ -157,6 +157,24 @@ export const timingStandardsTable = pgTable("timing_standards", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// Ad-hoc extra dough added to a specific production day (e.g. test dough for
+// a recipe trial). Unlike the global daily extra/snack balls in app_settings,
+// these rows are per-plan: added from the plan detail page and surfaced on the
+// dough station's balling view for whichever day preps that plan's dough.
+// A "ball" here is one piece of the given gram weight — the default add is a
+// single 1150g batch ball (10 portions × 115g).
+export const productionPlanExtraDoughTable = pgTable("production_plan_extra_dough", {
+  id: serial("id").primaryKey(),
+  planId: integer("plan_id").notNull().references(() => productionPlansTable.id, { onDelete: "cascade" }),
+  label: text("label").notNull().default("Test dough"),
+  ballCount: integer("ball_count").notNull(),
+  ballWeightG: integer("ball_weight_g").notNull(),
+  createdByUserId: integer("created_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type ProductionPlanExtraDough = typeof productionPlanExtraDoughTable.$inferSelect;
+
 export const appSettingsTable = pgTable("app_settings", {
   id: serial("id").primaryKey(),
   key: text("key").notNull().unique(),
