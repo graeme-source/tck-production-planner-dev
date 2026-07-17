@@ -1,0 +1,23 @@
+ id |                     name                      | target_build_seconds 
+----+-----------------------------------------------+----------------------
+  1 | Margherita                                    |                  300
+  2 | Chicken and Chorizo                           |                  420
+  3 | BBQ Pulled Pork                               |                  300
+  4 | The Godfather                                 |                  420
+  5 | Carnizone                                     |                  540
+  6 | Balsamic Roasted Vegetables                   |                  360
+  7 | New Yorker                                    |                  360
+  8 | The Donald                                    |                  360
+  9 | Chorizo Chilli & Fior Di Latte                |                  300
+ 10 | Garlic Cheese Calzones (V)                    |                  300
+ 11 | The Don - Double Bacon Cheeseburger Calzone   |                  600
+ 12 | Honey Chiptole BBQ Pulled Pork                |                  360
+ 14 | Garlic Korma                                  |                  300
+ 15 | Big Nanny's Macaroni Cheese                   |                   90
+ 16 | Pigs & Blankets - Big Nanny's Macaroni Cheese |                   90
+ 17 | Pepperoni & Mushroom                          |                  420
+ 18 | Cinco Texibean                                |                  420
+ 19 | The Texican Fajita Calzone 2.0                |                  420
+ 20 | Chilli Con Carnage (Hot)                      |                  300
+(19 rows)
+
