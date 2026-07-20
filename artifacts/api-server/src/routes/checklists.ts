@@ -21,6 +21,7 @@ import {
 import { eq, and, gt, asc, desc, gte, lte, sql, isNull, inArray } from "drizzle-orm";
 import * as z from "zod";
 import { londonDateString } from "../lib/london-time";
+import { LOCATION_DEFS } from "../lib/storage-location-defs";
 
 type ChecklistCompletion = typeof checklistCompletionsTable.$inferSelect;
 
@@ -931,22 +932,24 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
   }
 
   // Per-fridge/freezer temperature recording (opening + closing). Both
-  // types return the same shape; the frontend component switches which
-  // column it POSTs to based on the type. Storage locations come from
-  // the admin-managed storage_locations table (zone IN fridge|freezer)
-  // so adding a new fridge in Settings makes it show up here.
+  // types return the same shape; the frontend records into the AM or PM
+  // column based on the London clock (before/after midday), not the type.
+  // The location list MIRRORS Stock Control exactly — same rows, same
+  // names, same order (built-in fridges first in their canonical order,
+  // then user-added ones A-Z) — so the check list and Stock Control's
+  // Storage Locations can never drift apart.
   if (type === "fridge_freezer_temps_opening" || type === "fridge_freezer_temps_closing") {
-    const locations = await db
-      .select({
-        id: storageLocationsTable.id,
-        name: storageLocationsTable.name,
-        zone: storageLocationsTable.zone,
-        tempMinC: storageLocationsTable.tempMinC,
-        tempMaxC: storageLocationsTable.tempMaxC,
-      })
-      .from(storageLocationsTable)
-      .where(inArray(storageLocationsTable.zone, ["fridge", "freezer"]))
-      .orderBy(asc(storageLocationsTable.zone), asc(storageLocationsTable.name));
+    const allLocs = await db.select().from(storageLocationsTable);
+    const systemByLabel = new Map(allLocs.filter(l => l.isSystem).map(l => [l.name.toLowerCase(), l]));
+    const ordered: typeof allLocs = [];
+    for (const def of LOCATION_DEFS) {
+      const dbLoc = systemByLabel.get(def.label.toLowerCase());
+      if (dbLoc) ordered.push(dbLoc);
+    }
+    for (const ul of allLocs.filter(l => !l.isSystem).sort((a, b) => a.name.localeCompare(b.name))) {
+      ordered.push(ul);
+    }
+    const locations = ordered.filter(l => l.zone === "fridge" || l.zone === "freezer");
 
     const existing = await db
       .select()

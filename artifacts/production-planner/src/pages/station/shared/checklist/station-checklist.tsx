@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import {
-  CheckCircle2, Circle, ClipboardCheck, Plus, Undo2, Loader2, XCircle,
+  CheckCircle2, Circle, ClipboardCheck, Plus, Minus, Undo2, Loader2, XCircle,
   Sun, Sparkles, Moon, ChevronDown, ChevronUp, GripVertical, Trash2, Pencil, Eye, EyeOff, AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -888,27 +888,111 @@ interface LiveSensorReading {
   minC: number | null;
 }
 
-function LocationTemperatures({ data, planId, kind }: { data: unknown[]; planId: number; kind: "opening" | "closing" }) {
+// ── Fridge/freezer temperature checks ────────────────────────────────────
+// Session-aware: the London clock decides whether we're recording the
+// morning (before midday) or afternoon reading — the checklist template
+// type no longer picks the column, so a mis-configured template can't
+// leak the morning's numbers into the afternoon check. Every location
+// must be recorded each session; recorded rows drop into a collapsible
+// "completed" list, and the outstanding list refills itself when the
+// session flips at midday. Only locations with a live (non-stale) Govee
+// sensor get a pre-set dial value + live badge; everything else starts
+// from a neutral default and must be read by hand.
+
+function londonHourNow(): number {
+  return Number(
+    new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", hour12: false }).format(new Date()),
+  ) % 24;
+}
+
+// Big-buttoned temperature dial: − / + nudge 0.1°C (hold to spin), slider
+// underneath for coarse jumps. No keyboard needed — far easier than typing
+// "3.2" on an iPad with cold hands.
+function TempDial({ value, min, max, out, onStep, onSet }: {
+  value: number;
+  min: number;
+  max: number;
+  out: boolean;
+  onStep: (delta: number) => void;
+  onSet: (v: number) => void;
+}) {
+  const holdRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopHold = () => { if (holdRef.current) { clearInterval(holdRef.current); holdRef.current = null; } };
+  const startHold = (delta: number) => {
+    onStep(delta);
+    stopHold();
+    holdRef.current = setInterval(() => onStep(delta), 120);
+  };
+  useEffect(() => stopHold, []);
+  const btnClass = "w-12 h-12 rounded-xl border-2 border-border bg-background hover:bg-secondary/60 active:scale-95 flex items-center justify-center select-none touch-none shrink-0";
+  return (
+    <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          onPointerDown={() => startHold(-0.1)}
+          onPointerUp={stopHold}
+          onPointerLeave={stopHold}
+          onContextMenu={e => e.preventDefault()}
+          className={btnClass}
+        >
+          <Minus className="w-5 h-5" />
+        </button>
+        <div className={cn(
+          "flex-1 text-center text-3xl font-display font-bold tabular-nums leading-none whitespace-nowrap",
+          out ? "text-red-600 dark:text-red-400" : "text-foreground",
+        )}>
+          {value.toFixed(1)}<span className="text-lg font-semibold text-muted-foreground">°C</span>
+        </div>
+        <button
+          type="button"
+          onPointerDown={() => startHold(0.1)}
+          onPointerUp={stopHold}
+          onPointerLeave={stopHold}
+          onContextMenu={e => e.preventDefault()}
+          className={btnClass}
+        >
+          <Plus className="w-5 h-5" />
+        </button>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={0.1}
+        value={value}
+        onChange={e => onSet(Number(e.target.value))}
+        className="w-full h-2 accent-primary cursor-pointer"
+      />
+    </div>
+  );
+}
+
+function LocationTemperatures({ data, planId }: { data: unknown[]; planId: number; kind: "opening" | "closing" }) {
   const items = data as LocationTempRow[];
-  const [values, setValues] = useState<Record<number, string>>({});
+
+  // London hour, ticked every 30s so the AM→PM flip happens live on screen.
+  const [hour, setHour] = useState(londonHourNow);
+  useEffect(() => {
+    const id = setInterval(() => setHour(londonHourNow()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  const session: "opening" | "closing" = hour < 12 ? "opening" : "closing";
+  const isClosing = session === "closing";
+
+  const [values, setValues] = useState<Record<number, number>>({});
   const [saving, setSaving] = useState<Record<number, boolean>>({});
+  const [showCompleted, setShowCompleted] = useState(false);
+  const [editing, setEditing] = useState<Set<number>>(new Set());
+  // Saves made this visit, per session — moves rows to "completed"
+  // instantly without waiting for a dynamic-data refetch.
+  const [localRecorded, setLocalRecorded] = useState<Record<string, Record<number, { value: number; at: string | null }>>>({});
   // Live Govee sensor reading per storage location (when checklist-assist is on).
   const [sensorTemps, setSensorTemps] = useState<Record<number, LiveSensorReading>>({});
-  // Locations whose sensor is stale/offline — we must NOT prefill a frozen
+  // Locations whose sensor is stale/offline — we must NOT preset a frozen
   // reading here; staff read the unit by hand and see a warning instead.
   const [staleSensorLocs, setStaleSensorLocs] = useState<Record<number, boolean>>({});
   const [assistOn, setAssistOn] = useState(false);
-
-  const isClosing = kind === "closing";
-
-  useEffect(() => {
-    const init: Record<number, string> = {};
-    for (const item of items) {
-      const recorded = isClosing ? item.closingTemperatureC : item.openingTemperatureC;
-      init[item.storageLocationId] = recorded != null ? String(recorded) : "";
-    }
-    setValues(init);
-  }, [data, isClosing]);
 
   // Pull live sensor readings for prefill (no-op unless the integration + the
   // checklist-assist toggle are on).
@@ -942,40 +1026,76 @@ function LocationTemperatures({ data, planId, kind }: { data: unknown[]; planId:
     return () => { cancelled = true; };
   }, []);
 
-  // Prefill any not-yet-recorded, empty field with the live sensor reading so
-  // staff confirm rather than read-and-type. They can still overwrite it.
+  // What's recorded for the CURRENT session (server value merged with
+  // saves made just now on this device).
+  const recordedFor = (item: LocationTempRow): { value: number; at: string | null } | null => {
+    const local = localRecorded[session]?.[item.storageLocationId];
+    if (local) return local;
+    const v = isClosing ? item.closingTemperatureC : item.openingTemperatureC;
+    const at = isClosing ? item.closingRecordedAt : item.openingRecordedAt;
+    return v != null ? { value: v, at } : null;
+  };
+
+  const zoneDefault = (zone: string) => (zone === "freezer" ? -18 : 3);
+  const sliderRange = (item: LocationTempRow): [number, number] => {
+    let lo = item.zone === "freezer" ? -30 : -5;
+    let hi = item.zone === "freezer" ? 5 : 15;
+    if (item.tempMinC != null) lo = Math.min(lo, item.tempMinC - 2);
+    if (item.tempMaxC != null) hi = Math.max(hi, item.tempMaxC + 2);
+    return [lo, hi];
+  };
+
+  // (Re)seed the dial start value when the list, sensors, or session
+  // change: live sensor reading where one exists, else the middle of the
+  // location's safe band, else a neutral zone default. Purely a starting
+  // position — nothing is recorded until the green button is pressed.
+  const seededKey = useRef<string>("");
   useEffect(() => {
-    if (!assistOn) return;
+    const key = `${session}|${items.map(i => i.storageLocationId).join(",")}|${Object.keys(sensorTemps).join(",")}`;
+    if (seededKey.current === key) return;
+    seededKey.current = key;
+    const next: Record<number, number> = {};
+    for (const item of items) {
+      const sensor = sensorTemps[item.storageLocationId];
+      const mid = item.tempMinC != null && item.tempMaxC != null ? (item.tempMinC + item.tempMaxC) / 2 : null;
+      const v = sensor?.temperatureC ?? mid ?? zoneDefault(item.zone);
+      next[item.storageLocationId] = Math.round(v * 10) / 10;
+    }
+    setValues(next);
+    setEditing(new Set());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, items, sensorTemps]);
+
+  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Math.round(v * 10) / 10));
+  const stepValue = (item: LocationTempRow, delta: number) => {
+    const [lo, hi] = sliderRange(item);
     setValues(prev => {
-      const next = { ...prev };
-      let changed = false;
-      for (const item of items) {
-        const recorded = isClosing ? item.closingTemperatureC : item.openingTemperatureC;
-        const sensor = sensorTemps[item.storageLocationId];
-        if (recorded == null && (next[item.storageLocationId] == null || next[item.storageLocationId] === "") && sensor != null) {
-          next[item.storageLocationId] = String(sensor.temperatureC);
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
+      const cur = prev[item.storageLocationId] ?? zoneDefault(item.zone);
+      return { ...prev, [item.storageLocationId]: clamp(cur + delta, lo, hi) };
     });
-  }, [assistOn, sensorTemps, data, isClosing]);
+  };
+  const setValue = (item: LocationTempRow, v: number) => {
+    const [lo, hi] = sliderRange(item);
+    setValues(prev => ({ ...prev, [item.storageLocationId]: clamp(v, lo, hi) }));
+  };
 
   const saveTemp = async (locationId: number) => {
-    const raw = values[locationId];
-    if (raw == null || raw.trim() === "") return;
-    const parsed = parseFloat(raw);
-    if (Number.isNaN(parsed)) return;
+    const v = values[locationId];
+    if (v == null || Number.isNaN(v)) return;
     setSaving(s => ({ ...s, [locationId]: true }));
     try {
       const res = await fetch(`${BASE}/api/checklists/location-temperature-record`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planId, storageLocationId: locationId, temperatureC: parsed, kind }),
+        body: JSON.stringify({ planId, storageLocationId: locationId, temperatureC: v, kind: session }),
       });
       if (!res.ok) throw new Error("Failed to save");
-      toast({ title: "Saved", description: `${isClosing ? "Closing" : "Opening"} temperature recorded` });
+      setLocalRecorded(prev => ({
+        ...prev,
+        [session]: { ...(prev[session] ?? {}), [locationId]: { value: Math.round(v * 10) / 10, at: new Date().toISOString() } },
+      }));
+      setEditing(prev => { const n = new Set(prev); n.delete(locationId); return n; });
     } catch {
       toast({ title: "Error", description: "Failed to save temperature", variant: "destructive" });
     } finally {
@@ -991,61 +1111,84 @@ function LocationTemperatures({ data, planId, kind }: { data: unknown[]; planId:
     );
   }
 
+  const bandFor = (item: LocationTempRow) => {
+    const sensor = sensorTemps[item.storageLocationId];
+    // Safe band: per-location values from Stock Control win; the sensor's
+    // server-resolved threshold covers the zone-default fallback.
+    const bandMax = item.tempMaxC ?? sensor?.thresholdC ?? null;
+    const bandMin = item.tempMinC ?? sensor?.minC ?? null;
+    const outOfBand = (t: number) => (bandMax != null && t > bandMax) || (bandMin != null && t < bandMin);
+    const bandLabel = bandMin != null || bandMax != null
+      ? `safe ${bandMin != null ? `${bandMin}` : ""}${bandMin != null && bandMax != null ? " to " : bandMin != null ? "+" : "≤ "}${bandMax != null ? `${bandMax}` : ""}°C`
+      : null;
+    return { bandMin, bandMax, outOfBand, bandLabel };
+  };
+
+  const outstanding = items.filter(it => recordedFor(it) == null || editing.has(it.storageLocationId));
+  const completed = items.filter(it => recordedFor(it) != null && !editing.has(it.storageLocationId));
+
+  const fmtTime = (iso: string | null) =>
+    iso ? new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" }) : "";
+
   return (
     <div className="mb-4 space-y-2">
-      <p className="text-sm font-semibold text-foreground mb-2">
-        Record {isClosing ? "closing" : "opening"} temperature for each fridge and freezer
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+          {isClosing ? <Moon className="w-4 h-4 text-indigo-500" /> : <Sun className="w-4 h-4 text-amber-500" />}
+          {isClosing ? "Afternoon temperature check" : "Morning temperature check"}
+          <span className="text-muted-foreground font-normal">· {completed.length} of {items.length} recorded</span>
+        </p>
+        {completed.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowCompleted(v => !v)}
+            className="text-xs font-medium text-muted-foreground hover:text-foreground flex items-center gap-1"
+          >
+            {showCompleted ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            {showCompleted ? "Hide completed" : `Show completed (${completed.length})`}
+          </button>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {isClosing
+          ? "PM readings — the list refilled at midday for the afternoon round."
+          : "AM readings — the list resets at midday for the afternoon round."}
+        {" "}Set the dial and press the green button for each unit.
       </p>
-      {items.map(item => {
-        const val = values[item.storageLocationId] ?? "";
-        const recorded = isClosing ? item.closingTemperatureC : item.openingTemperatureC;
-        const isSaved = recorded != null && val !== "" && parseFloat(val) === recorded;
-        const contextLine = isClosing
-          ? (item.openingTemperatureC != null ? `Opening: ${item.openingTemperatureC.toFixed(1)}°C` : null)
-          : null;
+
+      {outstanding.length === 0 && (
+        <div className="p-3 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 flex items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
+          <CheckCircle2 className="w-5 h-5" />
+          All {items.length} {isClosing ? "afternoon" : "morning"} temperatures recorded
+        </div>
+      )}
+
+      {outstanding.map(item => {
+        const val = values[item.storageLocationId] ?? zoneDefault(item.zone);
+        const { outOfBand, bandLabel } = bandFor(item);
         const sensor: LiveSensorReading | undefined = sensorTemps[item.storageLocationId];
-        // Safe band: per-location values from Stock Control win; the sensor's
-        // server-resolved threshold covers the zone-default fallback.
-        const bandMax = item.tempMaxC ?? sensor?.thresholdC ?? null;
-        const bandMin = item.tempMinC ?? sensor?.minC ?? null;
-        const outOfBand = (t: number) =>
-          (bandMax != null && t > bandMax) || (bandMin != null && t < bandMin);
         const sensorOut = sensor != null && outOfBand(sensor.temperatureC);
-        const typed = val !== "" ? parseFloat(val) : null;
-        const typedOut = typed != null && !Number.isNaN(typed) && outOfBand(typed);
-        const bandLabel = bandMin != null || bandMax != null
-          ? `safe ${bandMin != null ? `${bandMin}` : ""}${bandMin != null && bandMax != null ? " to " : bandMin != null ? "+" : "≤ "}${bandMax != null ? `${bandMax}` : ""}°C`
-          : null;
+        const [lo, hi] = sliderRange(item);
         return (
-          <div key={item.storageLocationId} className={cn(
-            "flex items-center gap-3 p-3 rounded-xl border transition-colors",
-            isSaved ? "bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800" : "bg-secondary/20 border-border",
-          )}>
-            <div className="flex-1 min-w-0">
+          <div key={item.storageLocationId} className="p-3 rounded-xl border bg-secondary/20 border-border space-y-2">
+            <div className="min-w-0">
               <p className="text-sm font-semibold truncate">{item.locationName}</p>
               <p className="text-xs text-muted-foreground capitalize">
                 {item.zone}
                 {bandLabel ? ` · ${bandLabel}` : ""}
-                {contextLine ? ` · ${contextLine}` : ""}
               </p>
-              {isSaved && (
-                <p className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3" /> Recorded
-                </p>
-              )}
               {assistOn && sensor != null && (
                 <button
                   type="button"
-                  onClick={() => setValues(v => ({ ...v, [item.storageLocationId]: String(sensor.temperatureC) }))}
+                  onClick={() => setValue(item, sensor.temperatureC)}
                   className={cn(
                     "text-xs mt-0.5 flex items-center gap-1 font-medium hover:underline",
                     sensorOut ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400",
                   )}
                 >
                   {sensorOut && <AlertTriangle className="w-3 h-3 shrink-0" />}
-                  Sensor: {sensor.temperatureC.toFixed(1)}°C
+                  Live sensor: {sensor.temperatureC.toFixed(1)}°C
                   {sensor.readingAt ? ` · ${readingAgeLabel(sensor.readingAt)}` : ""}
-                  {" — use"}
                 </button>
               )}
               {assistOn && staleSensorLocs[item.storageLocationId] && (
@@ -1054,31 +1197,57 @@ function LocationTemperatures({ data, planId, kind }: { data: unknown[]; planId:
                 </p>
               )}
             </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <input
-                type="number"
-                step="0.1"
-                inputMode="decimal"
-                className={cn(
-                  "w-20 px-2 py-1.5 text-sm text-center font-mono font-bold border rounded-lg bg-background tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30",
-                  typedOut
-                    ? "border-red-400 dark:border-red-700 text-red-600 dark:text-red-400"
-                    : "border-border",
-                )}
+            <div className="flex items-center gap-3">
+              <TempDial
                 value={val}
-                onChange={e => setValues(v => ({ ...v, [item.storageLocationId]: e.target.value }))}
-                onKeyDown={e => { if (e.key === "Enter") saveTemp(item.storageLocationId); }}
-                placeholder="—"
+                min={lo}
+                max={hi}
+                out={outOfBand(val)}
+                onStep={d => stepValue(item, d)}
+                onSet={v => setValue(item, v)}
               />
-              <span className="text-xs text-muted-foreground">°C</span>
               <button
                 onClick={() => saveTemp(item.storageLocationId)}
-                disabled={!val || saving[item.storageLocationId]}
-                className="p-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                disabled={saving[item.storageLocationId]}
+                title="Record this temperature"
+                className="w-14 h-14 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center active:scale-95 disabled:opacity-50 transition-all shrink-0"
               >
-                {saving[item.storageLocationId] ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                {saving[item.storageLocationId] ? <Loader2 className="w-6 h-6 animate-spin" /> : <CheckCircle2 className="w-6 h-6" />}
               </button>
             </div>
+          </div>
+        );
+      })}
+
+      {showCompleted && completed.map(item => {
+        const rec = recordedFor(item)!;
+        const { outOfBand } = bandFor(item);
+        return (
+          <div key={item.storageLocationId} className="flex items-center gap-3 p-2.5 rounded-xl border bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold truncate">{item.locationName}</p>
+              <p className="text-xs text-muted-foreground capitalize">
+                {item.zone}{rec.at ? ` · recorded ${fmtTime(rec.at)}` : ""}
+              </p>
+            </div>
+            <span className={cn(
+              "text-base font-bold tabular-nums",
+              outOfBand(rec.value) ? "text-red-600 dark:text-red-400" : "text-emerald-700 dark:text-emerald-300",
+            )}>
+              {rec.value.toFixed(1)}°C
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setValues(v => ({ ...v, [item.storageLocationId]: rec.value }));
+                setEditing(prev => new Set(prev).add(item.storageLocationId));
+              }}
+              title="Edit this reading"
+              className="p-1.5 text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Pencil className="w-4 h-4" />
+            </button>
           </div>
         );
       })}
