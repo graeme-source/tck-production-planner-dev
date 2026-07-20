@@ -150,7 +150,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
   const ovenPacksTarget = (it: ProductionPlanItem) =>
     packsTargetForItem(it, effTarget(it));
   const ovenPacksDone = (it: ProductionPlanItem) =>
-    packsDoneForItem(it, getStationCount(it, "ovens"), effTarget(it));
+    packsDoneForItem(it, getStationCount(it, "ovens"), effTarget(it), combinedBuildingCount(it));
   const currentItem = items.find(it => getStationCount(it, "ovens") < effTarget(it));
 
   // Auto-expand current recipe, and track when it changes
@@ -451,7 +451,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
     Math.floor((getStationCount(item, "ovens") * (item.portionsPerBatch ?? 10)) / 2);
   const eightPackDeduction = (item: ProductionPlanItem) => (item.eightPackBagCount ?? 0) * 4;
   const netTwoPacks = (item: ProductionPlanItem) =>
-    computeNetTwoPacks(item, getStationCount(item, "ovens"), effTarget(item));
+    computeNetTwoPacks(item, getStationCount(item, "ovens"), effTarget(item), combinedBuildingCount(item));
   // netPacks includes both two-packs and eight-pack bags for tray calc
   const netPacks = (item: ProductionPlanItem) =>
     netTwoPacks(item) + (item.eightPackBagCount ?? 0);

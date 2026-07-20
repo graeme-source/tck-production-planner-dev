@@ -135,7 +135,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   const effBatches = (item: ProductionPlanItem) =>
     effectiveBatchesTarget(item, combinedBuildingCount(item));
   const netTwoPacks = (item: ProductionPlanItem) =>
-    computeNetTwoPacks(item, getStationCount(item, "ovens"), effBatches(item));
+    computeNetTwoPacks(item, getStationCount(item, "ovens"), effBatches(item), combinedBuildingCount(item));
   // netPacks for backward compat (total items including 8-pack bags for storage calcs)
   const netPacks = (item: ProductionPlanItem) =>
     netTwoPacks(item) + (item.eightPackBagCount ?? 0);
@@ -575,7 +575,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                           {isWrapped && <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
                         </div>
                         <p className="text-sm text-muted-foreground">
-                          {getStationCount(item, "ovens")} / {item.batchesTarget ?? 0} oven loads
+                          {getStationCount(item, "ovens")} / {effBatches(item)} oven loads
                           {item.builderMarkedCompleteAt && (
                             <span className="text-amber-600 dark:text-amber-400"> · builder marked complete</span>
                           )}

@@ -28,9 +28,16 @@ export function effectiveBatchesTarget(
   item: ProductionPlanItem,
   combinedBuildingCount: number,
 ): number {
-  // Show at least the planned target so downstream stations (ovens, wrapping)
-  // display the expected batches up front — not 0/0 until building has
-  // completed them — while still growing past the plan if builders over-build.
+  // Once the builder marks the recipe complete, what was built IS the day's
+  // output — full stop. A short build (13 of 14 planned, topped up with
+  // loose packs) must not leave downstream stations chasing an unreachable
+  // planned floor: ovens/wrapping targets become the 13 that exist, and the
+  // extras credit gate can actually open.
+  if (item.builderMarkedCompleteAt) return combinedBuildingCount;
+  // Mid-build: show at least the planned target so downstream stations
+  // (ovens, wrapping) display the expected batches up front — not 0/0 until
+  // building has completed them — while still growing past the plan if
+  // builders over-build.
   return Math.max(item.batchesTarget ?? 0, combinedBuildingCount);
 }
 
@@ -49,17 +56,21 @@ export function packsTargetForItem(
 
 /**
  * Packs completed at a station, based on batch completions. Extras credit in
- * when the station has caught up to its effective batch target.
+ * when the station has caught up to what building ACTUALLY produced
+ * (`builtBatches`), not the planned/display target — a short build (13 built
+ * of 14 planned + loose packs) must still release its extras once the
+ * station has processed all 13. Falls back to `effectiveBatches` for callers
+ * that don't pass the built count.
  */
 export function packsDoneForItem(
   item: ProductionPlanItem,
   stationBatches: number,
   effectiveBatches: number,
+  builtBatches?: number,
 ): number {
   const base = stationBatches * packsPerBatch(item);
-  const extrasCredit = effectiveBatches > 0 && stationBatches >= effectiveBatches
-    ? (item.extraPacksBuilt ?? 0)
-    : 0;
+  const gate = builtBatches ?? effectiveBatches;
+  const extrasCredit = stationBatches >= gate ? (item.extraPacksBuilt ?? 0) : 0;
   return base + extrasCredit;
 }
 
@@ -76,18 +87,22 @@ export function netTwoPacks(
   item: ProductionPlanItem,
   ovensBatchCount: number,
   effectiveBatches?: number,
+  builtBatches?: number,
 ): number {
   const grossPacks = Math.floor((ovensBatchCount * (item.portionsPerBatch ?? 10)) / 2);
   const eightPackDeduction = (item.eightPackBagCount ?? 0) * 4;
   const wonky = item.wonlyCount ?? 0;
   const extras = item.extraPacksBuilt ?? 0;
   const legacyShort = item.builderMarkedCompleteAt ? 0 : (item.shortCount ?? 0);
-  // Extras cook in the same trays as the regular batches, so they only count
-  // as "through ovens" once all batches on this station have completed.
-  // If the caller didn't supply effectiveBatches, fall back to always crediting
+  // Extras cook in the same trays as the regular batches, so they count as
+  // "through ovens" once ovens has caught up with what building ACTUALLY
+  // produced (`builtBatches`) — never the planned/display target, which a
+  // short build can leave permanently out of reach and strand the extras
+  // (13 built of 14 planned: ovens can only ever reach 13, so gating on 14
+  // hid the extra packs from wrapping forever).
+  // If the caller supplied neither count, fall back to always crediting
   // (legacy behaviour) so unrelated callers aren't silently affected.
-  const extrasCredit = effectiveBatches === undefined
-    ? extras
-    : (effectiveBatches > 0 && ovensBatchCount >= effectiveBatches ? extras : 0);
+  const gate = builtBatches ?? effectiveBatches;
+  const extrasCredit = gate === undefined ? extras : (ovensBatchCount >= gate ? extras : 0);
   return Math.max(0, grossPacks - eightPackDeduction - wonky - legacyShort) + extrasCredit;
 }
