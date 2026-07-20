@@ -1732,6 +1732,42 @@ async function runStartupMigrations() {
       )
     `);
 
+    // Timed station reminders — seed the two launch defaults once (2:45pm
+    // warnings counting down to 3pm: stock checks on Prep, the daily count on
+    // Wrapping/Packing). Managed afterwards in Settings → Production → Timed
+    // reminders; the guard means later edits/deletes are never re-seeded.
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'timed_station_reminders_seed_v1') THEN
+          INSERT INTO app_settings (key, value, updated_at)
+          SELECT 'timed_station_reminders', '${sql.raw(JSON.stringify([
+            {
+              id: "stock-checks-1445",
+              title: "Stock checks due by 3pm",
+              message: "Record any outstanding stock check items before 3:00pm.",
+              stations: ["prep"],
+              startTime: "14:45",
+              endTime: "15:00",
+              enabled: true,
+              onlyIfStockChecksOutstanding: true,
+            },
+            {
+              id: "pack-count-1445",
+              title: "Completed count due by 3pm",
+              message: "Please complete today's count before 3:00pm.",
+              stations: ["wrapping", "packing"],
+              startTime: "14:45",
+              endTime: "15:00",
+              enabled: true,
+            },
+          ]).replace(/'/g, "''"))}', NOW()
+          WHERE NOT EXISTS (SELECT 1 FROM app_settings WHERE key = 'timed_station_reminders');
+          INSERT INTO _migrations_done (key) VALUES ('timed_station_reminders_seed_v1');
+        END IF;
+      END $$;
+    `);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

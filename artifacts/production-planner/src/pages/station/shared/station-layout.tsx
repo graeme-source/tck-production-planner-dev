@@ -10,6 +10,7 @@ import { toast } from "@/hooks/use-toast";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import { STATIONS, type StationType } from "./constants";
 import { BreakTracker } from "./break-tracker";
+import { StationReminderBanner } from "./timed-reminders";
 import {
   NavLinks,
   AccountButton,
@@ -340,6 +341,7 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
       </div>
 
       <div className="max-w-7xl mx-auto px-4 pt-6 pb-[200px]">
+        <StationReminderBanner stationType={stationType} plan={plan} />
         {children}
       </div>
 
