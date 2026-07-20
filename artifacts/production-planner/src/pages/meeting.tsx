@@ -1429,6 +1429,41 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
               </div>
             );
           })}
+          {/* Column totals. Production keeps calzone batches and mac packs as
+              separate numbers — packs never count as batches. Stock columns
+              sum every row shown (planned + fridge-only). */}
+          {(() => {
+            const withStock = rows.filter(r => r.stock);
+            const sumHave = withStock.reduce((s, r) => s + r.stock!.have, 0);
+            const sumNeed = withStock.reduce((s, r) => s + r.stock!.need, 0);
+            const sumSurplus = sumHave - sumNeed;
+            const calzoneBatches = rows.reduce((s, r) => s + (r.unit === "batches" ? (r.target ?? 0) : 0), 0);
+            const macPacks = rows.reduce((s, r) => s + (r.unit === "packs" ? (r.target ?? 0) : 0), 0);
+            return (
+              <div className={cn("grid gap-1.5 items-center px-5 py-3 border-t-2 border-border bg-secondary/30", cols)}>
+                <span />
+                <span />
+                <span className="text-2xl font-bold">Totals</span>
+                <span className="text-2xl font-bold tabular-nums text-center">{sumHave}</span>
+                <span className="text-2xl font-bold tabular-nums text-center">{sumNeed}</span>
+                <span className="text-2xl font-bold tabular-nums text-center">
+                  {sumSurplus > 0 ? `+${sumSurplus}` : sumSurplus}
+                </span>
+                <span className="text-center self-stretch border-l-2 border-border/60 pl-3 flex flex-col items-center justify-center leading-tight">
+                  <span className="text-2xl font-bold tabular-nums whitespace-nowrap">
+                    {calzoneBatches}
+                    <span className="text-xs font-medium text-muted-foreground ml-1">bt</span>
+                  </span>
+                  {macPacks > 0 && (
+                    <span className="text-2xl font-bold tabular-nums whitespace-nowrap">
+                      {macPacks}
+                      <span className="text-xs font-medium text-muted-foreground ml-1">pk</span>
+                    </span>
+                  )}
+                </span>
+              </div>
+            );
+          })()}
         </div>
       )}
 
