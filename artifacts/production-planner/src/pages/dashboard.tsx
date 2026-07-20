@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/page-header";
 import { EightPackOrdersBanner } from "@/components/eight-pack-orders-banner";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { format, isToday, startOfWeek, addWeeks } from "date-fns";
-import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X, Sparkles } from "lucide-react";
+import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X, Sparkles, Salad } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/contexts/auth-context";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
@@ -535,6 +535,36 @@ export default function Dashboard() {
   const todayIndex = currentWeekOrders?.findIndex(d => d.date === todayTag) ?? -1;
   const todayShopifyOrderCount = todayIndex >= 0 ? currentWeekOrders![todayIndex].orderCount : null;
 
+  // Prep card — prep stations work ahead of production, so this follows the
+  // same next-plan-by-prep_date resolver the prep stations themselves use.
+  // Headline = batches on the plan being prepped; bar = tins prepped.
+  const { data: prepTarget } = useQuery({
+    queryKey: ["dashboard-next-prep", todayStr],
+    refetchInterval: 60000,
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/production-plans/next-active?afterDate=${todayStr}&for=prep`, { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json() as Promise<{ planId: number | null; planDate: string | null; status: string | null }>;
+    },
+  });
+  const prepPlanId = prepTarget?.planId ?? null;
+  const { data: prepBatches } = useQuery({
+    queryKey: ["dashboard-prep-batches", prepPlanId],
+    enabled: prepPlanId != null,
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => fetchTodayBatchCount([prepPlanId!]),
+  });
+  const { data: prepProgress } = useQuery({
+    queryKey: ["dashboard-prep-progress", prepPlanId],
+    enabled: prepPlanId != null,
+    refetchInterval: 30000,
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/production-plans/${prepPlanId}/prep-progress`, { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json() as Promise<{ totalTins: number; completedTins: number; pct: number }>;
+    },
+  });
+
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const item = payload[0].payload;
@@ -579,7 +609,7 @@ export default function Dashboard() {
 
       <EightPackOrdersBanner userRole={userRole} />
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <StatCard
           title="Total Batches Today"
           value={batchesLoading ? "…" : (totalBatches?.calzoneBatches ?? 0).toString()}
@@ -596,6 +626,23 @@ export default function Dashboard() {
             total: totalBatches!.calzoneBatches,
             label: "built",
             barClass: "bg-primary",
+          } : undefined}
+        />
+        <StatCard
+          title="Prepping For"
+          value={prepPlanId == null ? "—" : (prepBatches?.calzoneBatches ?? "…").toString()}
+          subtitle={prepTarget?.planDate
+            ? `batches · ${format(new Date(prepTarget.planDate + "T00:00:00"), "EEE d MMM")}`
+            : "no upcoming plan"}
+          icon={Salad}
+          color="text-green-500"
+          bg="bg-green-500/10"
+          href={prepPlanId ? `/plans/${prepPlanId}/station/prep` : "/plans"}
+          progress={prepProgress && prepProgress.totalTins > 0 ? {
+            done: prepProgress.completedTins,
+            total: prepProgress.totalTins,
+            label: "tins prepped",
+            barClass: "bg-green-500",
           } : undefined}
         />
         <StatCard
