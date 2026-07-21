@@ -30,7 +30,9 @@ import {
   MessageCircle,
   Users,
   GripVertical,
+  ScanLine,
 } from "lucide-react";
+import { QrScanner } from "@/components/qr-scanner";
 import {
   DndContext, DragOverlay, PointerSensor, useSensor, useSensors,
   useDraggable, useDroppable, pointerWithin, type DragEndEvent, type DragStartEvent,
@@ -320,6 +322,11 @@ export default function Orders() {
   const [deliveryDates, setDeliveryDates] = useState<Record<number, Date>>({});
 
   const [kanbanSearchOpen, setKanbanSearchOpen] = useState(false);
+  // Scan a physical kanban card straight from the orders page — queues the
+  // ingredient for today's order via the same endpoint the station-side
+  // scanner uses, then refreshes the calculated list so it appears at once.
+  const [scanKanbanOpen, setScanKanbanOpen] = useState(false);
+  const [scanBusy, setScanBusy] = useState(false);
   const [kanbanSearch, setKanbanSearch] = useState("");
   const debouncedKanbanSearch = useDebouncedValue(kanbanSearch);
   const [selectedKanbanIds, setSelectedKanbanIds] = useState<Set<number>>(new Set());
@@ -1562,6 +1569,14 @@ export default function Orders() {
           Recalculate
         </button>
         <button
+          onClick={() => setScanKanbanOpen(true)}
+          className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 border border-amber-500/30 flex items-center gap-1.5"
+          title="Scan a kanban card's QR to add it to today's order"
+        >
+          <ScanLine className="w-4 h-4" />
+          Scan kanban
+        </button>
+        <button
           onClick={() => { setKanbanSearchOpen(true); setKanbanSearch(""); setSelectedKanbanIds(new Set()); setKanbanSupplierOverrides({}); }}
           className="px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 border border-amber-500/30 flex items-center gap-1.5"
         >
@@ -2128,6 +2143,67 @@ export default function Orders() {
           })}
         </div>
       )}
+
+      {/* Scan a physical kanban card — one scan queues it for today's order */}
+      <Dialog open={scanKanbanOpen} onOpenChange={setScanKanbanOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg">
+              <ScanLine className="w-5 h-5 text-amber-500" />
+              Scan kanban card
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground -mt-2">
+            Scan the QR on a kanban card to add that item to today's order.
+          </p>
+          {scanBusy ? (
+            <div className="flex items-center justify-center py-10 text-muted-foreground">
+              <Loader2 className="w-6 h-6 animate-spin mr-2" /> Adding to today's order…
+            </div>
+          ) : (
+            <QrScanner
+              active={scanKanbanOpen}
+              onScan={async (data: string) => {
+                let parsed: { type: string; id: number } | null = null;
+                try {
+                  const j = JSON.parse(data);
+                  if (j.type && j.id) parsed = { type: j.type, id: Number(j.id) };
+                } catch {}
+                if (!parsed) {
+                  const m = data.match(/^(\d+)$/);
+                  if (m) parsed = { type: "ingredient", id: Number(m[1]) };
+                }
+                if (!parsed) {
+                  toast({ title: "Unrecognised QR code", description: "This doesn't look like a kanban card.", variant: "destructive" });
+                  return;
+                }
+                setScanBusy(true);
+                try {
+                  const res = await fetch(`${BASE}/api/kanbans/scan`, {
+                    method: "POST",
+                    credentials: "include",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(parsed),
+                  });
+                  const body = await res.json().catch(() => ({}));
+                  if (!res.ok) {
+                    toast({ title: "Couldn't add kanban", description: body.error ?? "Scan failed.", variant: "destructive" });
+                    return;
+                  }
+                  toast({
+                    title: body.alreadyQueued ? "Already on today's order" : "Added to today's order",
+                    description: `${body.ingredientName} — ${body.orderQty} ${body.unitLabel}${body.supplierName ? ` from ${body.supplierName}` : ""}`,
+                  });
+                  queryClient.invalidateQueries({ queryKey: ["order-calculate"] });
+                  setScanKanbanOpen(false);
+                } finally {
+                  setScanBusy(false);
+                }
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={kanbanSearchOpen} onOpenChange={open => { setKanbanSearchOpen(open); if (!open) { setKanbanSearch(""); setSelectedKanbanIds(new Set()); setKanbanSupplierOverrides({}); } }}>
         <DialogContent className="max-w-4xl w-[95vw] max-h-[90vh] flex flex-col">

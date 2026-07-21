@@ -68,6 +68,7 @@ interface KanbanCardData {
   kanbanUnit: string;
   kanbanOrderAmount: number | null;
   supplier: string | null;
+  supplierPartNumber: string | null;
   location: string | null;
   qrCodeUrl: string | null;
 }
@@ -91,13 +92,26 @@ async function printKanban(ingredientId: number) {
   }
 
   const safeName = escapeHtml(card.name);
+  // The card follows the ingredient's KANBAN unit (pack/bottle/pallet), not
+  // the stock-check weight unit — "1 pack", never "1 kg", when the kanban is
+  // configured in packs. "weight" is the only kanban unit that means the
+  // ingredient's native unit. ("packs" kept for legacy rows saved plural.)
+  const kanbanUnitLabel = (qty: number): string => {
+    switch (card.kanbanUnit) {
+      case "pack": case "packs": return qty === 1 ? "pack" : "packs";
+      case "bottle": return qty === 1 ? "bottle" : "bottles";
+      case "pallet": return qty === 1 ? "pallet" : "pallets";
+      default: return card.unit;
+    }
+  };
   const pullQty = card.kanbanQuantity > 0
-    ? `${card.kanbanQuantity} ${card.kanbanUnit === "packs" ? "pack" + (card.kanbanQuantity > 1 ? "s" : "") : card.unit}`
+    ? `${card.kanbanQuantity} ${kanbanUnitLabel(card.kanbanQuantity)}`
     : "Not set";
   const orderAmt = card.kanbanOrderAmount
-    ? `${card.kanbanOrderAmount} ${card.kanbanUnit === "packs" ? "pack" + (card.kanbanOrderAmount > 1 ? "s" : "") : card.unit}`
+    ? `${card.kanbanOrderAmount} ${kanbanUnitLabel(card.kanbanOrderAmount)}`
     : "Not set";
   const supplier = escapeHtml(card.supplier ?? "Not assigned");
+  const partNumber = card.supplierPartNumber ? escapeHtml(card.supplierPartNumber) : null;
   const location = escapeHtml(card.location ?? "Not assigned");
 
   const w = window.open("", "_blank", "width=600,height=900");
@@ -174,7 +188,7 @@ async function printKanban(ingredientId: number) {
       </div>
       <div class="field">
         <div class="field-label">Supplier</div>
-        <div class="field-value">${supplier}</div>
+        <div class="field-value">${supplier}${partNumber ? ` <span style="font-weight:500; color:#3f6212;">· Part # ${partNumber}</span>` : ""}</div>
       </div>
     </div>
     <div class="qr-section">

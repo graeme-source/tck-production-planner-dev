@@ -1,7 +1,8 @@
 import { Router, type IRouter } from "express";
 import { db, kanbanItemsTable, ingredientsTable, suppliersTable, usersTable, recipesTable, subRecipesTable } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { computeNextOrderDay, formatOrderDayTarget, getOrderDayLabel, isDueToday } from "../lib/order-day-scheduler";
+import { londonDateString } from "../lib/london-time";
 
 const router: IRouter = Router();
 
@@ -349,6 +350,93 @@ router.post("/sync", async (_req, res) => {
   );
 
   res.json({ created: toCreate.length });
+});
+
+// POST /scan — a kanban card QR was scanned on any device: queue the
+// ingredient for TODAY's order, exactly like ticking it in the orders page's
+// "Add Kanbans" dialog. Replaces the old lookup→pull two-step, which
+// (a) silently failed unless a kanban_items row had been hand-created on the
+// old Kanbans board, and (b) targeted the supplier's NEXT order day, so a
+// scan rarely surfaced in the day's order list. kanban_items still carries
+// the state, but it's auto-created here — a scan ledger, not a hand-managed
+// board. The ingredient's kanban settings are the single source of truth.
+router.post("/scan", async (req, res) => {
+  const { type, id } = (req.body ?? {}) as { type?: string; id?: number | string };
+  if (type !== "ingredient" || !Number.isInteger(Number(id))) {
+    res.status(400).json({ error: "Not an ingredient kanban QR code" });
+    return;
+  }
+  const ingredientId = Number(id);
+  const [ing] = await db
+    .select({
+      id: ingredientsTable.id,
+      name: ingredientsTable.name,
+      unit: ingredientsTable.unit,
+      kanbanEnabled: ingredientsTable.kanbanEnabled,
+      kanbanQuantity: ingredientsTable.kanbanQuantity,
+      kanbanUnit: ingredientsTable.kanbanUnit,
+      kanbanOrderAmount: ingredientsTable.kanbanOrderAmount,
+      supplierId: ingredientsTable.supplierId,
+    })
+    .from(ingredientsTable)
+    .where(eq(ingredientsTable.id, ingredientId));
+  if (!ing) { res.status(404).json({ error: "Ingredient not found" }); return; }
+  if (!ing.kanbanEnabled) {
+    res.status(400).json({ error: `${ing.name} doesn't have kanban enabled — turn it on in the ingredient's settings first.` });
+    return;
+  }
+
+  const today = londonDateString();
+  const userId = req.session.userId ?? null;
+
+  // One live state row per ingredient — reuse the latest if present.
+  const [existing] = await db
+    .select({ id: kanbanItemsTable.id, status: kanbanItemsTable.status, orderDayTarget: kanbanItemsTable.orderDayTarget })
+    .from(kanbanItemsTable)
+    .where(eq(kanbanItemsTable.ingredientId, ingredientId))
+    .orderBy(desc(kanbanItemsTable.id))
+    .limit(1);
+
+  const alreadyQueued = existing?.status === "pulled" && existing.orderDayTarget != null && existing.orderDayTarget <= today;
+  if (existing) {
+    await db.update(kanbanItemsTable)
+      .set({ status: "pulled", pulledAt: new Date(), pulledByUserId: userId, orderDayTarget: today, supplierId: ing.supplierId ?? null })
+      .where(eq(kanbanItemsTable.id, existing.id));
+  } else {
+    await db.insert(kanbanItemsTable).values({
+      ingredientId,
+      sourceType: "ingredient",
+      supplierId: ing.supplierId ?? null,
+      status: "pulled",
+      pulledAt: new Date(),
+      pulledByUserId: userId,
+      orderDayTarget: today,
+    });
+  }
+
+  const orderQty = ing.kanbanOrderAmount != null ? Number(ing.kanbanOrderAmount)
+    : ing.kanbanQuantity != null ? Number(ing.kanbanQuantity) : 1;
+  const unitLabel =
+    ing.kanbanUnit === "pack" || ing.kanbanUnit === "packs" ? (orderQty === 1 ? "pack" : "packs")
+    : ing.kanbanUnit === "bottle" ? (orderQty === 1 ? "bottle" : "bottles")
+    : ing.kanbanUnit === "pallet" ? (orderQty === 1 ? "pallet" : "pallets")
+    : ing.unit;
+  let supplierName: string | null = null;
+  if (ing.supplierId) {
+    const [sup] = await db.select({ name: suppliersTable.name }).from(suppliersTable).where(eq(suppliersTable.id, ing.supplierId));
+    supplierName = sup?.name ?? null;
+  }
+
+  res.json({
+    ok: true,
+    alreadyQueued,
+    ingredientId,
+    ingredientName: ing.name,
+    orderQty,
+    unitLabel,
+    supplierName,
+    orderDayTarget: today,
+  });
 });
 
 router.post("/:id/pull", async (req, res) => {

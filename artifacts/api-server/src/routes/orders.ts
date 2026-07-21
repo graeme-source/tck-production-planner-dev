@@ -15,7 +15,7 @@ import {
   dptIngredientRequirementsTable,
   usersTable,
 } from "@workspace/db";
-import { eq, and, desc, sql, inArray, notInArray } from "drizzle-orm";
+import { eq, and, desc, sql, inArray, notInArray, lte, gte } from "drizzle-orm";
 import { resolveRecipeIngredients, aggregateIngredients } from "../lib/ingredient-resolver";
 import { londonDateString, londonEndOfDay, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
 
@@ -163,6 +163,7 @@ router.get("/calculate", async (req, res) => {
       surplusMode: ingredientsTable.surplusMode,
       surplusAbsoluteQty: ingredientsTable.surplusAbsoluteQty,
       kanbanQuantity: ingredientsTable.kanbanQuantity,
+      kanbanOrderAmount: ingredientsTable.kanbanOrderAmount,
       kanbanUnit: ingredientsTable.kanbanUnit,
       orderingUrl: ingredientsTable.orderingUrl,
       stockInPacks: ingredientsTable.stockInPacks,
@@ -257,6 +258,11 @@ router.get("/calculate", async (req, res) => {
     dptLookup[d.ingredientId] = Number(d.dailyQtyRaw);
   }
 
+  // Scanned kanbans queue for the day they were scanned — but if no order was
+  // generated that day (weekend, missed run), they must NOT vanish. Carry
+  // anything still un-ordered from the past week into today's list; placing
+  // the order flips them to 'ordered' (see /purchase-orders/:id/place).
+  const kanbanCatchUpFrom = londonDateString(new Date(Date.now() - 7 * 86_400_000));
   const pulledKanbans = await db
     .select({
       id: kanbanItemsTable.id,
@@ -266,7 +272,8 @@ router.get("/calculate", async (req, res) => {
     .from(kanbanItemsTable)
     .where(and(
       eq(kanbanItemsTable.status, "pulled"),
-      eq(kanbanItemsTable.orderDayTarget, today),
+      lte(kanbanItemsTable.orderDayTarget, today),
+      gte(kanbanItemsTable.orderDayTarget, kanbanCatchUpFrom),
     ));
 
   const kanbanIngredientIds = new Set(pulledKanbans.map(k => k.ingredientId));
@@ -347,6 +354,18 @@ router.get("/calculate", async (req, res) => {
 
     const rawOrderQty = Math.max(0, ing.totalRequired + surplusTarget - stockOnHand);
     let packsToOrder = packWeight > 0 ? Math.ceil(rawOrderQty / packWeight) : 0;
+    // A scanned kanban is a person at the shelf saying "we're low — order
+    // one kanban's worth", so it FLOORS the suggestion at the kanban order
+    // amount even when the stock maths says 0 (stale stock check, opened
+    // packs, etc.). Kanban units pack/bottle/pallet mean supplier packs;
+    // "weight" means the ingredient's native unit.
+    if (isKanban) {
+      const kanbanAmt = Number(detail.kanbanOrderAmount ?? detail.kanbanQuantity) || 1;
+      const kanbanPacks = detail.kanbanUnit === "weight" && packWeight > 0
+        ? Math.ceil(kanbanAmt / packWeight)
+        : Math.ceil(kanbanAmt);
+      packsToOrder = Math.max(packsToOrder, kanbanPacks);
+    }
     // Case rounding: when this ingredient is ordered by the case, round the
     // pack count UP to the nearest whole case (e.g. need 8 tins, case of 12 →
     // order 12). Only kicks in when we're actually ordering something; a
@@ -850,6 +869,24 @@ router.patch("/purchase-orders/:id/place", async (req, res) => {
     .where(eq(purchaseOrdersTable.id, orderId))
     .returning();
 
+  // Close the kanban loop: any scanned-and-queued ("pulled") kanban whose
+  // ingredient is on this order is now ordered — without this the item would
+  // reappear in every future day's order list via the catch-up window.
+  const placedLines = await db
+    .select({ ingredientId: purchaseOrderLinesTable.ingredientId })
+    .from(purchaseOrderLinesTable)
+    .where(eq(purchaseOrderLinesTable.purchaseOrderId, orderId));
+  const placedIngredientIds = [...new Set(placedLines.map(l => l.ingredientId).filter((v): v is number => v != null))];
+  if (placedIngredientIds.length > 0) {
+    await db
+      .update(kanbanItemsTable)
+      .set({ status: "ordered" })
+      .where(and(
+        eq(kanbanItemsTable.status, "pulled"),
+        inArray(kanbanItemsTable.ingredientId, placedIngredientIds),
+      ));
+  }
+
   res.json({
     ...updated,
     createdAt: updated.createdAt.toISOString(),
@@ -920,6 +957,19 @@ router.patch("/purchase-orders/:id/resubmit", async (req, res) => {
       .set(patch)
       .where(eq(purchaseOrdersTable.id, orderId))
       .returning();
+
+    // Same kanban loop-closing as /place: scanned items on this order are
+    // now ordered and must stop reappearing in the day's order list.
+    const resubmitIngredientIds = [...new Set(cleanedLines.map(l => l.ingredientId).filter((v): v is number => v != null))];
+    if (resubmitIngredientIds.length > 0) {
+      await db
+        .update(kanbanItemsTable)
+        .set({ status: "ordered" })
+        .where(and(
+          eq(kanbanItemsTable.status, "pulled"),
+          inArray(kanbanItemsTable.ingredientId, resubmitIngredientIds),
+        ));
+    }
 
     console.log(`[Orders] Resubmitted PO ${orderId} with ${cleanedLines.length} lines`);
     res.json({

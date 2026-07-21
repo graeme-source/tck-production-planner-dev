@@ -124,8 +124,16 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
   const [activeTab, setActiveTab] = useState<Tab>(defaultTab);
 
   const [scanActive, setScanActive] = useState(false);
-  const [scanStep, setScanStep] = useState<"scanning" | "loading" | "result" | "pulling" | "done" | "error">("scanning");
-  const [lookupResult, setLookupResult] = useState<KanbanLookupResult | null>(null);
+  const [scanStep, setScanStep] = useState<"scanning" | "loading" | "done" | "error">("scanning");
+  // One scan = queued for today's order (no lookup/confirm step). Result of
+  // POST /api/kanbans/scan for the success panel.
+  const [scanResult, setScanResult] = useState<{
+    ingredientName: string;
+    orderQty: number;
+    unitLabel: string;
+    supplierName: string | null;
+    alreadyQueued: boolean;
+  } | null>(null);
   const [pullError, setPullError] = useState<string | null>(null);
 
   const [impTitle, setImpTitle] = useState("");
@@ -175,7 +183,7 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
     if (open && activeTab === "pullKanban") {
       setScanActive(true);
       setScanStep("scanning");
-      setLookupResult(null);
+      setScanResult(null);
       setPullError(null);
     } else {
       setScanActive(false);
@@ -188,7 +196,7 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
     } else {
       setScanActive(false);
       setScanStep("scanning");
-      setLookupResult(null);
+      setScanResult(null);
       setPullError(null);
     }
   }, [open]);
@@ -221,6 +229,9 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
     return null;
   }, []);
 
+  // One scan does the whole job: queues the ingredient for TODAY's order
+  // (same as ticking it in the orders page's "Add Kanbans" dialog). No
+  // lookup/confirm two-step, no pre-created kanban rows needed.
   const handleQrScan = useCallback(async (data: string) => {
     setScanActive(false);
     setScanStep("loading");
@@ -234,62 +245,32 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
     }
 
     try {
-      const res = await fetch(`${BASE}/api/kanbans/lookup?type=${parsed.type}&id=${parsed.id}`, {
+      const res = await fetch(`${BASE}/api/kanbans/scan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         credentials: "include",
+        body: JSON.stringify(parsed),
       });
 
-      if (res.status === 404) {
+      if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
         setScanStep("error");
-        setPullError(errData.error || "Item not found");
+        setPullError(errData.error || "Failed to add this kanban to today's order");
         return;
       }
 
-      if (!res.ok) {
-        setScanStep("error");
-        setPullError("Failed to look up kanban information");
-        return;
-      }
-
-      const result: KanbanLookupResult = await res.json();
-      setLookupResult(result);
-      setScanStep("result");
+      setScanResult(await res.json());
+      setScanStep("done");
     } catch (err) {
-      console.warn("[ReportModal] Kanban lookup failed:", err);
+      console.warn("[ReportModal] Kanban scan failed:", err);
       setScanStep("error");
       setPullError("Network error. Please check your connection and try again.");
     }
   }, [parseQrData]);
 
-  const handlePullKanban = useCallback(async (kanbanId: number) => {
-    setScanStep("pulling");
-    setPullError(null);
-
-    try {
-      const res = await fetch(`${BASE}/api/kanbans/${kanbanId}/pull`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-      });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        setScanStep("error");
-        setPullError(errData.error || "Failed to pull kanban");
-        return;
-      }
-
-      setScanStep("done");
-    } catch (err) {
-      console.warn("[ReportModal] Kanban pull failed:", err);
-      setScanStep("error");
-      setPullError("Network error. Please try again.");
-    }
-  }, []);
-
   const handleScanReset = useCallback(() => {
     setScanStep("scanning");
-    setLookupResult(null);
+    setScanResult(null);
     setPullError(null);
     setScanActive(true);
   }, []);
@@ -515,7 +496,7 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
                   {scanStep === "scanning" && (
                     <div className="space-y-3">
                       <p className="text-sm text-muted-foreground text-center">
-                        Scan an ingredient QR code to pull its kanban
+                        Scan a kanban card to add it to today's order
                       </p>
                       <QrScanner
                         onScan={handleQrScan}
@@ -527,101 +508,7 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
                   {scanStep === "loading" && (
                     <div className="flex flex-col items-center gap-3 py-12">
                       <Loader2 className="w-8 h-8 animate-spin text-primary" />
-                      <p className="text-sm text-muted-foreground">Looking up kanban...</p>
-                    </div>
-                  )}
-
-                  {scanStep === "result" && lookupResult && (
-                    <div className="space-y-4">
-                      {lookupResult.found && lookupResult.kanban ? (
-                        <>
-                          <div className="rounded-xl border border-border bg-secondary/20 p-4 space-y-3">
-                            <div className="flex items-center gap-2">
-                              <Package className="w-5 h-5 text-primary" />
-                              <h3 className="font-semibold text-base">
-                                {lookupResult.kanban.ingredientName ?? `Ingredient #${lookupResult.kanban.ingredientId}`}
-                              </h3>
-                            </div>
-                            <div className="grid grid-cols-2 gap-2 text-sm">
-                              <div>
-                                <span className="text-muted-foreground">Quantity:</span>{" "}
-                                <span className="font-medium">
-                                  {lookupResult.kanban.kanbanQuantity != null
-                                    ? `${lookupResult.kanban.kanbanQuantity} ${lookupResult.kanban.ingredientUnit ?? ""}`
-                                    : "—"}
-                                </span>
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground">Supplier:</span>{" "}
-                                <span className="font-medium">{lookupResult.kanban.supplierName ?? "—"}</span>
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground">Status:</span>{" "}
-                                <span className={cn(
-                                  "font-medium",
-                                  lookupResult.kanban.status === "active" ? "text-emerald-600" : "text-blue-600"
-                                )}>
-                                  {lookupResult.kanban.status.charAt(0).toUpperCase() + lookupResult.kanban.status.slice(1)}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-
-                          {lookupResult.kanban.status === "active" ? (
-                            <button
-                              onClick={() => handlePullKanban(lookupResult.kanban!.id)}
-                              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:bg-primary/90 transition-colors shadow-md"
-                            >
-                              <ArrowDownCircle className="w-5 h-5" />
-                              Pull Kanban
-                            </button>
-                          ) : (
-                            <div className="text-center py-2">
-                              <p className="text-sm text-amber-600 font-medium">
-                                This kanban has already been pulled
-                              </p>
-                            </div>
-                          )}
-
-                          <button
-                            onClick={handleScanReset}
-                            className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground rounded-lg border border-border hover:bg-secondary/50 transition-colors"
-                          >
-                            <ScanLine className="w-4 h-4" />
-                            Scan Another
-                          </button>
-                        </>
-                      ) : (
-                        <div className="text-center py-6 space-y-3">
-                          <AlertTriangle className="w-10 h-10 text-amber-500 mx-auto" />
-                          <div>
-                            <p className="font-medium">
-                              {lookupResult.sourceName
-                                ? `No active kanban for "${lookupResult.sourceName}"`
-                                : lookupResult.ingredientName
-                                ? `No active kanban for "${lookupResult.ingredientName}"`
-                                : "No active kanban found"}
-                            </p>
-                            <p className="text-sm text-muted-foreground mt-1">
-                              {lookupResult.message || "This ingredient does not have an active kanban card."}
-                            </p>
-                          </div>
-                          <button
-                            onClick={handleScanReset}
-                            className="flex items-center justify-center gap-2 mx-auto px-4 py-2 text-sm font-medium rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-                          >
-                            <ScanLine className="w-4 h-4" />
-                            Scan Again
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {scanStep === "pulling" && (
-                    <div className="flex flex-col items-center gap-3 py-12">
-                      <Loader2 className="w-8 h-8 animate-spin text-primary" />
-                      <p className="text-sm text-muted-foreground">Pulling kanban...</p>
+                      <p className="text-sm text-muted-foreground">Adding to today's order...</p>
                     </div>
                   )}
 
@@ -631,9 +518,13 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
                         <CheckCircle className="w-8 h-8 text-emerald-500" />
                       </div>
                       <div className="text-center">
-                        <p className="font-semibold text-lg">Kanban Pulled!</p>
+                        <p className="font-semibold text-lg">
+                          {scanResult?.alreadyQueued ? "Already on today's order" : "Added to today's order"}
+                        </p>
                         <p className="text-sm text-muted-foreground mt-1">
-                          {lookupResult?.kanban?.ingredientName ?? "Ingredient"} has been pulled successfully.
+                          {scanResult
+                            ? `${scanResult.ingredientName} — ${scanResult.orderQty} ${scanResult.unitLabel}${scanResult.supplierName ? ` from ${scanResult.supplierName}` : ""}. It will appear in the order list when today's orders are generated.`
+                            : "It will appear in the order list when today's orders are generated."}
                         </p>
                       </div>
                       <div className="flex gap-3 mt-2">

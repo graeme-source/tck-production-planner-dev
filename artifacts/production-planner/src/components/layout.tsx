@@ -61,13 +61,12 @@ export const inventorySubItems: NavItem[] = [
   { name: "Ingredients", href: "/inventory?tab=ingredients", icon: Carrot },
   { name: "Supplies", href: "/inventory?tab=supplies", icon: Box },
   { name: "Stock Control", href: "/stock-control", icon: PackageSearch },
-  { name: "Kanbans", href: "/kanbans", icon: ArrowDownCircle },
   { name: "Orders", href: "/orders", icon: ShoppingCart },
   { name: "Deliveries", href: "/deliveries", icon: PackageCheck },
   { name: "Tools", href: "/inventory/tools", icon: Wrench },
 ];
 
-const INVENTORY_PATHS = ["/inventory", "/kanbans", "/orders", "/deliveries", "/stock-control"];
+const INVENTORY_PATHS = ["/inventory", "/orders", "/deliveries", "/stock-control"];
 // Routes that count as "inside Inventory" for the auto-expand logic. Anything
 // under /inventory/... (e.g. /inventory/tools, /inventory/tools/label-stock-check)
 // should keep the sidebar group expanded.

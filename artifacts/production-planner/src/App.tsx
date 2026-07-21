@@ -35,7 +35,6 @@ import Improvements from "@/pages/improvements";
 import EmployeeHub from "@/pages/employee-hub";
 import Fulfilment from "@/pages/fulfilment";
 import Locations from "@/pages/locations";
-import Kanbans from "@/pages/kanbans";
 import Orders from "@/pages/orders";
 import Deliveries from "@/pages/deliveries";
 import FounderView from "@/pages/founder";
@@ -146,7 +145,10 @@ function Router() {
               <Route path="/orders" component={Orders} />
               <Route path="/fulfilment">{() => <ProtectedRoute component={Fulfilment} pageKey="/fulfilment" />}</Route>
               <Route path="/locations">{() => <ProtectedRoute component={Locations} pageKey="/locations" />}</Route>
-              <Route path="/kanbans">{() => <ProtectedRoute component={Kanbans} pageKey="/kanbans" />}</Route>
+              {/* Kanban board retired — kanban config lives on the ingredient
+                  edit form, and scanning a card queues it for today's order
+                  (orders page / quick-report scanner). */}
+              <Route path="/kanbans">{() => <Redirect to="/orders" />}</Route>
               <Route path="/deliveries" component={Deliveries} />
               <Route path="/stock-control" component={StockControl} />
               <Route path="/product-hub" component={ProductHub} />
