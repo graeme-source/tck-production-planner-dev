@@ -1282,16 +1282,19 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
     if (row.type === "recipe" && row.recipeId != null && row.start) startByRecipe.set(row.recipeId, row.start);
   }
 
-  // Stock position per recipe. NEED = today's pack (dispatch2Qty); surplus
-  // +ve = enough, -ve = short. Same maths the Short-on-pack slide used.
+  // Stock position per recipe. NEED = what's STILL to go out in today's pack
+  // (unfulfilled remainder) — orders fulfilment has already scanned out have
+  // also been deducted from fridge stock, so counting them here would
+  // double-count every packed order and drift the table into false shorts as
+  // the day progresses. Surplus +ve = enough, -ve = short.
   const calcById = new Map<number, { have: number; need: number; surplus: number; tone: "ok" | "warn" | "bad" }>();
   for (const r of calc?.recipes ?? []) {
     // "actual" is deliberately the default: the team reads this table to answer
-    // "can I pack the next dispatch from what's in the fridge right now". The
-    // predicted view answers a different question — where we'll land by close
-    // of play — and is opt-in via the toggle on the pack report.
+    // "can I pack the rest of the dispatch from what's in the fridge right
+    // now". The predicted view answers a different question — where we'll land
+    // by close of play — and is opt-in via the toggle on the pack report.
     const have = stockMode === "predicted" ? r.predictedFridgeStock : r.fridgeStock;
-    const need = r.dispatch2Qty;
+    const need = r.dispatch2RemainingQty ?? r.dispatch2Qty;
     const surplus = have - need;
     // Red when short (negative spare); amber when only 0–10 spare;
     // uncoloured once we have more than 10 to spare.
@@ -1373,8 +1376,8 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
               </HeaderInfo>
             </span>
             <span className="text-center">
-              Going out in {showTomorrowPack ? "tomorrow's" : "today's"} pack
-              <HeaderInfo>Covers the pack going out: dispatch {dispatchLabel} · delivery {deliveryLabel}.</HeaderInfo>
+              Left to dispatch {showTomorrowPack ? "tomorrow" : "today"}
+              <HeaderInfo>Orders still to be fulfilled for this pack: dispatch {dispatchLabel} · delivery {deliveryLabel}. Orders already packed drop off this count — they've also left the stock column — so the difference stays honest all day. Before packing starts this is the full dispatch.</HeaderInfo>
             </span>
             <span className="text-center">The difference</span>
             <span className="text-center self-stretch border-l-2 border-border/60 pl-3">Today's production</span>
@@ -1585,6 +1588,9 @@ interface CalcRecipeRow {
   remainingFulfilmentPacksToday: number;
   dispatch1Qty: number;
   dispatch2Qty: number;
+  // Unfulfilled remainder of today's pack — orders already scanned through
+  // fulfilment have also left the fridge count, so only this is live demand.
+  dispatch2RemainingQty?: number;
   dispatch3Qty: number;
   deficit: number;
 }

@@ -844,6 +844,13 @@ router.get("/calculate", async (req, res) => {
   // Variant-ID-based sales: variantId → { perDate: { date → qty }, combined: qty }
   const variantSalesPerDate: Record<string, Record<string, number>> = {};
   const variantSalesCombined: Record<string, number> = {};
+  // Unfulfilled-only mirrors of the per-date maps. The pack report's
+  // "going out in today's pack" needs the REMAINING packs: an order that
+  // fulfilment has already scanned out has ALSO been deducted from fridge
+  // stock, so counting it in the outgoing column double-counts every packed
+  // order and the report drifts into false shorts as the day progresses.
+  const shopifyUnfulfilledPerDate: Record<string, Record<string, number>> = {};
+  const variantUnfulfilledPerDate: Record<string, Record<string, number>> = {};
   const shopifyDatesLoaded = new Set<string>();
   let shopifyError: string | null = null;
 
@@ -862,6 +869,8 @@ router.get("/calculate", async (req, res) => {
       const { date, products } = result.value;
       shopifySalesPerDate[date] = {};
       if (!variantSalesPerDate[date]) variantSalesPerDate[date] = {};
+      shopifyUnfulfilledPerDate[date] = {};
+      if (!variantUnfulfilledPerDate[date]) variantUnfulfilledPerDate[date] = {};
       shopifyDatesLoaded.add(date);
       for (const p of products) {
         const packVariant = p.variants.find(v => {
@@ -872,6 +881,7 @@ router.get("/calculate", async (req, res) => {
           const key = p.productTitle.toLowerCase().trim();
           shopifySalesPerDate[date][key] = (shopifySalesPerDate[date][key] ?? 0) + packVariant.quantity;
           shopifySalesCombined[key] = (shopifySalesCombined[key] ?? 0) + packVariant.quantity;
+          shopifyUnfulfilledPerDate[date][key] = (shopifyUnfulfilledPerDate[date][key] ?? 0) + packVariant.unfulfilledQuantity;
           // Track every variant by ID so a recipe linked to a non-2-pack
           // variant of a product that also has a 2-pack still picks up sales.
           for (const v of p.variants) {
@@ -879,11 +889,13 @@ router.get("/calculate", async (req, res) => {
             const vid = String(v.variantId);
             variantSalesPerDate[date][vid] = (variantSalesPerDate[date][vid] ?? 0) + v.quantity;
             variantSalesCombined[vid] = (variantSalesCombined[vid] ?? 0) + v.quantity;
+            variantUnfulfilledPerDate[date][vid] = (variantUnfulfilledPerDate[date][vid] ?? 0) + v.unfulfilledQuantity;
           }
         } else if (p.variants.length === 0) {
           const key = p.productTitle.toLowerCase().trim();
           shopifySalesPerDate[date][key] = (shopifySalesPerDate[date][key] ?? 0) + p.totalQuantity;
           shopifySalesCombined[key] = (shopifySalesCombined[key] ?? 0) + p.totalQuantity;
+          shopifyUnfulfilledPerDate[date][key] = (shopifyUnfulfilledPerDate[date][key] ?? 0) + p.unfulfilledQuantity;
         } else {
           // No matching pack variant — still track by variant ID for mapped recipes
           for (const v of p.variants) {
@@ -891,6 +903,7 @@ router.get("/calculate", async (req, res) => {
               const vid = String(v.variantId);
               variantSalesPerDate[date][vid] = (variantSalesPerDate[date][vid] ?? 0) + v.quantity;
               variantSalesCombined[vid] = (variantSalesCombined[vid] ?? 0) + v.quantity;
+              variantUnfulfilledPerDate[date][vid] = (variantUnfulfilledPerDate[date][vid] ?? 0) + v.unfulfilledQuantity;
             }
           }
         }
@@ -1029,6 +1042,20 @@ router.get("/calculate", async (req, res) => {
         }
         specialCountPerDate[date] = specialQty;
       }
+      // Same merge for the unfulfilled-only maps so the pack report's
+      // remaining count includes any still-unpacked club specials.
+      const unfForDate = shopifyUnfulfilledPerDate[date];
+      if (unfForDate) {
+        const specialUnf = unfForDate[CALZONE_CLUB_SPECIAL_KEY] ?? 0;
+        if (specialUnf > 0) {
+          unfForDate[specialNorm] = (unfForDate[specialNorm] ?? 0) + specialUnf;
+          if (primarySpecialVariant) {
+            if (!variantUnfulfilledPerDate[date]) variantUnfulfilledPerDate[date] = {};
+            variantUnfulfilledPerDate[date][primarySpecialVariant] =
+              (variantUnfulfilledPerDate[date][primarySpecialVariant] ?? 0) + specialUnf;
+          }
+        }
+      }
     }
   }
 
@@ -1069,6 +1096,21 @@ router.get("/calculate", async (req, res) => {
     const recipeNorm = normalizeForMatch(recipeName);
     const salesForDate = shopifySalesPerDate[date] ?? {};
     return bestShopifyMatch(recipeNorm, salesForDate).qty;
+  }
+
+  // Same resolution order as matchShopifySalesForDate, but against the
+  // unfulfilled-only maps — the pack report's "still to go out" count. For a
+  // variant-mapped recipe the sum is authoritative: 0 means every order for
+  // that dispatch has been packed, not "no data".
+  function matchShopifyUnfulfilledForDate(recipeName: string, date: string, recipeId?: number): number {
+    if (recipeId && recipeToVariantIds.has(recipeId)) {
+      const dateSales = variantUnfulfilledPerDate[date] ?? {};
+      let total = 0;
+      for (const vid of recipeToVariantIds.get(recipeId)!) total += dateSales[vid] ?? 0;
+      return total;
+    }
+    const recipeNorm = normalizeForMatch(recipeName);
+    return bestShopifyMatch(recipeNorm, shopifyUnfulfilledPerDate[date] ?? {}).qty;
   }
 
   function matchShopifySalesCombined(recipeName: string, recipeId?: number): { qty: number; matchedProduct: string | null } {
@@ -1131,6 +1173,15 @@ router.get("/calculate", async (req, res) => {
     const dispatch2Qty = resolveDispatchQty(deliveryDates[1]);
     const dispatch3Qty = resolveDispatchQty(deliveryDates[2]);
     const totalDispatchQty = dispatch1Qty + dispatch2Qty + dispatch3Qty;
+
+    // REMAINING (unfulfilled) packs for today's pack — what the pack report
+    // shows as "going out". Orders already scanned through fulfilment have
+    // also left the fridge count, so only the remainder is a live demand on
+    // stock. DPT estimates carry no fulfilment state, so those fall back to
+    // the full figure.
+    const dispatch2RemainingQty = shopifyDatesLoaded.has(deliveryDates[1]) && (hasVariantMapping || hasRecipeMatch)
+      ? matchShopifyUnfulfilledForDate(recipeName, deliveryDates[1], recipeId)
+      : dispatch2Qty;
 
     const prevProduction = Math.round(prevProductionPacks[recipeId] ?? 0);
 
@@ -1195,6 +1246,7 @@ router.get("/calculate", async (req, res) => {
       bagPackEquivalents: Math.round(bagPackEquivalents),
       dispatch1Qty,
       dispatch2Qty,
+      dispatch2RemainingQty,
       dispatch3Qty,
       totalDispatchQty,
       deficit,
