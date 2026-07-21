@@ -12,6 +12,7 @@ import {
 } from "@workspace/db";
 import { eq, and, gte, lte, sql, desc, asc, inArray } from "drizzle-orm";
 import { londonDateString } from "../lib/london-time";
+import { adjustInventoryLevel } from "../services/shopify";
 
 const router: IRouter = Router();
 
@@ -530,6 +531,8 @@ router.post("/:id/receive", async (req, res) => {
       packWeight: ingredientsTable.packWeight,
       requiresUseByDate: ingredientsTable.requiresUseByDate,
       perishable: ingredientsTable.perishable,
+      shopifyVariantId: ingredientsTable.shopifyVariantId,
+      shopifyUnitsPerPack: ingredientsTable.shopifyUnitsPerPack,
     })
     .from(purchaseOrderLinesTable)
     .leftJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
@@ -562,6 +565,8 @@ router.post("/:id/receive", async (req, res) => {
     packWeight: string;
     requiresUseByDate: boolean;
     perishable: boolean;
+    shopifyVariantId: string | null;
+    shopifyUnitsPerPack: string | null;
   };
   const newLineIngredientIds = [...new Set((newLines ?? []).map((nl) => nl.ingredientId))];
   const newLineIngredientMap = new Map<number, NewLineIngredientInfo>();
@@ -575,6 +580,8 @@ router.post("/:id/receive", async (req, res) => {
         packWeight: ingredientsTable.packWeight,
         requiresUseByDate: ingredientsTable.requiresUseByDate,
         perishable: ingredientsTable.perishable,
+        shopifyVariantId: ingredientsTable.shopifyVariantId,
+        shopifyUnitsPerPack: ingredientsTable.shopifyUnitsPerPack,
       })
       .from(ingredientsTable)
       .where(inArray(ingredientsTable.id, newLineIngredientIds));
@@ -601,6 +608,29 @@ router.post("/:id/receive", async (req, res) => {
     location: string;
     useByDate: string | null;
   }[] = [];
+
+  // Ingredients linked to a Shopify variant (bought-in retail items, e.g.
+  // Cakehead brownies) push their received stock straight to Shopify —
+  // replacing the photo-the-delivery / upload-at-end-of-day ritual. Deltas
+  // accumulate here (received qty in the line's unit × units-per-pack) and
+  // are pushed best-effort after the local writes: a Shopify hiccup must
+  // never fail goods-in.
+  const shopifyPushes = new Map<number, { ingredientName: string; variantId: string; units: number }>();
+  const queueShopifyPush = (
+    ingredientId: number | null,
+    ingredientName: string | null,
+    variantId: string | null,
+    unitsPerPack: string | null,
+    receivedDelta: number,
+  ) => {
+    if (!ingredientId || !variantId || receivedDelta === 0) return;
+    const perPack = Number(unitsPerPack) || 1;
+    const units = Math.round(receivedDelta * perPack);
+    if (units === 0) return;
+    const existing = shopifyPushes.get(ingredientId);
+    if (existing) existing.units += units;
+    else shopifyPushes.set(ingredientId, { ingredientName: ingredientName ?? `Ingredient #${ingredientId}`, variantId, units });
+  };
 
   for (const line of lines || []) {
     const existing = existingLineMap.get(line.lineId)!;
@@ -630,6 +660,7 @@ router.post("/:id/receive", async (req, res) => {
         location,
         useByDate: line.useByDate || null,
       });
+      queueShopifyPush(existing.ingredientId, existing.ingredientName, existing.shopifyVariantId, existing.shopifyUnitsPerPack, delta);
     }
   }
 
@@ -662,6 +693,7 @@ router.post("/:id/receive", async (req, res) => {
         location,
         useByDate: nl.useByDate || null,
       });
+      queueShopifyPush(nl.ingredientId, ing.ingredientName, ing.shopifyVariantId, ing.shopifyUnitsPerPack, nl.quantityReceived);
     }
     void inserted;
   }
@@ -763,9 +795,25 @@ router.post("/:id/receive", async (req, res) => {
     .set({ status: "received" })
     .where(eq(purchaseOrdersTable.id, poId));
 
+  // Push mapped ingredients' received stock to Shopify. Best-effort per item:
+  // failures are reported back to the operator but never fail the goods-in.
+  const shopifySync: Array<{ ingredientName: string; units: number; newQuantity?: number; error?: string }> = [];
+  for (const push of shopifyPushes.values()) {
+    try {
+      const adj = await adjustInventoryLevel(push.variantId, push.units);
+      shopifySync.push({ ingredientName: push.ingredientName, units: push.units, newQuantity: adj.newQuantity });
+      console.log(`[Deliveries] Shopify stock +${push.units} for ${push.ingredientName} (variant ${push.variantId}) → ${adj.newQuantity}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      shopifySync.push({ ingredientName: push.ingredientName, units: push.units, error: msg });
+      console.error(`[Deliveries] Shopify stock push failed for ${push.ingredientName} (variant ${push.variantId}):`, msg);
+    }
+  }
+
   res.json({
     deliveryRecordId,
     orderStatus: "received",
+    shopifySync,
   });
 });
 

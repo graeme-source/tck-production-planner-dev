@@ -30,6 +30,10 @@ function mapRow(r: typeof ingredientsTable.$inferSelect) {
     kanbanQuantity: Number(r.kanbanQuantity ?? 0),
     kanbanUnit: r.kanbanUnit ?? "weight",
     kanbanOrderAmount: r.kanbanOrderAmount != null ? Number(r.kanbanOrderAmount) : null,
+    shopifyVariantId: r.shopifyVariantId ?? null,
+    shopifyProductTitle: r.shopifyProductTitle ?? null,
+    shopifyVariantTitle: r.shopifyVariantTitle ?? null,
+    shopifyUnitsPerPack: r.shopifyUnitsPerPack != null ? Number(r.shopifyUnitsPerPack) : null,
     perishable: r.perishable ?? true,
     palletSize: r.palletSize ?? null,
     caseSizePacks: (r as unknown as { caseSizePacks?: number | null }).caseSizePacks ?? null,
@@ -50,6 +54,12 @@ function mapRow(r: typeof ingredientsTable.$inferSelect) {
     isPasta: (r as unknown as { isPasta?: boolean }).isPasta ?? false,
     stockInPacks: (r as unknown as { stockInPacks?: boolean }).stockInPacks ?? false,
     allergens: (r.allergens as string[] | null) ?? [],
+    novaClass: r.novaClass ?? null,
+    novaMarkers: (r.novaMarkers as string[] | null) ?? [],
+    novaReasoning: r.novaReasoning ?? null,
+    novaConfidence: r.novaConfidence ?? null,
+    novaSource: r.novaSource ?? null,
+    novaAnalyzedAt: r.novaAnalyzedAt != null ? r.novaAnalyzedAt.toISOString() : null,
     createdAt: r.createdAt.toISOString(),
   };
 }
@@ -118,7 +128,7 @@ function validateProcessingRatio(value: unknown): string | null {
 }
 
 router.post("/", validate(CreateIngredientBody), async (req, res) => {
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, meatProcessMinutes, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, prepCountPerPortion, isPasta, stockInPacks, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, requiresUseByDate, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, caseSizePacks, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens, nutritionalsAiEstimated } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, meatProcessMinutes, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, prepCountPerPortion, isPasta, stockInPacks, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, requiresUseByDate, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, shopifyVariantId, shopifyProductTitle, shopifyVariantTitle, shopifyUnitsPerPack, perishable, palletSize, caseSizePacks, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens, nutritionalsAiEstimated } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const packsError = validateStockInPacks(stockInPacks, packWeight);
@@ -160,6 +170,10 @@ router.post("/", validate(CreateIngredientBody), async (req, res) => {
     kanbanQuantity: kanbanQuantity != null ? String(kanbanQuantity) : "0",
     kanbanUnit: kanbanUnit ?? "weight",
     kanbanOrderAmount: kanbanOrderAmount != null ? String(kanbanOrderAmount) : null,
+    shopifyVariantId: shopifyVariantId || null,
+    shopifyProductTitle: shopifyProductTitle || null,
+    shopifyVariantTitle: shopifyVariantTitle || null,
+    shopifyUnitsPerPack: shopifyUnitsPerPack != null ? String(shopifyUnitsPerPack) : null,
     perishable: perishable !== false,
     palletSize: palletSize != null ? Number(palletSize) : null,
     caseSizePacks: caseSizePacks != null ? Number(caseSizePacks) : null,
@@ -233,6 +247,7 @@ router.get("/:id/kanban-card", async (req, res) => {
     kanbanUnit: row.kanbanUnit ?? "weight",
     kanbanOrderAmount: row.kanbanOrderAmount != null ? Number(row.kanbanOrderAmount) : null,
     supplier: supplierName,
+    supplierPartNumber: row.supplierPartNumber ?? null,
     location,
     qrCodeUrl: row.qrCodeUrl,
   });
@@ -298,9 +313,22 @@ router.get("/:id/usage", async (req, res) => {
 
 router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, meatProcessMinutes, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, prepCountPerPortion, isPasta, stockInPacks, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, requiresUseByDate, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, perishable, palletSize, caseSizePacks, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens, nutritionalsAiEstimated } = req.body;
+  const { name, unit, packWeight, costPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, meatProcessMinutes, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, prepCountPerPortion, isPasta, stockInPacks, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, requiresUseByDate, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, shopifyVariantId, shopifyProductTitle, shopifyVariantTitle, shopifyUnitsPerPack, perishable, palletSize, caseSizePacks, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens, nutritionalsAiEstimated, novaClass } = req.body;
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
+  if (novaClass !== undefined && novaClass !== null && ![1, 2, 3, 4].includes(Number(novaClass))) {
+    res.status(400).json({ error: "novaClass must be 1-4 or null" });
+    return;
+  }
+  // The form round-trips novaClass on every save, so only treat it as a
+  // manual override when it actually changed — otherwise an untouched AI
+  // classification would get relabelled 'manual' and the batch analyzer
+  // would skip it forever.
+  let novaChanged = false;
+  if (novaClass !== undefined) {
+    const [current] = await db.select({ novaClass: ingredientsTable.novaClass }).from(ingredientsTable).where(eq(ingredientsTable.id, id));
+    novaChanged = current != null && (current.novaClass ?? null) !== (novaClass != null ? Number(novaClass) : null);
+  }
   // Need the effective packWeight: explicit override in body or fall back to the
   // stored value so toggling stockInPacks on doesn't require re-entering the pack size.
   let effectivePackWeight = packWeight;
@@ -347,6 +375,10 @@ router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
     ...(kanbanQuantity !== undefined ? { kanbanQuantity: kanbanQuantity != null ? String(kanbanQuantity) : "0" } : {}),
     ...(kanbanUnit !== undefined ? { kanbanUnit } : {}),
     ...(kanbanOrderAmount !== undefined ? { kanbanOrderAmount: kanbanOrderAmount != null ? String(kanbanOrderAmount) : null } : {}),
+    ...(shopifyVariantId !== undefined ? { shopifyVariantId: shopifyVariantId || null } : {}),
+    ...(shopifyProductTitle !== undefined ? { shopifyProductTitle: shopifyProductTitle || null } : {}),
+    ...(shopifyVariantTitle !== undefined ? { shopifyVariantTitle: shopifyVariantTitle || null } : {}),
+    ...(shopifyUnitsPerPack !== undefined ? { shopifyUnitsPerPack: shopifyUnitsPerPack != null ? String(shopifyUnitsPerPack) : null } : {}),
     ...(perishable !== undefined ? { perishable } : {}),
     ...(palletSize !== undefined ? { palletSize: palletSize != null ? Number(palletSize) : null } : {}),
     ...(caseSizePacks !== undefined ? { caseSizePacks: caseSizePacks != null ? Number(caseSizePacks) : null } : {}),
@@ -362,6 +394,16 @@ router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
     ...(labelDeclaration !== undefined ? { labelDeclaration: labelDeclaration || null } : {}),
     ...(allergens !== undefined ? { allergens: allergens ?? [] } : {}),
     ...(nutritionalsAiEstimated !== undefined ? { nutritionalsAiEstimated: !!nutritionalsAiEstimated } : {}),
+    // Manual NOVA override from the form. Marked 'manual' so the batch
+    // analyzer never overwrites it. Clearing (null) re-opens it to AI.
+    ...(novaChanged ? {
+      novaClass: novaClass != null ? Number(novaClass) : null,
+      novaSource: novaClass != null ? "manual" : null,
+      novaConfidence: novaClass != null ? "high" : null,
+      novaReasoning: novaClass != null ? "Set manually" : null,
+      novaMarkers: [] as string[],
+      novaAnalyzedAt: novaClass != null ? new Date() : null,
+    } : {}),
   }).where(eq(ingredientsTable.id, id)).returning();
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.json(mapRow(row));

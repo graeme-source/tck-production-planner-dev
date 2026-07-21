@@ -1732,6 +1732,13 @@ async function runStartupMigrations() {
       )
     `);
 
+    // Ingredient → Shopify variant link: goods-in pushes received stock of
+    // mapped bought-in items (e.g. Cakehead brownies) straight to Shopify.
+    await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS shopify_variant_id TEXT`);
+    await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS shopify_product_title TEXT`);
+    await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS shopify_variant_title TEXT`);
+    await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS shopify_units_per_pack NUMERIC(10,2)`);
+
     // Timed station reminders — seed the two launch defaults once (2:45pm
     // warnings counting down to 3pm: stock checks on Prep, the daily count on
     // Wrapping/Packing). Managed afterwards in Settings → Production → Timed
@@ -1766,6 +1773,20 @@ async function runStartupMigrations() {
           INSERT INTO _migrations_done (key) VALUES ('timed_station_reminders_seed_v1');
         END IF;
       END $$;
+    `);
+
+    // NOVA / UPF classification on ingredients — see
+    // lib/db/migrations/0027_add_upf_nova.sql. nova_class 1-4 (4 = UPF),
+    // null = not yet classified. Rolled up into recipe/sub-recipe UPF %
+    // by weight in routes/upf.ts.
+    await db.execute(sql`
+      ALTER TABLE ingredients
+        ADD COLUMN IF NOT EXISTS nova_class integer,
+        ADD COLUMN IF NOT EXISTS nova_markers jsonb NOT NULL DEFAULT '[]'::jsonb,
+        ADD COLUMN IF NOT EXISTS nova_reasoning text,
+        ADD COLUMN IF NOT EXISTS nova_confidence text,
+        ADD COLUMN IF NOT EXISTS nova_source text,
+        ADD COLUMN IF NOT EXISTS nova_analyzed_at timestamp
     `);
 
     console.log("Startup migrations OK");

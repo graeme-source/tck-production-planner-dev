@@ -384,9 +384,26 @@ function ReceivingDialog({
       if (!res.ok) throw new Error("Failed to receive delivery");
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: { shopifySync?: Array<{ ingredientName: string; units: number; newQuantity?: number; error?: string }> }) => {
       queryClient.invalidateQueries({ predicate: (q) => String(q.queryKey[0]).includes("/api/deliveries") });
       queryClient.invalidateQueries({ queryKey: ["/api/stock-entries"] });
+      // Shopify-linked items (e.g. bought-in brownies) push stock on receipt —
+      // tell the operator what went up, and shout if a push failed so the old
+      // manual upload can cover it.
+      for (const s of data?.shopifySync ?? []) {
+        if (s.error) {
+          toast({
+            title: `Shopify update failed — ${s.ingredientName}`,
+            description: `Could not add ${s.units} to Shopify (${s.error}). Update the store stock manually.`,
+            variant: "destructive",
+          });
+        } else {
+          toast({
+            title: `Shopify stock updated — ${s.ingredientName}`,
+            description: `Added ${s.units} to the store${s.newQuantity != null ? ` (now ${s.newQuantity} available)` : ""}.`,
+          });
+        }
+      }
       onClose();
     },
   });

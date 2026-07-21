@@ -9,11 +9,11 @@
  * Schema, value-shaping and payload-building helpers all live in
  * lib/ingredient-form.ts so this file is purely UI + wiring.
  */
-import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { useState, useEffect } from "react";
+import { useForm, type UseFormRegister, type UseFormWatch, type UseFormSetValue } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Carrot, Box, ChevronDown, Sparkles } from "lucide-react";
+import { Carrot, Box, ChevronDown, Sparkles, ShoppingBag, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Ingredient } from "@workspace/api-client-react";
 import {
@@ -777,6 +777,8 @@ export function IngredientFormDialog({
             </div>
           </div>
 
+          <ShopifyLinkSection watch={watch} setValue={setValue} register={register} inputClass={inputClass} />
+
           <div className="flex items-center gap-3 py-1">
             <label className="relative inline-flex items-center cursor-pointer">
               <input type="checkbox" {...register("stockCheckEnabled")} className="sr-only peer" />
@@ -1029,5 +1031,159 @@ export function IngredientFormDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ── Shopify inventory link ────────────────────────────────────────────────
+// For bought-in retail items (e.g. Cakehead brownies): link the ingredient
+// to a Shopify variant and goods-in pushes received stock straight to the
+// store — replacing the photo-the-delivery / manual end-of-day upload.
+// Same variant-picker pattern as the recipe edit screen.
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+interface ShopifyVariantOption {
+  variantId: string;
+  display: string;
+  productTitle: string;
+  variantTitle: string | null;
+}
+
+function ShopifyLinkSection({ watch, setValue, register, inputClass }: {
+  watch: UseFormWatch<IngredientFormValues>;
+  setValue: UseFormSetValue<IngredientFormValues>;
+  register: UseFormRegister<IngredientFormValues>;
+  inputClass: string;
+}) {
+  const linkedVariantId = watch("shopifyVariantId");
+  const linkedProduct = watch("shopifyProductTitle");
+  const linkedVariant = watch("shopifyVariantTitle");
+
+  const [options, setOptions] = useState<ShopifyVariantOption[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  // Load the store's product list once, only when the picker is opened.
+  useEffect(() => {
+    if (!pickerOpen || options !== null || loading) return;
+    setLoading(true);
+    fetch(`${BASE}/api/shopify/products`, { credentials: "include" })
+      .then(r => (r.ok ? r.json() : []))
+      .then((products: Array<{ id: number; title: string; variants: Array<{ id: number; title: string }> }>) => {
+        const opts: ShopifyVariantOption[] = [];
+        for (const p of products ?? []) {
+          for (const v of p.variants ?? []) {
+            const hasMultipleVariants = (p.variants?.length ?? 0) > 1;
+            const variantTitle = hasMultipleVariants && v.title !== "Default Title" ? v.title : null;
+            opts.push({
+              variantId: String(v.id),
+              productTitle: p.title,
+              variantTitle,
+              display: variantTitle ? `${p.title} – ${variantTitle}` : p.title,
+            });
+          }
+        }
+        setOptions(opts);
+      })
+      .catch(() => setOptions([]))
+      .finally(() => setLoading(false));
+  }, [pickerOpen, options, loading]);
+
+  const filtered = (options ?? [])
+    .filter(o => o.display.toLowerCase().includes(search.toLowerCase()))
+    .slice(0, 20);
+
+  return (
+    <div className="border border-border rounded-xl p-3 space-y-2">
+      <p className="text-sm font-medium flex items-center gap-1.5">
+        <ShoppingBag className="w-4 h-4 text-primary" />
+        Shopify inventory link
+      </p>
+      <p className="text-xs text-muted-foreground">
+        For bought-in items sold on the store (e.g. brownies). When a delivery
+        is marked received, the received quantity is added to this variant's
+        Shopify stock automatically.
+      </p>
+
+      {linkedVariantId ? (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 text-primary text-sm font-medium">
+            {linkedProduct || `Variant ${linkedVariantId}`}
+            {linkedVariant ? ` – ${linkedVariant}` : ""}
+            <button
+              type="button"
+              title="Remove Shopify link"
+              onClick={() => {
+                setValue("shopifyVariantId", "", { shouldDirty: true });
+                setValue("shopifyProductTitle", "", { shouldDirty: true });
+                setValue("shopifyVariantTitle", "", { shouldDirty: true });
+              }}
+              className="hover:text-destructive"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </span>
+          <div className="flex items-center gap-2">
+            <label className="text-sm text-muted-foreground">Store units per pack received</label>
+            <input
+              type="number"
+              step="any"
+              min="0"
+              placeholder="1"
+              {...register("shopifyUnitsPerPack")}
+              className={cn(inputClass, "w-24 text-right")}
+            />
+          </div>
+        </div>
+      ) : !pickerOpen ? (
+        <button
+          type="button"
+          onClick={() => setPickerOpen(true)}
+          className="text-sm text-primary font-medium hover:underline"
+        >
+          + Link to a Shopify product
+        </button>
+      ) : (
+        <div className="relative">
+          <input
+            type="text"
+            autoFocus
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder={loading ? "Loading store products…" : "Search Shopify products…"}
+            className={inputClass}
+          />
+          {!loading && search && (
+            <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto rounded-lg border border-border bg-card shadow-lg">
+              {filtered.length === 0 ? (
+                <p className="px-3 py-2 text-sm text-muted-foreground">No matching products.</p>
+              ) : filtered.map(o => (
+                <button
+                  key={o.variantId}
+                  type="button"
+                  onClick={() => {
+                    setValue("shopifyVariantId", o.variantId, { shouldDirty: true });
+                    setValue("shopifyProductTitle", o.productTitle, { shouldDirty: true });
+                    setValue("shopifyVariantTitle", o.variantTitle ?? "", { shouldDirty: true });
+                    setPickerOpen(false);
+                    setSearch("");
+                  }}
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-secondary/50"
+                >
+                  {o.display}
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => { setPickerOpen(false); setSearch(""); }}
+            className="mt-1.5 text-xs text-muted-foreground hover:text-foreground"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

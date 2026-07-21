@@ -14,6 +14,15 @@ export const ingredientsTable = pgTable("ingredients", {
   supplierId: integer("supplier_id").references(() => suppliersTable.id, { onDelete: "set null" }),
   secondarySupplierId: integer("secondary_supplier_id").references(() => suppliersTable.id, { onDelete: "set null" }),
   orderingUrl: text("ordering_url"),
+  // Shopify inventory link for bought-in retail items (e.g. Cakehead
+  // brownies): when a delivery line for this ingredient is marked received,
+  // the received quantity × shopifyUnitsPerPack is pushed straight to this
+  // variant's Shopify stock — no manual end-of-day upload.
+  shopifyVariantId: text("shopify_variant_id"),
+  shopifyProductTitle: text("shopify_product_title"),
+  shopifyVariantTitle: text("shopify_variant_title"),
+  // Sellable Shopify units per received pack/unit (box of 12 → 12).
+  shopifyUnitsPerPack: numeric("shopify_units_per_pack", { precision: 10, scale: 2 }),
   notes: text("notes"),
   category: text("category"),
   processingRatio: numeric("processing_ratio", { precision: 5, scale: 4 }),
@@ -88,6 +97,21 @@ export const ingredientsTable = pgTable("ingredients", {
   // and pasta_cooking_salt_g_per_kg. Purely a prep-display mechanism; no
   // impact on ordering, stock, or label weight.
   isPasta: boolean("is_pasta").notNull().default(false),
+  // NOVA processing classification (1-4). 4 = ultra-processed (UPF).
+  // Null = not yet classified, or a non-food item (cleaning/packaging).
+  // Recipes/sub-recipes roll these up into a UPF % by weight.
+  novaClass: integer("nova_class"),
+  // The specific UPF marker ingredients spotted in the label declaration
+  // (e.g. "glucose-fructose syrup", "flavourings") — shown as the "why".
+  novaMarkers: jsonb("nova_markers").$type<string[]>().notNull().default([]),
+  novaReasoning: text("nova_reasoning"),
+  // high | medium | low — low usually means no label declaration existed
+  // and the class was estimated from the ingredient name alone.
+  novaConfidence: text("nova_confidence"),
+  // 'ai' | 'manual' — manual classifications are never overwritten by the
+  // batch analyzer.
+  novaSource: text("nova_source"),
+  novaAnalyzedAt: timestamp("nova_analyzed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
