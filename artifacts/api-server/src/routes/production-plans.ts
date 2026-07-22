@@ -1252,6 +1252,9 @@ router.get("/calculate", async (req, res) => {
       deficit,
       deficitBatches,
       salesPercent: 0,
+      // This recipe's share of the curated DPT split (packsSold across all
+      // active DPT rows). Exact value — rounded only at the response edge.
+      dptPercent: recipeDptPercent,
       packsSold: effectivePacksSold,
       stockWarning,
       salesSource: recipeSource,
@@ -1271,8 +1274,18 @@ router.get("/calculate", async (req, res) => {
   const totalDeficitBatches = recipesWithData.reduce((s, r) => s + r.deficitBatches, 0);
   const remainingCapacity = Math.max(0, totalDailyBatches - totalDeficitBatches);
 
+  // Make-ahead surplus is distributed by the curated DPT split, NOT live
+  // sales share. That's what makes DPT = 0 mean "never suggest surplus
+  // production for this recipe" — e.g. a special being retired while stock
+  // is already banked. Such a recipe still gets deficitBatches whenever real
+  // orders outrun stock; it just earns no share of the spare capacity. If no
+  // DPT packs are configured at all, fall back to the live sales split.
+  const useDptWeights = totalDptPacksSold > 0;
   const rawSurplus = recipesWithData.map(r => {
-    const exact = totalPacksSold > 0 ? (r.salesPercent / 100) * remainingCapacity : 0;
+    const weightPercent = useDptWeights
+      ? r.dptPercent
+      : (totalPacksSold > 0 ? r.salesPercent : 0);
+    const exact = (weightPercent / 100) * remainingCapacity;
     return { exact, floor: Math.floor(exact) };
   });
 
@@ -1306,6 +1319,7 @@ router.get("/calculate", async (req, res) => {
 
     return {
       ...r,
+      dptPercent: Math.round(r.dptPercent * 10) / 10,
       surplusBatches,
       suggestedBatches,
       tinCount,

@@ -139,6 +139,10 @@ interface PlanItem {
   maxBatchesPerTin: number | null;
   tinSize: string | null;
   salesPercent: number;
+  // This recipe's share of the curated DPT split (%). The preferred weight
+  // for distributing make-ahead surplus — DPT 0 means "no surplus for this
+  // recipe" even while it still has live sales (e.g. a retiring special).
+  dptPercent?: number;
   // Packs sold for this recipe across the dispatch window (from backend for
   // DPT recipes, 0 for manual recipes). Used as the raw weight for the
   // Recalculate Batches distribution; normalising by total weight gives the
@@ -753,6 +757,9 @@ interface CalcRecipe {
   deficit: number;
   deficitBatches: number;
   salesPercent: number;
+  // Share of the curated DPT split (%), from /calculate. Preferred surplus
+  // weight — mirrors the backend's own distribution.
+  dptPercent?: number;
   packsSold: number;
   stockWarning: "ok" | "low" | "short";
   salesSource: "shopify" | "dpt";
@@ -1007,6 +1014,9 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   const effectiveTotalBatches = totalBatchesOverride ?? calcData?.totalDailyBatches ?? 0;
 
   const { data: allRecipes } = useListRecipes({ query: { queryKey: getListRecipesQueryKey(), enabled: open } });
+  // Existing plans — used to warn when the chosen date already has a plan,
+  // so a second plan on the same day is always a deliberate choice.
+  const { data: existingPlans } = useListProductionPlans(undefined, { query: { queryKey: getListProductionPlansQueryKey(), enabled: open } });
   const { createPlan, updatePlan } = useAppMutations();
   const queryClient = useQueryClient();
 
@@ -1032,12 +1042,21 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   useEffect(() => { prepDateRef.current = prepDate; }, [prepDate]);
   useEffect(() => { doughDateRef.current = doughDate; }, [doughDate]);
 
+  const existingPlansRef = useRef(existingPlans);
+  useEffect(() => { existingPlansRef.current = existingPlans; }, [existingPlans]);
+
+  // Close-prompt: shown when the dialog is dismissed with unsaved work so the
+  // operator explicitly chooses activate / draft / discard instead of a draft
+  // silently surviving (or work silently vanishing).
+  const [closePromptOpen, setClosePromptOpen] = useState(false);
+
   // Reset dirty state when dialog closes
   useEffect(() => {
     if (!open) {
       isDirty.current = false;
       autoSavedPlanId.current = null;
       setAutoSavedAt(null);
+      setClosePromptOpen(false);
       // Clear the touched flags so the next open re-auto-fills from scratch.
       setPrepTouched(false);
       setDoughTouched(false);
@@ -1073,6 +1092,13 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       };
       try {
         if (autoSavedPlanId.current === null) {
+          // Never silently create a second plan for a date that already has
+          // one — duplicate creation must go through the explicit save
+          // buttons, which ask for confirmation first.
+          const dateTaken = (existingPlansRef.current ?? []).some(
+            p => p.planDate === planDateRef.current
+          );
+          if (dateTaken) return;
           const res = await fetch(`${BASE}/api/production-plans`, {
             method: "POST",
             credentials: "include",
@@ -1223,15 +1249,20 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     // kept split in every view).
     const coreRecipes = calcData.recipes.filter((r: CalcRecipe) => r.isCoreMenu && (r.recipeCategory ?? "") !== "Macaroni Cheese");
     const capacity = calcData.totalDailyBatches;
-    // `salesPercent` was computed by the backend against the full recipe set,
-    // so after filtering to core-only the percentages no longer sum to 100 —
+    // Percentages were computed by the backend against the full recipe set,
+    // so after filtering to core-only they no longer sum to 100 —
     // allocateBatches would leave capacity on the table (e.g. 69 of 75).
     // Normalise across the filtered set so they sum to 100%, which lets the
     // fractional-remainder logic distribute the full daily capacity.
+    // Weight preference mirrors the backend: DPT split when any DPT packs
+    // are configured (so DPT 0 → zero surplus), else live sales, else equal.
+    const sumCoreDpt = coreRecipes.reduce((s: number, r: CalcRecipe) => s + (r.dptPercent ?? 0), 0);
     const sumCoreSales = coreRecipes.reduce((s: number, r: CalcRecipe) => s + (r.salesPercent || 0), 0);
-    const normCoreRecipes = sumCoreSales > 0
-      ? coreRecipes.map((r: CalcRecipe) => ({ ...r, salesPercent: (r.salesPercent / sumCoreSales) * 100 }))
-      : coreRecipes.map((r: CalcRecipe) => ({ ...r, salesPercent: 100 / Math.max(1, coreRecipes.length) }));
+    const normCoreRecipes = sumCoreDpt > 0
+      ? coreRecipes.map((r: CalcRecipe) => ({ ...r, salesPercent: ((r.dptPercent ?? 0) / sumCoreDpt) * 100, packsSold: 1 }))
+      : sumCoreSales > 0
+        ? coreRecipes.map((r: CalcRecipe) => ({ ...r, salesPercent: (r.salesPercent / sumCoreSales) * 100 }))
+        : coreRecipes.map((r: CalcRecipe) => ({ ...r, salesPercent: 100 / Math.max(1, coreRecipes.length) }));
     const alloc = allocateBatches(normCoreRecipes, capacity);
     // Capture any manual batch edits the user has already made so we can preserve them
     const prevItems = itemsRef.current;
@@ -1254,6 +1285,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
         maxBatchesPerTin: r.maxBatchesPerTin,
         tinSize: r.tinSize,
         salesPercent: r.salesPercent,
+        dptPercent: r.dptPercent ?? 0,
         portionsPerBatch: r.portionsPerBatch,
         packsPerBatch: r.packsPerBatch,
         packSize: r.packSize,
@@ -1308,11 +1340,16 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     setItems(prev => {
       const dptItems = prev.filter(it => it.isFromDpt);
       if (dptItems.length === 0) return prev;
+      // Same weight preference as the backend and Recalculate Batches:
+      // DPT split → live sales → equal.
+      const sumDpt = dptItems.reduce((s, it) => s + (it.dptPercent ?? 0), 0);
       const sumSales = dptItems.reduce((s, it) => s + (it.salesPercent || 0), 0);
       const fallback = 100 / dptItems.length;
       const recipesForAlloc = dptItems.map(it => ({
         deficitBatches: it.deficitBatches,
-        salesPercent: sumSales > 0 ? (it.salesPercent / sumSales) * 100 : fallback,
+        salesPercent: sumDpt > 0
+          ? ((it.dptPercent ?? 0) / sumDpt) * 100
+          : sumSales > 0 ? (it.salesPercent / sumSales) * 100 : fallback,
         packsSold: 1,
       })) as unknown as CalcRecipe[];
       const alloc = allocateBatches(recipesForAlloc, newTotal);
@@ -1361,19 +1398,24 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   const handleRecalculateBatches = useCallback(() => {
     const includedItems = items.filter(it => it.included);
     if (includedItems.length === 0) return;
-    // `salesPercent` is computed by the backend against the ORIGINAL set of
+    // Percentages are computed by the backend against the ORIGINAL set of
     // recipes, so once you delete a few the remaining percentages no longer
     // sum to 100 — allocateBatches would then leave a chunk of the daily
     // capacity unallocated (e.g. 58 of 75 when ~77% remains). Re-normalise
-    // across the still-included recipes so they sum to 100%. Fall back to
-    // equal weights if none of the recipes have any sales signal.
+    // across the still-included recipes so they sum to 100%.
+    // Weight preference mirrors the backend: DPT split first (so a freshly
+    // zeroed DPT immediately drops that recipe's surplus to nothing on
+    // recalculate), live sales next, equal weights as the last resort.
+    const sumDptPercent = includedItems.reduce((s, it) => s + (it.dptPercent ?? 0), 0);
     const sumSalesPercent = includedItems.reduce((s, it) => s + (it.salesPercent || 0), 0);
     const fallbackPercent = 100 / includedItems.length;
     const recipesForAlloc = includedItems.map(it => ({
       deficitBatches: it.deficitBatches,
-      salesPercent: sumSalesPercent > 0
-        ? (it.salesPercent / sumSalesPercent) * 100
-        : fallbackPercent,
+      salesPercent: sumDptPercent > 0
+        ? ((it.dptPercent ?? 0) / sumDptPercent) * 100
+        : sumSalesPercent > 0
+          ? (it.salesPercent / sumSalesPercent) * 100
+          : fallbackPercent,
       // allocateBatches only checks `totalPacksSold > 0` to decide whether to
       // distribute surplus at all — any positive value does the job here.
       packsSold: 1,
@@ -1558,6 +1600,18 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     const includedItems = items.filter(it => it.included);
     if (includedItems.length === 0) return;
 
+    // Guard against accidentally planning the same day twice. Deliberate
+    // doubles (e.g. a second run) are still allowed after confirming.
+    const duplicates = (existingPlans ?? []).filter(
+      p => p.planDate === planDate && p.id !== autoSavedPlanId.current
+    );
+    if (duplicates.length > 0) {
+      const ok = window.confirm(
+        `There is already a production plan for ${format(parseISO(planDate), "EEEE d MMM yyyy")}. Are you sure you want to create another one?`
+      );
+      if (!ok) return;
+    }
+
     setIsSubmitting(true);
     try {
       const data = {
@@ -1621,6 +1675,13 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     return (i === 0 || i === 1 || i === 2) ? i : 1;
   })();
 
+  // Plans that already exist for the chosen production date (excluding the
+  // draft this dialog auto-saved itself) — drives the inline warning under
+  // the date field and the are-you-sure confirm on save.
+  const duplicatePlansForDate = (existingPlans ?? []).filter(
+    p => p.planDate === planDate && p.id !== autoSavedPlanId.current
+  );
+
   // Closing the dialog with unsaved work is a frequent foot-gun: an
   // operator clicks outside the modal, the recipes list resets, and
   // they have to re-enter every batch / factory number override. Wrap
@@ -1632,21 +1693,47 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   const hasPendingFridgeWrites = items.some(it =>
     savedFridgeStock[it.id] != null && it.fridgeStock !== savedFridgeStock[it.id]
   );
-  const closeWithGuard = () => {
-    if (isDirty.current || hasPendingFridgeWrites) {
-      const ok = window.confirm(
-        hasPendingFridgeWrites
-          ? "You have factory-number changes that haven't saved yet. Close and lose them?"
-          : "You have unsaved changes on this plan. Close and lose them?"
-      );
-      if (!ok) return;
-    }
+  const reallyClose = () => {
     // Cancel any in-flight debounced fridge-stock timers so they don't
     // fire against a closed dialog and surprise-write a stale value.
     for (const t of Object.values(fridgeStockTimers.current)) clearTimeout(t);
     fridgeStockTimers.current = {};
     isDirty.current = false;
+    setClosePromptOpen(false);
     onClose();
+  };
+
+  const closeWithGuard = () => {
+    // Anything unsaved — form edits, pending factory-number writes, or a
+    // draft the 30s auto-save already created — needs an explicit decision:
+    // activate, keep as draft, or discard. Never leave a draft behind
+    // silently.
+    if (isDirty.current || hasPendingFridgeWrites || autoSavedPlanId.current !== null) {
+      setClosePromptOpen(true);
+      return;
+    }
+    reallyClose();
+  };
+
+  const discardAndClose = async () => {
+    const id = autoSavedPlanId.current;
+    // Clear these first so the next auto-save tick can't re-create the
+    // draft we're about to delete.
+    autoSavedPlanId.current = null;
+    isDirty.current = false;
+    if (id !== null) {
+      try {
+        await fetch(`${BASE}/api/production-plans/${id}`, {
+          method: "DELETE",
+          credentials: "include",
+        });
+        queryClient.invalidateQueries({ queryKey: getListProductionPlansQueryKey() });
+      } catch {
+        // Network hiccup while discarding — the stray draft stays visible
+        // in the plans list where it can be deleted manually.
+      }
+    }
+    reallyClose();
   };
 
   return (
@@ -1681,6 +1768,14 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                   <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
                     <Info className="w-3 h-3 flex-shrink-0" />
                     {dateWarning}
+                  </p>
+                )}
+                {duplicatePlansForDate.length > 0 && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                    {duplicatePlansForDate.length === 1
+                      ? "A production plan already exists for this date."
+                      : `${duplicatePlansForDate.length} production plans already exist for this date.`}
                   </p>
                 )}
               </div>
@@ -2142,6 +2237,53 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
         refetchCalc();
       }}
     />
+    {/* Close prompt — dismissing the create dialog with unsaved work forces
+        an explicit choice. Discard also deletes any draft the 30s auto-save
+        created behind the scenes, so no plan is left behind. */}
+    <Dialog open={closePromptOpen} onOpenChange={v => !v && setClosePromptOpen(false)}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 text-amber-500" />
+            This plan hasn't been saved
+          </DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          What would you like to do with it before closing?
+        </p>
+        <div className="space-y-2 pt-1">
+          <button
+            onClick={() => { setClosePromptOpen(false); handleSubmit("active"); }}
+            disabled={includedCount === 0 || isSubmitting}
+            className="w-full px-4 py-2.5 text-sm bg-primary text-primary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center justify-center gap-2 hover:opacity-90 transition-opacity"
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            Activate &amp; Lock
+          </button>
+          <button
+            onClick={() => { setClosePromptOpen(false); handleSubmit("draft"); }}
+            disabled={includedCount === 0 || isSubmitting}
+            className="w-full px-4 py-2 text-sm border border-border bg-secondary text-secondary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center justify-center gap-2 hover:bg-secondary/80 transition-colors"
+          >
+            <ClipboardList className="w-4 h-4" />
+            Save as Draft
+          </button>
+          <button
+            onClick={discardAndClose}
+            className="w-full px-4 py-2 text-sm border border-destructive/40 text-destructive rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-destructive/10 transition-colors"
+          >
+            <Trash2 className="w-4 h-4" />
+            Discard — don't create a plan
+          </button>
+          <button
+            onClick={() => setClosePromptOpen(false)}
+            className="w-full px-4 py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-xl transition-colors"
+          >
+            Keep Editing
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
     </>
   );
 }
@@ -2241,6 +2383,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
         ...it,
         recipeColor: calc.color ?? it.recipeColor,
         salesPercent: calc.salesPercent,
+        dptPercent: calc.dptPercent ?? 0,
         portionsPerBatch: calc.portionsPerBatch,
         packsPerBatch: calc.packsPerBatch,
         packSize: calc.packSize,
@@ -2308,11 +2451,15 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const handleEditRecalculateBatches = useCallback(() => {
     const includedItems = items.filter(it => it.included);
     if (includedItems.length === 0 || editEffectiveTotalBatches <= 0) return;
+    // Same weight preference as the backend: DPT split → live sales → equal.
+    const sumDptPercent = includedItems.reduce((s, it) => s + (it.dptPercent ?? 0), 0);
     const sumSalesPercent = includedItems.reduce((s, it) => s + (it.salesPercent || 0), 0);
     const fallbackPercent = 100 / includedItems.length;
     const recipesForAlloc = includedItems.map(it => ({
       deficitBatches: it.deficitBatches,
-      salesPercent: sumSalesPercent > 0 ? (it.salesPercent / sumSalesPercent) * 100 : fallbackPercent,
+      salesPercent: sumDptPercent > 0
+        ? ((it.dptPercent ?? 0) / sumDptPercent) * 100
+        : sumSalesPercent > 0 ? (it.salesPercent / sumSalesPercent) * 100 : fallbackPercent,
       packsSold: 1,
     })) as unknown as CalcRecipe[];
     const alloc = editAllocateBatches(recipesForAlloc, editEffectiveTotalBatches);
@@ -4826,6 +4973,14 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
   const selectedDoughWork = doughWorkByDate[selectedDateKey] ?? [];
 
   const openDayWithoutProduction = (kind: "day" | "mac") => {
+    // Same-day duplicate guard as the create dialog: allowed, but never by
+    // accident.
+    if ((plansByDate[selectedDateKey] ?? []).length > 0) {
+      const ok = window.confirm(
+        `There is already a production plan for ${format(selectedDate, "EEEE d MMM yyyy")}. Are you sure you want to create another one?`
+      );
+      if (!ok) return;
+    }
     setCreatingDayPlan(kind);
     createPlan.mutate(
       {
