@@ -204,6 +204,22 @@ export const ListIngredientsResponseItem = zod.object({
   kanbanQuantity: zod.number().optional(),
   prepCountPerPortion: zod.number().nullish(),
   isPasta: zod.boolean().optional(),
+  novaClass: zod
+    .number()
+    .nullish()
+    .describe(
+      "NOVA processing classification 1-4 (4 = ultra-processed \/ UPF). Null = not yet classified, or a non-food item.",
+    ),
+  novaMarkers: zod
+    .array(zod.string())
+    .optional()
+    .describe(
+      "UPF marker ingredients found in the label declaration (NOVA 4 only)",
+    ),
+  novaReasoning: zod.string().nullish(),
+  novaConfidence: zod.string().nullish().describe("high | medium | low"),
+  novaSource: zod.string().nullish().describe("ai | manual"),
+  novaAnalyzedAt: zod.string().nullish(),
   createdAt: zod.string(),
 });
 export const ListIngredientsResponse = zod.array(ListIngredientsResponseItem);
@@ -227,6 +243,12 @@ export const CreateIngredientBody = zod.object({
   rawMeatTrayCapacityKg: zod.number().nullish(),
   kanbanEnabled: zod.boolean().optional(),
   kanbanQuantity: zod.number().optional(),
+  novaClass: zod
+    .number()
+    .nullish()
+    .describe(
+      "Manual NOVA override (1-4); null clears back to unclassified so the AI analyzer can re-run.",
+    ),
 });
 
 /**
@@ -265,6 +287,22 @@ export const GetIngredientResponse = zod.object({
   kanbanQuantity: zod.number().optional(),
   prepCountPerPortion: zod.number().nullish(),
   isPasta: zod.boolean().optional(),
+  novaClass: zod
+    .number()
+    .nullish()
+    .describe(
+      "NOVA processing classification 1-4 (4 = ultra-processed \/ UPF). Null = not yet classified, or a non-food item.",
+    ),
+  novaMarkers: zod
+    .array(zod.string())
+    .optional()
+    .describe(
+      "UPF marker ingredients found in the label declaration (NOVA 4 only)",
+    ),
+  novaReasoning: zod.string().nullish(),
+  novaConfidence: zod.string().nullish().describe("high | medium | low"),
+  novaSource: zod.string().nullish().describe("ai | manual"),
+  novaAnalyzedAt: zod.string().nullish(),
   createdAt: zod.string(),
 });
 
@@ -291,6 +329,12 @@ export const UpdateIngredientBody = zod.object({
   rawMeatTrayCapacityKg: zod.number().nullish(),
   kanbanEnabled: zod.boolean().optional(),
   kanbanQuantity: zod.number().optional(),
+  novaClass: zod
+    .number()
+    .nullish()
+    .describe(
+      "Manual NOVA override (1-4); null clears back to unclassified so the AI analyzer can re-run.",
+    ),
 });
 
 export const UpdateIngredientResponse = zod.object({
@@ -322,6 +366,22 @@ export const UpdateIngredientResponse = zod.object({
   kanbanQuantity: zod.number().optional(),
   prepCountPerPortion: zod.number().nullish(),
   isPasta: zod.boolean().optional(),
+  novaClass: zod
+    .number()
+    .nullish()
+    .describe(
+      "NOVA processing classification 1-4 (4 = ultra-processed \/ UPF). Null = not yet classified, or a non-food item.",
+    ),
+  novaMarkers: zod
+    .array(zod.string())
+    .optional()
+    .describe(
+      "UPF marker ingredients found in the label declaration (NOVA 4 only)",
+    ),
+  novaReasoning: zod.string().nullish(),
+  novaConfidence: zod.string().nullish().describe("high | medium | low"),
+  novaSource: zod.string().nullish().describe("ai | manual"),
+  novaAnalyzedAt: zod.string().nullish(),
   createdAt: zod.string(),
 });
 
@@ -521,6 +581,88 @@ export const UpdateSubRecipeResponse = zod.object({
  */
 export const DeleteSubRecipeParams = zod.object({
   id: zod.coerce.number(),
+});
+
+/**
+ * @summary UPF percentage rollups for all recipes and sub-recipes
+ */
+export const GetUpfSummaryResponse = zod.object({
+  recipes: zod.array(
+    zod.object({
+      recipeId: zod.number(),
+      name: zod.string(),
+      category: zod.string().nullish(),
+      totalG: zod.number(),
+      upfG: zod.number(),
+      unclassifiedG: zod.number(),
+      upfPercent: zod.number().nullish(),
+      upfIngredients: zod.array(
+        zod.object({
+          ingredientId: zod.number(),
+          name: zod.string(),
+          grams: zod.number(),
+          novaMarkers: zod.array(zod.string()),
+        }),
+      ),
+      unclassifiedIngredients: zod.array(zod.string()),
+    }),
+  ),
+  subRecipes: zod.array(
+    zod.object({
+      subRecipeId: zod.number(),
+      name: zod.string(),
+      totalG: zod.number(),
+      upfG: zod.number(),
+      unclassifiedG: zod.number(),
+      upfPercent: zod.number().nullish(),
+      upfIngredients: zod.array(
+        zod.object({
+          ingredientId: zod.number(),
+          name: zod.string(),
+          grams: zod.number(),
+          novaMarkers: zod.array(zod.string()),
+        }),
+      ),
+      unclassifiedIngredients: zod.array(zod.string()),
+    }),
+  ),
+  unclassifiedUsedIngredientIds: zod.array(zod.number()),
+});
+
+/**
+ * @summary Classify ingredients on the NOVA scale with AI (admin/manager)
+ */
+export const AnalyzeUpfBody = zod.object({
+  ingredientIds: zod
+    .array(zod.number())
+    .optional()
+    .describe(
+      "Specific ingredients to (re)analyze. Omit to sweep every not-yet-analyzed ingredient used in a recipe or sub-recipe.",
+    ),
+  force: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Re-analyze even if already classified (including manual classifications).",
+    ),
+});
+
+export const AnalyzeUpfResponse = zod.object({
+  analyzed: zod.number(),
+  upfCount: zod.number().optional(),
+  failedBatches: zod.number().optional(),
+  results: zod
+    .array(
+      zod.object({
+        ingredientId: zod.number(),
+        isFood: zod.boolean(),
+        novaClass: zod.number().nullish(),
+        markers: zod.array(zod.string()),
+        reasoning: zod.string(),
+        confidence: zod.string(),
+      }),
+    )
+    .optional(),
 });
 
 /**

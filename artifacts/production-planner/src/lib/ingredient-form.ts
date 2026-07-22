@@ -97,6 +97,10 @@ export const ingredientFormSchema = z.object({
   // back to false when the operator manually edits a nutritional field
   // after the AI fill (handled in the dialog layer).
   nutritionalsAiEstimated: z.boolean().optional(),
+  // NOVA class 1-4 (4 = UPF), null = unclassified. Changing it in the form
+  // saves a manual override; the server only flips it to 'manual' when the
+  // value actually differs from what's stored.
+  novaClass: z.number().int().min(1).max(4).nullable().optional(),
 }).superRefine((val, ctx) => {
   // Ingredient-mode entries must use a native weight/volume/count unit.
   // Supplies can use packaging-style units.
@@ -180,6 +184,7 @@ export function emptyIngredientFormDefaults(
     labelDeclaration: "",
     allergens: [],
     nutritionalsAiEstimated: false,
+    novaClass: null,
   };
 }
 
@@ -262,6 +267,7 @@ export function ingredientToFormValues(
     labelDeclaration: str(it.labelDeclaration),
     allergens: (it.allergens as string[] | null | undefined) ?? [],
     nutritionalsAiEstimated: bool(it.nutritionalsAiEstimated),
+    novaClass: num(it.novaClass),
   };
 }
 
@@ -329,5 +335,6 @@ export function buildIngredientPayload(data: IngredientFormValues) {
     labelDeclaration: data.labelDeclaration || null,
     allergens: data.allergens ?? [],
     nutritionalsAiEstimated: data.nutritionalsAiEstimated ?? false,
+    novaClass: data.novaClass ?? null,
   };
 }

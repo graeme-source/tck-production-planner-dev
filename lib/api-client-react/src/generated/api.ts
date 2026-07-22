@@ -17,6 +17,8 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AnalyzeUpfBody,
+  AnalyzeUpfResult,
   AppUser,
   BatchCompletion,
   CategoryDefault,
@@ -79,6 +81,7 @@ import type {
   UpdateProductionPlanOrderBody,
   UpdateTimingStandard,
   UpdateUser,
+  UpfSummary,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -1819,6 +1822,167 @@ export const useDeleteSubRecipe = <
   TContext
 > => {
   return useMutation(getDeleteSubRecipeMutationOptions(options));
+};
+
+/**
+ * @summary UPF percentage rollups for all recipes and sub-recipes
+ */
+export const getGetUpfSummaryUrl = () => {
+  return `/api/upf/summary`;
+};
+
+export const getUpfSummary = async (
+  options?: RequestInit,
+): Promise<UpfSummary> => {
+  return customFetch<UpfSummary>(getGetUpfSummaryUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetUpfSummaryQueryKey = () => {
+  return [`/api/upf/summary`] as const;
+};
+
+export const getGetUpfSummaryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getUpfSummary>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getUpfSummary>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetUpfSummaryQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getUpfSummary>>> = ({
+    signal,
+  }) => getUpfSummary({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getUpfSummary>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetUpfSummaryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getUpfSummary>>
+>;
+export type GetUpfSummaryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary UPF percentage rollups for all recipes and sub-recipes
+ */
+
+export function useGetUpfSummary<
+  TData = Awaited<ReturnType<typeof getUpfSummary>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getUpfSummary>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetUpfSummaryQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Classify ingredients on the NOVA scale with AI (admin/manager)
+ */
+export const getAnalyzeUpfUrl = () => {
+  return `/api/upf/analyze`;
+};
+
+export const analyzeUpf = async (
+  analyzeUpfBody?: AnalyzeUpfBody,
+  options?: RequestInit,
+): Promise<AnalyzeUpfResult> => {
+  return customFetch<AnalyzeUpfResult>(getAnalyzeUpfUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(analyzeUpfBody),
+  });
+};
+
+export const getAnalyzeUpfMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof analyzeUpf>>,
+    TError,
+    { data: BodyType<AnalyzeUpfBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof analyzeUpf>>,
+  TError,
+  { data: BodyType<AnalyzeUpfBody> },
+  TContext
+> => {
+  const mutationKey = ["analyzeUpf"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof analyzeUpf>>,
+    { data: BodyType<AnalyzeUpfBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return analyzeUpf(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AnalyzeUpfMutationResult = NonNullable<
+  Awaited<ReturnType<typeof analyzeUpf>>
+>;
+export type AnalyzeUpfMutationBody = BodyType<AnalyzeUpfBody>;
+export type AnalyzeUpfMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Classify ingredients on the NOVA scale with AI (admin/manager)
+ */
+export const useAnalyzeUpf = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof analyzeUpf>>,
+    TError,
+    { data: BodyType<AnalyzeUpfBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof analyzeUpf>>,
+  TError,
+  { data: BodyType<AnalyzeUpfBody> },
+  TContext
+> => {
+  return useMutation(getAnalyzeUpfMutationOptions(options));
 };
 
 /**

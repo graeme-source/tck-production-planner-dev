@@ -372,6 +372,7 @@ router.get("/:id", async (req, res) => {
     const subIngRows = await db
       .select({
         subRecipeId: subRecipeIngredientsTable.subRecipeId,
+        ingredientId: subRecipeIngredientsTable.ingredientId,
         ingredientName: ingredientsTable.name,
         unit: ingredientsTable.unit,
         quantity: subRecipeIngredientsTable.quantity,
@@ -387,6 +388,7 @@ router.get("/:id", async (req, res) => {
       const cpp = Number(r.costPerPack);
       const costPerUnit = pw > 0 ? cpp / pw : 0;
       const entry = {
+        ingredientId: r.ingredientId,
         ingredientName: r.ingredientName,
         unit: r.unit,
         quantity: Number(r.quantity),
@@ -412,6 +414,7 @@ router.get("/:id", async (req, res) => {
       const rawQtyPerPortion = cookedQtyPerPortion / ing.processingRatio;
       const allocatedCostPortion = rawQtyPerPortion * ing.costPerUnit;
       return {
+        ingredientId: ing.ingredientId,
         ingredientName: ing.ingredientName,
         unit: ing.unit,
         quantity: cookedQtyPerPortion,

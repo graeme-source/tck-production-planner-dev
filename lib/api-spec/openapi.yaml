@@ -398,6 +398,38 @@ paths:
         "204":
           description: Deleted
 
+  /upf/summary:
+    get:
+      operationId: getUpfSummary
+      tags: [upf]
+      summary: UPF percentage rollups for all recipes and sub-recipes
+      responses:
+        "200":
+          description: UPF summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpfSummary"
+
+  /upf/analyze:
+    post:
+      operationId: analyzeUpf
+      tags: [upf]
+      summary: Classify ingredients on the NOVA scale with AI (admin/manager)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalyzeUpfBody"
+      responses:
+        "200":
+          description: Analysis results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyzeUpfResult"
+
   /recipes:
     get:
       operationId: listRecipes
@@ -1781,6 +1813,29 @@ components:
           nullable: true
         isPasta:
           type: boolean
+        novaClass:
+          type: integer
+          nullable: true
+          description: NOVA processing classification 1-4 (4 = ultra-processed / UPF). Null = not yet classified, or a non-food item.
+        novaMarkers:
+          type: array
+          items:
+            type: string
+          description: UPF marker ingredients found in the label declaration (NOVA 4 only)
+        novaReasoning:
+          type: string
+          nullable: true
+        novaConfidence:
+          type: string
+          nullable: true
+          description: high | medium | low
+        novaSource:
+          type: string
+          nullable: true
+          description: ai | manual
+        novaAnalyzedAt:
+          type: string
+          nullable: true
         createdAt:
           type: string
       required:
@@ -1833,11 +1888,146 @@ components:
           type: boolean
         kanbanQuantity:
           type: number
+        novaClass:
+          type: integer
+          nullable: true
+          description: Manual NOVA override (1-4); null clears back to unclassified so the AI analyzer can re-run.
       required:
         - name
         - unit
         - packWeight
         - costPerPack
+
+    UpfContributor:
+      type: object
+      properties:
+        ingredientId:
+          type: integer
+        name:
+          type: string
+        grams:
+          type: number
+        novaMarkers:
+          type: array
+          items:
+            type: string
+      required: [ingredientId, name, grams, novaMarkers]
+
+    UpfRecipeRollup:
+      type: object
+      properties:
+        recipeId:
+          type: integer
+        name:
+          type: string
+        category:
+          type: string
+          nullable: true
+        totalG:
+          type: number
+        upfG:
+          type: number
+        unclassifiedG:
+          type: number
+        upfPercent:
+          type: number
+          nullable: true
+        upfIngredients:
+          type: array
+          items:
+            $ref: "#/components/schemas/UpfContributor"
+        unclassifiedIngredients:
+          type: array
+          items:
+            type: string
+      required: [recipeId, name, totalG, upfG, unclassifiedG, upfIngredients, unclassifiedIngredients]
+
+    UpfSubRecipeRollup:
+      type: object
+      properties:
+        subRecipeId:
+          type: integer
+        name:
+          type: string
+        totalG:
+          type: number
+        upfG:
+          type: number
+        unclassifiedG:
+          type: number
+        upfPercent:
+          type: number
+          nullable: true
+        upfIngredients:
+          type: array
+          items:
+            $ref: "#/components/schemas/UpfContributor"
+        unclassifiedIngredients:
+          type: array
+          items:
+            type: string
+      required: [subRecipeId, name, totalG, upfG, unclassifiedG, upfIngredients, unclassifiedIngredients]
+
+    UpfSummary:
+      type: object
+      properties:
+        recipes:
+          type: array
+          items:
+            $ref: "#/components/schemas/UpfRecipeRollup"
+        subRecipes:
+          type: array
+          items:
+            $ref: "#/components/schemas/UpfSubRecipeRollup"
+        unclassifiedUsedIngredientIds:
+          type: array
+          items:
+            type: integer
+      required: [recipes, subRecipes, unclassifiedUsedIngredientIds]
+
+    AnalyzeUpfBody:
+      type: object
+      properties:
+        ingredientIds:
+          type: array
+          items:
+            type: integer
+          description: Specific ingredients to (re)analyze. Omit to sweep every not-yet-analyzed ingredient used in a recipe or sub-recipe.
+        force:
+          type: boolean
+          description: Re-analyze even if already classified (including manual classifications).
+
+    AnalyzeUpfResult:
+      type: object
+      properties:
+        analyzed:
+          type: integer
+        upfCount:
+          type: integer
+        failedBatches:
+          type: integer
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              ingredientId:
+                type: integer
+              isFood:
+                type: boolean
+              novaClass:
+                type: integer
+                nullable: true
+              markers:
+                type: array
+                items:
+                  type: string
+              reasoning:
+                type: string
+              confidence:
+                type: string
+            required: [ingredientId, isFood, markers, reasoning, confidence]
+      required: [analyzed]
 
     KanbanItem:
       type: object

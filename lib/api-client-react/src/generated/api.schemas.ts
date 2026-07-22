@@ -52,6 +52,16 @@ export interface Ingredient {
   kanbanQuantity?: number;
   prepCountPerPortion?: number | null;
   isPasta?: boolean;
+  /** NOVA processing classification 1-4 (4 = ultra-processed / UPF). Null = not yet classified, or a non-food item. */
+  novaClass?: number | null;
+  /** UPF marker ingredients found in the label declaration (NOVA 4 only) */
+  novaMarkers?: string[];
+  novaReasoning?: string | null;
+  /** high | medium | low */
+  novaConfidence?: string | null;
+  /** ai | manual */
+  novaSource?: string | null;
+  novaAnalyzedAt?: string | null;
   createdAt: string;
 }
 
@@ -71,6 +81,67 @@ export interface CreateIngredient {
   rawMeatTrayCapacityKg?: number | null;
   kanbanEnabled?: boolean;
   kanbanQuantity?: number;
+  /** Manual NOVA override (1-4); null clears back to unclassified so the AI analyzer can re-run. */
+  novaClass?: number | null;
+}
+
+export interface UpfContributor {
+  ingredientId: number;
+  name: string;
+  grams: number;
+  novaMarkers: string[];
+}
+
+export interface UpfRecipeRollup {
+  recipeId: number;
+  name: string;
+  category?: string | null;
+  totalG: number;
+  upfG: number;
+  unclassifiedG: number;
+  upfPercent?: number | null;
+  upfIngredients: UpfContributor[];
+  unclassifiedIngredients: string[];
+}
+
+export interface UpfSubRecipeRollup {
+  subRecipeId: number;
+  name: string;
+  totalG: number;
+  upfG: number;
+  unclassifiedG: number;
+  upfPercent?: number | null;
+  upfIngredients: UpfContributor[];
+  unclassifiedIngredients: string[];
+}
+
+export interface UpfSummary {
+  recipes: UpfRecipeRollup[];
+  subRecipes: UpfSubRecipeRollup[];
+  unclassifiedUsedIngredientIds: number[];
+}
+
+export interface AnalyzeUpfBody {
+  /** Specific ingredients to (re)analyze. Omit to sweep every not-yet-analyzed ingredient used in a recipe or sub-recipe. */
+  ingredientIds?: number[];
+  /** Re-analyze even if already classified (including manual classifications). */
+  force?: boolean;
+}
+
+export type AnalyzeUpfResultResultsItem = {
+  ingredientId: number;
+  isFood: boolean;
+  novaClass?: number | null;
+  markers: string[];
+  reasoning: string;
+  confidence: string;
+};
+
+export interface AnalyzeUpfResult {
+  analyzed: number;
+  upfCount?: number;
+  failedBatches?: number;
+  results?: AnalyzeUpfResultResultsItem[];
 }
 
 export interface KanbanItem {

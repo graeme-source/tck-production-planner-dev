@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { useListSubRecipes, useListIngredients, useGetSubRecipe } from "@workspace/api-client-react";
+import { useListSubRecipes, useListIngredients, useGetSubRecipe, useGetUpfSummary } from "@workspace/api-client-react";
+import { UpfChip, UpfPercentPill } from "@/components/upf-badge";
 import type { Ingredient, SubRecipeDetail, SubRecipe } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
@@ -41,7 +42,7 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
-type IngredientOption = Pick<Ingredient, "id" | "name" | "unit" | "processingRatio">;
+type IngredientOption = Pick<Ingredient, "id" | "name" | "unit" | "processingRatio" | "novaClass" | "novaMarkers">;
 type SubRecipeOption = Pick<SubRecipe, "id" | "name" | "yieldUnit">;
 
 function toKg(value: number | string | null | undefined, unit: string): number | null {
@@ -494,13 +495,18 @@ function SubRecipeForm({
               return (
                 <div key={field.id}>
                   <div className="grid grid-cols-[1fr_120px_44px] gap-2 items-center">
-                    <IngredientCombobox
-                      value={selectedId}
-                      onChange={(id) => setValue(`ingredients.${index}.ingredientId`, id, { shouldValidate: true })}
-                      options={localIngredients}
-                      placeholder="Select ingredient..."
-                      onCreateNew={() => openQuickAdd(index)}
-                    />
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <div className="flex-1 min-w-0">
+                        <IngredientCombobox
+                          value={selectedId}
+                          onChange={(id) => setValue(`ingredients.${index}.ingredientId`, id, { shouldValidate: true })}
+                          options={localIngredients}
+                          placeholder="Select ingredient..."
+                          onCreateNew={() => openQuickAdd(index)}
+                        />
+                      </div>
+                      <UpfChip novaClass={selectedIng?.novaClass} markers={selectedIng?.novaMarkers} />
+                    </div>
                     {(() => {
                       const isKg = unit === "kg";
                       const displayUnit = isKg ? (ingDisplayUnits[index] ?? "g") : null;
@@ -952,6 +958,16 @@ function ScaledIngredientList({
   subRecipeComponents: NonNullable<SubRecipeDetail["subRecipeComponents"]>;
   effectiveBatches: number;
 }) {
+  const { data: allIngredients } = useListIngredients();
+  const { data: upfSummary } = useGetUpfSummary();
+  const novaById = useMemo(
+    () => new Map((allIngredients ?? []).map(i => [i.id, { novaClass: i.novaClass ?? null, novaMarkers: i.novaMarkers ?? [] }])),
+    [allIngredients],
+  );
+  const subUpfById = useMemo(
+    () => new Map((upfSummary?.subRecipes ?? []).map(s => [s.subRecipeId, s])),
+    [upfSummary],
+  );
   if (ingredients.length === 0 && subRecipeComponents.length === 0) {
     return <p className="text-sm text-muted-foreground italic">No ingredients defined.</p>;
   }
@@ -970,7 +986,13 @@ function ScaledIngredientList({
           key={ing.id}
           className="flex items-center justify-between px-4 py-3 rounded-xl border border-border bg-background"
         >
-          <span className="font-medium text-sm">{ing.ingredientName}</span>
+          <span className="font-medium text-sm inline-flex items-center gap-1.5">
+            {ing.ingredientName}
+            <UpfChip
+              novaClass={novaById.get((ing as { ingredientId?: number }).ingredientId ?? -1)?.novaClass}
+              markers={novaById.get((ing as { ingredientId?: number }).ingredientId ?? -1)?.novaMarkers}
+            />
+          </span>
           <span className="text-base font-bold tabular-nums text-primary">
             {fmtScaled(ing.quantity, ing.unit, effectiveBatches)}
           </span>
@@ -984,6 +1006,16 @@ function ScaledIngredientList({
           <span className="flex items-center gap-2 text-sm font-medium">
             <Layers className="w-3.5 h-3.5 text-primary/70" />
             {c.componentSubRecipeName ?? `SR-${c.componentSubRecipeId}`}
+            {(() => {
+              const upf = subUpfById.get(c.componentSubRecipeId);
+              return upf != null && (upf.upfPercent ?? 0) > 0 ? (
+                <UpfPercentPill
+                  percent={upf.upfPercent}
+                  unclassifiedCount={upf.unclassifiedIngredients.length}
+                  upfNames={upf.upfIngredients.map(u => u.name)}
+                />
+              ) : null;
+            })()}
           </span>
           <span className="text-base font-bold tabular-nums text-primary">
             {fmtScaled(c.quantity, c.componentYieldUnit ?? "kg", effectiveBatches)}
@@ -1004,6 +1036,8 @@ function ViewSubRecipeDialog({
   onOpenChange: (v: boolean) => void;
 }) {
   const { data: detail, isLoading } = useGetSubRecipe(id, { query: { enabled: open } });
+  const { data: viewUpfSummary } = useGetUpfSummary({ query: { enabled: open } });
+  const viewUpf = viewUpfSummary?.subRecipes.find(s => s.subRecipeId === id);
   const [multiplier, setMultiplier] = useState<BatchMultiplier>(1);
   const [customBatches, setCustomBatches] = useState(1);
   const [targetYield, setTargetYield] = useState("");
@@ -1054,6 +1088,13 @@ function ViewSubRecipeDialog({
                   <span className="font-semibold">{detail.shelfLifeDays} days</span>
                 </div>
               )}
+              {viewUpf && (
+                <UpfPercentPill
+                  percent={viewUpf.upfPercent}
+                  unclassifiedCount={viewUpf.unclassifiedIngredients.length}
+                  upfNames={viewUpf.upfIngredients.map(u => u.name)}
+                />
+              )}
             </div>
 
             <div className="border border-border rounded-xl p-4 bg-secondary/10 space-y-3">
@@ -1099,6 +1140,11 @@ function ViewSubRecipeDialog({
 export default function SubRecipes() {
   const { data: subRecipes, isLoading } = useListSubRecipes();
   const { data: ingredients } = useListIngredients();
+  const { data: upfSummary } = useGetUpfSummary();
+  const subUpfById = useMemo(
+    () => new Map((upfSummary?.subRecipes ?? []).map(s => [s.subRecipeId, s])),
+    [upfSummary],
+  );
   const { createSubRecipe, deleteSubRecipe } = useAppMutations();
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search);
@@ -1116,6 +1162,8 @@ export default function SubRecipes() {
     name: i.name,
     unit: i.unit,
     processingRatio: i.processingRatio ?? null,
+    novaClass: i.novaClass ?? null,
+    novaMarkers: i.novaMarkers ?? [],
   }));
 
   const subRecipeList: SubRecipeOption[] = (subRecipes ?? []).map(sr => ({
@@ -1288,10 +1336,22 @@ export default function SubRecipes() {
                 <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{recipe.description}</p>
               )}
             </div>
-            <div className="mt-auto flex items-center justify-between pt-3 border-t border-border/60">
+            <div className="mt-auto flex items-center justify-between gap-2 pt-3 border-t border-border/60">
               <span className="text-sm font-medium">Yield: {recipe.yield} {recipe.yieldUnit}</span>
-              <span className="text-xs text-muted-foreground bg-secondary/50 px-2 py-1 rounded-md">
-                SR-{recipe.id.toString().padStart(4, '0')}
+              <span className="flex items-center gap-1.5">
+                {(() => {
+                  const upf = subUpfById.get(recipe.id);
+                  return upf ? (
+                    <UpfPercentPill
+                      percent={upf.upfPercent}
+                      unclassifiedCount={upf.unclassifiedIngredients.length}
+                      upfNames={upf.upfIngredients.map(u => u.name)}
+                    />
+                  ) : null;
+                })()}
+                <span className="text-xs text-muted-foreground bg-secondary/50 px-2 py-1 rounded-md">
+                  SR-{recipe.id.toString().padStart(4, '0')}
+                </span>
               </span>
             </div>
           </div>

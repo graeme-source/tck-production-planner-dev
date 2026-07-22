@@ -12,10 +12,12 @@
 import { useState, useEffect } from "react";
 import { useForm, type UseFormRegister, type UseFormWatch, type UseFormSetValue } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Carrot, Box, ChevronDown, Sparkles, ShoppingBag, X } from "lucide-react";
+import { Carrot, Box, ChevronDown, Sparkles, ShoppingBag, X, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Ingredient } from "@workspace/api-client-react";
+import { getGetUpfSummaryQueryKey } from "@workspace/api-client-react";
 import {
   ingredientFormSchema,
   emptyIngredientFormDefaults,
@@ -127,6 +129,51 @@ export function IngredientFormDialog({
   const toggleAllergen = (val: string) => {
     const cur = watchedAllergens;
     setValue("allergens", cur.includes(val) ? cur.filter((a: string) => a !== val) : [...cur, val]);
+  };
+
+  // ── UPF / NOVA classification ────────────────────────────────────────
+  // The class itself is a form field (manual override saves through the
+  // normal PUT). Reasoning/markers are display-only — sourced from the
+  // ingredient row, or replaced live after an "Analyze with AI" run.
+  const queryClient = useQueryClient();
+  const [novaAnalyzing, setNovaAnalyzing] = useState(false);
+  const [freshNova, setFreshNova] = useState<{ reasoning: string; markers: string[]; confidence: string; source: string } | null>(null);
+  if (!open && freshNova) setFreshNova(null);
+  const watchedNovaClass = watch("novaClass") ?? null;
+  const item = editingItem as (Ingredient & { novaReasoning?: string | null; novaMarkers?: string[]; novaConfidence?: string | null; novaSource?: string | null }) | null;
+  const novaDisplay = freshNova ?? (item?.novaReasoning || item?.novaMarkers?.length
+    ? { reasoning: item.novaReasoning ?? "", markers: item.novaMarkers ?? [], confidence: item.novaConfidence ?? "", source: item.novaSource ?? "ai" }
+    : null);
+
+  const analyzeNova = async () => {
+    if (!editingItem) return;
+    setNovaAnalyzing(true);
+    try {
+      const res = await fetch(`${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/upf/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ ingredientIds: [editingItem.id], force: true }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(err.error ?? "UPF analysis failed");
+      }
+      const json = await res.json() as { results?: { ingredientId: number; novaClass: number | null; markers: string[]; reasoning: string; confidence: string }[] };
+      const fresh = json.results?.find(r => r.ingredientId === editingItem.id);
+      if (fresh) {
+        // Keep the form field in sync so saving doesn't write the stale
+        // value back as a manual override.
+        setValue("novaClass", fresh.novaClass ?? null);
+        setFreshNova({ reasoning: fresh.reasoning, markers: fresh.markers, confidence: fresh.confidence, source: "ai" });
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/ingredients"] });
+      queryClient.invalidateQueries({ queryKey: getGetUpfSummaryQueryKey() });
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "UPF analysis failed");
+    } finally {
+      setNovaAnalyzing(false);
+    }
   };
 
   const onSubmit = (data: IngredientFormValues) => {
@@ -1011,6 +1058,70 @@ export function IngredientFormDialog({
                         </button>
                       ))}
                     </div>
+                  </div>
+
+                  {/* UPF / NOVA classification */}
+                  <div className="border-t border-border/60 pt-4">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-sm font-medium block">UPF / NOVA classification</label>
+                      {editingItem && (
+                        <button
+                          type="button"
+                          onClick={analyzeNova}
+                          disabled={novaAnalyzing}
+                          className="text-xs inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-border hover:bg-secondary/50 transition-colors disabled:opacity-50"
+                          title="Ask AI to (re)classify this ingredient from its name, brand and label declaration"
+                        >
+                          {novaAnalyzing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                          {novaAnalyzing ? "Analyzing…" : "Analyze with AI"}
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-2">
+                      NOVA 1 = unprocessed · 2 = culinary ingredient · 3 = processed · 4 = ultra-processed (UPF).
+                      Changing it here saves a manual override the AI won't touch.
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {([
+                        { value: null, label: "Unclassified" },
+                        { value: 1, label: "NOVA 1" },
+                        { value: 2, label: "NOVA 2" },
+                        { value: 3, label: "NOVA 3" },
+                        { value: 4, label: "NOVA 4 — UPF" },
+                      ] as { value: number | null; label: string }[]).map(opt => (
+                        <button
+                          key={String(opt.value)}
+                          type="button"
+                          onClick={() => setValue("novaClass", opt.value, { shouldDirty: true })}
+                          className={cn(
+                            "px-2.5 py-1 rounded-full text-xs font-medium border transition-colors",
+                            watchedNovaClass === opt.value
+                              ? opt.value === 4
+                                ? "bg-red-600 text-white border-red-600"
+                                : "bg-primary text-primary-foreground border-primary"
+                              : "bg-secondary/40 border-border text-muted-foreground hover:bg-secondary",
+                          )}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                    {novaDisplay && (
+                      <div className="mt-2 text-xs text-muted-foreground space-y-1">
+                        {novaDisplay.reasoning && (
+                          <p>
+                            <span className="font-medium">{novaDisplay.source === "manual" ? "Manual: " : "AI: "}</span>
+                            {novaDisplay.reasoning}
+                            {novaDisplay.confidence && novaDisplay.source !== "manual" && (
+                              <span className="opacity-70"> ({novaDisplay.confidence} confidence)</span>
+                            )}
+                          </p>
+                        )}
+                        {novaDisplay.markers.length > 0 && (
+                          <p><span className="font-medium">UPF markers:</span> {novaDisplay.markers.join(", ")}</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

@@ -8,8 +8,10 @@ import { cn } from "@/lib/utils";
 import {
   Search, Plus, Trash2, Edit2, Loader2, ExternalLink, Upload,
   FileText, CheckCircle2, XCircle, AlertTriangle, RefreshCw,
-  Carrot, Box, Printer, X, ChefHat, ClipboardList, QrCode,
+  Carrot, Box, Printer, X, ChefHat, ClipboardList, QrCode, Sparkles,
 } from "lucide-react";
+import { NovaPill } from "@/components/upf-badge";
+import { getGetUpfSummaryQueryKey } from "@workspace/api-client-react";
 import {
   buildIngredientPayload,
   emptyIngredientFormDefaults,
@@ -429,6 +431,40 @@ export default function Inventory() {
   const debouncedSearch = useDebouncedValue(search);
   const [filterCategory, setFilterCategory] = useState("all");
   const [filterUsage, setFilterUsage] = useState<"all" | "used" | "unused">("all");
+  const [filterNova, setFilterNova] = useState<"all" | "upf" | "unclassified-in-use">("all");
+  const [upfSweepRunning, setUpfSweepRunning] = useState(false);
+
+  // Ingredients used in a recipe/sub-recipe with no NOVA class yet — the
+  // "Analyze UPF" button shows the count and classifies exactly these.
+  const unclassifiedInUse = (allIngredients ?? []).filter(i => {
+    const rec = i as Record<string, unknown>;
+    const inUse = (Number(rec.usedInRecipes) || 0) + (Number(rec.usedInSubRecipes) || 0) > 0;
+    return inUse && i.novaClass == null;
+  }).length;
+
+  const runUpfSweep = async () => {
+    setUpfSweepRunning(true);
+    try {
+      const res = await fetch(`${BASE}/api/upf/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "UPF analysis failed");
+      toast({
+        title: `Analyzed ${data.analyzed} ingredient${data.analyzed === 1 ? "" : "s"}`,
+        description: `${data.upfCount} classified as UPF (NOVA 4). Recipe UPF percentages are updated.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/ingredients"] });
+      queryClient.invalidateQueries({ queryKey: getGetUpfSummaryQueryKey() });
+    } catch (e: any) {
+      toast({ title: "UPF analysis failed", description: e.message, variant: "destructive" });
+    } finally {
+      setUpfSweepRunning(false);
+    }
+  };
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Ingredient | null>(null);
@@ -456,9 +492,13 @@ export default function Inventory() {
       const matchesUsage =
         filterUsage === "all" ||
         (filterUsage === "used" ? totalUsage > 0 : totalUsage === 0);
-      return matchesSearch && matchesCategory && matchesUsage;
+      const matchesNova =
+        filterNova === "all" ||
+        (filterNova === "upf" && i.novaClass === 4) ||
+        (filterNova === "unclassified-in-use" && i.novaClass == null && totalUsage > 0);
+      return matchesSearch && matchesCategory && matchesUsage && matchesNova;
     });
-  }, [tabItems, debouncedSearch, filterCategory, filterUsage]);
+  }, [tabItems, debouncedSearch, filterCategory, filterUsage, filterNova]);
 
   const supplierMap = Object.fromEntries((suppliers ?? []).map(s => [s.id, s.name]));
   const categoryOptions = activeTab === "ingredients" ? INGREDIENT_CATEGORIES : SUPPLY_CATEGORIES;
@@ -495,6 +535,19 @@ export default function Inventory() {
             {activeTab === "ingredients" && canManage && (
               <button onClick={generateQrCodes} disabled={generatingQr} className="px-4 py-2.5 border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors text-sm disabled:opacity-50" title="Generate QR codes for any ingredients that don't have one yet">
                 {generatingQr ? <Loader2 className="w-4 h-4 animate-spin" /> : <QrCode className="w-4 h-4" />} Generate QR codes
+              </button>
+            )}
+            {activeTab === "ingredients" && canManage && (
+              <button
+                onClick={runUpfSweep}
+                disabled={upfSweepRunning || unclassifiedInUse === 0}
+                title={unclassifiedInUse === 0
+                  ? "Every ingredient used in a recipe already has a NOVA classification"
+                  : `Classify ${unclassifiedInUse} in-use ingredient${unclassifiedInUse === 1 ? "" : "s"} on the NOVA/UPF scale with AI`}
+                className="px-4 py-2.5 border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors text-sm disabled:opacity-50"
+              >
+                {upfSweepRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                {upfSweepRunning ? "Analyzing…" : `Analyze UPF${unclassifiedInUse > 0 ? ` (${unclassifiedInUse})` : ""}`}
               </button>
             )}
             {activeTab === "ingredients" && (
@@ -582,6 +635,17 @@ export default function Inventory() {
           <option value="used">Used in recipes</option>
           <option value="unused">Not used</option>
         </select>
+        {activeTab === "ingredients" && (
+          <select
+            value={filterNova}
+            onChange={e => setFilterNova(e.target.value as "all" | "upf" | "unclassified-in-use")}
+            className="px-3 py-2 bg-card border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          >
+            <option value="all">All NOVA</option>
+            <option value="upf">UPF only (NOVA 4)</option>
+            <option value="unclassified-in-use">Unclassified (in use)</option>
+          </select>
+        )}
       </div>
 
       {isLoading ? (
@@ -609,6 +673,7 @@ export default function Inventory() {
               <tr>
                 <th className="text-left py-3 px-4 font-medium text-muted-foreground">Name</th>
                 <th className="text-left py-3 px-3 font-medium text-muted-foreground">Category</th>
+                {activeTab === "ingredients" && <th className="text-left py-3 px-3 font-medium text-muted-foreground">NOVA</th>}
                 <th className="text-left py-3 px-3 font-medium text-muted-foreground">Unit</th>
                 <th className="text-right py-3 px-3 font-medium text-muted-foreground">Pack Size</th>
                 {activeTab === "supplies" && <th className="text-right py-3 px-3 font-medium text-muted-foreground">Pallet</th>}
@@ -640,6 +705,11 @@ export default function Inventory() {
                     <td className="py-3 px-3 text-muted-foreground text-xs">
                       {item.category ? categoryLabel(item.category, itemPerishable) : <span className="opacity-40">—</span>}
                     </td>
+                    {activeTab === "ingredients" && (
+                      <td className="py-3 px-3" title={(item as Record<string, unknown>).novaReasoning as string | undefined}>
+                        <NovaPill novaClass={item.novaClass} markers={item.novaMarkers} />
+                      </td>
+                    )}
                     <td className="py-3 px-3 text-muted-foreground">{item.unit}</td>
                     <td className="py-3 px-3 text-right tabular-nums">
                       {Number(item.packWeight) > 0 ? `${Number(item.packWeight)} ${item.unit}` : <span className="text-muted-foreground opacity-40">—</span>}
@@ -715,7 +785,7 @@ export default function Inventory() {
             </tbody>
             <tfoot className="border-t border-border bg-secondary/10">
               <tr>
-                <td colSpan={activeTab === "supplies" ? 10 : 9} className="py-2 px-4 text-xs text-muted-foreground">
+                <td colSpan={10} className="py-2 px-4 text-xs text-muted-foreground">
                   {filtered.length} {filtered.length === 1 ? "item" : "items"}
                   {filtered.length !== tabItems.length && ` (filtered from ${tabItems.length})`}
                 </td>

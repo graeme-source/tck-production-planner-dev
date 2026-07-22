@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useListRecipes, useListIngredients, useListSubRecipes, useGetRecipe, useListCategoryDefaults } from "@workspace/api-client-react";
+import { useListRecipes, useListIngredients, useListSubRecipes, useGetRecipe, useListCategoryDefaults, useGetUpfSummary } from "@workspace/api-client-react";
+import { UpfChip, UpfPercentPill } from "@/components/upf-badge";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
@@ -184,6 +185,8 @@ type IngredientOption = {
   costPerPack: number;
   category?: string | null;
   supplierName?: string | null;
+  novaClass?: number | null;
+  novaMarkers?: string[];
 };
 
 type SubRecipeOption = {
@@ -247,6 +250,12 @@ function RecipeForm({
   const { fields: subFields, append: appendSub, remove: removeSub } = useFieldArray({ control, name: "subRecipes" });
 
   const [localIngredients, setLocalIngredients] = useState(initialIngredients);
+  // Sub-recipe UPF % lookup for the per-row chip in the Sub Recipes section.
+  const { data: formUpfSummary } = useGetUpfSummary();
+  const formSubUpfById = useMemo(
+    () => new Map((formUpfSummary?.subRecipes ?? []).map(s => [s.subRecipeId, s])),
+    [formUpfSummary],
+  );
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAddTargetIndex, setQuickAddTargetIndex] = useState<number | null>(null);
   // Per-row display unit for kg ingredients: "g" (default) or "kg"
@@ -669,8 +678,9 @@ function RecipeForm({
                               />
                             )}
                           />
-                          <span className="text-[11px] text-muted-foreground truncate" title={thisIng?.supplierName ?? undefined}>
-                            {thisIng?.supplierName ?? <span className="text-muted-foreground/40">—</span>}
+                          <span className="text-[11px] text-muted-foreground truncate inline-flex items-center gap-1" title={thisIng?.supplierName ?? undefined}>
+                            <UpfChip novaClass={thisIng?.novaClass} markers={thisIng?.novaMarkers} />
+                            <span className="truncate">{thisIng?.supplierName ?? <span className="text-muted-foreground/40">—</span>}</span>
                           </span>
                           {(() => {
                             const isKg = thisIng?.unit === "kg";
@@ -793,7 +803,16 @@ function RecipeForm({
                             <option value={0} disabled>Select…</option>
                             {subRecipes.map(s => <option key={s.id} value={s.id}>{s.name} ({s.yieldUnit})</option>)}
                           </select>
-                          <span className="text-[11px] text-muted-foreground/40">—</span>
+                          {(() => {
+                            const subUpf = formSubUpfById.get(Number(watchedSubRecipes?.[index]?.subRecipeId));
+                            return subUpf != null && (subUpf.upfPercent ?? 0) > 0 ? (
+                              <UpfPercentPill
+                                percent={subUpf.upfPercent}
+                                unclassifiedCount={subUpf.unclassifiedIngredients.length}
+                                upfNames={subUpf.upfIngredients.map(u => u.name)}
+                              />
+                            ) : <span className="text-[11px] text-muted-foreground/40">—</span>;
+                          })()}
                           {(() => {
                             const thisSub = subRecipes.find(s => s.id === Number(watchedSubRecipes?.[index]?.subRecipeId));
                             const isKg = thisSub?.yieldUnit === "kg";
@@ -1352,6 +1371,7 @@ function EditRecipeDialog({
 // ── Cost Breakdown Dialog ─────────────────────────────────────────────────────
 
 type BreakdownIngredient = {
+  ingredientId?: number | null;
   ingredientName: string | null;
   unit: string | null;
   quantity: number;
@@ -1372,6 +1392,7 @@ type BreakdownSubRecipe = {
 };
 
 type BreakdownRawIngredient = {
+  ingredientId?: number | null;
   ingredientName: string | null;
   unit: string | null;
   quantity: number;
@@ -1381,19 +1402,37 @@ type BreakdownRawIngredient = {
   lineCostPortion: number;
 };
 
-function SubRecipeBreakdownRow({ sub, servingUnit }: { sub: BreakdownSubRecipe; servingUnit: string }) {
+/** ingredientId → {novaClass, novaMarkers} lookup used to put UPF chips on
+ *  breakdown rows. Built from the already-cached ingredients list. */
+type NovaLookup = Map<number, { novaClass: number | null; novaMarkers: string[] }>;
+
+function SubRecipeBreakdownRow({ sub, servingUnit, novaById, subUpf }: {
+  sub: BreakdownSubRecipe;
+  servingUnit: string;
+  novaById?: NovaLookup;
+  subUpf?: { upfPercent?: number | null; upfIngredients: { name: string }[]; unclassifiedIngredients: string[] };
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
       <tr className="bg-accent/5 border-t border-border/40">
         <td className="pl-4 pr-2 py-2.5">
-          <button
-            onClick={() => setOpen(v => !v)}
-            className="flex items-center gap-1.5 font-medium text-accent hover:text-accent/80 transition-colors text-sm"
-          >
-            {open ? <ChevronDown className="w-3.5 h-3.5 flex-shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 flex-shrink-0" />}
-            {sub.subRecipeName ?? "—"}
-          </button>
+          <span className="inline-flex items-center gap-1.5">
+            <button
+              onClick={() => setOpen(v => !v)}
+              className="flex items-center gap-1.5 font-medium text-accent hover:text-accent/80 transition-colors text-sm"
+            >
+              {open ? <ChevronDown className="w-3.5 h-3.5 flex-shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 flex-shrink-0" />}
+              {sub.subRecipeName ?? "—"}
+            </button>
+            {subUpf != null && (subUpf.upfPercent ?? 0) > 0 && (
+              <UpfPercentPill
+                percent={subUpf.upfPercent}
+                unclassifiedCount={subUpf.unclassifiedIngredients.length}
+                upfNames={subUpf.upfIngredients.map(u => u.name)}
+              />
+            )}
+          </span>
         </td>
         <td className="px-2 py-2.5 text-xs text-muted-foreground text-right">
           {fmtQty(sub.quantity, sub.unit)}
@@ -1410,6 +1449,13 @@ function SubRecipeBreakdownRow({ sub, servingUnit }: { sub: BreakdownSubRecipe; 
         <tr key={i} className="bg-accent/5">
           <td className="pl-10 pr-2 py-1.5 text-xs text-muted-foreground flex items-center gap-1">
             <span className="text-accent/40 mr-1">└</span>{b.ingredientName ?? "—"}
+            {b.ingredientId != null && (
+              <UpfChip
+                novaClass={novaById?.get(b.ingredientId)?.novaClass}
+                markers={novaById?.get(b.ingredientId)?.novaMarkers}
+                className="ml-1"
+              />
+            )}
           </td>
           <td className="px-2 py-1.5 text-xs text-muted-foreground text-right">
             {fmtQty(b.quantity, b.unit)}
@@ -1429,10 +1475,23 @@ function SubRecipeBreakdownRow({ sub, servingUnit }: { sub: BreakdownSubRecipe; 
 
 function RecipeCostBreakdownDialog({ id, open, onOpenChange }: { id: number; open: boolean; onOpenChange: (v: boolean) => void }) {
   const { data: detail, isLoading } = useGetRecipe(id, { query: { enabled: open } });
+  const { data: allIngredients } = useListIngredients({ query: { enabled: open } });
+  const { data: upfSummary } = useGetUpfSummary({ query: { enabled: open } });
+
+  const novaById: NovaLookup = useMemo(
+    () => new Map((allIngredients ?? []).map(i => [i.id, { novaClass: i.novaClass ?? null, novaMarkers: i.novaMarkers ?? [] }])),
+    [allIngredients],
+  );
+  const subUpfById = useMemo(
+    () => new Map((upfSummary?.subRecipes ?? []).map(s => [s.subRecipeId, s])),
+    [upfSummary],
+  );
+  const recipeUpf = upfSummary?.recipes.find(r => r.recipeId === id);
 
   const servings = Number(detail?.servings ?? 1);
   const servingUnit = detail?.servingUnit ?? "portion";
   const rawIngredients: BreakdownRawIngredient[] = (detail?.ingredients ?? []).map(i => ({
+    ingredientId: (i as { ingredientId?: number }).ingredientId ?? null,
     ingredientName: i.ingredientName,
     unit: i.unit,
     quantity: i.quantity,
@@ -1465,8 +1524,15 @@ function RecipeCostBreakdownDialog({ id, open, onOpenChange }: { id: number; ope
             Cost Breakdown — {detail?.name ?? "…"}
           </DialogTitle>
           {detail && (
-            <p className="text-sm text-muted-foreground mt-0.5">
-              Batch: {servings} {servingUnit} · All costs shown per {servingUnit}
+            <p className="text-sm text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
+              <span>Batch: {servings} {servingUnit} · All costs shown per {servingUnit}</span>
+              {recipeUpf && (
+                <UpfPercentPill
+                  percent={recipeUpf.upfPercent}
+                  unclassifiedCount={recipeUpf.unclassifiedIngredients.length}
+                  upfNames={recipeUpf.upfIngredients.map(u => u.name)}
+                />
+              )}
             </p>
           )}
         </DialogHeader>
@@ -1488,7 +1554,17 @@ function RecipeCostBreakdownDialog({ id, open, onOpenChange }: { id: number; ope
                 {/* Ingredients */}
                 {rawIngredients.map((r, i) => (
                   <tr key={i} className="hover:bg-secondary/10">
-                    <td className="pl-4 pr-2 py-2.5 font-medium text-sm">{r.ingredientName ?? "—"}</td>
+                    <td className="pl-4 pr-2 py-2.5 font-medium text-sm">
+                      <span className="inline-flex items-center gap-1.5">
+                        {r.ingredientName ?? "—"}
+                        {r.ingredientId != null && (
+                          <UpfChip
+                            novaClass={novaById.get(r.ingredientId)?.novaClass}
+                            markers={novaById.get(r.ingredientId)?.novaMarkers}
+                          />
+                        )}
+                      </span>
+                    </td>
                     <td className="px-2 py-2.5 text-right">
                       <span className="text-xs text-muted-foreground">{fmtQty(r.quantity, r.unit)}</span>
                       {r.processingRatio < 1 && (
@@ -1505,7 +1581,13 @@ function RecipeCostBreakdownDialog({ id, open, onOpenChange }: { id: number; ope
 
                 {/* Sub-recipes */}
                 {subRecipes.map((s, i) => (
-                  <SubRecipeBreakdownRow key={i} sub={s} servingUnit={servingUnit} />
+                  <SubRecipeBreakdownRow
+                    key={i}
+                    sub={s}
+                    servingUnit={servingUnit}
+                    novaById={novaById}
+                    subUpf={s.subRecipeId != null ? subUpfById.get(s.subRecipeId) : undefined}
+                  />
                 ))}
 
                 {/* Total row */}
@@ -1817,7 +1899,13 @@ function RecipeIngredientDeckDialog({ id, open, onOpenChange }: { id: number; op
   );
 }
 
-function RecipeCard({ recipe, onEdit, onDelete, onBreakdown, onDuplicate }: { recipe: RecipeItem; onEdit: () => void; onDelete: () => void; onBreakdown: () => void; onDuplicate: () => void }) {
+type RecipeUpfInfo = {
+  upfPercent?: number | null;
+  upfIngredients: { name: string }[];
+  unclassifiedIngredients: string[];
+};
+
+function RecipeCard({ recipe, upf, onEdit, onDelete, onBreakdown, onDuplicate }: { recipe: RecipeItem; upf?: RecipeUpfInfo; onEdit: () => void; onDelete: () => void; onBreakdown: () => void; onDuplicate: () => void }) {
   const margin = recipe.grossMargin;
   const recipeColor = (recipe as any).color as string | null;
   const [nutritionalsOpen, setNutritionalsOpen] = useState(false);
@@ -1910,7 +1998,14 @@ function RecipeCard({ recipe, onEdit, onDelete, onBreakdown, onDuplicate }: { re
           <p className="text-xs text-muted-foreground italic text-center">Set an RRP to see margin</p>
         )}
 
-        <div className="flex justify-end mt-auto pt-1">
+        <div className="flex justify-between items-center mt-auto pt-1">
+          {upf ? (
+            <UpfPercentPill
+              percent={upf.upfPercent}
+              unclassifiedCount={upf.unclassifiedIngredients.length}
+              upfNames={upf.upfIngredients.map(u => u.name)}
+            />
+          ) : <span />}
           <MarginBadge margin={margin} />
         </div>
       </div>
@@ -1925,6 +2020,7 @@ export default function Recipes() {
   const { data: ingredients } = useListIngredients();
   const { data: subRecipesData } = useListSubRecipes();
   const { data: categoryDefaultsData } = useListCategoryDefaults();
+  const { data: upfSummary } = useGetUpfSummary();
   const { createRecipe, deleteRecipe } = useAppMutations();
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -1937,7 +2033,7 @@ export default function Recipes() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [coreMenuOnly, setCoreMenuOnly] = useState(false);
   const [viewMode, setViewMode] = useState<"cards" | "table">("table");
-  type SortKey = "name" | "category" | "rrp" | "packCost" | "grossProfit" | "gpm";
+  type SortKey = "name" | "category" | "rrp" | "packCost" | "grossProfit" | "gpm" | "upf";
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const { data: duplicateDetail } = useGetRecipe(duplicatingId!, { query: { enabled: duplicatingId !== null } });
@@ -2002,6 +2098,8 @@ export default function Recipes() {
     costPerPack: Number(i.costPerPack) || 0,
     category: i.category ?? null,
     supplierName: (i as unknown as { supplierName?: string | null }).supplierName ?? null,
+    novaClass: i.novaClass ?? null,
+    novaMarkers: i.novaMarkers ?? [],
   }));
   const subRecipeList: SubRecipeOption[] = (subRecipesData ?? []).map(s => ({
     id: s.id,
@@ -2037,6 +2135,11 @@ export default function Recipes() {
     return true;
   });
 
+  const recipeUpfById = useMemo(
+    () => new Map((upfSummary?.recipes ?? []).map(r => [r.recipeId, r])),
+    [upfSummary],
+  );
+
   // Table sort. Recipes with no RRP set (no margin) sort to the bottom on
   // the money columns regardless of direction's natural ordering.
   const sortValue = (r: RecipeItem, key: SortKey): number | string => {
@@ -2048,6 +2151,10 @@ export default function Recipes() {
       case "packCost": return Number(r.totalPackCost) || 0;
       case "grossProfit": return rrp > 0 ? rrp - (Number(r.totalPackCost) || 0) : Number.NEGATIVE_INFINITY;
       case "gpm": return r.grossMargin == null ? Number.NEGATIVE_INFINITY : Number(r.grossMargin);
+      case "upf": {
+        const pct = recipeUpfById.get(r.id)?.upfPercent;
+        return pct == null ? Number.NEGATIVE_INFINITY : pct;
+      }
     }
   };
   const sortedRecipes = [...filteredRecipes].sort((a, b) => {
@@ -2266,6 +2373,7 @@ export default function Recipes() {
             <RecipeCard
               key={recipe.id}
               recipe={recipe as RecipeItem}
+              upf={recipeUpfById.get(recipe.id)}
               onEdit={() => setEditingId(recipe.id)}
               onDelete={() => { if (confirm(`Delete "${recipe.name}"?`)) deleteRecipe.mutate({ id: recipe.id }); }}
               onBreakdown={() => setBreakdownId(recipe.id)}
@@ -2284,6 +2392,7 @@ export default function Recipes() {
                 {sortTh("Total pack cost", "packCost", "right")}
                 {sortTh("Gross profit", "grossProfit", "right")}
                 {sortTh("GP margin", "gpm", "right")}
+                {sortTh("UPF", "upf", "right")}
                 <th className="w-10" />
               </tr>
             </thead>
@@ -2313,6 +2422,18 @@ export default function Recipes() {
                     <td className="py-2.5 px-3 text-right tabular-nums">£{fmt(r.totalPackCost)}</td>
                     <td className="py-2.5 px-3 text-right tabular-nums">{hasRrp ? `£${fmt(gp)}` : "—"}</td>
                     <td className={cn("py-2.5 px-3 text-right tabular-nums font-semibold", mColor)}>{m == null ? "—" : `${m.toFixed(1)}%`}</td>
+                    <td className="py-2.5 px-3 text-right">
+                      {(() => {
+                        const upf = recipeUpfById.get(r.id);
+                        return (
+                          <UpfPercentPill
+                            percent={upf?.upfPercent}
+                            unclassifiedCount={upf?.unclassifiedIngredients.length ?? 0}
+                            upfNames={upf?.upfIngredients.map(u => u.name)}
+                          />
+                        );
+                      })()}
+                    </td>
                     <td className="py-2.5 px-2 text-right" onClick={(e) => e.stopPropagation()}>
                       <button
                         type="button"
@@ -2327,7 +2448,7 @@ export default function Recipes() {
                 );
               })}
               {sortedRecipes.length === 0 && (
-                <tr><td colSpan={7} className="py-8 text-center text-muted-foreground text-sm">No recipes match your filters.</td></tr>
+                <tr><td colSpan={8} className="py-8 text-center text-muted-foreground text-sm">No recipes match your filters.</td></tr>
               )}
             </tbody>
           </table>
