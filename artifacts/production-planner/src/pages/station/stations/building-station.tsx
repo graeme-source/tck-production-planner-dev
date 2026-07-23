@@ -1657,10 +1657,19 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                           {/* Pack adjustment — this builder's OWN loose packs */}
                           <PackAdjustment planId={plan.id} item={item} isOnBreak={isOnBreak} stationType={stationType} stationExtraPacks={myExtraPacks} />
 
-                          {/* Move to next recipe — a PER-BUILDER action. Logs what
-                              this builder has built so far to the oven line and advances
-                              THEM only. The other builder keeps building on this recipe;
-                              it becomes globally complete once both have moved on. */}
+                          {/* Recipe finished — an ITEM-LEVEL declaration. Once set,
+                              ovens/wrapping work to the actual built count (short or
+                              over), not the planned target. */}
+                          <RecipeFinishedControls
+                            planId={plan.id}
+                            item={item}
+                            combinedCount={combinedCount}
+                            isOnBreak={isOnBreak}
+                          />
+
+                          {/* Move to next recipe — a PER-BUILDER action, pure
+                              navigation. Advances THIS builder only; the other
+                              builder can keep building on this recipe. */}
                           <MoveToNextRecipeButton
                             item={item}
                             combinedCount={combinedCount}
@@ -2018,6 +2027,101 @@ function MoveToNextRecipeButton({
     >
       {isShort ? <AlertTriangle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
       Move to Next Recipe →
+    </button>
+  );
+}
+
+/**
+ * Builder-facing "Recipe Finished" control. Sets/clears the item-level
+ * builderMarkedCompleteAt flag: once set, ovens and wrapping work to the
+ * ACTUAL built count (short of, equal to, or over the planned target)
+ * instead of max(planned, built) — the planned target stays visible as
+ * reference only. Soft signal: batches/packs can still be added afterwards
+ * and every downstream number simply grows to match.
+ */
+function RecipeFinishedControls({
+  planId,
+  item,
+  combinedCount,
+  isOnBreak,
+}: {
+  planId: number;
+  item: ProductionPlanItem;
+  combinedCount: number;
+  isOnBreak: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const [runAction, busy] = useGuardedAction({
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(planId) }),
+  });
+
+  const target = item.batchesTarget ?? 0;
+  const extras = item.extraPacksBuilt ?? 0;
+  const finished = !!item.builderMarkedCompleteAt;
+  const isShort = combinedCount < target;
+
+  const markFinished = () => {
+    if (isOnBreak) return;
+    const summary = `${combinedCount}/${target} batch${target === 1 ? "" : "es"} built (both builders combined)` +
+      (extras > 0 ? ` + ${extras} loose pack${extras === 1 ? "" : "s"}` : "");
+    const shortWarning = isShort
+      ? `\n\nYou are ${target - combinedCount} batch${target - combinedCount === 1 ? "" : "es"} SHORT of the plan — ovens and wrapping will work to the ${combinedCount} that exist, not the planned ${target}.`
+      : "";
+    const msg =
+      `Mark this recipe FINISHED for the day?\n\n` +
+      `${summary}.${shortWarning}\n\n` +
+      `Ovens and wrapping will process exactly what was built. You can still add batches or packs afterwards if more get made.`;
+    if (!window.confirm(msg)) return;
+    runAction((signal) =>
+      guardedFetch(`/api/production-plans/${planId}/items/${item.id}/builder-complete`, {
+        method: "POST", signal,
+      })
+    );
+  };
+
+  const undoFinished = () => {
+    if (isOnBreak) return;
+    if (!window.confirm("Reopen this recipe? Ovens and wrapping go back to showing the planned target until it's marked finished again.")) return;
+    runAction((signal) =>
+      guardedFetch(`/api/production-plans/${planId}/items/${item.id}/builder-complete`, {
+        method: "DELETE", signal,
+      })
+    );
+  };
+
+  if (finished) {
+    return (
+      <div className="w-full mt-2 flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border-2 border-emerald-400 dark:border-emerald-600 bg-emerald-50 dark:bg-emerald-900/20">
+        <span className="flex items-center gap-2 text-sm font-semibold text-emerald-800 dark:text-emerald-200">
+          <CheckCircle2 className="w-4 h-4" />
+          Finished — ovens working to {combinedCount} batch{combinedCount === 1 ? "" : "es"}{extras > 0 ? ` + ${extras} pack${extras === 1 ? "" : "s"}` : ""}
+        </span>
+        <button
+          type="button"
+          onClick={undoFinished}
+          disabled={busy || isOnBreak}
+          className="text-xs text-muted-foreground hover:text-foreground underline disabled:opacity-40"
+        >
+          Undo
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={markFinished}
+      disabled={busy || isOnBreak}
+      className={cn(
+        "w-full mt-2 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold border-2 transition-colors disabled:opacity-40",
+        isShort
+          ? "border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+          : "border-emerald-400 dark:border-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100 dark:hover:bg-emerald-900/40",
+      )}
+    >
+      <CheckCircle2 className="w-4 h-4" />
+      Recipe Finished — send built count to ovens
     </button>
   );
 }

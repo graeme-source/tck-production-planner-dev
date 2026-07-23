@@ -5433,6 +5433,62 @@ router.patch("/:id/items/:itemId/extra-packs-built", async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
+// POST /:id/items/:itemId/builder-complete — builders declare the recipe
+// FINISHED for the day. What was actually built (short of, equal to, or over
+// the planned batchesTarget) becomes the effective target downstream:
+// effectiveBatchesTarget() switches from max(planned, built) to the real
+// built count, so ovens and wrapping stop chasing planned batches that were
+// never made. The planned target remains visible everywhere as reference.
+//
+// Soft signal only — batch logging is never capped by it, so if builders
+// come back and add more batches/packs the downstream numbers simply grow.
+// Idempotent: no-op if already set. DELETE undoes it (any station user —
+// builders must be able to reverse an accidental tap without an admin).
+// ──────────────────────────────────────────────────────────────────────────────
+router.post("/:id/items/:itemId/builder-complete", async (req, res) => {
+  const planId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+
+  const [item] = await db.select({
+    id: productionPlanItemsTable.id,
+    builderMarkedCompleteAt: productionPlanItemsTable.builderMarkedCompleteAt,
+  })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+  if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
+
+  if (item.builderMarkedCompleteAt) {
+    res.json({ itemId, builderMarkedCompleteAt: item.builderMarkedCompleteAt });
+    return;
+  }
+
+  const [updated] = await db
+    .update(productionPlanItemsTable)
+    .set({ builderMarkedCompleteAt: new Date() })
+    .where(eq(productionPlanItemsTable.id, itemId))
+    .returning({ builderMarkedCompleteAt: productionPlanItemsTable.builderMarkedCompleteAt });
+
+  res.json({ itemId, builderMarkedCompleteAt: updated.builderMarkedCompleteAt });
+});
+
+router.delete("/:id/items/:itemId/builder-complete", async (req, res) => {
+  const planId = Number(req.params.id);
+  const itemId = Number(req.params.itemId);
+
+  const [item] = await db.select({ id: productionPlanItemsTable.id })
+    .from(productionPlanItemsTable)
+    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
+  if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
+
+  await db
+    .update(productionPlanItemsTable)
+    .set({ builderMarkedCompleteAt: null })
+    .where(eq(productionPlanItemsTable.id, itemId));
+
+  res.json({ itemId, builderMarkedCompleteAt: null });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
 // PATCH /:id/items/:itemId/leftover-filling — record leftover filling weight
 // ──────────────────────────────────────────────────────────────────────────────
 router.patch("/:id/items/:itemId/leftover-filling", async (req, res) => {
