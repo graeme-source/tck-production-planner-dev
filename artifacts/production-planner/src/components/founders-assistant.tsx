@@ -637,9 +637,13 @@ export function FoundersAssistant({ open, onClose, isFounder }: FoundersAssistan
             ))}
           </div>
         )}
-      <div className={cn("flex flex-col flex-1 min-w-0", threadsView && "hidden")}>
+      {/* min-h-0 on both levels is what makes the message list actually
+          scroll: without it, flex children default to min-height:auto and
+          grow to fit the whole conversation, pushing the bottom (and the
+          composer) off-screen with no way to scroll to it. */}
+      <div className={cn("flex flex-col flex-1 min-w-0 min-h-0", threadsView && "hidden")}>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-4 space-y-4">
         {messages.map(msg => {
           const text = getMessageText(msg.content);
           const images = getMessageImages(msg.content);
