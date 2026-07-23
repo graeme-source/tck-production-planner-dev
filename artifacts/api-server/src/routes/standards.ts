@@ -12,6 +12,8 @@ import { Router, type IRouter, type Request, type Response, type NextFunction } 
 import multer from "multer";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import { buildSopFromVideo, ffmpegAvailable } from "../lib/sop-video";
+import { isClaudeConfigured } from "../lib/ai/claude";
 
 const router: IRouter = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -443,6 +445,91 @@ router.patch("/:id/reorder", requireAuth, async (req, res) => {
   }
   await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = ${id}`);
   res.json({ ok: true });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Build SOP from video — AI drafting.
+//
+// Takes the video already uploaded on one step, extracts keyframes with
+// ffmpeg (plus an audio transcript when OPENAI_API_KEY is configured),
+// asks Claude to break the process into steps, and inserts the drafted
+// steps — each with an extracted photo — directly AFTER the source step.
+// The original video stays untouched on its step; the team then reviews
+// and polishes the draft with the normal step editor.
+//
+// Synchronous like /api/upf/analyze: the request runs the whole pipeline
+// (typically 30-90s) and the client waits with a spinner. One build per
+// SOP at a time.
+// ─────────────────────────────────────────────────────────────────────────────
+const sopBuildsInFlight = new Set<number>();
+
+router.post("/:id/steps/:stepId/build-from-video", requireAuth, async (req, res) => {
+  const sopId = Number(req.params.id);
+  const stepId = Number(req.params.stepId);
+  if (!Number.isFinite(sopId) || !Number.isFinite(stepId)) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  if (!isClaudeConfigured()) {
+    res.status(503).json({ error: "AI drafting requires the Anthropic API key. Ask an admin to set ANTHROPIC_API_KEY." });
+    return;
+  }
+  if (!(await ffmpegAvailable())) {
+    res.status(503).json({ error: "ffmpeg is not installed on the server — video analysis unavailable." });
+    return;
+  }
+  if (sopBuildsInFlight.has(sopId)) {
+    res.status(409).json({ error: "A build is already running for this SOP — wait for it to finish." });
+    return;
+  }
+
+  const rows = await db.execute<{ video_mime: string | null; video_data: Buffer | null; position: number }>(sql`
+    SELECT video_mime, video_data, position FROM sop_steps WHERE id = ${stepId} AND sop_id = ${sopId}
+  `);
+  const step = ((rows.rows ?? rows) as { video_mime: string | null; video_data: Buffer | null; position: number }[])[0];
+  if (!step) { res.status(404).json({ error: "Step not found" }); return; }
+  if (!step.video_mime || !step.video_data || step.video_data.length === 0) {
+    res.status(400).json({ error: "This step has no video to build from — upload one first." });
+    return;
+  }
+
+  sopBuildsInFlight.add(sopId);
+  try {
+    const result = await buildSopFromVideo(Buffer.from(step.video_data), step.video_mime);
+
+    // Insert drafted steps immediately after the source step: shift every
+    // later step down by the number of drafted steps, then fill the gap.
+    const n = result.steps.length;
+    await db.execute(sql`
+      UPDATE sop_steps SET position = position + ${n}, updated_at = NOW()
+      WHERE sop_id = ${sopId} AND position > ${step.position}
+    `);
+    const createdIds: number[] = [];
+    for (const [i, s] of result.steps.entries()) {
+      const timeRef = `(${Math.floor(s.startSec / 60)}:${String(Math.round(s.startSec % 60)).padStart(2, "0")}–${Math.floor(s.endSec / 60)}:${String(Math.round(s.endSec % 60)).padStart(2, "0")} in the video)`;
+      const inserted = await db.execute<{ id: number }>(sql`
+        INSERT INTO sop_steps (sop_id, position, description, image_mime, image_data)
+        VALUES (${sopId}, ${step.position + 1 + i}, ${`${s.description}\n\n${timeRef}`}, ${"image/jpeg"}, ${s.photoJpeg})
+        RETURNING id
+      `);
+      createdIds.push((((inserted.rows ?? inserted) as { id: number }[])[0]).id);
+    }
+    await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = ${sopId}`);
+
+    res.json({
+      ok: true,
+      stepsCreated: n,
+      createdStepIds: createdIds,
+      suggestedTitle: result.suggestedTitle,
+      transcriptUsed: result.transcriptUsed,
+    });
+  } catch (err) {
+    console.error("[standards] build-from-video failed:", err);
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(502).json({ error: `Video analysis failed: ${msg}` });
+  } finally {
+    sopBuildsInFlight.delete(sopId);
+  }
 });
 
 export default router;

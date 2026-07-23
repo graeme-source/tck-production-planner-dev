@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   BookOpen, X, Loader2, Plus, Upload, Trash2, Filter, ChevronLeft, ChevronRight,
   Edit2, ArrowUp, ArrowDown, FileText, Image as ImageIcon, Camera, CheckCircle2,
-  Search, ChevronDown, Check, Printer,
+  Search, ChevronDown, Check, Printer, Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -1457,6 +1457,7 @@ function Editor({
                   <StepRow
                     key={step.id}
                     step={step}
+                    sopId={sop.id}
                     index={i}
                     total={sop.steps.length}
                     onChanged={fetchDetail}
@@ -1514,6 +1515,7 @@ function Editor({
 
 function StepRow({
   step,
+  sopId,
   index,
   total,
   onChanged,
@@ -1521,6 +1523,7 @@ function StepRow({
   onDelete,
 }: {
   step: SopStep;
+  sopId: number;
   index: number;
   total: number;
   onChanged: () => void;
@@ -1534,6 +1537,7 @@ function StepRow({
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const [removingVideo, setRemovingVideo] = useState(false);
   const [videoBust, setVideoBust] = useState(0);
+  const [buildingSop, setBuildingSop] = useState(false);
 
   useEffect(() => { setDescription(step.description); }, [step.description]);
 
@@ -1630,6 +1634,38 @@ function StepRow({
       toast({ title: "Remove failed", description: String(err), variant: "destructive" });
     } finally {
       setRemovingVideo(false);
+    }
+  };
+
+  // AI drafting: analyse this step's video and insert drafted steps (each
+  // with an extracted photo) straight after it. The video stays on this
+  // step; the drafts are ordinary steps the team edits/deletes as usual.
+  const buildFromVideo = async () => {
+    const ok = window.confirm(
+      "Build SOP steps from this video?\n\n" +
+      "The AI watches the video, breaks the process into steps and adds them after this one — each with a photo pulled from the video. " +
+      "It usually takes a minute or two. You can edit, reorder or delete the drafted steps afterwards.",
+    );
+    if (!ok) return;
+    setBuildingSop(true);
+    try {
+      const resp = await fetch(`/api/standards/${sopId}/steps/${step.id}/build-from-video`, {
+        method: "POST",
+        credentials: "include",
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error ?? `HTTP ${resp.status}`);
+      toast({
+        title: `${data.stepsCreated} step${data.stepsCreated === 1 ? "" : "s"} drafted from the video`,
+        description: data.suggestedTitle
+          ? `Suggested title: "${data.suggestedTitle}". Review and edit the drafts below.`
+          : "Review and edit the drafts below.",
+      });
+      onChanged();
+    } catch (err) {
+      toast({ title: "Build from video failed", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+    } finally {
+      setBuildingSop(false);
     }
   };
 
@@ -1754,6 +1790,17 @@ function StepRow({
                 className="text-xs px-3 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-destructive disabled:opacity-50"
               >
                 Remove video
+              </button>
+            )}
+            {step.hasVideo && (
+              <button
+                onClick={buildFromVideo}
+                disabled={buildingSop}
+                title="AI watches this video, splits the process into steps and adds them after this one — each with a photo from the video"
+                className="text-xs px-3 py-1.5 rounded-lg border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/40 disabled:opacity-60 flex items-center gap-1.5 font-medium"
+              >
+                {buildingSop ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                {buildingSop ? "Building… (1-2 min)" : "Build SOP from video"}
               </button>
             )}
             <button
