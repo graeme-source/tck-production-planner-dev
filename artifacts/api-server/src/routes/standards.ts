@@ -242,6 +242,11 @@ router.delete("/:id", requireAuth, async (req, res) => {
     res.status(400).json({ error: "Invalid id" });
     return;
   }
+  // Steps are deleted explicitly, not left to the FK cascade — the FK was
+  // missing entirely on tables that pre-dated the bootstrap DDL, and the
+  // orphaned steps carried BYTEA image/video blobs. The startup migration
+  // retrofits the constraint; this keeps deletes correct regardless.
+  await db.execute(sql`DELETE FROM sop_steps WHERE sop_id = ${id}`);
   await db.execute(sql`DELETE FROM standards_sops WHERE id = ${id}`);
   res.json({ ok: true });
 });

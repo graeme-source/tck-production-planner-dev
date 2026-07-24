@@ -749,6 +749,29 @@ async function runStartupMigrations() {
     // a still and a clip if useful; in practice it's usually one or the other.
     await db.execute(sql`ALTER TABLE sop_steps ADD COLUMN IF NOT EXISTS video_mime TEXT`);
     await db.execute(sql`ALTER TABLE sop_steps ADD COLUMN IF NOT EXISTS video_data BYTEA`);
+    // Retrofit the sop_steps → standards_sops FK. The CREATE TABLE above
+    // declares ON DELETE CASCADE, but tables that pre-date it were created
+    // without any FK (CREATE TABLE IF NOT EXISTS never retrofits
+    // constraints), so deleting an SOP stranded its steps — BYTEA
+    // image/video blobs included — as invisible orphans. Purge existing
+    // orphans first or ADD CONSTRAINT itself would fail validation.
+    // See lib/db/migrations/0028_sop_steps_fk_cascade.sql.
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid = 'sop_steps'::regclass AND contype = 'f'
+        ) THEN
+          DELETE FROM sop_steps s WHERE NOT EXISTS (
+            SELECT 1 FROM standards_sops ss WHERE ss.id = s.sop_id
+          );
+          ALTER TABLE sop_steps
+            ADD CONSTRAINT sop_steps_sop_id_fkey
+            FOREIGN KEY (sop_id) REFERENCES standards_sops(id) ON DELETE CASCADE;
+        END IF;
+      END $$;
+    `);
 
     await seedStorageLocations();
 
