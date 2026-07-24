@@ -3,6 +3,7 @@ import { db, usersTable } from "@workspace/db";
 import { sql, count } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { startBackupScheduler, runBackup } from "./lib/backup";
+import { LOCATION_DEFS } from "./lib/storage-location-defs";
 
 const rawPort = process.env["PORT"];
 
@@ -20,24 +21,18 @@ if (Number.isNaN(port) || port <= 0) {
 
 async function seedStorageLocations() {
   // Seed the built-in fridges only on a brand-new install (empty table).
-  // Users can now delete any location, so re-inserting missing names on
+  // Users can now delete any location, so re-inserting missing rows on
   // every boot would resurrect fridges they'd deliberately removed.
+  // Seeded straight from LOCATION_DEFS with def_key set — the stable
+  // identity used everywhere instead of matching by name.
   const existing = await db.execute<{ count: number }>(sql`SELECT COUNT(*)::int AS count FROM storage_locations`);
   const count = Number((existing.rows ?? existing)[0]?.count ?? 0);
   if (count > 0) return;
 
-  const SYSTEM_LOCATIONS = [
-    { name: "Prep Fridge", zone: "fridge" },
-    { name: "Raw Meat Fridge", zone: "fridge" },
-    { name: "Raw Freezer", zone: "freezer" },
-    { name: "Production Fridge", zone: "fridge" },
-    { name: "Production Freezer", zone: "freezer" },
-    { name: "Dry Store", zone: "ambient" },
-  ];
-  for (const loc of SYSTEM_LOCATIONS) {
+  for (const def of LOCATION_DEFS) {
     await db.execute(sql`
-      INSERT INTO storage_locations (name, zone, is_system)
-      VALUES (${loc.name}, ${loc.zone}, TRUE)
+      INSERT INTO storage_locations (name, zone, is_system, def_key)
+      VALUES (${def.label}, ${def.zone}, TRUE, ${def.key})
     `);
   }
 }
@@ -772,6 +767,28 @@ async function runStartupMigrations() {
         END IF;
       END $$;
     `);
+
+    // Stable def_key identity for built-in storage locations — see
+    // lib/db/migrations/0029_storage_location_def_key.sql. Replaces the
+    // fragile match-by-name so renaming a built-in fridge no longer makes
+    // it vanish from Stock Control / temp checks or strand its stock.
+    // Must run BEFORE seedStorageLocations — the seed writes def_key.
+    await db.execute(sql`ALTER TABLE storage_locations ADD COLUMN IF NOT EXISTS def_key TEXT`);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS storage_locations_def_key_uq
+        ON storage_locations (def_key) WHERE def_key IS NOT NULL
+    `);
+    for (const def of LOCATION_DEFS) {
+      await db.execute(sql`
+        UPDATE storage_locations SET def_key = ${def.key}
+        WHERE is_system AND def_key IS NULL AND lower(name) = ${def.label.toLowerCase()}
+          AND NOT EXISTS (SELECT 1 FROM storage_locations WHERE def_key = ${def.key})
+      `);
+    }
+    // System rows whose names no longer match any def (renamed at some
+    // point) were invisible in both UIs — normalise them to user rows so
+    // they reappear with their current names.
+    await db.execute(sql`UPDATE storage_locations SET is_system = FALSE WHERE is_system AND def_key IS NULL`);
 
     await seedStorageLocations();
 

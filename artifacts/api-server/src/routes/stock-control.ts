@@ -89,9 +89,10 @@ router.get("/", async (_req, res) => {
   }
 
   const allDbLocs = await db.select().from(storageLocationsTable);
-  const systemDbLocs = allDbLocs.filter(l => l.isSystem);
-  const userDbLocs = allDbLocs.filter(l => !l.isSystem);
-  const systemByLabel = new Map(systemDbLocs.map(l => [l.name.toLowerCase(), l]));
+  // Built-ins are identified by their stored def_key (stable across
+  // renames); anything without one is a user-added location keyed sl_<id>.
+  const userDbLocs = allDbLocs.filter(l => !l.defKey);
+  const systemByDefKey = new Map(allDbLocs.filter(l => l.defKey).map(l => [l.defKey as string, l]));
 
   const locationMap = new Map<string, {
     key: string;
@@ -110,7 +111,7 @@ router.get("/", async (_req, res) => {
     // user deletes it (now allowed), it drops off the screen instead of
     // lingering as an undeletable ghost. Any stock still keyed to it is
     // re-added below via the fallback so nothing silently vanishes.
-    const dbLoc = systemByLabel.get(def.label.toLowerCase());
+    const dbLoc = systemByDefKey.get(def.key);
     if (!dbLoc) continue;
     locationMap.set(def.key, {
       key: def.key,

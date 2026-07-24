@@ -19,12 +19,10 @@ export const LOCATION_DEFS = [
 ] as const;
 
 /** The stock_entries.location key a given storage-location row owns.
- *  Built-in fridges keep their stable def key (matched by name) so the
- *  existing stock data still lines up; everything else is keyed by id. */
-export function stockKeyForLocation(loc: { id: number; name: string; isSystem: boolean }): string {
-  if (loc.isSystem) {
-    const def = LOCATION_DEFS.find(d => d.label.toLowerCase() === loc.name.toLowerCase());
-    if (def) return def.key;
-  }
+ *  Built-in fridges carry their stable def key on the row (def_key
+ *  column — set by seed/startup backfill), so renaming one never changes
+ *  its stock key; everything else is keyed by id. */
+export function stockKeyForLocation(loc: { id: number; defKey?: string | null }): string {
+  if (loc.defKey && LOCATION_DEFS.some(d => d.key === loc.defKey)) return loc.defKey;
   return `sl_${loc.id}`;
 }

@@ -13,6 +13,12 @@ export const storageLocationsTable = pgTable("storage_locations", {
   name: text("name").notNull(),
   zone: text("zone").notNull().default("fridge"),
   isSystem: boolean("is_system").notNull().default(false),
+  // Stable identity link to LOCATION_DEFS for the built-in fridges (e.g.
+  // 'raw_meat_fridge'). Replaces the old match-by-name: renaming a built-in
+  // no longer makes it vanish from Stock Control / temp checks or strand
+  // its stock entries. Null for user-added locations (their stock key is
+  // sl_<id>). Unique via partial index (one row per def key).
+  defKey: text("def_key"),
   // Safe temperature band for this unit, editable in Stock Control. When
   // null, the zone-wide Govee defaults apply (fridge ≤5°C, freezer ≤−18°C).
   tempMinC: numeric("temp_min_c", { precision: 5, scale: 1 }),

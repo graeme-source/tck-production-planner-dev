@@ -940,13 +940,16 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
   // Storage Locations can never drift apart.
   if (type === "fridge_freezer_temps_opening" || type === "fridge_freezer_temps_closing") {
     const allLocs = await db.select().from(storageLocationsTable);
-    const systemByLabel = new Map(allLocs.filter(l => l.isSystem).map(l => [l.name.toLowerCase(), l]));
+    // Built-ins are identified by their stored def_key (stable across
+    // renames), mirroring Stock Control exactly — a renamed built-in keeps
+    // its canonical slot and its new display name in both places.
+    const systemByDefKey = new Map(allLocs.filter(l => l.defKey).map(l => [l.defKey as string, l]));
     const ordered: typeof allLocs = [];
     for (const def of LOCATION_DEFS) {
-      const dbLoc = systemByLabel.get(def.label.toLowerCase());
+      const dbLoc = systemByDefKey.get(def.key);
       if (dbLoc) ordered.push(dbLoc);
     }
-    for (const ul of allLocs.filter(l => !l.isSystem).sort((a, b) => a.name.localeCompare(b.name))) {
+    for (const ul of allLocs.filter(l => !l.defKey).sort((a, b) => a.name.localeCompare(b.name))) {
       ordered.push(ul);
     }
     const locations = ordered.filter(l => l.zone === "fridge" || l.zone === "freezer");
