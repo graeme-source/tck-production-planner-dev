@@ -678,6 +678,7 @@ export default function Inventory() {
                 <th className="text-right py-3 px-3 font-medium text-muted-foreground">Pack Size</th>
                 {activeTab === "supplies" && <th className="text-right py-3 px-3 font-medium text-muted-foreground">Pallet</th>}
                 <th className="text-right py-3 px-3 font-medium text-muted-foreground">Cost/Pack</th>
+                <th className="text-right py-3 px-3 font-medium text-muted-foreground">Cost/Unit</th>
                 <th className="text-left py-3 px-3 font-medium text-muted-foreground">Supplier</th>
                 <th className="text-center py-3 px-3 font-medium text-muted-foreground">Used In</th>
                 <th className="text-center py-3 px-3 font-medium text-muted-foreground">Kanban</th>
@@ -721,6 +722,22 @@ export default function Inventory() {
                     )}
                     <td className="py-3 px-3 text-right tabular-nums font-medium">
                       {Number(item.costPerPack) > 0 ? `£${Number(item.costPerPack).toFixed(2)}` : <span className="text-muted-foreground opacity-40">—</span>}
+                    </td>
+                    <td className="py-3 px-3 text-right tabular-nums text-muted-foreground">
+                      {(() => {
+                        // Same maths as the edit dialog's live "cost per unit"
+                        // readout: pack cost spread over the pack size. Gram
+                        // and millilitre packs are shown per kg / per L so
+                        // costs compare at a glance across the whole table.
+                        const cost = Number(item.costPerPack);
+                        const size = Number(item.packWeight);
+                        if (!(cost > 0) || !(size > 0)) return <span className="opacity-40">—</span>;
+                        let perUnit = cost / size;
+                        let unit = item.unit;
+                        if (unit === "g") { perUnit *= 1000; unit = "kg"; }
+                        else if (unit === "ml") { perUnit *= 1000; unit = "L"; }
+                        return `£${perUnit.toFixed(perUnit >= 0.1 ? 2 : 4)}/${unit}`;
+                      })()}
                     </td>
                     <td className="py-3 px-3 text-muted-foreground text-xs">
                       {item.supplierId ? supplierMap[item.supplierId] ?? "—" : <span className="opacity-40">—</span>}
