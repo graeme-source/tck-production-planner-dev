@@ -12,8 +12,9 @@
 //   • if alerts are on, evaluate sustained breaches and notify (email + push)
 
 import { db, goveeSensorsTable, goveeReadingsTable, storageLocationsTable } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getAllReadings, isGoveeConfigured, type GoveeReading } from "../services/govee";
+import { cacheReading } from "./govee-cache";
 import { getGoveeSettings, type GoveeSettings } from "./govee-settings";
 import { sendEmail } from "./email";
 import { sendPushToUsers } from "../services/push";
@@ -39,10 +40,12 @@ function londonTime(d: Date): string {
 
 /** Push "sensor stopped reporting" alerts. A dead battery (or dropped WiFi /
  *  unplugged unit) stops fresh readings; Govee gives us no battery level, so
- *  the reliable signal is "no live reading for staleMinutes". Push only, once
- *  per outage. */
+ *  the reliable signals are "no live reading for staleMinutes" and
+ *  lastOnline=false — which govee-cache also sets when it spots frozen
+ *  cloud values (Govee claiming online while serving the same numbers).
+ *  Push only, once per outage. */
 async function evaluateOfflineAlerts(
-  sensors: Array<{ device: string; locationName: string | null; lastOnlineAt: Date | null }>,
+  sensors: Array<{ device: string; locationName: string | null; lastOnline: boolean | null; lastOnlineAt: Date | null }>,
   settings: GoveeSettings,
 ): Promise<void> {
   if (settings.alertRecipientUserIds.length === 0) return; // nobody to push to
@@ -51,7 +54,7 @@ async function evaluateOfflineAlerts(
 
   for (const s of sensors) {
     const lastOnlineMs = s.lastOnlineAt ? s.lastOnlineAt.getTime() : null;
-    const stale = lastOnlineMs == null || now - lastOnlineMs > staleMs;
+    const stale = s.lastOnline === false || lastOnlineMs == null || now - lastOnlineMs > staleMs;
 
     if (!stale) {
       offlineAlertedByDevice.delete(s.device); // recovered → re-arm
@@ -76,36 +79,6 @@ function thresholdFor(zone: string | null, settings: GoveeSettings): number | nu
   if (zone === "freezer") return settings.freezerMaxC;
   if (zone === "fridge") return settings.fridgeMaxC;
   return null;
-}
-
-async function cacheReading(reading: GoveeReading): Promise<void> {
-  const readingAt = new Date(reading.fetchedAt);
-  await db
-    .insert(goveeSensorsTable)
-    .values({
-      device: reading.device,
-      sku: reading.sku,
-      name: reading.deviceName,
-      lastTemperatureC: reading.temperatureC != null ? String(reading.temperatureC) : null,
-      lastHumidityPercent: reading.humidityPercent,
-      lastOnline: reading.online,
-      lastReadingAt: readingAt,
-      lastOnlineAt: reading.online ? readingAt : null,
-    })
-    .onConflictDoUpdate({
-      target: goveeSensorsTable.device,
-      set: {
-        lastTemperatureC: reading.temperatureC != null ? String(reading.temperatureC) : null,
-        lastHumidityPercent: reading.humidityPercent,
-        lastOnline: reading.online,
-        lastReadingAt: readingAt,
-        // Only advance the freshness clock while the sensor is actually
-        // online; keep the previous value when it's offline so we can tell
-        // how long it's been dark.
-        lastOnlineAt: reading.online ? readingAt : sql`${goveeSensorsTable.lastOnlineAt}`,
-        updatedAt: new Date(),
-      },
-    });
 }
 
 function alertEmailHtml(locationName: string, tempC: number, thresholdC: number, safeRange?: string): string {
@@ -192,7 +165,7 @@ async function runCycle(): Promise<void> {
     return;
   }
 
-  for (const r of readings) await cacheReading(r);
+  for (const r of readings) await cacheReading(r, settings.staleMinutes);
 
   if (settings.historyEnabled) {
     for (const r of readings) {
@@ -215,6 +188,7 @@ async function runCycle(): Promise<void> {
         zone: storageLocationsTable.zone,
         locTempMinC: storageLocationsTable.tempMinC,
         locTempMaxC: storageLocationsTable.tempMaxC,
+        lastOnline: goveeSensorsTable.lastOnline,
         lastOnlineAt: goveeSensorsTable.lastOnlineAt,
       })
       .from(goveeSensorsTable)
@@ -237,6 +211,7 @@ async function runCycle(): Promise<void> {
       mapped.filter((m) => m.enabled).map((m) => ({
         device: m.device,
         locationName: m.locationName,
+        lastOnline: m.lastOnline,
         lastOnlineAt: m.lastOnlineAt,
       })),
       settings,

@@ -28,6 +28,7 @@ import {
   getUsersWithPush,
 } from "../services/push";
 import { getGoveeSettings, setGoveeSettings, type GoveeSettings } from "../lib/govee-settings";
+import { cacheReading } from "../lib/govee-cache";
 
 const router: IRouter = Router();
 
@@ -44,37 +45,6 @@ async function adminOnly(req: Request, res: Response, next: NextFunction) {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
-/** Upsert a discovered sensor + cache its latest reading. */
-async function cacheReading(reading: GoveeLiveReading): Promise<void> {
-  const readingAt = new Date(reading.fetchedAt);
-  await db
-    .insert(goveeSensorsTable)
-    .values({
-      device: reading.device,
-      sku: reading.sku,
-      name: reading.deviceName,
-      lastTemperatureC: reading.temperatureC != null ? String(reading.temperatureC) : null,
-      lastHumidityPercent: reading.humidityPercent,
-      lastOnline: reading.online,
-      lastReadingAt: readingAt,
-      lastOnlineAt: reading.online ? readingAt : null,
-    })
-    .onConflictDoUpdate({
-      target: goveeSensorsTable.device,
-      set: {
-        sku: reading.sku,
-        lastTemperatureC: reading.temperatureC != null ? String(reading.temperatureC) : null,
-        lastHumidityPercent: reading.humidityPercent,
-        lastOnline: reading.online,
-        lastReadingAt: readingAt,
-        // Only advance the freshness clock while online; keep the prior value
-        // when offline so the tile can show how long it's been dark.
-        lastOnlineAt: reading.online ? readingAt : sql`${goveeSensorsTable.lastOnlineAt}`,
-        updatedAt: new Date(),
-      },
-    });
-}
 
 function thresholdFor(zone: string | null, settings: GoveeSettings): number | null {
   if (zone === "freezer") return settings.freezerMaxC;
@@ -107,7 +77,7 @@ router.get("/live", async (_req: Request, res: Response) => {
   let readings: GoveeLiveReading[] = [];
   try {
     readings = await getAllReadings();
-    for (const r of readings) await cacheReading(r);
+    for (const r of readings) await cacheReading(r, settings.staleMinutes);
   } catch (err) {
     console.error("[govee] live fetch failed, falling back to cache:", err);
   }
