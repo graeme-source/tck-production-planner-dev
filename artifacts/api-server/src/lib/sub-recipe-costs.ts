@@ -39,7 +39,12 @@ export async function computeSubRecipeCosts(
         COALESCE(
           SUM(
             sri.quantity::numeric
-            / NULLIF(i.processing_ratio::numeric, 0)
+            -- NULL/0 processing ratio means "no prep loss", i.e. 1 — left as a
+            -- bare NULLIF division this made the whole term NULL, silently
+            -- costing the ingredient at £0 (found 2026-07-27: a NULL-ratio
+            -- chicken ingredient priced fried-chicken strips at a third of
+            -- their real cost).
+            / COALESCE(NULLIF(i.processing_ratio::numeric, 0), 1)
             * i.cost_per_pack::numeric
             / NULLIF(i.pack_weight::numeric, 0)
           ),
