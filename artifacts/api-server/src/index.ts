@@ -693,6 +693,30 @@ async function runStartupMigrations() {
       }
     }
     await db.execute(sql`ALTER TABLE improvement_submissions ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'improvement'`);
+    // Improvements: assignee (defaults to the submitter) + collapse the old
+    // seven-step workflow to two statuses: Submitted and Complete.
+    await db.execute(sql`ALTER TABLE improvement_submissions ADD COLUMN IF NOT EXISTS assigned_to INTEGER REFERENCES app_users(id) ON DELETE SET NULL`);
+    await db.execute(sql`ALTER TABLE improvement_submissions ADD COLUMN IF NOT EXISTS assigned_to_name TEXT`);
+    await db.execute(sql`
+      INSERT INTO _migrations_done (key)
+      SELECT 'improvements_assignee_backfill'
+      WHERE NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'improvements_assignee_backfill')
+    `);
+    {
+      const result = await db.execute<{ cnt: number }>(sql`SELECT count(*)::int as cnt FROM _migrations_done WHERE key = 'improvements_assignee_backfill' AND done_at > NOW() - INTERVAL '5 seconds'`);
+      if (Number(result.rows[0]?.cnt) > 0) {
+        await db.execute(sql`
+          UPDATE improvement_submissions
+          SET assigned_to = submitted_by, assigned_to_name = submitted_by_name
+          WHERE assigned_to IS NULL AND assigned_to_name IS NULL
+        `);
+      }
+    }
+    await db.execute(sql`
+      UPDATE improvement_submissions
+      SET progress_status = 'submitted_for_review'
+      WHERE progress_status NOT IN ('submitted_for_review', 'complete')
+    `);
     await db.execute(sql`ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS qr_code_url TEXT`);
     await db.execute(sql`ALTER TABLE kanban_items ALTER COLUMN ingredient_id DROP NOT NULL`);
     await db.execute(sql`ALTER TABLE kanban_items ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'ingredient'`);

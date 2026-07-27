@@ -13,6 +13,7 @@ interface Improvement {
   description: string;
   progressStatus: string;
   station: string;
+  assignedToName: string | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -35,7 +36,7 @@ export default function Improvements() {
       .catch(() => setAll([]));
   }, []);
 
-  const open = (all ?? []).filter(i => i.progressStatus !== "complete" && i.progressStatus !== "rejected");
+  const open = (all ?? []).filter(i => i.progressStatus !== "complete");
   const completed = (all ?? [])
     .filter(i => i.progressStatus === "complete")
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
@@ -66,6 +67,7 @@ export default function Improvements() {
                   <span>
                     <span className="font-medium">{i.title}</span>
                     {i.description ? <span className="text-muted-foreground"> — {i.description}</span> : null}
+                    {i.assignedToName ? <span className="text-xs text-muted-foreground"> ({i.assignedToName})</span> : null}
                   </span>
                 </li>
               ))}

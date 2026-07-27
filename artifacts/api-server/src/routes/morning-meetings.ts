@@ -315,16 +315,17 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       .limit(10);
 
     // ── Improvements required (open improvements — ideas + struggles are
-    //    now one concept; show anything not yet complete or rejected) ───
+    //    now one concept; two-status model means open = not complete) ───
     const improvementsRequired = await db
       .select({
         id: improvementSubmissionsTable.id,
         title: improvementSubmissionsTable.title,
         description: improvementSubmissionsTable.description,
+        assignedToName: improvementSubmissionsTable.assignedToName,
         createdAt: improvementSubmissionsTable.createdAt,
       })
       .from(improvementSubmissionsTable)
-      .where(notInArray(improvementSubmissionsTable.progressStatus, ["complete", "rejected"]))
+      .where(notInArray(improvementSubmissionsTable.progressStatus, ["complete"]))
       .orderBy(desc(improvementSubmissionsTable.createdAt))
       .limit(10);
 

@@ -4,6 +4,9 @@ import { z } from "zod/v4";
 import { usersTable } from "./users";
 
 export const improvementApprovalTierEnum = pgEnum("improvement_approval_tier", ["minor", "medium", "major"]);
+// Only "submitted_for_review" (shown as "Submitted") and "complete" are used
+// now — the intermediate statuses were collapsed in July 2026. The extra enum
+// values must stay listed because Postgres enums can't drop values cheaply.
 export const improvementProgressStatusEnum = pgEnum("improvement_progress_status", [
   "submitted_for_review",
   "acknowledged",
@@ -22,6 +25,9 @@ export const improvementSubmissionsTable = pgTable("improvement_submissions", {
   type: text("type").notNull().default("improvement"),
   submittedBy: integer("submitted_by").references(() => usersTable.id, { onDelete: "set null" }),
   submittedByName: text("submitted_by_name"),
+  // Defaults to the submitter on creation; managers can reassign afterwards.
+  assignedTo: integer("assigned_to").references(() => usersTable.id, { onDelete: "set null" }),
+  assignedToName: text("assigned_to_name"),
   approvalTier: improvementApprovalTierEnum("approval_tier"),
   progressStatus: improvementProgressStatusEnum("progress_status").notNull().default("submitted_for_review"),
   notes: text("notes"),

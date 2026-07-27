@@ -44,13 +44,6 @@ const ANDON_CATEGORIES = [
   { key: "other", label: "Other" },
 ];
 
-const STATUS_LABELS: Record<string, string> = {
-  submitted_for_review: "Submitted for Review",
-  approved: "Approved",
-  testing: "Testing",
-  complete: "Complete",
-};
-
 const TIER_LABELS: Record<string, string> = {
   minor: "Minor",
   medium: "Medium",
@@ -659,13 +652,9 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
                                   "text-xs px-2 py-0.5 rounded-full shrink-0",
                                   imp.progressStatus === "complete"
                                     ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-                                    : imp.progressStatus === "testing"
-                                    ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                                    : imp.progressStatus === "approved"
-                                    ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400"
                                     : "bg-secondary text-muted-foreground"
                                 )}>
-                                  {STATUS_LABELS[imp.progressStatus] ?? imp.progressStatus}
+                                  {imp.progressStatus === "complete" ? "Complete" : "Submitted"}
                                 </span>
                               </div>
                             </div>

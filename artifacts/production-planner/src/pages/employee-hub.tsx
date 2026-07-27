@@ -523,7 +523,7 @@ function MyImprovementsList({ userId, type }: { userId: number | null; type: "im
               <p className="text-xs text-muted-foreground">{fmtRelative(r.createdAt)}</p>
               {r.progressStatus && (
                 <span className="inline-block mt-1 px-1.5 py-0.5 rounded-full bg-secondary text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
-                  {r.progressStatus.replace(/_/g, " ")}
+                  {r.progressStatus === "complete" ? "Complete" : "Submitted"}
                 </span>
               )}
             </div>

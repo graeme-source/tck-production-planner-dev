@@ -179,8 +179,10 @@ interface ImprovementRecord {
   station: string;
   type: "improvement" | "struggle";
   submittedByName: string | null;
+  assignedTo: number | null;
+  assignedToName: string | null;
   approvalTier: "minor" | "medium" | "major" | null;
-  progressStatus: "submitted_for_review" | "acknowledged" | "approved" | "testing" | "complete" | "rejected";
+  progressStatus: string;
   notes: string | null;
   reportContext: string | null;
   createdAt: string;
@@ -2607,47 +2609,31 @@ const STATION_LABELS_REPORT: Record<string, string> = {
   general: "General / Other",
 };
 
+// Two-status model (July 2026): everything is either Submitted or Complete.
+// Legacy rows are collapsed to submitted_for_review by a startup migration,
+// but normalizeStatus() keeps the UI safe if an old value ever slips through.
 const IMPROVEMENT_PROGRESS_OPTIONS = [
-  { value: "submitted_for_review", label: "Submitted for Review" },
-  { value: "acknowledged", label: "Acknowledged" },
-  { value: "approved", label: "Approved" },
-  { value: "in_development", label: "In Development" },
-  { value: "testing", label: "Testing" },
+  { value: "submitted_for_review", label: "Submitted" },
   { value: "complete", label: "Complete" },
-  { value: "rejected", label: "Rejected" },
 ];
 
+function normalizeStatus(status: string): "submitted_for_review" | "complete" {
+  return status === "complete" ? "complete" : "submitted_for_review";
+}
+
 function statusRowClass(status: string) {
-  if (status === "submitted_for_review") return "bg-yellow-50/60 dark:bg-yellow-900/10";
-  if (status === "acknowledged") return "bg-violet-50/60 dark:bg-violet-900/10";
-  if (status === "approved") return "bg-green-50/60 dark:bg-green-900/10";
-  if (status === "in_development") return "bg-amber-50/60 dark:bg-amber-900/10";
-  if (status === "testing") return "bg-blue-50/60 dark:bg-blue-900/10";
-  if (status === "complete") return "bg-emerald-50/60 dark:bg-emerald-900/10";
-  if (status === "rejected") return "bg-red-50/60 dark:bg-red-900/10";
-  return "";
+  if (normalizeStatus(status) === "complete") return "bg-emerald-50/60 dark:bg-emerald-900/10";
+  return "bg-yellow-50/60 dark:bg-yellow-900/10";
 }
 
 function statusBadgeClass(status: string) {
-  if (status === "submitted_for_review") return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300";
-  if (status === "acknowledged") return "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400";
-  if (status === "approved") return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
-  if (status === "in_development") return "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400";
-  if (status === "testing") return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
-  if (status === "complete") return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400 font-semibold";
-  if (status === "rejected") return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
-  return "bg-secondary text-muted-foreground";
+  if (normalizeStatus(status) === "complete") return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400 font-semibold";
+  return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300";
 }
 
 function statusSelectClass(status: string) {
-  if (status === "submitted_for_review") return "border-yellow-300 bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300 dark:border-yellow-700";
-  if (status === "acknowledged") return "border-violet-300 bg-violet-50 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400 dark:border-violet-700";
-  if (status === "approved") return "border-green-300 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400 dark:border-green-700";
-  if (status === "in_development") return "border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700";
-  if (status === "testing") return "border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-700";
-  if (status === "complete") return "border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-700";
-  if (status === "rejected") return "border-red-300 bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400 dark:border-red-700";
-  return "border-border bg-background";
+  if (normalizeStatus(status) === "complete") return "border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-700";
+  return "border-yellow-300 bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300 dark:border-yellow-700";
 }
 
 const IMPROVEMENT_TIER_OPTIONS = [
@@ -2663,6 +2649,16 @@ export function ImprovementsTab({ userRole, currentUserName }: { userRole: strin
   const [updating, setUpdating] = useState<number | null>(null);
   const [editNotes, setEditNotes] = useState<Record<number, string>>({});
 
+  // Assignee dropdown options
+  const [users, setUsers] = useState<{ id: number; name: string }[]>([]);
+  useEffect(() => {
+    fetch(`${BASE}/api/users`, { credentials: "include" })
+      .then(r => (r.ok ? r.json() : []))
+      .then((rows: { id: number; name: string; isActive?: boolean }[]) =>
+        setUsers(rows.filter(u => u.isActive !== false).map(u => ({ id: u.id, name: u.name }))))
+      .catch(() => setUsers([]));
+  }, []);
+
   // Detail dialog state
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [comments, setComments] = useState<ImprovementComment[]>([]);
@@ -2670,6 +2666,12 @@ export function ImprovementsTab({ userRole, currentUserName }: { userRole: strin
   const [newComment, setNewComment] = useState("");
   const [postingComment, setPostingComment] = useState(false);
   const commentsEndRef = useRef<HTMLDivElement>(null);
+
+  // Edit title/description in the detail dialog
+  const [editingDetail, setEditingDetail] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [savingDetail, setSavingDetail] = useState(false);
 
   const selectedImp = selectedId !== null ? improvements.find(i => i.id === selectedId) ?? null : null;
 
@@ -2685,7 +2687,34 @@ export function ImprovementsTab({ userRole, currentUserName }: { userRole: strin
   const openDetail = (id: number) => {
     setSelectedId(id);
     setNewComment("");
+    setEditingDetail(false);
     loadComments(id);
+  };
+
+  const startEditDetail = () => {
+    if (!selectedImp) return;
+    setEditTitle(selectedImp.title);
+    setEditDescription(selectedImp.description);
+    setEditingDetail(true);
+  };
+
+  const saveDetail = async () => {
+    if (!selectedId || !editTitle.trim() || !editDescription.trim()) return;
+    setSavingDetail(true);
+    try {
+      const res = await fetch(`${BASE}/api/improvements/${selectedId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ title: editTitle.trim(), description: editDescription.trim() }),
+      });
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      await load();
+      setEditingDetail(false);
+    } catch {
+      toast({ title: "Failed to save changes", variant: "destructive" });
+    }
+    setSavingDetail(false);
   };
 
   const postComment = async () => {
@@ -2777,7 +2806,7 @@ export function ImprovementsTab({ userRole, currentUserName }: { userRole: strin
 
   const filtered = improvements.filter(imp => {
     if (viewTab === "mine" && imp.submittedByName !== currentUserName) return false;
-    if (filterStatus && imp.progressStatus !== filterStatus) return false;
+    if (filterStatus && normalizeStatus(imp.progressStatus) !== filterStatus) return false;
     if (filterStation && imp.station !== filterStation) return false;
     if (filterTier && (imp.approvalTier ?? "") !== filterTier) return false;
     if (filterType && (imp.type ?? "improvement") !== filterType) return false;
@@ -2882,6 +2911,7 @@ export function ImprovementsTab({ userRole, currentUserName }: { userRole: strin
                 <th className="px-4 py-3 font-medium text-center">Type</th>
                 <th className="px-4 py-3 font-medium text-left">Station</th>
                 <th className="px-4 py-3 font-medium text-left">Submitted by</th>
+                <th className="px-4 py-3 font-medium text-left">Assigned to</th>
                 <th className="px-4 py-3 font-medium text-left">Date</th>
                 <th className="px-4 py-3 font-medium text-center">Tier</th>
                 <th className="px-4 py-3 font-medium text-center">Status</th>
@@ -2905,6 +2935,25 @@ export function ImprovementsTab({ userRole, currentUserName }: { userRole: strin
                     {STATION_LABELS_REPORT[imp.station] ?? imp.station}
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{imp.submittedByName ?? "—"}</td>
+                  <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                    {isManager ? (
+                      <select
+                        value={imp.assignedTo ?? ""}
+                        onChange={e => updateField(imp.id, "assignedTo", e.target.value)}
+                        disabled={updating === imp.id}
+                        className="px-2 py-1 border border-border rounded-lg text-xs bg-background disabled:opacity-50 max-w-[140px]"
+                      >
+                        <option value="">— Unassigned —</option>
+                        {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                        {/* Keep showing a name even if the user is no longer in the active list */}
+                        {imp.assignedTo !== null && !users.some(u => u.id === imp.assignedTo) && (
+                          <option value={imp.assignedTo}>{imp.assignedToName ?? `User #${imp.assignedTo}`}</option>
+                        )}
+                      </select>
+                    ) : (
+                      <span className="text-muted-foreground">{imp.assignedToName ?? "—"}</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
                     {imp.createdAt ? format(new Date(imp.createdAt), "d MMM yyyy") : "—"}
                   </td>
@@ -2925,7 +2974,7 @@ export function ImprovementsTab({ userRole, currentUserName }: { userRole: strin
                   <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
                     {isManager ? (
                       <select
-                        value={imp.progressStatus}
+                        value={normalizeStatus(imp.progressStatus)}
                         onChange={e => updateField(imp.id, "progressStatus", e.target.value)}
                         disabled={updating === imp.id}
                         className={cn("px-2 py-1 border rounded-lg text-xs disabled:opacity-50", statusSelectClass(imp.progressStatus))}
@@ -2934,7 +2983,7 @@ export function ImprovementsTab({ userRole, currentUserName }: { userRole: strin
                       </select>
                     ) : (
                       <span className={cn("px-2 py-1 rounded-full text-xs", statusBadgeClass(imp.progressStatus))}>
-                        {IMPROVEMENT_PROGRESS_OPTIONS.find(o => o.value === imp.progressStatus)?.label ?? imp.progressStatus}
+                        {IMPROVEMENT_PROGRESS_OPTIONS.find(o => o.value === normalizeStatus(imp.progressStatus))?.label ?? imp.progressStatus}
                       </span>
                     )}
                   </td>
@@ -2990,21 +3039,40 @@ export function ImprovementsTab({ userRole, currentUserName }: { userRole: strin
                     Improvement
                   </span>
                   <span className={cn("px-2 py-0.5 rounded-full text-xs", statusBadgeClass(selectedImp.progressStatus))}>
-                    {IMPROVEMENT_PROGRESS_OPTIONS.find(o => o.value === selectedImp.progressStatus)?.label ?? selectedImp.progressStatus}
+                    {IMPROVEMENT_PROGRESS_OPTIONS.find(o => o.value === normalizeStatus(selectedImp.progressStatus))?.label ?? selectedImp.progressStatus}
                   </span>
                   {selectedImp.approvalTier && (
                     <span className="px-2 py-0.5 rounded-full text-xs bg-secondary text-muted-foreground capitalize">
                       {selectedImp.approvalTier}
                     </span>
                   )}
+                  {isManager && !editingDetail && (
+                    <button
+                      onClick={startEditDetail}
+                      className="ml-auto text-xs px-2.5 py-1 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+                    >
+                      Edit
+                    </button>
+                  )}
                 </div>
-                <DialogTitle className="text-xl">{selectedImp.title}</DialogTitle>
+                {editingDetail ? (
+                  <input
+                    value={editTitle}
+                    onChange={e => setEditTitle(e.target.value)}
+                    className="w-full text-xl font-semibold px-3 py-2 border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    placeholder="Title"
+                  />
+                ) : (
+                  <DialogTitle className="text-xl">{selectedImp.title}</DialogTitle>
+                )}
                 <DialogDescription className="text-sm text-muted-foreground">
                   {STATION_LABELS_REPORT[selectedImp.station] ?? selectedImp.station}
                   {" · "}
                   {selectedImp.submittedByName ?? "Unknown"}
                   {" · "}
                   {selectedImp.createdAt ? format(new Date(selectedImp.createdAt), "d MMM yyyy, HH:mm") : "—"}
+                  {" · Assigned to "}
+                  {selectedImp.assignedToName ?? "no one"}
                 </DialogDescription>
               </DialogHeader>
 
@@ -3012,7 +3080,35 @@ export function ImprovementsTab({ userRole, currentUserName }: { userRole: strin
                 {/* Full description */}
                 <div className="bg-secondary/30 rounded-xl p-4">
                   <p className="text-sm font-medium text-muted-foreground mb-1">Description</p>
-                  <p className="text-sm whitespace-pre-wrap">{selectedImp.description}</p>
+                  {editingDetail ? (
+                    <>
+                      <textarea
+                        value={editDescription}
+                        onChange={e => setEditDescription(e.target.value)}
+                        rows={4}
+                        className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
+                        placeholder="Description"
+                      />
+                      <div className="flex justify-end gap-2 mt-2">
+                        <button
+                          onClick={() => setEditingDetail(false)}
+                          disabled={savingDetail}
+                          className="text-xs px-3 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={saveDetail}
+                          disabled={savingDetail || !editTitle.trim() || !editDescription.trim()}
+                          className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                        >
+                          {savingDetail ? "Saving…" : "Save changes"}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-sm whitespace-pre-wrap">{selectedImp.description}</p>
+                  )}
                 </div>
 
                 {/* Photos & videos */}

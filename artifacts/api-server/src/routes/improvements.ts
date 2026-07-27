@@ -52,6 +52,10 @@ router.post("/", async (req: Request, res: Response) => {
         type: submissionType,
         submittedBy: userId ?? null,
         submittedByName,
+        // New submissions start assigned to whoever raised them; managers
+        // can reassign from the Improvements table.
+        assignedTo: userId ?? null,
+        assignedToName: submittedByName,
         reportContext: reportContext || null,
       })
       .returning();
@@ -77,13 +81,37 @@ router.patch("/:id", async (req: Request, res: Response) => {
       return;
     }
 
-    const { approvalTier, progressStatus, notes } = req.body;
+    const { approvalTier, progressStatus, notes, title, description, assignedTo } = req.body;
 
-    type UpdatePayload = Partial<Pick<ImprovementSubmission, "approvalTier" | "progressStatus" | "notes" | "updatedAt">>;
+    type UpdatePayload = Partial<Pick<ImprovementSubmission, "approvalTier" | "progressStatus" | "notes" | "title" | "description" | "assignedTo" | "assignedToName" | "updatedAt">>;
     const updates: UpdatePayload = { updatedAt: new Date() };
     if (approvalTier !== undefined) updates.approvalTier = approvalTier;
-    if (progressStatus !== undefined) updates.progressStatus = progressStatus;
+    if (progressStatus !== undefined) {
+      // Two-status model: anything that isn't complete is simply submitted.
+      updates.progressStatus = progressStatus === "complete" ? "complete" : "submitted_for_review";
+    }
     if (notes !== undefined) updates.notes = notes;
+    if (title !== undefined) {
+      if (!String(title).trim()) { res.status(400).json({ error: "title cannot be empty" }); return; }
+      updates.title = String(title).trim();
+    }
+    if (description !== undefined) {
+      if (!String(description).trim()) { res.status(400).json({ error: "description cannot be empty" }); return; }
+      updates.description = String(description).trim();
+    }
+    if (assignedTo !== undefined) {
+      if (assignedTo === null || assignedTo === "") {
+        updates.assignedTo = null;
+        updates.assignedToName = null;
+      } else {
+        const assigneeId = parseInt(String(assignedTo), 10);
+        if (isNaN(assigneeId)) { res.status(400).json({ error: "Invalid assignedTo" }); return; }
+        const [assignee] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, assigneeId));
+        if (!assignee) { res.status(400).json({ error: "Assignee not found" }); return; }
+        updates.assignedTo = assigneeId;
+        updates.assignedToName = assignee.name;
+      }
+    }
 
     const [row] = await db
       .update(improvementSubmissionsTable)
