@@ -67,8 +67,8 @@ export interface DashboardData {
   };
   todayDeliveries: Array<{ id: number; supplierName: string; status: string }>;
   safetyIssues: Array<{ id: number; category: string; severity: string; description: string | null; createdAt: string }>;
-  struggles: Array<{ id: number; title: string; description: string; createdAt: string }>;
-  improvementsRequired: Array<{ id: number; title: string; description: string; createdAt: string }>;
+  struggles: Array<{ id: number; title: string; description: string; assignedToName?: string | null; createdAt: string }>;
+  improvementsRequired: Array<{ id: number; title: string; description: string; assignedToName?: string | null; createdAt: string }>;
   recentImprovements: Array<{ id: number; title: string; description: string; updatedAt: string }>;
   recentSops: Array<{ id: number; title: string; updatedAt: string }>;
   lesson: {
@@ -894,10 +894,10 @@ function SlideBody({ slide, data, onRefresh, isPreviewing }: { slide: MeetingSli
     case "special_prep": return <SpecialPrepSlide data={data} slide={slide} />;
     case "stretches": return <StretchesPanel />;
     case "yesterday_kpis": return <YesterdayKpisSlide data={data} slide={slide} />;
-    case "order_of_production": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} />;
+    case "order_of_production": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} stickyTotals />;
     case "local_delivery": return <LocalDeliverySlide data={data} slide={slide} />;
     case "bag_orders": return <BagOrdersSlide data={data} slide={slide} />;
-    case "short_on_pack": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} />;
+    case "short_on_pack": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} stickyTotals />;
     case "safety_issues": return <SafetyIssuesSlide data={data} onRefresh={onRefresh} slide={slide} />;
     case "system_updates": return <SystemUpdatesSlide slide={slide} />;
     case "new_sops": return <NewSopsSlide data={data} slide={slide} />;
@@ -1235,11 +1235,15 @@ function HeaderInfo({ children }: { children: React.ReactNode }) {
  *                  where the fridge actually lands by close of play. */
 export type PackStockMode = "actual" | "predicted";
 
-export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "actual" }: {
+export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "actual", stickyTotals = false }: {
   data: DashboardData;
   slide: MeetingSlide;
   isPreviewing: boolean;
   stockMode?: PackStockMode;
+  /** Pin a totals bar to the bottom of the screen. Used by the morning
+   *  meeting, where the table is taller than the slide and the in-table
+   *  totals row sits out of sight below the fold. */
+  stickyTotals?: boolean;
 }) {
   // In a live meeting the pack is today's; in a preview of tomorrow's
   // meeting it's tomorrow's. Matches the old Short-on-pack behaviour.
@@ -1343,6 +1347,16 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
 
   const rows = [...plannedRows, ...notPlanned];
 
+  // Column totals. Production keeps calzone batches and mac packs as
+  // separate numbers — packs never count as batches. Stock columns
+  // sum every row shown (planned + fridge-only).
+  const withStock = rows.filter(r => r.stock);
+  const sumHave = withStock.reduce((s, r) => s + r.stock!.have, 0);
+  const sumNeed = withStock.reduce((s, r) => s + r.stock!.need, 0);
+  const sumSurplus = sumHave - sumNeed;
+  const calzoneBatches = rows.reduce((s, r) => s + (r.unit === "batches" ? (r.target ?? 0) : 0), 0);
+  const macPacks = rows.reduce((s, r) => s + (r.unit === "packs" ? (r.target ?? 0) : 0), 0);
+
   const fmtDay = (iso?: string) => iso ? format(new Date(`${iso}T00:00:00`), "EEE d MMM") : "—";
   const dispatchLabel = fmtDay(calc?.dispatchDates?.[1]);
   const deliveryLabel = fmtDay(calc?.deliveryDates?.[1]);
@@ -1432,41 +1446,28 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
               </div>
             );
           })}
-          {/* Column totals. Production keeps calzone batches and mac packs as
-              separate numbers — packs never count as batches. Stock columns
-              sum every row shown (planned + fridge-only). */}
-          {(() => {
-            const withStock = rows.filter(r => r.stock);
-            const sumHave = withStock.reduce((s, r) => s + r.stock!.have, 0);
-            const sumNeed = withStock.reduce((s, r) => s + r.stock!.need, 0);
-            const sumSurplus = sumHave - sumNeed;
-            const calzoneBatches = rows.reduce((s, r) => s + (r.unit === "batches" ? (r.target ?? 0) : 0), 0);
-            const macPacks = rows.reduce((s, r) => s + (r.unit === "packs" ? (r.target ?? 0) : 0), 0);
-            return (
-              <div className={cn("grid gap-1.5 items-center px-5 py-3 border-t-2 border-border bg-secondary/30", cols)}>
-                <span />
-                <span />
-                <span className="text-2xl font-bold">Totals</span>
-                <span className="text-2xl font-bold tabular-nums text-center">{sumHave}</span>
-                <span className="text-2xl font-bold tabular-nums text-center">{sumNeed}</span>
-                <span className="text-2xl font-bold tabular-nums text-center">
-                  {sumSurplus > 0 ? `+${sumSurplus}` : sumSurplus}
+          <div className={cn("grid gap-1.5 items-center px-5 py-3 border-t-2 border-border bg-secondary/30", cols)}>
+            <span />
+            <span />
+            <span className="text-2xl font-bold">Totals</span>
+            <span className="text-2xl font-bold tabular-nums text-center">{sumHave}</span>
+            <span className="text-2xl font-bold tabular-nums text-center">{sumNeed}</span>
+            <span className="text-2xl font-bold tabular-nums text-center">
+              {sumSurplus > 0 ? `+${sumSurplus}` : sumSurplus}
+            </span>
+            <span className="text-center self-stretch border-l-2 border-border/60 pl-3 flex flex-col items-center justify-center leading-tight">
+              <span className="text-2xl font-bold tabular-nums whitespace-nowrap">
+                {calzoneBatches}
+                <span className="text-xs font-medium text-muted-foreground ml-1">bt</span>
+              </span>
+              {macPacks > 0 && (
+                <span className="text-2xl font-bold tabular-nums whitespace-nowrap">
+                  {macPacks}
+                  <span className="text-xs font-medium text-muted-foreground ml-1">pk</span>
                 </span>
-                <span className="text-center self-stretch border-l-2 border-border/60 pl-3 flex flex-col items-center justify-center leading-tight">
-                  <span className="text-2xl font-bold tabular-nums whitespace-nowrap">
-                    {calzoneBatches}
-                    <span className="text-xs font-medium text-muted-foreground ml-1">bt</span>
-                  </span>
-                  {macPacks > 0 && (
-                    <span className="text-2xl font-bold tabular-nums whitespace-nowrap">
-                      {macPacks}
-                      <span className="text-xs font-medium text-muted-foreground ml-1">pk</span>
-                    </span>
-                  )}
-                </span>
-              </div>
-            );
-          })()}
+              )}
+            </span>
+          </div>
         </div>
       )}
 
@@ -1476,6 +1477,48 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-emerald-500 inline-block" /> Enough</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-500 inline-block" /> Tight</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-red-500 inline-block" /> Short</span>
+        </div>
+      )}
+
+      {/* Pinned totals bar — the meeting slide is taller than the screen, so
+          the in-table totals row lives below the fold. This bar sticks to the
+          bottom of the slide's scroll area so the headline numbers are always
+          in view without scrolling. */}
+      {stickyTotals && rows.length > 0 && (
+        <div className="sticky bottom-0 z-10 mt-4">
+          <div className="rounded-2xl border-2 border-border bg-card shadow-lg px-6 py-4 flex items-center justify-between gap-4">
+            <div className="text-center flex-1">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">In stock</p>
+              <p className="text-3xl font-display font-bold tabular-nums">{sumHave}</p>
+            </div>
+            <div className="text-center flex-1">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Left to dispatch</p>
+              <p className="text-3xl font-display font-bold tabular-nums">{sumNeed}</p>
+            </div>
+            <div className="text-center flex-1">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">The difference</p>
+              <p className={cn(
+                "text-3xl font-display font-bold tabular-nums",
+                sumSurplus < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400",
+              )}>
+                {sumSurplus > 0 ? `+${sumSurplus}` : sumSurplus}
+              </p>
+            </div>
+            <div className="text-center flex-1 border-l-2 border-border/60 pl-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Today's production</p>
+              <p className="text-3xl font-display font-bold tabular-nums whitespace-nowrap">
+                {calzoneBatches}
+                <span className="text-sm font-medium text-muted-foreground ml-1">bt</span>
+                {macPacks > 0 && (
+                  <>
+                    <span className="text-muted-foreground/60 mx-2">·</span>
+                    {macPacks}
+                    <span className="text-sm font-medium text-muted-foreground ml-1">pk</span>
+                  </>
+                )}
+              </p>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -1845,6 +1888,26 @@ function StrugglesSlide({ data, onRefresh, slide }: { data: DashboardData; onRef
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [completingId, setCompletingId] = useState<number | null>(null);
+  const markComplete = async (id: number) => {
+    setCompletingId(id);
+    try {
+      const res = await fetch(`${BASE}/api/improvements/${id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ progressStatus: "complete" }),
+      });
+      if (res.status === 403) { toast({ title: "Manager or admin login needed to mark complete", variant: "destructive" }); return; }
+      if (!res.ok) throw new Error("Failed");
+      onRefresh();
+      toast({ title: "Marked complete" });
+    } catch {
+      toast({ title: "Failed to mark complete", variant: "destructive" });
+    } finally {
+      setCompletingId(null);
+    }
+  };
   const submit = async () => {
     if (!title.trim() || !description.trim()) return;
     setSubmitting(true);
@@ -1873,9 +1936,22 @@ function StrugglesSlide({ data, onRefresh, slide }: { data: DashboardData; onRef
         <div className="glass-panel rounded-2xl overflow-hidden mb-6">
           <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground px-6 py-3 border-b border-border/50">Open improvements</p>
           {data.struggles.map(s => (
-            <div key={s.id} className="px-6 py-4 border-b border-border/50 last:border-0">
-              <p className="text-2xl font-semibold leading-tight">{s.title}</p>
-              <p className="text-lg text-muted-foreground mt-1 leading-snug">{s.description}</p>
+            <div key={s.id} className="px-6 py-4 border-b border-border/50 last:border-0 flex items-start gap-4">
+              <div className="flex-1 min-w-0">
+                <p className="text-2xl font-semibold leading-tight">{s.title}</p>
+                <p className="text-lg text-muted-foreground mt-1 leading-snug">{s.description}</p>
+                {s.assignedToName && (
+                  <p className="text-base text-muted-foreground mt-1">Assigned to <span className="font-semibold text-foreground">{s.assignedToName}</span></p>
+                )}
+              </div>
+              <button
+                onClick={() => markComplete(s.id)}
+                disabled={completingId === s.id}
+                className="shrink-0 mt-1 flex items-center gap-2 px-4 py-2.5 rounded-xl border border-green-300 dark:border-green-700 text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/20 text-base font-semibold hover:bg-green-100 dark:hover:bg-green-900/40 disabled:opacity-50 transition-colors"
+              >
+                {completingId === s.id ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
+                Complete
+              </button>
             </div>
           ))}
         </div>
