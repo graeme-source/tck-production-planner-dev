@@ -58,6 +58,7 @@ import bundlesRouter from "./bundles";
 import trainingRouter from "./training";
 import onboardingRouter from "./onboarding";
 import goveeRouter from "./govee";
+import visitorsRouter from "./visitors";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -161,6 +162,9 @@ router.use("/wholesale-bags", requireAdminOrManager, wholesaleBagsRouter);
 router.use("/bundles", requireAdminOrManager, bundlesRouter);
 router.use("/training", requireAdminOrManager, trainingRouter);
 router.use("/govee", goveeRouter);
+// Visitor book. Open to all logged-in staff — anyone on the floor may be the
+// one who greets a visitor and hands them the iPad.
+router.use("/visitors", visitorsRouter);
 
 // Caz assistant. Open to ALL logged-in staff — the route itself gives each
 // user only the read tools their role permits, and reserves recipe-design /

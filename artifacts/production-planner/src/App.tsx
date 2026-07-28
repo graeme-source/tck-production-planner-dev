@@ -13,6 +13,7 @@ import { StagingEnvBanner } from "@/components/staging-env-banner";
 import { PullToRefresh } from "@/components/pull-to-refresh";
 import Dashboard from "@/pages/dashboard";
 import MeetingPage from "@/pages/meeting";
+import VisitorCheckIn from "@/pages/visitor-check-in";
 import PackReport from "@/pages/pack-report";
 import LabelLiveTest from "@/pages/label-live-test";
 import Ingredients from "@/pages/ingredients";
@@ -114,6 +115,10 @@ function Router() {
 
       {/* Morning Meeting — full-screen slideshow */}
       <Route path="/meeting" component={MeetingPage} />
+
+      {/* Visitor check-in — full-screen kiosk, no sidebar. The iPad gets
+          handed to a visitor, so the app nav must not be reachable. */}
+      <Route path="/visitor-check-in" component={VisitorCheckIn} />
 
       {/* Print / resource pages — full-screen, no sidebar, print-optimised */}
       <Route path="/print/fire-action-notice" component={FireActionNoticePrint} />

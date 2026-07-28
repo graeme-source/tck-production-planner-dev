@@ -14,7 +14,7 @@ import {
   Lightbulb, AlertTriangle, CheckCircle, Filter, Play, Square,
   MessageSquare, Send, ClipboardCheck, FileText, Eye, EyeOff,
   Droplets, UserCog, ClipboardList, Flame, HardHat, Printer, Check, Pencil, Plus,
-  PoundSterling, Sunrise, Sunset,
+  PoundSterling, Sunrise, Sunset, UserPlus, LogOut, Download, X as XIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
@@ -170,7 +170,7 @@ type TabId = "kpis" | "breaks" | "haccp" | "risk-assessments" | "improvements" |
 // HACCP is being built out into a full food-safety system, so it gets its
 // own sub-navigation. Temperature Log lives here too — fridge, freezer, and
 // cooked-core readings are all food-safety evidence.
-type HaccpSubTabId = "evidence" | "temperatures" | "cooling-weights" | "sensors";
+type HaccpSubTabId = "evidence" | "temperatures" | "cooling-weights" | "sensors" | "visitors";
 
 interface ImprovementRecord {
   id: number;
@@ -265,7 +265,7 @@ function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: stri
 }
 
 const VALID_TABS: TabId[] = ["kpis", "breaks", "haccp", "risk-assessments", "improvements", "issues", "leftover-filling", "employees", "printables"];
-const VALID_HACCP_SUBTABS: HaccpSubTabId[] = ["evidence", "temperatures", "cooling-weights", "sensors"];
+const VALID_HACCP_SUBTABS: HaccpSubTabId[] = ["evidence", "temperatures", "cooling-weights", "sensors", "visitors"];
 
 interface ReportsNavItem {
   id: TabId;
@@ -296,6 +296,7 @@ const HACCP_SUB_NAV_ITEMS: HaccpSubNavItem[] = [
   { id: "temperatures", label: "Temperature Log", icon: Thermometer },
   { id: "cooling-weights", label: "Cooling & Weights", icon: Hourglass },
   { id: "sensors", label: "Sensor History", icon: Activity },
+  { id: "visitors", label: "Visitor Book", icon: UserPlus },
 ];
 
 // Tabs only visible to admins (not managers). Empty — no admin-gated tabs right now.
@@ -537,6 +538,7 @@ export default function Reports() {
               {haccpSubTab === "temperatures" && <TemperatureRecordsTab />}
               {haccpSubTab === "cooling-weights" && <BatchWeightsTab fromDate={fromDate} toDate={toDate} />}
               {haccpSubTab === "sensors" && <GoveeSensorHistoryTab initialDevice={deviceParam} />}
+              {haccpSubTab === "visitors" && <VisitorBookTab fromDate={fromDate} toDate={toDate} />}
             </>
           )}
           {activeTab === "risk-assessments" && <RiskAssessmentsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
@@ -1066,6 +1068,286 @@ function isReadingSafe(zone: "fridge" | "freezer", temp: number): boolean {
 // sit in a collapsible section below the day detail.
 interface GoveeHistorySensor { device: string; name: string; zone: string | null; thresholdC: number | null; stale?: boolean; lastOnlineAt?: string | null; }
 interface GoveeHistoryPoint { temperatureC: number | null; humidityPercent: number | null; online: boolean; recordedAt: string; }
+
+interface VisitorEntry {
+  id: number;
+  visitorName: string;
+  company: string | null;
+  visiting: string | null;
+  purpose: string | null;
+  illnessLast48h: boolean;
+  jewelleryRemoved: boolean;
+  ppeAgreed: boolean;
+  entryPermitted: boolean;
+  signedInAt: string;
+  signedOutAt: string | null;
+  recordedByName: string | null;
+  signedOutByName: string | null;
+  notes: string | null;
+}
+
+// Retrievable visitor book — the log side of the /visitor-check-in kiosk.
+// Every sign-in over the selected date range, with the health + hygiene
+// declarations each visitor made and who was still on site. Exports to CSV
+// so an EHO or SALSA auditor can be handed the period they asked for.
+function VisitorBookTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
+  const [rows, setRows] = useState<VisitorEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState<number | null>(null);
+  const [showRefusedOnly, setShowRefusedOnly] = useState(false);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    const params = new URLSearchParams({ from: fromDate, to: toDate });
+    fetch(`${BASE}/api/visitors?${params.toString()}`, { credentials: "include" })
+      .then(r => { if (!r.ok) throw new Error("Failed to load the visitor book"); return r.json(); })
+      .then((data: VisitorEntry[]) => { setRows(data); setLoading(false); })
+      .catch((err: Error) => { setError(err.message); setLoading(false); });
+  }, [fromDate, toDate]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function signOut(id: number) {
+    setSigningOut(id);
+    try {
+      const res = await fetch(`${BASE}/api/visitors/${id}/sign-out`, { method: "PATCH", credentials: "include" });
+      if (!res.ok) throw new Error("Sign-out failed");
+      load();
+    } catch {
+      toast({ title: "Sign-out failed", description: "Could not sign this visitor out.", variant: "destructive" });
+    }
+    setSigningOut(null);
+  }
+
+  const visible = showRefusedOnly ? rows.filter(r => !r.entryPermitted) : rows;
+  // "Still on site" is a live fact, not a property of the date range — an
+  // open record from an earlier day is exactly the thing worth surfacing.
+  const stillOnSite = rows.filter(r => r.entryPermitted && !r.signedOutAt);
+  const refused = rows.filter(r => !r.entryPermitted);
+
+  function exportCsv() {
+    const header = [
+      "Signed in", "Signed out", "Minutes on site", "Visitor", "Company", "Visiting",
+      "Reason", "Ill in last 48h", "Jewellery removed", "PPE agreed", "Entry permitted",
+      "Signed in with", "Signed out by", "Notes",
+    ];
+    const lines = visible.map(r => [
+      format(new Date(r.signedInAt), "yyyy-MM-dd HH:mm"),
+      r.signedOutAt ? format(new Date(r.signedOutAt), "yyyy-MM-dd HH:mm") : "",
+      r.signedOutAt ? String(Math.round((new Date(r.signedOutAt).getTime() - new Date(r.signedInAt).getTime()) / 60000)) : "",
+      r.visitorName, r.company ?? "", r.visiting ?? "", r.purpose ?? "",
+      r.illnessLast48h ? "YES" : "No",
+      // Not asked when entry was refused — blank rather than a misleading "No".
+      r.entryPermitted ? (r.jewelleryRemoved ? "Yes" : "No") : "n/a",
+      r.entryPermitted ? (r.ppeAgreed ? "Yes" : "No") : "n/a",
+      r.entryPermitted ? "Yes" : "REFUSED",
+      r.recordedByName ?? "", r.signedOutByName ?? "", r.notes ?? "",
+    ]);
+    const csv = [header, ...lines]
+      .map(cols => cols.map(c => `"${String(c).replace(/"/g, '""')}"`).join(","))
+      .join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `visitor-book-${fromDate}-to-${toDate}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function fmtDuration(from: string, to: string | null) {
+    if (!to) return null;
+    const mins = Math.round((new Date(to).getTime() - new Date(from).getTime()) / 60000);
+    if (mins < 60) return `${mins}m`;
+    return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+  }
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-16 text-muted-foreground gap-2">
+      <Loader2 className="w-5 h-5 animate-spin" /> Loading the visitor book…
+    </div>
+  );
+  if (error) return (
+    <div className="rounded-xl border border-red-200 bg-red-50 dark:bg-red-900/20 p-4 text-red-700 dark:text-red-400 text-sm">{error}</div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20 px-4 py-3 flex items-start gap-3">
+        <UserPlus className="w-5 h-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+        <div className="text-sm">
+          <p className="font-semibold text-blue-800 dark:text-blue-300">Visitor Book</p>
+          <p className="text-blue-700/80 dark:text-blue-300/80 mt-0.5">
+            Every visitor who signed in on the check-in iPad, with the sickness declaration and
+            hygiene confirmations they made. Sign-in and sign-out times are stamped by the server.
+            Visitors are checked in from the dashboard's <span className="font-medium">Visitor Check-In</span> button.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <SummaryCard
+          icon={<UserPlus className="w-4 h-4 text-primary" />}
+          label="Visits in Range"
+          value={String(rows.length)}
+          sub={`${new Set(rows.map(r => r.company).filter(Boolean)).size} compan${new Set(rows.map(r => r.company).filter(Boolean)).size === 1 ? "y" : "ies"}`}
+        />
+        <SummaryCard
+          icon={<Users className={cn("w-4 h-4", stillOnSite.length > 0 ? "text-amber-500" : "text-muted-foreground")} />}
+          label="Still On Site"
+          value={String(stillOnSite.length)}
+          sub={stillOnSite.length > 0 ? "Never signed out — check before locking up" : "Everyone signed out"}
+          highlight={stillOnSite.length > 0 ? "amber" : undefined}
+        />
+        <SummaryCard
+          icon={<AlertTriangle className={cn("w-4 h-4", refused.length > 0 ? "text-red-500" : "text-muted-foreground")} />}
+          label="Entry Refused"
+          value={String(refused.length)}
+          sub={refused.length > 0 ? "Reported illness in last 48h" : "No illness declared"}
+          highlight={refused.length > 0 ? "red" : undefined}
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card px-3 py-2">
+        <Filter className="w-4 h-4 text-muted-foreground" />
+        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mr-1">Filter</span>
+        <button
+          onClick={() => setShowRefusedOnly(v => !v)}
+          className={cn(
+            "px-2.5 py-1.5 rounded-lg text-sm border transition-colors",
+            showRefusedOnly
+              ? "border-red-300 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300"
+              : "border-border bg-background hover:bg-secondary/50"
+          )}
+        >
+          Refused entry only
+        </button>
+        <button
+          onClick={exportCsv}
+          disabled={visible.length === 0}
+          className="ml-auto flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm border border-border bg-background hover:bg-secondary/50 transition-colors disabled:opacity-40"
+        >
+          <Download className="w-3.5 h-3.5" /> Export CSV
+        </button>
+      </div>
+
+      <div className="rounded-xl border border-border bg-card overflow-hidden">
+        <div className="px-4 py-2.5 border-b border-border bg-secondary/20 flex items-center gap-2">
+          <ClipboardList className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+          <h3 className="text-sm font-semibold">Visitor Log ({visible.length})</h3>
+        </div>
+        {visible.length === 0 ? (
+          <div className="p-8 text-center text-sm text-muted-foreground">
+            No visitors signed in over this date range.
+          </div>
+        ) : (
+          <div className="overflow-x-auto max-h-[640px] overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-secondary/40 backdrop-blur-sm">
+                <tr className="border-b border-border">
+                  <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground whitespace-nowrap">In</th>
+                  <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground whitespace-nowrap">Out</th>
+                  <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Visitor</th>
+                  <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Seeing</th>
+                  <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Reason</th>
+                  <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground whitespace-nowrap">Declarations</th>
+                  <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground whitespace-nowrap">Signed in with</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {visible.map(r => {
+                  const duration = fmtDuration(r.signedInAt, r.signedOutAt);
+                  const open = r.entryPermitted && !r.signedOutAt;
+                  return (
+                    <tr
+                      key={r.id}
+                      className={cn(
+                        "hover:bg-secondary/10 transition-colors align-top",
+                        !r.entryPermitted && "bg-red-50/40 dark:bg-red-950/20"
+                      )}
+                    >
+                      <td className="px-4 py-2.5 whitespace-nowrap tabular-nums">
+                        <span className="font-medium">{format(new Date(r.signedInAt), "HH:mm")}</span>
+                        <span className="block text-xs text-muted-foreground">{format(new Date(r.signedInAt), "dd MMM yyyy")}</span>
+                      </td>
+                      <td className="px-4 py-2.5 whitespace-nowrap tabular-nums">
+                        {r.signedOutAt ? (
+                          <>
+                            <span className="font-medium">{format(new Date(r.signedOutAt), "HH:mm")}</span>
+                            {duration && <span className="block text-xs text-muted-foreground">{duration} on site</span>}
+                          </>
+                        ) : open ? (
+                          <button
+                            onClick={() => signOut(r.id)}
+                            disabled={signingOut === r.id}
+                            className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 rounded-lg hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors disabled:opacity-50"
+                          >
+                            <LogOut className="w-3 h-3" />
+                            {signingOut === r.id ? "…" : "Sign out"}
+                          </button>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className="font-medium">{r.visitorName}</span>
+                        {r.company && <span className="block text-xs text-muted-foreground">{r.company}</span>}
+                        {!r.entryPermitted && (
+                          <span className="inline-flex items-center gap-1 mt-1 text-[10px] font-bold uppercase tracking-wide text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-900/30 rounded-full px-2 py-0.5">
+                            <AlertTriangle className="w-3 h-3" /> Entry refused
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-muted-foreground">{r.visiting ?? "—"}</td>
+                      <td className="px-4 py-2.5 text-muted-foreground max-w-[14rem]">{r.purpose ?? "—"}</td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex flex-col gap-1">
+                          <DeclarationChip
+                            ok={!r.illnessLast48h}
+                            label={r.illnessLast48h ? "Ill in last 48h" : "No illness 48h"}
+                          />
+                          {/* A refused visitor never got as far as the hygiene
+                              questions, so don't show them as failures. */}
+                          {r.entryPermitted && (
+                            <>
+                              <DeclarationChip ok={r.jewelleryRemoved} label="Jewellery off" />
+                              <DeclarationChip ok={r.ppeAgreed} label="PPE agreed" />
+                            </>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
+                        {r.recordedByName ?? "—"}
+                        {r.signedOutByName && (
+                          <span className="block">out: {r.signedOutByName}</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DeclarationChip({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <span className={cn(
+      "inline-flex items-center gap-1 text-[11px] font-medium rounded-full px-2 py-0.5 w-fit whitespace-nowrap",
+      ok
+        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+        : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300"
+    )}>
+      {ok ? <Check className="w-3 h-3" /> : <XIcon className="w-3 h-3" />}
+      {label}
+    </span>
+  );
+}
 
 // Cold-chain history from the Govee sensors. Lists each mapped sensor, a time
 // range, summary stats and a lightweight SVG trend line — no chart library.
@@ -2572,7 +2854,7 @@ function SummaryCard({ icon, label, value, sub, highlight }: {
   label: string;
   value: string;
   sub?: string;
-  highlight?: "red" | "green";
+  highlight?: "red" | "green" | "amber";
 }) {
   return (
     <div className="rounded-2xl border border-border bg-card p-4">
@@ -2584,7 +2866,7 @@ function SummaryCard({ icon, label, value, sub, highlight }: {
       {sub && (
         <p className={cn(
           "text-xs mt-1",
-          highlight === "red" ? "text-red-600" : highlight === "green" ? "text-emerald-600" : "text-muted-foreground"
+          highlight === "red" ? "text-red-600" : highlight === "green" ? "text-emerald-600" : highlight === "amber" ? "text-amber-600" : "text-muted-foreground"
         )}>
           {sub}
         </p>

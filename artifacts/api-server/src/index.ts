@@ -1111,6 +1111,32 @@ async function runStartupMigrations() {
       )
     `);
 
+    // Digital visitor book — see lib/db/migrations/0030_add_visitor_log.sql.
+    // The check-in screen and the HACCP → Visitor Book log both query this
+    // unconditionally, so it must exist on every environment.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS visitor_log (
+        id SERIAL PRIMARY KEY,
+        visitor_name TEXT NOT NULL,
+        company TEXT,
+        visiting TEXT,
+        purpose TEXT,
+        illness_last_48h BOOLEAN NOT NULL,
+        jewellery_removed BOOLEAN NOT NULL DEFAULT FALSE,
+        ppe_agreed BOOLEAN NOT NULL DEFAULT FALSE,
+        entry_permitted BOOLEAN NOT NULL DEFAULT TRUE,
+        signed_in_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        signed_out_at TIMESTAMP,
+        recorded_by_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        recorded_by_name TEXT,
+        signed_out_by_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        signed_out_by_name TEXT,
+        notes TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_visitor_log_signed_in ON visitor_log (signed_in_at)`);
+
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS prep_tin_overrides (
         id SERIAL PRIMARY KEY,
