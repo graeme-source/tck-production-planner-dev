@@ -16,7 +16,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
-import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt } from "lucide-react";
+import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt, Camera, Upload, X, FileText } from "lucide-react";
 import { jsPDF } from "jspdf";
 import { toast } from "@/hooks/use-toast";
 
@@ -448,6 +448,19 @@ const EXPENSE_CATEGORIES = [
   "Other",
 ] as const;
 
+/** A receipt captured against one expense line. Photos are downscaled to a
+ *  JPEG data URL so they can be embedded straight into the claim PDF;
+ *  PDFs keep the original File and travel as separate email attachments. */
+interface ReceiptFile {
+  kind: "image" | "pdf";
+  fileName: string;
+  sizeKB: number;
+  dataUrl?: string;
+  width?: number;
+  height?: number;
+  file?: File;
+}
+
 interface ExpenseLine {
   date: string;
   supplier: string;
@@ -456,6 +469,7 @@ interface ExpenseLine {
   category: string;
   gross: number;
   vat: number;
+  receipt: ReceiptFile | null;
 }
 
 interface ExpenseFormValues {
@@ -464,7 +478,44 @@ interface ExpenseFormValues {
 }
 
 function emptyExpenseLine(): ExpenseLine {
-  return { date: todayIso(), supplier: "", supplierVatNo: "", description: "", category: EXPENSE_CATEGORIES[0], gross: 0, vat: 0 };
+  return { date: todayIso(), supplier: "", supplierVatNo: "", description: "", category: EXPENSE_CATEGORIES[0], gross: 0, vat: 0, receipt: null };
+}
+
+const MAX_RECEIPT_PDF_BYTES = 8 * 1024 * 1024;
+const RECEIPT_MAX_DIMENSION = 1600;
+
+/** Downscale + JPEG-compress an image so a phone photo (~5MB) becomes a
+ *  few hundred KB — small enough to embed in the claim PDF and email. */
+async function prepareReceipt(file: File): Promise<ReceiptFile> {
+  if (file.type === "application/pdf") {
+    if (file.size > MAX_RECEIPT_PDF_BYTES) throw new Error("PDF too large (max 8MB). Photograph the receipt instead.");
+    return { kind: "pdf", fileName: file.name, sizeKB: Math.round(file.size / 1024), file };
+  }
+  if (!file.type.startsWith("image/")) throw new Error("Use a photo (JPEG/PNG/HEIC) or a PDF.");
+
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const scale = Math.min(1, RECEIPT_MAX_DIMENSION / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.round(img.naturalWidth * scale);
+    const h = Math.round(img.naturalHeight * scale);
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Couldn't process the image.");
+    ctx.drawImage(img, 0, 0, w, h);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+    const sizeKB = Math.round((dataUrl.length * 3) / 4 / 1024);
+    return { kind: "image", fileName: file.name || "photo.jpg", sizeKB, dataUrl, width: w, height: h };
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("image")) throw err;
+    throw new Error("Couldn't read that image — try a JPEG/PNG photo or a PDF.");
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 function calcExpenses(lines: ExpenseLine[]) {
@@ -574,9 +625,98 @@ function buildExpensePdf(form: ExpenseFormValues): { doc: jsPDF; filename: strin
   doc.setFontSize(7.5);
   doc.setTextColor(120);
   doc.text("VAT reclaim requires a receipt showing the supplier's name, address, VAT number, date, a description of the goods, and the VAT amount or rate (simplified receipts acceptable up to £250 gross; a full VAT invoice above that).", left, y, { maxWidth: right - left });
+  doc.setTextColor(0);
+
+  // Appendix — one page per photographed receipt, embedded full-page so the
+  // claim PDF is self-contained evidence. Receipts supplied as PDF files
+  // can't be merged client-side; they're listed here and attached to the
+  // email alongside this document.
+  const pdfReceipts: Array<{ line: number; supplier: string; fileName: string }> = [];
+  form.lines.forEach((l, i) => {
+    const r = l.receipt;
+    if (!r) return;
+    if (r.kind === "pdf") {
+      pdfReceipts.push({ line: i + 1, supplier: l.supplier || "—", fileName: r.fileName });
+      return;
+    }
+    if (!r.dataUrl || !r.width || !r.height) return;
+    doc.addPage();
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text(`Receipt — item ${i + 1}: ${l.supplier || "—"} (${fmtDateUK(l.date)})`, left, 44);
+    const maxW = right - left;
+    const maxH = pageHeight - 110;
+    const fit = Math.min(maxW / r.width, maxH / r.height);
+    doc.addImage(r.dataUrl, "JPEG", left, 60, r.width * fit, r.height * fit);
+  });
+  if (pdfReceipts.length > 0) {
+    doc.addPage();
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("Receipts supplied as PDF files (attached separately)", left, 44);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    let yy = 64;
+    for (const p of pdfReceipts) {
+      doc.text(`Item ${p.line} — ${p.supplier}: ${p.fileName}`, left, yy);
+      yy += 14;
+    }
+  }
 
   const filename = `expense-claim-${(form.employeeName || "employee").toLowerCase().replace(/\s+/g, "-")}-${todayIso()}.pdf`;
   return { doc, filename, totals };
+}
+
+/** Per-line receipt attach control: take a photo, or upload a photo/PDF.
+ *  Required — the submit buttons stay disabled until every line has one. */
+function ReceiptField({ value, onChange }: { value: ReceiptFile | null; onChange: (r: ReceiptFile | null) => void }) {
+  const [busy, setBusy] = useState(false);
+
+  const handleFile = async (file: File | undefined) => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      onChange(await prepareReceipt(file));
+    } catch (err) {
+      toast({ variant: "destructive", title: "Couldn't attach receipt", description: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pickerBtn = "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-background text-xs font-medium hover:bg-secondary/50 transition-colors cursor-pointer";
+
+  if (value) {
+    return (
+      <div className="flex items-center gap-2 min-w-0">
+        {value.kind === "image" && value.dataUrl ? (
+          <img src={value.dataUrl} alt="Receipt" className="w-9 h-9 rounded-md object-cover border border-border shrink-0" />
+        ) : (
+          <span className="w-9 h-9 rounded-md border border-border bg-secondary/40 flex items-center justify-center shrink-0"><FileText className="w-4 h-4 text-muted-foreground" /></span>
+        )}
+        <span className="text-xs text-muted-foreground truncate">{value.fileName} · {value.sizeKB}KB</span>
+        <button type="button" onClick={() => onChange(null)} className="text-muted-foreground hover:text-destructive shrink-0" title="Remove receipt">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <label className={pickerBtn}>
+        {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />} Take photo
+        <input type="file" accept="image/*" capture="environment" className="hidden" disabled={busy}
+          onChange={e => { void handleFile(e.target.files?.[0]); e.target.value = ""; }} />
+      </label>
+      <label className={pickerBtn}>
+        <Upload className="w-3.5 h-3.5" /> Upload photo / PDF
+        <input type="file" accept="image/*,application/pdf" className="hidden" disabled={busy}
+          onChange={e => { void handleFile(e.target.files?.[0]); e.target.value = ""; }} />
+      </label>
+      <span className="text-xs text-destructive/80 font-medium">Required</span>
+    </div>
+  );
 }
 
 function ExpenseClaimForm() {
@@ -597,7 +737,9 @@ function ExpenseClaimForm() {
     lines: data.lines.map(l => ({ ...l, gross: Number(l.gross) || 0, vat: Number(l.vat) || 0 })),
   });
 
-  const canSubmit = Boolean(lines?.some(l => (Number(l.gross) || 0) > 0 && l.supplier?.trim()));
+  const hasContent = Boolean(lines?.some(l => (Number(l.gross) || 0) > 0 && l.supplier?.trim()));
+  const everyLineHasReceipt = Boolean(lines?.every(l => l.receipt != null));
+  const canSubmit = hasContent && everyLineHasReceipt;
 
   const onSubmit = (data: ExpenseFormValues) => {
     if (!data.employeeName?.trim()) return;
@@ -611,23 +753,23 @@ function ExpenseClaimForm() {
     try {
       const normalised = normalise(data);
       const { doc, filename, totals: built } = buildExpensePdf(normalised);
-      const ab = doc.output("arraybuffer");
-      const bytes = new Uint8Array(ab);
-      let binary = "";
-      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      const pdfBase64 = btoa(binary);
+      // Multipart: the claim PDF (photo receipts already embedded) plus any
+      // receipts that were supplied as PDF files, which can't be merged
+      // client-side and travel as their own email attachments.
+      const fd = new FormData();
+      fd.append("claimPdf", doc.output("blob"), filename);
+      for (const l of normalised.lines) {
+        if (l.receipt?.kind === "pdf" && l.receipt.file) fd.append("receipts", l.receipt.file, l.receipt.fileName);
+      }
+      fd.append("filename", filename);
+      fd.append("totalGross", String(built.gross));
+      fd.append("totalVat", String(built.vat));
+      fd.append("lineCount", String(normalised.lines.length));
+      fd.append("employeeName", normalised.employeeName);
       const res = await fetch("/api/forms/expense-claim/email", {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pdfBase64,
-          filename,
-          totalGross: built.gross,
-          totalVat: built.vat,
-          lineCount: normalised.lines.length,
-          employeeName: normalised.employeeName,
-        }),
+        body: fd,
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -721,6 +863,14 @@ function ExpenseClaimForm() {
                   )}
                 />
               </div>
+              <div className="flex items-center gap-3 pt-1">
+                <span className="text-xs font-medium text-muted-foreground shrink-0">Receipt or invoice *</span>
+                <Controller
+                  control={control}
+                  name={`lines.${idx}.receipt`}
+                  render={({ field: f }) => <ReceiptField value={f.value} onChange={f.onChange} />}
+                />
+              </div>
             </div>
           ))}
         </div>
@@ -745,8 +895,14 @@ function ExpenseClaimForm() {
         </div>
       </div>
 
+      {hasContent && !everyLineHasReceipt && (
+        <div className="rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          Every expense needs its receipt or invoice attached before you can submit — tap "Take photo" or "Upload" on each line.
+        </div>
+      )}
+
       <div className="rounded-xl border border-amber-300/60 dark:border-amber-700/60 bg-amber-50/60 dark:bg-amber-900/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
-        Keep your receipts — VAT can only be claimed back with the original receipt showing the supplier's VAT number. Hand them in (or photograph and reply to the claim email) when you submit.
+        Photo receipts are embedded in the claim PDF and PDF receipts are attached to the review email automatically — but hold on to the paper originals until the claim is paid, in case HMRC wants them.
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3">
