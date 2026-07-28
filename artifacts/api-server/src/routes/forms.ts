@@ -1,8 +1,8 @@
 /**
- * Employee form submissions. Currently a single endpoint: email a
- * mileage-claim PDF (generated client-side via jsPDF) to the
+ * Employee form submissions: email a client-side-generated PDF
+ * (mileage claim or expense claim, both built via jsPDF) to the
  * founder for review. The PDF is forwarded as a Resend attachment;
- * the body summarises the trip total so the recipient gets a quick
+ * the body summarises the totals so the recipient gets a quick
  * read without opening the attachment.
  */
 import { Router, type IRouter, type Request, type Response } from "express";
@@ -86,6 +86,83 @@ router.post("/mileage-claim/email", async (req: Request, res: Response) => {
     res.json({ ok: true, sentTo: MILEAGE_REVIEW_TO, submitter: { name: submitterName, email: submitterEmail } });
   } catch (err) {
     console.error("[forms] mileage-claim email failed:", err);
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to send email" });
+  }
+});
+
+const EXPENSE_REVIEW_TO = "graeme@thecalzonekitchen.co.uk";
+const EXPENSE_REVIEW_SUBJECT = "TCK Expense claim form for review";
+
+interface ExpenseEmailBody {
+  pdfBase64: string;
+  filename?: string;
+  totalGross?: number;
+  totalVat?: number;
+  lineCount?: number;
+  employeeName?: string;
+}
+
+router.post("/expense-claim/email", async (req: Request, res: Response) => {
+  const { pdfBase64, filename, totalGross, totalVat, lineCount, employeeName } = req.body as ExpenseEmailBody;
+  if (!pdfBase64 || typeof pdfBase64 !== "string") {
+    res.status(400).json({ error: "pdfBase64 is required" });
+    return;
+  }
+
+  // Identify the submitter from the session so we don't blindly trust
+  // the employeeName the client sent.
+  const userId = req.session.userId;
+  let submitterName = employeeName?.trim() || "(unknown)";
+  let submitterEmail: string | null = null;
+  if (userId) {
+    const [user] = await db
+      .select({ name: usersTable.name, email: usersTable.email })
+      .from(usersTable)
+      .where(eq(usersTable.id, userId));
+    if (user) {
+      submitterName = user.name;
+      submitterEmail = user.email;
+    }
+  }
+
+  const safeFilename = (filename ?? `expense-claim-${submitterName.toLowerCase().replace(/\s+/g, "-")}.pdf`).replace(/[^a-zA-Z0-9._-]/g, "_");
+  const itemsLine = typeof lineCount === "number" ? `<p><strong>Items:</strong> ${lineCount}</p>` : "";
+  const grossLine = typeof totalGross === "number" ? `<p><strong>Total claim (gross):</strong> £${totalGross.toFixed(2)}</p>` : "";
+  const vatLine = typeof totalVat === "number" ? `<p><strong>Of which VAT:</strong> £${totalVat.toFixed(2)}</p>` : "";
+
+  const html = `<!DOCTYPE html><html><body style="font-family: sans-serif; max-width: 560px; margin: 32px auto; color: #333;">
+    <h2 style="color: #1a1a1a;">Expense claim — ${submitterName}</h2>
+    <p>${submitterName} has submitted an expense claim for review. The PDF is attached.</p>
+    ${itemsLine}
+    ${grossLine}
+    ${vatLine}
+    <p style="color:#999;font-size:12px;margin-top:24px;">Reminder: VAT can only be reclaimed against the original receipts — chase them if they weren't handed in. Submitted via TCK Production Planner.</p>
+  </body></html>`;
+
+  const text = [
+    `Expense claim — ${submitterName}`,
+    "",
+    `${submitterName} has submitted an expense claim for review. The PDF is attached.`,
+    typeof lineCount === "number" ? `Items: ${lineCount}` : null,
+    typeof totalGross === "number" ? `Total claim (gross): £${totalGross.toFixed(2)}` : null,
+    typeof totalVat === "number" ? `Of which VAT: £${totalVat.toFixed(2)}` : null,
+  ].filter(Boolean).join("\n");
+
+  try {
+    await sendEmail({
+      to: EXPENSE_REVIEW_TO,
+      subject: EXPENSE_REVIEW_SUBJECT,
+      html,
+      text,
+      attachments: [{
+        filename: safeFilename,
+        content: pdfBase64,
+        contentType: "application/pdf",
+      }],
+    });
+    res.json({ ok: true, sentTo: EXPENSE_REVIEW_TO, submitter: { name: submitterName, email: submitterEmail } });
+  } catch (err) {
+    console.error("[forms] expense-claim email failed:", err);
     res.status(500).json({ error: err instanceof Error ? err.message : "Failed to send email" });
   }
 });
