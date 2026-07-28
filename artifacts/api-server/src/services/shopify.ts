@@ -1,4 +1,5 @@
 import { shouldSkipSideEffect, logSkippedSideEffect } from "../lib/app-env";
+import { apcTrackingUrl } from "./apc";
 
 const STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN!;
 const CLIENT_ID = process.env.SHOPIFY_CLIENT_ID!;
@@ -564,7 +565,11 @@ export async function fulfillOrder(
         tracking_info: {
           number: trackingNumber,
           company: trackingCompany,
-          url: trackingUrl ?? `https://apc.co.uk/tracking/${trackingNumber}`,
+          // Callers pass the proper link (built by apcTrackingUrl, which adds
+          // the consignee postcode so the customer skips APC's CAPTCHA). The
+          // fallback is the same host without the postcode — the old
+          // apc.co.uk/tracking/ path this used to emit is not a live URL.
+          url: trackingUrl ?? apcTrackingUrl(trackingNumber, null),
         },
       } : {}),
       notify_customer: true,

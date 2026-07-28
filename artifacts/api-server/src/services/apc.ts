@@ -632,6 +632,217 @@ export async function addParcel(req: AddParcelRequest): Promise<AddParcelResult>
   return { labelPdfs, warnings };
 }
 
+// ── Label-barcode ↔ waybill matching ───────────────────────────────────────
+// An APC label carries TWO barcodes: the long item barcode, and a short
+// depot/route code (e.g. "080"). Only the long one identifies the parcel, so a
+// short scan must be reported as "wrong barcode on the label", never as
+// "wrong label for this order".
+//
+// The two long forms share a 14-digit core (see the identifier glossary in the
+// APC API v3 guide):
+//   item barcode   (17) = <14-digit core><3-digit item no>   03036990014368 + 001
+//   consignment id (22) = <8-digit send date><14-digit core> 20260728 + 03036990014368
+//
+// Matching on the core therefore works whichever barcode the scanner reads,
+// and every parcel of a multi-box consignment matches the same consignment —
+// which is what we want for the add-parcel flow.
+//
+// The send date lives ONLY in the 22-digit form, so a scanned item barcode can
+// never be turned into a waybill on its own. Always take the waybill from the
+// API (lookupOrderByReference) and use the scan purely to verify it.
+
+export type ApcBarcodeParse =
+  | { ok: true; core: string; itemNumber: string | null; format: "item" | "consignment" | "core"; digits: string }
+  | { ok: false; reason: "empty" | "too-short" | "unrecognised-length"; digits: string };
+
+/** Reduce a raw scanner string to the 14-digit consignment core. */
+export function parseApcBarcode(scanned: string): ApcBarcodeParse {
+  const digits = (scanned ?? "").replace(/\D/g, "");
+  if (!digits) return { ok: false, reason: "empty", digits };
+  // The depot/route barcode is far too short to be a parcel identifier.
+  if (digits.length < 14) return { ok: false, reason: "too-short", digits };
+  if (digits.length === 14) return { ok: true, core: digits, itemNumber: null, format: "core", digits };
+  if (digits.length === 17) return { ok: true, core: digits.slice(0, 14), itemNumber: digits.slice(14), format: "item", digits };
+  if (digits.length === 22) return { ok: true, core: digits.slice(8), itemNumber: null, format: "consignment", digits };
+  return { ok: false, reason: "unrecognised-length", digits };
+}
+
+/** The 14-digit core of a 22-digit APC waybill (or of a bare core). */
+export function waybillCore(waybill: string): string | null {
+  const digits = (waybill ?? "").replace(/\D/g, "");
+  if (digits.length === 22) return digits.slice(8);
+  if (digits.length === 14) return digits;
+  return null;
+}
+
+/** True when a scanned label barcode belongs to the given consignment. */
+export function barcodeMatchesWaybill(scanned: string, waybill: string): boolean {
+  const parsed = parseApcBarcode(scanned);
+  const core = waybillCore(waybill);
+  return parsed.ok && core !== null && parsed.core === core;
+}
+
+/** APC's Reference field allows only letters, numbers and dashes, so a Shopify
+ *  order name like "#131377" has to be reduced before it can be sent or
+ *  looked up. Leading/trailing dashes are trimmed so "#131377" resolves to
+ *  "131377" rather than "-131377". */
+export function sanitiseApcReference(reference: string): string {
+  return (reference ?? "")
+    .replace(/[^a-zA-Z0-9-]/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 25);
+}
+
+export interface ApcOrderLookup {
+  /** 22-digit consignment identifier — the number Shopify wants. */
+  waybill: string | null;
+  reference: string | null;
+  consigneeName: string | null;
+  consigneeCompany: string | null;
+  consigneePostcode: string | null;
+  productCode: string | null;
+  /** Per-parcel item barcodes, when APC returns them. */
+  itemNumbers: string[];
+}
+
+/**
+ * Look up a consignment by OUR reference (the Shopify order number).
+ *
+ * Read-only: passes labels=False and markprinted=False explicitly so a lookup
+ * can never mark a label as printed — `markprinted` defaults to "Conditional"
+ * in the API, and fetchLabel() deliberately sets it True, so being explicit
+ * here matters.
+ *
+ * Returns null when APC has no consignment for that reference — which is the
+ * signal that the reference was mistyped during the manual upload.
+ */
+/**
+ * Look up a consignment by OUR reference (the Shopify order number).
+ *
+ * Tries the reference VERBATIM first. The API guide says the Reference field
+ * allows "only letters, numbers, or - (dash)", but that isn't enforced on the
+ * CSV bulk-import path: verified 2026-07-28 against a live consignment, where
+ * APC had stored "#131377" complete with the hash. Sanitising first therefore
+ * produced a false "not found". The "#" is percent-encoded into the path by
+ * encodeURIComponent, so it queries cleanly.
+ *
+ * The sanitised form is tried as a fallback because createShipment() strips
+ * the reference before booking, so consignments raised through the API carry a
+ * different string from the ones uploaded by hand.
+ */
+export async function lookupOrderByReference(
+  reference: string,
+  apiBase?: string,
+): Promise<(ApcOrderLookup & { matchedReferenceForm: string }) | null> {
+  const verbatim = (reference ?? "").trim();
+  const sanitised = sanitiseApcReference(reference);
+  if (!verbatim && !sanitised) throw new Error("Reference is empty.");
+
+  // Deduped, verbatim first.
+  const candidates = Array.from(new Set([verbatim, sanitised].filter(Boolean)));
+
+  for (const candidate of candidates) {
+    const hit = await lookupOrder(candidate, "Reference", apiBase);
+    if (hit) return { ...hit, matchedReferenceForm: candidate };
+  }
+  return null;
+}
+
+/** Look up a consignment by its 22-digit APC waybill. Read-only, same
+ *  no-side-effects guarantees as lookupOrderByReference — useful for asking
+ *  "what reference does APC actually hold for this parcel?" when a lookup by
+ *  our own reference comes back empty. */
+export async function lookupOrderByWaybill(
+  waybill: string,
+  apiBase?: string,
+): Promise<ApcOrderLookup | null> {
+  const digits = (waybill ?? "").replace(/\D/g, "");
+  if (digits.length !== 22) throw new Error("Waybill must be 22 digits.");
+  return lookupOrder(digits, "CarrierWaybill", apiBase);
+}
+
+async function lookupOrder(
+  key: string,
+  searchtype: "Reference" | "CarrierWaybill" | "OrderNumber",
+  apiBase?: string,
+): Promise<ApcOrderLookup | null> {
+  if (!isConfigured()) {
+    throw new Error("APC credentials not configured.");
+  }
+
+  const base = apiBase ?? APC_API_BASE;
+
+  const url = `${base}/Orders/${encodeURIComponent(key)}.json`
+    + `?searchtype=${searchtype}&labels=False&markprinted=False`;
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      "remote-user": basicAuthHeader(base),
+      "Content-Type": "application/json",
+    },
+  });
+
+  const text = await res.text();
+
+  if (!res.ok) {
+    // A reference APC doesn't know is a normal, expected outcome — not an
+    // error the caller should have to catch.
+    if (res.status === 404) return null;
+    let errMsg = `APC ${searchtype} lookup failed (${res.status})`;
+    try {
+      const json = JSON.parse(text);
+      const desc = json?.Orders?.Messages?.Description ?? json?.Messages?.Description;
+      if (desc && desc !== "SUCCESS") errMsg = desc;
+    } catch {
+      if (text && !text.trim().startsWith("<")) errMsg = text.slice(0, 300);
+    }
+    throw new Error(errMsg);
+  }
+
+  let json: any;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`APC returned invalid JSON: ${text.slice(0, 200)}`);
+  }
+
+  const order = json?.Orders?.Order;
+  if (!order) return null;
+  // Some "not found" responses come back 200 with a non-SUCCESS message.
+  const waybill: string | null = order?.WayBill ?? null;
+  if (!waybill) return null;
+
+  const rawItem = order?.ShipmentDetails?.Items?.Item;
+  const items = rawItem ? (Array.isArray(rawItem) ? rawItem : [rawItem]) : [];
+
+  return {
+    waybill,
+    reference: order?.Reference ?? null,
+    consigneeName: order?.Delivery?.Contact?.PersonName ?? null,
+    consigneeCompany: order?.Delivery?.CompanyName ?? null,
+    consigneePostcode: order?.Delivery?.PostalCode ?? null,
+    productCode: order?.ProductCode ?? null,
+    itemNumbers: items
+      .map((it: any) => it?.ItemNumber)
+      .filter((n: unknown): n is string => typeof n === "string"),
+  };
+}
+
+/** Customer-facing tracking link. APC's direct URL skips the CAPTCHA on their
+ *  public tracking page, but needs the consignee postcode alongside the
+ *  22-digit waybill, with the outward and inward halves separated by a "+". */
+export function apcTrackingUrl(waybill: string, postcode: string | null | undefined): string {
+  const wb = encodeURIComponent(waybill);
+  const pc = (postcode ?? "").toUpperCase().replace(/\s+/g, "");
+  if (!pc) return `https://apc-overnight.com/track-parcel.php?id=${wb}`;
+  // Inward code is always the last 3 characters of a UK postcode.
+  const formatted = pc.length > 3
+    ? `${pc.slice(0, pc.length - 3)}+${pc.slice(-3)}`
+    : pc;
+  return `https://apc-overnight.com/track-parcel.php?id=${wb}&postcode=${formatted}`;
+}
+
 export async function cancelShipment(waybill: string, apiBase?: string): Promise<void> {
   if (!isConfigured()) {
     throw new Error("APC credentials not configured.");

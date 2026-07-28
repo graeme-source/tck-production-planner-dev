@@ -4832,6 +4832,9 @@ function ApcServiceCodesSection() {
   const [testMode, setTestMode] = useState(false);
   const [testModeToggling, setTestModeToggling] = useState(false);
   const [testModeError, setTestModeError] = useState(false);
+  const [apcMode, setApcMode] = useState<"off" | "reconcile" | "full">("off");
+  const [apcModeSaving, setApcModeSaving] = useState(false);
+  const [apcModeError, setApcModeError] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -4841,7 +4844,9 @@ function ApcServiceCodesSection() {
       fetch(`${BASE}/api/app-settings/apc_service_code_large_friday`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
       fetch(`${BASE}/api/app-settings/apc_weight_threshold_grams`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
       fetch(`${BASE}/api/app-settings/apc_test_mode`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
-    ]).then(([sw, lw, sf, lf, wt, tm]) => {
+      fetch(`${BASE}/api/app-settings/apc_mode`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
+      fetch(`${BASE}/api/app-settings/apc_enabled`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
+    ]).then(([sw, lw, sf, lf, wt, tm, mode, legacyEnabled]) => {
       setCodes({
         smallWeekday: sw?.value ?? "",
         largeWeekday: lw?.value ?? "",
@@ -4850,10 +4855,44 @@ function ApcServiceCodesSection() {
         weightThreshold: wt?.value ?? "1000",
       });
       setTestMode(tm?.value === "true");
+      // Mirror the server's resolution order: apc_mode wins, else derive from
+      // the legacy apc_enabled boolean.
+      const raw = mode?.value;
+      if (raw === "off" || raw === "reconcile" || raw === "full") setApcMode(raw);
+      else setApcMode(legacyEnabled?.value === "false" ? "off" : "full");
     }).catch(() => {
       // Leave defaults if fetch fails
     }).finally(() => setFetching(false));
   }, []);
+
+  const handleApcModeChange = async (next: "off" | "reconcile" | "full") => {
+    if (next === apcMode) return;
+    setApcModeSaving(true);
+    setApcModeError(false);
+    try {
+      const r = await fetch(`${BASE}/api/app-settings/apc_mode`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: next }),
+      });
+      if (!r.ok) throw new Error("Failed to save courier mode");
+      setApcMode(next);
+      // Keep the legacy boolean consistent so any code path still reading
+      // apc_enabled agrees with the mode.
+      await fetch(`${BASE}/api/app-settings/apc_enabled`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: String(next !== "off") }),
+      }).catch(() => { /* non-fatal — apc_mode is the source of truth */ });
+    } catch {
+      setApcModeError(true);
+      setTimeout(() => setApcModeError(false), 3000);
+    } finally {
+      setApcModeSaving(false);
+    }
+  };
 
   const handleTestModeToggle = async () => {
     const newValue = !testMode;
@@ -4935,6 +4974,50 @@ function ApcServiceCodesSection() {
 
       <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
         {fetching && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3 h-3 animate-spin" /> Loading saved values…</div>}
+
+        {/* Courier mode — the switch that decides how the packing station gets
+            a tracking number. Kept above the service codes because those only
+            matter in "full" mode. */}
+        <div className="p-4 rounded-xl border-2 border-border bg-secondary/20 space-y-3">
+          <div>
+            <p className="font-semibold text-sm">Courier Mode</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              How the packing station gets a tracking number onto the Shopify order.
+            </p>
+            {apcModeError && <p className="text-xs text-destructive mt-1 font-medium">Failed to save — please try again.</p>}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {([
+              { id: "off", label: "Off", detail: "No courier integration. Orders are fulfilled with no tracking number." },
+              { id: "reconcile", label: "Label scan", detail: "Consignments booked by hand in Hypaship. Scan each printed label to verify it, then its tracking number goes to Shopify." },
+              { id: "full", label: "Full API", detail: "The app books consignments and prints labels itself. Needs the 4 service codes below." },
+            ] as const).map(opt => {
+              const active = apcMode === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  onClick={() => handleApcModeChange(opt.id)}
+                  disabled={apcModeSaving}
+                  className={`text-left p-3 rounded-xl border-2 transition-colors disabled:opacity-50 ${
+                    active ? "border-primary bg-primary/10" : "border-border bg-background hover:bg-secondary/40"
+                  }`}
+                >
+                  <span className="text-sm font-semibold flex items-center gap-1.5">
+                    {active && <Check className="w-3.5 h-3.5 text-primary" />}
+                    {opt.label}
+                  </span>
+                  <span className="block text-xs text-muted-foreground mt-1">{opt.detail}</span>
+                </button>
+              );
+            })}
+          </div>
+          {apcMode === "reconcile" && (
+            <p className="text-xs text-muted-foreground">
+              Note: APC Test Mode below does not affect label scanning — consignment lookups always
+              use the live account, because that's where hand-raised consignments exist.
+            </p>
+          )}
+        </div>
 
         {/* APC Test Mode toggle */}
         <div className={`flex items-center justify-between p-4 rounded-xl border-2 transition-colors ${testMode ? "border-amber-400 bg-amber-50 dark:bg-amber-950/30" : "border-border bg-secondary/20"}`}>

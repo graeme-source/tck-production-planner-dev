@@ -1,9 +1,9 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { db, skuLocationsTable, skuBarcodesTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable } from "@workspace/db";
+import { db, skuLocationsTable, skuBarcodesTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable, apcConsignmentsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
 import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
-import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService } from "../services/apc";
+import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService, lookupOrderByReference, lookupOrderByWaybill, parseApcBarcode, waybillCore, apcTrackingUrl, type ApcOrderLookup } from "../services/apc";
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
 import { sql } from "drizzle-orm";
 
@@ -37,6 +37,44 @@ async function requireManagerOrAdmin(req: Request, res: Response, next: NextFunc
 async function getAppSetting(key: string): Promise<string | null> {
   const [row] = await db.select().from(appSettingsTable).where(eq(appSettingsTable.key, key));
   return row?.value ?? null;
+}
+
+/**
+ * Courier integration mode.
+ *
+ *   "off"       — no courier integration; Shopify is fulfilled without tracking
+ *   "reconcile" — consignments are raised BY HAND in Hypaship (bulk CSV) with
+ *                 the Shopify order name as the reference. The app looks the
+ *                 consignment up, makes the packer scan the printed label to
+ *                 prove it's the right one, then writes that waybill to
+ *                 Shopify. No consignments are booked and no labels printed.
+ *   "full"      — the app books consignments and prints labels via the API.
+ *
+ * Falls back to the legacy apc_enabled boolean when apc_mode is unset, so an
+ * environment that hasn't run the seed keeps its existing behaviour.
+ */
+export type ApcMode = "off" | "reconcile" | "full";
+
+/** Stamp the ledger row once Shopify has actually accepted the tracking
+ *  number. Never throws — a bookkeeping failure must not fail a fulfilment
+ *  that already succeeded. A no-op in "full" mode, where the waybill came
+ *  from createShipment and was never scanned into the ledger. */
+async function markConsignmentPushed(waybill: string): Promise<void> {
+  try {
+    await db
+      .update(apcConsignmentsTable)
+      .set({ pushedToShopifyAt: new Date() })
+      .where(eq(apcConsignmentsTable.waybill, waybill));
+  } catch (err) {
+    console.warn(`[Fulfilment] could not mark consignment ${waybill} pushed:`, err instanceof Error ? err.message : err);
+  }
+}
+
+async function getApcMode(): Promise<ApcMode> {
+  const mode = await getAppSetting("apc_mode");
+  if (mode === "off" || mode === "reconcile" || mode === "full") return mode;
+  const legacy = await getAppSetting("apc_enabled");
+  return legacy === "false" ? "off" : "full";
 }
 
 function pickServiceCode(
@@ -381,6 +419,7 @@ router.post("/orders/:id/scan-complete", requireManagerOrAdmin, async (req: Requ
       consignmentNumber ? "APC Overnight" : "",
       trackingUrl,
     );
+    if (consignmentNumber) await markConsignmentPushed(consignmentNumber);
     res.json({ ok: true, orderId });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -517,6 +556,311 @@ router.post("/shipments", requireManagerOrAdmin, async (req: Request, res: Respo
     const status = err.message?.includes("not configured") ? 503 :
       err.message?.includes("not found") ? 404 : 502;
     res.status(status).json({ error: err.message });
+  }
+});
+
+// ── Reconcile mode: look up the hand-raised consignment for an order ───────
+// Called when the packer opens an order (and prefetched for the queue), so the
+// waybill is in hand before anyone touches a box and an APC outage surfaces
+// before packing rather than halfway through.
+//
+// Returns 404 when APC has no consignment for the reference — the signal that
+// the reference was mistyped during the manual upload. The packer must not be
+// allowed to ship that order until it's fixed.
+router.get("/consignment-for-order", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const orderName = typeof req.query.orderName === "string" ? req.query.orderName.trim() : "";
+  if (!orderName) {
+    res.status(400).json({ error: "orderName query param required, e.g. ?orderName=%23131377" });
+    return;
+  }
+  if (!isApcConfigured()) {
+    res.status(503).json({ error: "APC credentials not configured." });
+    return;
+  }
+
+  try {
+    // Deliberately LIVE regardless of apc_test_mode: in reconcile mode the
+    // consignment was raised by hand in the live Hypaship account, so looking
+    // it up on the training server just returns a 419 that reads like bad
+    // credentials. Nothing is booked here — it's a read — so there's no
+    // side-effect risk in ignoring test mode.
+    const lookup = await lookupOrderByReference(orderName);
+    if (!lookup || !lookup.waybill) {
+      res.status(404).json({
+        error: `APC has no consignment with reference "${orderName}". Check the reference in Hypaship before packing this order.`,
+        notFound: true,
+      });
+      return;
+    }
+
+    res.json({
+      waybill: lookup.waybill,
+      // The 14 digits a scanned label barcode must contain to belong to this
+      // consignment. Sent so the UI can explain a mismatch, NOT so the client
+      // can decide the verdict — that stays server-side in /verify-label-scan.
+      expectedCore: waybillCore(lookup.waybill),
+      reference: lookup.reference,
+      consigneeName: lookup.consigneeName,
+      consigneeCompany: lookup.consigneeCompany,
+      consigneePostcode: lookup.consigneePostcode,
+      productCode: lookup.productCode,
+      trackingUrl: apcTrackingUrl(lookup.waybill, lookup.consigneePostcode),
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Fulfilment] consignment-for-order error:", msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
+// ── Reconcile mode: verify a scanned label against the order being packed ──
+// The verdict is decided HERE, not in the browser, and the ledger insert is
+// what enforces one-label-one-order. Three distinct outcomes, because they
+// need three different actions on the bench:
+//   too-short      → they scanned the depot/route barcode; aim at the long one
+//   wrong-order    → this label belongs to another consignment; do not ship it
+//   already-used   → this waybill is already on a different order
+const VerifyLabelBody = z.object({
+  orderId: z.number(),
+  orderName: z.string().min(1),
+  barcode: z.string().min(1),
+});
+
+router.post("/verify-label-scan", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const parsed = VerifyLabelBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "orderId, orderName and barcode are required" });
+    return;
+  }
+  const { orderId, orderName, barcode } = parsed.data;
+
+  const scan = parseApcBarcode(barcode);
+  if (!scan.ok) {
+    res.json({
+      verified: false,
+      problem: scan.reason,
+      message: scan.reason === "too-short"
+        ? "That's the short depot barcode — scan the long barcode on the label."
+        : "Not a recognisable APC parcel barcode.",
+    });
+    return;
+  }
+
+  if (!isApcConfigured()) {
+    res.status(503).json({ error: "APC credentials not configured." });
+    return;
+  }
+
+  try {
+    // Live regardless of apc_test_mode — see the note in /consignment-for-order.
+    const lookup = await lookupOrderByReference(orderName);
+    if (!lookup || !lookup.waybill) {
+      res.json({
+        verified: false,
+        problem: "no-consignment",
+        message: `APC has no consignment with reference "${orderName}". Check Hypaship before shipping this order.`,
+      });
+      return;
+    }
+
+    const expectedCore = waybillCore(lookup.waybill);
+    if (scan.core !== expectedCore) {
+      res.json({
+        verified: false,
+        problem: "wrong-order",
+        message: "This label belongs to a DIFFERENT consignment — do not ship it on this order.",
+        scannedCore: scan.core,
+        expectedCore,
+      });
+      return;
+    }
+
+    const trackingUrl = apcTrackingUrl(lookup.waybill, lookup.consigneePostcode);
+    const userId = req.session?.userId ?? null;
+    let userName: string | null = null;
+    if (userId) {
+      const [u] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId));
+      userName = u?.name ?? null;
+    }
+
+    // The UNIQUE waybill turns "same label scanned twice" into a conflict we
+    // can reason about instead of a silent duplicate.
+    const [inserted] = await db.insert(apcConsignmentsTable).values({
+      waybill: lookup.waybill,
+      reference: lookup.reference,
+      shopifyOrderId: orderId,
+      shopifyOrderName: orderName,
+      consigneeName: lookup.consigneeName,
+      consigneePostcode: lookup.consigneePostcode,
+      scannedBarcode: barcode,
+      trackingUrl,
+      verifiedByUserId: userId,
+      verifiedByName: userName,
+    }).onConflictDoNothing({ target: apcConsignmentsTable.waybill }).returning();
+
+    if (!inserted) {
+      // Already claimed. Re-scanning the SAME order is harmless (a packer
+      // going back a step); a different order is a genuine mix-up.
+      const [existing] = await db
+        .select()
+        .from(apcConsignmentsTable)
+        .where(eq(apcConsignmentsTable.waybill, lookup.waybill));
+
+      if (existing && existing.shopifyOrderId !== orderId) {
+        res.json({
+          verified: false,
+          problem: "already-used",
+          message: `That label is already scanned onto order ${existing.shopifyOrderName ?? existing.shopifyOrderId}. Do not ship it twice.`,
+        });
+        return;
+      }
+    }
+
+    res.json({
+      verified: true,
+      consignmentNumber: lookup.waybill,
+      trackingUrl,
+      reference: lookup.reference,
+      consigneeName: lookup.consigneeName,
+      consigneePostcode: lookup.consigneePostcode,
+      parcel: scan.itemNumber,
+      message: "Label verified.",
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Fulfilment] verify-label-scan error:", msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
+// ── APC label-scan probe (read-only diagnostic) ────────────────────────────
+// Proves the pieces the "scan the printed APC label" flow depends on, without
+// changing anything:
+//   1. can we find a manually-uploaded consignment by OUR reference?
+//   2. does the barcode on its printed label match the waybill APC returns?
+//
+// GET /api/fulfilment/apc-probe?reference=131377&barcode=03036990014368001
+//
+// Strictly a GET against APC's Orders endpoint with labels=False and
+// markprinted=False, so it cannot mark a label printed, book anything, or
+// cancel anything. Admin-only.
+//
+// Defaults to whatever apc_test_mode says, but takes ?env=live|training to
+// override. The override exists because consignments uploaded by hand into
+// Hypaship only exist on the LIVE server — pointing a lookup for one at the
+// training server returns a 419 auth error, which reads like bad credentials
+// when it's really the wrong environment.
+router.get("/apc-probe", requireAdmin, async (req: Request, res: Response) => {
+  const reference = typeof req.query.reference === "string" ? req.query.reference : "";
+  const barcode = typeof req.query.barcode === "string" ? req.query.barcode : "";
+  const envParam = typeof req.query.env === "string" ? req.query.env : "";
+
+  if (envParam && envParam !== "live" && envParam !== "training") {
+    res.status(400).json({ error: "env must be 'live' or 'training' when supplied" });
+    return;
+  }
+
+  if (!reference && !barcode) {
+    res.status(400).json({ error: "reference and/or barcode query param required, e.g. ?reference=131377&barcode=03036990014368001" });
+    return;
+  }
+  if (!isApcConfigured()) {
+    res.status(503).json({ error: "APC credentials not configured in this environment (APC_USERNAME / APC_PASSWORD / APC_ACCOUNT_NUMBER)." });
+    return;
+  }
+
+  const scan = barcode ? parseApcBarcode(barcode) : null;
+
+  try {
+    const apiBase = envParam === "live" ? undefined
+      : envParam === "training" ? APC_TRAINING_BASE
+      : await getTestModeApiBase();
+
+    // matchedReferenceForm is only present when the reference lookup hit — the
+    // waybill fallback identifies the parcel without one.
+    let lookup: (ApcOrderLookup & { matchedReferenceForm?: string }) | null =
+      reference ? await lookupOrderByReference(reference, apiBase) : null;
+    let foundVia: "reference" | "waybill" | null = lookup ? "reference" : null;
+
+    // Fall back to identifying the parcel by its own barcode. The 22-digit
+    // waybill is <8-digit send date><14-digit core> and the barcode carries
+    // only the core, so try a few plausible send dates around today. This is
+    // how we discover what reference APC actually holds when a lookup by our
+    // reference finds nothing.
+    const triedWaybills: string[] = [];
+    if (!lookup && scan?.ok) {
+      const today = new Date();
+      for (let offset = 1; offset >= -6 && !lookup; offset--) {
+        const d = new Date(today);
+        d.setDate(d.getDate() + offset);
+        const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+        const candidate = `${stamp}${scan.core}`;
+        triedWaybills.push(candidate);
+        try {
+          const hit = await lookupOrderByWaybill(candidate, apiBase);
+          if (hit) { lookup = hit; foundVia = "waybill"; }
+        } catch {
+          // A miss on one date is expected — keep trying the others.
+        }
+      }
+    }
+
+    if (!lookup) {
+      res.json({
+        queriedReference: reference || null,
+        found: false,
+        triedWaybills,
+        message: "APC has no consignment for that reference, and the scanned barcode didn't resolve to one either. On the real flow this is the signal that the reference was mistyped during the manual upload — packing would be blocked for this order.",
+        scan,
+        environment: apiBase != null ? "training" : "live",
+      });
+      return;
+    }
+
+    const expectedCore = waybillCore(lookup.waybill ?? "");
+    const verdict = !scan
+      ? null
+      : !scan.ok
+        ? {
+            match: false,
+            problem: scan.reason,
+            message: scan.reason === "too-short"
+              ? "That's the short depot/route barcode on the label — scan the long one instead."
+              : "Not a recognisable APC parcel barcode.",
+          }
+        : {
+            match: scan.core === expectedCore,
+            scannedCore: scan.core,
+            expectedCore,
+            barcodeFormat: scan.format,
+            parcel: scan.itemNumber,
+            message: scan.core === expectedCore
+              ? "Label matches this order's consignment."
+              : "This label belongs to a DIFFERENT consignment — do not ship it on this order.",
+          };
+
+    res.json({
+      queriedReference: reference || null,
+      found: true,
+      foundVia,
+      matchedReferenceForm: lookup.matchedReferenceForm ?? null,
+      // When we only found it by waybill, this is the value the manual upload
+      // actually wrote — compare it against the Shopify order number.
+      referenceHeldByApc: lookup.reference,
+      // What would be written to Shopify for this order.
+      wouldSendToShopify: {
+        trackingNumber: lookup.waybill,
+        trackingCompany: "APC Overnight",
+        trackingUrl: apcTrackingUrl(lookup.waybill ?? "", lookup.consigneePostcode),
+      },
+      scan,
+      verdict,
+      environment: apiBase != null ? "training" : "live",
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Fulfilment] apc-probe error:", msg);
+    res.status(502).json({ error: msg, scan });
   }
 });
 
@@ -848,11 +1192,14 @@ router.post("/orders/:id/complete", requireManagerOrAdmin, async (req: Request, 
     return;
   }
 
-  const apcEnabledSetting = await getAppSetting("apc_enabled");
-  const apcEnabled = apcEnabledSetting !== "false";
+  const apcMode = await getApcMode();
+  const apcEnabled = apcMode !== "off";
   const { consignmentNumber, trackingUrl } = parsed.data;
+  // Both "full" (label booked via API) and "reconcile" (label scanned off a
+  // hand-raised consignment) must arrive with a number — shipping an order
+  // with no tracking is exactly the failure this flow exists to prevent.
   if (apcEnabled && !consignmentNumber) {
-    res.status(400).json({ error: "consignmentNumber is required when APC is enabled" });
+    res.status(400).json({ error: `consignmentNumber is required when apc_mode is "${apcMode}"` });
     return;
   }
 
@@ -877,6 +1224,9 @@ router.post("/orders/:id/complete", requireManagerOrAdmin, async (req: Request, 
       apcEnabled ? "APC Overnight" : "",
       apcEnabled ? trackingUrl : undefined,
     );
+    // Shopify has the tracking number — close the ledger row so an
+    // end-of-dispatch audit can tell "scanned but never pushed" from "done".
+    if (consignmentNumber) await markConsignmentPushed(consignmentNumber);
   } catch (err: any) {
     console.error(`[Fulfilment] completeOrder fulfilOrder FAILED for order ${orderId}:`, err.message);
     res.status(502).json({ error: err.message });
@@ -1586,23 +1936,24 @@ router.get("/weekend-service-check", requireManagerOrAdmin, (req: Request, res: 
 
 router.get("/config-status", requireManagerOrAdmin, async (_req: Request, res: Response) => {
   try {
-    const [smallWeekday, largeWeekday, smallFriday, largeFriday, testModeSetting, apcEnabledSetting] = await Promise.all([
+    const [smallWeekday, largeWeekday, smallFriday, largeFriday, testModeSetting, apcMode] = await Promise.all([
       getAppSetting("apc_service_code_small_weekday"),
       getAppSetting("apc_service_code_large_weekday"),
       getAppSetting("apc_service_code_small_friday"),
       getAppSetting("apc_service_code_large_friday"),
       getAppSetting("apc_test_mode"),
-      getAppSetting("apc_enabled"),
+      getApcMode(),
     ]);
 
     const isTestMode = testModeSetting === "true";
-    // apc_enabled: master kill-switch for the APC label-creation step.
-    // When false, fulfilment skips the createShipment call entirely
-    // and operators can mark orders fulfilled without a tracking
-    // number. Defaults to true to preserve historic behaviour.
-    const apcEnabled = apcEnabledSetting !== "false";
+    // apcEnabled is kept for backwards compatibility with the existing UI
+    // checks and means "some courier integration is active". apcMode is the
+    // one to branch on: "full" books labels via the API, "reconcile" verifies
+    // a hand-raised consignment by scanning its printed label.
+    const apcEnabled = apcMode !== "off";
     res.json({
       apcEnabled,
+      apcMode,
       apcCredentialsConfigured: isApcConfigured(),
       serviceCodesConfigured: !!(smallWeekday && largeWeekday && smallFriday && largeFriday),
       testMode: isTestMode,

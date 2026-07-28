@@ -136,8 +136,41 @@ interface ShipmentResult {
   warnings?: string[];
 }
 
+/** Result of scanning the printed APC label at the bench. The verdict is
+ *  decided server-side by /verify-label-scan — the browser never gets to
+ *  decide that a label belongs to an order. */
+interface LabelVerifyResult {
+  verified: boolean;
+  consignmentNumber?: string;
+  trackingUrl?: string;
+  reference?: string;
+  consigneeName?: string;
+  consigneePostcode?: string;
+  parcel?: string | null;
+  problem?: "too-short" | "unrecognised-length" | "empty" | "wrong-order" | "already-used" | "no-consignment";
+  message?: string;
+  scannedCore?: string;
+  expectedCore?: string;
+}
+
+/** The hand-raised consignment we expect for an order, fetched when the order
+ *  is opened so the waybill is in hand before anyone packs. */
+interface ExpectedConsignment {
+  waybill: string;
+  expectedCore: string | null;
+  reference: string | null;
+  consigneeName: string | null;
+  consigneeCompany: string | null;
+  consigneePostcode: string | null;
+  productCode: string | null;
+  trackingUrl: string;
+}
+
+type ApcMode = "off" | "reconcile" | "full";
+
 interface ConfigStatus {
   apcEnabled: boolean;
+  apcMode?: ApcMode;
   apcCredentialsConfigured: boolean;
   serviceCodesConfigured: boolean;
   testMode: boolean;
@@ -380,6 +413,36 @@ async function createShipment(orderId: number, tag: string, dispatchDate?: strin
   return data;
 }
 
+/** Reconcile mode: fetch the hand-raised APC consignment for an order, keyed on
+ *  the Shopify order name (which is what the manual upload puts in APC's
+ *  Reference field — including the leading "#"). Returns null when APC has no
+ *  consignment for it, which must block packing rather than pass silently. */
+async function fetchExpectedConsignment(orderName: string): Promise<ExpectedConsignment | null> {
+  const res = await fetch(
+    `${BASE}/api/fulfilment/consignment-for-order?orderName=${encodeURIComponent(orderName)}`,
+    { credentials: "include" },
+  );
+  if (res.status === 404) return null;
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? "Failed to look up APC consignment");
+  return data;
+}
+
+/** Reconcile mode: ask the server whether a scanned label belongs to this
+ *  order. Also claims the waybill in the ledger, so the same label can't be
+ *  scanned onto a second order. */
+async function verifyLabelScan(orderId: number, orderName: string, barcode: string): Promise<LabelVerifyResult> {
+  const res = await fetch(`${BASE}/api/fulfilment/verify-label-scan`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ orderId, orderName, barcode }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? "Label verification failed");
+  return data;
+}
+
 /** Tags exactly the orders the operator has filtered to. We send explicit ids
  *  rather than a category, because the wave can be filtered by several box
  *  categories plus tags and products — which the server can't reconstruct. */
@@ -483,6 +546,23 @@ function TestModeBanner({ trainingCredentialsMissing }: { trainingCredentialsMis
           </span>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Shown in reconcile mode, where consignments are raised by hand in Hypaship
+ *  and the app's job is to verify the printed label then push its tracking
+ *  number to Shopify. Deliberately states that orders ARE real — it replaces
+ *  the TEST MODE banner, which would otherwise imply the opposite. */
+function ReconcileModeBanner() {
+  return (
+    <div className="w-full rounded-xl border border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30 px-4 py-2.5 flex items-start gap-2 text-blue-900 dark:text-blue-200 text-sm">
+      <Scan className="w-4 h-4 flex-shrink-0 text-blue-600 mt-0.5" />
+      <span>
+        <span className="font-semibold">Label-scan mode.</span>{" "}
+        Consignments are booked by hand in Hypaship — the app doesn't create labels. Scan each
+        printed APC label before packing and its tracking number goes onto the real Shopify order.
+      </span>
     </div>
   );
 }
@@ -836,6 +916,19 @@ export default function Fulfilment() {
   const [pickedCounts, setPickedCounts] = useState<Map<string, number>>(new Map());
   const [flashItem, setFlashItem] = useState<string | null>(null);
   const [flashWrong, setFlashWrong] = useState(false);
+  // ── Reconcile mode: label-scan gate ──────────────────────────────────────
+  // The packer must scan the printed APC label before picking anything, so a
+  // wrong label is caught before the box is packed rather than after. Until
+  // labelVerified is set, scans route to the label matcher, not the item one.
+  const [expectedConsignment, setExpectedConsignment] = useState<ExpectedConsignment | null>(null);
+  const [expectedConsignmentError, setExpectedConsignmentError] = useState<string | null>(null);
+  const [loadingConsignment, setLoadingConsignment] = useState(false);
+  const [labelVerified, setLabelVerified] = useState<LabelVerifyResult | null>(null);
+  const [labelScanError, setLabelScanError] = useState<string | null>(null);
+  const [verifyingLabel, setVerifyingLabel] = useState(false);
+  // Prefetched consignment lookups, so opening an order is instant and an APC
+  // outage shows up before packing starts rather than mid-order.
+  const consignmentCacheRef = useRef<Map<string, Promise<ExpectedConsignment | null>>>(new Map());
   // Box categories are multi-select now: the operator can pick a wave of
   // Small + Large together. An empty set means "no category constraint".
   // Defaults to Small Box, matching the team's existing muscle memory.
@@ -861,6 +954,20 @@ export default function Fulfilment() {
     queryFn: fetchConfigStatus,
     staleTime: 60_000,
   });
+
+  // Declared up here rather than next to the render guards because the
+  // label-gate derivation below reads them during render — leaving them lower
+  // put them in the temporal dead zone.
+  const apcEnabled = configStatus?.apcEnabled !== false;
+  // Fall back to the legacy boolean when the server predates apc_mode.
+  const apcMode: ApcMode = configStatus?.apcMode ?? (apcEnabled ? "full" : "off");
+  const reconcileMode = apcMode === "reconcile";
+  // apc_test_mode only means anything in "full" mode, where it diverts real
+  // bookings to APC's training server. In reconcile mode nothing is booked and
+  // the consignment lookups deliberately go to live — so showing "consignments
+  // are not real, no bookings are made" would be a dangerous lie: the app is
+  // writing real tracking numbers onto real customers' orders.
+  const showTestModeBanner = apcMode === "full" && (configStatus?.testMode ?? false);
 
   // Manual-tap kill switch — read from app_settings via /manual-tick-config.
   // Defaults to enabled until the fetch resolves so we don't briefly look
@@ -1085,9 +1192,22 @@ export default function Fulfilment() {
     }
   }
 
+  /** Reconcile mode: warm the consignment lookup for the next order so opening
+   *  it is instant, and so an APC problem surfaces a step early. */
+  function preQueueConsignment(nextOrderName: string) {
+    if (!reconcileMode) return;
+    if (consignmentCacheRef.current.has(nextOrderName)) return;
+    consignmentCacheRef.current.set(
+      nextOrderName,
+      fetchExpectedConsignment(nextOrderName).catch(() => null),
+    );
+  }
+
   function preQueueNextOrder(nextOrderId: number) {
-    // APC off → no shipment to pre-create, no label to pre-print.
-    if (!apcEnabled) return;
+    // APC off → no shipment to pre-create, no label to pre-print. Reconcile
+    // mode books nothing either — it warms the lookup via
+    // preQueueConsignment instead.
+    if (!apcEnabled || reconcileMode) return;
     if (preQueueRef.current.has(nextOrderId)) return;
     const promise = createShipment(nextOrderId, queryTag, queryTag)
       .then((result) => {
@@ -1111,14 +1231,15 @@ export default function Fulfilment() {
   function clearPreQueue() {
     preQueueRef.current.clear();
     prePrintRef.current.clear();
+    consignmentCacheRef.current.clear();
   }
 
   function handleOrderSelect(order: ShopifyOrder) {
     clearPreQueue();
     // Live-mode confirmation only matters when a real APC consignment
-    // is about to be created. With APC off there's no shipment, so we
-    // can go straight into picking.
-    if (configStatus?.testMode || !apcEnabled) {
+    // is about to be created. With APC off, or in reconcile mode where the
+    // consignment already exists, there's nothing to confirm — go straight in.
+    if (configStatus?.testMode || !apcEnabled || reconcileMode) {
       startPicking(order);
     } else {
       setPendingPickOrder(order);
@@ -1137,7 +1258,42 @@ export default function Fulfilment() {
     setConsignmentActionError(null);
     setShowAddBoxConfirm(false);
     setShowCancelConfirm(false);
+    setLabelVerified(null);
+    setLabelScanError(null);
+    setExpectedConsignment(null);
+    setExpectedConsignmentError(null);
     setView("picking");
+
+    // Reconcile mode: the consignment already exists in Hypaship, so nothing
+    // is booked here. Fetch it (usually already prefetched) so the label-scan
+    // gate knows which waybill to expect, then wait for the packer to scan the
+    // printed label before any item picking is allowed.
+    if (reconcileMode) {
+      setCreatingShipment(false);
+      setLoadingConsignment(true);
+      try {
+        const cached = consignmentCacheRef.current.get(order.name);
+        const expected = await (cached ?? fetchExpectedConsignment(order.name));
+        if (!expected) {
+          setExpectedConsignmentError(
+            `APC has no consignment with reference ${order.name}. Check the reference in Hypaship — this order can't be shipped until it's fixed.`,
+          );
+        } else {
+          setExpectedConsignment(expected);
+        }
+      } catch (err) {
+        setExpectedConsignmentError(err instanceof Error ? err.message : "Could not reach APC to look up this consignment.");
+      } finally {
+        setLoadingConsignment(false);
+      }
+
+      // Warm the next order in the wave. Safe to do unconditionally here —
+      // unlike "full" mode this books nothing, it's just a read.
+      const pos = filteredUnfulfilled.findIndex(o => o.id === order.id);
+      const next = filteredUnfulfilled[pos + 1];
+      if (next) preQueueConsignment(next.name);
+      return;
+    }
 
     // APC off → no shipment to create, no label to print. The picker
     // just scans items and presses Complete; the backend fulfils
@@ -1260,6 +1416,36 @@ export default function Fulfilment() {
   const pickedUnits = groupedItems.reduce((sum, g) => sum + Math.min(pickedCounts.get(g._groupKey) ?? 0, g.totalQty), 0);
   const allChecked = totalUnits > 0 && pickedUnits >= totalUnits;
 
+  // True while the packer still owes us a verified APC label for this order.
+  // Only meaningful in reconcile mode, and only once we know which consignment
+  // to expect — a lookup failure shows its own blocking message instead.
+  const labelGateOpen = reconcileMode && !!expectedConsignment && !labelVerified?.verified;
+
+  async function handleLabelScan(scanned: string) {
+    if (!activeOrder || verifyingLabel) return;
+    setVerifyingLabel(true);
+    setLabelScanError(null);
+    try {
+      const result = await verifyLabelScan(activeOrder.id, activeOrder.name, scanned);
+      if (result.verified) {
+        setLabelVerified(result);
+        playScanSuccess();
+      } else {
+        // Distinct sound + message per failure: aiming at the wrong barcode is
+        // a different problem from the wrong label being on the box.
+        playScanWrong();
+        setFlashWrong(true);
+        setTimeout(() => setFlashWrong(false), 600);
+        setLabelScanError(result.message ?? "Label did not verify.");
+      }
+    } catch (err) {
+      playScanWrong();
+      setLabelScanError(err instanceof Error ? err.message : "Label verification failed.");
+    } finally {
+      setVerifyingLabel(false);
+    }
+  }
+
   function handleBarcodeSubmit(e: React.FormEvent) {
     e.preventDefault();
     // The scan field is UNCONTROLLED — read straight from the DOM. A hardware
@@ -1272,6 +1458,15 @@ export default function Fulfilment() {
     const raw = barcodeRef.current?.value ?? "";
     const input = raw.trim().toLowerCase();
     if (!input) return;
+
+    // Reconcile mode: until the printed APC label has been verified, every
+    // scan is treated as a label scan. Doing this first means a wrong label is
+    // caught before a single item goes in the box.
+    if (labelGateOpen) {
+      handleLabelScan(raw.trim());
+      if (barcodeRef.current) barcodeRef.current.value = "";
+      return;
+    }
 
     // Only rows that still need picks — once a row is fully picked, scanning
     // its barcode again should be a no-match (flash red), not a silent ignore.
@@ -1341,7 +1536,14 @@ export default function Fulfilment() {
     // With APC disabled there's no shipment object — fulfilment runs
     // without a tracking number. The barcode-driven decrement still
     // fires inside the backend complete handler.
-    if (apcEnabled && !shipment) return;
+    // Reconcile mode gates on the verified label instead of a booked shipment —
+    // shipping without a verified consignment is the exact failure this flow
+    // exists to prevent.
+    if (reconcileMode) {
+      if (!labelVerified?.verified) return;
+    } else if (apcEnabled && !shipment) {
+      return;
+    }
 
     // Snapshot what we need for the background call before we move on.
     const snapshot = {
@@ -1349,8 +1551,12 @@ export default function Fulfilment() {
       orderName: activeOrder.name,
       customerName: activeOrder.shipping_address?.name
         ?? (`${activeOrder.customer?.first_name ?? ""} ${activeOrder.customer?.last_name ?? ""}`.trim() || "(no name)"),
-      consignmentNumber: shipment?.consignmentNumber ?? null,
-      trackingUrl: shipment?.trackingUrl,
+      consignmentNumber: reconcileMode
+        ? labelVerified?.consignmentNumber ?? null
+        : shipment?.consignmentNumber ?? null,
+      trackingUrl: reconcileMode
+        ? labelVerified?.trackingUrl
+        : shipment?.trackingUrl,
     };
 
     // Optimistic UI: play sound, advance immediately. The actual Shopify
@@ -1513,17 +1719,20 @@ export default function Fulfilment() {
   // disabled); `completing` prevents a re-entrant call while the request
   // is in flight.
   useEffect(() => {
+    const courierReady = reconcileMode
+      ? !!labelVerified?.verified
+      : (!apcEnabled || !!shipment);
     if (
       view === "picking" &&
       allChecked &&
       totalUnits > 0 &&
       !completing &&
-      (!apcEnabled || shipment)
+      courierReady
     ) {
       handleComplete();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allChecked, shipment, view]);
+  }, [allChecked, shipment, view, labelVerified?.verified]);
 
   // Auto-advance after the confirm celebration — kept short so the picker
   // flows straight into the next order without losing scanning rhythm.
@@ -1556,12 +1765,17 @@ export default function Fulfilment() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeOrder?.id, view, speakNameEnabled]);
 
-  const apcEnabled = configStatus?.apcEnabled !== false;
+  // Reconcile mode needs APC credentials (to look consignments up) but NOT the
+  // four service codes — nothing is booked, so there's no service to pick.
+  const configIncomplete = reconcileMode
+    ? !configStatus?.apcCredentialsConfigured
+    : (!configStatus?.apcCredentialsConfigured || !configStatus?.serviceCodesConfigured);
 
-  if (apcEnabled && !configStatusLoading && (!configStatus?.apcCredentialsConfigured || !configStatus?.serviceCodesConfigured)) {
+  if (apcEnabled && !configStatusLoading && configIncomplete) {
     return (
       <div className="space-y-6">
-        {configStatus?.testMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
+        {showTestModeBanner && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
+        {reconcileMode && <ReconcileModeBanner />}
         <PageHeader title="Order Packing Live" description={apcEnabled ? "APC order scanning and label printing." : "Scan orders into the box — couriers booked manually."} />
         <div className="glass-panel p-8 rounded-2xl border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20">
           <div className="flex items-start gap-4">
@@ -1616,7 +1830,8 @@ export default function Fulfilment() {
     return (
       <div className="space-y-4">
         <PageHeader title={activeOrder.name} description={customerName} />
-        {apcEnabled && isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
+        {showTestModeBanner && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
+        {reconcileMode && <ReconcileModeBanner />}
 
         <div className="flex items-center gap-3">
           <button onClick={() => setView("picking")} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
@@ -1816,7 +2031,7 @@ export default function Fulfilment() {
   // With APC off there is no shipment object — the completion screen still
   // shows (minus the consignment number) so the packer gets the same
   // celebration + auto-advance rhythm either way.
-  if (view === "confirm" && activeOrder && (shipment || !apcEnabled)) {
+  if (view === "confirm" && activeOrder && (shipment || !apcEnabled || reconcileMode)) {
     const hasNext = filteredUnfulfilled.filter(o => o.id !== activeOrder.id).length > 0;
     const isTestMode = configStatus?.testMode ?? false;
     return (
@@ -1831,7 +2046,8 @@ export default function Fulfilment() {
             onCancel={() => setPendingPickOrder(null)}
           />
         )}
-        {apcEnabled && isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
+        {showTestModeBanner && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
+        {reconcileMode && <ReconcileModeBanner />}
         <PageHeader title="Order Packing Live" description={apcEnabled ? "APC order scanning and label printing." : "Scan orders into the box — couriers booked manually."} />
         <div className="glass-panel p-8 rounded-2xl border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 text-center">
           <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto mb-4" />
@@ -1892,7 +2108,8 @@ export default function Fulfilment() {
             onCancel={() => setPendingPickOrder(null)}
           />
         )}
-        {apcEnabled && isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
+        {showTestModeBanner && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
+        {reconcileMode && <ReconcileModeBanner />}
         <div className="flex items-center gap-3">
           <button onClick={goBack} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
             <ArrowLeft className="w-5 h-5" />
@@ -2113,7 +2330,71 @@ export default function Fulfilment() {
           </div>
         )}
 
-        <form onSubmit={handleBarcodeSubmit} hidden={creatingShipment || !!shipmentError}>
+        {/* ── Reconcile mode: APC label gate ──────────────────────────────
+            Blocks picking until the printed label on the box is proven to
+            belong to this order. */}
+        {reconcileMode && loadingConsignment && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground bg-secondary/30 rounded-xl px-4 py-3">
+            <Loader2 className="w-4 h-4 animate-spin" /> Looking up the APC consignment for {activeOrder.name}…
+          </div>
+        )}
+
+        {reconcileMode && expectedConsignmentError && (
+          <div className="rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 space-y-2">
+            <div className="flex items-start gap-2 text-sm text-destructive">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>{expectedConsignmentError}</span>
+            </div>
+            <button
+              onClick={goBack}
+              className="text-xs px-3 py-2 border border-border rounded-lg hover:bg-secondary/50 transition-colors font-medium"
+            >
+              Back to the queue
+            </button>
+          </div>
+        )}
+
+        {reconcileMode && labelGateOpen && (
+          <div className="rounded-2xl border-2 border-primary/40 bg-primary/5 p-5 space-y-3">
+            <div className="flex items-start gap-3">
+              <Scan className="w-6 h-6 text-primary flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="font-display font-bold text-lg leading-tight">Scan the APC label first</h3>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  Scan the <strong>long barcode</strong> on the label for {activeOrder.name}. Item picking unlocks once it matches.
+                </p>
+              </div>
+              {verifyingLabel && <Loader2 className="w-5 h-5 animate-spin text-primary flex-shrink-0" />}
+            </div>
+            {/* Shown so the packer's eyes are a second layer of checking — the
+                match itself is decided server-side on the reference. */}
+            <div className="text-xs text-muted-foreground grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 pl-9">
+              <span>APC reference: <strong className="font-mono text-foreground">{expectedConsignment?.reference ?? "—"}</strong></span>
+              <span>Consignee: <strong className="text-foreground">{expectedConsignment?.consigneeName ?? "—"}</strong></span>
+              <span>Postcode: <strong className="font-mono text-foreground">{expectedConsignment?.consigneePostcode ?? "—"}</strong></span>
+              <span>Service: <strong className="font-mono text-foreground">{expectedConsignment?.productCode ?? "—"}</strong></span>
+            </div>
+            {labelScanError && (
+              <div className="flex items-start gap-2 text-sm font-medium text-destructive bg-destructive/10 rounded-xl px-3 py-2.5">
+                <XCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>{labelScanError}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {reconcileMode && labelVerified?.verified && (
+          <div className="flex items-center gap-2 text-sm rounded-xl border border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/30 px-4 py-3">
+            <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0" />
+            <span className="text-green-800 dark:text-green-200">
+              Label verified —{" "}
+              <span className="font-mono font-semibold">{labelVerified.consignmentNumber}</span>
+              {labelVerified.parcel ? <span className="text-green-700/80 dark:text-green-300/80"> · parcel {labelVerified.parcel}</span> : null}
+            </span>
+          </div>
+        )}
+
+        <form onSubmit={handleBarcodeSubmit} hidden={creatingShipment || !!shipmentError || !!expectedConsignmentError}>
           <div className={`relative transition-all ${flashWrong ? "ring-2 ring-destructive rounded-xl" : ""}`}>
             <Scan className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground pointer-events-none" />
             {/* Uncontrolled on purpose — see handleBarcodeSubmit. A controlled
@@ -2121,15 +2402,19 @@ export default function Fulfilment() {
             <input
               ref={barcodeRef}
               defaultValue=""
-              placeholder="Scan barcode or type SKU…"
-              className="w-full pl-12 pr-4 py-4 text-lg bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono"
+              placeholder={labelGateOpen ? "Scan the APC label…" : "Scan barcode or type SKU…"}
+              className={`w-full pl-12 pr-4 py-4 text-lg bg-background border rounded-xl focus:outline-none focus:ring-2 font-mono ${
+                labelGateOpen ? "border-primary/50 focus:ring-primary/40" : "border-border focus:ring-primary/30"
+              }`}
               autoComplete="off"
               autoFocus
             />
           </div>
         </form>
 
-        <div className="space-y-2" hidden={creatingShipment || !!shipmentError}>
+        {/* Item list stays hidden until the label is verified, so there's no
+            way to start picking into a box with the wrong label on it. */}
+        <div className="space-y-2" hidden={creatingShipment || !!shipmentError || !!expectedConsignmentError || labelGateOpen}>
           <div className="flex items-center gap-3 text-xs text-muted-foreground px-1 mb-1">
             <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-blue-400 inline-block" /> Fridge</span>
             <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-purple-400 inline-block" /> Freezer</span>
@@ -2277,7 +2562,8 @@ export default function Fulfilment() {
     const isTestMode = configStatus?.testMode ?? false;
     return (
       <div className="space-y-6">
-        {apcEnabled && isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
+        {showTestModeBanner && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
+        {reconcileMode && <ReconcileModeBanner />}
         <PageHeader
           title="Order Packing Live"
           description="Select a dispatch date to start picking."
@@ -2504,7 +2790,8 @@ export default function Fulfilment() {
 
   return (
     <div className="space-y-6">
-      {apcEnabled && isTestMode && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
+      {showTestModeBanner && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
+        {reconcileMode && <ReconcileModeBanner />}
 
       {/* Live-mode confirmation dialog — appears when operator selects an order */}
       {pendingPickOrder && (

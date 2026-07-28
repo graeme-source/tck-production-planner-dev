@@ -1111,6 +1111,40 @@ async function runStartupMigrations() {
       )
     `);
 
+    // APC label-scan ledger — see lib/db/migrations/0031_add_apc_consignments.sql.
+    // The UNIQUE waybill is what stops one physical label being scanned onto
+    // two orders, so this table must exist before the packing flow runs.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS apc_consignments (
+        id SERIAL PRIMARY KEY,
+        waybill TEXT NOT NULL UNIQUE,
+        reference TEXT,
+        shopify_order_id BIGINT,
+        shopify_order_name TEXT,
+        consignee_name TEXT,
+        consignee_postcode TEXT,
+        scanned_barcode TEXT,
+        tracking_url TEXT,
+        verified_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        verified_by_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        verified_by_name TEXT,
+        pushed_to_shopify_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_apc_consignments_order ON apc_consignments (shopify_order_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_apc_consignments_verified ON apc_consignments (verified_at)`);
+    // Seed apc_mode from the existing apc_enabled boolean so no environment
+    // silently changes courier behaviour on deploy.
+    await db.execute(sql`
+      INSERT INTO app_settings (key, value, updated_at)
+      SELECT 'apc_mode',
+             CASE WHEN COALESCE((SELECT value FROM app_settings WHERE key = 'apc_enabled'), 'true') = 'false'
+                  THEN 'off' ELSE 'full' END,
+             NOW()
+      ON CONFLICT (key) DO NOTHING
+    `);
+
     // Digital visitor book — see lib/db/migrations/0030_add_visitor_log.sql.
     // The check-in screen and the HACCP → Visitor Book log both query this
     // unconditionally, so it must exist on every environment.
