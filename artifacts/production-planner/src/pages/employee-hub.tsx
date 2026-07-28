@@ -16,7 +16,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
-import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, Flame, BookOpen, Loader2, Receipt } from "lucide-react";
+import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt } from "lucide-react";
 import { jsPDF } from "jspdf";
 import { toast } from "@/hooks/use-toast";
 
@@ -837,7 +837,7 @@ function EmptyList({ label }: { label: string }) {
   );
 }
 
-function MyImprovementsList({ userId, type }: { userId: number | null; type: "improvement" | "struggle" }) {
+function MyImprovementsList({ userId }: { userId: number | null }) {
   const { data, isLoading } = useQuery<ImprovementRow[]>({
     queryKey: ["my-improvements"],
     queryFn: async () => {
@@ -849,9 +849,9 @@ function MyImprovementsList({ userId, type }: { userId: number | null; type: "im
   });
 
   if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
-  const rows = (data ?? []).filter(r => r.submittedBy === userId && r.type === type);
+  const rows = (data ?? []).filter(r => r.submittedBy === userId);
   if (rows.length === 0) {
-    return <EmptyList label={type === "improvement" ? "You haven't logged any improvements yet." : "You haven't logged any struggles yet."} />;
+    return <EmptyList label="You haven't logged any improvements yet." />;
   }
   return (
     <ul className="divide-y divide-border border border-border rounded-xl overflow-hidden">
@@ -965,7 +965,7 @@ function MySopsList({ userId }: { userId: number | null }) {
   );
 }
 
-type HubSection = "mileage" | "expenses" | "improvements" | "struggles" | "issues" | "sops";
+type HubSection = "mileage" | "expenses" | "improvements" | "issues" | "sops";
 
 export default function EmployeeHub() {
   const [active, setActive] = useState<HubSection>("mileage");
@@ -976,7 +976,6 @@ export default function EmployeeHub() {
     { key: "mileage", label: "Mileage Claim", icon: Car },
     { key: "expenses", label: "Expense Claim", icon: Receipt },
     { key: "improvements", label: "My Improvements", icon: Lightbulb },
-    { key: "struggles", label: "My Struggles", icon: Flame },
     { key: "issues", label: "My Issues", icon: AlertTriangle },
     { key: "sops", label: "My SOPs", icon: BookOpen },
   ];
@@ -1038,18 +1037,7 @@ export default function EmployeeHub() {
                   Improvement ideas you've submitted. Add new ones from the report dialog on any station.
                 </p>
               </div>
-              <MyImprovementsList userId={userId} type="improvement" />
-            </>
-          )}
-          {active === "struggles" && (
-            <>
-              <div className="mb-4 pb-4 border-b border-border">
-                <h2 className="text-lg font-semibold">My Struggles</h2>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Struggles you've logged. Surfacing these helps the team know what to fix.
-                </p>
-              </div>
-              <MyImprovementsList userId={userId} type="struggle" />
+              <MyImprovementsList userId={userId} />
             </>
           )}
           {active === "issues" && (
