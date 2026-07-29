@@ -11,7 +11,7 @@ import { useLocation } from "wouter";
 import {
   Package, Scan, CheckCircle2, AlertCircle, ChevronRight, Printer,
   RefreshCw, MapPin, SkipForward, RotateCcw, XCircle, Loader2,
-  ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter,
+  ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter, ArrowUpDown,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -1021,6 +1021,9 @@ export default function Fulfilment() {
     queryKey: ["fulfilment-postcode-validations", queryTag],
     queryFn: () => fetchPostcodeValidations(queryTag),
     staleTime: 60_000,
+    // Postcode results only matter in full mode (see the isBlocked note
+    // below) — don't even fetch them otherwise.
+    enabled: apcMode === "full",
   });
 
   const postcodeIssueMap = new Map<number, PostcodeValidation>();
@@ -1091,7 +1094,15 @@ export default function Fulfilment() {
     return true;
   }
 
-  const filteredUnfulfilled = unfulfilledOrders.filter(passesFilters);
+  // Pick-list direction. The queue arrives oldest-first (order placed), which
+  // matches label print order — but the printer sometimes stacks labels in
+  // reverse, so the packer needs to flip the list to work from the other end
+  // (same affordance as the old EasyScan app).
+  const [pickListReversed, setPickListReversed] = useState(false);
+  const filteredUnfulfilledBase = unfulfilledOrders.filter(passesFilters);
+  const filteredUnfulfilled = pickListReversed
+    ? [...filteredUnfulfilledBase].reverse()
+    : filteredUnfulfilledBase;
   const filteredUntagged = untaggedOrders.filter(passesFilters);
 
   // Every tag / product actually present in today's orders — the operator only
@@ -2635,7 +2646,7 @@ export default function Fulfilment() {
                       <span className="flex items-center gap-1"><Package className="w-3.5 h-3.5" /> {group.orderCount} unfulfilled</span>
                       <span>{group.totalItems} items</span>
                       <span>{weightKg} kg</span>
-                      {apcEnabled && group.postcodeIssues > 0 && (
+                      {apcMode === "full" && group.postcodeIssues > 0 && (
                         <span className="flex items-center gap-1 text-red-600 dark:text-red-400 font-medium">
                           <ShieldAlert className="w-3.5 h-3.5" />
                           {group.postcodeIssues} postcode {group.postcodeIssues === 1 ? "issue" : "issues"}
@@ -2663,8 +2674,9 @@ export default function Fulfilment() {
 
         {/* APC Service Check — validates postcodes against the correct service
             code for the delivery date, using the codes configured in Settings.
-            Hidden entirely while APC is switched off. */}
-        {apcEnabled && (
+            Only relevant in full mode, where the app books the consignments;
+            in reconcile mode APC itself rejects bad postcodes at upload. */}
+        {apcMode === "full" && (
         <details className="text-sm">
           <summary className="cursor-pointer font-medium text-foreground hover:text-primary transition-colors select-none">
             APC Service Check
@@ -3108,8 +3120,16 @@ export default function Fulfilment() {
           )}
 
           {filteredUnfulfilled.length > 0 && (
-            <div className="space-y-1 mb-2">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-1">Ready to Pack</p>
+            <div className="flex items-center justify-between mb-2 px-1">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Ready to Pack</p>
+              <button
+                onClick={() => setPickListReversed(v => !v)}
+                className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 border border-border rounded-lg hover:bg-secondary/50 transition-colors"
+                title="Flip the list to match the label stack when the printer prints in reverse"
+              >
+                <ArrowUpDown className="w-3.5 h-3.5" />
+                {pickListReversed ? "Newest first" : "Oldest first"}
+              </button>
             </div>
           )}
 
@@ -3117,53 +3137,60 @@ export default function Fulfilment() {
             const hasUnassigned = order.line_items.some(i => !i.location && i.sku);
             const weightKg = ((order.total_weight ?? 0) / 1000).toFixed(2);
             const tags = order.tags.split(",").map(t => t.trim()).filter(Boolean);
-            // Postcode coverage only gates picking when the app creates the
-            // APC consignment. APC off = couriers booked manually, so a
-            // stale failed check must never block the scanner.
-            const postcodeIssue = apcEnabled ? postcodeIssueMap.get(order.id) : undefined;
+            // Postcode coverage only gates picking in FULL mode, where the app
+            // itself books the consignment and a bad postcode would fail at
+            // label time. In reconcile mode consignments are uploaded to APC
+            // by hand and APC flags service problems there — so a stored
+            // failure here must never block the scanner (2026-07-29: stale
+            // LW16 rejections froze the entire pick list).
+            const postcodeIssue = apcMode === "full" ? postcodeIssueMap.get(order.id) : undefined;
             const isBlocked = !!postcodeIssue;
 
             return (
+              // Compact on purpose: a dispatch day is 60+ orders and the packer
+              // works down the list top to bottom — density beats whitespace
+              // here, so the full screen height shows as many orders as
+              // possible.
               <div
                 key={order.id}
                 className={cn(
-                  "glass-panel p-5 rounded-2xl border flex items-center gap-4 transition-colors group",
+                  "glass-panel px-3.5 py-2.5 rounded-xl border flex items-center gap-3 transition-colors group",
                   isBlocked
                     ? "border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-950/10"
                     : "border-border hover:border-primary/30"
                 )}
               >
                 <div className={cn(
-                  "w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0",
+                  "w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0",
                   isBlocked ? "bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400" : "bg-secondary text-muted-foreground"
                 )}>
                   {isBlocked ? <ShieldAlert className="w-4 h-4" /> : idx + 1}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="font-bold text-lg">{order.name}</span>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-bold text-base leading-tight">{order.name}</span>
+                    <span className="text-sm text-muted-foreground truncate">
+                      {order.shipping_address?.name ?? `${order.customer?.first_name} ${order.customer?.last_name}`}
+                      {order.shipping_address && ` — ${order.shipping_address.city}, ${order.shipping_address.zip}`}
+                    </span>
                     {hasUnassigned && (
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300 font-medium">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300 font-medium">
                         Unassigned SKUs
                       </span>
                     )}
                     {isBlocked && (
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 font-medium">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 font-medium">
                         Postcode Issue
                       </span>
                     )}
                   </div>
-                  <p className="text-sm text-muted-foreground truncate">
-                    {order.shipping_address?.name ?? `${order.customer?.first_name} ${order.customer?.last_name}`}
-                    {order.shipping_address && ` — ${order.shipping_address.city}, ${order.shipping_address.zip}`}
-                  </p>
                   {isBlocked && (
-                    <p className="text-xs text-red-600 dark:text-red-400 mt-1 flex items-center gap-1">
+                    <p className="text-xs text-red-600 dark:text-red-400 mt-0.5 flex items-center gap-1">
                       <AlertCircle className="w-3 h-3" />
                       {postcodeIssue.reason ?? "Service not available for this postcode"} (Service: {postcodeIssue.service_code})
                     </p>
                   )}
-                  <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-2.5 mt-0.5 text-xs text-muted-foreground">
                     <span>{order.line_items.reduce((s, i) => s + i.quantity, 0)} items</span>
                     <span>{weightKg} kg</span>
                     {tags.slice(0, 4).map(t => (
@@ -3197,7 +3224,7 @@ export default function Fulfilment() {
                 ) : (
                   <button
                     onClick={() => handleOrderSelect(order)}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground rounded-xl font-semibold hover:bg-primary/90 transition-colors flex-shrink-0"
+                    className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:bg-primary/90 transition-colors flex-shrink-0"
                   >
                     <Scan className="w-4 h-4" /> Start Picking
                     <ChevronRight className="w-4 h-4" />
