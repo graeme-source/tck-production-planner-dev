@@ -59,6 +59,7 @@ import trainingRouter from "./training";
 import onboardingRouter from "./onboarding";
 import goveeRouter from "./govee";
 import visitorsRouter from "./visitors";
+import collectionsRouter from "./collections";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -140,6 +141,9 @@ router.use("/dpt-ingredient-requirements", dptIngredientRequirementsRouter);
 router.use("/kanbans", kanbansRouter);
 router.use("/orders", ordersRouter);
 router.use("/deliveries", deliveriesRouter);
+// Collections — goods leaving the unit. Same audience as deliveries: anyone
+// on the floor may be the one who meets the driver.
+router.use("/collections", collectionsRouter);
 router.use("/stock-control", stockControlRouter);
 router.use("/founder-panels", founderPanelsRouter);
 router.use("/improvements", improvementsRouter);

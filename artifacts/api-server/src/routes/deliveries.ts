@@ -13,6 +13,7 @@ import {
 import { eq, and, gte, lte, sql, desc, asc, inArray } from "drizzle-orm";
 import { londonDateString } from "../lib/london-time";
 import { adjustInventoryLevel } from "../services/shopify";
+import { outstandingCollectionsForOrder } from "./collections";
 
 const router: IRouter = Router();
 
@@ -494,6 +495,20 @@ router.post("/:id/receive", async (req, res) => {
     checkResults?: { checkConfigId: number; passed: boolean; notes?: string }[];
     notes?: string;
   };
+
+  // A collection scheduled with this delivery must be handed over and signed
+  // for first. Enforced here, not just in the UI: once the driver has left,
+  // the collection is the thing that gets forgotten, and by then it's too late.
+  const blockingCollections = await outstandingCollectionsForOrder(poId);
+  if (blockingCollections.length > 0) {
+    res.status(409).json({
+      error: blockingCollections.length === 1
+        ? "There's a collection scheduled with this delivery that hasn't been handed over yet. Complete the collection first."
+        : `There are ${blockingCollections.length} collections scheduled with this delivery that haven't been handed over yet. Complete them first.`,
+      blockedByCollections: blockingCollections.map(c => ({ id: c.id, reference: c.reference })),
+    });
+    return;
+  }
 
   if ((!lines || !Array.isArray(lines)) && (!newLines || newLines.length === 0)) {
     res.status(400).json({ error: "lines array is required" });

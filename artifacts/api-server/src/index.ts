@@ -1111,6 +1111,45 @@ async function runStartupMigrations() {
       )
     `);
 
+    // Collections — goods leaving the unit, the mirror of a delivery.
+    // See lib/db/migrations/0032_add_collections.sql. The weekly deliveries
+    // view queries this on every render, so it must exist everywhere.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS collections (
+        id SERIAL PRIMARY KEY,
+        supplier_id INTEGER NOT NULL REFERENCES suppliers(id) ON DELETE RESTRICT,
+        collection_date DATE NOT NULL,
+        status TEXT NOT NULL DEFAULT 'scheduled',
+        reference TEXT,
+        notes TEXT,
+        driver_name TEXT,
+        signature_blob BYTEA,
+        signature_mime TEXT,
+        photo_blob BYTEA,
+        photo_mime TEXT,
+        collected_at TIMESTAMP,
+        collected_by_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        collected_by_name TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_collections_supplier_date ON collections (supplier_id, collection_date)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_collections_date ON collections (collection_date)`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS collection_lines (
+        id SERIAL PRIMARY KEY,
+        collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+        description TEXT NOT NULL,
+        quantity NUMERIC(10,2) NOT NULL DEFAULT 1,
+        unit TEXT NOT NULL DEFAULT 'items',
+        checked_off BOOLEAN NOT NULL DEFAULT FALSE,
+        quantity_collected NUMERIC(10,2),
+        notes TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_collection_lines_collection ON collection_lines (collection_id)`);
+
     // APC label-scan ledger — see lib/db/migrations/0031_add_apc_consignments.sql.
     // The UNIQUE waybill is what stops one physical label being scanned onto
     // two orders, so this table must exist before the packing flow runs.
