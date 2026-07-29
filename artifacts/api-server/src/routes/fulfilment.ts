@@ -980,7 +980,12 @@ router.post("/tag-dispatch", requireManagerOrAdmin, async (req: Request, res: Re
     // Postcode coverage only matters when the app is creating APC
     // consignments. With apc_enabled=false the operator books couriers
     // manually, so don't call APC at all (and don't record blocking rows).
-    const apcEnabledForTagging = (await getAppSetting("apc_enabled")) !== "false";
+    // Auto-validate postcodes only in "full" mode, where the app itself books
+    // the consignment and a bad postcode would fail at label time. In
+    // "reconcile" mode consignments are uploaded to APC by hand — APC flags
+    // service problems there, so a stored failure here must never gate the
+    // scanner (2026-07-29: stale LW16 rejections blocked the whole pick list).
+    const apcEnabledForTagging = (await getApcMode()) === "full";
     if (apcEnabledForTagging && isApcConfigured() && dateTag) {
       postcodeCheck = await validateOrderPostcode(order, dateTag);
     }
@@ -1052,7 +1057,12 @@ router.post("/tag-dispatch-bulk", requireManagerOrAdmin, async (req: Request, re
     const postcodeIssues: Array<{ orderName: string; reason: string }> = [];
     // Same gate as /tag-dispatch: only pre-validate postcodes when the app
     // itself will create the APC consignments.
-    const apcEnabledForTagging = (await getAppSetting("apc_enabled")) !== "false";
+    // Auto-validate postcodes only in "full" mode, where the app itself books
+    // the consignment and a bad postcode would fail at label time. In
+    // "reconcile" mode consignments are uploaded to APC by hand — APC flags
+    // service problems there, so a stored failure here must never gate the
+    // scanner (2026-07-29: stale LW16 rejections blocked the whole pick list).
+    const apcEnabledForTagging = (await getApcMode()) === "full";
     for (const order of toTag) {
       await addTagToOrder(order.id, order.tags, "dispatch");
       tagged++;
