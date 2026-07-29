@@ -1100,6 +1100,26 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                     {/* 8-Pack Bags — each + click adds ONE bag. The counter
                         shows the number of 8-pack bags being assembled. */}
                     <div className="border-t border-border pt-3">
+                      {/* What to physically DO with bag portions at this
+                          station: bags are assembled AFTER the blast chiller
+                          (at wrapping), so here the bag portions go into the
+                          chiller LOOSE, not as two-packs. Expressed per batch
+                          of 10 because that's what's in front of the operator.
+                          Deliberately says nothing about fridge vs freezer —
+                          that split is wrapping's concern, not ovens'. */}
+                      {((item as { eightPackBagCount?: number }).eightPackBagCount ?? 0) > 0 && (() => {
+                        const bagCount = (item as { eightPackBagCount?: number }).eightPackBagCount ?? 0;
+                        return (
+                        <div className="mb-3 rounded-lg border border-indigo-300 dark:border-indigo-700 bg-indigo-50/60 dark:bg-indigo-950/30 px-3 py-2.5">
+                          <p className="text-sm font-semibold text-indigo-800 dark:text-indigo-200">
+                            {bagCount} bag{bagCount === 1 ? "" : "s"} today = {bagCount * 8} portions loose into the chiller — don't two-pack them
+                          </p>
+                          <p className="text-xs text-indigo-700/90 dark:text-indigo-300/90 mt-0.5">
+                            Per batch of 10: <span className="font-semibold">8 portions loose</span> (1 bag's worth) + <span className="font-semibold">1 two-pack</span>. Bags are made up after chilling, at wrapping.
+                          </p>
+                        </div>
+                        );
+                      })()}
                       <div className="flex items-center justify-between mb-2">
                         <div>
                           <p className="text-sm font-semibold text-foreground">8-Pack Bags assembled</p>

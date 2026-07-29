@@ -60,6 +60,7 @@ import onboardingRouter from "./onboarding";
 import goveeRouter from "./govee";
 import visitorsRouter from "./visitors";
 import collectionsRouter from "./collections";
+import caseOrdersRouter from "./case-orders";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -144,6 +145,10 @@ router.use("/deliveries", deliveriesRouter);
 // Collections — goods leaving the unit. Same audience as deliveries: anyone
 // on the floor may be the one who meets the driver.
 router.use("/collections", collectionsRouter);
+// Case orders — planning is manager/admin, but the freezer-bag counting
+// endpoint inside is used from the wrapping station by whoever is on it, so
+// the router is mounted for all logged-in users and does not gate reads.
+router.use("/case-orders", caseOrdersRouter);
 router.use("/stock-control", stockControlRouter);
 router.use("/founder-panels", founderPanelsRouter);
 router.use("/improvements", improvementsRouter);

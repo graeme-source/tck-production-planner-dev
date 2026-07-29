@@ -22,6 +22,11 @@ export const recipesTable = pgTable("recipes", {
   shelfLifeDays: integer("shelf_life_days"),
   tinSize: text("tin_size"),
   maxBatchesPerTin: integer("max_batches_per_tin"),
+  // Hard process ceiling on batches of this recipe in one day, driven by
+  // equipment rather than staffing (e.g. BBQ pulled pork: 30, limited by slow
+  // meat cooking). Null = no per-recipe limit. Schedulers must warn-and-allow
+  // on override, never hard-block — Graeme's call, 2026-07-28.
+  maxBatchesPerDay: integer("max_batches_per_day"),
   sopUrl: text("sop_url"),
   // Name of the pinned Label LIVE design used when printing this recipe's
   // ingredient-deck label via the labellive:// URL scheme. Null = no label

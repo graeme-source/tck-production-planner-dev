@@ -1150,6 +1150,70 @@ async function runStartupMigrations() {
     `);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_collection_lines_collection ON collection_lines (collection_id)`);
 
+    // Case orders — see lib/db/migrations/0033_add_case_orders.sql. Order
+    // matters: production_plan_items.case_order_id FKs case_orders, so the
+    // tables come first.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS case_types (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS case_type_lines (
+        id SERIAL PRIMARY KEY,
+        case_type_id INTEGER NOT NULL REFERENCES case_types(id) ON DELETE CASCADE,
+        recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE RESTRICT,
+        bags_per_case INTEGER NOT NULL DEFAULT 1
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_case_type_lines_type ON case_type_lines (case_type_id)`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS case_orders (
+        id SERIAL PRIMARY KEY,
+        supplier_id INTEGER NOT NULL REFERENCES suppliers(id) ON DELETE RESTRICT,
+        reference TEXT,
+        target_collection_date DATE NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        notes TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        created_by_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_case_orders_target ON case_orders (target_collection_date)`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS case_order_lines (
+        id SERIAL PRIMARY KEY,
+        case_order_id INTEGER NOT NULL REFERENCES case_orders(id) ON DELETE CASCADE,
+        case_type_id INTEGER NOT NULL REFERENCES case_types(id) ON DELETE RESTRICT,
+        cases_ordered INTEGER NOT NULL
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_case_order_lines_order ON case_order_lines (case_order_id)`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS case_order_production (
+        id SERIAL PRIMARY KEY,
+        case_order_id INTEGER NOT NULL REFERENCES case_orders(id) ON DELETE CASCADE,
+        recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE RESTRICT,
+        plan_id INTEGER REFERENCES production_plans(id) ON DELETE SET NULL,
+        production_date DATE NOT NULL,
+        bags INTEGER NOT NULL,
+        counted_by_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        counted_by_name TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_case_order_production_order ON case_order_production (case_order_id, recipe_id)`);
+    await db.execute(sql`ALTER TABLE recipes ADD COLUMN IF NOT EXISTS max_batches_per_day INTEGER`);
+    await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS freezer_eight_pack_bag_count INTEGER NOT NULL DEFAULT 0`);
+    await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS freezer_eight_pack_qty INTEGER NOT NULL DEFAULT 0`);
+    await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS case_order_id INTEGER REFERENCES case_orders(id) ON DELETE SET NULL`);
+    await db.execute(sql`INSERT INTO app_settings (key, value, updated_at) VALUES ('capacity_batches_with_dough_prep', '110', NOW()) ON CONFLICT (key) DO NOTHING`);
+    await db.execute(sql`INSERT INTO app_settings (key, value, updated_at) VALUES ('capacity_batches_without_dough_prep', '80', NOW()) ON CONFLICT (key) DO NOTHING`);
+    await db.execute(sql`INSERT INTO app_settings (key, value, updated_at) VALUES ('capacity_dough_prep_position_name', 'Dough Prep', NOW()) ON CONFLICT (key) DO NOTHING`);
+
     // APC label-scan ledger — see lib/db/migrations/0031_add_apc_consignments.sql.
     // The UNIQUE waybill is what stops one physical label being scanned onto
     // two orders, so this table must exist before the packing flow runs.

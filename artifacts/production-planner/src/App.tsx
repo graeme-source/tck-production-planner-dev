@@ -27,6 +27,7 @@ import StationPage from "@/pages/station";
 import Stock from "@/pages/stock";
 import Sales from "@/pages/sales";
 import Dispatches from "@/pages/dispatches";
+import CaseOrders from "@/pages/case-orders";
 import Suppliers from "@/pages/suppliers";
 import Supplies from "@/pages/supplies";
 import Settings from "@/pages/settings";
@@ -145,6 +146,7 @@ function Router() {
               <Route path="/stock" component={Stock} />
               <Route path="/sales">{() => <ProtectedRoute component={Sales} pageKey="/sales" />}</Route>
               <Route path="/dispatches" component={Dispatches} />
+              <Route path="/case-orders" component={CaseOrders} />
               <Route path="/suppliers" component={Suppliers} />
               <Route path="/supplies">{() => <Redirect to="/inventory?tab=supplies" />}</Route>
               <Route path="/orders" component={Orders} />

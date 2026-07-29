@@ -224,6 +224,7 @@ export function NavLinks({
 
   const dispatchSubItems = [
     { name: "Dispatches", href: "/dispatches", icon: Truck },
+    { name: "Case Orders", href: "/case-orders", icon: Box },
     { name: "Bin Locations", href: "/locations", icon: MapPin },
   ];
 
