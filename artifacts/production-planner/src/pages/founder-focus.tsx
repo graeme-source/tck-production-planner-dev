@@ -716,9 +716,13 @@ function AppleCalendarCard() {
     mutationFn: (enabledUrls: string[]) =>
       api("/caldav/calendars", { method: "PUT", body: JSON.stringify({ enabledUrls }) }),
     onSuccess: () => {
+      setError(null);
       queryClient.invalidateQueries({ queryKey: ["founder-focus-caldav"] });
       queryClient.invalidateQueries({ queryKey: ["founder-focus"] });
     },
+    // A silently-failed save looks like the toggle "not sticking" next
+    // session — surface it in the card instead.
+    onError: (e: Error) => setError(`Calendar choice didn't save: ${e.message}`),
   });
 
   function toggleCalendar(cal: CaldavCalendar) {
@@ -767,6 +771,9 @@ function AppleCalendarCard() {
           )}
           {status.error && (
             <p className="text-sm text-amber-700 dark:text-amber-400">{status.error}</p>
+          )}
+          {error && (
+            <p className="text-sm text-destructive">{error}</p>
           )}
           <button onClick={() => disconnect.mutate()} disabled={disconnect.isPending}
             className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-destructive/10 hover:text-destructive disabled:opacity-50">
