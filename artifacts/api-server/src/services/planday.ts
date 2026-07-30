@@ -268,9 +268,19 @@ export interface PlandayShift {
   endDateTime?: string | null;
   shiftTypeId?: number | null;
   status?: string | null;
+  // Planday position (e.g. "Dough Prep", "Ovens", "Builder 1") — the rota's
+  // station assignment. Present in the Scheduling API response; capacity
+  // planning keys off it (a "Dough Prep" shift on a date unlocks the higher
+  // daily batch ceiling).
+  positionId?: number | null;
 }
 
 export interface PlandayShiftType {
+  id: number;
+  name: string;
+}
+
+export interface PlandayPosition {
   id: number;
   name: string;
 }
@@ -303,6 +313,7 @@ const LOOKUP_TTL_MS = 10 * 60 * 1000;
 interface CachedLookup<T> { data: T[]; expiresAt: number }
 let cachedEmployees: CachedLookup<PlandayEmployee> | null = null;
 let cachedShiftTypes: CachedLookup<PlandayShiftType> | null = null;
+let cachedPositions: CachedLookup<PlandayPosition> | null = null;
 
 async function getCachedLookup<T>(
   current: CachedLookup<T> | null,
@@ -332,6 +343,56 @@ export async function getPlandayShiftTypes(): Promise<PlandayShiftType[]> {
     if (!token) return [];
     return fetchAllPages<PlandayShiftType>(`/scheduling/v1.0/shifttypes`, token);
   }, c => { cachedShiftTypes = c; });
+}
+
+/** Positions are per-department, like shifts — fetch each and merge. */
+export async function getPlandayPositions(): Promise<PlandayPosition[]> {
+  return getCachedLookup(cachedPositions, async () => {
+    const config = getConfig();
+    if (!config) return [];
+    const token = await getAccessToken();
+    if (!token) return [];
+    const perDept = await Promise.all(
+      config.departmentIds.map(id =>
+        fetchAllPages<PlandayPosition>(`/scheduling/v1.0/positions?departmentId=${id}`, token),
+      ),
+    );
+    const seen = new Set<number>();
+    const merged: PlandayPosition[] = [];
+    for (const arr of perDept) {
+      for (const p of arr) {
+        if (seen.has(p.id)) continue;
+        seen.add(p.id);
+        merged.push(p);
+      }
+    }
+    return merged;
+  }, c => { cachedPositions = c; });
+}
+
+/**
+ * Which of the given dates have someone rostered on the named position
+ * (matched case-insensitively, e.g. "Dough Prep"). Returns null when Planday
+ * isn't configured or the position can't be found — callers must treat null as
+ * "unknown" and fall back to the safe capacity, not as "nobody on".
+ */
+export async function datesWithPosition(
+  positionName: string,
+  from: string,
+  to: string,
+): Promise<Set<string> | null> {
+  if (!isPlandayConfigured()) return null;
+  const wanted = positionName.trim().toLowerCase();
+  if (!wanted) return null;
+  const positions = await getPlandayPositions();
+  const position = positions.find(p => p.name.trim().toLowerCase() === wanted);
+  if (!position) return null;
+  const shifts = await getPlandayShifts(from, to);
+  const dates = new Set<string>();
+  for (const s of shifts) {
+    if (s.positionId === position.id && s.date) dates.add(s.date.slice(0, 10));
+  }
+  return dates;
 }
 
 export async function getPlandayShifts(from: string, to: string): Promise<PlandayShift[]> {

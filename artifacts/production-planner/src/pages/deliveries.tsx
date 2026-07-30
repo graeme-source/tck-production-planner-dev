@@ -5,7 +5,7 @@ import {
   Truck, ChevronLeft, ChevronRight, Calendar, Package, Thermometer,
   Check, AlertTriangle, Loader2, ClipboardCheck, X,
   CheckCircle2, AlertCircle, PackageCheck, ArrowRightLeft, Plus, Minus,
-  FileText, Boxes, Pencil, Eye, EyeOff, RotateCcw,
+  FileText, Boxes, Pencil, Eye, EyeOff, RotateCcw, PackageOpen,
 } from "lucide-react";
 import { format, startOfWeek, addDays, isSameDay, parseISO, isToday } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -16,6 +16,10 @@ import { toast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { packNoun, packDescriptor, fmtQty, formatLineQty, formatLineQtyParts, packSizeHint } from "@/pages/station/shared/prep-helpers";
 import { NumberInput } from "@/components/ui/number-input";
+import {
+  CollectionPanel, AddCollectionDialog, useWeekCollections, groupCollections, collectionKey,
+  type Collection,
+} from "@/components/collections";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -989,6 +993,36 @@ export default function Deliveries() {
     return map;
   }, [data, weekDays]);
 
+  // Collections for the same Mon–Sun window as the orders, so a collection can
+  // be matched to its delivery (same supplier + day) client-side.
+  const weekEndStr = format(addDays(weekStart, 6), "yyyy-MM-dd");
+  const { data: weekCollections } = useWeekCollections(format(weekStart, "yyyy-MM-dd"), weekEndStr);
+  const collectionsByKey = useMemo(() => groupCollections(weekCollections), [weekCollections]);
+
+  const [addingCollection, setAddingCollection] = useState<{ supplierId?: number } | null>(null);
+
+  /** Collections on the selected day with no delivery from that supplier —
+   *  they get their own card rather than nesting. */
+  const standaloneCollections = useMemo(() => {
+    const dayOrders = ordersByDay[selectedDateStr] || [];
+    const supplierIdsWithOrders = new Set(dayOrders.map(o => o.supplierId));
+    return (weekCollections ?? []).filter(c =>
+      c.collectionDate === selectedDateStr &&
+      c.status !== "cancelled" &&
+      !supplierIdsWithOrders.has(c.supplierId),
+    );
+  }, [weekCollections, ordersByDay, selectedDateStr]);
+
+  const { data: suppliersList } = useQuery<Array<{ id: number; name: string }>>({
+    queryKey: ["suppliers-for-collections"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/suppliers`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
   const selectedDayOrdersAll = ordersByDay[selectedDateStr] || [];
   const selectedDayOrders = useMemo(() => {
     if (showProcessed) return selectedDayOrdersAll;
@@ -1102,6 +1136,16 @@ export default function Deliveries() {
               </span>
             )}
           </h2>
+          {canReceive && (
+            <button
+              onClick={() => setAddingCollection({})}
+              className="px-3 py-1.5 border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"
+              title="Something being collected from us"
+            >
+              <PackageOpen className="w-4 h-4" />
+              Add collection
+            </button>
+          )}
           {selectedDayOrdersAll.length > 0 && (
             <button
               onClick={() => setShowProcessed((v) => !v)}
@@ -1122,18 +1166,29 @@ export default function Deliveries() {
           <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-destructive text-sm">
             Failed to load deliveries. Please refresh.
           </div>
-        ) : selectedDayOrders.length === 0 ? (
+        ) : selectedDayOrders.length === 0 && standaloneCollections.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-border bg-card flex flex-col items-center justify-center py-14 text-muted-foreground">
             <Truck className="w-10 h-10 mb-3 opacity-20" />
-            <p className="text-sm font-medium">No deliveries expected for this day</p>
-            <p className="text-xs mt-1 opacity-70">Select another day or place an order from the Orders page</p>
+            <p className="text-sm font-medium">Nothing expected for this day</p>
+            <p className="text-xs mt-1 opacity-70">Select another day, place an order from the Orders page, or add a collection</p>
           </div>
         ) : (
           <div className="space-y-3">
+            {/* Collections with no delivery from that supplier get their own
+                card, above the deliveries for the same reason they lead a
+                nested card: they're easy to forget. */}
+            {standaloneCollections.map(c => (
+              <CollectionPanel key={c.id} collection={c} nested={false} canEdit={canReceive} />
+            ))}
             {selectedDayOrders.map((order) => {
               const isReceived = order.status === "received" || order.status === "partially_received";
               const dots = computeProcessingDots(order);
-              const cardIsClickable = canReceive;
+              // A collection scheduled with this delivery has to be handed over
+              // first — so the whole card stops being a shortcut into receiving
+              // until it's signed for. The server enforces this too.
+              const orderCollections = collectionsByKey.get(collectionKey(order.supplierId, selectedDateStr)) ?? [];
+              const blockedByCollection = orderCollections.some(c => c.outstanding);
+              const cardIsClickable = canReceive && !blockedByCollection;
               return (
                 <div
                   key={order.id}
@@ -1154,6 +1209,13 @@ export default function Deliveries() {
                     cardIsClickable && "cursor-pointer"
                   )}
                 >
+                  {/* Collections lead the card. They're the thing that gets
+                      forgotten once the driver has gone, so they sit above the
+                      supplier header where they can't be scrolled past. */}
+                  {orderCollections.map(c => (
+                    <CollectionPanel key={c.id} collection={c} nested canEdit={canReceive} />
+                  ))}
+
                   <div className="p-4 flex items-center gap-4">
                     <div className={cn(
                       "w-12 h-12 rounded-xl flex items-center justify-center shrink-0",
@@ -1224,7 +1286,13 @@ export default function Deliveries() {
                           Edit order
                         </button>
                       )}
-                      {canReceive && !isReceived && (
+                      {canReceive && !isReceived && blockedByCollection && (
+                        <span className="text-xs font-medium text-amber-700 dark:text-amber-300 px-3 py-2 rounded-xl bg-amber-100 dark:bg-amber-900/40 flex items-center gap-1.5">
+                          <PackageOpen className="w-3.5 h-3.5" />
+                          Collection first
+                        </span>
+                      )}
+                      {canReceive && !isReceived && !blockedByCollection && (
                         <button
                           onClick={(e) => { e.stopPropagation(); openReceiving(order.id); }}
                           className="px-5 py-3 rounded-xl bg-primary text-primary-foreground text-lg font-bold hover:bg-primary/90 transition-colors flex items-center gap-2"
@@ -1383,6 +1451,15 @@ export default function Deliveries() {
             setReceivingOpen(false);
             setSelectedOrderId(null);
           }}
+        />
+      )}
+
+      {addingCollection && (
+        <AddCollectionDialog
+          suppliers={suppliersList ?? []}
+          defaultDate={selectedDateStr}
+          defaultSupplierId={addingCollection.supplierId}
+          onClose={() => setAddingCollection(null)}
         />
       )}
     </div>

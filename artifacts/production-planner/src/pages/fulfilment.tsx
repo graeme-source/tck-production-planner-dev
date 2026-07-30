@@ -27,6 +27,7 @@ interface LineItem {
   title: string;
   variant_title: string | null;
   quantity: number;
+  variant_id: number | null;
   sku: string;
   location: SkuLocation | null;
   barcode: string | null;
@@ -910,9 +911,9 @@ export default function Fulfilment() {
   const [pendingCompletions, setPendingCompletions] = useState(0);
   const [showFailuresModal, setShowFailuresModal] = useState(false);
   const [showAuditModal, setShowAuditModal] = useState(false);
-  // Per-row scanned count, keyed by the grouped item's `_groupKey` (SKU when
-  // present). Lets us collapse duplicate line items into a single row with
-  // an `×N` badge, then track scan progress within that row.
+  // Per-row scanned count, keyed by the grouped item's `_groupKey` (variant
+  // id when present). Lets us collapse duplicate line items into a single row
+  // with an `×N` badge, then track scan progress within that row.
   const [pickedCounts, setPickedCounts] = useState<Map<string, number>>(new Map());
   const [flashItem, setFlashItem] = useState<string | null>(null);
   const [flashWrong, setFlashWrong] = useState(false);
@@ -1068,11 +1069,13 @@ export default function Fulfilment() {
   const orderTagList = (o: ShopifyOrder) =>
     o.tags.split(",").map(t => t.trim().toLowerCase()).filter(Boolean);
 
-  /** Stable key for a line item. SKU is the operator-facing identity; fall
-   *  back to variant id, then title, so an item without a SKU is still
-   *  filterable rather than silently unfilterable. */
+  /** Stable key for a line item. Variant id is the real product identity —
+   *  SKUs are shelf labels shared across products, so keying on SKU merged
+   *  unrelated products into one filter chip (and excluding one silently
+   *  excluded the others). Fall back to title so an item without a variant
+   *  is still filterable rather than silently unfilterable. */
   const productKey = (li: { sku?: string | null; variant_id?: number | null; title: string }) =>
-    (li.sku && li.sku.trim()) || (li.variant_id != null ? `variant:${li.variant_id}` : `title:${li.title}`);
+    (li.variant_id != null ? `variant:${li.variant_id}` : `title:${li.title}`);
 
   const orderProductKeys = (o: ShopifyOrder) => new Set((o.line_items ?? []).map(productKey));
 
@@ -1382,10 +1385,13 @@ export default function Fulfilment() {
     return a.title.localeCompare(b.title);
   }) : [];
 
-  // Collapse multiple line items with the same SKU into one row so a packer
+  // Collapse multiple line items of the same VARIANT into one row so a packer
   // sees "Chicken & Chorizo ×2" instead of two identical rows. Quantity adds
   // up across the merged lines, and scans increment a per-row picked count
-  // until the row is full.
+  // until the row is full. Grouping must key on variant id, not SKU — SKUs
+  // are shelf labels shared across products, and grouping by SKU merged
+  // different products into one row (wrong title/image/barcode for all but
+  // the first).
   interface GroupedItem {
     _groupKey: string;
     title: string;
@@ -1401,7 +1407,7 @@ export default function Fulfilment() {
   {
     const map = new Map<string, GroupedItem>();
     for (const li of sortedLineItems) {
-      const key = li.sku || `__nosku_${li.id}`;
+      const key = li.variant_id != null ? `v${li.variant_id}` : (li.sku || `__nosku_${li.id}`);
       const existing = map.get(key);
       if (existing) {
         existing.totalQty += li.quantity;

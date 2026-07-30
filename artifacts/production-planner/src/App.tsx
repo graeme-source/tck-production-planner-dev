@@ -27,6 +27,7 @@ import StationPage from "@/pages/station";
 import Stock from "@/pages/stock";
 import Sales from "@/pages/sales";
 import Dispatches from "@/pages/dispatches";
+import CaseOrders from "@/pages/case-orders";
 import Suppliers from "@/pages/suppliers";
 import Supplies from "@/pages/supplies";
 import Settings from "@/pages/settings";
@@ -40,6 +41,7 @@ import Orders from "@/pages/orders";
 import Deliveries from "@/pages/deliveries";
 import FounderView from "@/pages/founder";
 import FounderPnL from "@/pages/founder-pnl";
+import FounderFocus from "@/pages/founder-focus";
 import StockControl from "@/pages/stock-control";
 import ProductHub from "@/pages/product-hub";
 import TrainingMatrix from "@/pages/training-matrix";
@@ -145,6 +147,7 @@ function Router() {
               <Route path="/stock" component={Stock} />
               <Route path="/sales">{() => <ProtectedRoute component={Sales} pageKey="/sales" />}</Route>
               <Route path="/dispatches" component={Dispatches} />
+              <Route path="/case-orders" component={CaseOrders} />
               <Route path="/suppliers" component={Suppliers} />
               <Route path="/supplies">{() => <Redirect to="/inventory?tab=supplies" />}</Route>
               <Route path="/orders" component={Orders} />
@@ -159,6 +162,7 @@ function Router() {
               <Route path="/product-hub" component={ProductHub} />
               <Route path="/founder" component={FounderView} />
               <Route path="/founder/pnl" component={FounderPnL} />
+              <Route path="/founder/focus" component={FounderFocus} />
               <Route path="/reports">{() => <ProtectedRoute component={Reports} pageKey="/reports" />}</Route>
               <Route path="/training">{() => <ProtectedRoute component={TrainingMatrix} pageKey="/training" />}</Route>
               <Route path="/lean-cave" component={LeanCave} />

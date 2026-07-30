@@ -1111,6 +1111,366 @@ async function runStartupMigrations() {
       )
     `);
 
+    // Collections — goods leaving the unit, the mirror of a delivery.
+    // See lib/db/migrations/0032_add_collections.sql. The weekly deliveries
+    // view queries this on every render, so it must exist everywhere.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS collections (
+        id SERIAL PRIMARY KEY,
+        supplier_id INTEGER NOT NULL REFERENCES suppliers(id) ON DELETE RESTRICT,
+        collection_date DATE NOT NULL,
+        status TEXT NOT NULL DEFAULT 'scheduled',
+        reference TEXT,
+        notes TEXT,
+        driver_name TEXT,
+        signature_blob BYTEA,
+        signature_mime TEXT,
+        photo_blob BYTEA,
+        photo_mime TEXT,
+        collected_at TIMESTAMP,
+        collected_by_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        collected_by_name TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_collections_supplier_date ON collections (supplier_id, collection_date)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_collections_date ON collections (collection_date)`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS collection_lines (
+        id SERIAL PRIMARY KEY,
+        collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+        description TEXT NOT NULL,
+        quantity NUMERIC(10,2) NOT NULL DEFAULT 1,
+        unit TEXT NOT NULL DEFAULT 'items',
+        checked_off BOOLEAN NOT NULL DEFAULT FALSE,
+        quantity_collected NUMERIC(10,2),
+        notes TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_collection_lines_collection ON collection_lines (collection_id)`);
+
+    // Case orders — see lib/db/migrations/0033_add_case_orders.sql. Order
+    // matters: production_plan_items.case_order_id FKs case_orders, so the
+    // tables come first.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS case_types (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS case_type_lines (
+        id SERIAL PRIMARY KEY,
+        case_type_id INTEGER NOT NULL REFERENCES case_types(id) ON DELETE CASCADE,
+        recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE RESTRICT,
+        bags_per_case INTEGER NOT NULL DEFAULT 1
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_case_type_lines_type ON case_type_lines (case_type_id)`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS case_orders (
+        id SERIAL PRIMARY KEY,
+        supplier_id INTEGER NOT NULL REFERENCES suppliers(id) ON DELETE RESTRICT,
+        reference TEXT,
+        target_collection_date DATE NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        notes TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        created_by_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_case_orders_target ON case_orders (target_collection_date)`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS case_order_lines (
+        id SERIAL PRIMARY KEY,
+        case_order_id INTEGER NOT NULL REFERENCES case_orders(id) ON DELETE CASCADE,
+        case_type_id INTEGER NOT NULL REFERENCES case_types(id) ON DELETE RESTRICT,
+        cases_ordered INTEGER NOT NULL
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_case_order_lines_order ON case_order_lines (case_order_id)`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS case_order_production (
+        id SERIAL PRIMARY KEY,
+        case_order_id INTEGER NOT NULL REFERENCES case_orders(id) ON DELETE CASCADE,
+        recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE RESTRICT,
+        plan_id INTEGER REFERENCES production_plans(id) ON DELETE SET NULL,
+        production_date DATE NOT NULL,
+        bags INTEGER NOT NULL,
+        counted_by_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        counted_by_name TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_case_order_production_order ON case_order_production (case_order_id, recipe_id)`);
+    await db.execute(sql`ALTER TABLE recipes ADD COLUMN IF NOT EXISTS max_batches_per_day INTEGER`);
+    await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS freezer_eight_pack_bag_count INTEGER NOT NULL DEFAULT 0`);
+    await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS freezer_eight_pack_qty INTEGER NOT NULL DEFAULT 0`);
+    await db.execute(sql`ALTER TABLE production_plan_items ADD COLUMN IF NOT EXISTS case_order_id INTEGER REFERENCES case_orders(id) ON DELETE SET NULL`);
+    await db.execute(sql`INSERT INTO app_settings (key, value, updated_at) VALUES ('capacity_batches_with_dough_prep', '110', NOW()) ON CONFLICT (key) DO NOTHING`);
+    await db.execute(sql`INSERT INTO app_settings (key, value, updated_at) VALUES ('capacity_batches_without_dough_prep', '80', NOW()) ON CONFLICT (key) DO NOTHING`);
+    await db.execute(sql`INSERT INTO app_settings (key, value, updated_at) VALUES ('capacity_dough_prep_position_name', 'Dough Prep', NOW()) ON CONFLICT (key) DO NOTHING`);
+
+    // Re-key the fulfilment barcode cache from SKU to Shopify variant id —
+    // see lib/db/migrations/0034_sku_barcodes_variant_key.sql. TCK SKUs are
+    // shelf labels shared by many products, so the SKU-keyed cache attached
+    // the wrong product's barcode/image to order lines (2026-07-30:
+    // buttermilk vs korean strips, both SKU "1"). Guarded by _migrations_done
+    // because the wipe must not repeat on every boot: the cache refills via
+    // the manual "Sync from Shopify" button, and an unconditional DELETE
+    // would silently blank the scanner between sync runs.
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS _migrations_done (key TEXT PRIMARY KEY, done_at TIMESTAMP DEFAULT NOW())`);
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'sku_barcodes_variant_key_v1') THEN
+          ALTER TABLE sku_barcodes ADD COLUMN IF NOT EXISTS variant_id TEXT;
+          DELETE FROM sku_barcodes;
+          ALTER TABLE sku_barcodes DROP CONSTRAINT IF EXISTS sku_barcodes_pkey;
+          ALTER TABLE sku_barcodes ALTER COLUMN sku DROP NOT NULL;
+          ALTER TABLE sku_barcodes ALTER COLUMN variant_id SET NOT NULL;
+          ALTER TABLE sku_barcodes ADD PRIMARY KEY (variant_id);
+          INSERT INTO _migrations_done (key) VALUES ('sku_barcodes_variant_key_v1');
+        END IF;
+      END $$;
+    `);
+
+    // Founder Focus — see lib/db/migrations/0035_founder_focus.sql. Tables
+    // are additive; the pillar/goal seed (from Graeme's 2026-07-30 notebook)
+    // runs once, guarded, so later UI edits are never re-seeded.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS founder_pillars (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        color TEXT,
+        sort INTEGER NOT NULL DEFAULT 0,
+        target_share_pct INTEGER,
+        notes TEXT,
+        archived_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS founder_goals (
+        id SERIAL PRIMARY KEY,
+        pillar_id INTEGER NOT NULL REFERENCES founder_pillars(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        detail TEXT,
+        status TEXT NOT NULL DEFAULT 'active',
+        sort INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        done_at TIMESTAMP
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS founder_blocks (
+        id SERIAL PRIMARY KEY,
+        date DATE NOT NULL,
+        start_min INTEGER NOT NULL,
+        end_min INTEGER NOT NULL,
+        pillar_id INTEGER REFERENCES founder_pillars(id) ON DELETE SET NULL,
+        title TEXT NOT NULL,
+        notes TEXT,
+        status TEXT NOT NULL DEFAULT 'planned',
+        source TEXT NOT NULL DEFAULT 'manual',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_founder_blocks_date ON founder_blocks (date)`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS founder_block_templates (
+        id SERIAL PRIMARY KEY,
+        weekday INTEGER NOT NULL,
+        start_min INTEGER NOT NULL,
+        end_min INTEGER NOT NULL,
+        pillar_id INTEGER REFERENCES founder_pillars(id) ON DELETE SET NULL,
+        title TEXT NOT NULL,
+        sort INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS founder_parking_lot (
+        id SERIAL PRIMARY KEY,
+        text TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        resolved_at TIMESTAMP
+      )
+    `);
+    await db.execute(sql`
+      DO $$
+      DECLARE
+        claude_id INTEGER; sales_id INTEGER; team_id INTEGER; product_id INTEGER;
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'founder_focus_seed_v1') THEN
+          INSERT INTO founder_pillars (name, color, sort, notes) VALUES
+            ('Claude & Systems', '#7cb342', 0, 'AI + app work — the leverage multiplier.')
+            RETURNING id INTO claude_id;
+          INSERT INTO founder_pillars (name, color, sort, notes) VALUES
+            ('Sales', '#3b82f6', 1, 'Revenue-driving work only Graeme can do.')
+            RETURNING id INTO sales_id;
+          INSERT INTO founder_pillars (name, color, sort, notes) VALUES
+            ('Team & Coaching', '#f59e0b', 2, 'No experienced manager in the team yet — this one is founder-only for now.')
+            RETURNING id INTO team_id;
+          INSERT INTO founder_pillars (name, color, sort, notes) VALUES
+            ('Product', '#8b5cf6', 3, 'From the notebook with a question mark — flesh out or archive.')
+            RETURNING id INTO product_id;
+          INSERT INTO founder_goals (pillar_id, title, detail, sort) VALUES
+            (claude_id, 'AI customer service agent', 'In progress — recently started, making progress.', 0),
+            (claude_id, 'Website: subs, conversion rate, customer experience', 'E-commerce improvements on the Shopify site.', 1),
+            (claude_id, 'Production planner', 'Ongoing app development.', 2),
+            (sales_id, 'Online', NULL, 0),
+            (sales_id, 'Wholesale', NULL, 1),
+            (team_id, 'Buddy system', NULL, 0),
+            (team_id, 'Outstanding performer', NULL, 1),
+            (team_id, '30 mins a day one-on-one', 'Daily corrective-coaching slot.', 2),
+            (team_id, 'Bottom 3 performers', 'Corrective coaching focus.', 3),
+            (team_id, 'Culture', NULL, 4);
+          INSERT INTO _migrations_done (key) VALUES ('founder_focus_seed_v1');
+        END IF;
+      END $$;
+    `);
+
+    // Founder Focus recurring items + default week — see
+    // lib/db/migrations/0037_founder_recurring_and_week_template.sql.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS founder_recurring_items (
+        id SERIAL PRIMARY KEY,
+        pillar_id INTEGER NOT NULL REFERENCES founder_pillars(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        sort INTEGER NOT NULL DEFAULT 0,
+        archived_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS founder_recurring_ticks (
+        id SERIAL PRIMARY KEY,
+        item_id INTEGER NOT NULL REFERENCES founder_recurring_items(id) ON DELETE CASCADE,
+        date DATE NOT NULL,
+        ticked_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE (item_id, date)
+      )
+    `);
+    await db.execute(sql`
+      DO $$
+      DECLARE
+        sales_id INTEGER; team_id INTEGER; claude_id INTEGER; product_id INTEGER;
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'founder_focus_seed_v2') THEN
+          -- Graeme consistently calls this pillar "sales and marketing".
+          UPDATE founder_pillars SET name = 'Sales & Marketing' WHERE name = 'Sales';
+
+          SELECT id INTO sales_id FROM founder_pillars WHERE name = 'Sales & Marketing' AND archived_at IS NULL LIMIT 1;
+          SELECT id INTO team_id FROM founder_pillars WHERE name = 'Team & Coaching' AND archived_at IS NULL LIMIT 1;
+          SELECT id INTO claude_id FROM founder_pillars WHERE name = 'Claude & Systems' AND archived_at IS NULL LIMIT 1;
+          SELECT id INTO product_id FROM founder_pillars WHERE name = 'Product' AND archived_at IS NULL LIMIT 1;
+
+          IF team_id IS NOT NULL THEN
+            INSERT INTO founder_recurring_items (pillar_id, title, sort)
+            VALUES (team_id, '30-min one-on-one coaching', 0);
+          END IF;
+
+          -- Default Mon-Fri week (weekday 1..5, 0=Sunday). Only when the
+          -- template is still empty so hand-made rows are never clobbered.
+          IF NOT EXISTS (SELECT 1 FROM founder_block_templates) THEN
+            FOR wd IN 1..5 LOOP
+              IF team_id IS NOT NULL THEN
+                INSERT INTO founder_block_templates (weekday, start_min, end_min, pillar_id, title) VALUES (wd, 420, 480, team_id, 'Team & Coaching');
+                INSERT INTO founder_block_templates (weekday, start_min, end_min, pillar_id, title) VALUES (wd, 840, 900, team_id, 'Team & Coaching');
+              END IF;
+              IF sales_id IS NOT NULL THEN
+                INSERT INTO founder_block_templates (weekday, start_min, end_min, pillar_id, title) VALUES (wd, 480, 540, sales_id, 'Sales & Marketing');
+              END IF;
+              IF claude_id IS NOT NULL THEN
+                INSERT INTO founder_block_templates (weekday, start_min, end_min, pillar_id, title) VALUES (wd, 540, 720, claude_id, 'Claude & Systems');
+              END IF;
+              IF product_id IS NOT NULL THEN
+                INSERT INTO founder_block_templates (weekday, start_min, end_min, pillar_id, title) VALUES (wd, 720, 840, product_id, 'Product');
+              END IF;
+            END LOOP;
+          END IF;
+
+          INSERT INTO _migrations_done (key) VALUES ('founder_focus_seed_v2');
+        END IF;
+      END $$;
+    `);
+
+    // Founder settings — see lib/db/migrations/0036_founder_settings.sql.
+    // Founder-only k/v (CalDAV credentials etc.) — kept out of app_settings
+    // because that table is readable by ordinary logged-in users.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS founder_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    // Merge the four prep-section checklists into one canonical 'prep'
+    // checklist — see lib/db/migrations/0038_prep_checklist_merge.sql for
+    // the full rationale. Every completion row is preserved (HACCP trail):
+    // duplicates of a canonical item hand their ticks to it (first tick per
+    // plan wins the unique slot) and deactivate; unique items move over.
+    await db.execute(sql`
+      DO $$
+      DECLARE
+        r RECORD;
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'prep_checklist_merge_v1') THEN
+          FOR r IN
+            SELECT DISTINCT ON (cc.id) cc.id AS completion_id, cc.plan_id, keep.id AS keep_id
+            FROM checklist_completions cc
+            JOIN checklist_templates dup
+              ON dup.id = cc.template_id
+             AND dup.station_type IN ('main_prep', 'prep_bases', 'prep_meat')
+            JOIN checklist_templates keep
+              ON keep.station_type = 'prep'
+             AND keep.category = dup.category
+             AND lower(btrim(keep.title)) = lower(btrim(dup.title))
+            ORDER BY cc.id, keep.id
+          LOOP
+            IF NOT EXISTS (
+              SELECT 1 FROM checklist_completions x
+              WHERE x.template_id = r.keep_id AND x.plan_id = r.plan_id
+            ) THEN
+              UPDATE checklist_completions
+              SET template_id = r.keep_id, station_type = 'prep'
+              WHERE id = r.completion_id;
+            END IF;
+          END LOOP;
+
+          UPDATE checklist_templates dup
+          SET is_active = false
+          WHERE dup.station_type IN ('main_prep', 'prep_bases', 'prep_meat')
+            AND EXISTS (
+              SELECT 1 FROM checklist_templates keep
+              WHERE keep.station_type = 'prep'
+                AND keep.category = dup.category
+                AND lower(btrim(keep.title)) = lower(btrim(dup.title))
+            );
+
+          UPDATE checklist_completions cc
+          SET station_type = 'prep'
+          FROM checklist_templates t
+          WHERE t.id = cc.template_id
+            AND t.station_type IN ('main_prep', 'prep_bases', 'prep_meat');
+
+          UPDATE checklist_templates
+          SET station_type = 'prep'
+          WHERE station_type IN ('main_prep', 'prep_bases', 'prep_meat');
+
+          UPDATE checklist_oneoff_items
+          SET station_type = 'prep'
+          WHERE station_type IN ('main_prep', 'prep_bases', 'prep_meat');
+
+          INSERT INTO _migrations_done (key) VALUES ('prep_checklist_merge_v1');
+        END IF;
+      END $$;
+    `);
+
     // APC label-scan ledger — see lib/db/migrations/0031_add_apc_consignments.sql.
     // The UNIQUE waybill is what stops one physical label being scanned onto
     // two orders, so this table must exist before the packing flow runs.

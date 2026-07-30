@@ -51,6 +51,15 @@ async function adminOnly(req: Request, res: Response, next: NextFunction) {
 const SHARED_CHECKLIST_STATIONS: Record<string, string> = {
   building_2: "building_1",
   dough_prep: "dough_sheeting",
+  // The prep area is ONE physical station with one checklist, whichever
+  // section (hub, main, bases, raw meat) it's opened from. Before 2026-07-30
+  // each section had its own cloned copy, so a tick in one section didn't
+  // show in the others and the team thought the checklist was undoing
+  // itself. Existing templates/history were merged into 'prep' by the
+  // prep_checklist_merge_v1 startup migration.
+  main_prep: "prep",
+  prep_bases: "prep",
+  prep_meat: "prep",
 };
 
 /** Resolve to the canonical station type for checklist storage */

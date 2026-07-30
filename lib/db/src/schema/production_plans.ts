@@ -56,6 +56,18 @@ export const productionPlanItemsTable = pgTable("production_plan_items", {
   shortCount: integer("short_count").notNull().default(0),
   eightPackBagCount: integer("eight_pack_bag_count").notNull().default(0),
   fridgeEightPackQty: integer("fridge_eight_pack_qty").notNull().default(0),
+  // Of eightPackBagCount (which stays the TOTAL bags — every existing
+  // gross−bags=net calculation is unchanged), how many are destined for the
+  // walk-in product freezer for a case order rather than the fridge. Only the
+  // wrapping station acts on the split; ovens see total bags only.
+  freezerEightPackBagCount: integer("freezer_eight_pack_bag_count").notNull().default(0),
+  // Freezer bags actually wrapped + counted into the freezer so far — the
+  // freezer twin of fridgeEightPackQty.
+  freezerEightPackQty: integer("freezer_eight_pack_qty").notNull().default(0),
+  // Which case order the freezer bags on this item belong to. Set when a
+  // schedule suggestion is applied; the wrapping station's freezer count
+  // ledger entries are attributed through it.
+  caseOrderId: integer("case_order_id"),
   mixingTinOverride: integer("mixing_tin_override"),
   leftoverFillingGrams: integer("leftover_filling_grams"),
   leftoverFillingComment: text("leftover_filling_comment"),

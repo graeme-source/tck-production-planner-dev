@@ -1753,6 +1753,13 @@ router.post("/:id/add-mac-cheese", validate(AddMacCheeseBody), async (req, res) 
       leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
       eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
       fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
+      // Case-order freezer split: of eightPackBagCount, how many bags go to
+      // the walk-in freezer (target), how many are in there so far
+      // (progress), and which case order they belong to. Wrapping is the only
+      // station that acts on these; ovens display total bags only.
+      freezerEightPackBagCount: productionPlanItemsTable.freezerEightPackBagCount,
+      freezerEightPackQty: productionPlanItemsTable.freezerEightPackQty,
+      caseOrderId: productionPlanItemsTable.caseOrderId,
       mixingTinOverride: productionPlanItemsTable.mixingTinOverride,
       fillWeightGrams: recipesTable.fillWeightGrams,
       baseType: recipesTable.baseType,
@@ -2257,6 +2264,13 @@ router.get("/:id", async (req, res) => {
       leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
       eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
       fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
+      // Case-order freezer split: of eightPackBagCount, how many bags go to
+      // the walk-in freezer (target), how many are in there so far
+      // (progress), and which case order they belong to. Wrapping is the only
+      // station that acts on these; ovens display total bags only.
+      freezerEightPackBagCount: productionPlanItemsTable.freezerEightPackBagCount,
+      freezerEightPackQty: productionPlanItemsTable.freezerEightPackQty,
+      caseOrderId: productionPlanItemsTable.caseOrderId,
       mixingTinOverride: productionPlanItemsTable.mixingTinOverride,
       fillWeightGrams: recipesTable.fillWeightGrams,
       baseType: recipesTable.baseType,

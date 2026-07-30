@@ -15,6 +15,27 @@ import { BreakTracker } from "../shared/break-tracker";
 import { getStationCount, getAvailableFromPrev, compareItemsForDisplay } from "../shared/constants";
 import { netTwoPacks as computeNetTwoPacks, effectiveBatchesTarget } from "../shared/recipe-completion";
 
+// Case-order freezer split — new columns not yet in the generated API client
+// (openapi.yaml codegen deliberately deferred; see project_api_spec_drift).
+type ItemWithFreezer = ProductionPlanItem & {
+  freezerEightPackBagCount?: number;
+  freezerEightPackQty?: number;
+  caseOrderId?: number | null;
+};
+const freezerBagTarget = (item: ProductionPlanItem) => (item as ItemWithFreezer).freezerEightPackBagCount ?? 0;
+const freezerBagDone = (item: ProductionPlanItem) => (item as ItemWithFreezer).freezerEightPackQty ?? 0;
+const itemCaseOrderId = (item: ProductionPlanItem) => (item as ItemWithFreezer).caseOrderId ?? null;
+
+interface CaseOrderSummary {
+  id: number;
+  supplierName: string | null;
+  reference: string | null;
+  targetCollectionDate: string;
+  status: string;
+  caseLines: Array<{ caseTypeName: string | null; casesOrdered: number }>;
+  totals: { cases: number; bagsRequired: number; bagsMade: number; bagsRemaining: number };
+}
+
 interface ShopifyWrapConfirmState {
   item: ProductionPlanItem;
   productTitle: string;
@@ -54,6 +75,43 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   const [runWonkyTransfer, wonkyTransferLoading] = useGuardedAction();
   const [runWrappingAction, wrappingBusy] = useGuardedAction();
   const [runStorageAction, storageBusy] = useGuardedAction();
+  const [runFreezerBagAction, freezerBagBusy] = useGuardedAction();
+
+  // Case orders linked to today's items — drives the banner that tells the
+  // wrapper how many cases they're building and the bags-per-case breakdown.
+  const [caseOrders, setCaseOrders] = useState<CaseOrderSummary[]>([]);
+  const linkedCaseOrderIds = useMemo(
+    () => Array.from(new Set((plan.items ?? []).map(itemCaseOrderId).filter((v): v is number => v != null))),
+    [plan.items],
+  );
+  useEffect(() => {
+    if (linkedCaseOrderIds.length === 0) { setCaseOrders([]); return; }
+    fetch(`/api/case-orders`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : [])
+      .then((all: CaseOrderSummary[]) => {
+        setCaseOrders(all.filter(o => linkedCaseOrderIds.includes(o.id)));
+      })
+      .catch((err) => { console.warn("[WrappingStation] Case orders fetch failed:", err); });
+  }, [linkedCaseOrderIds]);
+
+  /** Count freezer bags in/out. Also writes the case-order ledger server-side,
+   *  so the order's made-vs-remaining can't drift from what was counted. */
+  const adjustFreezerBags = async (item: ProductionPlanItem, delta: number) => {
+    if (isOnBreak || delta === 0) return;
+    await runFreezerBagAction(async (signal) => {
+      await guardedFetch(`/api/case-orders/plan-items/${item.id}/freezer-bags`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ delta }),
+        signal,
+      });
+      await queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+      toast({
+        title: delta > 0 ? `+${delta} freezer bag${delta === 1 ? "" : "s"}` : `${delta} freezer bag${delta === -1 ? "" : "s"}`,
+        description: `${item.recipeName ?? "Recipe"} → walk-in product freezer`,
+      });
+    });
+  };
 
   useEffect(() => {
     fetch(`/api/production-plans/${plan.id}/assembly-items`, { credentials: "include" })
@@ -392,6 +450,36 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
 
   return (
     <div className="space-y-4">
+      {/* Case-order banner — the wrapper's brief: how many cases to build,
+          what goes in each, and the running made-vs-remaining. Only rendered
+          when today's items carry a freezer allocation. */}
+      {caseOrders.map(order => (
+        <div key={order.id} className="rounded-xl border-2 border-sky-300 dark:border-sky-800 bg-sky-50/70 dark:bg-sky-950/30 px-4 py-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Snowflake className="w-5 h-5 text-sky-600 dark:text-sky-400 flex-shrink-0" />
+            <span className="font-bold text-sky-900 dark:text-sky-100">
+              Case order #{order.id}{order.supplierName ? ` — ${order.supplierName}` : ""}
+            </span>
+            <span className="text-xs text-sky-800/80 dark:text-sky-200/80">
+              collect {order.targetCollectionDate}
+            </span>
+            <span className="ml-auto text-sm font-bold tabular-nums text-sky-800 dark:text-sky-200">
+              {order.totals.bagsMade}/{order.totals.bagsRequired} bags in freezer · {order.totals.bagsRemaining} to go
+            </span>
+          </div>
+          <p className="text-sm text-sky-900/90 dark:text-sky-100/90 mt-1">
+            {order.totals.cases} cases to build:{" "}
+            {order.caseLines.map((l, i) => (
+              <span key={i}>
+                {i > 0 ? " · " : ""}
+                <span className="font-semibold">{l.casesOrdered}×</span> {l.caseTypeName ?? "case"}
+              </span>
+            ))}
+            <span className="text-sky-800/70 dark:text-sky-200/70"> — bags below go to the walk-in product freezer, not the fridge.</span>
+          </p>
+        </div>
+      ))}
+
       {garlicReminderItem && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4">
           <div className="bg-card border-2 border-amber-500 rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
@@ -495,7 +583,14 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
             const produced = net + wonkiesRecorded;
             const eightPkCount = item.eightPackBagCount ?? 0;
             const eightPkFridge = item.fridgeEightPackQty ?? 0;
-            const eightPkRemaining = eightPkCount - eightPkFridge;
+            // Of the total bags, the case-order freezer split. Fridge bags are
+            // what's left after the freezer allocation — the two destinations
+            // are counted separately because they're physically different jobs
+            // (fridge = normal wholesale; freezer = blast-freeze + case).
+            const fzTarget = freezerBagTarget(item);
+            const fzDone = freezerBagDone(item);
+            const fridgeBagTargetCount = Math.max(0, eightPkCount - fzTarget);
+            const eightPkRemaining = Math.max(0, fridgeBagTargetCount - eightPkFridge);
             const fridge = item.fridgeQty ?? 0;
             const freezer = item.freezerQty ?? 0;
             const totalStored = fridge + freezer;
@@ -641,9 +736,15 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                       {eightPkCount > 0 && (
                         <div className="mt-3 pt-3 border-t border-cyan-200 dark:border-cyan-800/60 flex items-center justify-center gap-6 text-sm">
                           <div className="flex items-center gap-2">
-                            <span className="text-xs text-muted-foreground font-medium">8-packs</span>
-                            <span className="text-lg font-bold tabular-nums text-indigo-600 dark:text-indigo-400">{eightPkFridge}/{eightPkCount}</span>
+                            <span className="text-xs text-muted-foreground font-medium">{fzTarget > 0 ? "Fridge 8-packs" : "8-packs"}</span>
+                            <span className="text-lg font-bold tabular-nums text-indigo-600 dark:text-indigo-400">{eightPkFridge}/{fridgeBagTargetCount}</span>
                           </div>
+                          {fzTarget > 0 && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-muted-foreground font-medium">Freezer 8-packs</span>
+                              <span className="text-lg font-bold tabular-nums text-sky-600 dark:text-sky-400">{fzDone}/{fzTarget}</span>
+                            </div>
+                          )}
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-muted-foreground font-medium">Produced</span>
                             <span className="text-lg font-bold tabular-nums text-cyan-700 dark:text-cyan-200">{produced}</span>
@@ -836,7 +937,53 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                             <span className="text-sm text-muted-foreground">{eightPkFridge} in fridge</span>
                           )}
                           {eightPkRemaining <= 0 && eightPkFridge > 0 && (
-                            <span className="text-sm text-emerald-600 font-medium">All 8-packs stored ✓</span>
+                            <span className="text-sm text-emerald-600 font-medium">All fridge 8-packs stored ✓</span>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Freezer bags — the case-order allocation. Physically a
+                          different job from fridge bags: blast-freeze the loose
+                          portions, bag, count into the walk-in product freezer.
+                          Counted here (not at ovens) because this is where the
+                          bags actually come into existence. */}
+                      {fzTarget > 0 && (
+                        <div className="flex items-center gap-2 flex-wrap mt-2 pt-2 border-t border-sky-200/60 dark:border-sky-800/50">
+                          <span className="text-sm font-medium text-sky-600 dark:text-sky-400 flex items-center gap-1.5">
+                            <Snowflake className="w-4 h-4" /> Freezer bags{itemCaseOrderId(item) != null ? ` (case order #${itemCaseOrderId(item)})` : ""}:
+                          </span>
+                          <span className="text-sm font-bold tabular-nums text-sky-700 dark:text-sky-300">
+                            {fzDone}/{fzTarget} in freezer
+                          </span>
+                          <button
+                            onClick={() => adjustFreezerBags(item, 1)}
+                            disabled={freezerBagBusy || isOnBreak || fzDone >= fzTarget}
+                            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-sky-600 text-white text-sm font-medium hover:bg-sky-700 disabled:opacity-50 transition-colors"
+                          >
+                            {freezerBagBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                            Bag to freezer
+                          </button>
+                          {fzTarget - fzDone > 1 && (
+                            <button
+                              onClick={() => adjustFreezerBags(item, fzTarget - fzDone)}
+                              disabled={freezerBagBusy || isOnBreak}
+                              className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-300 text-sm font-medium hover:bg-sky-100/60 dark:hover:bg-sky-900/40 disabled:opacity-50 transition-colors"
+                            >
+                              +{fzTarget - fzDone} remaining
+                            </button>
+                          )}
+                          {fzDone > 0 && (
+                            <button
+                              onClick={() => adjustFreezerBags(item, -1)}
+                              disabled={freezerBagBusy || isOnBreak}
+                              className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-border text-muted-foreground text-sm font-medium hover:bg-secondary/50 disabled:opacity-50 transition-colors"
+                              title="Undo one freezer bag"
+                            >
+                              <Minus className="w-4 h-4" />
+                            </button>
+                          )}
+                          {fzDone >= fzTarget && (
+                            <span className="text-sm text-emerald-600 font-medium">All freezer bags in ✓</span>
                           )}
                         </div>
                       )}
