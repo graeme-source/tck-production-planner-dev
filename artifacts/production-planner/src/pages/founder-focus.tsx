@@ -82,10 +82,16 @@ interface Overview {
   calendarError: string | null;
 }
 
+interface CaldavCalendar {
+  url: string;
+  name: string;
+  enabled: boolean;
+}
+
 interface CaldavStatus {
   configured: boolean;
   appleId?: string;
-  calendars?: string[];
+  calendars?: CaldavCalendar[];
   error?: string;
 }
 
@@ -511,6 +517,22 @@ function AppleCalendarCard() {
       queryClient.invalidateQueries({ queryKey: ["founder-focus"] });
     },
   });
+  const saveCalendarToggles = useMutation({
+    mutationFn: (disabledUrls: string[]) =>
+      api("/caldav/calendars", { method: "PUT", body: JSON.stringify({ disabledUrls }) }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["founder-focus-caldav"] });
+      queryClient.invalidateQueries({ queryKey: ["founder-focus"] });
+    },
+  });
+
+  function toggleCalendar(cal: CaldavCalendar) {
+    const calendars = status?.calendars ?? [];
+    const disabledUrls = calendars
+      .filter(c => (c.url === cal.url ? c.enabled : !c.enabled))
+      .map(c => c.url);
+    saveCalendarToggles.mutate(disabledUrls);
+  }
 
   const inputCls = "px-2.5 py-2 rounded-lg border border-border bg-background text-sm";
 
@@ -521,12 +543,33 @@ function AppleCalendarCard() {
       </h2>
       {status?.configured ? (
         <>
-          <p className="text-sm">
-            Connected as <b>{status.appleId}</b>
-            {status.calendars && status.calendars.length > 0 && (
-              <span className="text-muted-foreground"> — reading: {status.calendars.join(", ")}</span>
-            )}
-          </p>
+          <p className="text-sm">Connected as <b>{status.appleId}</b></p>
+          {status.calendars && status.calendars.length > 0 && (
+            <>
+              <p className="text-xs text-muted-foreground">
+                Tap a calendar to show or hide it in the day view. New calendars you create in Apple appear here switched on.
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {status.calendars.map(c => (
+                  <button
+                    key={c.url}
+                    onClick={() => toggleCalendar(c)}
+                    disabled={saveCalendarToggles.isPending}
+                    className={cn(
+                      "px-3 py-1.5 rounded-full text-xs font-medium border transition-colors flex items-center gap-1.5 disabled:opacity-60",
+                      c.enabled
+                        ? "bg-primary/10 border-primary/40 text-primary"
+                        : "bg-secondary/40 border-border text-muted-foreground line-through",
+                    )}
+                    aria-pressed={c.enabled}
+                  >
+                    {c.enabled ? <Check className="w-3 h-3" /> : <X className="w-3 h-3" />}
+                    {c.name}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
           {status.error && (
             <p className="text-sm text-amber-700 dark:text-amber-400">{status.error}</p>
           )}

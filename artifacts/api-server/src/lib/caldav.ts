@@ -67,12 +67,19 @@ async function getAccount(appleId: string, password: string): Promise<CachedAcco
   return account;
 }
 
+export interface CalendarInfo {
+  /** Stable CalDAV collection URL — survives display-name changes, so
+   *  the on/off preference is keyed on it. */
+  url: string;
+  name: string;
+}
+
 /** Connection test: authenticates and lists event calendars. Throws with a
  *  readable message on bad credentials or network trouble. */
-export async function verifyCaldav(appleId: string, password: string): Promise<string[]> {
+export async function verifyCaldav(appleId: string, password: string): Promise<CalendarInfo[]> {
   try {
     const account = await getAccount(appleId, password);
-    return account.calendars.map(calendarName);
+    return account.calendars.map(c => ({ url: c.url, name: calendarName(c) }));
   } catch (err) {
     accountCache.delete(`${appleId}|${password}`);
     const msg = err instanceof Error ? err.message : String(err);
@@ -104,8 +111,16 @@ function londonMidnight(dateStr: string): Date {
   return new Date(utcGuess.getTime() - londonOffsetMin(utcGuess) * 60_000);
 }
 
-export async function getDayEvents(appleId: string, password: string, dateStr: string): Promise<CalendarEvent[]> {
-  const cacheKey = `${appleId}|${dateStr}`;
+export async function getDayEvents(
+  appleId: string,
+  password: string,
+  dateStr: string,
+  // Calendars the founder switched off — keyed by collection URL. An
+  // exclusion list (not inclusion) so a calendar newly created in Apple
+  // shows up by default and gets switched off if it's noise.
+  disabledUrls: ReadonlySet<string> = new Set(),
+): Promise<CalendarEvent[]> {
+  const cacheKey = `${appleId}|${dateStr}|${[...disabledUrls].sort().join(",")}`;
   const cached = eventsCache.get(cacheKey);
   if (cached && Date.now() < cached.expiry) return cached.events;
 
@@ -114,8 +129,9 @@ export async function getDayEvents(appleId: string, password: string, dateStr: s
   const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
 
   const events: CalendarEvent[] = [];
+  const activeCalendars = account.calendars.filter(c => !disabledUrls.has(c.url));
 
-  await Promise.all(account.calendars.map(async calendar => {
+  await Promise.all(activeCalendars.map(async calendar => {
     const objects = await account.client.fetchCalendarObjects({
       calendar,
       timeRange: { start: dayStart.toISOString(), end: dayEnd.toISOString() },
