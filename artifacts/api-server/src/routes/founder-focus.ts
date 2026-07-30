@@ -70,6 +70,42 @@ router.use(requireFounder);
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+function todayLondonStr(): string {
+  // en-CA gives YYYY-MM-DD directly.
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date());
+}
+
+// The weekly template materialises into a day automatically the FIRST time
+// that day is opened (today or future — past days stay the historical
+// record). The once-per-date marker means deliberately clearing a day
+// sticks; the manual "Fill from template" button still works after that.
+async function autofillFromTemplate(dateStr: string, weekday: number): Promise<boolean> {
+  if (dateStr < todayLondonStr()) return false;
+  const marker = `autofill_done:${dateStr}`;
+  if (await getFounderSetting(marker)) return false;
+
+  const [existing, templates] = await Promise.all([
+    db.select({ id: founderBlocksTable.id }).from(founderBlocksTable).where(eq(founderBlocksTable.date, dateStr)).limit(1),
+    db.select().from(founderBlockTemplatesTable).where(eq(founderBlockTemplatesTable.weekday, weekday)),
+  ]);
+  await setFounderSetting(marker, "1");
+  // Old markers are one-per-day noise — sweep anything before today.
+  await db.execute(sql`DELETE FROM founder_settings WHERE key LIKE 'autofill_done:%' AND key < ${"autofill_done:" + todayLondonStr()}`);
+  if (existing.length > 0 || templates.length === 0) return false;
+
+  for (const t of templates) {
+    await db.insert(founderBlocksTable).values({
+      date: dateStr,
+      startMin: t.startMin,
+      endMin: t.endMin,
+      pillarId: t.pillarId,
+      title: t.title,
+      source: "template",
+    });
+  }
+  return true;
+}
+
 // ── Overview ───────────────────────────────────────────────────────────────
 // One fetch for the Focus page: pillars+goals, the day's blocks, that
 // weekday's template rows, and the open parking lot.
@@ -82,6 +118,8 @@ router.get("/overview", async (req: Request, res: Response) => {
   const weekday = new Date(`${dateStr}T12:00:00Z`).getUTCDay();
 
   try {
+    await autofillFromTemplate(dateStr, weekday);
+
     const [pillars, goals, blocks, templates, parkingLot, recurringItems, ticks, appleId, appPassword] = await Promise.all([
       db.select().from(founderPillarsTable).where(isNull(founderPillarsTable.archivedAt)).orderBy(asc(founderPillarsTable.sort), asc(founderPillarsTable.id)),
       db.select().from(founderGoalsTable).orderBy(asc(founderGoalsTable.sort), asc(founderGoalsTable.id)),
