@@ -8,7 +8,7 @@ import { format, addDays, parseISO } from "date-fns";
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, Check, X, Play,
   CalendarDays, Inbox, Target, LayoutTemplate, CircleDashed,
-  SkipForward, Pencil,
+  SkipForward, Pencil, Repeat, Copy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -70,6 +70,13 @@ interface CalEvent {
   allDay: boolean;
 }
 
+interface RecurringItem {
+  id: number;
+  pillarId: number;
+  title: string;
+  ticked: boolean;
+}
+
 interface Overview {
   date: string;
   weekday: number;
@@ -77,6 +84,7 @@ interface Overview {
   blocks: Block[];
   templates: TemplateRow[];
   parkingLot: ParkingItem[];
+  recurringItems: RecurringItem[];
   calendarConfigured: boolean;
   events: CalEvent[];
   calendarError: string | null;
@@ -152,7 +160,7 @@ export default function FounderFocus() {
 
   // ── Mutations ────────────────────────────────────────────────────────────
   const addBlock = useMutation({
-    mutationFn: (b: { date: string; startMin: number; endMin: number; title: string; pillarId: number | null }) =>
+    mutationFn: (b: { date: string; startMin: number; endMin: number; title?: string; pillarId: number | null }) =>
       api("/blocks", { method: "POST", body: JSON.stringify(b) }),
     onSuccess: invalidate,
   });
@@ -199,8 +207,22 @@ export default function FounderFocus() {
       api(`/pillars/${id}`, { method: "PATCH", body: JSON.stringify(fields) }),
     onSuccess: invalidate,
   });
+  const addRecurring = useMutation({
+    mutationFn: (r: { pillarId: number; title: string }) =>
+      api("/recurring-items", { method: "POST", body: JSON.stringify(r) }),
+    onSuccess: invalidate,
+  });
+  const deleteRecurring = useMutation({
+    mutationFn: (id: number) => api(`/recurring-items/${id}`, { method: "DELETE" }),
+    onSuccess: invalidate,
+  });
+  const tickRecurring = useMutation({
+    mutationFn: ({ id, ticked }: { id: number; ticked: boolean }) =>
+      api(`/recurring-items/${id}/tick`, { method: "POST", body: JSON.stringify({ date: dateStr, ticked }) }),
+    onSuccess: invalidate,
+  });
   const addTemplateRow = useMutation({
-    mutationFn: (t: { weekday: number; startMin: number; endMin: number; title: string; pillarId: number | null }) =>
+    mutationFn: (t: { weekday: number; startMin: number; endMin: number; title?: string; pillarId: number | null }) =>
       api("/templates", { method: "POST", body: JSON.stringify(t) }),
     onSuccess: invalidate,
   });
@@ -236,6 +258,26 @@ export default function FounderFocus() {
   const isLive = (t: TimelineItem) => t.kind === "event" || t.block.status === "planned";
   const currentItem = isToday ? timeline.find(t => isLive(t) && t.startMin <= now && now < t.endMin) : undefined;
   const nextItem = isToday ? timeline.find(t => isLive(t) && t.startMin > now) : undefined;
+
+  // Recurring rituals attach to the FIRST block of their pillar for the day,
+  // so "30-min one-on-one" shows inside the morning Team & Coaching block
+  // and simply doesn't appear on days whose template skips the pillar.
+  const recurringByBlockId = useMemo(() => {
+    const firstBlockForPillar = new Map<number, number>();
+    for (const b of blocks) {
+      if (b.pillarId != null && !firstBlockForPillar.has(b.pillarId)) {
+        firstBlockForPillar.set(b.pillarId, b.id);
+      }
+    }
+    const m = new Map<number, RecurringItem[]>();
+    for (const item of data?.recurringItems ?? []) {
+      const blockId = firstBlockForPillar.get(item.pillarId);
+      if (blockId == null) continue;
+      if (!m.has(blockId)) m.set(blockId, []);
+      m.get(blockId)!.push(item);
+    }
+    return m;
+  }, [blocks, data?.recurringItems]);
 
   if (state.status !== "authenticated" || state.user.email !== FOUNDER_EMAIL) {
     return <Redirect to="/" />;
@@ -341,46 +383,71 @@ export default function FounderFocus() {
               const pillar = b.pillarId != null ? pillarById.get(b.pillarId) : undefined;
               const color = pillar?.color ?? DEFAULT_PILLAR_COLOR;
               const isCurrent = isToday && b.startMin <= now && now < b.endMin;
+              const rituals = recurringByBlockId.get(b.id) ?? [];
               return (
                 <li key={b.id}
                   className={cn(
-                    "flex items-center gap-3 rounded-xl border border-border p-3 bg-background",
+                    "rounded-xl border border-border p-3 bg-background",
                     b.status === "done" && "opacity-60",
                     b.status === "skipped" && "opacity-40",
                     isCurrent && b.status === "planned" && "ring-2 ring-primary/60",
                   )}
                   style={{ borderLeft: `5px solid ${color}` }}
                 >
-                  <button
-                    onClick={() => patchBlock.mutate({ id: b.id, status: b.status === "done" ? "planned" : "done" })}
-                    className={cn(
-                      "w-8 h-8 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors",
-                      b.status === "done" ? "bg-primary border-primary text-primary-foreground" : "border-border hover:border-primary",
-                    )}
-                    aria-label={b.status === "done" ? "Mark not done" : "Mark done"}
-                  >
-                    {b.status === "done" ? <Check className="w-4 h-4" /> : <CircleDashed className="w-4 h-4 text-muted-foreground" />}
-                  </button>
-                  <div className="flex-1 min-w-0">
-                    <p className={cn("text-sm font-medium leading-tight", b.status !== "planned" && "line-through")}>
-                      {b.title}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {minToTime(b.startMin)}–{minToTime(b.endMin)}
-                      {pillar && <span className="ml-2" style={{ color }}>{pillar.name}</span>}
-                      {b.status === "skipped" && <span className="ml-2">skipped</span>}
-                    </p>
-                  </div>
-                  {b.status === "planned" && (
-                    <button onClick={() => patchBlock.mutate({ id: b.id, status: "skipped" })}
-                      className="p-2 rounded-lg text-muted-foreground hover:bg-secondary/50" title="Skip this block" aria-label="Skip block">
-                      <SkipForward className="w-4 h-4" />
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => patchBlock.mutate({ id: b.id, status: b.status === "done" ? "planned" : "done" })}
+                      className={cn(
+                        "w-8 h-8 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors",
+                        b.status === "done" ? "bg-primary border-primary text-primary-foreground" : "border-border hover:border-primary",
+                      )}
+                      aria-label={b.status === "done" ? "Mark not done" : "Mark done"}
+                    >
+                      {b.status === "done" ? <Check className="w-4 h-4" /> : <CircleDashed className="w-4 h-4 text-muted-foreground" />}
                     </button>
+                    <div className="flex-1 min-w-0">
+                      <p className={cn("text-sm font-medium leading-tight", b.status !== "planned" && "line-through")}>
+                        {b.title}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {minToTime(b.startMin)}–{minToTime(b.endMin)}
+                        {pillar && pillar.name !== b.title && <span className="ml-2" style={{ color }}>{pillar.name}</span>}
+                        {b.status === "skipped" && <span className="ml-2">skipped</span>}
+                      </p>
+                    </div>
+                    {b.status === "planned" && (
+                      <button onClick={() => patchBlock.mutate({ id: b.id, status: "skipped" })}
+                        className="p-2 rounded-lg text-muted-foreground hover:bg-secondary/50" title="Skip this block" aria-label="Skip block">
+                        <SkipForward className="w-4 h-4" />
+                      </button>
+                    )}
+                    <button onClick={() => deleteBlock.mutate(b.id)}
+                      className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10" aria-label="Delete block">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                  {rituals.length > 0 && (
+                    <ul className="mt-2 ml-11 space-y-1.5">
+                      {rituals.map(r => (
+                        <li key={r.id} className="flex items-center gap-2 text-sm">
+                          <button
+                            onClick={() => tickRecurring.mutate({ id: r.id, ticked: !r.ticked })}
+                            className={cn(
+                              "w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 transition-colors",
+                              r.ticked ? "bg-primary border-primary text-primary-foreground" : "border-border hover:border-primary",
+                            )}
+                            aria-label={r.ticked ? `Untick ${r.title}` : `Tick ${r.title}`}
+                          >
+                            {r.ticked && <Check className="w-3 h-3" />}
+                          </button>
+                          <span className={cn(r.ticked && "line-through text-muted-foreground")}>
+                            {r.title}
+                            <Repeat className="w-3 h-3 inline ml-1.5 text-muted-foreground" />
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
                   )}
-                  <button onClick={() => deleteBlock.mutate(b.id)}
-                    className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10" aria-label="Delete block">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
                 </li>
               );
             })())}
@@ -390,8 +457,8 @@ export default function FounderFocus() {
         <AddBlockForm
           pillars={data?.pillars ?? []}
           pending={addBlock.isPending}
-          onAdd={(startMin, endMin, title, pillarId) =>
-            addBlock.mutate({ date: dateStr, startMin, endMin, title, pillarId })}
+          onAdd={(startMin, endMin, pillarId, title) =>
+            addBlock.mutate({ date: dateStr, startMin, endMin, pillarId, ...(title ? { title } : {}) })}
         />
       </section>
 
@@ -425,9 +492,12 @@ export default function FounderFocus() {
         </h2>
         {(data?.pillars ?? []).map(p => (
           <PillarCard key={p.id} pillar={p}
+            recurring={(data?.recurringItems ?? []).filter(r => r.pillarId === p.id)}
             onAddGoal={title => addGoal.mutate({ pillarId: p.id, title })}
             onToggleGoal={g => patchGoal.mutate({ id: g.id, status: g.status === "done" ? "active" : "done" })}
             onDeleteGoal={id => deleteGoal.mutate(id)}
+            onAddRecurring={title => addRecurring.mutate({ pillarId: p.id, title })}
+            onDeleteRecurring={id => deleteRecurring.mutate(id)}
             onRename={name => patchPillar.mutate({ id: p.id, name })}
             onTarget={pct => patchPillar.mutate({ id: p.id, targetSharePct: pct })}
             onArchive={() => patchPillar.mutate({ id: p.id, archived: true })}
@@ -608,21 +678,25 @@ function AppleCalendarCard() {
 }
 
 // ── Add block form ─────────────────────────────────────────────────────────
+// The pillar IS the block: pick a pillar and a time range and go. The title
+// is an optional override for one-offs that don't fit a pillar.
 function AddBlockForm({ pillars, pending, onAdd }: {
   pillars: Pillar[];
   pending: boolean;
-  onAdd: (startMin: number, endMin: number, title: string, pillarId: number | null) => void;
+  onAdd: (startMin: number, endMin: number, pillarId: number | null, title: string | null) => void;
 }) {
   const [start, setStart] = useState("09:00");
   const [end, setEnd] = useState("10:00");
   const [title, setTitle] = useState("");
   const [pillarId, setPillarId] = useState<string>("");
 
+  const canSubmit = !!pillarId || !!title.trim();
+
   function submit() {
     const s = timeToMin(start);
     const e = timeToMin(end);
-    if (s == null || e == null || e <= s || !title.trim()) return;
-    onAdd(s, e, title.trim(), pillarId ? Number(pillarId) : null);
+    if (s == null || e == null || e <= s || !canSubmit) return;
+    onAdd(s, e, pillarId ? Number(pillarId) : null, title.trim() || null);
     setTitle("");
   }
 
@@ -633,18 +707,18 @@ function AddBlockForm({ pillars, pending, onAdd }: {
       <input type="time" value={start} onChange={e => setStart(e.target.value)} className={inputCls} aria-label="Start time" />
       <span className="text-muted-foreground text-sm">–</span>
       <input type="time" value={end} onChange={e => setEnd(e.target.value)} className={inputCls} aria-label="End time" />
+      <select value={pillarId} onChange={e => setPillarId(e.target.value)} className={inputCls + " flex-1 min-w-[140px]"} aria-label="Pillar">
+        <option value="">Pick a pillar…</option>
+        {pillars.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>
       <input
         value={title}
         onChange={e => setTitle(e.target.value)}
         onKeyDown={e => { if (e.key === "Enter") submit(); }}
-        placeholder="What will you do?"
-        className={inputCls + " flex-1 min-w-[160px]"}
+        placeholder="Title (optional)"
+        className={inputCls + " flex-1 min-w-[120px]"}
       />
-      <select value={pillarId} onChange={e => setPillarId(e.target.value)} className={inputCls} aria-label="Pillar">
-        <option value="">No pillar</option>
-        {pillars.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-      </select>
-      <button onClick={submit} disabled={pending || !title.trim()}
+      <button onClick={submit} disabled={pending || !canSubmit}
         className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5">
         <Plus className="w-4 h-4" /> Add
       </button>
@@ -678,16 +752,20 @@ function ParkingInput({ pending, onAdd }: { pending: boolean; onAdd: (text: stri
 }
 
 // ── Pillar card ────────────────────────────────────────────────────────────
-function PillarCard({ pillar, onAddGoal, onToggleGoal, onDeleteGoal, onRename, onTarget, onArchive }: {
+function PillarCard({ pillar, recurring, onAddGoal, onToggleGoal, onDeleteGoal, onAddRecurring, onDeleteRecurring, onRename, onTarget, onArchive }: {
   pillar: Pillar;
+  recurring: RecurringItem[];
   onAddGoal: (title: string) => void;
   onToggleGoal: (g: Goal) => void;
   onDeleteGoal: (id: number) => void;
+  onAddRecurring: (title: string) => void;
+  onDeleteRecurring: (id: number) => void;
   onRename: (name: string) => void;
   onTarget: (pct: number | null) => void;
   onArchive: () => void;
 }) {
   const [newGoal, setNewGoal] = useState("");
+  const [newRecurring, setNewRecurring] = useState("");
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(pillar.name);
   const color = pillar.color ?? DEFAULT_PILLAR_COLOR;
@@ -788,6 +866,38 @@ function PillarCard({ pillar, onAddGoal, onToggleGoal, onDeleteGoal, onRename, o
           <Plus className="w-4 h-4" />
         </button>
       </div>
+
+      {/* Daily rituals — tickable each day inside this pillar's time block */}
+      <div className="pt-1 border-t border-border/60 space-y-1.5">
+        <p className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold flex items-center gap-1">
+          <Repeat className="w-3 h-3" /> Daily
+        </p>
+        {recurring.map(r => (
+          <div key={r.id} className="flex items-center gap-2 text-sm group">
+            <Repeat className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+            <span className="flex-1">{r.title}</span>
+            <button onClick={() => onDeleteRecurring(r.id)}
+              className="p-1 rounded-md text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive" aria-label="Delete daily item">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ))}
+        <div className="flex gap-2">
+          <input
+            value={newRecurring}
+            onChange={e => setNewRecurring(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && newRecurring.trim()) { onAddRecurring(newRecurring.trim()); setNewRecurring(""); } }}
+            placeholder="Add a daily item — reappears every day this pillar is blocked…"
+            className="flex-1 px-2.5 py-1.5 rounded-lg border border-border bg-background text-sm"
+          />
+          <button
+            onClick={() => { if (newRecurring.trim()) { onAddRecurring(newRecurring.trim()); setNewRecurring(""); } }}
+            disabled={!newRecurring.trim()}
+            className="px-2.5 py-1.5 rounded-lg border border-border text-sm hover:bg-secondary/50 disabled:opacity-50" aria-label="Add daily item">
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -840,7 +950,7 @@ const WEEKDAY_VALUES = [1, 2, 3, 4, 5, 6, 0];
 function TemplateEditor({ pillars, pendingAdd, onAdd, onDelete }: {
   pillars: Pillar[];
   pendingAdd: boolean;
-  onAdd: (row: { weekday: number; startMin: number; endMin: number; title: string; pillarId: number | null }) => void;
+  onAdd: (row: { weekday: number; startMin: number; endMin: number; title?: string; pillarId: number | null }) => void;
   onDelete: (id: number) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -860,11 +970,22 @@ function TemplateEditor({ pillars, pendingAdd, onAdd, onDelete }: {
   const queryClient = useQueryClient();
   const rows = (allRows ?? []).filter(r => r.weekday === weekday);
 
+  const copyDay = useMutation({
+    mutationFn: () => api("/templates/copy-day", {
+      method: "POST",
+      body: JSON.stringify({ fromWeekday: weekday, toWeekdays: [1, 2, 3, 4, 5] }),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["founder-focus-templates"] });
+      queryClient.invalidateQueries({ queryKey: ["founder-focus"] });
+    },
+  });
+
   function submit() {
     const s = timeToMin(start);
     const e = timeToMin(end);
-    if (s == null || e == null || e <= s || !title.trim()) return;
-    onAdd({ weekday, startMin: s, endMin: e, title: title.trim(), pillarId: pillarId ? Number(pillarId) : null });
+    if (s == null || e == null || e <= s || (!pillarId && !title.trim())) return;
+    onAdd({ weekday, startMin: s, endMin: e, ...(title.trim() ? { title: title.trim() } : {}), pillarId: pillarId ? Number(pillarId) : null });
     setTitle("");
     // templates list is a separate query from the day overview
     setTimeout(() => queryClient.invalidateQueries({ queryKey: ["founder-focus-templates"] }), 300);
@@ -882,7 +1003,7 @@ function TemplateEditor({ pillars, pendingAdd, onAdd, onDelete }: {
       </button>
       {open && (
         <>
-          <div className="flex gap-1.5 flex-wrap">
+          <div className="flex gap-1.5 flex-wrap items-center">
             {WEEKDAYS.map((d, i) => (
               <button key={d} onClick={() => setDayIdx(i)}
                 className={cn(
@@ -892,6 +1013,14 @@ function TemplateEditor({ pillars, pendingAdd, onAdd, onDelete }: {
                 {d}
               </button>
             ))}
+            <button
+              onClick={() => copyDay.mutate()}
+              disabled={copyDay.isPending || rows.length === 0}
+              title={rows.length === 0 ? "Nothing to copy on this day yet." : `Replace Mon–Fri with ${WEEKDAYS[dayIdx]}'s blocks`}
+              className="ml-auto text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-secondary/50 disabled:opacity-50 flex items-center gap-1.5"
+            >
+              <Copy className="w-3.5 h-3.5" /> {copyDay.isPending ? "Copying…" : `Copy ${WEEKDAYS[dayIdx]} to Mon–Fri`}
+            </button>
           </div>
           {rows.length === 0 ? (
             <p className="text-sm text-muted-foreground">No template blocks for {WEEKDAYS[dayIdx]} yet.</p>
@@ -918,14 +1047,14 @@ function TemplateEditor({ pillars, pendingAdd, onAdd, onDelete }: {
             <input type="time" value={start} onChange={e => setStart(e.target.value)} className={inputCls} aria-label="Start time" />
             <span className="text-muted-foreground text-sm">–</span>
             <input type="time" value={end} onChange={e => setEnd(e.target.value)} className={inputCls} aria-label="End time" />
-            <input value={title} onChange={e => setTitle(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter") submit(); }}
-              placeholder={`Every ${WEEKDAYS[dayIdx]}…`} className={inputCls + " flex-1 min-w-[140px]"} />
-            <select value={pillarId} onChange={e => setPillarId(e.target.value)} className={inputCls} aria-label="Pillar">
-              <option value="">No pillar</option>
+            <select value={pillarId} onChange={e => setPillarId(e.target.value)} className={inputCls + " flex-1 min-w-[140px]"} aria-label="Pillar">
+              <option value="">Pick a pillar…</option>
               {pillars.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
-            <button onClick={submit} disabled={pendingAdd || !title.trim()}
+            <input value={title} onChange={e => setTitle(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") submit(); }}
+              placeholder="Title (optional)" className={inputCls + " flex-1 min-w-[110px]"} />
+            <button onClick={submit} disabled={pendingAdd || (!pillarId && !title.trim())}
               className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50">
               <Plus className="w-4 h-4" />
             </button>

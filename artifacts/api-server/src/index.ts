@@ -1333,6 +1333,71 @@ async function runStartupMigrations() {
       END $$;
     `);
 
+    // Founder Focus recurring items + default week — see
+    // lib/db/migrations/0037_founder_recurring_and_week_template.sql.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS founder_recurring_items (
+        id SERIAL PRIMARY KEY,
+        pillar_id INTEGER NOT NULL REFERENCES founder_pillars(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        sort INTEGER NOT NULL DEFAULT 0,
+        archived_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS founder_recurring_ticks (
+        id SERIAL PRIMARY KEY,
+        item_id INTEGER NOT NULL REFERENCES founder_recurring_items(id) ON DELETE CASCADE,
+        date DATE NOT NULL,
+        ticked_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE (item_id, date)
+      )
+    `);
+    await db.execute(sql`
+      DO $$
+      DECLARE
+        sales_id INTEGER; team_id INTEGER; claude_id INTEGER; product_id INTEGER;
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'founder_focus_seed_v2') THEN
+          -- Graeme consistently calls this pillar "sales and marketing".
+          UPDATE founder_pillars SET name = 'Sales & Marketing' WHERE name = 'Sales';
+
+          SELECT id INTO sales_id FROM founder_pillars WHERE name = 'Sales & Marketing' AND archived_at IS NULL LIMIT 1;
+          SELECT id INTO team_id FROM founder_pillars WHERE name = 'Team & Coaching' AND archived_at IS NULL LIMIT 1;
+          SELECT id INTO claude_id FROM founder_pillars WHERE name = 'Claude & Systems' AND archived_at IS NULL LIMIT 1;
+          SELECT id INTO product_id FROM founder_pillars WHERE name = 'Product' AND archived_at IS NULL LIMIT 1;
+
+          IF team_id IS NOT NULL THEN
+            INSERT INTO founder_recurring_items (pillar_id, title, sort)
+            VALUES (team_id, '30-min one-on-one coaching', 0);
+          END IF;
+
+          -- Default Mon-Fri week (weekday 1..5, 0=Sunday). Only when the
+          -- template is still empty so hand-made rows are never clobbered.
+          IF NOT EXISTS (SELECT 1 FROM founder_block_templates) THEN
+            FOR wd IN 1..5 LOOP
+              IF team_id IS NOT NULL THEN
+                INSERT INTO founder_block_templates (weekday, start_min, end_min, pillar_id, title) VALUES (wd, 420, 480, team_id, 'Team & Coaching');
+                INSERT INTO founder_block_templates (weekday, start_min, end_min, pillar_id, title) VALUES (wd, 840, 900, team_id, 'Team & Coaching');
+              END IF;
+              IF sales_id IS NOT NULL THEN
+                INSERT INTO founder_block_templates (weekday, start_min, end_min, pillar_id, title) VALUES (wd, 480, 540, sales_id, 'Sales & Marketing');
+              END IF;
+              IF claude_id IS NOT NULL THEN
+                INSERT INTO founder_block_templates (weekday, start_min, end_min, pillar_id, title) VALUES (wd, 540, 720, claude_id, 'Claude & Systems');
+              END IF;
+              IF product_id IS NOT NULL THEN
+                INSERT INTO founder_block_templates (weekday, start_min, end_min, pillar_id, title) VALUES (wd, 720, 840, product_id, 'Product');
+              END IF;
+            END LOOP;
+          END IF;
+
+          INSERT INTO _migrations_done (key) VALUES ('founder_focus_seed_v2');
+        END IF;
+      END $$;
+    `);
+
     // Founder settings — see lib/db/migrations/0036_founder_settings.sql.
     // Founder-only k/v (CalDAV credentials etc.) — kept out of app_settings
     // because that table is readable by ordinary logged-in users.

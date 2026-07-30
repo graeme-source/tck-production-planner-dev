@@ -6,6 +6,8 @@ import {
   founderBlocksTable,
   founderBlockTemplatesTable,
   founderParkingLotTable,
+  founderRecurringItemsTable,
+  founderRecurringTicksTable,
 } from "@workspace/db";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -80,15 +82,19 @@ router.get("/overview", async (req: Request, res: Response) => {
   const weekday = new Date(`${dateStr}T12:00:00Z`).getUTCDay();
 
   try {
-    const [pillars, goals, blocks, templates, parkingLot, appleId, appPassword] = await Promise.all([
+    const [pillars, goals, blocks, templates, parkingLot, recurringItems, ticks, appleId, appPassword] = await Promise.all([
       db.select().from(founderPillarsTable).where(isNull(founderPillarsTable.archivedAt)).orderBy(asc(founderPillarsTable.sort), asc(founderPillarsTable.id)),
       db.select().from(founderGoalsTable).orderBy(asc(founderGoalsTable.sort), asc(founderGoalsTable.id)),
       db.select().from(founderBlocksTable).where(eq(founderBlocksTable.date, dateStr)).orderBy(asc(founderBlocksTable.startMin)),
       db.select().from(founderBlockTemplatesTable).where(eq(founderBlockTemplatesTable.weekday, weekday)).orderBy(asc(founderBlockTemplatesTable.startMin)),
       db.select().from(founderParkingLotTable).where(isNull(founderParkingLotTable.resolvedAt)).orderBy(asc(founderParkingLotTable.createdAt)),
+      db.select().from(founderRecurringItemsTable).where(isNull(founderRecurringItemsTable.archivedAt)).orderBy(asc(founderRecurringItemsTable.sort), asc(founderRecurringItemsTable.id)),
+      db.select().from(founderRecurringTicksTable).where(eq(founderRecurringTicksTable.date, dateStr)),
       getFounderSetting(CALDAV_ID_KEY),
       getFounderSetting(CALDAV_PW_KEY),
     ]);
+
+    const tickedItemIds = new Set(ticks.map(t => t.itemId));
 
     // Apple Calendar is best-effort: an iCloud wobble must never take the
     // whole Focus page down, so failures degrade to an inline warning.
@@ -110,6 +116,7 @@ router.get("/overview", async (req: Request, res: Response) => {
       blocks,
       templates,
       parkingLot,
+      recurringItems: recurringItems.map(i => ({ ...i, ticked: tickedItemIds.has(i.id) })),
       calendarConfigured,
       events,
       calendarError,
@@ -266,25 +273,34 @@ router.delete("/goals/:id", async (req: Request, res: Response) => {
 });
 
 // ── Blocks ─────────────────────────────────────────────────────────────────
+// The pillar IS the block (2026-07-30): title is optional and defaults to
+// the pillar's name, so "add a Sales & Marketing block 8-9" is one tap.
 const BlockBody = z.object({
   date: z.string().regex(DATE_RE),
   startMin: z.number().int().min(0).max(1439),
   endMin: z.number().int().min(1).max(1440),
   pillarId: z.number().int().nullish(),
-  title: z.string().trim().min(1).max(200),
+  title: z.string().trim().max(200).optional(),
   notes: z.string().trim().max(2000).nullish(),
-}).refine(b => b.endMin > b.startMin, { message: "endMin must be after startMin" });
+}).refine(b => b.endMin > b.startMin, { message: "endMin must be after startMin" })
+  .refine(b => (b.title && b.title.length > 0) || b.pillarId != null, { message: "Pick a pillar or give the block a title" });
+
+async function pillarNameById(id: number): Promise<string | null> {
+  const [row] = await db.select({ name: founderPillarsTable.name }).from(founderPillarsTable).where(eq(founderPillarsTable.id, id));
+  return row?.name ?? null;
+}
 
 router.post("/blocks", async (req: Request, res: Response) => {
   const parsed = BlockBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid body" }); return; }
   const b = parsed.data;
+  const title = b.title?.trim() || (b.pillarId != null ? await pillarNameById(b.pillarId) : null) || "Focus";
   const [row] = await db.insert(founderBlocksTable).values({
     date: b.date,
     startMin: b.startMin,
     endMin: b.endMin,
     pillarId: b.pillarId ?? null,
-    title: b.title,
+    title,
     notes: b.notes ?? null,
   }).returning();
   res.status(201).json(row);
@@ -360,27 +376,122 @@ const TemplateBody = z.object({
   startMin: z.number().int().min(0).max(1439),
   endMin: z.number().int().min(1).max(1440),
   pillarId: z.number().int().nullish(),
-  title: z.string().trim().min(1).max(200),
-}).refine(t => t.endMin > t.startMin, { message: "endMin must be after startMin" });
+  title: z.string().trim().max(200).optional(),
+}).refine(t => t.endMin > t.startMin, { message: "endMin must be after startMin" })
+  .refine(t => (t.title && t.title.length > 0) || t.pillarId != null, { message: "Pick a pillar or give the block a title" });
 
 router.post("/templates", async (req: Request, res: Response) => {
   const parsed = TemplateBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid body" }); return; }
   const t = parsed.data;
+  const title = t.title?.trim() || (t.pillarId != null ? await pillarNameById(t.pillarId) : null) || "Focus";
   const [row] = await db.insert(founderBlockTemplatesTable).values({
     weekday: t.weekday,
     startMin: t.startMin,
     endMin: t.endMin,
     pillarId: t.pillarId ?? null,
-    title: t.title,
+    title,
   }).returning();
   res.status(201).json(row);
+});
+
+// Copy one weekday's template rows over other weekdays (replacing them).
+// "Edit Monday, copy to the week, then tweak Tuesday" is the intended flow.
+router.post("/templates/copy-day", async (req: Request, res: Response) => {
+  const parsed = z.object({
+    fromWeekday: z.number().int().min(0).max(6),
+    toWeekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "fromWeekday and toWeekdays[] required" }); return; }
+  const { fromWeekday, toWeekdays } = parsed.data;
+  const targets = [...new Set(toWeekdays)].filter(d => d !== fromWeekday);
+
+  const sourceRows = await db.select().from(founderBlockTemplatesTable)
+    .where(eq(founderBlockTemplatesTable.weekday, fromWeekday));
+
+  for (const day of targets) {
+    await db.delete(founderBlockTemplatesTable).where(eq(founderBlockTemplatesTable.weekday, day));
+    for (const r of sourceRows) {
+      await db.insert(founderBlockTemplatesTable).values({
+        weekday: day,
+        startMin: r.startMin,
+        endMin: r.endMin,
+        pillarId: r.pillarId,
+        title: r.title,
+        sort: r.sort,
+      });
+    }
+  }
+  res.json({ copied: sourceRows.length, days: targets });
 });
 
 router.delete("/templates/:id", async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   await db.delete(founderBlockTemplatesTable).where(eq(founderBlockTemplatesTable.id, id));
+  res.json({ ok: true });
+});
+
+// ── Recurring items (per-pillar daily rituals) ─────────────────────────────
+router.post("/recurring-items", async (req: Request, res: Response) => {
+  const parsed = z.object({
+    pillarId: z.number().int(),
+    title: z.string().trim().min(1).max(200),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "pillarId and title required" }); return; }
+  const [row] = await db.insert(founderRecurringItemsTable).values({
+    pillarId: parsed.data.pillarId,
+    title: parsed.data.title,
+  }).returning();
+  res.status(201).json(row);
+});
+
+router.patch("/recurring-items/:id", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const parsed = z.object({
+    title: z.string().trim().min(1).max(200).optional(),
+    archived: z.boolean().optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Invalid body" }); return; }
+  const { archived, ...fields } = parsed.data;
+  const [row] = await db.update(founderRecurringItemsTable)
+    .set({
+      ...fields,
+      ...(archived !== undefined ? { archivedAt: archived ? new Date() : null } : {}),
+    })
+    .where(eq(founderRecurringItemsTable.id, id))
+    .returning();
+  if (!row) { res.status(404).json({ error: "Item not found" }); return; }
+  res.json(row);
+});
+
+router.delete("/recurring-items/:id", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  await db.delete(founderRecurringItemsTable).where(eq(founderRecurringItemsTable.id, id));
+  res.json({ ok: true });
+});
+
+// Tick / untick for a given date. One row per (item, date).
+router.post("/recurring-items/:id/tick", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const parsed = z.object({
+    date: z.string().regex(DATE_RE),
+    ticked: z.boolean(),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "date and ticked required" }); return; }
+  if (parsed.data.ticked) {
+    await db.insert(founderRecurringTicksTable)
+      .values({ itemId: id, date: parsed.data.date })
+      .onConflictDoNothing();
+  } else {
+    await db.delete(founderRecurringTicksTable).where(and(
+      eq(founderRecurringTicksTable.itemId, id),
+      eq(founderRecurringTicksTable.date, parsed.data.date),
+    ));
+  }
   res.json({ ok: true });
 });
 

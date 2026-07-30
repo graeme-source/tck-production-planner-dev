@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, timestamp, date, index } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, date, index, unique } from "drizzle-orm/pg-core";
 
 // Founder Focus — founder-only time-blocking and priorities. Pillars are the
 // handful of areas only the founder can do (AI/systems work, sales, team
@@ -69,6 +69,34 @@ export const founderBlockTemplatesTable = pgTable("founder_block_templates", {
   sort: integer("sort").notNull().default(0),
 });
 
+// Per-pillar daily rituals ("30-min one-on-one coaching"). Shown as
+// tickboxes inside that pillar's block on the day view — only on days
+// where the pillar actually has a block, so a template without the pillar
+// simply hides them. Tick state is one row per (item, date).
+export const founderRecurringItemsTable = pgTable("founder_recurring_items", {
+  id: serial("id").primaryKey(),
+  pillarId: integer("pillar_id")
+    .notNull()
+    .references(() => founderPillarsTable.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  sort: integer("sort").notNull().default(0),
+  archivedAt: timestamp("archived_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const founderRecurringTicksTable = pgTable(
+  "founder_recurring_ticks",
+  {
+    id: serial("id").primaryKey(),
+    itemId: integer("item_id")
+      .notNull()
+      .references(() => founderRecurringItemsTable.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    tickedAt: timestamp("ticked_at").notNull().defaultNow(),
+  },
+  (t) => [unique("founder_recurring_ticks_item_date").on(t.itemId, t.date)],
+);
+
 export const founderParkingLotTable = pgTable("founder_parking_lot", {
   id: serial("id").primaryKey(),
   text: text("text").notNull(),
@@ -81,3 +109,5 @@ export type FounderGoal = typeof founderGoalsTable.$inferSelect;
 export type FounderBlock = typeof founderBlocksTable.$inferSelect;
 export type FounderBlockTemplate = typeof founderBlockTemplatesTable.$inferSelect;
 export type FounderParkingLotItem = typeof founderParkingLotTable.$inferSelect;
+export type FounderRecurringItem = typeof founderRecurringItemsTable.$inferSelect;
+export type FounderRecurringTick = typeof founderRecurringTicksTable.$inferSelect;
