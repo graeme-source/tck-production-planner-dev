@@ -9,8 +9,31 @@ import {
 } from "@workspace/db";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
+import { verifyCaldav, getDayEvents, resetCaldavCache, type CalendarEvent } from "../lib/caldav";
 
 const router: IRouter = Router();
+
+// ── Founder settings k/v (founder_settings table — NOT app_settings, which
+// ordinary users can read). Secrets never leave the server: status endpoints
+// only say whether a value exists.
+const CALDAV_ID_KEY = "caldav_apple_id";
+const CALDAV_PW_KEY = "caldav_app_password";
+
+async function getFounderSetting(key: string): Promise<string | null> {
+  const rows = await db.execute<{ value: string }>(sql`SELECT value FROM founder_settings WHERE key = ${key} LIMIT 1`);
+  return rows.rows[0]?.value ?? null;
+}
+
+async function setFounderSetting(key: string, value: string): Promise<void> {
+  await db.execute(sql`
+    INSERT INTO founder_settings (key, value, updated_at) VALUES (${key}, ${value}, NOW())
+    ON CONFLICT (key) DO UPDATE SET value = ${value}, updated_at = NOW()
+  `);
+}
+
+async function deleteFounderSetting(key: string): Promise<void> {
+  await db.execute(sql`DELETE FROM founder_settings WHERE key = ${key}`);
+}
 
 // Same founder gate as founder-panels: these tables hold the founder's
 // personal plan, so role checks aren't enough — the account itself must be
@@ -41,13 +64,29 @@ router.get("/overview", async (req: Request, res: Response) => {
   const weekday = new Date(`${dateStr}T12:00:00Z`).getUTCDay();
 
   try {
-    const [pillars, goals, blocks, templates, parkingLot] = await Promise.all([
+    const [pillars, goals, blocks, templates, parkingLot, appleId, appPassword] = await Promise.all([
       db.select().from(founderPillarsTable).where(isNull(founderPillarsTable.archivedAt)).orderBy(asc(founderPillarsTable.sort), asc(founderPillarsTable.id)),
       db.select().from(founderGoalsTable).orderBy(asc(founderGoalsTable.sort), asc(founderGoalsTable.id)),
       db.select().from(founderBlocksTable).where(eq(founderBlocksTable.date, dateStr)).orderBy(asc(founderBlocksTable.startMin)),
       db.select().from(founderBlockTemplatesTable).where(eq(founderBlockTemplatesTable.weekday, weekday)).orderBy(asc(founderBlockTemplatesTable.startMin)),
       db.select().from(founderParkingLotTable).where(isNull(founderParkingLotTable.resolvedAt)).orderBy(asc(founderParkingLotTable.createdAt)),
+      getFounderSetting(CALDAV_ID_KEY),
+      getFounderSetting(CALDAV_PW_KEY),
     ]);
+
+    // Apple Calendar is best-effort: an iCloud wobble must never take the
+    // whole Focus page down, so failures degrade to an inline warning.
+    let events: CalendarEvent[] = [];
+    let calendarError: string | null = null;
+    const calendarConfigured = !!(appleId && appPassword);
+    if (calendarConfigured) {
+      try {
+        events = await getDayEvents(appleId, appPassword, dateStr);
+      } catch (err) {
+        calendarError = err instanceof Error ? err.message : String(err);
+      }
+    }
+
     res.json({
       date: dateStr,
       weekday,
@@ -55,10 +94,52 @@ router.get("/overview", async (req: Request, res: Response) => {
       blocks,
       templates,
       parkingLot,
+      calendarConfigured,
+      events,
+      calendarError,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Apple Calendar (CalDAV, read-only) ─────────────────────────────────────
+router.get("/caldav", async (_req: Request, res: Response) => {
+  const appleId = await getFounderSetting(CALDAV_ID_KEY);
+  const password = await getFounderSetting(CALDAV_PW_KEY);
+  if (!appleId || !password) { res.json({ configured: false }); return; }
+  try {
+    const calendars = await verifyCaldav(appleId, password);
+    res.json({ configured: true, appleId, calendars });
+  } catch (err) {
+    res.json({ configured: true, appleId, calendars: [], error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+router.post("/caldav", async (req: Request, res: Response) => {
+  const parsed = z.object({
+    appleId: z.string().trim().email(),
+    appPassword: z.string().trim().min(8).max(100),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "appleId (email) and appPassword required" }); return; }
+  const { appleId, appPassword } = parsed.data;
+  try {
+    // Verify before saving so a typo'd password is caught immediately.
+    const calendars = await verifyCaldav(appleId, appPassword);
+    await setFounderSetting(CALDAV_ID_KEY, appleId);
+    await setFounderSetting(CALDAV_PW_KEY, appPassword);
+    resetCaldavCache();
+    res.json({ configured: true, appleId, calendars });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+router.delete("/caldav", async (_req: Request, res: Response) => {
+  await deleteFounderSetting(CALDAV_ID_KEY);
+  await deleteFounderSetting(CALDAV_PW_KEY);
+  resetCaldavCache();
+  res.json({ configured: false });
 });
 
 // ── Pillars ────────────────────────────────────────────────────────────────

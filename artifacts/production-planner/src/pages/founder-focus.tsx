@@ -62,6 +62,14 @@ interface ParkingItem {
   createdAt: string;
 }
 
+interface CalEvent {
+  title: string;
+  calendar: string;
+  startMin: number;
+  endMin: number;
+  allDay: boolean;
+}
+
 interface Overview {
   date: string;
   weekday: number;
@@ -69,6 +77,16 @@ interface Overview {
   blocks: Block[];
   templates: TemplateRow[];
   parkingLot: ParkingItem[];
+  calendarConfigured: boolean;
+  events: CalEvent[];
+  calendarError: string | null;
+}
+
+interface CaldavStatus {
+  configured: boolean;
+  appleId?: string;
+  calendars?: string[];
+  error?: string;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -195,8 +213,23 @@ export default function FounderFocus() {
   const isToday = dateStr === todayStr;
   const now = nowMinutes();
   const blocks = data?.blocks ?? [];
-  const currentBlock = isToday ? blocks.find(b => b.status === "planned" && b.startMin <= now && now < b.endMin) : undefined;
-  const nextBlock = isToday ? blocks.find(b => b.status === "planned" && b.startMin > now) : undefined;
+  const events = data?.events ?? [];
+
+  // One merged timeline: blocks you planned plus meetings from the diary.
+  // Meetings are immovable, so Now/Next treats them as first-class items —
+  // "you're in the supplier call until 2" beats pretending the block matters.
+  type TimelineItem =
+    | { kind: "block"; startMin: number; endMin: number; block: Block }
+    | { kind: "event"; startMin: number; endMin: number; event: CalEvent };
+  const timeline: TimelineItem[] = [
+    ...blocks.map(b => ({ kind: "block" as const, startMin: b.startMin, endMin: b.endMin, block: b })),
+    ...events.filter(e => !e.allDay).map(e => ({ kind: "event" as const, startMin: e.startMin, endMin: e.endMin, event: e })),
+  ].sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+  const allDayEvents = events.filter(e => e.allDay);
+
+  const isLive = (t: TimelineItem) => t.kind === "event" || t.block.status === "planned";
+  const currentItem = isToday ? timeline.find(t => isLive(t) && t.startMin <= now && now < t.endMin) : undefined;
+  const nextItem = isToday ? timeline.find(t => isLive(t) && t.startMin > now) : undefined;
 
   if (state.status !== "authenticated" || state.user.email !== FOUNDER_EMAIL) {
     return <Redirect to="/" />;
@@ -232,10 +265,29 @@ export default function FounderFocus() {
       {/* ── Now / Next ──────────────────────────────────────────────────── */}
       {isToday && (
         <div className="grid grid-cols-2 gap-3">
-          <NowNextCard label="Now" block={currentBlock} pillarById={pillarById} now={now}
-            empty={blocks.length === 0 ? "No plan yet — block the day out below." : "Nothing blocked right now."} />
-          <NowNextCard label="Next" block={nextBlock} pillarById={pillarById} now={now}
+          <NowNextCard label="Now" item={currentItem} pillarById={pillarById} now={now}
+            empty={timeline.length === 0 ? "No plan yet — block the day out below." : "Nothing blocked right now."} />
+          <NowNextCard label="Next" item={nextItem} pillarById={pillarById} now={now}
             empty="Nothing else planned today." />
+        </div>
+      )}
+
+      {/* ── All-day + calendar warnings ─────────────────────────────────── */}
+      {allDayEvents.length > 0 && (
+        <div className="rounded-xl border border-border bg-secondary/30 px-4 py-2.5 text-sm flex items-center gap-2 flex-wrap">
+          <CalendarDays className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+          {allDayEvents.map((e, i) => (
+            <span key={i} className="font-medium">
+              {e.title}
+              <span className="text-muted-foreground font-normal text-xs ml-1">({e.calendar})</span>
+              {i < allDayEvents.length - 1 && <span className="text-muted-foreground"> · </span>}
+            </span>
+          ))}
+        </div>
+      )}
+      {data?.calendarError && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-700 dark:text-amber-400">
+          Apple Calendar unavailable: {data.calendarError}
         </div>
       )}
 
@@ -257,11 +309,29 @@ export default function FounderFocus() {
 
         {isLoading ? (
           <Skeleton className="h-24 w-full" />
-        ) : blocks.length === 0 ? (
+        ) : timeline.length === 0 ? (
           <p className="text-sm text-muted-foreground">No blocks for this day yet.</p>
         ) : (
           <ul className="space-y-2">
-            {blocks.map(b => {
+            {timeline.map(t => t.kind === "event" ? (
+              <li key={`e-${t.event.calendar}-${t.startMin}-${t.event.title}`}
+                className={cn(
+                  "flex items-center gap-3 rounded-xl border border-dashed border-border p-3 bg-secondary/30",
+                  isToday && t.startMin <= now && now < t.endMin && "ring-2 ring-primary/60",
+                )}>
+                <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center flex-shrink-0">
+                  <CalendarDays className="w-4 h-4 text-muted-foreground" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium leading-tight">{t.event.title}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {minToTime(t.startMin)}–{minToTime(t.endMin)}
+                    <span className="ml-2">{t.event.calendar} · from your diary</span>
+                  </p>
+                </div>
+              </li>
+            ) : (() => {
+              const b = t.block;
               const pillar = b.pillarId != null ? pillarById.get(b.pillarId) : undefined;
               const color = pillar?.color ?? DEFAULT_PILLAR_COLOR;
               const isCurrent = isToday && b.startMin <= now && now < b.endMin;
@@ -307,7 +377,7 @@ export default function FounderFocus() {
                   </button>
                 </li>
               );
-            })}
+            })())}
           </ul>
         )}
 
@@ -360,6 +430,9 @@ export default function FounderFocus() {
         <AddPillarForm pending={addPillar.isPending} onAdd={(name, color) => addPillar.mutate({ name, color })} />
       </section>
 
+      {/* ── Apple Calendar connection ───────────────────────────────────── */}
+      <AppleCalendarCard />
+
       {/* ── Weekly template ─────────────────────────────────────────────── */}
       <TemplateEditor
         pillars={data?.pillars ?? []}
@@ -372,34 +445,122 @@ export default function FounderFocus() {
 }
 
 // ── Now / Next card ────────────────────────────────────────────────────────
-function NowNextCard({ label, block, pillarById, now, empty }: {
+type TimelineCardItem =
+  | { kind: "block"; startMin: number; endMin: number; block: Block }
+  | { kind: "event"; startMin: number; endMin: number; event: CalEvent };
+
+function NowNextCard({ label, item, pillarById, now, empty }: {
   label: string;
-  block: Block | undefined;
+  item: TimelineCardItem | undefined;
   pillarById: Map<number, Pillar>;
   now: number;
   empty: string;
 }) {
-  const pillar = block?.pillarId != null ? pillarById.get(block.pillarId) : undefined;
-  const color = pillar?.color ?? DEFAULT_PILLAR_COLOR;
+  const pillar = item?.kind === "block" && item.block.pillarId != null ? pillarById.get(item.block.pillarId) : undefined;
+  const color = item?.kind === "event" ? "#64748b" : (pillar?.color ?? DEFAULT_PILLAR_COLOR);
+  const title = item?.kind === "event" ? item.event.title : item?.block.title;
+  const tag = item?.kind === "event" ? `${item.event.calendar} · diary` : pillar?.name;
   return (
     <div className="rounded-2xl border border-border bg-card p-4"
-      style={block ? { borderTop: `4px solid ${color}` } : undefined}>
+      style={item ? { borderTop: `4px solid ${color}` } : undefined}>
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold flex items-center gap-1.5">
         {label === "Now" ? <Play className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />} {label}
       </p>
-      {block ? (
+      {item ? (
         <>
-          <p className="font-display font-bold text-lg leading-tight mt-1">{block.title}</p>
+          <p className="font-display font-bold text-lg leading-tight mt-1">{title}</p>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {minToTime(block.startMin)}–{minToTime(block.endMin)}
-            {label === "Now" && <span className="ml-1.5 font-medium text-foreground">· {block.endMin - now} min left</span>}
-            {pillar && <span className="ml-1.5" style={{ color }}>{pillar.name}</span>}
+            {minToTime(item.startMin)}–{minToTime(item.endMin)}
+            {label === "Now" && <span className="ml-1.5 font-medium text-foreground">· {item.endMin - now} min left</span>}
+            {tag && <span className="ml-1.5" style={{ color }}>{tag}</span>}
           </p>
         </>
       ) : (
         <p className="text-sm text-muted-foreground mt-1.5">{empty}</p>
       )}
     </div>
+  );
+}
+
+// ── Apple Calendar connection card ─────────────────────────────────────────
+function AppleCalendarCard() {
+  const queryClient = useQueryClient();
+  const { data: status } = useQuery<CaldavStatus>({
+    queryKey: ["founder-focus-caldav"],
+    queryFn: () => api("/caldav"),
+    staleTime: 5 * 60 * 1000,
+  });
+  const [appleId, setAppleId] = useState("");
+  const [appPassword, setAppPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const connect = useMutation({
+    mutationFn: () => api("/caldav", { method: "POST", body: JSON.stringify({ appleId: appleId.trim(), appPassword: appPassword.trim() }) }),
+    onSuccess: () => {
+      setAppPassword("");
+      setError(null);
+      queryClient.invalidateQueries({ queryKey: ["founder-focus-caldav"] });
+      queryClient.invalidateQueries({ queryKey: ["founder-focus"] });
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+  const disconnect = useMutation({
+    mutationFn: () => api("/caldav", { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["founder-focus-caldav"] });
+      queryClient.invalidateQueries({ queryKey: ["founder-focus"] });
+    },
+  });
+
+  const inputCls = "px-2.5 py-2 rounded-lg border border-border bg-background text-sm";
+
+  return (
+    <section className="rounded-2xl border border-border bg-card p-5 space-y-3">
+      <h2 className="text-sm font-semibold flex items-center gap-2">
+        <CalendarDays className="w-4 h-4 text-primary" /> Apple Calendar
+      </h2>
+      {status?.configured ? (
+        <>
+          <p className="text-sm">
+            Connected as <b>{status.appleId}</b>
+            {status.calendars && status.calendars.length > 0 && (
+              <span className="text-muted-foreground"> — reading: {status.calendars.join(", ")}</span>
+            )}
+          </p>
+          {status.error && (
+            <p className="text-sm text-amber-700 dark:text-amber-400">{status.error}</p>
+          )}
+          <button onClick={() => disconnect.mutate()} disabled={disconnect.isPending}
+            className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-destructive/10 hover:text-destructive disabled:opacity-50">
+            Disconnect
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="text-xs text-muted-foreground">
+            Read-only: meetings appear in the day view; nothing is ever written to your calendar.
+            Use an <b>app-specific password</b> from account.apple.com (Sign-In &amp; Security → App-Specific
+            Passwords), never your real Apple ID password. Generate a fresh one — if a password has ever been
+            shared anywhere else (a chat, a note), revoke it first.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <input value={appleId} onChange={e => setAppleId(e.target.value)} placeholder="Apple ID email"
+              type="email" autoComplete="off" className={inputCls + " flex-1 min-w-[200px]"} />
+            <input value={appPassword} onChange={e => setAppPassword(e.target.value)} placeholder="xxxx-xxxx-xxxx-xxxx"
+              type="password" autoComplete="off" className={inputCls + " flex-1 min-w-[180px] font-mono"} />
+            <button
+              onClick={() => connect.mutate()}
+              disabled={connect.isPending || !appleId.trim() || appPassword.trim().length < 8}
+              className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50">
+              {connect.isPending ? "Connecting…" : "Connect"}
+            </button>
+          </div>
+          {error && (
+            <p className="text-sm text-destructive">{error}</p>
+          )}
+        </>
+      )}
+    </section>
   );
 }
 

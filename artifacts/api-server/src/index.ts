@@ -1333,6 +1333,17 @@ async function runStartupMigrations() {
       END $$;
     `);
 
+    // Founder settings — see lib/db/migrations/0036_founder_settings.sql.
+    // Founder-only k/v (CalDAV credentials etc.) — kept out of app_settings
+    // because that table is readable by ordinary logged-in users.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS founder_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+
     // APC label-scan ledger — see lib/db/migrations/0031_add_apc_consignments.sql.
     // The UNIQUE waybill is what stops one physical label being scanned onto
     // two orders, so this table must exist before the packing flow runs.
