@@ -17,6 +17,46 @@ export interface CalendarEvent {
   startMin: number;
   endMin: number;
   allDay: boolean;
+  // First meeting link found in the event (URL prop, location, then
+  // description) — a video-call provider link when one exists, else the
+  // first plain http(s) link. Lets the planner offer "Join" without
+  // opening the calendar app.
+  joinUrl: string | null;
+  // True when joinUrl points at a known video-call provider (Zoom, Teams,
+  // Meet…), so the UI can say "Join call" rather than a generic "Open link".
+  joinIsCall: boolean;
+}
+
+// Known video-call providers, checked against a link's host.
+const CALL_PROVIDERS = [
+  "zoom.us", "teams.microsoft.com", "teams.live.com", "meet.google.com",
+  "webex.com", "gotomeet.me", "goto.com", "whereby.com", "meet.jit.si",
+  "around.co", "chime.aws",
+];
+
+function isCallLink(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return CALL_PROVIDERS.some(p => host === p || host.endsWith(`.${p}`));
+  } catch {
+    return false;
+  }
+}
+
+/** Pull the best "join" link out of an event's url/location/description.
+ *  Descriptions are often HTML soup, so URLs get trailing junk stripped. */
+function extractJoinLink(fields: Array<string | undefined | null>): { joinUrl: string | null; joinIsCall: boolean } {
+  const links: string[] = [];
+  for (const field of fields) {
+    if (!field) continue;
+    for (const m of String(field).match(/https?:\/\/[^\s<>"']+/g) ?? []) {
+      const cleaned = m.replace(/[)\],.;:!?]+$/, "");
+      if (!links.includes(cleaned)) links.push(cleaned);
+    }
+  }
+  const call = links.find(isCallLink);
+  if (call) return { joinUrl: call, joinIsCall: true };
+  return { joinUrl: links[0] ?? null, joinIsCall: false };
 }
 
 type Client = Awaited<ReturnType<typeof createDAVClient>>;
@@ -163,6 +203,13 @@ export async function getDayEvents(
           continue;
         }
         const allDay = vevent.datetype === "date";
+        const rawUrl = (vevent as { url?: unknown }).url;
+        const urlField = typeof rawUrl === "string" ? rawUrl : (rawUrl as { val?: string } | undefined)?.val;
+        const { joinUrl, joinIsCall } = extractJoinLink([
+          urlField,
+          typeof vevent.location === "string" ? vevent.location : undefined,
+          typeof vevent.description === "string" ? vevent.description : undefined,
+        ]);
         for (const inst of instances) {
           const startMin = Math.max(0, Math.round((inst.start.getTime() - dayStart.getTime()) / 60_000));
           const endMin = Math.min(1440, Math.round((inst.end.getTime() - dayStart.getTime()) / 60_000));
@@ -173,6 +220,8 @@ export async function getDayEvents(
             startMin: allDay ? 0 : startMin,
             endMin: allDay ? 1440 : endMin,
             allDay,
+            joinUrl,
+            joinIsCall,
           });
         }
       }

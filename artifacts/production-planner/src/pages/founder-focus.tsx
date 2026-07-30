@@ -8,7 +8,7 @@ import { format, addDays, parseISO } from "date-fns";
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, Check, X, Play,
   CalendarDays, Inbox, Target, LayoutTemplate, CircleDashed,
-  SkipForward, Pencil, Repeat, Copy,
+  SkipForward, Pencil, Repeat, Copy, Video, ExternalLink, Eye, EyeOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -68,6 +68,8 @@ interface CalEvent {
   startMin: number;
   endMin: number;
   allDay: boolean;
+  joinUrl: string | null;
+  joinIsCall: boolean;
 }
 
 interface RecurringItem {
@@ -259,6 +261,17 @@ export default function FounderFocus() {
   const currentItem = isToday ? timeline.find(t => isLive(t) && t.startMin <= now && now < t.endMin) : undefined;
   const nextItem = isToday ? timeline.find(t => isLive(t) && t.startMin > now) : undefined;
 
+  // Completed things are clutter mid-day: hide done/skipped blocks and (for
+  // today only) meetings that have already ended, behind a toggle. Past
+  // dates always show everything — that's the day's record.
+  const [showCompleted, setShowCompleted] = useState(false);
+  const isCompleted = (t: TimelineItem) =>
+    t.kind === "block"
+      ? t.block.status !== "planned"
+      : (isToday && t.endMin <= now);
+  const completedCount = isToday ? timeline.filter(isCompleted).length : 0;
+  const visibleTimeline = isToday && !showCompleted ? timeline.filter(t => !isCompleted(t)) : timeline;
+
   // Recurring rituals attach to the FIRST block of their pillar for the day,
   // so "30-min one-on-one" shows inside the morning Team & Coaching block
   // and simply doesn't appear on days whose template skips the pillar.
@@ -341,27 +354,40 @@ export default function FounderFocus() {
 
       {/* ── Day blocks ──────────────────────────────────────────────────── */}
       <section className="rounded-2xl border border-border bg-card p-5 space-y-4">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
           <h2 className="text-sm font-semibold flex items-center gap-2">
             <CalendarDays className="w-4 h-4 text-primary" /> Time blocks
           </h2>
-          <button
-            onClick={() => applyTemplate.mutate()}
-            disabled={applyTemplate.isPending || (data?.templates.length ?? 0) === 0}
-            title={(data?.templates.length ?? 0) === 0 ? "No template rows for this weekday yet — add some below." : undefined}
-            className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-secondary/50 disabled:opacity-50 flex items-center gap-1.5"
-          >
-            <LayoutTemplate className="w-3.5 h-3.5" /> Fill from template
-          </button>
+          <div className="flex items-center gap-2">
+            {completedCount > 0 && (
+              <button
+                onClick={() => setShowCompleted(s => !s)}
+                className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-secondary/50 flex items-center gap-1.5 text-muted-foreground"
+              >
+                {showCompleted ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                {showCompleted ? "Hide completed" : `Show completed (${completedCount})`}
+              </button>
+            )}
+            <button
+              onClick={() => applyTemplate.mutate()}
+              disabled={applyTemplate.isPending || (data?.templates.length ?? 0) === 0}
+              title={(data?.templates.length ?? 0) === 0 ? "No template rows for this weekday yet — add some below." : undefined}
+              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-secondary/50 disabled:opacity-50 flex items-center gap-1.5"
+            >
+              <LayoutTemplate className="w-3.5 h-3.5" /> Fill from template
+            </button>
+          </div>
         </div>
 
         {isLoading ? (
           <Skeleton className="h-24 w-full" />
         ) : timeline.length === 0 ? (
           <p className="text-sm text-muted-foreground">No blocks for this day yet.</p>
+        ) : visibleTimeline.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Everything's done or wrapped up — nice. Toggle "Show completed" to review the day.</p>
         ) : (
           <ul className="space-y-2">
-            {timeline.map(t => t.kind === "event" ? (
+            {visibleTimeline.map(t => t.kind === "event" ? (
               <li key={`e-${t.event.calendar}-${t.startMin}-${t.event.title}`}
                 className={cn(
                   "flex items-center gap-3 rounded-xl border border-dashed border-border p-3 bg-secondary/30",
@@ -377,6 +403,22 @@ export default function FounderFocus() {
                     <span className="ml-2">{t.event.calendar} · from your diary</span>
                   </p>
                 </div>
+                {t.event.joinUrl && (
+                  <a
+                    href={t.event.joinUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 flex-shrink-0",
+                      t.event.joinIsCall
+                        ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                        : "border border-border hover:bg-secondary/50 text-muted-foreground",
+                    )}
+                  >
+                    {t.event.joinIsCall ? <Video className="w-3.5 h-3.5" /> : <ExternalLink className="w-3.5 h-3.5" />}
+                    {t.event.joinIsCall ? "Join" : "Open"}
+                  </a>
+                )}
               </li>
             ) : (() => {
               const b = t.block;
@@ -550,6 +592,22 @@ function NowNextCard({ label, item, pillarById, now, empty }: {
             {label === "Now" && <span className="ml-1.5 font-medium text-foreground">· {item.endMin - now} min left</span>}
             {tag && <span className="ml-1.5" style={{ color }}>{tag}</span>}
           </p>
+          {item.kind === "event" && item.event.joinUrl && (
+            <a
+              href={item.event.joinUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(
+                "mt-2 inline-flex px-3 py-1.5 rounded-lg text-xs font-medium items-center gap-1.5",
+                item.event.joinIsCall
+                  ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                  : "border border-border hover:bg-secondary/50 text-muted-foreground",
+              )}
+            >
+              {item.event.joinIsCall ? <Video className="w-3.5 h-3.5" /> : <ExternalLink className="w-3.5 h-3.5" />}
+              {item.event.joinIsCall ? "Join call" : "Open link"}
+            </a>
+          )}
         </>
       ) : (
         <p className="text-sm text-muted-foreground mt-1.5">{empty}</p>
