@@ -68,7 +68,8 @@ async function deleteLocation(sku: string): Promise<void> {
 }
 
 interface BarcodeRow {
-  sku: string;
+  variantId: string;
+  sku: string | null;
   barcode: string;
   productTitle: string | null;
   variantTitle: string | null;
@@ -211,7 +212,7 @@ export default function Locations() {
               <Barcode className="w-4 h-4 text-primary" /> Shopify Barcodes
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {barcodes?.length ?? 0} SKU{(barcodes?.length ?? 0) !== 1 ? "s" : ""} have a barcode synced from Shopify.
+              {barcodes?.length ?? 0} product variant{(barcodes?.length ?? 0) !== 1 ? "s" : ""} have a barcode synced from Shopify.
               Re-run after editing variant barcodes in Shopify admin.
             </p>
           </div>

@@ -265,8 +265,13 @@ router.get("/orders", requireManagerOrAdmin, async (req: Request, res: Response)
       `),
     ]);
     const locationBySku = new Map(allLocations.map(l => [l.sku, l]));
-    const barcodeBySku = new Map(allBarcodes.map(b => [b.sku, b.barcode]));
-    const imageBySku = new Map(allBarcodes.filter(b => b.imageUrl).map(b => [b.sku, b.imageUrl as string]));
+    // Barcode/image are matched by variant id ONLY. SKUs here are shelf
+    // labels shared by many products ("1" covers buttermilk AND korean
+    // strips), so a SKU-keyed lookup can attach the wrong product's barcode
+    // to a line item — a mis-scan the packer has no way to catch. A missing
+    // variant row means no barcode (manual SKU/title entry still works)
+    // rather than a wrong one.
+    const barcodeRowByVariantId = new Map(allBarcodes.map(b => [b.variantId, b]));
     const colorByVariantId = new Map<string, string>();
     const colorBySku = new Map<string, string>();
     for (const row of recipeMappings.rows as Array<{ shopify_variant_id: string | null; shopify_sku: string | null; color: string | null }>) {
@@ -282,11 +287,12 @@ router.get("/orders", requireManagerOrAdmin, async (req: Request, res: Response)
           (variantKey && colorByVariantId.get(variantKey)) ??
           (item.sku && colorBySku.get(item.sku)) ??
           null;
+        const barcodeRow = variantKey ? (barcodeRowByVariantId.get(variantKey) ?? null) : null;
         return {
           ...item,
           location: item.sku ? (locationBySku.get(item.sku) ?? null) : null,
-          barcode: item.sku ? (barcodeBySku.get(item.sku) ?? null) : null,
-          imageUrl: item.sku ? (imageBySku.get(item.sku) ?? null) : null,
+          barcode: barcodeRow?.barcode ?? null,
+          imageUrl: barcodeRow?.imageUrl ?? null,
           recipeColor,
         };
       });
@@ -1648,17 +1654,20 @@ router.get("/sku-barcodes", requireAdmin, async (_req: Request, res: Response) =
   }
 });
 
-// Pulls every variant from Shopify and caches `(sku, barcode)` pairs. The
-// fulfilment scanner reads from this cache to translate a scanned barcode
-// back to a SKU on the open order. Safe to re-run — variants with empty
-// barcodes are skipped, variants with new/changed barcodes overwrite.
+// Pulls every variant from Shopify and caches one row per VARIANT ID with
+// its barcode, SKU, titles and image. The fulfilment scanner reads this
+// cache to attach a barcode/image to each order line item (matched by
+// variant id — SKUs are shelf labels shared across products, so they can't
+// identify one). Safe to re-run — variants with empty barcodes are skipped,
+// variants with new/changed barcodes overwrite. Variants with no SKU still
+// sync: they have no bin location, but their barcode must scan (e.g. the
+// first-order insert).
 router.post("/sync-barcodes", requireAdmin, async (_req: Request, res: Response) => {
   try {
     const products = await getProducts();
 
     let synced = 0;
     let skippedNoBarcode = 0;
-    let skippedNoSku = 0;
 
     for (const product of products) {
       // Variant.image_id points at one of product.images. Fall back to the
@@ -1667,7 +1676,6 @@ router.post("/sync-barcodes", requireAdmin, async (_req: Request, res: Response)
       const imageById = new Map(product.images.map(img => [img.id, img.src]));
       const fallbackImage = product.image?.src ?? null;
       for (const variant of product.variants) {
-        if (!variant.sku) { skippedNoSku++; continue; }
         const barcode = (variant.barcode ?? "").trim();
         if (!barcode) { skippedNoBarcode++; continue; }
 
@@ -1676,15 +1684,17 @@ router.post("/sync-barcodes", requireAdmin, async (_req: Request, res: Response)
         await db
           .insert(skuBarcodesTable)
           .values({
-            sku: variant.sku,
+            variantId: String(variant.id),
+            sku: variant.sku || null,
             barcode,
             productTitle: product.title,
             variantTitle: variant.title,
             imageUrl,
           })
           .onConflictDoUpdate({
-            target: skuBarcodesTable.sku,
+            target: skuBarcodesTable.variantId,
             set: {
+              sku: variant.sku || null,
               barcode,
               productTitle: product.title,
               variantTitle: variant.title,
@@ -1696,7 +1706,7 @@ router.post("/sync-barcodes", requireAdmin, async (_req: Request, res: Response)
       }
     }
 
-    res.json({ synced, skippedNoBarcode, skippedNoSku, totalProducts: products.length });
+    res.json({ synced, skippedNoBarcode, skippedNoSku: 0, totalProducts: products.length });
   } catch (err: any) {
     console.error("[Fulfilment] sync-barcodes error:", err.message);
     res.status(502).json({ error: err.message });

@@ -1214,6 +1214,30 @@ async function runStartupMigrations() {
     await db.execute(sql`INSERT INTO app_settings (key, value, updated_at) VALUES ('capacity_batches_without_dough_prep', '80', NOW()) ON CONFLICT (key) DO NOTHING`);
     await db.execute(sql`INSERT INTO app_settings (key, value, updated_at) VALUES ('capacity_dough_prep_position_name', 'Dough Prep', NOW()) ON CONFLICT (key) DO NOTHING`);
 
+    // Re-key the fulfilment barcode cache from SKU to Shopify variant id —
+    // see lib/db/migrations/0034_sku_barcodes_variant_key.sql. TCK SKUs are
+    // shelf labels shared by many products, so the SKU-keyed cache attached
+    // the wrong product's barcode/image to order lines (2026-07-30:
+    // buttermilk vs korean strips, both SKU "1"). Guarded by _migrations_done
+    // because the wipe must not repeat on every boot: the cache refills via
+    // the manual "Sync from Shopify" button, and an unconditional DELETE
+    // would silently blank the scanner between sync runs.
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS _migrations_done (key TEXT PRIMARY KEY, done_at TIMESTAMP DEFAULT NOW())`);
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'sku_barcodes_variant_key_v1') THEN
+          ALTER TABLE sku_barcodes ADD COLUMN IF NOT EXISTS variant_id TEXT;
+          DELETE FROM sku_barcodes;
+          ALTER TABLE sku_barcodes DROP CONSTRAINT IF EXISTS sku_barcodes_pkey;
+          ALTER TABLE sku_barcodes ALTER COLUMN sku DROP NOT NULL;
+          ALTER TABLE sku_barcodes ALTER COLUMN variant_id SET NOT NULL;
+          ALTER TABLE sku_barcodes ADD PRIMARY KEY (variant_id);
+          INSERT INTO _migrations_done (key) VALUES ('sku_barcodes_variant_key_v1');
+        END IF;
+      END $$;
+    `);
+
     // APC label-scan ledger — see lib/db/migrations/0031_add_apc_consignments.sql.
     // The UNIQUE waybill is what stops one physical label being scanned onto
     // two orders, so this table must exist before the packing flow runs.
