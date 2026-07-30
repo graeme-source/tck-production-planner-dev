@@ -518,8 +518,8 @@ function AppleCalendarCard() {
     },
   });
   const saveCalendarToggles = useMutation({
-    mutationFn: (disabledUrls: string[]) =>
-      api("/caldav/calendars", { method: "PUT", body: JSON.stringify({ disabledUrls }) }),
+    mutationFn: (enabledUrls: string[]) =>
+      api("/caldav/calendars", { method: "PUT", body: JSON.stringify({ enabledUrls }) }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["founder-focus-caldav"] });
       queryClient.invalidateQueries({ queryKey: ["founder-focus"] });
@@ -528,10 +528,10 @@ function AppleCalendarCard() {
 
   function toggleCalendar(cal: CaldavCalendar) {
     const calendars = status?.calendars ?? [];
-    const disabledUrls = calendars
-      .filter(c => (c.url === cal.url ? c.enabled : !c.enabled))
+    const enabledUrls = calendars
+      .filter(c => (c.url === cal.url ? !c.enabled : c.enabled))
       .map(c => c.url);
-    saveCalendarToggles.mutate(disabledUrls);
+    saveCalendarToggles.mutate(enabledUrls);
   }
 
   const inputCls = "px-2.5 py-2 rounded-lg border border-border bg-background text-sm";
@@ -547,7 +547,7 @@ function AppleCalendarCard() {
           {status.calendars && status.calendars.length > 0 && (
             <>
               <p className="text-xs text-muted-foreground">
-                Tap a calendar to show or hide it in the day view. New calendars you create in Apple appear here switched on.
+                Tap a calendar to show or hide it in the day view. New calendars you create in Apple stay hidden until you switch them on here.
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {status.calendars.map(c => (

@@ -115,12 +115,13 @@ export async function getDayEvents(
   appleId: string,
   password: string,
   dateStr: string,
-  // Calendars the founder switched off — keyed by collection URL. An
-  // exclusion list (not inclusion) so a calendar newly created in Apple
-  // shows up by default and gets switched off if it's noise.
-  disabledUrls: ReadonlySet<string> = new Set(),
+  // Calendars the founder switched ON, keyed by collection URL. An
+  // inclusion list by request (2026-07-30): calendars newly created in
+  // Apple stay HIDDEN until explicitly enabled. `null` (no saved choice
+  // yet) shows everything so a fresh connection isn't an empty day view.
+  enabledUrls: ReadonlySet<string> | null = null,
 ): Promise<CalendarEvent[]> {
-  const cacheKey = `${appleId}|${dateStr}|${[...disabledUrls].sort().join(",")}`;
+  const cacheKey = `${appleId}|${dateStr}|${enabledUrls ? [...enabledUrls].sort().join(",") : "*"}`;
   const cached = eventsCache.get(cacheKey);
   if (cached && Date.now() < cached.expiry) return cached.events;
 
@@ -129,7 +130,9 @@ export async function getDayEvents(
   const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
 
   const events: CalendarEvent[] = [];
-  const activeCalendars = account.calendars.filter(c => !disabledUrls.has(c.url));
+  const activeCalendars = enabledUrls
+    ? account.calendars.filter(c => enabledUrls.has(c.url))
+    : account.calendars;
 
   await Promise.all(activeCalendars.map(async calendar => {
     const objects = await account.client.fetchCalendarObjects({

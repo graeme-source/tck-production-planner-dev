@@ -18,16 +18,20 @@ const router: IRouter = Router();
 // only say whether a value exists.
 const CALDAV_ID_KEY = "caldav_apple_id";
 const CALDAV_PW_KEY = "caldav_app_password";
-const CALDAV_DISABLED_KEY = "caldav_disabled_calendars";
+// Inclusion list (2026-07-30, by request): only calendars on this list show
+// in the day view, so anything newly created in Apple stays hidden until
+// explicitly switched on. `null` = no choice saved yet → show everything,
+// so a fresh connection isn't an empty day view.
+const CALDAV_ENABLED_KEY = "caldav_enabled_calendars";
 
-async function getDisabledCalendarUrls(): Promise<Set<string>> {
-  const raw = await getFounderSetting(CALDAV_DISABLED_KEY);
-  if (!raw) return new Set();
+async function getEnabledCalendarUrls(): Promise<Set<string> | null> {
+  const raw = await getFounderSetting(CALDAV_ENABLED_KEY);
+  if (!raw) return null;
   try {
     const arr = JSON.parse(raw);
     return new Set(Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : []);
   } catch {
-    return new Set();
+    return null;
   }
 }
 
@@ -93,7 +97,7 @@ router.get("/overview", async (req: Request, res: Response) => {
     const calendarConfigured = !!(appleId && appPassword);
     if (calendarConfigured) {
       try {
-        events = await getDayEvents(appleId, appPassword, dateStr, await getDisabledCalendarUrls());
+        events = await getDayEvents(appleId, appPassword, dateStr, await getEnabledCalendarUrls());
       } catch (err) {
         calendarError = err instanceof Error ? err.message : String(err);
       }
@@ -121,23 +125,23 @@ router.get("/caldav", async (_req: Request, res: Response) => {
   const password = await getFounderSetting(CALDAV_PW_KEY);
   if (!appleId || !password) { res.json({ configured: false }); return; }
   try {
-    const [calendars, disabled] = await Promise.all([verifyCaldav(appleId, password), getDisabledCalendarUrls()]);
+    const [calendars, enabled] = await Promise.all([verifyCaldav(appleId, password), getEnabledCalendarUrls()]);
     res.json({
       configured: true,
       appleId,
-      calendars: calendars.map(c => ({ ...c, enabled: !disabled.has(c.url) })),
+      calendars: calendars.map(c => ({ ...c, enabled: enabled ? enabled.has(c.url) : true })),
     });
   } catch (err) {
     res.json({ configured: true, appleId, calendars: [], error: err instanceof Error ? err.message : String(err) });
   }
 });
 
-// Per-calendar on/off. Stored as a DISABLED list so calendars added in
-// Apple later default to visible.
+// Per-calendar on/off. Stored as an ENABLED list so calendars added in
+// Apple later stay hidden until explicitly switched on.
 router.put("/caldav/calendars", async (req: Request, res: Response) => {
-  const parsed = z.object({ disabledUrls: z.array(z.string().min(1)).max(100) }).safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: "disabledUrls: string[] required" }); return; }
-  await setFounderSetting(CALDAV_DISABLED_KEY, JSON.stringify(parsed.data.disabledUrls));
+  const parsed = z.object({ enabledUrls: z.array(z.string().min(1)).max(100) }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "enabledUrls: string[] required" }); return; }
+  await setFounderSetting(CALDAV_ENABLED_KEY, JSON.stringify(parsed.data.enabledUrls));
   res.json({ ok: true });
 });
 
@@ -163,7 +167,7 @@ router.post("/caldav", async (req: Request, res: Response) => {
 router.delete("/caldav", async (_req: Request, res: Response) => {
   await deleteFounderSetting(CALDAV_ID_KEY);
   await deleteFounderSetting(CALDAV_PW_KEY);
-  await deleteFounderSetting(CALDAV_DISABLED_KEY);
+  await deleteFounderSetting(CALDAV_ENABLED_KEY);
   resetCaldavCache();
   res.json({ configured: false });
 });
