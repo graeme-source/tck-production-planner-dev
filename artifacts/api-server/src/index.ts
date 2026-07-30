@@ -1409,6 +1409,68 @@ async function runStartupMigrations() {
       )
     `);
 
+    // Merge the four prep-section checklists into one canonical 'prep'
+    // checklist — see lib/db/migrations/0038_prep_checklist_merge.sql for
+    // the full rationale. Every completion row is preserved (HACCP trail):
+    // duplicates of a canonical item hand their ticks to it (first tick per
+    // plan wins the unique slot) and deactivate; unique items move over.
+    await db.execute(sql`
+      DO $$
+      DECLARE
+        r RECORD;
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'prep_checklist_merge_v1') THEN
+          FOR r IN
+            SELECT DISTINCT ON (cc.id) cc.id AS completion_id, cc.plan_id, keep.id AS keep_id
+            FROM checklist_completions cc
+            JOIN checklist_templates dup
+              ON dup.id = cc.template_id
+             AND dup.station_type IN ('main_prep', 'prep_bases', 'prep_meat')
+            JOIN checklist_templates keep
+              ON keep.station_type = 'prep'
+             AND keep.category = dup.category
+             AND lower(btrim(keep.title)) = lower(btrim(dup.title))
+            ORDER BY cc.id, keep.id
+          LOOP
+            IF NOT EXISTS (
+              SELECT 1 FROM checklist_completions x
+              WHERE x.template_id = r.keep_id AND x.plan_id = r.plan_id
+            ) THEN
+              UPDATE checklist_completions
+              SET template_id = r.keep_id, station_type = 'prep'
+              WHERE id = r.completion_id;
+            END IF;
+          END LOOP;
+
+          UPDATE checklist_templates dup
+          SET is_active = false
+          WHERE dup.station_type IN ('main_prep', 'prep_bases', 'prep_meat')
+            AND EXISTS (
+              SELECT 1 FROM checklist_templates keep
+              WHERE keep.station_type = 'prep'
+                AND keep.category = dup.category
+                AND lower(btrim(keep.title)) = lower(btrim(dup.title))
+            );
+
+          UPDATE checklist_completions cc
+          SET station_type = 'prep'
+          FROM checklist_templates t
+          WHERE t.id = cc.template_id
+            AND t.station_type IN ('main_prep', 'prep_bases', 'prep_meat');
+
+          UPDATE checklist_templates
+          SET station_type = 'prep'
+          WHERE station_type IN ('main_prep', 'prep_bases', 'prep_meat');
+
+          UPDATE checklist_oneoff_items
+          SET station_type = 'prep'
+          WHERE station_type IN ('main_prep', 'prep_bases', 'prep_meat');
+
+          INSERT INTO _migrations_done (key) VALUES ('prep_checklist_merge_v1');
+        END IF;
+      END $$;
+    `);
+
     // APC label-scan ledger — see lib/db/migrations/0031_add_apc_consignments.sql.
     // The UNIQUE waybill is what stops one physical label being scanned onto
     // two orders, so this table must exist before the packing flow runs.
