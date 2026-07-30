@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useAuth } from "@/contexts/auth-context";
 import { Redirect } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -9,6 +9,7 @@ import {
   ChevronLeft, ChevronRight, Plus, Trash2, Check, X, Play,
   CalendarDays, Inbox, Target, LayoutTemplate, CircleDashed,
   SkipForward, Pencil, Repeat, Copy, Video, ExternalLink, Eye, EyeOff,
+  BellRing, BellOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -272,6 +273,44 @@ export default function FounderFocus() {
   const completedCount = isToday ? timeline.filter(isCompleted).length : 0;
   const visibleTimeline = isToday && !showCompleted ? timeline.filter(t => !isCompleted(t)) : timeline;
 
+  // ── Reminders ────────────────────────────────────────────────────────────
+  // Pop-up 10 minutes before anything on today's timeline (meetings and
+  // blocks). Browser Notification API: works while the app is open in a
+  // desktop/tablet browser; on an iPhone it needs the app added to the home
+  // screen. The fired-set stops the 30s tick re-firing the same reminder.
+  const notifSupported = typeof window !== "undefined" && "Notification" in window;
+  const [notifPermission, setNotifPermission] = useState<string>(
+    () => (typeof Notification !== "undefined" ? Notification.permission : "unsupported"),
+  );
+  const firedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!isToday || notifPermission !== "granted") return;
+    const LEAD_MIN = 10;
+    for (const t of timeline) {
+      if (t.kind === "block" && t.block.status !== "planned") continue;
+      const minsTo = t.startMin - now;
+      if (minsTo <= 0 || minsTo > LEAD_MIN) continue;
+      const title = t.kind === "event" ? t.event.title : t.block.title;
+      const key = `${dateStr}|${t.startMin}|${title}`;
+      if (firedRef.current.has(key)) continue;
+      firedRef.current.add(key);
+      try {
+        const n = new Notification(`${title} — in ${minsTo} min`, {
+          body: t.kind === "event"
+            ? `${minToTime(t.startMin)} · ${t.event.calendar}${t.event.joinIsCall ? " · join from the planner" : ""}`
+            : `${minToTime(t.startMin)} · time block`,
+          tag: key,
+        });
+        n.onclick = () => window.focus();
+      } catch {
+        // Some platforms expose the API but refuse page-context notifications.
+      }
+    }
+  });
+
+  // Accordion: one pillar open at a time keeps the rail scannable.
+  const [openPillarId, setOpenPillarId] = useState<number | null>(null);
+
   // Recurring rituals attach to the FIRST block of their pillar for the day,
   // so "30-min one-on-one" shows inside the morning Team & Coaching block
   // and simply doesn't appear on days whose template skips the pillar.
@@ -297,7 +336,7 @@ export default function FounderFocus() {
   }
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-6">
       <PageHeader
         title="Founder Focus"
         description="Time-blocked days against the pillars only you can move."
@@ -317,6 +356,21 @@ export default function FounderFocus() {
             </button>
           )}
         </div>
+        {notifSupported && notifPermission === "default" && (
+          <button
+            onClick={() => Notification.requestPermission().then(setNotifPermission)}
+            title="Get a pop-up 10 minutes before meetings and time blocks"
+            className="p-2 rounded-lg border border-border hover:bg-secondary/50 text-muted-foreground"
+            aria-label="Enable reminders"
+          >
+            <BellRing className="w-4 h-4" />
+          </button>
+        )}
+        {notifSupported && notifPermission === "denied" && (
+          <span title="Notifications are blocked for this site in your browser settings" className="p-2 text-muted-foreground/50">
+            <BellOff className="w-4 h-4" />
+          </span>
+        )}
         <button onClick={() => setDateStr(format(addDays(parseISO(dateStr), 1), "yyyy-MM-dd"))}
           className="p-2 rounded-lg border border-border hover:bg-secondary/50" aria-label="Next day">
           <ChevronRight className="w-4 h-4" />
@@ -325,7 +379,7 @@ export default function FounderFocus() {
 
       {/* ── Now / Next ──────────────────────────────────────────────────── */}
       {isToday && (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <NowNextCard label="Now" item={currentItem} pillarById={pillarById} now={now}
             empty={timeline.length === 0 ? "No plan yet — block the day out below." : "Nothing blocked right now."} />
           <NowNextCard label="Next" item={nextItem} pillarById={pillarById} now={now}
@@ -351,6 +405,11 @@ export default function FounderFocus() {
           Apple Calendar unavailable: {data.calendarError}
         </div>
       )}
+
+      {/* ── Two columns on wide screens: the day on the left, planning
+             tools on the right; stacked on tablet/mobile. ─────────────── */}
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_400px] gap-6 items-start">
+      <div className="space-y-6 min-w-0">
 
       {/* ── Day blocks ──────────────────────────────────────────────────── */}
       <section className="rounded-2xl border border-border bg-card p-5 space-y-4">
@@ -504,6 +563,9 @@ export default function FounderFocus() {
         />
       </section>
 
+      </div>{/* end main column */}
+      <div className="space-y-6 min-w-0">
+
       {/* ── Parking lot ─────────────────────────────────────────────────── */}
       <section className="rounded-2xl border border-border bg-card p-5 space-y-3">
         <h2 className="text-sm font-semibold flex items-center gap-2">
@@ -534,6 +596,8 @@ export default function FounderFocus() {
         </h2>
         {(data?.pillars ?? []).map(p => (
           <PillarCard key={p.id} pillar={p}
+            open={openPillarId === p.id}
+            onToggle={() => setOpenPillarId(id => (id === p.id ? null : p.id))}
             recurring={(data?.recurringItems ?? []).filter(r => r.pillarId === p.id)}
             onAddGoal={title => addGoal.mutate({ pillarId: p.id, title })}
             onToggleGoal={g => patchGoal.mutate({ id: g.id, status: g.status === "done" ? "active" : "done" })}
@@ -558,6 +622,9 @@ export default function FounderFocus() {
         onAdd={row => addTemplateRow.mutate(row)}
         onDelete={id => deleteTemplateRow.mutate(id)}
       />
+
+      </div>{/* end right rail */}
+      </div>{/* end two-column grid */}
     </div>
   );
 }
@@ -809,9 +876,11 @@ function ParkingInput({ pending, onAdd }: { pending: boolean; onAdd: (text: stri
   );
 }
 
-// ── Pillar card ────────────────────────────────────────────────────────────
-function PillarCard({ pillar, recurring, onAddGoal, onToggleGoal, onDeleteGoal, onAddRecurring, onDeleteRecurring, onRename, onTarget, onArchive }: {
+// ── Pillar card (accordion) ────────────────────────────────────────────────
+function PillarCard({ pillar, open, onToggle, recurring, onAddGoal, onToggleGoal, onDeleteGoal, onAddRecurring, onDeleteRecurring, onRename, onTarget, onArchive }: {
   pillar: Pillar;
+  open: boolean;
+  onToggle: () => void;
   recurring: RecurringItem[];
   onAddGoal: (title: string) => void;
   onToggleGoal: (g: Goal) => void;
@@ -837,9 +906,22 @@ function PillarCard({ pillar, recurring, onAddGoal, onToggleGoal, onDeleteGoal, 
   }
 
   return (
-    <div className="rounded-2xl border border-border bg-card p-4 space-y-3" style={{ borderLeft: `5px solid ${color}` }}>
-      <div className="flex items-center gap-2">
+    <div className="rounded-2xl border border-border bg-card" style={{ borderLeft: `5px solid ${color}` }}>
+      {/* Accordion header — always visible, summarises what's inside */}
+      <button onClick={onToggle} className="w-full flex items-center gap-2 p-4 text-left" aria-expanded={open}>
         <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: color }} />
+        <h3 className="font-semibold text-sm flex-1 min-w-0 truncate">{pillar.name}</h3>
+        <span className="text-xs text-muted-foreground flex-shrink-0">
+          {activeGoals.length} goal{activeGoals.length !== 1 ? "s" : ""}
+          {recurring.length > 0 && ` · ${recurring.length} daily`}
+          {pillar.targetSharePct != null && ` · ${pillar.targetSharePct}%`}
+        </span>
+        <ChevronRight className={cn("w-4 h-4 text-muted-foreground transition-transform flex-shrink-0", open && "rotate-90")} />
+      </button>
+
+      {open && (
+      <div className="px-4 pb-4 space-y-3">
+      <div className="flex items-center gap-2">
         {editingName ? (
           <span className="flex items-center gap-1.5 flex-1">
             <input value={nameDraft} onChange={e => setNameDraft(e.target.value)}
@@ -851,14 +933,12 @@ function PillarCard({ pillar, recurring, onAddGoal, onToggleGoal, onDeleteGoal, 
               className="p-1 text-muted-foreground" aria-label="Cancel rename"><X className="w-4 h-4" /></button>
           </span>
         ) : (
-          <>
-            <h3 className="font-semibold text-sm flex-1">{pillar.name}</h3>
-            <button onClick={() => { setNameDraft(pillar.name); setEditingName(true); }}
-              className="p-1.5 rounded-md text-muted-foreground hover:bg-secondary/50" aria-label="Rename pillar">
-              <Pencil className="w-3.5 h-3.5" />
-            </button>
-          </>
+          <button onClick={() => { setNameDraft(pillar.name); setEditingName(true); }}
+            className="p-1.5 rounded-md text-muted-foreground hover:bg-secondary/50 flex items-center gap-1.5 text-xs" aria-label="Rename pillar">
+            <Pencil className="w-3.5 h-3.5" /> Rename
+          </button>
         )}
+        <span className="flex-1" />
         <label className="flex items-center gap-1 text-xs text-muted-foreground">
           <input
             type="number" min={0} max={100}
@@ -956,6 +1036,8 @@ function PillarCard({ pillar, recurring, onAddGoal, onToggleGoal, onDeleteGoal, 
           </button>
         </div>
       </div>
+      </div>
+      )}
     </div>
   );
 }

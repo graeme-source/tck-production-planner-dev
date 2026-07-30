@@ -503,6 +503,22 @@ export function Layout({ children }: { children: ReactNode }) {
   const user = state.status === "authenticated" ? state.user : null;
   const { canAccess } = usePagePermissions();
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Collapsible sidebar on tablet/desktop too — the hamburger in the top bar
+  // is always visible, so getting it back is one obvious tap. Choice sticks
+  // across sessions.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem("tck-sidebar-collapsed") === "1",
+  );
+  function handleMenuButton() {
+    if (window.matchMedia("(min-width: 768px)").matches) {
+      setSidebarCollapsed(c => {
+        localStorage.setItem("tck-sidebar-collapsed", c ? "0" : "1");
+        return !c;
+      });
+    } else {
+      setMobileOpen(true);
+    }
+  }
   // SOPs dialog state lives at the Layout root (rather than inside TopBar)
   // because the header has backdrop-blur, which creates a stacking context
   // that traps any fixed-position child's z-index inside it. Rendering the
@@ -542,8 +558,8 @@ export function Layout({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
 
-      {/* ── Desktop sidebar (md+) ───────────────────────────────────────── */}
-      <aside className="w-52 lg:w-60 xl:w-64 flex-shrink-0 border-r border-border bg-card/50 backdrop-blur-md flex-col hidden md:flex relative z-10">
+      {/* ── Desktop sidebar (md+, collapsible via the top-bar hamburger) ── */}
+      <aside className={`w-52 lg:w-60 xl:w-64 flex-shrink-0 border-r border-border bg-card/50 backdrop-blur-md flex-col hidden relative z-10 ${sidebarCollapsed ? "" : "md:flex"}`}>
         <div className="px-4 py-4 flex items-center gap-2.5">
           <div className="flex-shrink-0 w-9 h-9 rounded-xl bg-primary flex items-center justify-center shadow-lg shadow-primary/20 p-1.5">
             <img
@@ -636,7 +652,7 @@ export function Layout({ children }: { children: ReactNode }) {
 
       {/* ── Main content ────────────────────────────────────────────────── */}
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
-        <TopBar onOpenMobile={() => setMobileOpen(true)} fallbackTitle={currentPageName} onOpenSops={() => setSopsOpen(true)} />
+        <TopBar onMenu={handleMenuButton} fallbackTitle={currentPageName} onOpenSops={() => setSopsOpen(true)} />
         <div className="flex-1 overflow-y-auto p-4 md:p-8 pb-[200px] relative">
           <motion.div
             key={location}
@@ -675,15 +691,19 @@ export function Layout({ children }: { children: ReactNode }) {
   );
 }
 
-function TopBar({ onOpenMobile, fallbackTitle, onOpenSops }: { onOpenMobile: () => void; fallbackTitle: string; onOpenSops: () => void }) {
+function TopBar({ onMenu, fallbackTitle, onOpenSops }: { onMenu: () => void; fallbackTitle: string; onOpenSops: () => void }) {
   const header = usePageHeaderValue();
   const title = header?.title ?? fallbackTitle;
 
   return (
     <header className="min-h-[56px] border-b border-border bg-background/80 backdrop-blur-md flex items-center px-4 md:px-5 xl:px-8 gap-3 z-10 min-w-0">
+      {/* Always visible: opens the drawer on phones, collapses/restores the
+          sidebar on tablet/desktop — one obvious place to get the menu back. */}
       <button
-        onClick={onOpenMobile}
-        className="md:hidden p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors flex-shrink-0"
+        onClick={onMenu}
+        aria-label="Toggle menu"
+        title="Toggle menu"
+        className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors flex-shrink-0"
       >
         <Menu className="w-5 h-5" />
       </button>
