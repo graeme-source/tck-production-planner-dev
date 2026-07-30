@@ -28,3 +28,4 @@ export * from "./visitors";
 export * from "./apc";
 export * from "./collections";
 export * from "./case_orders";
+export * from "./founder_focus";

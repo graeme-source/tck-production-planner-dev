@@ -1238,6 +1238,101 @@ async function runStartupMigrations() {
       END $$;
     `);
 
+    // Founder Focus — see lib/db/migrations/0035_founder_focus.sql. Tables
+    // are additive; the pillar/goal seed (from Graeme's 2026-07-30 notebook)
+    // runs once, guarded, so later UI edits are never re-seeded.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS founder_pillars (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        color TEXT,
+        sort INTEGER NOT NULL DEFAULT 0,
+        target_share_pct INTEGER,
+        notes TEXT,
+        archived_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS founder_goals (
+        id SERIAL PRIMARY KEY,
+        pillar_id INTEGER NOT NULL REFERENCES founder_pillars(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        detail TEXT,
+        status TEXT NOT NULL DEFAULT 'active',
+        sort INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        done_at TIMESTAMP
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS founder_blocks (
+        id SERIAL PRIMARY KEY,
+        date DATE NOT NULL,
+        start_min INTEGER NOT NULL,
+        end_min INTEGER NOT NULL,
+        pillar_id INTEGER REFERENCES founder_pillars(id) ON DELETE SET NULL,
+        title TEXT NOT NULL,
+        notes TEXT,
+        status TEXT NOT NULL DEFAULT 'planned',
+        source TEXT NOT NULL DEFAULT 'manual',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_founder_blocks_date ON founder_blocks (date)`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS founder_block_templates (
+        id SERIAL PRIMARY KEY,
+        weekday INTEGER NOT NULL,
+        start_min INTEGER NOT NULL,
+        end_min INTEGER NOT NULL,
+        pillar_id INTEGER REFERENCES founder_pillars(id) ON DELETE SET NULL,
+        title TEXT NOT NULL,
+        sort INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS founder_parking_lot (
+        id SERIAL PRIMARY KEY,
+        text TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        resolved_at TIMESTAMP
+      )
+    `);
+    await db.execute(sql`
+      DO $$
+      DECLARE
+        claude_id INTEGER; sales_id INTEGER; team_id INTEGER; product_id INTEGER;
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'founder_focus_seed_v1') THEN
+          INSERT INTO founder_pillars (name, color, sort, notes) VALUES
+            ('Claude & Systems', '#7cb342', 0, 'AI + app work — the leverage multiplier.')
+            RETURNING id INTO claude_id;
+          INSERT INTO founder_pillars (name, color, sort, notes) VALUES
+            ('Sales', '#3b82f6', 1, 'Revenue-driving work only Graeme can do.')
+            RETURNING id INTO sales_id;
+          INSERT INTO founder_pillars (name, color, sort, notes) VALUES
+            ('Team & Coaching', '#f59e0b', 2, 'No experienced manager in the team yet — this one is founder-only for now.')
+            RETURNING id INTO team_id;
+          INSERT INTO founder_pillars (name, color, sort, notes) VALUES
+            ('Product', '#8b5cf6', 3, 'From the notebook with a question mark — flesh out or archive.')
+            RETURNING id INTO product_id;
+          INSERT INTO founder_goals (pillar_id, title, detail, sort) VALUES
+            (claude_id, 'AI customer service agent', 'In progress — recently started, making progress.', 0),
+            (claude_id, 'Website: subs, conversion rate, customer experience', 'E-commerce improvements on the Shopify site.', 1),
+            (claude_id, 'Production planner', 'Ongoing app development.', 2),
+            (sales_id, 'Online', NULL, 0),
+            (sales_id, 'Wholesale', NULL, 1),
+            (team_id, 'Buddy system', NULL, 0),
+            (team_id, 'Outstanding performer', NULL, 1),
+            (team_id, '30 mins a day one-on-one', 'Daily corrective-coaching slot.', 2),
+            (team_id, 'Bottom 3 performers', 'Corrective coaching focus.', 3),
+            (team_id, 'Culture', NULL, 4);
+          INSERT INTO _migrations_done (key) VALUES ('founder_focus_seed_v1');
+        END IF;
+      END $$;
+    `);
+
     // APC label-scan ledger — see lib/db/migrations/0031_add_apc_consignments.sql.
     // The UNIQUE waybill is what stops one physical label being scanned onto
     // two orders, so this table must exist before the packing flow runs.

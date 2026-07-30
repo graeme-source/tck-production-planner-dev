@@ -736,6 +736,19 @@ function FounderDashboard() {
         </div>
         <ChevronDown className="w-4 h-4 text-muted-foreground -rotate-90" />
       </a>
+      <a
+        href={`${BASE}/founder/focus`}
+        className="glass-panel p-4 rounded-2xl flex items-center gap-3 hover:bg-secondary/50 transition-colors group"
+      >
+        <div className="p-2.5 rounded-xl bg-primary/10 text-primary">
+          <Calendar className="w-5 h-5" />
+        </div>
+        <div className="flex-1">
+          <p className="text-sm font-medium group-hover:text-primary transition-colors">Founder Focus</p>
+          <p className="text-xs text-muted-foreground">Time-blocked days, pillars &amp; goals, parking lot — the plan for where your time goes</p>
+        </div>
+        <ChevronDown className="w-4 h-4 text-muted-foreground -rotate-90" />
+      </a>
 
       {/* ── Section 1: Fixed At-a-Glance KPIs (always this month) ──────────── */}
       <section>
