@@ -220,16 +220,17 @@ const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
 /** Returns separate totals so calzone batches (10-portion batches) aren't
  *  conflated with mac cheese packs (1 mac batch = 1 pack). Also sums how far
  *  the day has actually got — batches built past the building tables and
- *  flavours marked wrapped — purely so the dashboard cards can show at-a-glance
- *  progress bars. */
+ *  packs landed in the fridge/freezer off wrapping — purely so the dashboard
+ *  cards can show at-a-glance progress. Packs (not flavours) measure wrapping:
+ *  a flavour can be two packs or forty, so pack counts are the honest bar. */
 async function fetchTodayBatchCount(planIds: number[]): Promise<{
   calzoneBatches: number;
   macPacks: number;
   calzoneBuilt: number;
-  flavoursTotal: number;
-  flavoursWrapped: number;
+  packsTotal: number;
+  packsWrapped: number;
 }> {
-  const empty = { calzoneBatches: 0, macPacks: 0, calzoneBuilt: 0, flavoursTotal: 0, flavoursWrapped: 0 };
+  const empty = { calzoneBatches: 0, macPacks: 0, calzoneBuilt: 0, packsTotal: 0, packsWrapped: 0 };
   if (planIds.length === 0) return empty;
   const totals = { ...empty };
   for (const id of planIds) {
@@ -248,8 +249,16 @@ async function fetchTodayBatchCount(planIds: number[]): Promise<{
         totals.calzoneBuilt += Math.min(built, target);
       }
       if (target > 0) {
-        totals.flavoursTotal++;
-        if (it.wrappingComplete) totals.flavoursWrapped++;
+        // Planned pack units for the day: 2-packs after the 8-pack bags take
+        // their 4 two-packs' worth of portions, plus the bags themselves.
+        // (Mac cheese falls out naturally: 2 portions/batch ÷ pack of 2.)
+        const bags = it.eightPackBagCount ?? 0;
+        const plannedTwoPacks = Math.max(0, Math.floor((target * (it.portionsPerBatch ?? 10)) / 2) - bags * 4);
+        const itemTotal = plannedTwoPacks + bags;
+        // Wrapped = pack units that have physically landed in storage.
+        const wrapped = (it.fridgeQty ?? 0) + (it.fridgeEightPackQty ?? 0) + (it.freezerEightPackQty ?? 0);
+        totals.packsTotal += itemTotal;
+        totals.packsWrapped += Math.min(wrapped, itemTotal);
       }
     }
   }
@@ -615,7 +624,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <StatCard
           title="Total Batches Today"
-          value={batchesLoading ? "…" : (totalBatches?.calzoneBatches ?? 0).toString()}
+          value={batchesLoading ? "…" : formatProgressValue(totalBatches?.calzoneBuilt ?? 0, totalBatches?.calzoneBatches ?? 0)}
           subtitle={batchesLoading ? undefined : [
             teamBph > 0 ? `${teamBph.toFixed(1)} batches/hr` : null,
             (totalBatches?.macPacks ?? 0) > 0 ? `+ ${totalBatches!.macPacks} mac packs` : null,
@@ -629,6 +638,7 @@ export default function Dashboard() {
             total: totalBatches!.calzoneBatches,
             label: "built",
             barClass: "bg-primary",
+            hideDetail: true,
           } : undefined}
         />
         <StatCard
@@ -665,7 +675,7 @@ export default function Dashboard() {
         />
         <StatCard
           title="Deliveries Arriving"
-          value={(todayDeliveriesCount?.total ?? 0).toString()}
+          value={formatProgressValue(todayDeliveriesCount?.arrived ?? 0, todayDeliveriesCount?.total ?? 0)}
           icon={PackageCheck}
           color="text-emerald-500"
           bg="bg-emerald-500/10"
@@ -675,21 +685,25 @@ export default function Dashboard() {
             total: todayDeliveriesCount!.total,
             label: "arrived",
             barClass: "bg-emerald-500",
+            hideDetail: true,
           } : undefined}
         />
         <StatCard
-          title="Current Factory Number"
-          value={stockControlData == null ? "…" : (stockControlData.productionFridgeTotal ?? 0).toLocaleString()}
-          subtitle="Tap for pack report"
+          title="Packs Wrapped"
+          value={batchesLoading ? "…" : formatProgressValue(totalBatches?.packsWrapped ?? 0, totalBatches?.packsTotal ?? 0)}
+          subtitle={stockControlData == null
+            ? "Tap for pack report"
+            : `Factory #${(stockControlData.productionFridgeTotal ?? 0).toLocaleString()} · tap for pack report`}
           icon={Thermometer}
           color="text-cyan-500"
           bg="bg-cyan-500/10"
           href="/pack-report"
-          progress={!batchesLoading && (totalBatches?.flavoursTotal ?? 0) > 0 ? {
-            done: totalBatches!.flavoursWrapped,
-            total: totalBatches!.flavoursTotal,
-            label: "flavours wrapped",
+          progress={!batchesLoading && (totalBatches?.packsTotal ?? 0) > 0 ? {
+            done: totalBatches!.packsWrapped,
+            total: totalBatches!.packsTotal,
+            label: "packs wrapped",
             barClass: "bg-cyan-500",
+            hideDetail: true,
           } : undefined}
         />
         <StatCard
@@ -978,7 +992,15 @@ function GoveeTempTile() {
 /** Optional at-a-glance progress under the headline number. Purely visual —
  *  `done / total` with a slim bar so nobody has to click into the card to see
  *  where the day is up to. `barClass` matches the card's accent colour. */
-type StatProgress = { done: number; total: number; label: string; barClass: string };
+type StatProgress = { done: number; total: number; label: string; barClass: string; hideDetail?: boolean };
+
+/** "44 / 46" once work has started; just "46" while nothing's done yet. The
+ *  fraction IS the headline — per Graeme, progress is the biggest detail on
+ *  show, so it belongs in the big number rather than under the bar. */
+function formatProgressValue(done: number, total: number): string {
+  if (total <= 0) return "0";
+  return done > 0 ? `${done} / ${total}` : total.toString();
+}
 
 function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, progress }: any & { progress?: StatProgress }) {
   const pct = progress && progress.total > 0
@@ -991,7 +1013,7 @@ function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, progres
           <Icon className="w-6 h-6" />
         </div>
         <p className="text-sm font-medium text-muted-foreground leading-snug">{title}</p>
-        <h3 className="text-3xl font-display font-bold leading-none">{value}</h3>
+        <h3 className="text-3xl font-display font-bold leading-none tabular-nums whitespace-nowrap">{value}</h3>
         {subtitle && (
           <p className="text-xs text-muted-foreground leading-snug">{subtitle}</p>
         )}
@@ -1003,9 +1025,11 @@ function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, progres
                 style={{ width: `${pct}%` }}
               />
             </div>
-            <p className="text-xs text-muted-foreground mt-1 tabular-nums leading-snug">
-              {progress.done} / {progress.total} {progress.label}
-            </p>
+            {!progress.hideDetail && (
+              <p className="text-xs text-muted-foreground mt-1 tabular-nums leading-snug">
+                {progress.done} / {progress.total} {progress.label}
+              </p>
+            )}
           </div>
         )}
       </div>
