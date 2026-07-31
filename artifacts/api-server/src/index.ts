@@ -1398,6 +1398,14 @@ async function runStartupMigrations() {
       END $$;
     `);
 
+    // Founder Focus goal URLs + ritual recurrence — see
+    // lib/db/migrations/0039_founder_goal_urls_and_recurrence.sql.
+    await db.execute(sql`ALTER TABLE founder_goals ADD COLUMN IF NOT EXISTS url TEXT`);
+    await db.execute(sql`ALTER TABLE founder_recurring_items ADD COLUMN IF NOT EXISTS url TEXT`);
+    await db.execute(sql`ALTER TABLE founder_recurring_items ADD COLUMN IF NOT EXISTS schedule TEXT NOT NULL DEFAULT 'daily'`);
+    await db.execute(sql`ALTER TABLE founder_recurring_items ADD COLUMN IF NOT EXISTS schedule_day INTEGER`);
+    await db.execute(sql`ALTER TABLE founder_recurring_items ADD COLUMN IF NOT EXISTS anchor_date DATE`);
+
     // Founder settings — see lib/db/migrations/0036_founder_settings.sql.
     // Founder-only k/v (CalDAV credentials etc.) — kept out of app_settings
     // because that table is readable by ordinary logged-in users.

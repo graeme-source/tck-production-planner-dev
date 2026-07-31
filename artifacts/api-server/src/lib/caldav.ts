@@ -95,16 +95,27 @@ async function getAccount(appleId: string, password: string): Promise<CachedAcco
   const cached = accountCache.get(key);
   if (cached && Date.now() < cached.expiry) return cached;
 
-  const client = await createDAVClient({
-    serverUrl: ICLOUD_SERVER,
-    credentials: { username: appleId, password },
-    authMethod: "Basic",
-    defaultAccountType: "caldav",
-  });
-  const calendars = (await client.fetchCalendars()).filter(supportsEvents);
-  const account: CachedAccount = { client, calendars, expiry: Date.now() + ACCOUNT_TTL_MS };
-  accountCache.set(key, account);
-  return account;
+  try {
+    const client = await createDAVClient({
+      serverUrl: ICLOUD_SERVER,
+      credentials: { username: appleId, password },
+      authMethod: "Basic",
+      defaultAccountType: "caldav",
+    });
+    const calendars = (await client.fetchCalendars()).filter(supportsEvents);
+    const account: CachedAccount = { client, calendars, expiry: Date.now() + ACCOUNT_TTL_MS };
+    accountCache.set(key, account);
+    return account;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // tsdav surfaces a failed iCloud sign-in as a missing principalUrl
+    // rather than a 401 — translate wherever the account is fetched so the
+    // day-view banner gets the same readable message as the connect card.
+    if (/401|unauthorized|credentials|principalUrl/i.test(msg)) {
+      throw new Error("iCloud rejected the sign-in — the app-specific password has likely been revoked. Generate a new one at account.apple.com and reconnect.");
+    }
+    throw err;
+  }
 }
 
 export interface CalendarInfo {
@@ -123,11 +134,7 @@ export async function verifyCaldav(appleId: string, password: string): Promise<C
   } catch (err) {
     accountCache.delete(`${appleId}|${password}`);
     const msg = err instanceof Error ? err.message : String(err);
-    // tsdav surfaces a failed iCloud sign-in as a missing principalUrl
-    // rather than a 401, so treat that as bad credentials too.
-    if (/401|unauthorized|credentials|principalUrl/i.test(msg)) {
-      throw new Error("iCloud rejected the sign-in — check the Apple ID and app-specific password (generate one at account.apple.com → Sign-In & Security).");
-    }
+    if (msg.startsWith("iCloud rejected")) throw err; // already friendly (getAccount)
     throw new Error(`Could not reach iCloud CalDAV: ${msg}`);
   }
 }
