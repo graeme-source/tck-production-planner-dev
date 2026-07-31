@@ -409,10 +409,87 @@ router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
   res.json(mapRow(row));
 });
 
+// Sixteen tables hold foreign keys into ingredients — recipes and prep the
+// operator can unpick, but also history that must never be unpicked
+// (purchase orders, stock entries, prep completions). A referenced
+// ingredient therefore can't be hard-deleted; explain what's holding it
+// instead of surfacing a raw FK error (2026-07-31: duplicate Oregano).
 router.delete("/:id", async (req, res) => {
   const id = Number(req.params.id);
-  await db.delete(ingredientsTable).where(eq(ingredientsTable.id, id));
-  res.status(204).send();
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid ingredient id" }); return; }
+
+  try {
+    await db.delete(ingredientsTable).where(eq(ingredientsTable.id, id));
+    res.status(204).send();
+  } catch (err) {
+    const pgCode =
+      (err as { cause?: { code?: string } }).cause?.code ??
+      (err as { code?: string }).code;
+    if (pgCode !== "23503") {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[ingredients] delete error:", msg);
+      res.status(500).json({ error: msg });
+      return;
+    }
+
+    // Build a human explanation of what still references it.
+    const [ing] = await db.select({ name: ingredientsTable.name })
+      .from(ingredientsTable).where(eq(ingredientsTable.id, id));
+    const name = ing?.name ?? `Ingredient ${id}`;
+
+    const [recipes, subRecipes, historyCounts] = await Promise.all([
+      db.execute<{ name: string }>(sql`
+        SELECT DISTINCT r.name FROM recipes r
+        WHERE r.id IN (
+          SELECT recipe_id FROM recipe_ingredients WHERE ingredient_id = ${id} OR marinade_for_ingredient_id = ${id}
+          UNION SELECT recipe_id FROM recipe_meat_marinades WHERE raw_meat_ingredient_id = ${id} OR marinade_ingredient_id = ${id}
+          UNION SELECT recipe_id FROM recipe_sub_recipes WHERE marinade_for_ingredient_id = ${id}
+        ) ORDER BY r.name
+      `),
+      db.execute<{ name: string }>(sql`
+        SELECT DISTINCT s.name FROM sub_recipes s
+        JOIN sub_recipe_ingredients si ON si.sub_recipe_id = s.id
+        WHERE si.ingredient_id = ${id} ORDER BY s.name
+      `),
+      db.execute<{ purchase_orders: number; stock_rows: number; prep_rows: number; kanbans: number }>(sql`
+        SELECT
+          (SELECT count(*)::int FROM purchase_order_lines WHERE ingredient_id = ${id}) AS purchase_orders,
+          (SELECT count(*)::int FROM stock_entries WHERE ingredient_id = ${id})
+            + (SELECT count(*)::int FROM stock_transfers WHERE ingredient_id = ${id})
+            + (SELECT count(*)::int FROM daily_stock_checks WHERE ingredient_id = ${id}) AS stock_rows,
+          (SELECT count(*)::int FROM prep_completions WHERE ingredient_id = ${id})
+            + (SELECT count(*)::int FROM prep_deferrals WHERE ingredient_id = ${id}) AS prep_rows,
+          (SELECT count(*)::int FROM kanban_items WHERE ingredient_id = ${id}) AS kanbans
+      `),
+    ]);
+
+    const h = historyCounts.rows[0];
+    const parts: string[] = [];
+    const recipeNames = recipes.rows.map(r => r.name);
+    const subNames = subRecipes.rows.map(r => r.name);
+    if (recipeNames.length) parts.push(`recipes: ${recipeNames.slice(0, 5).join(", ")}${recipeNames.length > 5 ? ` (+${recipeNames.length - 5} more)` : ""}`);
+    if (subNames.length) parts.push(`sub-recipes: ${subNames.slice(0, 5).join(", ")}${subNames.length > 5 ? ` (+${subNames.length - 5} more)` : ""}`);
+    if (h && h.purchase_orders > 0) parts.push(`${h.purchase_orders} purchase-order line${h.purchase_orders === 1 ? "" : "s"}`);
+    if (h && h.stock_rows > 0) parts.push(`${h.stock_rows} stock record${h.stock_rows === 1 ? "" : "s"}`);
+    if (h && h.prep_rows > 0) parts.push(`${h.prep_rows} prep record${h.prep_rows === 1 ? "" : "s"}`);
+    if (h && h.kanbans > 0) parts.push(`${h.kanbans} kanban item${h.kanbans === 1 ? "" : "s"}`);
+
+    const usage = parts.length ? parts.join(" · ") : "other records";
+    const hasHistory = !!h && (h.purchase_orders > 0 || h.stock_rows > 0 || h.prep_rows > 0);
+    res.status(409).json({
+      error: `Can't delete "${name}" — still referenced by ${usage}.` +
+        (recipeNames.length || subNames.length ? " Remove it from those recipes first." : "") +
+        (hasHistory ? " Order/stock history can't be detached — mark the ingredient inactive instead of deleting it." : ""),
+      usedBy: {
+        recipes: recipeNames,
+        subRecipes: subNames,
+        purchaseOrderLines: h?.purchase_orders ?? 0,
+        stockRecords: h?.stock_rows ?? 0,
+        prepRecords: h?.prep_rows ?? 0,
+        kanbanItems: h?.kanbans ?? 0,
+      },
+    });
+  }
 });
 
 interface ImportRow {
