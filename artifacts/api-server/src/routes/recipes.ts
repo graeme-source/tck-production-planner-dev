@@ -1556,6 +1556,177 @@ router.get("/:id/ingredient-deck", async (req, res) => {
   }
 });
 
+// ── Push ingredient deck to the Shopify website ────────────────────────────
+// Writes the deck (with allergen bolding), the standard allergen statement
+// and the legal disclaimer into the `custom.ingredient_deck` rich-text
+// metafield on every Shopify PRODUCT linked to this recipe (via the main /
+// wonky / 8-pack variant mappings). That metafield is what the storefront
+// theme renders on product pages, so this replaces the old copy-paste flow.
+
+type RichRun = { type: "text"; value: string; bold?: boolean };
+
+/** Convert the deck's markdown-style **Allergen** markers into Shopify
+ *  rich-text runs. Split on `**`: odd segments are the bolded ones. */
+function mdBoldToRichRuns(text: string): RichRun[] {
+  const runs: RichRun[] = [];
+  text.split("**").forEach((part, i) => {
+    if (!part) return;
+    runs.push(i % 2 === 1 ? { type: "text", value: part, bold: true } : { type: "text", value: part });
+  });
+  return runs;
+}
+
+router.post("/:id/push-ingredient-deck", requireAdmin, async (req, res) => {
+  const parsed = RecipeIdParams.safeParse({ id: req.params.id });
+  if (!parsed.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
+  const recipeId = parsed.data.id;
+  // ?dryRun=1 builds everything and reports which products WOULD be updated
+  // without writing — the UI uses it as the confirm step before publishing.
+  const dryRun = req.query["dryRun"] === "1";
+  const { shopifyGraphQL } = await import("../services/shopify");
+
+  try {
+    const [recipe] = await db.select().from(recipesTable).where(eq(recipesTable.id, recipeId));
+    if (!recipe) { res.status(404).json({ error: "Recipe not found" }); return; }
+
+    // Deck over loopback so the pushed content always matches the app's own
+    // deck view (same pattern as the spec-sheet PDF).
+    const port = process.env["PORT"];
+    if (!port) { res.status(500).json({ error: "Server PORT not set — cannot build the deck" }); return; }
+    const deckResp = await fetch(`http://127.0.0.1:${port}/api/recipes/${recipeId}/ingredient-deck`, {
+      headers: { cookie: req.headers.cookie ?? "" },
+    });
+    if (!deckResp.ok) { res.status(502).json({ error: "Could not build the ingredient deck" }); return; }
+    const deck = (await deckResp.json()) as {
+      deckText: string;
+      mayContainStatement: string | null;
+      missingDeclarations: string[];
+      unwrappedDeclarations: string[];
+      isComplete: boolean;
+    };
+
+    // Never publish an incomplete (potentially unlawful) declaration.
+    if (!deck.isComplete) {
+      res.status(422).json({
+        error: "The deck isn't ready to publish — fix the flagged declarations first.",
+        missingDeclarations: deck.missingDeclarations,
+        unwrappedDeclarations: deck.unwrappedDeclarations,
+      });
+      return;
+    }
+
+    const [disclaimerRow] = await db
+      .select({ value: appSettingsTable.value })
+      .from(appSettingsTable)
+      .where(eq(appSettingsTable.key, "legal_disclaimer_statement"));
+    const disclaimer = disclaimerRow?.value || null;
+
+    // All Shopify variants linked to this recipe → their parent products.
+    const mappingRows = await db.execute<{
+      shopify_variant_id: string | null;
+      wonky_variant_id: string | null;
+      eight_pack_variant_id: string | null;
+    }>(sql`
+      SELECT shopify_variant_id, wonky_variant_id, eight_pack_variant_id
+      FROM recipe_shopify_mappings WHERE recipe_id = ${recipeId}
+    `);
+    const variantIds = [...new Set(
+      mappingRows.rows
+        .flatMap(r => [r.shopify_variant_id, r.wonky_variant_id, r.eight_pack_variant_id])
+        .filter((v): v is string => !!v && v.trim() !== ""),
+    )];
+    if (variantIds.length === 0) {
+      res.status(422).json({ error: "This recipe has no linked Shopify variants — link it on the recipe's Shopify mapping first." });
+      return;
+    }
+
+    const nodes = await shopifyGraphQL<{
+      nodes: Array<{ id: string; product: { id: string; title: string } } | null>;
+    }>(
+      `query ($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          ... on ProductVariant { id product { id title } }
+        }
+      }`,
+      { ids: variantIds.map(v => `gid://shopify/ProductVariant/${v}`) },
+    );
+    const products = new Map<string, string>(); // gid → title
+    for (const n of nodes.nodes) {
+      if (n?.product) products.set(n.product.id, n.product.title);
+    }
+    if (products.size === 0) {
+      res.status(422).json({ error: "None of the linked variants exist on Shopify any more — re-link the recipe." });
+      return;
+    }
+
+    // Shopify rich-text document: deck paragraph, allergen statement,
+    // legal disclaimer.
+    const children: Array<{ type: "paragraph"; children: RichRun[] }> = [
+      { type: "paragraph", children: mdBoldToRichRuns(deck.deckText) },
+    ];
+    const allergenRuns: RichRun[] = [
+      { type: "text", value: "Allergens are shown in " },
+      { type: "text", value: "Bold", bold: true },
+      { type: "text", value: "." },
+    ];
+    if (deck.mayContainStatement) {
+      allergenRuns.push({ type: "text", value: ` ${deck.mayContainStatement.trim().replace(/\.?$/, ".")}` });
+    }
+    children.push({ type: "paragraph", children: allergenRuns });
+    if (disclaimer) {
+      children.push({
+        type: "paragraph",
+        children: [
+          { type: "text", value: "Legal Disclaimer: ", bold: true },
+          { type: "text", value: disclaimer },
+        ],
+      });
+    }
+    const value = JSON.stringify({ type: "root", children });
+
+    if (dryRun) {
+      res.json({ dryRun: true, wouldPush: [...products.values()], metafield: "custom.ingredient_deck", richTextValue: value });
+      return;
+    }
+
+    const result = await shopifyGraphQL<{
+      metafieldsSet: {
+        metafields: Array<{ id: string }> | null;
+        userErrors: Array<{ field: string[] | null; message: string }>;
+      };
+    }>(
+      `mutation ($metafields: [MetafieldsSetInput!]!) {
+        metafieldsSet(metafields: $metafields) {
+          metafields { id }
+          userErrors { field message }
+        }
+      }`,
+      {
+        metafields: [...products.keys()].map(ownerId => ({
+          ownerId,
+          namespace: "custom",
+          key: "ingredient_deck",
+          type: "rich_text_field",
+          value,
+        })),
+      },
+    );
+    if (result.metafieldsSet.userErrors.length > 0) {
+      res.status(502).json({ error: `Shopify rejected the update: ${result.metafieldsSet.userErrors.map(e => e.message).join("; ")}` });
+      return;
+    }
+
+    res.json({
+      pushed: [...products.values()],
+      metafield: "custom.ingredient_deck",
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[recipes] push-ingredient-deck error:", msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
 // BRC-style finished-product specification sheet (PDF), for trade buyers.
 // Reuses the ingredient-deck and nutritionals endpoints over loopback (same
 // pattern as the production-plan lock-pdf) so the allergen/QUID/nutrition

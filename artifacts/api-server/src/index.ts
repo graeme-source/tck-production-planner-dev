@@ -122,6 +122,13 @@ async function runStartupMigrations() {
       VALUES ('may_contain_statement', 'May also contain traces of nuts, peanuts, egg, soya, celery, sulphites, mustard, wheat and milk', NOW())
       ON CONFLICT (key) DO NOTHING
     `);
+    // Appended after the deck + allergen statement when pushing ingredient
+    // decks to the Shopify website (custom.ingredient_deck metafield).
+    await db.execute(sql`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES ('legal_disclaimer_statement', 'Ingredients and Allergens for all of our products can be found on our website however, from time to time ingredients do vary and subsequently, we ask you to always check the packaging for a complete and accurate list of ingredients and allergens before consuming our products.', NOW())
+      ON CONFLICT (key) DO NOTHING
+    `);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS postcode_validations (
         id SERIAL PRIMARY KEY,

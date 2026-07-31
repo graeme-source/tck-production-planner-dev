@@ -4,7 +4,7 @@ import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import {
   Loader2, ClipboardList, Beaker, AlertTriangle, Copy, Check, Tag, Settings2, Printer, Calculator,
-  CheckCircle2,
+  CheckCircle2, UploadCloud,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { BundleCalculator } from "@/components/bundle-calculator";
@@ -174,6 +174,36 @@ function DeckPanel({ recipe }: { recipe: RecipeItem }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<null | "plain" | "label">(null);
+  // Shopify push: dry-run first so the founder sees exactly which website
+  // products will be overwritten, then a confirm click does the real write.
+  const [pushState, setPushState] = useState<
+    | { phase: "idle" }
+    | { phase: "checking" }
+    | { phase: "confirm"; products: string[] }
+    | { phase: "pushing"; products: string[] }
+    | { phase: "done"; products: string[] }
+    | { phase: "error"; message: string }
+  >({ phase: "idle" });
+
+  async function pushToShopify(confirm: boolean) {
+    setPushState(confirm ? { phase: "pushing", products: pushState.phase === "confirm" ? pushState.products : [] } : { phase: "checking" });
+    try {
+      const res = await fetch(`${BASE}/api/recipes/${recipe.id}/push-ingredient-deck${confirm ? "" : "?dryRun=1"}`, {
+        method: "POST",
+        credentials: "include",
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        const detail = [body.error, ...(body.missingDeclarations ?? []), ...(body.unwrappedDeclarations ?? [])]
+          .filter(Boolean).join(" — ");
+        throw new Error(detail || `HTTP ${res.status}`);
+      }
+      if (body.dryRun) setPushState({ phase: "confirm", products: body.wouldPush });
+      else setPushState({ phase: "done", products: body.pushed });
+    } catch (e) {
+      setPushState({ phase: "error", message: e instanceof Error ? e.message : String(e) });
+    }
+  }
 
   useEffect(() => {
     setLoading(true);
@@ -224,6 +254,56 @@ function DeckPanel({ recipe }: { recipe: RecipeItem }) {
             {copied === "label" ? <><Check className="w-3 h-3" /> Copied!</> : <><Copy className="w-3 h-3" /> Copy for Label Live</>}
           </button>
         </div>
+      </div>
+
+      {/* ── Push to the Shopify website (custom.ingredient_deck) ─────────── */}
+      <div className="bg-secondary/20 rounded-lg p-4 border border-border space-y-2">
+        <p className="text-sm font-medium flex items-center gap-1.5">
+          <UploadCloud className="w-4 h-4 text-primary" /> Website ingredient deck
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Publishes this deck — with the allergen statement and legal disclaimer — to the
+          ingredient-deck field on every Shopify product linked to this recipe.
+        </p>
+        {pushState.phase === "confirm" ? (
+          <div className="space-y-2">
+            <p className="text-sm">
+              This will overwrite the website deck on:{" "}
+              <b>{pushState.products.join(", ")}</b>
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => pushToShopify(true)}
+                className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90">
+                Confirm — publish to website
+              </button>
+              <button onClick={() => setPushState({ phase: "idle" })}
+                className="px-3 py-1.5 rounded-lg border border-border text-xs hover:bg-secondary/50">
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : pushState.phase === "done" ? (
+          <p className="text-sm text-primary flex items-center gap-1.5">
+            <Check className="w-4 h-4" /> Published to {pushState.products.join(", ")}.
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            <button
+              onClick={() => pushToShopify(false)}
+              disabled={pushState.phase === "checking" || pushState.phase === "pushing" || !data.isComplete}
+              title={!data.isComplete ? "Fix the flagged declarations below before publishing." : undefined}
+              className="px-3 py-1.5 rounded-lg border border-border text-xs font-medium hover:bg-secondary/50 disabled:opacity-50 flex items-center gap-1.5"
+            >
+              {pushState.phase === "checking" || pushState.phase === "pushing"
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <UploadCloud className="w-3.5 h-3.5" />}
+              {pushState.phase === "checking" ? "Checking…" : pushState.phase === "pushing" ? "Publishing…" : "Push to Shopify…"}
+            </button>
+            {pushState.phase === "error" && (
+              <p className="text-xs text-destructive">{pushState.message}</p>
+            )}
+          </div>
+        )}
       </div>
 
       {data.missingDeclarations && data.missingDeclarations.length > 0 && (

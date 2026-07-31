@@ -134,7 +134,7 @@ async function shopifyFetch(path: string, params?: Record<string, string>) {
  * 502 a user-facing endpoint. Not a general solution — heavy/frequent
  * callers should implement their own throttling.
  */
-export async function shopifyGraphQL<T>(query: string): Promise<T> {
+export async function shopifyGraphQL<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
   const token = await getAccessToken();
   for (let attempt = 1; attempt <= 2; attempt++) {
     const res = await fetch(`${API_BASE}/graphql.json`, {
@@ -143,7 +143,7 @@ export async function shopifyGraphQL<T>(query: string): Promise<T> {
         "X-Shopify-Access-Token": token,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ query }),
+      body: JSON.stringify(variables ? { query, variables } : { query }),
     });
 
     if (!res.ok) {
