@@ -174,6 +174,17 @@ export async function runBackup(): Promise<void> {
 // ── Scheduler — daily 18:00 Europe/London ─────────────────────────────────────
 
 export function startBackupScheduler(): void {
+  // Disabled 2026-07-31: this job depends on the Replit GitHub connector,
+  // which died when the app moved to Railway — it has silently failed every
+  // night since 9 April (last artifact: backups/prod/2026-04-09.sql.gz).
+  // Railway's own daily volume backups on the Postgres service are the
+  // working backup regime now (17:08 UK, 6-day retention). To resurrect
+  // this job, replace the connector with a PAT and set BACKUPS_ENABLED=true.
+  if (process.env["BACKUPS_ENABLED"] !== "true") {
+    console.log("[backup] scheduler disabled (BACKUPS_ENABLED != true) — Railway volume backups are the active regime");
+    return;
+  }
+
   // Staging: don't run the backup scheduler. Production is the source
   // of truth for backups and we don't want staging clobbering the
   // backups/YYYY-MM-DD.sql.gz bucket with its snapshot data.
