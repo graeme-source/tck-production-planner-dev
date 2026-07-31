@@ -9,7 +9,7 @@ import {
   ChevronLeft, ChevronRight, Plus, Trash2, Check, X, Play,
   CalendarDays, Inbox, Target, LayoutTemplate, CircleDashed,
   SkipForward, Pencil, Repeat, Copy, Video, ExternalLink, Eye, EyeOff,
-  BellRing, BellOff,
+  BellRing, BellOff, GripVertical, Sparkles, Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -22,9 +22,12 @@ interface Goal {
   pillarId: number;
   title: string;
   detail: string | null;
+  url: string | null;
   status: "active" | "done" | "parked";
   sort: number;
 }
+
+type RecurringSchedule = "daily" | "weekdays" | "weekly" | "biweekly";
 
 interface Pillar {
   id: number;
@@ -77,7 +80,27 @@ interface RecurringItem {
   id: number;
   pillarId: number;
   title: string;
+  url: string | null;
+  schedule: RecurringSchedule;
+  scheduleDay: number | null;
   ticked: boolean;
+  dueOnDate: boolean;
+}
+
+const SCHEDULE_LABELS: Record<RecurringSchedule, string> = {
+  daily: "Every day",
+  weekdays: "Weekdays",
+  weekly: "Weekly",
+  biweekly: "Every 2 weeks",
+};
+
+// 0=Sunday..6=Saturday, matching Date.getDay().
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+function scheduleLabel(r: RecurringItem): string {
+  if (r.schedule === "weekly" && r.scheduleDay != null) return `Every ${DAY_NAMES[r.scheduleDay]}`;
+  if (r.schedule === "biweekly" && r.scheduleDay != null) return `Every 2nd ${DAY_NAMES[r.scheduleDay]}`;
+  return SCHEDULE_LABELS[r.schedule];
 }
 
 interface Overview {
@@ -189,11 +212,11 @@ export default function FounderFocus() {
     onSuccess: invalidate,
   });
   const addGoal = useMutation({
-    mutationFn: (g: { pillarId: number; title: string }) => api("/goals", { method: "POST", body: JSON.stringify(g) }),
+    mutationFn: (g: { pillarId: number; title: string; url?: string }) => api("/goals", { method: "POST", body: JSON.stringify(g) }),
     onSuccess: invalidate,
   });
   const patchGoal = useMutation({
-    mutationFn: ({ id, ...fields }: { id: number; status?: Goal["status"]; title?: string }) =>
+    mutationFn: ({ id, ...fields }: { id: number; status?: Goal["status"]; title?: string; url?: string | null }) =>
       api(`/goals/${id}`, { method: "PATCH", body: JSON.stringify(fields) }),
     onSuccess: invalidate,
   });
@@ -211,8 +234,13 @@ export default function FounderFocus() {
     onSuccess: invalidate,
   });
   const addRecurring = useMutation({
-    mutationFn: (r: { pillarId: number; title: string }) =>
+    mutationFn: (r: { pillarId: number; title: string; url?: string; schedule?: RecurringSchedule; scheduleDay?: number | null }) =>
       api("/recurring-items", { method: "POST", body: JSON.stringify(r) }),
+    onSuccess: invalidate,
+  });
+  const patchRecurring = useMutation({
+    mutationFn: ({ id, ...fields }: { id: number; title?: string; url?: string | null }) =>
+      api(`/recurring-items/${id}`, { method: "PATCH", body: JSON.stringify(fields) }),
     onSuccess: invalidate,
   });
   const deleteRecurring = useMutation({
@@ -311,6 +339,67 @@ export default function FounderFocus() {
   // Accordion: one pillar open at a time keeps the rail scannable.
   const [openPillarId, setOpenPillarId] = useState<number | null>(null);
 
+  // ── AI replan ────────────────────────────────────────────────────────────
+  const [replanOpen, setReplanOpen] = useState(false);
+  const [replanPrompt, setReplanPrompt] = useState("");
+  const [replanNote, setReplanNote] = useState<string | null>(null);
+  const replan = useMutation({
+    mutationFn: () =>
+      api("/replan", { method: "POST", body: JSON.stringify({ date: dateStr, prompt: replanPrompt.trim() }) }) as Promise<{ explanation: string }>,
+    onSuccess: r => {
+      setReplanNote(r.explanation);
+      setReplanPrompt("");
+      setReplanOpen(false);
+      invalidate();
+    },
+    onError: (e: Error) => setReplanNote(e.message),
+  });
+
+  // ── Drag-to-move / drag-to-resize commits ────────────────────────────────
+  const [timelineBusy, setTimelineBusy] = useState(false);
+
+  async function handleMoveBlock(id: number, newStart: number) {
+    const b = blocks.find(x => x.id === id);
+    if (!b || timelineBusy) return;
+    const dur = b.endMin - b.startMin;
+    const start = Math.max(0, Math.min(1440 - dur, newStart));
+    setTimelineBusy(true);
+    try {
+      await api(`/blocks/${id}`, { method: "PATCH", body: JSON.stringify({ startMin: start, endMin: start + dur }) });
+    } finally {
+      setTimelineBusy(false);
+      invalidate();
+    }
+  }
+
+  // Growing a block pushes later planned blocks down until the overlap
+  // clears (cascading); shrinking just leaves a gap.
+  async function handleResizeBlock(id: number, newEnd: number) {
+    const b = blocks.find(x => x.id === id);
+    if (!b || timelineBusy) return;
+    const end = Math.max(b.startMin + 5, Math.min(1440, newEnd));
+    setTimelineBusy(true);
+    try {
+      await api(`/blocks/${id}`, { method: "PATCH", body: JSON.stringify({ endMin: end }) });
+      if (end > b.endMin) {
+        const later = blocks
+          .filter(x => x.id !== id && x.status === "planned" && x.startMin >= b.endMin)
+          .sort((p, q) => p.startMin - q.startMin);
+        let cursor = end;
+        for (const x of later) {
+          if (x.startMin >= cursor) break;
+          const dur = x.endMin - x.startMin;
+          const ns = Math.min(cursor, 1440 - dur);
+          await api(`/blocks/${x.id}`, { method: "PATCH", body: JSON.stringify({ startMin: ns, endMin: ns + dur }) });
+          cursor = ns + dur;
+        }
+      }
+    } finally {
+      setTimelineBusy(false);
+      invalidate();
+    }
+  }
+
   // Recurring rituals attach to the FIRST block of their pillar for the day,
   // so "30-min one-on-one" shows inside the morning Team & Coaching block
   // and simply doesn't appear on days whose template skips the pillar.
@@ -323,6 +412,7 @@ export default function FounderFocus() {
     }
     const m = new Map<number, RecurringItem[]>();
     for (const item of data?.recurringItems ?? []) {
+      if (!item.dueOnDate) continue;
       const blockId = firstBlockForPillar.get(item.pillarId);
       if (blockId == null) continue;
       if (!m.has(blockId)) m.set(blockId, []);
@@ -435,8 +525,52 @@ export default function FounderFocus() {
             >
               <LayoutTemplate className="w-3.5 h-3.5" /> Fill from template
             </button>
+            <button
+              onClick={() => { setReplanOpen(o => !o); setReplanNote(null); }}
+              className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 flex items-center gap-1.5"
+            >
+              <Sparkles className="w-3.5 h-3.5" /> Replan with AI
+            </button>
           </div>
         </div>
+
+        {replanOpen && (
+          <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 space-y-2">
+            <textarea
+              value={replanPrompt}
+              onChange={e => setReplanPrompt(e.target.value)}
+              placeholder={'e.g. "Finishing at midday today — fit in two hours of sales & marketing before I go."'}
+              rows={2}
+              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm resize-y"
+              autoFocus
+            />
+            <div className="flex items-center gap-2 justify-end">
+              <span className="text-xs text-muted-foreground mr-auto">
+                Meetings and anything already done stay put — only the rest of the day is rearranged.
+              </span>
+              <button onClick={() => setReplanOpen(false)} className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-secondary/50">
+                Cancel
+              </button>
+              <button
+                onClick={() => replan.mutate()}
+                disabled={replan.isPending || !replanPrompt.trim()}
+                className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {replan.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                {replan.isPending ? "Replanning…" : "Replan"}
+              </button>
+            </div>
+          </div>
+        )}
+        {replanNote && (
+          <div className="rounded-xl border border-border bg-secondary/30 px-3 py-2 text-sm flex items-start gap-2">
+            <Sparkles className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
+            <span className="flex-1">{replanNote}</span>
+            <button onClick={() => setReplanNote(null)} className="p-1 text-muted-foreground" aria-label="Dismiss">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {isLoading ? (
           <Skeleton className="h-24 w-full" />
@@ -445,114 +579,20 @@ export default function FounderFocus() {
         ) : visibleTimeline.length === 0 ? (
           <p className="text-sm text-muted-foreground">Everything's done or wrapped up — nice. Toggle "Show completed" to review the day.</p>
         ) : (
-          <ul className="space-y-2">
-            {visibleTimeline.map(t => t.kind === "event" ? (
-              <li key={`e-${t.event.calendar}-${t.startMin}-${t.event.title}`}
-                className={cn(
-                  "flex items-center gap-3 rounded-xl border border-dashed border-border p-3 bg-secondary/30",
-                  isToday && t.startMin <= now && now < t.endMin && "ring-2 ring-primary/60",
-                )}>
-                <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center flex-shrink-0">
-                  <CalendarDays className="w-4 h-4 text-muted-foreground" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium leading-tight">{t.event.title}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {minToTime(t.startMin)}–{minToTime(t.endMin)}
-                    <span className="ml-2">{t.event.calendar} · from your diary</span>
-                  </p>
-                </div>
-                {t.event.joinUrl && (
-                  <a
-                    href={t.event.joinUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={cn(
-                      "px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 flex-shrink-0",
-                      t.event.joinIsCall
-                        ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                        : "border border-border hover:bg-secondary/50 text-muted-foreground",
-                    )}
-                  >
-                    {t.event.joinIsCall ? <Video className="w-3.5 h-3.5" /> : <ExternalLink className="w-3.5 h-3.5" />}
-                    {t.event.joinIsCall ? "Join" : "Open"}
-                  </a>
-                )}
-              </li>
-            ) : (() => {
-              const b = t.block;
-              const pillar = b.pillarId != null ? pillarById.get(b.pillarId) : undefined;
-              const color = pillar?.color ?? DEFAULT_PILLAR_COLOR;
-              const isCurrent = isToday && b.startMin <= now && now < b.endMin;
-              const rituals = recurringByBlockId.get(b.id) ?? [];
-              return (
-                <li key={b.id}
-                  className={cn(
-                    "rounded-xl border border-border p-3 bg-background",
-                    b.status === "done" && "opacity-60",
-                    b.status === "skipped" && "opacity-40",
-                    isCurrent && b.status === "planned" && "ring-2 ring-primary/60",
-                  )}
-                  style={{ borderLeft: `5px solid ${color}` }}
-                >
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => patchBlock.mutate({ id: b.id, status: b.status === "done" ? "planned" : "done" })}
-                      className={cn(
-                        "w-8 h-8 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors",
-                        b.status === "done" ? "bg-primary border-primary text-primary-foreground" : "border-border hover:border-primary",
-                      )}
-                      aria-label={b.status === "done" ? "Mark not done" : "Mark done"}
-                    >
-                      {b.status === "done" ? <Check className="w-4 h-4" /> : <CircleDashed className="w-4 h-4 text-muted-foreground" />}
-                    </button>
-                    <div className="flex-1 min-w-0">
-                      <p className={cn("text-sm font-medium leading-tight", b.status !== "planned" && "line-through")}>
-                        {b.title}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {minToTime(b.startMin)}–{minToTime(b.endMin)}
-                        {pillar && pillar.name !== b.title && <span className="ml-2" style={{ color }}>{pillar.name}</span>}
-                        {b.status === "skipped" && <span className="ml-2">skipped</span>}
-                      </p>
-                    </div>
-                    {b.status === "planned" && (
-                      <button onClick={() => patchBlock.mutate({ id: b.id, status: "skipped" })}
-                        className="p-2 rounded-lg text-muted-foreground hover:bg-secondary/50" title="Skip this block" aria-label="Skip block">
-                        <SkipForward className="w-4 h-4" />
-                      </button>
-                    )}
-                    <button onClick={() => deleteBlock.mutate(b.id)}
-                      className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10" aria-label="Delete block">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                  {rituals.length > 0 && (
-                    <ul className="mt-2 ml-11 space-y-1.5">
-                      {rituals.map(r => (
-                        <li key={r.id} className="flex items-center gap-2 text-sm">
-                          <button
-                            onClick={() => tickRecurring.mutate({ id: r.id, ticked: !r.ticked })}
-                            className={cn(
-                              "w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 transition-colors",
-                              r.ticked ? "bg-primary border-primary text-primary-foreground" : "border-border hover:border-primary",
-                            )}
-                            aria-label={r.ticked ? `Untick ${r.title}` : `Tick ${r.title}`}
-                          >
-                            {r.ticked && <Check className="w-3 h-3" />}
-                          </button>
-                          <span className={cn(r.ticked && "line-through text-muted-foreground")}>
-                            {r.title}
-                            <Repeat className="w-3 h-3 inline ml-1.5 text-muted-foreground" />
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </li>
-              );
-            })())}
-          </ul>
+          <DayTimeline
+            items={visibleTimeline}
+            pillarById={pillarById}
+            recurringByBlockId={recurringByBlockId}
+            isToday={isToday}
+            now={now}
+            busy={timelineBusy}
+            onMove={handleMoveBlock}
+            onResize={handleResizeBlock}
+            onToggleDone={b => patchBlock.mutate({ id: b.id, status: b.status === "done" ? "planned" : "done" })}
+            onSkip={b => patchBlock.mutate({ id: b.id, status: "skipped" })}
+            onDelete={id => deleteBlock.mutate(id)}
+            onTickRecurring={(id, ticked) => tickRecurring.mutate({ id, ticked })}
+          />
         )}
 
         <AddBlockForm
@@ -562,6 +602,14 @@ export default function FounderFocus() {
             addBlock.mutate({ date: dateStr, startMin, endMin, pillarId, ...(title ? { title } : {}) })}
         />
       </section>
+
+      {/* ── Weekly template (edits like a normal day once opened) ───────── */}
+      <TemplateEditor
+        pillars={data?.pillars ?? []}
+        pendingAdd={addTemplateRow.isPending}
+        onAdd={row => addTemplateRow.mutate(row)}
+        onDelete={id => deleteTemplateRow.mutate(id)}
+      />
 
       </div>{/* end main column */}
       <div className="space-y-6 min-w-0">
@@ -599,10 +647,12 @@ export default function FounderFocus() {
             open={openPillarId === p.id}
             onToggle={() => setOpenPillarId(id => (id === p.id ? null : p.id))}
             recurring={(data?.recurringItems ?? []).filter(r => r.pillarId === p.id)}
-            onAddGoal={title => addGoal.mutate({ pillarId: p.id, title })}
+            onAddGoal={(title, url) => addGoal.mutate({ pillarId: p.id, title, ...(url ? { url } : {}) })}
+            onEditGoal={(id, title, url) => patchGoal.mutate({ id, title, url })}
             onToggleGoal={g => patchGoal.mutate({ id: g.id, status: g.status === "done" ? "active" : "done" })}
             onDeleteGoal={id => deleteGoal.mutate(id)}
-            onAddRecurring={title => addRecurring.mutate({ pillarId: p.id, title })}
+            onAddRecurring={r => addRecurring.mutate({ pillarId: p.id, ...r })}
+            onEditRecurring={(id, title, url) => patchRecurring.mutate({ id, title, url })}
             onDeleteRecurring={id => deleteRecurring.mutate(id)}
             onRename={name => patchPillar.mutate({ id: p.id, name })}
             onTarget={pct => patchPillar.mutate({ id: p.id, targetSharePct: pct })}
@@ -614,14 +664,6 @@ export default function FounderFocus() {
 
       {/* ── Apple Calendar connection ───────────────────────────────────── */}
       <AppleCalendarCard />
-
-      {/* ── Weekly template ─────────────────────────────────────────────── */}
-      <TemplateEditor
-        pillars={data?.pillars ?? []}
-        pendingAdd={addTemplateRow.isPending}
-        onAdd={row => addTemplateRow.mutate(row)}
-        onDelete={id => deleteTemplateRow.mutate(id)}
-      />
 
       </div>{/* end right rail */}
       </div>{/* end two-column grid */}
@@ -884,22 +926,28 @@ function ParkingInput({ pending, onAdd }: { pending: boolean; onAdd: (text: stri
 }
 
 // ── Pillar card (accordion) ────────────────────────────────────────────────
-function PillarCard({ pillar, open, onToggle, recurring, onAddGoal, onToggleGoal, onDeleteGoal, onAddRecurring, onDeleteRecurring, onRename, onTarget, onArchive }: {
+function PillarCard({ pillar, open, onToggle, recurring, onAddGoal, onEditGoal, onToggleGoal, onDeleteGoal, onAddRecurring, onEditRecurring, onDeleteRecurring, onRename, onTarget, onArchive }: {
   pillar: Pillar;
   open: boolean;
   onToggle: () => void;
   recurring: RecurringItem[];
-  onAddGoal: (title: string) => void;
+  onAddGoal: (title: string, url: string | null) => void;
+  onEditGoal: (id: number, title: string, url: string | null) => void;
   onToggleGoal: (g: Goal) => void;
   onDeleteGoal: (id: number) => void;
-  onAddRecurring: (title: string) => void;
+  onAddRecurring: (r: { title: string; url?: string; schedule: RecurringSchedule; scheduleDay?: number | null }) => void;
+  onEditRecurring: (id: number, title: string, url: string | null) => void;
   onDeleteRecurring: (id: number) => void;
   onRename: (name: string) => void;
   onTarget: (pct: number | null) => void;
   onArchive: () => void;
 }) {
   const [newGoal, setNewGoal] = useState("");
+  const [newGoalUrl, setNewGoalUrl] = useState("");
   const [newRecurring, setNewRecurring] = useState("");
+  const [newRecurringUrl, setNewRecurringUrl] = useState("");
+  const [newRecurringSchedule, setNewRecurringSchedule] = useState<RecurringSchedule>("daily");
+  const [newRecurringDay, setNewRecurringDay] = useState(1); // Monday
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(pillar.name);
   const color = pillar.color ?? DEFAULT_PILLAR_COLOR;
@@ -908,8 +956,21 @@ function PillarCard({ pillar, open, onToggle, recurring, onAddGoal, onToggleGoal
 
   function submitGoal() {
     if (!newGoal.trim()) return;
-    onAddGoal(newGoal.trim());
+    onAddGoal(newGoal.trim(), newGoalUrl.trim() || null);
     setNewGoal("");
+    setNewGoalUrl("");
+  }
+
+  function submitRecurring() {
+    if (!newRecurring.trim()) return;
+    onAddRecurring({
+      title: newRecurring.trim(),
+      ...(newRecurringUrl.trim() ? { url: newRecurringUrl.trim() } : {}),
+      schedule: newRecurringSchedule,
+      scheduleDay: newRecurringSchedule === "weekly" || newRecurringSchedule === "biweekly" ? newRecurringDay : null,
+    });
+    setNewRecurring("");
+    setNewRecurringUrl("");
   }
 
   return (
@@ -968,79 +1029,103 @@ function PillarCard({ pillar, open, onToggle, recurring, onAddGoal, onToggleGoal
 
       <ul className="space-y-1">
         {activeGoals.map(g => (
-          <li key={g.id} className="flex items-center gap-2 text-sm group">
-            <button onClick={() => onToggleGoal(g)}
-              className="w-5 h-5 rounded-full border-2 border-border hover:border-primary flex items-center justify-center flex-shrink-0"
-              aria-label="Mark goal done" />
-            <span className="flex-1">
-              {g.title}
-              {g.detail && <span className="text-muted-foreground text-xs ml-1.5">— {g.detail}</span>}
-            </span>
-            <button onClick={() => onDeleteGoal(g.id)}
-              className="p-1 rounded-md text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive" aria-label="Delete goal">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </li>
+          <EditableGoalRow key={g.id} goal={g} done={false}
+            onToggle={() => onToggleGoal(g)}
+            onSave={(title, url) => onEditGoal(g.id, title, url)}
+            onDelete={() => onDeleteGoal(g.id)} />
         ))}
         {doneGoals.map(g => (
-          <li key={g.id} className="flex items-center gap-2 text-sm text-muted-foreground group">
-            <button onClick={() => onToggleGoal(g)}
-              className="w-5 h-5 rounded-full bg-primary border-2 border-primary text-primary-foreground flex items-center justify-center flex-shrink-0"
-              aria-label="Mark goal active">
-              <Check className="w-3 h-3" />
-            </button>
-            <span className="flex-1 line-through">{g.title}</span>
-            <button onClick={() => onDeleteGoal(g.id)}
-              className="p-1 rounded-md opacity-0 group-hover:opacity-100 hover:text-destructive" aria-label="Delete goal">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </li>
+          <EditableGoalRow key={g.id} goal={g} done
+            onToggle={() => onToggleGoal(g)}
+            onSave={(title, url) => onEditGoal(g.id, title, url)}
+            onDelete={() => onDeleteGoal(g.id)} />
         ))}
       </ul>
 
-      <div className="flex gap-2">
-        <input
-          value={newGoal}
-          onChange={e => setNewGoal(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") submitGoal(); }}
-          placeholder="Add a goal…"
-          className="flex-1 px-2.5 py-1.5 rounded-lg border border-border bg-background text-sm"
-        />
-        <button onClick={submitGoal} disabled={!newGoal.trim()}
-          className="px-2.5 py-1.5 rounded-lg border border-border text-sm hover:bg-secondary/50 disabled:opacity-50" aria-label="Add goal">
-          <Plus className="w-4 h-4" />
-        </button>
-      </div>
-
-      {/* Daily rituals — tickable each day inside this pillar's time block */}
-      <div className="pt-1 border-t border-border/60 space-y-1.5">
-        <p className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold flex items-center gap-1">
-          <Repeat className="w-3 h-3" /> Daily
-        </p>
-        {recurring.map(r => (
-          <div key={r.id} className="flex items-center gap-2 text-sm group">
-            <Repeat className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-            <span className="flex-1">{r.title}</span>
-            <button onClick={() => onDeleteRecurring(r.id)}
-              className="p-1 rounded-md text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive" aria-label="Delete daily item">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        ))}
+      <div className="space-y-1.5">
         <div className="flex gap-2">
           <input
-            value={newRecurring}
-            onChange={e => setNewRecurring(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter" && newRecurring.trim()) { onAddRecurring(newRecurring.trim()); setNewRecurring(""); } }}
-            placeholder="Add a daily item — reappears every day this pillar is blocked…"
+            value={newGoal}
+            onChange={e => setNewGoal(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") submitGoal(); }}
+            placeholder="Add a goal…"
             className="flex-1 px-2.5 py-1.5 rounded-lg border border-border bg-background text-sm"
           />
-          <button
-            onClick={() => { if (newRecurring.trim()) { onAddRecurring(newRecurring.trim()); setNewRecurring(""); } }}
-            disabled={!newRecurring.trim()}
-            className="px-2.5 py-1.5 rounded-lg border border-border text-sm hover:bg-secondary/50 disabled:opacity-50" aria-label="Add daily item">
+          <button onClick={submitGoal} disabled={!newGoal.trim()}
+            className="px-2.5 py-1.5 rounded-lg border border-border text-sm hover:bg-secondary/50 disabled:opacity-50" aria-label="Add goal">
             <Plus className="w-4 h-4" />
           </button>
+        </div>
+        {newGoal.trim() && (
+          <input
+            value={newGoalUrl}
+            onChange={e => setNewGoalUrl(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") submitGoal(); }}
+            placeholder="Link URL (optional) — e.g. your Meta ads dashboard"
+            className="w-full px-2.5 py-1.5 rounded-lg border border-border bg-background text-xs"
+          />
+        )}
+      </div>
+
+      {/* Recurring rituals — tickable inside this pillar's time block on the
+          days their schedule falls */}
+      <div className="pt-1 border-t border-border/60 space-y-1.5">
+        <p className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold flex items-center gap-1">
+          <Repeat className="w-3 h-3" /> Recurring
+        </p>
+        {recurring.map(r => (
+          <EditableRecurringRow key={r.id} item={r}
+            onSave={(title, url) => onEditRecurring(r.id, title, url)}
+            onDelete={() => onDeleteRecurring(r.id)} />
+        ))}
+        <div className="space-y-1.5">
+          <div className="flex gap-2">
+            <input
+              value={newRecurring}
+              onChange={e => setNewRecurring(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") submitRecurring(); }}
+              placeholder="Add a recurring item…"
+              className="flex-1 px-2.5 py-1.5 rounded-lg border border-border bg-background text-sm"
+            />
+            <button
+              onClick={submitRecurring}
+              disabled={!newRecurring.trim()}
+              className="px-2.5 py-1.5 rounded-lg border border-border text-sm hover:bg-secondary/50 disabled:opacity-50" aria-label="Add recurring item">
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
+          {newRecurring.trim() && (
+            <div className="flex flex-wrap gap-2">
+              <select
+                value={newRecurringSchedule}
+                onChange={e => setNewRecurringSchedule(e.target.value as RecurringSchedule)}
+                className="px-2 py-1.5 rounded-lg border border-border bg-background text-xs"
+                aria-label="Repeats"
+              >
+                <option value="daily">Every day</option>
+                <option value="weekdays">Weekdays (Mon–Fri)</option>
+                <option value="weekly">Every week on…</option>
+                <option value="biweekly">Every 2nd week on…</option>
+              </select>
+              {(newRecurringSchedule === "weekly" || newRecurringSchedule === "biweekly") && (
+                <select
+                  value={newRecurringDay}
+                  onChange={e => setNewRecurringDay(Number(e.target.value))}
+                  className="px-2 py-1.5 rounded-lg border border-border bg-background text-xs"
+                  aria-label="Day of week"
+                >
+                  {[1, 2, 3, 4, 5, 6, 0].map(d => <option key={d} value={d}>{DAY_NAMES[d]}</option>)}
+                </select>
+              )}
+              <input
+                value={newRecurringUrl}
+                onChange={e => setNewRecurringUrl(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") submitRecurring(); }}
+                placeholder="Link URL (optional)"
+                className="flex-1 min-w-[140px] px-2.5 py-1.5 rounded-lg border border-border bg-background text-xs"
+              />
+            </div>
+          )}
         </div>
       </div>
       </div>
@@ -1138,6 +1223,44 @@ function TemplateEditor({ pillars, pendingAdd, onAdd, onDelete }: {
     setTimeout(() => queryClient.invalidateQueries({ queryKey: ["founder-focus-templates"] }), 300);
   }
 
+  // Template rows edit exactly like a day: drag to move, drag the bottom
+  // edge to resize. Same endpoint family, no ripple (a template is sparse).
+  const [templateBusy, setTemplateBusy] = useState(false);
+  function invalidateTemplates() {
+    queryClient.invalidateQueries({ queryKey: ["founder-focus-templates"] });
+    queryClient.invalidateQueries({ queryKey: ["founder-focus"] });
+  }
+  async function moveRow(id: number, newStart: number) {
+    const r = rows.find(x => x.id === id);
+    if (!r || templateBusy) return;
+    const dur = r.endMin - r.startMin;
+    const s = Math.max(0, Math.min(1440 - dur, newStart));
+    setTemplateBusy(true);
+    try {
+      await api(`/templates/${id}`, { method: "PATCH", body: JSON.stringify({ startMin: s, endMin: s + dur }) });
+    } finally { setTemplateBusy(false); invalidateTemplates(); }
+  }
+  async function resizeRow(id: number, newEnd: number) {
+    const r = rows.find(x => x.id === id);
+    if (!r || templateBusy) return;
+    const e = Math.max(r.startMin + 5, Math.min(1440, newEnd));
+    setTemplateBusy(true);
+    try {
+      await api(`/templates/${id}`, { method: "PATCH", body: JSON.stringify({ endMin: e }) });
+    } finally { setTemplateBusy(false); invalidateTemplates(); }
+  }
+
+  const templateItems: TimelineCardItem[] = rows.map(r => ({
+    kind: "block" as const,
+    startMin: r.startMin,
+    endMin: r.endMin,
+    block: {
+      id: r.id, date: "", startMin: r.startMin, endMin: r.endMin,
+      pillarId: r.pillarId, title: r.title, notes: null,
+      status: "planned" as const, source: "template",
+    },
+  }));
+
   const inputCls = "px-2.5 py-2 rounded-lg border border-border bg-background text-sm";
 
   return (
@@ -1172,23 +1295,17 @@ function TemplateEditor({ pillars, pendingAdd, onAdd, onDelete }: {
           {rows.length === 0 ? (
             <p className="text-sm text-muted-foreground">No template blocks for {WEEKDAYS[dayIdx]} yet.</p>
           ) : (
-            <ul className="space-y-1.5">
-              {rows.map(r => {
-                const pillar = r.pillarId != null ? pillars.find(p => p.id === r.pillarId) : undefined;
-                return (
-                  <li key={r.id} className="flex items-center gap-2 text-sm rounded-lg bg-secondary/30 px-3 py-2">
-                    <span className="font-mono text-xs text-muted-foreground">{minToTime(r.startMin)}–{minToTime(r.endMin)}</span>
-                    <span className="flex-1">{r.title}</span>
-                    {pillar && <span className="text-xs" style={{ color: pillar.color ?? undefined }}>{pillar.name}</span>}
-                    <button
-                      onClick={() => { onDelete(r.id); setTimeout(() => queryClient.invalidateQueries({ queryKey: ["founder-focus-templates"] }), 300); }}
-                      className="p-1 rounded-md text-muted-foreground hover:text-destructive" aria-label="Delete template row">
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+            <DayTimeline
+              items={templateItems}
+              pillarById={new Map(pillars.map(p => [p.id, p]))}
+              isToday={false}
+              now={0}
+              busy={templateBusy}
+              statusControls={false}
+              onMove={moveRow}
+              onResize={resizeRow}
+              onDelete={id => { onDelete(id); setTimeout(invalidateTemplates, 300); }}
+            />
           )}
           <div className="flex flex-wrap items-center gap-2">
             <input type="time" value={start} onChange={e => setStart(e.target.value)} className={inputCls} aria-label="Start time" />
@@ -1209,5 +1326,432 @@ function TemplateEditor({ pillars, pendingAdd, onAdd, onDelete }: {
         </>
       )}
     </section>
+  );
+}
+
+// ── Day timeline — proportional heights, drag to move, drag bottom to resize ─
+const PX_PER_MIN = 1.6;
+const SNAP_MIN = 5;
+
+interface TimelineDrag {
+  id: number;
+  mode: "move" | "resize";
+  startY: number;
+  origStart: number;
+  origEnd: number;
+  delta: number;
+}
+
+/** Greedy lane layout so overlapping items sit side by side. */
+function layoutLanes(items: Array<{ startMin: number; endMin: number }>): Array<{ col: number; cols: number }> {
+  const result = items.map(() => ({ col: 0, cols: 1 }));
+  let lanes: number[] = [];
+  let cluster: number[] = [];
+  let clusterCols = 0;
+  let clusterEnd = -1;
+
+  const close = () => {
+    for (const j of cluster) result[j].cols = Math.max(1, clusterCols);
+    lanes = [];
+    cluster = [];
+    clusterCols = 0;
+    clusterEnd = -1;
+  };
+
+  items.forEach((it, i) => {
+    if (cluster.length && it.startMin >= clusterEnd) close();
+    let lane = lanes.findIndex(end => end <= it.startMin);
+    if (lane === -1) { lane = lanes.length; lanes.push(0); }
+    lanes[lane] = it.endMin;
+    result[i].col = lane;
+    cluster.push(i);
+    clusterCols = Math.max(clusterCols, lane + 1);
+    clusterEnd = Math.max(clusterEnd, it.endMin);
+  });
+  close();
+  return result;
+}
+
+function DayTimeline({ items, pillarById, recurringByBlockId, isToday, now, busy, statusControls = true, onMove, onResize, onToggleDone, onSkip, onDelete, onTickRecurring }: {
+  items: TimelineCardItem[];
+  pillarById: Map<number, Pillar>;
+  recurringByBlockId?: Map<number, RecurringItem[]>;
+  isToday: boolean;
+  now: number;
+  busy: boolean;
+  statusControls?: boolean;
+  onMove: (id: number, newStart: number) => void;
+  onResize: (id: number, newEnd: number) => void;
+  onToggleDone?: (b: Block) => void;
+  onSkip?: (b: Block) => void;
+  onDelete: (id: number) => void;
+  onTickRecurring?: (id: number, ticked: boolean) => void;
+}) {
+  const [drag, setDrag] = useState<TimelineDrag | null>(null);
+
+  // Displayed positions, with the in-flight drag applied.
+  const displayed = items.map(t => {
+    let s = t.startMin;
+    let e = t.endMin;
+    if (t.kind === "block" && drag && drag.id === t.block.id) {
+      if (drag.mode === "move") {
+        const dur = e - s;
+        s = Math.max(0, Math.min(1440 - dur, drag.origStart + drag.delta));
+        e = s + dur;
+      } else {
+        e = Math.max(s + SNAP_MIN, Math.min(1440, drag.origEnd + drag.delta));
+      }
+    }
+    return { ...t, dispStart: s, dispEnd: e };
+  }).sort((a, b) => a.dispStart - b.dispStart || a.dispEnd - b.dispEnd);
+
+  const winStart = Math.floor(Math.min(7 * 60, ...displayed.map(t => t.dispStart)) / 60) * 60;
+  const winEnd = Math.ceil(Math.max(18 * 60, ...displayed.map(t => Math.min(1440, t.dispEnd))) / 60) * 60;
+  const totalH = (winEnd - winStart) * PX_PER_MIN;
+  const lanes = layoutLanes(displayed.map(t => ({ startMin: t.dispStart, endMin: t.dispEnd })));
+
+  const hours: number[] = [];
+  for (let h = winStart; h <= winEnd; h += 60) hours.push(h);
+
+  // Listeners are attached synchronously here, NOT in an effect: a fast drag
+  // (hardware pen, automation, quick flick) can deliver pointermove/up before
+  // React re-renders and mounts effect listeners, leaving the drag stranded.
+  function startDrag(e: React.PointerEvent, block: Block, mode: "move" | "resize") {
+    if (busy) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const startY = e.clientY;
+    const d: TimelineDrag = { id: block.id, mode, startY, origStart: block.startMin, origEnd: block.endMin, delta: 0 };
+    setDrag({ ...d });
+    const onPointerMove = (ev: PointerEvent) => {
+      const raw = (ev.clientY - startY) / PX_PER_MIN;
+      const snapped = Math.round(raw / SNAP_MIN) * SNAP_MIN;
+      if (snapped !== d.delta) {
+        d.delta = snapped;
+        setDrag({ ...d });
+      }
+    };
+    const onPointerUp = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+      if (d.delta !== 0) {
+        if (mode === "move") onMove(d.id, d.origStart + d.delta);
+        else onResize(d.id, d.origEnd + d.delta);
+      }
+      setDrag(null);
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
+  }
+
+  return (
+    <div className={cn("relative", drag && "select-none")} style={{ height: totalH }}>
+      {/* Hour grid */}
+      {hours.map(h => (
+        <div key={h} className="absolute left-0 right-0 border-t border-border/50" style={{ top: (h - winStart) * PX_PER_MIN }}>
+          <span className="absolute -top-2 left-0 text-[10px] text-muted-foreground font-mono">{minToTime(h)}</span>
+        </div>
+      ))}
+      {/* Now line */}
+      {isToday && now >= winStart && now <= winEnd && (
+        <div className="absolute left-8 right-0 z-20 pointer-events-none" style={{ top: (now - winStart) * PX_PER_MIN }}>
+          <div className="border-t-2 border-red-500/80 relative">
+            <span className="absolute -left-1.5 -top-1 w-2 h-2 rounded-full bg-red-500" />
+          </div>
+        </div>
+      )}
+
+      {/* Cards */}
+      <div className="absolute inset-y-0 left-10 right-0">
+        {displayed.map((t, i) => {
+          const { col, cols } = lanes[i];
+          const top = (t.dispStart - winStart) * PX_PER_MIN;
+          const rawH = (t.dispEnd - t.dispStart) * PX_PER_MIN;
+          const h = Math.max(26, rawH);
+          const leftPct = (col / cols) * 100;
+          const widthPct = 100 / cols;
+          const compact = h < 52;
+
+          if (t.kind === "event") {
+            const ev = t.event;
+            const isNow = isToday && t.dispStart <= now && now < t.dispEnd;
+            return (
+              <div key={`e-${ev.calendar}-${t.startMin}-${ev.title}`}
+                className={cn(
+                  "absolute rounded-lg border border-dashed border-border bg-secondary/40 backdrop-blur-[1px] px-2 py-1 overflow-hidden",
+                  isNow && "ring-2 ring-primary/60",
+                )}
+                style={{ top, height: h, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)` }}
+              >
+                <div className="flex items-center gap-1.5 h-full min-h-0">
+                  <CalendarDays className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium truncate">{ev.title}</p>
+                    {!compact && (
+                      <p className="text-[10px] text-muted-foreground truncate">
+                        {minToTime(t.dispStart)}–{minToTime(t.dispEnd)} · {ev.calendar}
+                      </p>
+                    )}
+                  </div>
+                  {ev.joinUrl && (
+                    <a href={ev.joinUrl} target="_blank" rel="noopener noreferrer"
+                      className={cn(
+                        "flex-shrink-0 rounded-md text-[11px] font-medium flex items-center gap-1 px-2 py-1",
+                        ev.joinIsCall ? "bg-primary text-primary-foreground hover:bg-primary/90" : "border border-border text-muted-foreground hover:bg-secondary/50",
+                      )}>
+                      {ev.joinIsCall ? <Video className="w-3 h-3" /> : <ExternalLink className="w-3 h-3" />}
+                      {!compact && (ev.joinIsCall ? "Join" : "Open")}
+                    </a>
+                  )}
+                </div>
+              </div>
+            );
+          }
+
+          const b = t.block;
+          const pillar = b.pillarId != null ? pillarById.get(b.pillarId) : undefined;
+          const color = pillar?.color ?? DEFAULT_PILLAR_COLOR;
+          const isNow = isToday && t.dispStart <= now && now < t.dispEnd;
+          const rituals = recurringByBlockId?.get(b.id) ?? [];
+          const dragging = drag?.id === b.id;
+
+          return (
+            <div key={`b-${b.id}`}
+              className={cn(
+                "absolute rounded-lg border border-border bg-background shadow-sm overflow-hidden",
+                b.status === "done" && "opacity-60",
+                b.status === "skipped" && "opacity-40",
+                isNow && b.status === "planned" && "ring-2 ring-primary/60",
+                dragging && "z-30 shadow-lg",
+              )}
+              style={{ top, height: h, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, borderLeft: `4px solid ${color}` }}
+            >
+              <div className="flex items-start gap-1.5 px-1.5 py-1 h-full min-h-0">
+                {/* Drag handle */}
+                <button
+                  onPointerDown={e => startDrag(e, b, "move")}
+                  className="flex-shrink-0 p-0.5 mt-0.5 text-muted-foreground/60 hover:text-foreground cursor-grab active:cursor-grabbing"
+                  style={{ touchAction: "none" }}
+                  aria-label="Drag to move block"
+                  title="Drag to move"
+                >
+                  <GripVertical className="w-3.5 h-3.5" />
+                </button>
+                {statusControls && onToggleDone && (
+                  <button
+                    onClick={() => onToggleDone(b)}
+                    className={cn(
+                      "flex-shrink-0 w-5 h-5 mt-0.5 rounded-full border-2 flex items-center justify-center transition-colors",
+                      b.status === "done" ? "bg-primary border-primary text-primary-foreground" : "border-border hover:border-primary",
+                    )}
+                    aria-label={b.status === "done" ? "Mark not done" : "Mark done"}
+                  >
+                    {b.status === "done" && <Check className="w-3 h-3" />}
+                  </button>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className={cn("text-xs font-medium truncate", b.status !== "planned" && "line-through")}>{b.title}</p>
+                  {!compact && (
+                    <p className="text-[10px] text-muted-foreground truncate">
+                      {minToTime(t.dispStart)}–{minToTime(t.dispEnd)}
+                      {pillar && pillar.name !== b.title && <span className="ml-1" style={{ color }}>{pillar.name}</span>}
+                      {b.status === "skipped" && <span className="ml-1">skipped</span>}
+                    </p>
+                  )}
+                  {onTickRecurring && rituals.length > 0 && h >= 84 && (
+                    <div className="mt-1 space-y-0.5">
+                      {rituals.map(r => (
+                        <div key={r.id} className="flex items-center gap-1">
+                          <button
+                            onClick={() => onTickRecurring(r.id, !r.ticked)}
+                            className={cn(
+                              "flex items-center gap-1.5 text-[11px] rounded-md px-1.5 py-0.5 border min-w-0",
+                              r.ticked ? "border-primary/40 bg-primary/10 text-muted-foreground line-through" : "border-border hover:border-primary",
+                            )}
+                          >
+                            <span className={cn(
+                              "w-3 h-3 rounded-sm border flex items-center justify-center flex-shrink-0",
+                              r.ticked ? "bg-primary border-primary text-primary-foreground" : "border-border",
+                            )}>
+                              {r.ticked && <Check className="w-2 h-2" />}
+                            </span>
+                            <span className="truncate">{r.title}</span>
+                            <Repeat className="w-2.5 h-2.5 text-muted-foreground flex-shrink-0" />
+                          </button>
+                          {r.url && (
+                            <a href={r.url} target="_blank" rel="noopener noreferrer"
+                              className="flex-shrink-0 p-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20"
+                              title={r.url} aria-label={`Open link for ${r.title}`}>
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="flex-shrink-0 flex items-center gap-0.5">
+                  {statusControls && onSkip && b.status === "planned" && !compact && (
+                    <button onClick={() => onSkip(b)}
+                      className="p-1 rounded-md text-muted-foreground hover:bg-secondary/50" title="Skip" aria-label="Skip block">
+                      <SkipForward className="w-3 h-3" />
+                    </button>
+                  )}
+                  <button onClick={() => onDelete(b.id)}
+                    className="p-1 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10" aria-label="Delete block">
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
+              {/* Resize handle */}
+              {b.status === "planned" && (
+                <div
+                  onPointerDown={e => startDrag(e, b, "resize")}
+                  className="absolute bottom-0 inset-x-0 h-2.5 cursor-ns-resize flex items-center justify-center group"
+                  style={{ touchAction: "none" }}
+                  title="Drag to lengthen or shorten"
+                >
+                  <div className="w-8 h-1 rounded-full bg-border group-hover:bg-primary/60" />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Editable goal / recurring rows ─────────────────────────────────────────
+function EditableGoalRow({ goal, done, onToggle, onSave, onDelete }: {
+  goal: Goal;
+  done: boolean;
+  onToggle: () => void;
+  onSave: (title: string, url: string | null) => void;
+  onDelete: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(goal.title);
+  const [url, setUrl] = useState(goal.url ?? "");
+
+  function save() {
+    if (!title.trim()) return;
+    onSave(title.trim(), url.trim() || null);
+    setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <li className="space-y-1.5 rounded-lg border border-border p-2">
+        <input value={title} onChange={e => setTitle(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") save(); }}
+          className="w-full px-2 py-1 rounded-md border border-border bg-background text-sm" autoFocus />
+        <input value={url} onChange={e => setUrl(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") save(); }}
+          placeholder="Link URL (optional) — https://…"
+          className="w-full px-2 py-1 rounded-md border border-border bg-background text-xs" />
+        <div className="flex gap-1.5 justify-end">
+          <button onClick={() => { setTitle(goal.title); setUrl(goal.url ?? ""); setEditing(false); }}
+            className="p-1 text-muted-foreground" aria-label="Cancel"><X className="w-4 h-4" /></button>
+          <button onClick={save} disabled={!title.trim()} className="p-1 text-primary disabled:opacity-50" aria-label="Save">
+            <Check className="w-4 h-4" />
+          </button>
+        </div>
+      </li>
+    );
+  }
+
+  return (
+    <li className={cn("flex items-center gap-2 text-sm group", done && "text-muted-foreground")}>
+      <button onClick={onToggle}
+        className={cn(
+          "w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0",
+          done ? "bg-primary border-primary text-primary-foreground" : "border-border hover:border-primary",
+        )}
+        aria-label={done ? "Mark goal active" : "Mark goal done"}>
+        {done && <Check className="w-3 h-3" />}
+      </button>
+      <span className={cn("flex-1 min-w-0 truncate", done && "line-through")}>
+        {goal.title}
+        {!done && goal.detail && <span className="text-muted-foreground text-xs ml-1.5">— {goal.detail}</span>}
+      </span>
+      {goal.url && (
+        <a href={goal.url} target="_blank" rel="noopener noreferrer"
+          className="flex-shrink-0 px-2 py-1 rounded-md bg-primary/10 text-primary text-xs font-medium flex items-center gap-1 hover:bg-primary/20"
+          title={goal.url}>
+          <ExternalLink className="w-3 h-3" /> Open
+        </a>
+      )}
+      <button onClick={() => setEditing(true)}
+        className="p-1 rounded-md text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-secondary/50" aria-label="Edit goal">
+        <Pencil className="w-3.5 h-3.5" />
+      </button>
+      <button onClick={onDelete}
+        className="p-1 rounded-md text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive" aria-label="Delete goal">
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </li>
+  );
+}
+
+function EditableRecurringRow({ item, onSave, onDelete }: {
+  item: RecurringItem;
+  onSave: (title: string, url: string | null) => void;
+  onDelete: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(item.title);
+  const [url, setUrl] = useState(item.url ?? "");
+
+  function save() {
+    if (!title.trim()) return;
+    onSave(title.trim(), url.trim() || null);
+    setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <div className="space-y-1.5 rounded-lg border border-border p-2">
+        <input value={title} onChange={e => setTitle(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") save(); }}
+          className="w-full px-2 py-1 rounded-md border border-border bg-background text-sm" autoFocus />
+        <input value={url} onChange={e => setUrl(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") save(); }}
+          placeholder="Link URL (optional) — https://…"
+          className="w-full px-2 py-1 rounded-md border border-border bg-background text-xs" />
+        <div className="flex gap-1.5 justify-end">
+          <button onClick={() => { setTitle(item.title); setUrl(item.url ?? ""); setEditing(false); }}
+            className="p-1 text-muted-foreground" aria-label="Cancel"><X className="w-4 h-4" /></button>
+          <button onClick={save} disabled={!title.trim()} className="p-1 text-primary disabled:opacity-50" aria-label="Save">
+            <Check className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2 text-sm group">
+      <Repeat className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+      <span className="flex-1 min-w-0 truncate">{item.title}</span>
+      <span className="text-[10px] text-muted-foreground flex-shrink-0">{scheduleLabel(item)}</span>
+      {item.url && (
+        <a href={item.url} target="_blank" rel="noopener noreferrer"
+          className="flex-shrink-0 px-2 py-1 rounded-md bg-primary/10 text-primary text-xs font-medium flex items-center gap-1 hover:bg-primary/20"
+          title={item.url}>
+          <ExternalLink className="w-3 h-3" /> Open
+        </a>
+      )}
+      <button onClick={() => setEditing(true)}
+        className="p-1 rounded-md text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-secondary/50" aria-label="Edit recurring item">
+        <Pencil className="w-3.5 h-3.5" />
+      </button>
+      <button onClick={onDelete}
+        className="p-1 rounded-md text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive" aria-label="Delete recurring item">
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </div>
   );
 }

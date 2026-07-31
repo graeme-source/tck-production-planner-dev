@@ -26,6 +26,8 @@ export const founderGoalsTable = pgTable("founder_goals", {
     .references(() => founderPillarsTable.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
   detail: text("detail"),
+  // Dashboard/report link rendered as a button (Meta ads, Shopify…).
+  url: text("url"),
   // active | done | parked
   status: text("status").notNull().default("active"),
   sort: integer("sort").notNull().default(0),
@@ -79,6 +81,15 @@ export const founderRecurringItemsTable = pgTable("founder_recurring_items", {
     .notNull()
     .references(() => founderPillarsTable.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
+  // Dashboard/report link rendered as a button next to the tickbox.
+  url: text("url"),
+  // Todoist-style recurrence: daily | weekdays | weekly | biweekly.
+  // scheduleDay (0=Sunday..6) applies to weekly/biweekly; anchorDate fixes
+  // biweekly parity ("every second Friday" = Fridays an even number of
+  // whole weeks from the anchor).
+  schedule: text("schedule").notNull().default("daily"),
+  scheduleDay: integer("schedule_day"),
+  anchorDate: date("anchor_date"),
   sort: integer("sort").notNull().default(0),
   archivedAt: timestamp("archived_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),

@@ -12,6 +12,7 @@ import {
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { verifyCaldav, getDayEvents, resetCaldavCache, type CalendarEvent } from "../lib/caldav";
+import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 
 const router: IRouter = Router();
 
@@ -154,7 +155,14 @@ router.get("/overview", async (req: Request, res: Response) => {
       blocks,
       templates,
       parkingLot,
-      recurringItems: recurringItems.map(i => ({ ...i, ticked: tickedItemIds.has(i.id) })),
+      // All items (the pillar card manages them whatever the day); dueOnDate
+      // says whether each one falls on the requested date, so only due items
+      // appear as tickboxes in the day's blocks.
+      recurringItems: recurringItems.map(i => ({
+        ...i,
+        ticked: tickedItemIds.has(i.id),
+        dueOnDate: recurringMatchesDate(i, dateStr, weekday),
+      })),
       calendarConfigured,
       events,
       calendarError,
@@ -265,10 +273,15 @@ router.delete("/pillars/:id", async (req: Request, res: Response) => {
 });
 
 // ── Goals ──────────────────────────────────────────────────────────────────
+const UrlField = z.string().trim().max(1000)
+  .refine(u => u === "" || /^https?:\/\//i.test(u), { message: "URL must start with http(s)://" })
+  .nullish();
+
 const GoalBody = z.object({
   pillarId: z.number().int(),
   title: z.string().trim().min(1).max(200),
   detail: z.string().trim().max(2000).nullish(),
+  url: UrlField,
   sort: z.number().int().optional(),
 });
 
@@ -279,6 +292,7 @@ router.post("/goals", async (req: Request, res: Response) => {
     pillarId: parsed.data.pillarId,
     title: parsed.data.title,
     detail: parsed.data.detail ?? null,
+    url: parsed.data.url || null,
     sort: parsed.data.sort ?? 0,
   }).returning();
   res.status(201).json(row);
@@ -291,10 +305,11 @@ router.patch("/goals/:id", async (req: Request, res: Response) => {
     status: z.enum(["active", "done", "parked"]).optional(),
   }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid body" }); return; }
-  const { status, ...fields } = parsed.data;
+  const { status, url, ...fields } = parsed.data;
   const [row] = await db.update(founderGoalsTable)
     .set({
       ...fields,
+      ...(url !== undefined ? { url: url || null } : {}),
       ...(status !== undefined ? { status, doneAt: status === "done" ? new Date() : null } : {}),
     })
     .where(eq(founderGoalsTable.id, id))
@@ -463,6 +478,25 @@ router.post("/templates/copy-day", async (req: Request, res: Response) => {
   res.json({ copied: sourceRows.length, days: targets });
 });
 
+router.patch("/templates/:id", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const parsed = z.object({
+    startMin: z.number().int().min(0).max(1439).optional(),
+    endMin: z.number().int().min(1).max(1440).optional(),
+    pillarId: z.number().int().nullish(),
+    title: z.string().trim().min(1).max(200).optional(),
+    weekday: z.number().int().min(0).max(6).optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid body" }); return; }
+  const [row] = await db.update(founderBlockTemplatesTable)
+    .set(parsed.data)
+    .where(eq(founderBlockTemplatesTable.id, id))
+    .returning();
+  if (!row) { res.status(404).json({ error: "Template row not found" }); return; }
+  res.json(row);
+});
+
 router.delete("/templates/:id", async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
@@ -470,16 +504,59 @@ router.delete("/templates/:id", async (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
-// ── Recurring items (per-pillar daily rituals) ─────────────────────────────
+// ── Recurring items (per-pillar rituals with Todoist-style recurrence) ─────
+const RecurringSchedule = z.enum(["daily", "weekdays", "weekly", "biweekly"]);
+
+/** For biweekly items, fix parity to the NEXT occurrence of scheduleDay so
+ *  "every second Friday" starts from the first Friday after creation. */
+function nextDateForWeekday(scheduleDay: number): string {
+  const today = londonTodayStr();
+  const base = new Date(`${today}T12:00:00Z`);
+  const delta = (scheduleDay - base.getUTCDay() + 7) % 7;
+  base.setUTCDate(base.getUTCDate() + delta);
+  return base.toISOString().slice(0, 10);
+}
+
+/** Does a recurring item fall on this date? (Pillar-blocked rule applies
+ *  separately on the client.) */
+function recurringMatchesDate(item: { schedule: string; scheduleDay: number | null; anchorDate: string | null }, dateStr: string, weekday: number): boolean {
+  switch (item.schedule) {
+    case "weekdays":
+      return weekday >= 1 && weekday <= 5;
+    case "weekly":
+      return item.scheduleDay === weekday;
+    case "biweekly": {
+      if (item.scheduleDay !== weekday) return false;
+      if (!item.anchorDate) return true;
+      const diffDays = Math.round((Date.parse(`${dateStr}T12:00:00Z`) - Date.parse(`${item.anchorDate}T12:00:00Z`)) / 86_400_000);
+      return ((Math.floor(diffDays / 7) % 2) + 2) % 2 === 0;
+    }
+    default:
+      return true; // daily
+  }
+}
+
 router.post("/recurring-items", async (req: Request, res: Response) => {
   const parsed = z.object({
     pillarId: z.number().int(),
     title: z.string().trim().min(1).max(200),
+    url: UrlField,
+    schedule: RecurringSchedule.optional(),
+    scheduleDay: z.number().int().min(0).max(6).nullish(),
   }).safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: "pillarId and title required" }); return; }
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "pillarId and title required" }); return; }
+  const { pillarId, title, url, schedule = "daily", scheduleDay } = parsed.data;
+  if ((schedule === "weekly" || schedule === "biweekly") && scheduleDay == null) {
+    res.status(400).json({ error: "scheduleDay required for weekly/biweekly items" });
+    return;
+  }
   const [row] = await db.insert(founderRecurringItemsTable).values({
-    pillarId: parsed.data.pillarId,
-    title: parsed.data.title,
+    pillarId,
+    title,
+    url: url || null,
+    schedule,
+    scheduleDay: schedule === "daily" || schedule === "weekdays" ? null : scheduleDay,
+    anchorDate: schedule === "biweekly" && scheduleDay != null ? nextDateForWeekday(scheduleDay) : null,
   }).returning();
   res.status(201).json(row);
 });
@@ -489,13 +566,22 @@ router.patch("/recurring-items/:id", async (req: Request, res: Response) => {
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   const parsed = z.object({
     title: z.string().trim().min(1).max(200).optional(),
+    url: UrlField,
+    schedule: RecurringSchedule.optional(),
+    scheduleDay: z.number().int().min(0).max(6).nullish(),
     archived: z.boolean().optional(),
   }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Invalid body" }); return; }
-  const { archived, ...fields } = parsed.data;
+  const { archived, url, schedule, scheduleDay, ...fields } = parsed.data;
   const [row] = await db.update(founderRecurringItemsTable)
     .set({
       ...fields,
+      ...(url !== undefined ? { url: url || null } : {}),
+      ...(schedule !== undefined ? {
+        schedule,
+        scheduleDay: schedule === "daily" || schedule === "weekdays" ? null : scheduleDay ?? null,
+        anchorDate: schedule === "biweekly" && scheduleDay != null ? nextDateForWeekday(scheduleDay) : null,
+      } : {}),
       ...(archived !== undefined ? { archivedAt: archived ? new Date() : null } : {}),
     })
     .where(eq(founderRecurringItemsTable.id, id))
@@ -531,6 +617,175 @@ router.post("/recurring-items/:id/tick", async (req: Request, res: Response) => 
     ));
   }
   res.json({ ok: true });
+});
+
+// ── AI replan ──────────────────────────────────────────────────────────────
+// "Finishing at midday today — reschedule around that, and fit in two hours
+// of sales." Rebuilds the movable part of a day from the founder's prompt:
+// done/skipped blocks and anything already finished stay put, meetings are
+// immovable, and the weekly template + pillars give the model its defaults.
+function londonNowMinutes(): number {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+  const h = Number(parts.find(p => p.type === "hour")?.value ?? 0);
+  const m = Number(parts.find(p => p.type === "minute")?.value ?? 0);
+  return h * 60 + m;
+}
+
+function londonTodayStr(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date());
+  return parts; // en-CA gives YYYY-MM-DD
+}
+
+const REPLAN_TOOL = {
+  name: "set_day_plan",
+  description: "Replace the movable time blocks of the founder's day with a new plan.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      explanation: {
+        type: "string",
+        description: "One or two sentences, spoken to the founder, explaining the shape of the new plan and any trade-offs made.",
+      },
+      blocks: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            startMin: { type: "integer", description: "Start, minutes from midnight local time" },
+            endMin: { type: "integer", description: "End, minutes from midnight local time" },
+            pillarId: { type: ["integer", "null"], description: "Pillar id from the provided list, or null for a one-off" },
+            title: { type: "string", description: "Optional title; omit to use the pillar name" },
+          },
+          required: ["startMin", "endMin"],
+        },
+      },
+    },
+    required: ["explanation", "blocks"],
+  },
+};
+
+router.post("/replan", async (req: Request, res: Response) => {
+  const parsed = z.object({
+    date: z.string().regex(DATE_RE),
+    prompt: z.string().trim().min(1).max(2000),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "date and prompt required" }); return; }
+  if (!isClaudeConfigured()) { res.status(503).json({ error: "AI is not configured on this server." }); return; }
+  const { date: dateStr, prompt } = parsed.data;
+
+  try {
+    const isToday = dateStr === londonTodayStr();
+    const now = isToday ? londonNowMinutes() : 0;
+    const weekday = new Date(`${dateStr}T12:00:00Z`).getUTCDay();
+
+    const [pillars, recurringItems, blocks, templates, appleId, appPassword] = await Promise.all([
+      db.select().from(founderPillarsTable).where(isNull(founderPillarsTable.archivedAt)).orderBy(asc(founderPillarsTable.sort)),
+      db.select().from(founderRecurringItemsTable).where(isNull(founderRecurringItemsTable.archivedAt)),
+      db.select().from(founderBlocksTable).where(eq(founderBlocksTable.date, dateStr)).orderBy(asc(founderBlocksTable.startMin)),
+      db.select().from(founderBlockTemplatesTable).where(eq(founderBlockTemplatesTable.weekday, weekday)).orderBy(asc(founderBlockTemplatesTable.startMin)),
+      getFounderSetting(CALDAV_ID_KEY),
+      getFounderSetting(CALDAV_PW_KEY),
+    ]);
+
+    let events: CalendarEvent[] = [];
+    if (appleId && appPassword) {
+      try {
+        events = await getDayEvents(appleId, appPassword, dateStr, await getEnabledCalendarUrls());
+      } catch { /* replan still works without the diary */ }
+    }
+
+    // Blocks the model may not touch: finished/skipped, or already over.
+    const locked = blocks.filter(b => b.status !== "planned" || (isToday && b.endMin <= now));
+    const movable = blocks.filter(b => !locked.includes(b));
+
+    const fmt = (min: number) => `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+    const context = [
+      `Date: ${dateStr}${isToday ? ` (today — current time ${fmt(now)}; nothing may be scheduled before now)` : ""}`,
+      `Pillars (id · name · weekly target %):`,
+      ...pillars.map(p => `  ${p.id} · ${p.name}${p.targetSharePct != null ? ` · ${p.targetSharePct}%` : ""}`),
+      (() => {
+        const due = recurringItems.filter(r => recurringMatchesDate(r, dateStr, weekday));
+        return due.length ? `Rituals due this date (need their pillar blocked): ${due.map(r => `"${r.title}" (pillar ${r.pillarId})`).join(", ")}` : "";
+      })(),
+      `Normal template for this weekday:`,
+      ...(templates.length ? templates.map(t => `  ${fmt(t.startMin)}-${fmt(t.endMin)} ${t.title} (pillar ${t.pillarId ?? "none"})`) : ["  (none)"]),
+      events.length ? `Immovable diary events:` : "No diary events.",
+      ...events.filter(e => !e.allDay).map(e => `  ${fmt(e.startMin)}-${fmt(e.endMin)} ${e.title}`),
+      locked.length ? `Locked blocks (already done/skipped/past — do NOT include, plan around them):` : "",
+      ...locked.map(b => `  ${fmt(b.startMin)}-${fmt(b.endMin)} ${b.title} [${b.status}]`),
+      movable.length ? `Existing movable blocks (these will be REPLACED by your plan):` : "No existing movable blocks.",
+      ...movable.map(b => `  ${fmt(b.startMin)}-${fmt(b.endMin)} ${b.title} (pillar ${b.pillarId ?? "none"})`),
+    ].filter(Boolean).join("\n");
+
+    const client = getClaudeClient();
+    const response = await client.messages.create({
+      model: CLAUDE_MODELS.sonnet,
+      max_tokens: 1500,
+      system: [
+        "You are the scheduling assistant inside The Calzone Kitchen founder's day planner.",
+        "Produce a realistic time-blocked plan for the REMAINDER of the day via the set_day_plan tool only.",
+        "Rules: never overlap diary events or locked blocks; blocks must not overlap each other;",
+        "5-minute granularity; respect the founder's stated constraints above all;",
+        "otherwise follow the weekday template's shape and the pillars' intent;",
+        "if a daily ritual's pillar can be fitted, keep at least one block for that pillar;",
+        "don't fill every minute — leave small gaps between long stretches.",
+      ].join(" "),
+      messages: [{
+        role: "user",
+        content: `${context}\n\nFounder's instruction: ${prompt}`,
+      }],
+      tools: [REPLAN_TOOL],
+      tool_choice: { type: "tool", name: "set_day_plan" },
+    });
+
+    const toolUse = response.content.find(c => c.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") {
+      res.status(502).json({ error: "AI did not return a plan — try again." });
+      return;
+    }
+    const plan = toolUse.input as { explanation?: string; blocks?: Array<{ startMin: number; endMin: number; pillarId?: number | null; title?: string }> };
+    const pillarIds = new Set(pillars.map(p => p.id));
+    const newBlocks = (plan.blocks ?? [])
+      .filter(b => Number.isInteger(b.startMin) && Number.isInteger(b.endMin) && b.endMin > b.startMin && b.startMin >= 0 && b.endMin <= 1440)
+      .filter(b => !isToday || b.endMin > now)
+      .map(b => ({
+        startMin: b.startMin,
+        endMin: b.endMin,
+        pillarId: b.pillarId != null && pillarIds.has(b.pillarId) ? b.pillarId : null,
+        title: b.title?.trim() || (b.pillarId != null ? pillars.find(p => p.id === b.pillarId)?.name : null) || "Focus",
+      }));
+
+    if (newBlocks.length === 0) {
+      res.status(422).json({ error: "The AI returned an empty plan — nothing was changed. Try rephrasing." });
+      return;
+    }
+
+    // Swap the movable blocks for the new plan.
+    for (const b of movable) {
+      await db.delete(founderBlocksTable).where(eq(founderBlocksTable.id, b.id));
+    }
+    for (const b of newBlocks) {
+      await db.insert(founderBlocksTable).values({
+        date: dateStr,
+        startMin: b.startMin,
+        endMin: b.endMin,
+        pillarId: b.pillarId,
+        title: b.title,
+        source: "caz",
+      });
+    }
+
+    res.json({ explanation: plan.explanation ?? "Day replanned.", replaced: movable.length, created: newBlocks.length });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[founder-focus] replan error:", msg);
+    res.status(502).json({ error: `Replan failed: ${msg}` });
+  }
 });
 
 // ── Parking lot ────────────────────────────────────────────────────────────
