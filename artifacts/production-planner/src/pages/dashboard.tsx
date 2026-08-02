@@ -4,7 +4,7 @@ import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
 import { EightPackOrdersBanner } from "@/components/eight-pack-orders-banner";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
-import { format, isToday, startOfWeek, addWeeks } from "date-fns";
+import { format, isToday, startOfWeek, addWeeks, addDays } from "date-fns";
 import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X, Sparkles, Salad, UserPlus } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/contexts/auth-context";
@@ -220,16 +220,17 @@ const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
 /** Returns separate totals so calzone batches (10-portion batches) aren't
  *  conflated with mac cheese packs (1 mac batch = 1 pack). Also sums how far
  *  the day has actually got — batches built past the building tables and
- *  flavours marked wrapped — purely so the dashboard cards can show at-a-glance
- *  progress bars. */
+ *  packs landed in the fridge/freezer off wrapping — purely so the dashboard
+ *  cards can show at-a-glance progress. Packs (not flavours) measure wrapping:
+ *  a flavour can be two packs or forty, so pack counts are the honest bar. */
 async function fetchTodayBatchCount(planIds: number[]): Promise<{
   calzoneBatches: number;
   macPacks: number;
   calzoneBuilt: number;
-  flavoursTotal: number;
-  flavoursWrapped: number;
+  packsTotal: number;
+  packsWrapped: number;
 }> {
-  const empty = { calzoneBatches: 0, macPacks: 0, calzoneBuilt: 0, flavoursTotal: 0, flavoursWrapped: 0 };
+  const empty = { calzoneBatches: 0, macPacks: 0, calzoneBuilt: 0, packsTotal: 0, packsWrapped: 0 };
   if (planIds.length === 0) return empty;
   const totals = { ...empty };
   for (const id of planIds) {
@@ -248,8 +249,16 @@ async function fetchTodayBatchCount(planIds: number[]): Promise<{
         totals.calzoneBuilt += Math.min(built, target);
       }
       if (target > 0) {
-        totals.flavoursTotal++;
-        if (it.wrappingComplete) totals.flavoursWrapped++;
+        // Planned pack units for the day: 2-packs after the 8-pack bags take
+        // their 4 two-packs' worth of portions, plus the bags themselves.
+        // (Mac cheese falls out naturally: 2 portions/batch ÷ pack of 2.)
+        const bags = it.eightPackBagCount ?? 0;
+        const plannedTwoPacks = Math.max(0, Math.floor((target * (it.portionsPerBatch ?? 10)) / 2) - bags * 4);
+        const itemTotal = plannedTwoPacks + bags;
+        // Wrapped = pack units that have physically landed in storage.
+        const wrapped = (it.fridgeQty ?? 0) + (it.fridgeEightPackQty ?? 0) + (it.freezerEightPackQty ?? 0);
+        totals.packsTotal += itemTotal;
+        totals.packsWrapped += Math.min(wrapped, itemTotal);
       }
     }
   }
@@ -456,6 +465,20 @@ export default function Dashboard() {
   const weekLabel = `${format(selectedMonday, "d MMM")} – ${format(weekSunday, "d MMM yyyy")}`;
   const isCurrentWeek = weekOffset === 0;
 
+  // Calzone packs planned per day this week — drawn beside the dispatch
+  // packs so making-vs-dispatching compares in the same unit.
+  const { data: weekPacksMade } = useQuery({
+    queryKey: ["packs-by-date", weekStartStr],
+    queryFn: async () => {
+      const end = format(addDays(selectedMonday, 6), "yyyy-MM-dd");
+      const res = await fetch(`${BASE}/api/production-plans/packs-by-date?start=${weekStartStr}&end=${end}`, { credentials: "include" });
+      if (!res.ok) return [] as { date: string; calzonePacks: number }[];
+      return res.json() as Promise<{ date: string; calzonePacks: number }[]>;
+    },
+    refetchInterval: 60000,
+  });
+  const madePacksByDate = new Map((weekPacksMade ?? []).map(r => [r.date, r.calzonePacks]));
+
   const { data: weeklyOrders, isLoading: weeklyLoading, error: weeklyError, refetch } = useQuery({
     queryKey: ["shopify-weekly-orders-dashboard", weekStartStr],
     queryFn: () => fetchWeeklyOrders(weekStartStr),
@@ -572,7 +595,11 @@ export default function Dashboard() {
         <div className="bg-card border border-border rounded-xl px-4 py-3 shadow-lg text-sm space-y-1">
           <p className="font-semibold">Dispatch: {item.date}</p>
           <p className="text-muted-foreground text-xs">Delivery: {item.deliveryDate}</p>
-          <p className="font-bold pt-1">{item.orderCount} total orders</p>
+          <p className="font-bold pt-1">{item.packCount} packs dispatching</p>
+          {(item.madePacks ?? 0) > 0 && (
+            <p className="font-bold text-blue-500">{item.madePacks} calzone packs making</p>
+          )}
+          <p className="text-xs text-muted-foreground pt-1">{item.orderCount} orders</p>
           <div className="flex items-center gap-2 text-xs">
             <span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-500" />
             <span>{item.fulfilledCount} fulfilled</span>
@@ -581,7 +608,6 @@ export default function Dashboard() {
             <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: "hsl(var(--primary) / 0.3)" }} />
             <span>{item.unfulfilledCount} unfulfilled</span>
           </div>
-          <p className="text-xs text-muted-foreground pt-1">{item.packCount} packs total</p>
         </div>
       );
     }
@@ -615,7 +641,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <StatCard
           title="Total Batches Today"
-          value={batchesLoading ? "…" : (totalBatches?.calzoneBatches ?? 0).toString()}
+          value={batchesLoading ? "…" : formatProgressValue(totalBatches?.calzoneBuilt ?? 0, totalBatches?.calzoneBatches ?? 0)}
           subtitle={batchesLoading ? undefined : [
             teamBph > 0 ? `${teamBph.toFixed(1)} batches/hr` : null,
             (totalBatches?.macPacks ?? 0) > 0 ? `+ ${totalBatches!.macPacks} mac packs` : null,
@@ -629,6 +655,7 @@ export default function Dashboard() {
             total: totalBatches!.calzoneBatches,
             label: "built",
             barClass: "bg-primary",
+            hideDetail: true,
           } : undefined}
         />
         <StatCard
@@ -665,7 +692,7 @@ export default function Dashboard() {
         />
         <StatCard
           title="Deliveries Arriving"
-          value={(todayDeliveriesCount?.total ?? 0).toString()}
+          value={formatProgressValue(todayDeliveriesCount?.arrived ?? 0, todayDeliveriesCount?.total ?? 0)}
           icon={PackageCheck}
           color="text-emerald-500"
           bg="bg-emerald-500/10"
@@ -675,21 +702,25 @@ export default function Dashboard() {
             total: todayDeliveriesCount!.total,
             label: "arrived",
             barClass: "bg-emerald-500",
+            hideDetail: true,
           } : undefined}
         />
         <StatCard
-          title="Current Factory Number"
-          value={stockControlData == null ? "…" : (stockControlData.productionFridgeTotal ?? 0).toLocaleString()}
-          subtitle="Tap for pack report"
+          title="Packs Wrapped"
+          value={batchesLoading ? "…" : formatProgressValue(totalBatches?.packsWrapped ?? 0, totalBatches?.packsTotal ?? 0)}
+          subtitle={stockControlData == null
+            ? "Tap for pack report"
+            : `Factory #${(stockControlData.productionFridgeTotal ?? 0).toLocaleString()} · tap for pack report`}
           icon={Thermometer}
           color="text-cyan-500"
           bg="bg-cyan-500/10"
           href="/pack-report"
-          progress={!batchesLoading && (totalBatches?.flavoursTotal ?? 0) > 0 ? {
-            done: totalBatches!.flavoursWrapped,
-            total: totalBatches!.flavoursTotal,
-            label: "flavours wrapped",
+          progress={!batchesLoading && (totalBatches?.packsTotal ?? 0) > 0 ? {
+            done: totalBatches!.packsWrapped,
+            total: totalBatches!.packsTotal,
+            label: "packs wrapped",
             barClass: "bg-cyan-500",
+            hideDetail: true,
           } : undefined}
         />
         <StatCard
@@ -774,8 +805,8 @@ export default function Dashboard() {
                 )}
               </div>
               <div className="flex items-center gap-4 mt-1.5 text-xs text-muted-foreground">
-                <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-emerald-500" /> Fulfilled</span>
-                <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm" style={{ background: "hsl(var(--primary) / 0.3)" }} /> Unfulfilled</span>
+                <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm" style={{ background: "hsl(var(--primary) / 0.35)" }} /> Dispatching (packs)</span>
+                <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm" style={{ background: "hsl(217 91% 60% / 0.75)" }} /> Making (calzone packs)</span>
               </div>
             </div>
             <button
@@ -800,7 +831,11 @@ export default function Dashboard() {
               </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={weeklyOrders} barSize={36}>
+                <BarChart
+                  data={weeklyOrders?.map(d => ({ ...d, madePacks: madePacksByDate.get(d.date) ?? 0 }))}
+                  barSize={20}
+                  barGap={3}
+                >
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                   <XAxis
                     dataKey="day"
@@ -813,10 +848,13 @@ export default function Dashboard() {
                     tick={(props: { x: number; y: number; payload: { value: string } }) => {
                       const day = props.payload.value;
                       const row = weeklyOrders?.find(d => d.day === day);
+                      const made = row ? (madePacksByDate.get(row.date) ?? 0) : 0;
                       return (
                         <g transform={`translate(${props.x},${props.y})`}>
                           <text x={0} y={0} dy={12} textAnchor="middle" fill="hsl(var(--muted-foreground))" fontSize={12}>{day}</text>
-                          <text x={0} y={0} dy={26} textAnchor="middle" fill="hsl(var(--foreground))" fontSize={11} fontWeight={600}>{row?.packCount ?? 0}</text>
+                          <text x={0} y={0} dy={26} textAnchor="middle" fill="hsl(var(--foreground))" fontSize={11} fontWeight={600}>
+                            {row?.packCount ?? 0}{made > 0 ? ` / ${made}` : ""}
+                          </text>
                         </g>
                       );
                     }}
@@ -830,15 +868,18 @@ export default function Dashboard() {
                     width={32}
                   />
                   <Tooltip content={<CustomTooltip />} cursor={{ fill: "hsl(var(--secondary))" }} />
-                  <Bar dataKey="fulfilledCount" stackId="orders" fill="hsl(142 71% 45%)" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="unfulfilledCount" stackId="orders" radius={[6, 6, 0, 0]}>
+                  {/* Both bars are PACKS so the eye can honestly compare
+                      dispatch volume against production volume. Orders and
+                      fulfilment progress live in the tooltip and summary. */}
+                  <Bar dataKey="packCount" name="Dispatching (packs)" radius={[6, 6, 0, 0]}>
                     {weeklyOrders?.map((entry, i) => (
                       <Cell
                         key={entry.date}
-                        fill={i === todayIndex ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.3)"}
+                        fill={i === todayIndex ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.35)"}
                       />
                     ))}
                   </Bar>
+                  <Bar dataKey="madePacks" name="Making (calzone packs)" fill="hsl(217 91% 60% / 0.75)" radius={[6, 6, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -978,7 +1019,15 @@ function GoveeTempTile() {
 /** Optional at-a-glance progress under the headline number. Purely visual —
  *  `done / total` with a slim bar so nobody has to click into the card to see
  *  where the day is up to. `barClass` matches the card's accent colour. */
-type StatProgress = { done: number; total: number; label: string; barClass: string };
+type StatProgress = { done: number; total: number; label: string; barClass: string; hideDetail?: boolean };
+
+/** "44 / 46" once work has started; just "46" while nothing's done yet. The
+ *  fraction IS the headline — per Graeme, progress is the biggest detail on
+ *  show, so it belongs in the big number rather than under the bar. */
+function formatProgressValue(done: number, total: number): string {
+  if (total <= 0) return "0";
+  return done > 0 ? `${done} / ${total}` : total.toString();
+}
 
 function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, progress }: any & { progress?: StatProgress }) {
   const pct = progress && progress.total > 0
@@ -991,7 +1040,7 @@ function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, progres
           <Icon className="w-6 h-6" />
         </div>
         <p className="text-sm font-medium text-muted-foreground leading-snug">{title}</p>
-        <h3 className="text-3xl font-display font-bold leading-none">{value}</h3>
+        <h3 className="text-3xl font-display font-bold leading-none tabular-nums whitespace-nowrap">{value}</h3>
         {subtitle && (
           <p className="text-xs text-muted-foreground leading-snug">{subtitle}</p>
         )}
@@ -1003,9 +1052,11 @@ function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, progres
                 style={{ width: `${pct}%` }}
               />
             </div>
-            <p className="text-xs text-muted-foreground mt-1 tabular-nums leading-snug">
-              {progress.done} / {progress.total} {progress.label}
-            </p>
+            {!progress.hideDetail && (
+              <p className="text-xs text-muted-foreground mt-1 tabular-nums leading-snug">
+                {progress.done} / {progress.total} {progress.label}
+              </p>
+            )}
           </div>
         )}
       </div>

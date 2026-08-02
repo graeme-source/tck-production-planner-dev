@@ -432,6 +432,36 @@ router.get("/", async (req, res) => {
   })));
 });
 
+// GET /production-plans/packs-by-date?start=YYYY-MM-DD&end=YYYY-MM-DD
+// Calzone pack output planned per date (2-pack equivalents: batches ×
+// portions ÷ 2, mac cheese excluded). Feeds the dashboard's dispatch chart
+// so making-vs-dispatching can be compared in the same unit — packs.
+router.get("/packs-by-date", async (req, res) => {
+  const start = String(req.query.start ?? "");
+  const end = String(req.query.end ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    res.status(400).json({ error: "start and end query params required (YYYY-MM-DD)" });
+    return;
+  }
+  try {
+    const rows = await db.execute<{ date: string; calzone_packs: number }>(sql`
+      SELECT p.plan_date::text AS date,
+             COALESCE(SUM(FLOOR(pi.batches_target * COALESCE(r.portions_per_batch, 10) / 2.0)), 0)::int AS calzone_packs
+      FROM production_plans p
+      JOIN production_plan_items pi ON pi.plan_id = p.id
+      JOIN recipes r ON r.id = pi.recipe_id
+      WHERE p.plan_date BETWEEN ${start} AND ${end}
+        AND COALESCE(r.category, '') <> 'Macaroni Cheese'
+        AND pi.batches_target > 0
+      GROUP BY p.plan_date
+      ORDER BY p.plan_date
+    `);
+    res.json(rows.rows.map(r => ({ date: r.date, calzonePacks: Number(r.calzone_packs) })));
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 // GET /production-plans/default-dates?planDate=YYYY-MM-DD
 // Returns the prep_date and dough_date the backend will assign to a new
 // plan with this planDate (assuming no overrides). The Create Plan dialog
