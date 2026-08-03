@@ -2254,7 +2254,7 @@ function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSli
                 onChange={e => setTopic(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter") submitTopic(); }}
                 disabled={generate.isPending}
-                placeholder='e.g. "total ownership, as in Lean Made Simple by Ryan Tiani"'
+                placeholder='e.g. "total ownership, as in Lean Made Simple by Ryan Tierney"'
                 className="flex-1 bg-background border border-border rounded-xl px-3 py-2 text-sm disabled:opacity-50"
               />
               <button
@@ -2949,6 +2949,77 @@ interface ExampleRow {
   isActive: boolean;
 }
 
+// ── Weekly focus picker ─────────────────────────────────────────────
+// "This week we're on X; next week I want Y." A pinned week overrides
+// the curriculum rotation; clearing it falls back to the rotation.
+function WeeklyFocusCard() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery<{
+    thisWeek: { weekStart: string; principle: { id: number; title: string } | null; source: "override" | "curriculum" };
+    nextWeek: { weekStart: string; principle: { id: number; title: string } | null; source: "override" | "curriculum" };
+    principles: Array<{ id: number; title: string }>;
+  }>({
+    queryKey: ["lean-week-plan"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/morning-meetings/lessons/week-plan`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load week plan");
+      return res.json();
+    },
+  });
+
+  const setFocus = useMutation({
+    mutationFn: async ({ weekStart, principleId }: { weekStart: string; principleId: number | null }) => {
+      const res = await fetch(`${BASE}/api/morning-meetings/lessons/week-focus`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ weekStart, principleId }),
+      });
+      if (!res.ok) throw new Error("Failed to save focus");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["lean-week-plan"] });
+      queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
+      toast({ title: "Weekly focus updated" });
+    },
+  });
+
+  if (!data) return null;
+
+  const row = (label: string, wk: typeof data.thisWeek) => (
+    <div className="flex items-center gap-3 py-2">
+      <div className="w-24 flex-shrink-0">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+        <p className="text-[11px] text-muted-foreground">{format(new Date(`${wk.weekStart}T00:00:00`), "d MMM")}</p>
+      </div>
+      <select
+        value={wk.source === "override" && wk.principle ? String(wk.principle.id) : ""}
+        onChange={e => setFocus.mutate({ weekStart: wk.weekStart, principleId: e.target.value ? Number(e.target.value) : null })}
+        className="flex-1 px-3 py-2 rounded-lg border border-border bg-background text-sm"
+      >
+        <option value="">
+          Follow curriculum{wk.source === "curriculum" && wk.principle ? ` — ${wk.principle.title}` : ""}
+        </option>
+        {data.principles.map(p => (
+          <option key={p.id} value={p.id}>{p.title}</option>
+        ))}
+      </select>
+      {wk.source === "override" && (
+        <span className="text-[11px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 flex-shrink-0">pinned</span>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="rounded-2xl border border-border bg-card p-4 mb-6">
+      <p className="text-sm font-semibold flex items-center gap-2 mb-1">
+        <Calendar className="w-4 h-4 text-purple-500" /> Weekly focus
+      </p>
+      {row("This week", data.thisWeek)}
+      {row("Next week", data.nextWeek)}
+    </div>
+  );
+}
+
 function CurriculumEditor({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -2993,8 +3064,10 @@ function CurriculumEditor({ onClose }: { onClose: () => void }) {
           Lean Curriculum
         </h1>
         <p className="text-sm text-muted-foreground mb-6">
-          Weekly themes rotate through the year. Each theme has multiple daily examples — the Morning Meeting auto-picks today's based on weekday so the team gets a different angle on the same principle Mon-Fri.
+          One theme per week — the Morning Meeting sticks with it Mon–Fri, rotating that theme's examples so the team gets a different angle on the same principle each day. Pick a week's focus below, or let it follow the curriculum order.
         </p>
+
+        <WeeklyFocusCard />
 
         {isLoading ? (
           <div className="py-12 text-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground inline" /></div>

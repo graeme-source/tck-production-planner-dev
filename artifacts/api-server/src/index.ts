@@ -1522,6 +1522,29 @@ async function runStartupMigrations() {
       END $$;
     `);
 
+    // Weekly lean focus — see lib/db/migrations/0041_lean_week_focus.sql.
+    // One curriculum principle per week; a row here pins a specific week
+    // to a chosen principle ("next week we're doing Leave It Better Than
+    // You Found It"), otherwise the curriculum rotates weekly. Also renames
+    // the week-2 principle to the Lean Made Simple wording — DOWNTIME is
+    // the generic acronym whose terminology Graeme explicitly doesn't use.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS lean_week_focus (
+        week_start DATE PRIMARY KEY,
+        principle_id INTEGER NOT NULL REFERENCES lean_principles(id) ON DELETE CASCADE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      UPDATE lean_principles SET title = 'The 8 Wastes'
+      WHERE title = 'The 8 Wastes — DOWNTIME'
+    `);
+    await db.execute(sql`
+      UPDATE lean_principles
+      SET summary = 'Overproduction, Transportation, Inventory, Defects, Motion, Overprocessing, Waiting, Waste of Skills.'
+      WHERE title = 'The 8 Wastes' AND summary ~* 'non.?utili[sz]ed'
+    `);
+
     // APC label-scan ledger — see lib/db/migrations/0031_add_apc_consignments.sql.
     // The UNIQUE waybill is what stops one physical label being scanned onto
     // two orders, so this table must exist before the packing flow runs.

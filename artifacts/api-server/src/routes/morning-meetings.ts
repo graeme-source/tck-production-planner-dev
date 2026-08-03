@@ -45,6 +45,7 @@ import {
 } from "../lib/yesterday-kpis";
 import { getPreviousDispatchDayAsync } from "./production-plans";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
+import { leanCorpusPrompt } from "../lib/lean-corpus";
 import type Anthropic from "@anthropic-ai/sdk";
 
 const router: IRouter = Router();
@@ -54,37 +55,74 @@ const router: IRouter = Router();
 const photoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 const GRATITUDE_IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif"];
 
-/** Picks today's default lesson. Rotates freely through EVERY active
- *  example, one per calendar day, ordered by principle week then example
- *  position — so the whole library is cycled through before any lesson
- *  repeats. (It used to lock onto this week's principle and only vary by
- *  weekday, which is why the same handful kept coming round.) The day
- *  index is measured from the curriculum anchor in app_settings
- *  (`lean_curriculum_start_date`) so every device agrees and the pick is
- *  stable for a given day. Host can still override on the meeting slide
- *  via configJson.exampleId / the library picker. */
-async function getTodayPrincipleAndExample() {
-  const now = new Date();
+const ON_DEMAND_PRINCIPLE_TITLE = "On-demand lessons";
+
+/** Monday (YYYY-MM-DD) of the week containing the given London date. */
+function mondayOf(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  const shift = (d.getUTCDay() + 6) % 7; // Mon=0 … Sun=6
+  d.setUTCDate(d.getUTCDate() - shift);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Which principle is the focus for the week starting `weekStart`?
+ *  An explicit row in lean_week_focus wins; otherwise the active
+ *  curriculum (minus the on-demand catch-all) is walked in weekPosition
+ *  order from the anchor week. */
+async function getWeekFocusPrinciple(weekStart: string) {
+  const [override] = await db.execute<{ principle_id: number }>(sql`
+    SELECT principle_id FROM lean_week_focus WHERE week_start = ${weekStart}
+  `).then(r => r.rows);
+  if (override) {
+    const [p] = await db.select().from(leanPrinciplesTable).where(eq(leanPrinciplesTable.id, override.principle_id));
+    if (p) return { principle: p, source: "override" as const };
+  }
+
+  const actives = await db
+    .select()
+    .from(leanPrinciplesTable)
+    .where(eq(leanPrinciplesTable.isActive, true))
+    .orderBy(asc(leanPrinciplesTable.weekPosition));
+  const rotation = actives.filter(p => p.title !== ON_DEMAND_PRINCIPLE_TITLE);
+  if (rotation.length === 0) return { principle: null, source: "curriculum" as const };
 
   const [anchorRow] = await db
     .select({ value: appSettingsTable.value })
     .from(appSettingsTable)
     .where(eq(appSettingsTable.key, "lean_curriculum_start_date"))
     .limit(1);
-  const anchorIso = anchorRow?.value ?? londonDateString();
-  const anchor = new Date(`${anchorIso}T00:00:00`);
-  const daysSinceAnchor = Math.max(0, Math.floor((now.getTime() - anchor.getTime()) / 86_400_000));
+  const anchorMonday = mondayOf(anchorRow?.value ?? londonDateString());
+  const weeks = Math.max(0, Math.round(
+    (new Date(`${weekStart}T00:00:00Z`).getTime() - new Date(`${anchorMonday}T00:00:00Z`).getTime()) / (7 * 86_400_000),
+  ));
+  return { principle: rotation[weeks % rotation.length], source: "curriculum" as const };
+}
 
-  const rows = await db
-    .select({ example: leanExamplesTable, principle: leanPrinciplesTable })
+/** Picks today's default lesson — WEEKLY focus, daily variety.
+ *  One principle is the theme for the whole week (Mon–Sun): either the
+ *  host's explicit pick for that week (lean_week_focus — "next week we're
+ *  doing Leave It Better Than You Found It") or the curriculum walked one
+ *  principle per week from the anchor. Within the week, the principle's
+ *  examples rotate by weekday so a rich theme still varies day to day —
+ *  this deliberately replaces the every-example-daily rotation (which
+ *  changed topic every morning) while avoiding the older repeat problem
+ *  by cycling examples inside the theme. Host can still override a single
+ *  day on the meeting slide via configJson.exampleId / the library picker. */
+async function getTodayPrincipleAndExample() {
+  const todayIso = londonDateString();
+  const weekStart = mondayOf(todayIso);
+  const { principle } = await getWeekFocusPrinciple(weekStart);
+  if (!principle) return { principle: null, example: null };
+
+  const examples = await db
+    .select()
     .from(leanExamplesTable)
-    .innerJoin(leanPrinciplesTable, eq(leanPrinciplesTable.id, leanExamplesTable.principleId))
-    .where(and(eq(leanExamplesTable.isActive, true), eq(leanPrinciplesTable.isActive, true)))
-    .orderBy(asc(leanPrinciplesTable.weekPosition), asc(leanExamplesTable.orderPosition));
-  if (rows.length === 0) return { principle: null, example: null };
+    .where(and(eq(leanExamplesTable.principleId, principle.id), eq(leanExamplesTable.isActive, true)))
+    .orderBy(asc(leanExamplesTable.orderPosition));
+  if (examples.length === 0) return { principle, example: null };
 
-  const picked = rows[daysSinceAnchor % rows.length];
-  return { principle: picked.principle, example: picked.example };
+  const dayIdx = (new Date(`${todayIso}T00:00:00Z`).getUTCDay() + 6) % 7; // Mon=0
+  return { principle, example: examples[dayIdx % examples.length] };
 }
 
 /** Backwards-compat shim — returns the legacy lean_lessons-shaped row
@@ -759,6 +797,49 @@ router.get("/lessons/today", async (_req: Request, res: Response) => {
   res.json(lesson);
 });
 
+// ── Weekly focus ────────────────────────────────────────────────────
+// GET  /lessons/week-plan   — this week + next week's focus and options
+// PUT  /lessons/week-focus  — pin (or clear) a week's principle
+router.get("/lessons/week-plan", async (_req: Request, res: Response) => {
+  const thisMonday = mondayOf(londonDateString());
+  const nextMonday = mondayOf(new Date(new Date(`${thisMonday}T00:00:00Z`).getTime() + 7 * 86_400_000).toISOString().slice(0, 10));
+
+  const [thisWeek, nextWeek, principles] = await Promise.all([
+    getWeekFocusPrinciple(thisMonday),
+    getWeekFocusPrinciple(nextMonday),
+    db.select({ id: leanPrinciplesTable.id, title: leanPrinciplesTable.title, weekPosition: leanPrinciplesTable.weekPosition, isActive: leanPrinciplesTable.isActive })
+      .from(leanPrinciplesTable)
+      .orderBy(asc(leanPrinciplesTable.weekPosition)),
+  ]);
+
+  res.json({
+    thisWeek: { weekStart: thisMonday, principle: thisWeek.principle ? { id: thisWeek.principle.id, title: thisWeek.principle.title } : null, source: thisWeek.source },
+    nextWeek: { weekStart: nextMonday, principle: nextWeek.principle ? { id: nextWeek.principle.id, title: nextWeek.principle.title } : null, source: nextWeek.source },
+    principles: principles.filter(p => p.isActive && p.title !== ON_DEMAND_PRINCIPLE_TITLE),
+  });
+});
+
+router.put("/lessons/week-focus", async (req: Request, res: Response) => {
+  const body = req.body as { weekStart?: string; principleId?: number | null };
+  if (!body.weekStart || !/^\d{4}-\d{2}-\d{2}$/.test(body.weekStart)) {
+    res.status(400).json({ error: "weekStart (YYYY-MM-DD) required" });
+    return;
+  }
+  const weekStart = mondayOf(body.weekStart);
+  if (body.principleId == null) {
+    await db.execute(sql`DELETE FROM lean_week_focus WHERE week_start = ${weekStart}`);
+    res.json({ ok: true, weekStart, cleared: true });
+    return;
+  }
+  const [p] = await db.select({ id: leanPrinciplesTable.id }).from(leanPrinciplesTable).where(eq(leanPrinciplesTable.id, body.principleId));
+  if (!p) { res.status(404).json({ error: "Principle not found" }); return; }
+  await db.execute(sql`
+    INSERT INTO lean_week_focus (week_start, principle_id) VALUES (${weekStart}, ${body.principleId})
+    ON CONFLICT (week_start) DO UPDATE SET principle_id = ${body.principleId}
+  `);
+  res.json({ ok: true, weekStart, principleId: body.principleId });
+});
+
 router.put("/lessons/:id", async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   const body = req.body as Partial<{
@@ -790,13 +871,11 @@ router.put("/lessons/:id", async (req: Request, res: Response) => {
 
 // ── AI lesson generation ────────────────────────────────────────────
 // The host types a topic on the Lesson slide ("total ownership as in
-// Lean Made Simple by Ryan Tiani") and we generate a full three-block
+// Lean Made Simple by Ryan Tierney") and we generate a full three-block
 // lesson in the house style, save it as a permanent example under the
 // catch-all "On-demand lessons" principle (so it joins the daily
 // rotation + library picker forever), and return it shaped like the
 // dashboard lesson so the slide can switch to it immediately.
-
-const ON_DEMAND_PRINCIPLE_TITLE = "On-demand lessons";
 
 const LESSON_TOOL: Anthropic.Tool = {
   name: "emit_lesson",
@@ -814,14 +893,13 @@ const LESSON_TOOL: Anthropic.Tool = {
   },
 };
 
-const LESSON_SYSTEM = `You write daily "lean lesson" cards for the morning stand-up at The Calzone Kitchen, a UK artisan food business that makes calzones and macaroni cheese. The team practises Two Second Lean (Paul Akers) and draws on Lean Made Simple (Ryan Tiani).
+const LESSON_SYSTEM = `You write daily "lean lesson" cards for the morning stand-up at The Calzone Kitchen, a UK artisan food business that makes calzones and macaroni cheese. The team practises Two Second Lean (Paul Akers) and their primary lean text is Lean Made Simple by Ryan Tierney — the whole team learned lean through this book, so terminology consistency with it is non-negotiable.
+
+${leanCorpusPrompt()}
 
 Write ONE lesson on the topic the user gives you, in this exact house style:
-- Plain, warm, practical British English. Short sentences. No corporate jargon.
-- Always ground the idea in a concrete KITCHEN example (calzones, dough, ovens, packing, fridges, kanban cards, marinades).
 - Keep it short — the whole thing is read aloud in 2-3 minutes.
 - Never use H1/H2 markdown headings (#). Use **bold** and bullet lists only.
-- If the topic names a book or author, honour that framing in the explanation.
 
 Return the lesson by calling the emit_lesson tool. Do not write anything outside the tool call.`;
 
