@@ -23,7 +23,7 @@ import {
   Sparkles, ChefHat, Truck, ShoppingBag, AlertCircle, FileText, MessageCircle,
   HeartHandshake, Activity, BookOpen, Award, Loader2, ClipboardCheck, Sun,
   CheckCircle2, Heart, Settings, Edit3, Calendar, GripVertical, Plus, Trash2, Save,
-  Shuffle, Camera, Image as ImageIcon, Info,
+  Shuffle, Camera, Image as ImageIcon, Info, Users,
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
@@ -219,6 +219,7 @@ type SlideKind =
   | "special_prep"
   | "stretches"
   | "yesterday_kpis"
+  | "station_assignments"
   | "order_of_production"
   | "local_delivery"
   | "bag_orders"
@@ -236,6 +237,7 @@ const SLIDE_KIND_META: Record<SlideKind, { icon: React.ElementType; color: strin
   special_prep:        { icon: Award,         color: "text-amber-500",   fallbackTitle: "Test Product Prep" },
   stretches:           { icon: Activity,      color: "text-emerald-500", fallbackTitle: "Stretches" },
   yesterday_kpis:      { icon: ChefHat,       color: "text-violet-500",  fallbackTitle: "Yesterday's Numbers" },
+  station_assignments: { icon: Users,         color: "text-teal-500",    fallbackTitle: "Who's On Today" },
   order_of_production: { icon: ClipboardCheck,color: "text-primary",     fallbackTitle: "Order of Production" },
   local_delivery:      { icon: Truck,         color: "text-blue-500",    fallbackTitle: "Local Despatch" },
   bag_orders:          { icon: ShoppingBag,   color: "text-indigo-500",  fallbackTitle: "Bag Orders" },
@@ -870,6 +872,95 @@ function PrepMode({
   );
 }
 
+// ── "Who's On Today" — station assignments from the Planday rota ─────
+// Self-fetching (Planday costs a few round trips server-side, so this
+// slide loads with its own spinner instead of slowing the meeting start).
+// Read-across-the-room design: names big, times small, one card per
+// station in production-flow order; rota roles that don't map to a
+// station appear in the footer so nobody is missing.
+interface StationAssignmentPerson { name: string; start: string | null; end: string | null; position: string }
+interface StationAssignmentsData {
+  available: boolean;
+  reason?: string;
+  date: string;
+  stations: Array<{ title: string; people: StationAssignmentPerson[]; hideWhenEmpty: boolean }>;
+  extras: StationAssignmentPerson[];
+}
+
+function StationAssignmentsSlide() {
+  const { data, isLoading } = useQuery<StationAssignmentsData>({
+    queryKey: ["station-assignments-today"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/morning-meetings/station-assignments`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load rota");
+      return res.json();
+    },
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-16 text-muted-foreground">
+        <Loader2 className="w-6 h-6 animate-spin mr-2" /> Fetching today's rota…
+      </div>
+    );
+  }
+  if (!data || !data.available) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-2 text-center">
+        <AlertCircle className="w-10 h-10 text-amber-500" />
+        <p className="text-lg font-semibold">Rota unavailable</p>
+        <p className="text-muted-foreground">{data?.reason ?? "Could not reach Planday."} Check the printed rota.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+        {data.stations.map(st => (
+          <div key={st.title}
+            className={cn(
+              "rounded-2xl border p-4",
+              st.people.length > 0 ? "border-border bg-card" : "border-dashed border-border bg-secondary/20",
+            )}>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">{st.title}</p>
+            {st.people.length === 0 ? (
+              <p className="text-2xl font-display font-bold text-muted-foreground/50">—</p>
+            ) : (
+              <div className="space-y-1.5">
+                {st.people.map((p, i) => (
+                  <div key={i}>
+                    <p className="text-xl font-display font-bold leading-tight">{p.name}</p>
+                    {p.start && (
+                      <p className="text-xs text-muted-foreground tabular-nums">{p.start}–{p.end ?? ""}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {data.extras.length > 0 && (
+        <div className="rounded-xl border border-border bg-secondary/20 px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Also in today</p>
+          <p className="text-sm">
+            {data.extras.map((p, i) => (
+              <span key={i}>
+                <span className="font-semibold">{p.name}</span>
+                <span className="text-muted-foreground"> ({p.position}{p.start ? ` · ${p.start}` : ""})</span>
+                {i < data.extras.length - 1 && <span className="text-muted-foreground"> · </span>}
+              </span>
+            ))}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Done screen ─────────────────────────────────────────────────────
 function DoneScreen({ data, onClose }: { data: DashboardData; onClose: () => void }) {
   return (
@@ -894,6 +985,7 @@ function SlideBody({ slide, data, onRefresh, isPreviewing }: { slide: MeetingSli
     case "special_prep": return <SpecialPrepSlide data={data} slide={slide} />;
     case "stretches": return <StretchesPanel />;
     case "yesterday_kpis": return <YesterdayKpisSlide data={data} slide={slide} />;
+    case "station_assignments": return <StationAssignmentsSlide />;
     case "order_of_production": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} stickyTotals />;
     case "local_delivery": return <LocalDeliverySlide data={data} slide={slide} />;
     case "bag_orders": return <BagOrdersSlide data={data} slide={slide} />;
@@ -2443,6 +2535,7 @@ const SLIDE_KIND_CATALOG: Array<{ kind: SlideKind; label: string; description: s
   { kind: "special_prep",        label: "Test Product Prep",    description: "Tomorrow's non-core items being prepped today" },
   { kind: "stretches",           label: "Stretches",            description: "Daily-random stretches, auto-cycling 10s each" },
   { kind: "yesterday_kpis",      label: "Yesterday's Numbers",  description: "Building rate, packing rate, wonkies" },
+  { kind: "station_assignments", label: "Who's On Today",       description: "Stations and who's rostered on each, live from Planday" },
   { kind: "order_of_production", label: "Order of Production",  description: "Today's recipe order + batches, with shortages colour-coded" },
   { kind: "local_delivery",      label: "Local Despatch",       description: "Any local despatches + today's deliveries in" },
   { kind: "bag_orders",          label: "Bag Orders",           description: "Discussion prompt" },

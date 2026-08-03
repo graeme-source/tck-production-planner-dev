@@ -160,6 +160,87 @@ function isoDateMinusDays(iso: string, days: number): string {
   return d.toISOString().split("T")[0];
 }
 
+// ── "Who's On Today" — station assignments from the Planday rota ──────────
+// Maps rota positions onto planner stations via the editable
+// station_assignments_mapping setting; unmapped positions land in an
+// "extras" footer so nobody disappears from the slide. Self-contained
+// endpoint (not part of /dashboard) because Planday costs a few round
+// trips — the slide fetches it lazily with its own spinner.
+router.get("/station-assignments", async (req: Request, res: Response) => {
+  const dateStr = typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+    ? req.query.date
+    : new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date());
+
+  try {
+    const { isPlandayConfigured, getPlandayShifts, getPlandayEmployees, getPlandayPositions } = await import("../services/planday");
+    if (!isPlandayConfigured()) {
+      res.json({ available: false, reason: "Planday is not configured on this server.", date: dateStr, stations: [], extras: [] });
+      return;
+    }
+
+    const [shifts, employees, positions] = await Promise.all([
+      getPlandayShifts(dateStr, dateStr),
+      getPlandayEmployees(),
+      getPlandayPositions(),
+    ]);
+
+    const empById = new Map(employees.map(e => [e.id, e]));
+    const posById = new Map(positions.map(p => [p.id, p]));
+
+    // Mapping: { stations: [{ title, positions: string[], hideWhenEmpty? }] }
+    let mapping: { stations: Array<{ title: string; positions: string[]; hideWhenEmpty?: boolean }> } = { stations: [] };
+    const [mapRow] = await db.select({ value: appSettingsTable.value })
+      .from(appSettingsTable)
+      .where(eq(appSettingsTable.key, "station_assignments_mapping"));
+    try {
+      if (mapRow?.value) mapping = JSON.parse(mapRow.value);
+    } catch { /* fall through with empty mapping — everything lands in extras */ }
+
+    const positionToStation = new Map<string, string>();
+    for (const st of mapping.stations ?? []) {
+      for (const p of st.positions ?? []) positionToStation.set(p.trim().toLowerCase(), st.title);
+    }
+
+    type Person = { name: string; start: string | null; end: string | null; position: string };
+    const byStation = new Map<string, Person[]>();
+    const extras: Person[] = [];
+
+    for (const s of shifts) {
+      const emp = s.employeeId != null ? empById.get(s.employeeId) : undefined;
+      const posName = s.positionId != null ? (posById.get(s.positionId)?.name ?? null) : null;
+      const person: Person = {
+        name: emp ? `${emp.firstName ?? ""} ${emp.lastName ?? ""}`.trim() || "Unassigned" : "Unassigned",
+        start: s.startDateTime?.slice(11, 16) ?? null,
+        end: s.endDateTime?.slice(11, 16) ?? null,
+        position: posName ?? "No position",
+      };
+      const station = posName ? positionToStation.get(posName.trim().toLowerCase()) : undefined;
+      if (station) {
+        if (!byStation.has(station)) byStation.set(station, []);
+        byStation.get(station)!.push(person);
+      } else {
+        extras.push(person);
+      }
+    }
+
+    const stations = (mapping.stations ?? [])
+      .map(st => ({
+        title: st.title,
+        people: (byStation.get(st.title) ?? []).sort((a, b) => (a.start ?? "").localeCompare(b.start ?? "")),
+        hideWhenEmpty: !!st.hideWhenEmpty,
+      }))
+      .filter(st => st.people.length > 0 || !st.hideWhenEmpty);
+
+    extras.sort((a, b) => a.position.localeCompare(b.position) || a.name.localeCompare(b.name));
+
+    res.json({ available: true, date: dateStr, stations, extras });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[morning-meetings] station-assignments error:", msg);
+    res.json({ available: false, reason: "Could not reach Planday.", date: dateStr, stations: [], extras: [] });
+  }
+});
+
 router.get("/dashboard", async (_req: Request, res: Response) => {
   try {
     const today = londonDateString();

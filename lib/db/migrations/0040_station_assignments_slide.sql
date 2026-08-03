@@ -1,0 +1,23 @@
+-- Morning-meeting "Who's On Today" slide (station assignments from Planday).
+--
+-- Graeme (2026-08-02): "I'm always asking people who's building, who's on
+-- mixing prep, who's on dough sheeting" — a slide before Order of Production
+-- showing each station and who's rostered on it, pulled live from Planday.
+--
+-- Two seeds, both applied idempotently at API startup (runStartupMigrations):
+--   1. app_settings.station_assignments_mapping — JSON mapping of Planday
+--      position names → planner station cards, in production-flow order.
+--      ON CONFLICT DO NOTHING so later edits are never overwritten.
+--      "OG Prep" carries hideWhenEmpty: barely used, so the card only shows
+--      when someone is actually rostered on it (Graeme's request).
+--      Positions not in the mapping still show, in an "Also in today"
+--      footer under their raw Planday name — nobody vanishes.
+--   2. template_slides — inserts kind 'station_assignments' into the default
+--      template (id 1) at Order of Production's slot, bumping it and
+--      everything after down one. Guarded by _migrations_done key
+--      'station_assignments_slide_v1' so admin reorders stick.
+--
+-- The slide's data comes from GET /api/morning-meetings/station-assignments
+-- (Planday shifts + employees + positions for the day, grouped via the
+-- mapping). If Planday is unconfigured/unreachable the slide shows a
+-- "check the printed rota" fallback rather than blocking the meeting.
