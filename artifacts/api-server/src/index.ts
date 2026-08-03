@@ -1413,6 +1413,22 @@ async function runStartupMigrations() {
     await db.execute(sql`ALTER TABLE founder_recurring_items ADD COLUMN IF NOT EXISTS schedule_day INTEGER`);
     await db.execute(sql`ALTER TABLE founder_recurring_items ADD COLUMN IF NOT EXISTS anchor_date DATE`);
 
+    // Founder objectives — see lib/db/migrations/0042_founder_objectives.sql.
+    // Moonshot / Mission / Stepping Stones above the pillars on /founder/focus.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS founder_objectives (
+        id SERIAL PRIMARY KEY,
+        horizon TEXT NOT NULL,
+        title TEXT NOT NULL,
+        detail TEXT,
+        metric TEXT,
+        target_date DATE,
+        sort INTEGER NOT NULL DEFAULT 0,
+        achieved_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+
     // Founder settings — see lib/db/migrations/0036_founder_settings.sql.
     // Founder-only k/v (CalDAV credentials etc.) — kept out of app_settings
     // because that table is readable by ordinary logged-in users.

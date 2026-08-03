@@ -103,7 +103,18 @@ function scheduleLabel(r: RecurringItem): string {
   return SCHEDULE_LABELS[r.schedule];
 }
 
+interface Objective {
+  id: number;
+  horizon: "moonshot" | "mission" | "stepping_stone";
+  title: string;
+  detail: string | null;
+  metric: string | null;
+  targetDate: string | null;
+  achieved: boolean;
+}
+
 interface Overview {
+  objectives: Objective[];
   date: string;
   weekday: number;
   pillars: Pillar[];
@@ -614,6 +625,9 @@ export default function FounderFocus() {
       </div>{/* end main column */}
       <div className="space-y-6 min-w-0">
 
+      {/* ── North Star (moonshot → mission → stepping stones) ───────────── */}
+      <NorthStarCard objectives={data?.objectives ?? []} />
+
       {/* ── Parking lot ─────────────────────────────────────────────────── */}
       <section className="rounded-2xl border border-border bg-card p-5 space-y-3">
         <h2 className="text-sm font-semibold flex items-center gap-2">
@@ -668,6 +682,198 @@ export default function FounderFocus() {
       </div>{/* end right rail */}
       </div>{/* end two-column grid */}
     </div>
+  );
+}
+
+// Generic list-of-objectives section (used for the Mission's multiple goals).
+function ObjectiveList({ label, sub, horizon, items, placeholder, onChanged }: {
+  label: string; sub: string;
+  horizon: Objective["horizon"];
+  items: Objective[];
+  placeholder: string;
+  onChanged: () => void;
+}) {
+  const [draft, setDraft] = useState("");
+  async function add() {
+    if (!draft.trim()) return;
+    await api("/objectives", { method: "POST", body: JSON.stringify({ horizon, title: draft.trim() }) });
+    setDraft("");
+    onChanged();
+  }
+  return (
+    <div>
+      <p className="text-[11px] uppercase tracking-wide font-semibold text-muted-foreground mb-1.5">
+        {label} <span className="font-normal normal-case">— {sub}</span>
+      </p>
+      <ul className="space-y-1.5">
+        {items.map(o => (
+          <li key={o.id} className="flex items-center gap-2 text-sm group">
+            <button
+              onClick={async () => { await api(`/objectives/${o.id}`, { method: "PATCH", body: JSON.stringify({ achieved: !o.achieved }) }); onChanged(); }}
+              className={cn(
+                "w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0",
+                o.achieved ? "bg-primary border-primary text-primary-foreground" : "border-border hover:border-primary",
+              )}
+              aria-label={o.achieved ? "Mark not achieved" : "Mark achieved"}
+            >
+              {o.achieved && <Check className="w-3 h-3" />}
+            </button>
+            <span className={cn("flex-1 min-w-0", o.achieved && "line-through text-muted-foreground")}>{o.title}</span>
+            <button
+              onClick={async () => { await api(`/objectives/${o.id}`, { method: "DELETE" }); onChanged(); }}
+              className="p-1 rounded-md text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive"
+              aria-label={`Delete ${label.toLowerCase()} goal`}
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </li>
+        ))}
+      </ul>
+      <div className="flex gap-2 mt-2">
+        <input
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") add(); }}
+          placeholder={placeholder}
+          className="flex-1 px-2.5 py-1.5 rounded-lg border border-border bg-background text-sm"
+        />
+        <button onClick={add} disabled={!draft.trim()}
+          className="px-2.5 py-1.5 rounded-lg border border-border text-sm hover:bg-secondary/50 disabled:opacity-50" aria-label={`Add ${label.toLowerCase()} goal`}>
+          <Plus className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── North Star card ────────────────────────────────────────────────────────
+// The top of the goal pyramid: Moonshot (10yr) → Mission (3–5yr) →
+// Stepping Stones (~3 months, measurable). Fed to the AI replanner so
+// daily prioritisation is pulled by these, not just the week's template.
+function NorthStarCard({ objectives }: { objectives: Objective[] }) {
+  const queryClient = useQueryClient();
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["founder-focus"] });
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [stoneTitle, setStoneTitle] = useState("");
+  const [stoneMetric, setStoneMetric] = useState("");
+
+  const moonshot = objectives.find(o => o.horizon === "moonshot");
+  const stones = objectives.filter(o => o.horizon === "stepping_stone");
+
+  async function save(horizon: Objective["horizon"], existing: Objective | undefined, title: string) {
+    const t = title.trim();
+    if (!t) return;
+    if (existing) {
+      await api(`/objectives/${existing.id}`, { method: "PATCH", body: JSON.stringify({ title: t }) });
+    } else {
+      await api("/objectives", { method: "POST", body: JSON.stringify({ horizon, title: t }) });
+    }
+    invalidate();
+  }
+
+  async function addStone() {
+    if (!stoneTitle.trim()) return;
+    await api("/objectives", {
+      method: "POST",
+      body: JSON.stringify({ horizon: "stepping_stone", title: stoneTitle.trim(), metric: stoneMetric.trim() || null }),
+    });
+    setStoneTitle(""); setStoneMetric("");
+    invalidate();
+  }
+
+  const singleRow = (label: string, sub: string, horizon: Objective["horizon"], existing: Objective | undefined) => {
+    const key = horizon;
+    const value = drafts[key] ?? existing?.title ?? "";
+    return (
+      <div>
+        <p className="text-[11px] uppercase tracking-wide font-semibold text-muted-foreground">
+          {label} <span className="font-normal normal-case">— {sub}</span>
+        </p>
+        <input
+          value={value}
+          onChange={e => setDrafts(d => ({ ...d, [key]: e.target.value }))}
+          onBlur={() => { if ((drafts[key] ?? "") && drafts[key] !== existing?.title) save(horizon, existing, drafts[key]!); }}
+          onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+          placeholder={horizon === "moonshot" ? "The 10-year moonshot…" : "The 3–5 year mission…"}
+          className="w-full mt-0.5 bg-transparent border-b border-border focus:border-primary outline-none py-1 text-sm font-medium"
+        />
+        {existing?.metric && (
+          <span className="inline-block mt-1 text-xs px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">{existing.metric}</span>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <section className="rounded-2xl border border-border bg-card p-5 space-y-4">
+      <h2 className="text-sm font-semibold flex items-center gap-2">
+        <Target className="w-4 h-4 text-primary" /> North Star
+      </h2>
+      {singleRow("Moonshot", "10 years", "moonshot", moonshot)}
+      <ObjectiveList
+        label="Mission" sub="3–5 years"
+        horizon="mission"
+        items={objectives.filter(o => o.horizon === "mission")}
+        placeholder="Add a 3–5 year goal…"
+        onChanged={invalidate}
+      />
+
+      <div>
+        <p className="text-[11px] uppercase tracking-wide font-semibold text-muted-foreground mb-1.5">
+          Stepping stones <span className="font-normal normal-case">— next ~3 months, measurable</span>
+        </p>
+        <ul className="space-y-1.5">
+          {stones.map(s => (
+            <li key={s.id} className="flex items-center gap-2 text-sm group">
+              <button
+                onClick={async () => { await api(`/objectives/${s.id}`, { method: "PATCH", body: JSON.stringify({ achieved: !s.achieved }) }); invalidate(); }}
+                className={cn(
+                  "w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0",
+                  s.achieved ? "bg-primary border-primary text-primary-foreground" : "border-border hover:border-primary",
+                )}
+                aria-label={s.achieved ? "Mark not achieved" : "Mark achieved"}
+              >
+                {s.achieved && <Check className="w-3 h-3" />}
+              </button>
+              <span className={cn("flex-1 min-w-0", s.achieved && "line-through text-muted-foreground")}>
+                {s.title}
+                {s.metric && <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded-full bg-primary/10 text-primary whitespace-nowrap">{s.metric}</span>}
+              </span>
+              <button
+                onClick={async () => { await api(`/objectives/${s.id}`, { method: "DELETE" }); invalidate(); }}
+                className="p-1 rounded-md text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive"
+                aria-label="Delete stepping stone"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+        <div className="flex flex-wrap gap-2 mt-2">
+          <input
+            value={stoneTitle}
+            onChange={e => setStoneTitle(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") addStone(); }}
+            placeholder="Add a stepping stone…"
+            className="flex-1 min-w-[150px] px-2.5 py-1.5 rounded-lg border border-border bg-background text-sm"
+          />
+          <input
+            value={stoneMetric}
+            onChange={e => setStoneMetric(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") addStone(); }}
+            placeholder="Metric (e.g. £120k/mo)"
+            className="w-36 px-2.5 py-1.5 rounded-lg border border-border bg-background text-sm"
+          />
+          <button onClick={addStone} disabled={!stoneTitle.trim()}
+            className="px-2.5 py-1.5 rounded-lg border border-border text-sm hover:bg-secondary/50 disabled:opacity-50" aria-label="Add stepping stone">
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        The AI replanner reads these — days get prioritised toward the stepping stones.
+      </p>
+    </section>
   );
 }
 
