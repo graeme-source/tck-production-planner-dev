@@ -163,6 +163,7 @@ router.get("/overview", async (req: Request, res: Response) => {
         ticked: tickedItemIds.has(i.id),
         dueOnDate: recurringMatchesDate(i, dateStr, weekday),
       })),
+      objectives: await listObjectives(),
       calendarConfigured,
       events,
       calendarError,
@@ -223,6 +224,75 @@ router.delete("/caldav", async (_req: Request, res: Response) => {
   await deleteFounderSetting(CALDAV_ENABLED_KEY);
   resetCaldavCache();
   res.json({ configured: false });
+});
+
+// ── Objectives (Moonshot / Mission / Stepping Stones) ──────────────────────
+// The top of the goal pyramid: moonshot (10yr) → mission (3–5yr) →
+// stepping stones (next ~3 months, measurable). Raw-SQL rows — the table
+// is founder-only and tiny.
+const HORIZONS = ["moonshot", "mission", "stepping_stone"] as const;
+
+async function listObjectives() {
+  const rows = await db.execute<{
+    id: number; horizon: string; title: string; detail: string | null;
+    metric: string | null; target_date: string | null; sort: number; achieved_at: string | null;
+  }>(sql`
+    SELECT id, horizon, title, detail, metric, target_date::text, sort, achieved_at::text
+    FROM founder_objectives ORDER BY sort, id
+  `);
+  return rows.rows.map(r => ({
+    id: r.id, horizon: r.horizon, title: r.title, detail: r.detail,
+    metric: r.metric, targetDate: r.target_date, sort: r.sort, achieved: r.achieved_at != null,
+  }));
+}
+
+router.post("/objectives", async (req: Request, res: Response) => {
+  const parsed = z.object({
+    horizon: z.enum(HORIZONS),
+    title: z.string().trim().min(1).max(300),
+    detail: z.string().trim().max(2000).nullish(),
+    metric: z.string().trim().max(200).nullish(),
+    targetDate: z.string().regex(DATE_RE).nullish(),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid body" }); return; }
+  const b = parsed.data;
+  const rows = await db.execute<{ id: number }>(sql`
+    INSERT INTO founder_objectives (horizon, title, detail, metric, target_date)
+    VALUES (${b.horizon}, ${b.title}, ${b.detail ?? null}, ${b.metric ?? null}, ${b.targetDate ?? null})
+    RETURNING id
+  `);
+  res.status(201).json({ id: rows.rows[0].id });
+});
+
+router.patch("/objectives/:id", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const parsed = z.object({
+    title: z.string().trim().min(1).max(300).optional(),
+    detail: z.string().trim().max(2000).nullish(),
+    metric: z.string().trim().max(200).nullish(),
+    targetDate: z.string().regex(DATE_RE).nullish(),
+    achieved: z.boolean().optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Invalid body" }); return; }
+  const b = parsed.data;
+  await db.execute(sql`
+    UPDATE founder_objectives SET
+      title = COALESCE(${b.title ?? null}, title),
+      detail = CASE WHEN ${b.detail !== undefined} THEN ${b.detail ?? null} ELSE detail END,
+      metric = CASE WHEN ${b.metric !== undefined} THEN ${b.metric ?? null} ELSE metric END,
+      target_date = CASE WHEN ${b.targetDate !== undefined} THEN ${b.targetDate ?? null}::date ELSE target_date END,
+      achieved_at = CASE WHEN ${b.achieved === undefined} THEN achieved_at WHEN ${b.achieved === true} THEN NOW() ELSE NULL END
+    WHERE id = ${id}
+  `);
+  res.json({ ok: true });
+});
+
+router.delete("/objectives/:id", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  await db.execute(sql`DELETE FROM founder_objectives WHERE id = ${id}`);
+  res.json({ ok: true });
 });
 
 // ── Pillars ────────────────────────────────────────────────────────────────
@@ -704,7 +774,16 @@ router.post("/replan", async (req: Request, res: Response) => {
     const movable = blocks.filter(b => !locked.includes(b));
 
     const fmt = (min: number) => `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+    const objectives = await listObjectives();
+    const horizonLabel: Record<string, string> = { moonshot: "MOONSHOT (10-year)", mission: "MISSION (3-5 year)", stepping_stone: "STEPPING STONE (next ~3 months)" };
     const context = [
+      objectives.length
+        ? [
+            "North-star objectives — when trading off what fits in the day, favour work that advances the stepping stones:",
+            ...objectives.filter(o => !o.achieved).map(o =>
+              `  ${horizonLabel[o.horizon] ?? o.horizon}: ${o.title}${o.metric ? ` [target: ${o.metric}]` : ""}${o.targetDate ? ` (by ${o.targetDate})` : ""}`),
+          ].join("\n")
+        : "",
       `Date: ${dateStr}${isToday ? ` (today — current time ${fmt(now)}; nothing may be scheduled before now)` : ""}`,
       `Pillars (id · name · weekly target %):`,
       ...pillars.map(p => `  ${p.id} · ${p.name}${p.targetSharePct != null ? ` · ${p.targetSharePct}%` : ""}`),
