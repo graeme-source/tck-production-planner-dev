@@ -709,6 +709,48 @@ function DispatchProgressHeader({ progress }: { progress: DispatchProgress }) {
   );
 }
 
+// Constant motivator for the packing team: live packed-count plus a
+// traffic-light orders-per-hour tile. Bands agreed with Graeme 2026-08-03:
+// under 50 red, 50–55 amber, 55–60 green, over 60 purple ("smashing it").
+function paceBand(oph: number): { tile: string; label: string } {
+  if (oph > 60) return { tile: "bg-purple-600 text-white animate-pulse", label: "SMASHING IT! 🔥" };
+  if (oph >= 55) return { tile: "bg-green-600 text-white", label: "On target — keep going!" };
+  if (oph >= 50) return { tile: "bg-amber-500 text-white", label: "Almost there — push on!" };
+  return { tile: "bg-red-600 text-white", label: "Speed up!" };
+}
+
+function PackingPaceStrip({ packed, total, oph }: { packed: number | null; total: number | null; oph: number | null }) {
+  const pct = packed != null && total ? Math.min(100, Math.round((packed / total) * 100)) : 0;
+  const band = oph != null ? paceBand(oph) : null;
+  return (
+    <div className="flex items-stretch gap-3">
+      <div className="flex-1 glass-panel rounded-2xl border border-border px-4 py-3 flex items-center gap-4">
+        <Package className="w-7 h-7 text-primary flex-shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <span className="text-3xl md:text-4xl font-extrabold tabular-nums leading-none">
+              {packed ?? "—"}
+              <span className="text-muted-foreground font-bold text-xl md:text-2xl">/{total ?? "—"}</span>
+            </span>
+            <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">packed</span>
+          </div>
+          <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden mt-2">
+            <div className="h-full rounded-full bg-primary transition-all duration-700" style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+      </div>
+      <div
+        className={`rounded-2xl px-5 py-3 flex flex-col items-center justify-center flex-shrink-0 min-w-[9rem] transition-colors ${band ? band.tile : "bg-secondary text-muted-foreground"}`}
+        aria-label={oph != null ? `Packing pace ${oph.toFixed(1)} orders per hour` : "Packing pace not available yet"}
+      >
+        <span className="text-3xl md:text-4xl font-extrabold tabular-nums leading-none">{oph != null ? oph.toFixed(1) : "—"}</span>
+        <span className="text-[11px] font-bold uppercase tracking-wider mt-1 opacity-90">orders/hr</span>
+        <span className="text-xs font-bold mt-0.5 text-center leading-tight">{band ? band.label : "warming up…"}</span>
+      </div>
+    </div>
+  );
+}
+
 // Modal showing background-completion failures for the current session.
 // Each failure can be dismissed individually after the operator has dealt
 // with it (e.g. retried in Shopify Admin or manually decremented stock).
@@ -1020,6 +1062,29 @@ export default function Fulfilment() {
     queryKey: ["fulfilment-dispatch-progress", queryTag],
     queryFn: () => fetchDispatchProgress(queryTag),
     staleTime: 30_000,
+    // Poll so the packed-count on the picking screen stays live even when
+    // a second packer on another iPad is completing orders in the same wave.
+    refetchInterval: 60_000,
+  });
+
+  // Live packing pace — the SAME orders/hr number the dashboard and the
+  // packing-speed report show (Shopify fulfilment timestamps, gaps over
+  // 10 min treated as idle). The wave's dispatch day is the day before
+  // the delivery tag. Only polled while actually picking.
+  const dispatchDayStr = (() => {
+    try { return format(addDays(parseISO(queryTag), -1), "yyyy-MM-dd"); }
+    catch { return null; }
+  })();
+  const { data: packingPace, refetch: refetchPace } = useQuery({
+    queryKey: ["fulfilment-packing-pace", dispatchDayStr],
+    enabled: !!dispatchDayStr && view === "picking",
+    refetchInterval: 60_000,
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/reports/packing-speed?from=${dispatchDayStr}&to=${dispatchDayStr}`, { credentials: "include" });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return (data.dailyRows?.[0] ?? null) as { ordersPerHour: number | null; count: number } | null;
+    },
   });
 
   const { data: postcodeValidations, refetch: refetchPostcodes } = useQuery({
@@ -1600,6 +1665,7 @@ export default function Fulfilment() {
         // Shopify shipped — refresh the orders list to drop this one.
         refetch();
         refetchProgress();
+        refetchPace();
         // Decrement may still have failed silently — surface it.
         if (result.decrementError) {
           setCompletionFailures(prev => [...prev, {
@@ -2143,6 +2209,11 @@ export default function Fulfilment() {
           title={activeOrder.name}
           description={activeOrder.shipping_address?.name ?? `${activeOrder.customer?.first_name} ${activeOrder.customer?.last_name}`}
         />
+        <PackingPaceStrip
+          packed={progress?.totalFulfilled ?? null}
+          total={progress?.totalOrders ?? null}
+          oph={packingPace?.ordersPerHour ?? null}
+        />
         {pendingPickOrder && (
           <ShopifyConfirmDialog
             title={`Ship order ${pendingPickOrder.name}?`}
@@ -2517,6 +2588,18 @@ export default function Fulfilment() {
                     loading="lazy"
                   />
                 )}
+                {/* Multiplier sits BEFORE the name so the row reads "2 × Chicken
+                    Chorizo" — the packer sees how many to grab first. The pack
+                    size stays greyed on the right so "2" can't be misread as
+                    two packs when it's one 2-pack. */}
+                {item.totalQty > 1 && (
+                  <div
+                    className="px-3 py-1 rounded-lg text-2xl md:text-3xl font-extrabold flex-shrink-0 bg-orange-500 text-white"
+                    aria-label={`Quantity ${item.totalQty}, ${picked} picked`}
+                  >
+                    {isPartial ? `${picked}/${item.totalQty}` : `${item.totalQty} ×`}
+                  </div>
+                )}
                 <div className="flex-1 min-w-0">
                   <p
                     className={`font-bold text-2xl md:text-3xl leading-tight ${isComplete ? "line-through text-muted-foreground" : ""}`}
@@ -2531,14 +2614,6 @@ export default function Fulfilment() {
                     <p className="text-sm font-mono text-muted-foreground mt-1">{item.sku}</p>
                   )}
                 </div>
-                {item.totalQty > 1 && (
-                  <div
-                    className="px-3 py-1 rounded-lg text-2xl md:text-3xl font-extrabold flex-shrink-0 bg-orange-500 text-white"
-                    aria-label={`Quantity ${item.totalQty}, ${picked} picked`}
-                  >
-                    {isPartial ? `${picked}/${item.totalQty}` : `×${item.totalQty}`}
-                  </div>
-                )}
                 {item.location ? (
                   <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium flex-shrink-0 ${style?.badge}`}>
                     <MapPin className="w-3 h-3" />
