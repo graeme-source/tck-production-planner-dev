@@ -354,8 +354,18 @@ export default function MeetingPage() {
   if (mode === "setup") {
     return <SetupScreen
       data={data}
-      hostName={hostName}
-      onHostNameChange={setHostName}
+      ensureMeeting={async () => {
+        if (data?.meeting) return data.meeting.id;
+        const res = await fetch(`${BASE}/api/morning-meetings/start`, {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ hostName, exampleId: data?.lesson?.id ?? null }),
+        });
+        if (!res.ok) return null;
+        const row = await res.json();
+        await queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
+        return row?.id ?? null;
+      }}
       onReadBriefing={() => setMode("prep")}
       onStart={() => startMutation.mutate()}
       starting={startMutation.isPending}
@@ -672,13 +682,333 @@ function MeetingShell({
 }
 
 // ── Setup screen ────────────────────────────────────────────────────
+// ── Setup cards — the pre-meeting control centre ────────────────────
+// Everything a host preps before pressing Start: review/swap the lesson,
+// load a gratitude photo, and shape today's slide list (add/drop slides,
+// including quick "Reminders" notes) without touching the master template.
+
+function SetupLessonCard({ data, ensureMeeting, onReadBriefing }: {
+  data: DashboardData;
+  ensureMeeting: () => Promise<number | null>;
+  onReadBriefing: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [picking, setPicking] = useState(false);
+  const { data: allExamples = [] } = useQuery<Array<{ id: number; title: string; principleTitle: string }>>({
+    queryKey: ["lesson-all-examples"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/morning-meetings/examples`, { credentials: "include" });
+      return res.ok ? res.json() : [];
+    },
+    enabled: picking,
+  });
+  const grouped = useMemo(() => {
+    const g = new Map<string, Array<{ id: number; title: string }>>();
+    for (const ex of allExamples) {
+      const key = ex.principleTitle ?? "Other";
+      if (!g.has(key)) g.set(key, []);
+      g.get(key)!.push({ id: ex.id, title: ex.title });
+    }
+    return [...g.entries()];
+  }, [allExamples]);
+
+  async function swapTo(exampleId: number | null) {
+    const id = await ensureMeeting();
+    if (!id) return;
+    await fetch(`${BASE}/api/morning-meetings/${id}/example`, {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ exampleId }),
+    });
+    queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
+    toast({ title: exampleId ? "Lesson swapped" : "Back to this week's lesson" });
+    setPicking(false);
+  }
+
+  if (!data.lesson) return null;
+  const overridden = data.meeting?.exampleId != null;
+  return (
+    <div className="glass-panel rounded-2xl p-6 mb-6">
+      <div className="flex items-start justify-between mb-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+            Today's lesson — Week {data.lesson.weekNumber}
+          </p>
+          <h2 className="text-xl font-display font-bold">{data.lesson.title}</h2>
+          <p className="text-sm text-muted-foreground mt-1">{data.lesson.summary}</p>
+        </div>
+        <BookOpen className="w-6 h-6 text-purple-500 shrink-0" />
+      </div>
+      <div className="flex flex-wrap items-center gap-3 mt-2">
+        <button onClick={onReadBriefing} className="flex items-center gap-2 text-sm font-medium text-primary hover:text-primary/80">
+          <BookOpen className="w-4 h-4" /> Read host briefing (1 min)
+        </button>
+        <button onClick={() => setPicking(p => !p)} className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground">
+          <Shuffle className="w-4 h-4" /> {picking ? "Keep this lesson" : "Change lesson"}
+        </button>
+        {overridden && (
+          <button onClick={() => swapTo(null)} className="text-sm text-muted-foreground hover:text-foreground underline">
+            Reset to this week's
+          </button>
+        )}
+      </div>
+      {picking && (
+        <select
+          className="mt-3 w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+          defaultValue=""
+          onChange={e => { if (e.target.value) swapTo(Number(e.target.value)); }}
+        >
+          <option value="" disabled>Pick a lesson from the library…</option>
+          {grouped.map(([principle, items]) => (
+            <optgroup key={principle} label={principle}>
+              {items.map(i => <option key={i.id} value={i.id}>{i.title}</option>)}
+            </optgroup>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
+
+function SetupGratitudeCard({ data, ensureMeeting }: {
+  data: DashboardData;
+  ensureMeeting: () => Promise<number | null>;
+}) {
+  const queryClient = useQueryClient();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [cacheBust, setCacheBust] = useState(0);
+  const meeting = data.meeting;
+
+  async function upload(file: File) {
+    setBusy(true);
+    try {
+      const id = await ensureMeeting();
+      if (!id) return;
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`${BASE}/api/morning-meetings/${id}/gratitude-photo`, {
+        method: "POST", credentials: "include", body: form,
+      });
+      if (!res.ok) throw new Error("Upload failed");
+      setCacheBust(Date.now());
+      queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
+      toast({ title: "Gratitude photo set" });
+    } catch (e) {
+      toast({ title: "Upload failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    if (!meeting) return;
+    setBusy(true);
+    try {
+      await fetch(`${BASE}/api/morning-meetings/${meeting.id}/gratitude-photo`, { method: "DELETE", credentials: "include" });
+      queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const hasPhoto = !!meeting?.hasGratitudePhoto;
+  return (
+    <div className="glass-panel rounded-2xl p-6 mb-6">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Gratitude photo</p>
+          <p className="text-sm text-muted-foreground">
+            {hasPhoto ? "Loaded — it'll fill the gratitude slide." : "Add a team photo for the gratitude slide (optional)."}
+          </p>
+        </div>
+        {hasPhoto && meeting && (
+          <img
+            src={`${BASE}/api/morning-meetings/${meeting.id}/gratitude-photo?v=${cacheBust}`}
+            alt="Gratitude"
+            className="w-16 h-16 rounded-xl object-cover border border-border flex-shrink-0"
+          />
+        )}
+      </div>
+      <div className="flex gap-2 mt-3">
+        <input ref={fileRef} type="file" accept="image/*" className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ""; }} />
+        <button onClick={() => fileRef.current?.click()} disabled={busy}
+          className="px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImageIcon className="w-4 h-4" />}
+          {hasPhoto ? "Replace photo" : "Add photo"}
+        </button>
+        {hasPhoto && (
+          <button onClick={remove} disabled={busy}
+            className="px-3 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:opacity-50 inline-flex items-center gap-1.5">
+            <Trash2 className="w-4 h-4" /> Remove
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SetupSlidesCard({ data, ensureMeeting, onEditToday }: {
+  data: DashboardData;
+  ensureMeeting: () => Promise<number | null>;
+  onEditToday: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [editingReminderId, setEditingReminderId] = useState<number | null>(null);
+  const [reminderText, setReminderText] = useState("");
+  const slides = data.slides ?? [];
+
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
+
+  async function removeSlide(slideId: number) {
+    setBusy(true);
+    try {
+      await fetch(`${BASE}/api/morning-meetings/slides/${slideId}`, { method: "DELETE", credentials: "include" });
+      refresh();
+    } finally { setBusy(false); }
+  }
+
+  async function addSlide(kind: SlideKind, label: string) {
+    setBusy(true);
+    try {
+      const id = await ensureMeeting();
+      if (!id) return;
+      const res = await fetch(`${BASE}/api/morning-meetings/${id}/slides`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind, title: label }),
+      });
+      const row = await res.json();
+      refresh();
+      setAdding(false);
+      // A fresh Reminders note opens straight into its editor.
+      if (kind === "custom_markdown" && label === "Reminders" && row?.id) {
+        setEditingReminderId(row.id);
+        setReminderText("");
+      }
+    } finally { setBusy(false); }
+  }
+
+  async function saveReminder(slideId: number) {
+    setBusy(true);
+    try {
+      await fetch(`${BASE}/api/morning-meetings/slides/${slideId}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contentMd: reminderText }),
+      });
+      setEditingReminderId(null);
+      refresh();
+      toast({ title: "Reminders saved" });
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="glass-panel rounded-2xl p-6 mb-6">
+      <div className="flex items-center justify-between gap-3 mb-1">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Today's slides</p>
+        <button onClick={onEditToday} className="text-xs text-muted-foreground hover:text-foreground underline">
+          Full editor
+        </button>
+      </div>
+
+      {slides.length === 0 ? (
+        <button
+          onClick={async () => { setBusy(true); await ensureMeeting(); setBusy(false); }}
+          disabled={busy}
+          className="mt-2 px-3 py-2 rounded-lg border border-dashed border-border text-sm text-muted-foreground hover:bg-secondary/30 disabled:opacity-50 inline-flex items-center gap-1.5"
+        >
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Edit3 className="w-4 h-4" />}
+          Prepare today's slides (from the template)
+        </button>
+      ) : (
+        <ul className="mt-2 space-y-1">
+          {slides.map(s => {
+            const meta = SLIDE_KIND_META[s.kind as SlideKind];
+            const Icon = meta?.icon ?? FileText;
+            const isReminder = s.kind === "custom_markdown";
+            return (
+              <li key={s.id} className="group">
+                <div className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-secondary/30">
+                  <Icon className={cn("w-4 h-4 flex-shrink-0", meta?.color ?? "text-muted-foreground")} />
+                  <span className="text-sm flex-1 min-w-0 truncate">{s.title}</span>
+                  {isReminder && (
+                    <button
+                      onClick={() => { setEditingReminderId(editingReminderId === s.id ? null : s.id); setReminderText(s.contentMd ?? ""); }}
+                      className="p-1 rounded-md text-muted-foreground hover:text-foreground" title="Edit content" aria-label="Edit slide content">
+                      <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => removeSlide(s.id)}
+                    disabled={busy}
+                    className="p-1 rounded-md text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive disabled:opacity-30"
+                    title="Remove from today's meeting" aria-label={`Remove ${s.title}`}>
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                {editingReminderId === s.id && (
+                  <div className="ml-8 mr-2 mb-2 space-y-1.5">
+                    <textarea
+                      value={reminderText}
+                      onChange={e => setReminderText(e.target.value)}
+                      placeholder={"- Fire alarm test at 11\n- Visitors at 2pm — aprons on"}
+                      rows={3}
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono"
+                    />
+                    <button onClick={() => saveReminder(s.id)} disabled={busy}
+                      className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium disabled:opacity-50">
+                      Save
+                    </button>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {slides.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => addSlide("custom_markdown", "Reminders")}
+            disabled={busy}
+            className="px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+            <Plus className="w-3.5 h-3.5" /> Reminders slide
+          </button>
+          {adding ? (
+            <select
+              className="px-3 py-1.5 rounded-lg border border-border bg-background text-sm"
+              defaultValue=""
+              onChange={e => {
+                const item = SLIDE_KIND_CATALOG.find(k => k.kind === e.target.value);
+                if (item) addSlide(item.kind, item.label);
+              }}
+            >
+              <option value="" disabled>Add a slide…</option>
+              {SLIDE_KIND_CATALOG.map(k => <option key={k.kind} value={k.kind}>{k.label}</option>)}
+            </select>
+          ) : (
+            <button onClick={() => setAdding(true)} disabled={busy}
+              className="px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+              <Plus className="w-3.5 h-3.5" /> Other slide
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SetupScreen({
-  data, hostName, onHostNameChange, onReadBriefing, onStart, starting, onExit,
+  data, ensureMeeting, onReadBriefing, onStart, starting, onExit,
   onEditToday, onEditTemplate, onEditCurriculum, onEditTomorrow, onPreviewTomorrow, isAdmin,
 }: {
   data: DashboardData;
-  hostName: string;
-  onHostNameChange: (s: string) => void;
+  ensureMeeting: () => Promise<number | null>;
   onReadBriefing: () => void;
   onStart: () => void;
   starting: boolean;
@@ -750,44 +1080,13 @@ function SetupScreen({
           )}
         </div>
 
-        <div className="glass-panel rounded-2xl p-6 mb-6">
-          <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 block">Today's host</label>
-          <input
-            type="text"
-            value={hostName}
-            onChange={e => onHostNameChange(e.target.value)}
-            placeholder="Who's running this meeting?"
-            className="w-full text-2xl font-display font-bold bg-transparent border-b border-border focus:border-primary outline-none py-2"
-          />
-        </div>
-
-        {data.lesson && (
-          <div className="glass-panel rounded-2xl p-6 mb-6">
-            <div className="flex items-start justify-between mb-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Today's lesson — Week {data.lesson.weekNumber}</p>
-                <h2 className="text-xl font-display font-bold">{data.lesson.title}</h2>
-                <p className="text-sm text-muted-foreground mt-1">{data.lesson.summary}</p>
-              </div>
-              <BookOpen className="w-6 h-6 text-purple-500 shrink-0" />
-            </div>
-            <button
-              onClick={onReadBriefing}
-              className="mt-2 flex items-center gap-2 text-sm font-medium text-primary hover:text-primary/80"
-            >
-              <BookOpen className="w-4 h-4" />
-              Read host briefing (1 min)
-            </button>
-            <p className="text-xs text-muted-foreground mt-3">
-              The briefing walks you through what this concept means, what you'll show the team, and how to deliver it.
-              You can host even if you've never heard the word "kaizen."
-            </p>
-          </div>
-        )}
+        <SetupLessonCard data={data} ensureMeeting={ensureMeeting} onReadBriefing={onReadBriefing} />
+        <SetupGratitudeCard data={data} ensureMeeting={ensureMeeting} />
+        <SetupSlidesCard data={data} ensureMeeting={ensureMeeting} onEditToday={onEditToday} />
 
         <button
           onClick={onStart}
-          disabled={!hostName.trim() || starting}
+          disabled={starting}
           className="w-full px-6 py-4 rounded-2xl bg-primary text-primary-foreground text-lg font-semibold hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2"
         >
           {starting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5" />}
