@@ -829,18 +829,23 @@ async function lookupOrder(
   };
 }
 
-/** Customer-facing tracking link. APC's direct URL skips the CAPTCHA on their
- *  public tracking page, but needs the consignee postcode alongside the
- *  22-digit waybill, with the outward and inward halves separated by a "+". */
+/** Customer-facing tracking link. APC's WordPress site (apc.co.uk) prefills
+ *  the parcel-tracker widget from `consignment` + `postcode` query params and
+ *  its JS auto-submits the search when BOTH are present — so this link lands
+ *  the customer straight on their parcel's status. The old
+ *  apc-overnight.com/track-parcel.php URL now 301s to the apc.co.uk homepage
+ *  and DROPS its params (verified 2026-08-03), so it must not be used. */
 export function apcTrackingUrl(waybill: string, postcode: string | null | undefined): string {
   const wb = encodeURIComponent(waybill);
   const pc = (postcode ?? "").toUpperCase().replace(/\s+/g, "");
-  if (!pc) return `https://apc-overnight.com/track-parcel.php?id=${wb}`;
-  // Inward code is always the last 3 characters of a UK postcode.
+  if (!pc) return `https://apc.co.uk/?consignment=${wb}`;
+  // Inward code is always the last 3 characters of a UK postcode; APC's
+  // widget expects the two halves space-separated ("DY12 1RB"), and "+"
+  // encodes a space in a query string.
   const formatted = pc.length > 3
     ? `${pc.slice(0, pc.length - 3)}+${pc.slice(-3)}`
     : pc;
-  return `https://apc-overnight.com/track-parcel.php?id=${wb}&postcode=${formatted}`;
+  return `https://apc.co.uk/?consignment=${wb}&postcode=${formatted}`;
 }
 
 export async function cancelShipment(waybill: string, apiBase?: string): Promise<void> {
