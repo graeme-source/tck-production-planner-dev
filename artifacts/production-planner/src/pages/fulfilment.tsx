@@ -890,6 +890,10 @@ export default function Fulfilment() {
   const [view, setView] = useState<View>(urlTag ? "list" : "dates");
   const [, navigate] = useLocation();
   const [activeOrder, setActiveOrder] = useState<ShopifyOrder | null>(null);
+  // Orders the packer pressed Skip on. They stay out of the auto-advance
+  // rotation until every other order in the wave is done, so a skipped
+  // order can't bounce straight back onto the screen after the next one.
+  const [skippedIds, setSkippedIds] = useState<Set<number>>(new Set());
   const [shipment, setShipment] = useState<ShipmentResult | null>(null);
   const [printStatus, setPrintStatus] = useState<PrintStatus>("idle");
   const [shipmentError, setShipmentError] = useState<string | null>(null);
@@ -1249,6 +1253,14 @@ export default function Fulfilment() {
   }
 
   function handleOrderSelect(order: ShopifyOrder) {
+    // Picking an order by hand (or cycling back round to it) un-skips it.
+    if (skippedIds.has(order.id)) {
+      setSkippedIds(prev => {
+        const next = new Set(prev);
+        next.delete(order.id);
+        return next;
+      });
+    }
     clearPreQueue();
     // Live-mode confirmation only matters when a real APC consignment
     // is about to be created. With APC off, or in reconcile mode where the
@@ -1304,7 +1316,7 @@ export default function Fulfilment() {
       // Warm the next order in the wave. Safe to do unconditionally here —
       // unlike "full" mode this books nothing, it's just a read.
       const pos = filteredUnfulfilled.findIndex(o => o.id === order.id);
-      const next = filteredUnfulfilled[pos + 1];
+      const next = filteredUnfulfilled.slice(pos + 1).find(o => !skippedIds.has(o.id));
       if (next) preQueueConsignment(next.name);
       return;
     }
@@ -1355,7 +1367,7 @@ export default function Fulfilment() {
       // for an order the operator isn't going to pick next.
       if (configStatus?.testMode) {
         const currentPos = filteredUnfulfilled.findIndex(o => o.id === order.id);
-        const nextOrder = filteredUnfulfilled[currentPos + 1];
+        const nextOrder = filteredUnfulfilled.slice(currentPos + 1).find(o => !skippedIds.has(o.id));
         if (nextOrder) preQueueNextOrder(nextOrder.id);
       }
     } catch (err: any) {
@@ -1626,9 +1638,16 @@ export default function Fulfilment() {
     // whatever filter the operator had set (the screen even defaults to Small
     // Box) and dropped them into an unrelated order.
     // After refetch, the completed order is removed from the list, so we
-    // pick the first remaining order.
+    // pick the first remaining order. Skipped orders are held to the back:
+    // they only come round again once everything else in the wave is done.
     const remaining = filteredUnfulfilled.filter(o => o.id !== activeOrder?.id);
-    const nextOrder = remaining[0];
+    const unskipped = remaining.filter(o => !skippedIds.has(o.id));
+    let nextOrder = unskipped[0];
+    if (!nextOrder && remaining.length > 0) {
+      // Only skipped orders are left — start a fresh pass over them.
+      setSkippedIds(new Set());
+      nextOrder = remaining[0];
+    }
     if (nextOrder) {
       // Route through handleOrderSelect so that live-mode confirmation dialog
       // is shown before any real APC consignment is created.
@@ -1637,6 +1656,15 @@ export default function Fulfilment() {
       setView("list");
       setActiveOrder(null);
     }
+  }
+
+  function skipCurrent() {
+    // Remember the skip BEFORE advancing, so advanceToNext (and the next
+    // completion's auto-advance) won't hand this order straight back.
+    if (activeOrder) {
+      setSkippedIds(prev => new Set(prev).add(activeOrder.id));
+    }
+    advanceToNext();
   }
 
   function goBack() {
@@ -2214,7 +2242,7 @@ export default function Fulfilment() {
                 <RotateCcw className="w-3.5 h-3.5" /> Retry
               </button>
               <button
-                onClick={advanceToNext}
+                onClick={skipCurrent}
                 className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-secondary hover:bg-secondary/80 rounded-lg transition-colors font-medium"
               >
                 <SkipForward className="w-3.5 h-3.5" /> Skip
@@ -2540,7 +2568,7 @@ export default function Fulfilment() {
 
         <div className="flex gap-3 pt-2">
           <button
-            onClick={advanceToNext}
+            onClick={skipCurrent}
             className="px-4 py-2.5 border border-border rounded-xl text-sm font-medium hover:bg-secondary/50 transition-colors flex items-center gap-1.5 text-muted-foreground"
           >
             <SkipForward className="w-4 h-4" /> Skip
@@ -3182,6 +3210,11 @@ export default function Fulfilment() {
                     {hasUnassigned && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300 font-medium">
                         Unassigned SKUs
+                      </span>
+                    )}
+                    {skippedIds.has(order.id) && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground font-medium flex items-center gap-1">
+                        <SkipForward className="w-2.5 h-2.5" /> Skipped
                       </span>
                     )}
                     {isBlocked && (

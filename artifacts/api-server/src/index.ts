@@ -1486,6 +1486,65 @@ async function runStartupMigrations() {
       END $$;
     `);
 
+    // Morning-meeting "Who's On Today" slide — see
+    // lib/db/migrations/0040_station_assignments_slide.sql. Maps Planday
+    // rota positions onto planner stations; mapping lives in app_settings
+    // (ON CONFLICT DO NOTHING so admin edits survive restarts) and the
+    // slide is inserted into the default template just before Order of
+    // Production, once.
+    await db.execute(sql`
+      INSERT INTO app_settings (key, value, updated_at) VALUES (
+        'station_assignments_mapping',
+        '{"stations":[{"title":"Dough Prep","positions":["Dough Prep","Dough Mixing"]},{"title":"Dough Sheeting","positions":["Dough"]},{"title":"Mixing","positions":["Mixing Prep"]},{"title":"Prep","positions":["OG Prep"],"hideWhenEmpty":true},{"title":"Building Table 1","positions":["Builder 1"]},{"title":"Building Table 2","positions":["Builder 2"]},{"title":"Ovens","positions":["Ovens"]},{"title":"Fried Chicken","positions":["Frying","Breading"]},{"title":"Wrapping","positions":["Wrapper"]},{"title":"Packing","positions":["Packer"]}]}',
+        NOW()
+      ) ON CONFLICT (key) DO NOTHING
+    `);
+    await db.execute(sql`
+      DO $$
+      DECLARE
+        target_pos INTEGER;
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'station_assignments_slide_v1') THEN
+          SELECT order_position INTO target_pos FROM template_slides
+          WHERE template_id = 1 AND kind = 'order_of_production' LIMIT 1;
+          IF target_pos IS NOT NULL THEN
+            -- Insert first, then shift everything else at/after that slot —
+            -- excluding the new row itself — so the new slide provably owns
+            -- the slot regardless of statement ordering quirks.
+            INSERT INTO template_slides (template_id, kind, title, order_position)
+            VALUES (1, 'station_assignments', 'Who''s On Today', target_pos);
+            UPDATE template_slides SET order_position = order_position + 1
+            WHERE template_id = 1 AND order_position >= target_pos
+              AND kind <> 'station_assignments';
+          END IF;
+          INSERT INTO _migrations_done (key) VALUES ('station_assignments_slide_v1');
+        END IF;
+      END $$;
+    `);
+
+    // Weekly lean focus — see lib/db/migrations/0041_lean_week_focus.sql.
+    // One curriculum principle per week; a row here pins a specific week
+    // to a chosen principle ("next week we're doing Leave It Better Than
+    // You Found It"), otherwise the curriculum rotates weekly. Also renames
+    // the week-2 principle to the Lean Made Simple wording — DOWNTIME is
+    // the generic acronym whose terminology Graeme explicitly doesn't use.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS lean_week_focus (
+        week_start DATE PRIMARY KEY,
+        principle_id INTEGER NOT NULL REFERENCES lean_principles(id) ON DELETE CASCADE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      UPDATE lean_principles SET title = 'The 8 Wastes'
+      WHERE title = 'The 8 Wastes — DOWNTIME'
+    `);
+    await db.execute(sql`
+      UPDATE lean_principles
+      SET summary = 'Overproduction, Transportation, Inventory, Defects, Motion, Overprocessing, Waiting, Waste of Skills.'
+      WHERE title = 'The 8 Wastes' AND summary ~* 'non.?utili[sz]ed'
+    `);
+
     // APC label-scan ledger — see lib/db/migrations/0031_add_apc_consignments.sql.
     // The UNIQUE waybill is what stops one physical label being scanned onto
     // two orders, so this table must exist before the packing flow runs.

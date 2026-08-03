@@ -23,7 +23,7 @@ import {
   Sparkles, ChefHat, Truck, ShoppingBag, AlertCircle, FileText, MessageCircle,
   HeartHandshake, Activity, BookOpen, Award, Loader2, ClipboardCheck, Sun,
   CheckCircle2, Heart, Settings, Edit3, Calendar, GripVertical, Plus, Trash2, Save,
-  Shuffle, Camera, Image as ImageIcon, Info,
+  Shuffle, Camera, Image as ImageIcon, Info, Users,
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
@@ -219,6 +219,7 @@ type SlideKind =
   | "special_prep"
   | "stretches"
   | "yesterday_kpis"
+  | "station_assignments"
   | "order_of_production"
   | "local_delivery"
   | "bag_orders"
@@ -236,6 +237,7 @@ const SLIDE_KIND_META: Record<SlideKind, { icon: React.ElementType; color: strin
   special_prep:        { icon: Award,         color: "text-amber-500",   fallbackTitle: "Test Product Prep" },
   stretches:           { icon: Activity,      color: "text-emerald-500", fallbackTitle: "Stretches" },
   yesterday_kpis:      { icon: ChefHat,       color: "text-violet-500",  fallbackTitle: "Yesterday's Numbers" },
+  station_assignments: { icon: Users,         color: "text-teal-500",    fallbackTitle: "Who's On Today" },
   order_of_production: { icon: ClipboardCheck,color: "text-primary",     fallbackTitle: "Order of Production" },
   local_delivery:      { icon: Truck,         color: "text-blue-500",    fallbackTitle: "Local Despatch" },
   bag_orders:          { icon: ShoppingBag,   color: "text-indigo-500",  fallbackTitle: "Bag Orders" },
@@ -352,8 +354,18 @@ export default function MeetingPage() {
   if (mode === "setup") {
     return <SetupScreen
       data={data}
-      hostName={hostName}
-      onHostNameChange={setHostName}
+      ensureMeeting={async () => {
+        if (data?.meeting) return data.meeting.id;
+        const res = await fetch(`${BASE}/api/morning-meetings/start`, {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ hostName, exampleId: data?.lesson?.id ?? null }),
+        });
+        if (!res.ok) return null;
+        const row = await res.json();
+        await queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
+        return row?.id ?? null;
+      }}
       onReadBriefing={() => setMode("prep")}
       onStart={() => startMutation.mutate()}
       starting={startMutation.isPending}
@@ -670,13 +682,333 @@ function MeetingShell({
 }
 
 // ── Setup screen ────────────────────────────────────────────────────
+// ── Setup cards — the pre-meeting control centre ────────────────────
+// Everything a host preps before pressing Start: review/swap the lesson,
+// load a gratitude photo, and shape today's slide list (add/drop slides,
+// including quick "Reminders" notes) without touching the master template.
+
+function SetupLessonCard({ data, ensureMeeting, onReadBriefing }: {
+  data: DashboardData;
+  ensureMeeting: () => Promise<number | null>;
+  onReadBriefing: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [picking, setPicking] = useState(false);
+  const { data: allExamples = [] } = useQuery<Array<{ id: number; title: string; principleTitle: string }>>({
+    queryKey: ["lesson-all-examples"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/morning-meetings/examples`, { credentials: "include" });
+      return res.ok ? res.json() : [];
+    },
+    enabled: picking,
+  });
+  const grouped = useMemo(() => {
+    const g = new Map<string, Array<{ id: number; title: string }>>();
+    for (const ex of allExamples) {
+      const key = ex.principleTitle ?? "Other";
+      if (!g.has(key)) g.set(key, []);
+      g.get(key)!.push({ id: ex.id, title: ex.title });
+    }
+    return [...g.entries()];
+  }, [allExamples]);
+
+  async function swapTo(exampleId: number | null) {
+    const id = await ensureMeeting();
+    if (!id) return;
+    await fetch(`${BASE}/api/morning-meetings/${id}/example`, {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ exampleId }),
+    });
+    queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
+    toast({ title: exampleId ? "Lesson swapped" : "Back to this week's lesson" });
+    setPicking(false);
+  }
+
+  if (!data.lesson) return null;
+  const overridden = data.meeting?.exampleId != null;
+  return (
+    <div className="glass-panel rounded-2xl p-6 mb-6">
+      <div className="flex items-start justify-between mb-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+            Today's lesson — Week {data.lesson.weekNumber}
+          </p>
+          <h2 className="text-xl font-display font-bold">{data.lesson.title}</h2>
+          <p className="text-sm text-muted-foreground mt-1">{data.lesson.summary}</p>
+        </div>
+        <BookOpen className="w-6 h-6 text-purple-500 shrink-0" />
+      </div>
+      <div className="flex flex-wrap items-center gap-3 mt-2">
+        <button onClick={onReadBriefing} className="flex items-center gap-2 text-sm font-medium text-primary hover:text-primary/80">
+          <BookOpen className="w-4 h-4" /> Read host briefing (1 min)
+        </button>
+        <button onClick={() => setPicking(p => !p)} className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground">
+          <Shuffle className="w-4 h-4" /> {picking ? "Keep this lesson" : "Change lesson"}
+        </button>
+        {overridden && (
+          <button onClick={() => swapTo(null)} className="text-sm text-muted-foreground hover:text-foreground underline">
+            Reset to this week's
+          </button>
+        )}
+      </div>
+      {picking && (
+        <select
+          className="mt-3 w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+          defaultValue=""
+          onChange={e => { if (e.target.value) swapTo(Number(e.target.value)); }}
+        >
+          <option value="" disabled>Pick a lesson from the library…</option>
+          {grouped.map(([principle, items]) => (
+            <optgroup key={principle} label={principle}>
+              {items.map(i => <option key={i.id} value={i.id}>{i.title}</option>)}
+            </optgroup>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
+
+function SetupGratitudeCard({ data, ensureMeeting }: {
+  data: DashboardData;
+  ensureMeeting: () => Promise<number | null>;
+}) {
+  const queryClient = useQueryClient();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [cacheBust, setCacheBust] = useState(0);
+  const meeting = data.meeting;
+
+  async function upload(file: File) {
+    setBusy(true);
+    try {
+      const id = await ensureMeeting();
+      if (!id) return;
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`${BASE}/api/morning-meetings/${id}/gratitude-photo`, {
+        method: "POST", credentials: "include", body: form,
+      });
+      if (!res.ok) throw new Error("Upload failed");
+      setCacheBust(Date.now());
+      queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
+      toast({ title: "Gratitude photo set" });
+    } catch (e) {
+      toast({ title: "Upload failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    if (!meeting) return;
+    setBusy(true);
+    try {
+      await fetch(`${BASE}/api/morning-meetings/${meeting.id}/gratitude-photo`, { method: "DELETE", credentials: "include" });
+      queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const hasPhoto = !!meeting?.hasGratitudePhoto;
+  return (
+    <div className="glass-panel rounded-2xl p-6 mb-6">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Gratitude photo</p>
+          <p className="text-sm text-muted-foreground">
+            {hasPhoto ? "Loaded — it'll fill the gratitude slide." : "Add a team photo for the gratitude slide (optional)."}
+          </p>
+        </div>
+        {hasPhoto && meeting && (
+          <img
+            src={`${BASE}/api/morning-meetings/${meeting.id}/gratitude-photo?v=${cacheBust}`}
+            alt="Gratitude"
+            className="w-16 h-16 rounded-xl object-cover border border-border flex-shrink-0"
+          />
+        )}
+      </div>
+      <div className="flex gap-2 mt-3">
+        <input ref={fileRef} type="file" accept="image/*" className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ""; }} />
+        <button onClick={() => fileRef.current?.click()} disabled={busy}
+          className="px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImageIcon className="w-4 h-4" />}
+          {hasPhoto ? "Replace photo" : "Add photo"}
+        </button>
+        {hasPhoto && (
+          <button onClick={remove} disabled={busy}
+            className="px-3 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:opacity-50 inline-flex items-center gap-1.5">
+            <Trash2 className="w-4 h-4" /> Remove
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SetupSlidesCard({ data, ensureMeeting, onEditToday }: {
+  data: DashboardData;
+  ensureMeeting: () => Promise<number | null>;
+  onEditToday: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [editingReminderId, setEditingReminderId] = useState<number | null>(null);
+  const [reminderText, setReminderText] = useState("");
+  const slides = data.slides ?? [];
+
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
+
+  async function removeSlide(slideId: number) {
+    setBusy(true);
+    try {
+      await fetch(`${BASE}/api/morning-meetings/slides/${slideId}`, { method: "DELETE", credentials: "include" });
+      refresh();
+    } finally { setBusy(false); }
+  }
+
+  async function addSlide(kind: SlideKind, label: string) {
+    setBusy(true);
+    try {
+      const id = await ensureMeeting();
+      if (!id) return;
+      const res = await fetch(`${BASE}/api/morning-meetings/${id}/slides`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind, title: label }),
+      });
+      const row = await res.json();
+      refresh();
+      setAdding(false);
+      // A fresh Reminders note opens straight into its editor.
+      if (kind === "custom_markdown" && label === "Reminders" && row?.id) {
+        setEditingReminderId(row.id);
+        setReminderText("");
+      }
+    } finally { setBusy(false); }
+  }
+
+  async function saveReminder(slideId: number) {
+    setBusy(true);
+    try {
+      await fetch(`${BASE}/api/morning-meetings/slides/${slideId}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contentMd: reminderText }),
+      });
+      setEditingReminderId(null);
+      refresh();
+      toast({ title: "Reminders saved" });
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="glass-panel rounded-2xl p-6 mb-6">
+      <div className="flex items-center justify-between gap-3 mb-1">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Today's slides</p>
+        <button onClick={onEditToday} className="text-xs text-muted-foreground hover:text-foreground underline">
+          Full editor
+        </button>
+      </div>
+
+      {slides.length === 0 ? (
+        <button
+          onClick={async () => { setBusy(true); await ensureMeeting(); setBusy(false); }}
+          disabled={busy}
+          className="mt-2 px-3 py-2 rounded-lg border border-dashed border-border text-sm text-muted-foreground hover:bg-secondary/30 disabled:opacity-50 inline-flex items-center gap-1.5"
+        >
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Edit3 className="w-4 h-4" />}
+          Prepare today's slides (from the template)
+        </button>
+      ) : (
+        <ul className="mt-2 space-y-1">
+          {slides.map(s => {
+            const meta = SLIDE_KIND_META[s.kind as SlideKind];
+            const Icon = meta?.icon ?? FileText;
+            const isReminder = s.kind === "custom_markdown";
+            return (
+              <li key={s.id} className="group">
+                <div className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-secondary/30">
+                  <Icon className={cn("w-4 h-4 flex-shrink-0", meta?.color ?? "text-muted-foreground")} />
+                  <span className="text-sm flex-1 min-w-0 truncate">{s.title}</span>
+                  {isReminder && (
+                    <button
+                      onClick={() => { setEditingReminderId(editingReminderId === s.id ? null : s.id); setReminderText(s.contentMd ?? ""); }}
+                      className="p-1 rounded-md text-muted-foreground hover:text-foreground" title="Edit content" aria-label="Edit slide content">
+                      <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => removeSlide(s.id)}
+                    disabled={busy}
+                    className="p-1 rounded-md text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive disabled:opacity-30"
+                    title="Remove from today's meeting" aria-label={`Remove ${s.title}`}>
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                {editingReminderId === s.id && (
+                  <div className="ml-8 mr-2 mb-2 space-y-1.5">
+                    <textarea
+                      value={reminderText}
+                      onChange={e => setReminderText(e.target.value)}
+                      placeholder={"- Fire alarm test at 11\n- Visitors at 2pm — aprons on"}
+                      rows={3}
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono"
+                    />
+                    <button onClick={() => saveReminder(s.id)} disabled={busy}
+                      className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium disabled:opacity-50">
+                      Save
+                    </button>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {slides.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => addSlide("custom_markdown", "Reminders")}
+            disabled={busy}
+            className="px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+            <Plus className="w-3.5 h-3.5" /> Reminders slide
+          </button>
+          {adding ? (
+            <select
+              className="px-3 py-1.5 rounded-lg border border-border bg-background text-sm"
+              defaultValue=""
+              onChange={e => {
+                const item = SLIDE_KIND_CATALOG.find(k => k.kind === e.target.value);
+                if (item) addSlide(item.kind, item.label);
+              }}
+            >
+              <option value="" disabled>Add a slide…</option>
+              {SLIDE_KIND_CATALOG.map(k => <option key={k.kind} value={k.kind}>{k.label}</option>)}
+            </select>
+          ) : (
+            <button onClick={() => setAdding(true)} disabled={busy}
+              className="px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+              <Plus className="w-3.5 h-3.5" /> Other slide
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SetupScreen({
-  data, hostName, onHostNameChange, onReadBriefing, onStart, starting, onExit,
+  data, ensureMeeting, onReadBriefing, onStart, starting, onExit,
   onEditToday, onEditTemplate, onEditCurriculum, onEditTomorrow, onPreviewTomorrow, isAdmin,
 }: {
   data: DashboardData;
-  hostName: string;
-  onHostNameChange: (s: string) => void;
+  ensureMeeting: () => Promise<number | null>;
   onReadBriefing: () => void;
   onStart: () => void;
   starting: boolean;
@@ -748,44 +1080,13 @@ function SetupScreen({
           )}
         </div>
 
-        <div className="glass-panel rounded-2xl p-6 mb-6">
-          <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 block">Today's host</label>
-          <input
-            type="text"
-            value={hostName}
-            onChange={e => onHostNameChange(e.target.value)}
-            placeholder="Who's running this meeting?"
-            className="w-full text-2xl font-display font-bold bg-transparent border-b border-border focus:border-primary outline-none py-2"
-          />
-        </div>
-
-        {data.lesson && (
-          <div className="glass-panel rounded-2xl p-6 mb-6">
-            <div className="flex items-start justify-between mb-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Today's lesson — Week {data.lesson.weekNumber}</p>
-                <h2 className="text-xl font-display font-bold">{data.lesson.title}</h2>
-                <p className="text-sm text-muted-foreground mt-1">{data.lesson.summary}</p>
-              </div>
-              <BookOpen className="w-6 h-6 text-purple-500 shrink-0" />
-            </div>
-            <button
-              onClick={onReadBriefing}
-              className="mt-2 flex items-center gap-2 text-sm font-medium text-primary hover:text-primary/80"
-            >
-              <BookOpen className="w-4 h-4" />
-              Read host briefing (1 min)
-            </button>
-            <p className="text-xs text-muted-foreground mt-3">
-              The briefing walks you through what this concept means, what you'll show the team, and how to deliver it.
-              You can host even if you've never heard the word "kaizen."
-            </p>
-          </div>
-        )}
+        <SetupLessonCard data={data} ensureMeeting={ensureMeeting} onReadBriefing={onReadBriefing} />
+        <SetupGratitudeCard data={data} ensureMeeting={ensureMeeting} />
+        <SetupSlidesCard data={data} ensureMeeting={ensureMeeting} onEditToday={onEditToday} />
 
         <button
           onClick={onStart}
-          disabled={!hostName.trim() || starting}
+          disabled={starting}
           className="w-full px-6 py-4 rounded-2xl bg-primary text-primary-foreground text-lg font-semibold hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2"
         >
           {starting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5" />}
@@ -870,6 +1171,95 @@ function PrepMode({
   );
 }
 
+// ── "Who's On Today" — station assignments from the Planday rota ─────
+// Self-fetching (Planday costs a few round trips server-side, so this
+// slide loads with its own spinner instead of slowing the meeting start).
+// Read-across-the-room design: names big, times small, one card per
+// station in production-flow order; rota roles that don't map to a
+// station appear in the footer so nobody is missing.
+interface StationAssignmentPerson { name: string; start: string | null; end: string | null; position: string }
+interface StationAssignmentsData {
+  available: boolean;
+  reason?: string;
+  date: string;
+  stations: Array<{ title: string; people: StationAssignmentPerson[]; hideWhenEmpty: boolean }>;
+  extras: StationAssignmentPerson[];
+}
+
+function StationAssignmentsSlide() {
+  const { data, isLoading } = useQuery<StationAssignmentsData>({
+    queryKey: ["station-assignments-today"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/morning-meetings/station-assignments`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load rota");
+      return res.json();
+    },
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-16 text-muted-foreground">
+        <Loader2 className="w-6 h-6 animate-spin mr-2" /> Fetching today's rota…
+      </div>
+    );
+  }
+  if (!data || !data.available) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-2 text-center">
+        <AlertCircle className="w-10 h-10 text-amber-500" />
+        <p className="text-lg font-semibold">Rota unavailable</p>
+        <p className="text-muted-foreground">{data?.reason ?? "Could not reach Planday."} Check the printed rota.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+        {data.stations.map(st => (
+          <div key={st.title}
+            className={cn(
+              "rounded-2xl border p-4",
+              st.people.length > 0 ? "border-border bg-card" : "border-dashed border-border bg-secondary/20",
+            )}>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">{st.title}</p>
+            {st.people.length === 0 ? (
+              <p className="text-2xl font-display font-bold text-muted-foreground/50">—</p>
+            ) : (
+              <div className="space-y-1.5">
+                {st.people.map((p, i) => (
+                  <div key={i}>
+                    <p className="text-xl font-display font-bold leading-tight">{p.name}</p>
+                    {p.start && (
+                      <p className="text-xs text-muted-foreground tabular-nums">{p.start}–{p.end ?? ""}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {data.extras.length > 0 && (
+        <div className="rounded-xl border border-border bg-secondary/20 px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Also in today</p>
+          <p className="text-sm">
+            {data.extras.map((p, i) => (
+              <span key={i}>
+                <span className="font-semibold">{p.name}</span>
+                <span className="text-muted-foreground"> ({p.position}{p.start ? ` · ${p.start}` : ""})</span>
+                {i < data.extras.length - 1 && <span className="text-muted-foreground"> · </span>}
+              </span>
+            ))}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Done screen ─────────────────────────────────────────────────────
 function DoneScreen({ data, onClose }: { data: DashboardData; onClose: () => void }) {
   return (
@@ -894,6 +1284,7 @@ function SlideBody({ slide, data, onRefresh, isPreviewing }: { slide: MeetingSli
     case "special_prep": return <SpecialPrepSlide data={data} slide={slide} />;
     case "stretches": return <StretchesPanel />;
     case "yesterday_kpis": return <YesterdayKpisSlide data={data} slide={slide} />;
+    case "station_assignments": return <StationAssignmentsSlide />;
     case "order_of_production": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} stickyTotals />;
     case "local_delivery": return <LocalDeliverySlide data={data} slide={slide} />;
     case "bag_orders": return <BagOrdersSlide data={data} slide={slide} />;
@@ -2162,7 +2553,7 @@ function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSli
                 onChange={e => setTopic(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter") submitTopic(); }}
                 disabled={generate.isPending}
-                placeholder='e.g. "total ownership, as in Lean Made Simple by Ryan Tiani"'
+                placeholder='e.g. "total ownership, as in Lean Made Simple by Ryan Tierney"'
                 className="flex-1 bg-background border border-border rounded-xl px-3 py-2 text-sm disabled:opacity-50"
               />
               <button
@@ -2443,6 +2834,7 @@ const SLIDE_KIND_CATALOG: Array<{ kind: SlideKind; label: string; description: s
   { kind: "special_prep",        label: "Test Product Prep",    description: "Tomorrow's non-core items being prepped today" },
   { kind: "stretches",           label: "Stretches",            description: "Daily-random stretches, auto-cycling 10s each" },
   { kind: "yesterday_kpis",      label: "Yesterday's Numbers",  description: "Building rate, packing rate, wonkies" },
+  { kind: "station_assignments", label: "Who's On Today",       description: "Stations and who's rostered on each, live from Planday" },
   { kind: "order_of_production", label: "Order of Production",  description: "Today's recipe order + batches, with shortages colour-coded" },
   { kind: "local_delivery",      label: "Local Despatch",       description: "Any local despatches + today's deliveries in" },
   { kind: "bag_orders",          label: "Bag Orders",           description: "Discussion prompt" },
@@ -2856,6 +3248,77 @@ interface ExampleRow {
   isActive: boolean;
 }
 
+// ── Weekly focus picker ─────────────────────────────────────────────
+// "This week we're on X; next week I want Y." A pinned week overrides
+// the curriculum rotation; clearing it falls back to the rotation.
+function WeeklyFocusCard() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery<{
+    thisWeek: { weekStart: string; principle: { id: number; title: string } | null; source: "override" | "curriculum" };
+    nextWeek: { weekStart: string; principle: { id: number; title: string } | null; source: "override" | "curriculum" };
+    principles: Array<{ id: number; title: string }>;
+  }>({
+    queryKey: ["lean-week-plan"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/morning-meetings/lessons/week-plan`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load week plan");
+      return res.json();
+    },
+  });
+
+  const setFocus = useMutation({
+    mutationFn: async ({ weekStart, principleId }: { weekStart: string; principleId: number | null }) => {
+      const res = await fetch(`${BASE}/api/morning-meetings/lessons/week-focus`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ weekStart, principleId }),
+      });
+      if (!res.ok) throw new Error("Failed to save focus");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["lean-week-plan"] });
+      queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
+      toast({ title: "Weekly focus updated" });
+    },
+  });
+
+  if (!data) return null;
+
+  const row = (label: string, wk: typeof data.thisWeek) => (
+    <div className="flex items-center gap-3 py-2">
+      <div className="w-24 flex-shrink-0">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+        <p className="text-[11px] text-muted-foreground">{format(new Date(`${wk.weekStart}T00:00:00`), "d MMM")}</p>
+      </div>
+      <select
+        value={wk.source === "override" && wk.principle ? String(wk.principle.id) : ""}
+        onChange={e => setFocus.mutate({ weekStart: wk.weekStart, principleId: e.target.value ? Number(e.target.value) : null })}
+        className="flex-1 px-3 py-2 rounded-lg border border-border bg-background text-sm"
+      >
+        <option value="">
+          Follow curriculum{wk.source === "curriculum" && wk.principle ? ` — ${wk.principle.title}` : ""}
+        </option>
+        {data.principles.map(p => (
+          <option key={p.id} value={p.id}>{p.title}</option>
+        ))}
+      </select>
+      {wk.source === "override" && (
+        <span className="text-[11px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 flex-shrink-0">pinned</span>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="rounded-2xl border border-border bg-card p-4 mb-6">
+      <p className="text-sm font-semibold flex items-center gap-2 mb-1">
+        <Calendar className="w-4 h-4 text-purple-500" /> Weekly focus
+      </p>
+      {row("This week", data.thisWeek)}
+      {row("Next week", data.nextWeek)}
+    </div>
+  );
+}
+
 function CurriculumEditor({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -2900,8 +3363,10 @@ function CurriculumEditor({ onClose }: { onClose: () => void }) {
           Lean Curriculum
         </h1>
         <p className="text-sm text-muted-foreground mb-6">
-          Weekly themes rotate through the year. Each theme has multiple daily examples — the Morning Meeting auto-picks today's based on weekday so the team gets a different angle on the same principle Mon-Fri.
+          One theme per week — the Morning Meeting sticks with it Mon–Fri, rotating that theme's examples so the team gets a different angle on the same principle each day. Pick a week's focus below, or let it follow the curriculum order.
         </p>
+
+        <WeeklyFocusCard />
 
         {isLoading ? (
           <div className="py-12 text-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground inline" /></div>
