@@ -2,9 +2,11 @@
 //
 // List view: cards of each matrix. Detail view: a grid of enrolled users (rows)
 // × items (columns) with a per-cell trained sign-off (date + who signed off).
-// Items can be free-text or linked to a live SOP (Documents → assessment_type
-// 'sop'); SOP-linked columns open the actual PDF. Whole feature is gated to
-// admins/managers (page permission /training + API requireAdminOrManager).
+// Items can be free-text or linked to a live document (Documents →
+// assessment_type 'sop' or 'policy'); linked columns open the canonical
+// reader at /documents/:id (which renders markdown or serves the PDF).
+// Whole feature is gated to admins/managers (page permission /training +
+// API requireAdminOrManager).
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -369,11 +371,11 @@ function ItemRowHeader({ item, onEdit, onDelete }: { item: Item; onEdit: () => v
         <PopoverContent className="w-48 p-1.5" align="end">
           {isSop && (
             <a
-              href={`${BASE}/api/risk-assessments/${item.sopId}/file`} target="_blank" rel="noopener noreferrer"
+              href={`${BASE}/documents/${item.sopId}`} target="_blank" rel="noopener noreferrer"
               className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm hover:bg-secondary transition-colors"
               onClick={() => setOpen(false)}
             >
-              <ExternalLink className="w-4 h-4 text-primary" /> Open SOP
+              <ExternalLink className="w-4 h-4 text-primary" /> Open document
             </a>
           )}
           <button onClick={() => { setOpen(false); onEdit(); }} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm hover:bg-secondary transition-colors">
@@ -614,7 +616,7 @@ function AddItemDialog({ matrixId, onClose, onDone }: { matrixId: number; onClos
     queryKey: ["training", "sops"],
     queryFn: async () => {
       const all = await api<Sop[]>("/risk-assessments");
-      return all.filter(d => d.assessmentType === "sop");
+      return all.filter(d => d.assessmentType === "sop" || d.assessmentType === "policy");
     },
   });
 
@@ -693,7 +695,7 @@ function EditItemDialog({ item, onClose, onDone }: { item: Item; onClose: () => 
     queryKey: ["training", "sops"],
     queryFn: async () => {
       const all = await api<Sop[]>("/risk-assessments");
-      return all.filter(d => d.assessmentType === "sop");
+      return all.filter(d => d.assessmentType === "sop" || d.assessmentType === "policy");
     },
   });
 

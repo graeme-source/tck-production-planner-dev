@@ -1,0 +1,25 @@
+-- Jewellery & Body Piercings Policy (2026-08-04, Graeme): first document of
+-- the 'policy' assessment_type, and the pilot for policies as a single
+-- source of truth. One risk_assessments row IS the policy; everything else
+-- links to it:
+--
+--   * Employee Hub → Policies section lists active 'policy' documents and
+--     opens the staff-facing reader at /documents/:id.
+--   * Documents → HACCP → Evidence Log shows the same list as prerequisite
+--     policies (personal hygiene / foreign-body control).
+--   * New Colleague Onboarding training matrix gains an item with
+--     sop_id → the policy row, so every enrolled colleague gets a
+--     read-and-signed-off training record against it.
+--
+-- No schema changes. Seed applied at API startup (runStartupMigrations),
+-- guarded by _migrations_done key 'jewellery_policy_seed_v1'. The full
+-- policy text lives in JEWELLERY_POLICY_MARKDOWN in
+-- artifacts/api-server/src/index.ts until seeded; thereafter the DB row is
+-- canonical and edits happen in the Documents admin UI.
+--
+-- Content summary: no jewellery or exposed piercings in production,
+-- ingredient-storage or packing areas; exceptions for one plain wedding
+-- band, risk-assessed medical-alert and religious items; removal →
+-- declaration & risk assessment → containment → reassignment hierarchy for
+-- non-removable piercings; new piercings discussed beforehand; existing
+-- staff risk-classified through consultation rather than dismissal.

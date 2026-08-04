@@ -1938,6 +1938,34 @@ function SlotCell({ label, icon, reading, zone }: {
   );
 }
 
+// ── HACCP prerequisite policies ────────────────────────────────────────────
+// Personal-hygiene / foreign-body policies are HACCP prerequisite
+// programmes. They live once in the Documents repository (type 'policy');
+// this strip links to the canonical reader so the evidence log and the
+// policy text never drift apart.
+function HaccpPolicyLinks() {
+  const [policies, setPolicies] = useState<{ id: number; title: string }[]>([]);
+  useEffect(() => {
+    fetch(`${BASE}/api/risk-assessments`, { credentials: "include" })
+      .then(res => (res.ok ? res.json() : []))
+      .then((rows: { id: number; title: string; assessmentType: string; status: string }[]) =>
+        setPolicies(rows.filter(r => r.assessmentType === "policy" && r.status === "active").map(r => ({ id: r.id, title: r.title }))))
+      .catch(() => setPolicies([]));
+  }, []);
+  if (policies.length === 0) return null;
+  return (
+    <div className="rounded-xl border border-border bg-card px-4 py-3 flex items-center gap-3 flex-wrap">
+      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Prerequisite policies</span>
+      {policies.map(p => (
+        <a key={p.id} href={`${BASE}/documents/${p.id}`}
+          className="text-sm text-primary hover:underline inline-flex items-center gap-1.5">
+          <FileText className="w-3.5 h-3.5" /> {p.title}
+        </a>
+      ))}
+    </div>
+  );
+}
+
 // ── HACCP Tab ──────────────────────────────────────────────────────────────
 // Unified reporting view for EHO-relevant records: checklist completions
 // (opening/cleaning/closing checks) and cooked-core temperature readings.
@@ -2368,6 +2396,8 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
           </p>
         </div>
       </div>
+
+      <HaccpPolicyLinks />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <SummaryCard icon={<ClipboardCheck className="w-4 h-4 text-emerald-600" />} label="Checks Completed" value={String(filteredChecklists.length)} sub={`${uniqueCheckUsers} team member${uniqueCheckUsers !== 1 ? "s" : ""}, ${uniqueStations} station${uniqueStations !== 1 ? "s" : ""}`} />
@@ -3701,6 +3731,7 @@ const CATEGORY_ICON: Record<string, typeof TrendingUp> = {
   certification: ShieldCheck,
   licence: ClipboardList,
   sop: ClipboardList,
+  policy: FileText,
 };
 
 function assessmentTypeLabel(t: string): string {
@@ -3712,6 +3743,7 @@ function assessmentTypeLabel(t: string): string {
     case "certification": return "Certification";
     case "licence": return "Licence";
     case "sop": return "SOP";
+    case "policy": return "Policy";
     default: return t.charAt(0).toUpperCase() + t.slice(1);
   }
 }
