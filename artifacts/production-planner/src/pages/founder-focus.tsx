@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useAuth } from "@/contexts/auth-context";
-import { Redirect } from "wouter";
+import { Redirect, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -10,6 +10,7 @@ import {
   CalendarDays, Inbox, Target, LayoutTemplate, CircleDashed,
   SkipForward, Pencil, Repeat, Copy, Video, ExternalLink, Eye, EyeOff,
   BellRing, BellOff, GripVertical, Sparkles, Loader2,
+  LineChart, Calculator, Megaphone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -441,6 +442,25 @@ export default function FounderFocus() {
       <PageHeader
         title="Founder Focus"
         description="Time-blocked days against the pillars only you can move."
+        action={
+          <div className="flex items-center gap-2 flex-wrap">
+            <Link href="/founder">
+              <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-2 hover:bg-secondary transition-colors">
+                <LineChart className="w-3.5 h-3.5" /> Founder View
+              </button>
+            </Link>
+            <Link href="/founder/pnl">
+              <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-2 hover:bg-secondary transition-colors">
+                <Calculator className="w-3.5 h-3.5" /> P&amp;L
+              </button>
+            </Link>
+            <Link href="/founder/sales">
+              <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-2 hover:bg-secondary transition-colors">
+                <Megaphone className="w-3.5 h-3.5" /> Sales &amp; Marketing
+              </button>
+            </Link>
+          </div>
+        }
       />
 
       {/* ── Date navigation ─────────────────────────────────────────────── */}
