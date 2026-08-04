@@ -24,6 +24,7 @@ import {
   Trash2,
   X,
   Check,
+  Megaphone,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
@@ -746,6 +747,19 @@ function FounderDashboard() {
         <div className="flex-1">
           <p className="text-sm font-medium group-hover:text-primary transition-colors">Founder Focus</p>
           <p className="text-xs text-muted-foreground">Time-blocked days, pillars &amp; goals, parking lot — the plan for where your time goes</p>
+        </div>
+        <ChevronDown className="w-4 h-4 text-muted-foreground -rotate-90" />
+      </a>
+      <a
+        href={`${BASE}/founder/sales`}
+        className="glass-panel p-4 rounded-2xl flex items-center gap-3 hover:bg-secondary/50 transition-colors group"
+      >
+        <div className="p-2.5 rounded-xl bg-violet-500/10 text-violet-500">
+          <Megaphone className="w-5 h-5" />
+        </div>
+        <div className="flex-1">
+          <p className="text-sm font-medium group-hover:text-primary transition-colors">Sales &amp; Marketing</p>
+          <p className="text-xs text-muted-foreground">Revenue pace vs the £120k target, email cadence, and the always-on marketing calendar</p>
         </div>
         <ChevronDown className="w-4 h-4 text-muted-foreground -rotate-90" />
       </a>

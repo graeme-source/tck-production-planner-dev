@@ -62,6 +62,7 @@ import visitorsRouter from "./visitors";
 import collectionsRouter from "./collections";
 import caseOrdersRouter from "./case-orders";
 import founderFocusRouter from "./founder-focus";
+import founderSalesRouter from "./founder-sales";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -153,6 +154,7 @@ router.use("/case-orders", caseOrdersRouter);
 router.use("/stock-control", stockControlRouter);
 router.use("/founder-panels", founderPanelsRouter);
 router.use("/founder-focus", founderFocusRouter);
+router.use("/founder-sales", founderSalesRouter);
 router.use("/improvements", improvementsRouter);
 router.use("/andon", andonRouter);
 router.use("/qr", qrRouter);

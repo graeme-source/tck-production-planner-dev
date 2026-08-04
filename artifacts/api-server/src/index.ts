@@ -1429,6 +1429,42 @@ async function runStartupMigrations() {
       )
     `);
 
+    // Sales & Marketing assistant — see lib/db/migrations/0043_marketing_events.sql.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS marketing_events (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        offer TEXT,
+        notes TEXT,
+        status TEXT NOT NULL DEFAULT 'planned',
+        source TEXT NOT NULL DEFAULT 'manual',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES ('monthly_revenue_target', '120000', NOW())
+      ON CONFLICT (key) DO NOTHING
+    `);
+    await db.execute(sql`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES ('marketing_email_cadence_days', '3', NOW())
+      ON CONFLICT (key) DO NOTHING
+    `);
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'marketing_events_seed_v1') THEN
+          INSERT INTO marketing_events (name, start_date, end_date, offer, status, source) VALUES
+            ('Summer Holiday Free Pack', '2026-07-20', '2026-09-01', 'Free pack offer while the schools are out', 'planned', 'manual'),
+            ('Black Friday', '2026-11-23', '2026-11-30', 'Biggest offer of the year — plan stock early', 'planned', 'manual');
+          INSERT INTO _migrations_done (key) VALUES ('marketing_events_seed_v1');
+        END IF;
+      END $$;
+    `);
+
     // Founder settings — see lib/db/migrations/0036_founder_settings.sql.
     // Founder-only k/v (CalDAV credentials etc.) — kept out of app_settings
     // because that table is readable by ordinary logged-in users.
