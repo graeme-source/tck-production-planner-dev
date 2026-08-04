@@ -448,6 +448,19 @@ export default function Dashboard() {
   const dashRefresh = useRefreshSpin();
   const { state } = useAuth();
   const isFounder = state.status === "authenticated" && state.user.email === FOUNDER_EMAIL;
+  const [, setLocation] = useLocation();
+
+  // The founder's day starts on Founder Focus, not the kitchen dashboard:
+  // the first "/" load of each app session redirects there (his user only).
+  // sessionStorage scopes the flag to the window session, so relaunching
+  // the installed app redirects again, while deliberately navigating back
+  // to the Dashboard mid-session stays put.
+  useEffect(() => {
+    if (isFounder && !sessionStorage.getItem("founderFocusAutoOpened")) {
+      sessionStorage.setItem("founderFocusAutoOpened", "1");
+      setLocation("/founder/focus");
+    }
+  }, [isFounder, setLocation]);
   const { data: plans } = useListProductionPlans();
   const { data: dispatches } = useListDispatchOrders();
   const { roles: bannerRoles, loaded: bannerRolesLoaded } = useBannerRoles();
@@ -623,10 +636,10 @@ export default function Dashboard() {
           <div className="flex items-center gap-2">
             <VisitorCheckInButton />
             {isFounder && (
-              <Link href="/founder">
+              <Link href="/founder/focus">
                 <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-2 hover:bg-secondary transition-colors">
                   <LineChart className="w-3.5 h-3.5" />
-                  Founder View
+                  Founder Focus
                 </button>
               </Link>
             )}

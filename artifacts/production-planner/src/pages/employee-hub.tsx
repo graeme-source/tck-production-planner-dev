@@ -16,7 +16,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
-import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt, Camera, Upload, X, FileText } from "lucide-react";
+import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt, Camera, Upload, X, FileText, ScrollText, ChevronRight } from "lucide-react";
 import { jsPDF } from "jspdf";
 import { toast } from "@/hooks/use-toast";
 
@@ -1121,7 +1121,50 @@ function MySopsList({ userId }: { userId: number | null }) {
   );
 }
 
-type HubSection = "mileage" | "expenses" | "improvements" | "issues" | "sops";
+// ── Policies ────────────────────────────────────────────────────────────────
+// Company policies live once in the Documents repository (risk_assessments,
+// type 'policy'); this list links every colleague to the same canonical
+// reader page — no copies.
+
+interface PolicyRow {
+  id: number;
+  assessmentType: string;
+  title: string;
+  status: string;
+  originalIssueDate: string | null;
+}
+
+const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+function PoliciesList() {
+  const { data, isLoading } = useQuery<PolicyRow[]>({
+    queryKey: ["hub-policies"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE_URL}/api/risk-assessments`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load");
+      return res.json();
+    },
+  });
+
+  if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
+  const rows = (data ?? []).filter(r => r.assessmentType === "policy" && r.status === "active");
+  if (rows.length === 0) return <EmptyList label="No policies published yet." />;
+  return (
+    <ul className="divide-y divide-border border border-border rounded-xl overflow-hidden">
+      {rows.map(r => (
+        <li key={r.id}>
+          <a href={`${BASE_URL}/documents/${r.id}`} className="px-4 py-3 bg-card flex items-center gap-3 hover:bg-secondary/40 transition-colors">
+            <ScrollText className="w-4 h-4 text-primary flex-shrink-0" />
+            <span className="text-sm font-medium flex-1 min-w-0 truncate">{r.title}</span>
+            <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+type HubSection = "mileage" | "expenses" | "policies" | "improvements" | "issues" | "sops";
 
 export default function EmployeeHub() {
   const [active, setActive] = useState<HubSection>("mileage");
@@ -1131,6 +1174,7 @@ export default function EmployeeHub() {
   const sections: { key: HubSection; label: string; icon: typeof Car }[] = [
     { key: "mileage", label: "Mileage Claim", icon: Car },
     { key: "expenses", label: "Expense Claim", icon: Receipt },
+    { key: "policies", label: "Policies", icon: ScrollText },
     { key: "improvements", label: "My Improvements", icon: Lightbulb },
     { key: "issues", label: "My Issues", icon: AlertTriangle },
     { key: "sops", label: "My SOPs", icon: BookOpen },
@@ -1140,7 +1184,7 @@ export default function EmployeeHub() {
     <div className="space-y-6">
       <PageHeader
         title="My Employee Hub"
-        description="Your personal forms, downloads, and records. Currently: mileage and expense claims, plus the improvements, struggles, issues and SOPs you've created."
+        description="Your personal forms, downloads, and records. Mileage and expense claims, company policies, plus the improvements, struggles, issues and SOPs you've created."
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6">
@@ -1183,6 +1227,17 @@ export default function EmployeeHub() {
                 </p>
               </div>
               <ExpenseClaimForm />
+            </>
+          )}
+          {active === "policies" && (
+            <>
+              <div className="mb-4 pb-4 border-b border-border">
+                <h2 className="text-lg font-semibold">Policies</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Company policies that apply to everyone. Read each one — once you have, tell your manager and your sign-off is recorded on the training matrix.
+                </p>
+              </div>
+              <PoliciesList />
             </>
           )}
           {active === "improvements" && (

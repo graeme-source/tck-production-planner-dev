@@ -42,6 +42,8 @@ import Deliveries from "@/pages/deliveries";
 import FounderView from "@/pages/founder";
 import FounderPnL from "@/pages/founder-pnl";
 import FounderFocus from "@/pages/founder-focus";
+import FounderSales from "@/pages/founder-sales";
+import DocumentViewer from "@/pages/document-viewer";
 import StockControl from "@/pages/stock-control";
 import ProductHub from "@/pages/product-hub";
 import TrainingMatrix from "@/pages/training-matrix";
@@ -163,10 +165,12 @@ function Router() {
               <Route path="/founder" component={FounderView} />
               <Route path="/founder/pnl" component={FounderPnL} />
               <Route path="/founder/focus" component={FounderFocus} />
+              <Route path="/founder/sales" component={FounderSales} />
               <Route path="/reports">{() => <ProtectedRoute component={Reports} pageKey="/reports" />}</Route>
               <Route path="/training">{() => <ProtectedRoute component={TrainingMatrix} pageKey="/training" />}</Route>
               <Route path="/lean-cave" component={LeanCave} />
               <Route path="/hub" component={EmployeeHub} />
+              <Route path="/documents/:id" component={DocumentViewer} />
               <Route path="/settings" component={Settings} />
               <Route component={NotFound} />
             </Switch>

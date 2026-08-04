@@ -37,6 +37,62 @@ async function seedStorageLocations() {
   }
 }
 
+// The canonical Jewellery & Body Piercings Policy text, seeded once into
+// risk_assessments (type 'policy'). After seeding, the DB row is the live
+// document — edits happen there via the Documents admin UI, not here.
+const JEWELLERY_POLICY_MARKDOWN = `**Applies to:** all employees, agency workers, contractors, managers and visitors entering production, ingredient-storage or packing areas. Compliance is checked before entry into production.
+
+## Why we have this policy
+
+Jewellery can harbour bacteria and can fall into open food as a foreign body. TCK produces 800–1,000 portions of open, unpackaged food five days a week, so we follow a standard that is stricter than the bare legal minimum, in line with FSA guidance and the expectations of food-manufacturing certification schemes such as SALSA and BRCGS.
+
+## The rule
+
+No jewellery or exposed body piercings may be worn in production, ingredient-storage or packing areas. This includes:
+
+- Watches, smartwatches and fitness trackers
+- Bracelets, necklaces and chains
+- Earrings, including studs, hoops and ear gauges
+- Nose, eyebrow, lip and other facial piercings
+- Rings, except one plain wedding band
+- Any jewellery containing stones, gems, beads or detachable components
+
+## Permitted exceptions
+
+1. **One smooth, plain wedding band** without stones or engraving that makes it difficult to clean. Management may require it to be removed where it could interfere with effective handwashing, damage gloves or create another contamination risk — in direct food-handling roles wearing gloves, no hand jewellery is permitted.
+2. **Essential medical-alert jewellery**, following a documented risk assessment and secure containment.
+3. **Religious jewellery that cannot reasonably be removed**, following a documented risk assessment and complete containment beneath clothing.
+
+## Piercings that cannot be removed
+
+Exposed jewellery and body piercings are not permitted in open-food production areas unless specifically authorised following a documented food-safety risk assessment. We apply this hierarchy:
+
+1. If a piercing can reasonably be removed, it must be removed before entering production.
+2. If it is genuinely non-removable, it must be declared to management and individually risk-assessed.
+3. It may only remain where it can be completely and securely contained beneath suitable protective clothing (for example, an ear piercing fully contained by a hairnet), and must not have loose, detachable or damaged components.
+4. Where an exposed item (such as a dermal anchor or facial stud) cannot be securely contained, the person must not handle open food or work above exposed product until it can be removed.
+5. Any approved exception is recorded on the jewellery-exception register and checked at the start and end of each shift. Loose, damaged or missing items must be reported immediately.
+
+We do not routinely cover facial piercings with plasters — a plaster can itself detach and become a foreign body. Removal or complete containment always comes first.
+
+## New piercings
+
+Employees planning a new piercing that cannot be removed during healing must discuss it with management beforehand. Where the piercing would remain exposed, the employee may be temporarily reassigned away from open-food production for the healing period.
+
+## Long-standing piercings — how we assess them
+
+If you already have piercings you have worn for years, you will not lose your job over this policy. Declare them privately to management, and each will be classified by actual contamination risk:
+
+- **Low risk** (for example a small, secure stud fully enclosed beneath a hairnet, or a piercing under clothing): permitted under a documented exception with the controls above.
+- **Medium risk** (for example exposed ear piercings): improved containment, such as a company-issued head covering that fully covers the ears.
+- **Higher risk** (exposed facial jewellery over open food, particularly hoops, bars, stones or anything loose): replacement with a secure retainer, removal during the shift, or reassignment to duties away from open product.
+
+Anything connected to religion, belief, disability or medical need will be individually considered and reasonably accommodated before any decision is made.
+
+## Compliance
+
+These requirements apply equally to owners, managers, employees, agency workers, contractors and visitors. Formal disciplinary procedures apply only where an employee refuses to follow controls that have been agreed through the process above.`;
+
 async function runStartupMigrations() {
   try {
     await db.execute(sql`
@@ -1429,6 +1485,42 @@ async function runStartupMigrations() {
       )
     `);
 
+    // Sales & Marketing assistant — see lib/db/migrations/0043_marketing_events.sql.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS marketing_events (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        offer TEXT,
+        notes TEXT,
+        status TEXT NOT NULL DEFAULT 'planned',
+        source TEXT NOT NULL DEFAULT 'manual',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES ('monthly_revenue_target', '120000', NOW())
+      ON CONFLICT (key) DO NOTHING
+    `);
+    await db.execute(sql`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES ('marketing_email_cadence_days', '3', NOW())
+      ON CONFLICT (key) DO NOTHING
+    `);
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'marketing_events_seed_v1') THEN
+          INSERT INTO marketing_events (name, start_date, end_date, offer, status, source) VALUES
+            ('Summer Holiday Free Pack', '2026-07-20', '2026-09-01', 'Free pack offer while the schools are out', 'planned', 'manual'),
+            ('Black Friday', '2026-11-23', '2026-11-30', 'Biggest offer of the year — plan stock early', 'planned', 'manual');
+          INSERT INTO _migrations_done (key) VALUES ('marketing_events_seed_v1');
+        END IF;
+      END $$;
+    `);
+
     // Founder settings — see lib/db/migrations/0036_founder_settings.sql.
     // Founder-only k/v (CalDAV credentials etc.) — kept out of app_settings
     // because that table is readable by ordinary logged-in users.
@@ -1801,6 +1893,42 @@ async function runStartupMigrations() {
         ON risk_assessments (next_review_due)
         WHERE status <> 'archived'
     `);
+
+    // Jewellery & Body Piercings Policy — first document of the 'policy'
+    // category. Single source of truth: this one risk_assessments row is THE
+    // policy; the Employee Hub, the HACCP evidence tab and the training
+    // matrix all link to it rather than carrying copies. Also appended to
+    // the New Colleague Onboarding matrix (sop_id link) so every new starter
+    // gets a sign-off record against it. See
+    // lib/db/migrations/0044_jewellery_policy.sql.
+    const jewellerySeedDone = await db.execute<{ key: string }>(
+      sql`SELECT key FROM _migrations_done WHERE key = 'jewellery_policy_seed_v1'`,
+    );
+    if (jewellerySeedDone.rows.length === 0) {
+      const policyDoc = await db.execute<{ id: number }>(sql`
+        INSERT INTO risk_assessments
+          (assessment_type, title, body_markdown, status, review_frequency_months, original_issue_date, last_reviewed_at, next_review_due)
+        VALUES
+          ('policy', 'Jewellery & Body Piercings Policy', ${JEWELLERY_POLICY_MARKDOWN}, 'active', 12, CURRENT_DATE, NOW(), (CURRENT_DATE + INTERVAL '12 months')::date)
+        RETURNING id
+      `);
+      const policyId = policyDoc.rows[0].id;
+      // Training tables are created outside startup migrations, so guard on
+      // their existence before wiring the onboarding item.
+      const hasTraining = await db.execute<{ ok: string | null }>(
+        sql`SELECT to_regclass('public.training_matrix_items')::text AS ok`,
+      );
+      if (hasTraining.rows[0]?.ok) {
+        await db.execute(sql`
+          INSERT INTO training_matrix_items (matrix_id, label, sop_id, sort_order)
+          SELECT m.id, 'Jewellery & Body Piercings Policy — read & signed off', ${policyId},
+                 COALESCE((SELECT MAX(i.sort_order) FROM training_matrix_items i WHERE i.matrix_id = m.id), -1) + 1
+          FROM training_matrices m
+          WHERE m.name = 'New Colleague Onboarding'
+        `);
+      }
+      await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('jewellery_policy_seed_v1')`);
+    }
 
     // Notifications table
     await db.execute(sql`
