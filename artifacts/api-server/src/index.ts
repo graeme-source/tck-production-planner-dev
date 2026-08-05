@@ -1930,6 +1930,10 @@ async function runStartupMigrations() {
       await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('jewellery_policy_seed_v1')`);
     }
 
+    // Periodic checklist schedule — every-4-weeks tasks (13 periods/year).
+    // See lib/db/migrations/0045_periodic_checklists.sql.
+    await db.execute(sql`ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS schedule_anchor_date DATE`);
+
     // Notifications table
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS notifications (

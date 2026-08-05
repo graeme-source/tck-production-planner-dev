@@ -27,6 +27,7 @@ interface Template {
   description: string | null;
   schedule: string;
   scheduleDays: string | null;
+  scheduleAnchorDate: string | null;
   orderPosition: number;
   dynamicDataType: string | null;
   isActive: boolean;
@@ -62,7 +63,10 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
   // Form state
   const [formTitle, setFormTitle] = useState("");
   const [formDescription, setFormDescription] = useState("");
-  const [formSchedule, setFormSchedule] = useState<"daily" | "weekly" | "specific_days">("specific_days");
+  const [formSchedule, setFormSchedule] = useState<"daily" | "weekly" | "specific_days" | "periodic">("specific_days");
+  // For "periodic" (every 4 weeks — 13 periods a year): the anchor date
+  // whose week starts the 4-week cycle. Defaults to today for new tasks.
+  const [formAnchorDate, setFormAnchorDate] = useState<string>("");
   const [formDays, setFormDays] = useState<string[]>(WEEKDAYS);
   const [formDynamic, setFormDynamic] = useState<string>("");
 
@@ -95,6 +99,7 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
     setFormDescription("");
     setFormSchedule("specific_days");
     setFormDays(WEEKDAYS);
+    setFormAnchorDate(new Date().toISOString().slice(0, 10));
     setFormDynamic("");
     setEditingId(null);
     setAdding(false);
@@ -103,8 +108,9 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
   const openEditForm = (t: Template) => {
     setFormTitle(t.title);
     setFormDescription(t.description ?? "");
-    setFormSchedule(t.schedule as "daily" | "weekly" | "specific_days");
+    setFormSchedule(t.schedule as "daily" | "weekly" | "specific_days" | "periodic");
     setFormDays(t.scheduleDays ? JSON.parse(t.scheduleDays) : ["monday"]);
+    setFormAnchorDate(t.scheduleAnchorDate ?? new Date().toISOString().slice(0, 10));
     setFormDynamic(t.dynamicDataType ?? "");
     setEditingId(t.id);
     setAdding(false);
@@ -123,6 +129,7 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
         description: formDescription.trim() || null,
         schedule: formSchedule,
         scheduleDays: formSchedule !== "daily" ? formDays : null,
+        scheduleAnchorDate: formSchedule === "periodic" ? (formAnchorDate || null) : null,
         dynamicDataType: formDynamic || null,
       };
 
@@ -362,12 +369,13 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Schedule</label>
                 <select
                   value={formSchedule}
-                  onChange={e => setFormSchedule(e.target.value as "daily" | "weekly" | "specific_days")}
+                  onChange={e => setFormSchedule(e.target.value as "daily" | "weekly" | "specific_days" | "periodic")}
                   className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background"
                 >
                   <option value="daily">Daily</option>
                   <option value="weekly">Weekly</option>
                   <option value="specific_days">Specific Days</option>
+                  <option value="periodic">Every 4 Weeks (periodic)</option>
                 </select>
               </div>
               <div>
@@ -427,6 +435,24 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
                     </button>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {formSchedule === "periodic" && (
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                  First due week (repeats every 4 weeks — 13 periods a year)
+                </label>
+                <input
+                  type="date"
+                  value={formAnchorDate}
+                  onChange={e => setFormAnchorDate(e.target.value)}
+                  className="px-3 py-2 border border-border rounded-lg text-sm bg-background"
+                />
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  The task is due on the selected day(s) in this date's week, then every 4th week after.
+                  Stagger different periodic tasks by picking different weeks.
+                </p>
               </div>
             )}
 
@@ -495,7 +521,8 @@ function SortableTemplateRow({
         <p className="text-sm font-medium truncate">{template.title}</p>
         <p className="text-xs text-muted-foreground">
           {template.schedule === "daily" ? "Daily" :
-            template.schedule === "weekly" ? "Weekly" : "Specific days"}
+            template.schedule === "weekly" ? "Weekly" :
+            template.schedule === "periodic" ? "Every 4 weeks" : "Specific days"}
           {template.dynamicDataType && ` · ${template.dynamicDataType.replace(/_/g, " ")}`}
         </p>
       </div>

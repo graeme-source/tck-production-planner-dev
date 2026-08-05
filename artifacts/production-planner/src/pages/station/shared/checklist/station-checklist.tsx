@@ -541,7 +541,9 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                     <h3 className="text-xl font-bold">{selectedItem.title}</h3>
                     {selectedItem.schedule !== "daily" && selectedItem.schedule !== "oneoff" && (
                       <p className="text-xs text-muted-foreground mt-1">
-                        Schedule: {selectedItem.schedule === "weekly" ? "Weekly" : "Specific days"}
+                        Schedule: {selectedItem.schedule === "weekly" ? "Weekly"
+                          : selectedItem.schedule === "periodic" ? "Every 4 weeks"
+                          : "Specific days"}
                         {selectedItem.scheduleDays && ` (${JSON.parse(selectedItem.scheduleDays).join(", ")})`}
                       </p>
                     )}

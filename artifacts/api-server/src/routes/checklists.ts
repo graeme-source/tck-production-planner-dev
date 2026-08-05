@@ -71,7 +71,17 @@ function getDayName(date: Date): string {
   return ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][date.getUTCDay()];
 }
 
-function templateMatchesDay(template: { schedule: string; scheduleDays: string | null }, planDate: string): boolean {
+/** Monday 12:00Z of the week containing the given ISO date. */
+function mondayOfWeek(iso: string): Date {
+  const d = new Date(`${iso}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d;
+}
+
+function templateMatchesDay(
+  template: { schedule: string; scheduleDays: string | null; scheduleAnchorDate?: string | null; createdAt?: Date | null },
+  planDate: string,
+): boolean {
   if (template.schedule === "daily") return true;
   const day = getDayName(new Date(`${planDate}T12:00:00Z`));
   if (template.schedule === "weekly") {
@@ -84,6 +94,21 @@ function templateMatchesDay(template: { schedule: string; scheduleDays: string |
     const days: string[] = JSON.parse(template.scheduleDays);
     return days.includes(day);
   }
+  if (template.schedule === "periodic") {
+    // Every 4 weeks (TCK runs 13 four-week periods a year): due on its
+    // scheduleDays in every week that's a whole multiple of 4 weeks from
+    // the anchor's week. The anchor picks which week of the period the
+    // task lands, so periodic tasks can be staggered; a template without
+    // an anchor cycles from its creation week.
+    const days: string[] = template.scheduleDays ? JSON.parse(template.scheduleDays) : ["monday"];
+    if (!days.includes(day)) return false;
+    const anchorIso = template.scheduleAnchorDate
+      ?? (template.createdAt ? template.createdAt.toISOString().slice(0, 10) : planDate);
+    const weeks = Math.round(
+      (mondayOfWeek(planDate).getTime() - mondayOfWeek(anchorIso).getTime()) / (7 * 86_400_000),
+    );
+    return ((weeks % 4) + 4) % 4 === 0;
+  }
   return true;
 }
 
@@ -94,8 +119,9 @@ const CreateTemplateBody = z.object({
   category: z.enum(["opening", "cleaning", "closing"]),
   title: z.string().min(1),
   description: z.string().nullish(),
-  schedule: z.enum(["daily", "weekly", "specific_days"]).default("daily"),
+  schedule: z.enum(["daily", "weekly", "specific_days", "periodic"]).default("daily"),
   scheduleDays: z.array(z.string()).nullish(),
+  scheduleAnchorDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
   orderPosition: z.number().int().optional(),
   dynamicDataType: z.string().nullish(),
 });
@@ -132,8 +158,9 @@ const UpdateTemplateBody = z.object({
   category: z.enum(["opening", "cleaning", "closing"]).optional(),
   title: z.string().min(1).optional(),
   description: z.string().nullable().optional(),
-  schedule: z.enum(["daily", "weekly", "specific_days"]).optional(),
+  schedule: z.enum(["daily", "weekly", "specific_days", "periodic"]).optional(),
   scheduleDays: z.array(z.string()).nullable().optional(),
+  scheduleAnchorDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   orderPosition: z.number().int().optional(),
   dynamicDataType: z.string().nullable().optional(),
   isActive: z.boolean().optional(),
