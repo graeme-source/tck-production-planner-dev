@@ -67,9 +67,12 @@ interface KlaviyoCampaign {
 }
 
 async function recentSentCampaigns(apiKey: string): Promise<Array<{ name: string; sentAt: string }>> {
+  // No page[size] here — the campaigns resource rejects it (400 "'page_size'
+  // is not a valid field"); the default page sorted newest-first is plenty
+  // for cadence tracking.
   const data = await klaviyoFetch<{ data: KlaviyoCampaign[] }>(
     apiKey,
-    `/api/campaigns?filter=${encodeURIComponent("equals(messages.channel,'email')")}&sort=-created_at&page[size]=25`,
+    `/api/campaigns?filter=${encodeURIComponent("equals(messages.channel,'email')")}&sort=-created_at`,
   );
   return data.data
     .filter(c => c.attributes.send_time && ["Sent", "Complete", "Completed"].includes(c.attributes.status))
