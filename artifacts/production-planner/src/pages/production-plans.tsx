@@ -1498,7 +1498,12 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     setItems(prev =>
       prev.map(it => {
         if (it.id !== id) return it;
-        const estimatedFactoryNumber = newStock - it.dispatch1Qty + it.prevProduction;
+        // Preserve the server's stock→factory-number adjustment (wrapping/
+        // fulfilment prediction for core recipes, −dispatch1+prevProduction
+        // for legacy rows) while swapping in the operator's fresh count.
+        // Recomputing the legacy formula here for BOTH paths used to
+        // double-subtract dispatch1 for core recipes after a stock edit.
+        const estimatedFactoryNumber = newStock + (it.estimatedFactoryNumber - it.fridgeStock);
         const deficit = Math.max(0, it.dispatch2Qty + it.dispatch3Qty - estimatedFactoryNumber);
         const deficitBatches = it.packsPerBatch > 0 ? Math.ceil(deficit / it.packsPerBatch) : 0;
         return { ...it, fridgeStock: newStock, estimatedFactoryNumber, deficit, deficitBatches };
@@ -2655,7 +2660,12 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
     setItems(prev =>
       prev.map(it => {
         if (it.id !== id) return it;
-        const estimatedFactoryNumber = newStock - it.dispatch1Qty + it.prevProduction;
+        // Preserve the server's stock→factory-number adjustment (wrapping/
+        // fulfilment prediction for core recipes, −dispatch1+prevProduction
+        // for legacy rows) while swapping in the operator's fresh count.
+        // Recomputing the legacy formula here for BOTH paths used to
+        // double-subtract dispatch1 for core recipes after a stock edit.
+        const estimatedFactoryNumber = newStock + (it.estimatedFactoryNumber - it.fridgeStock);
         const deficit = Math.max(0, it.dispatch2Qty + it.dispatch3Qty - estimatedFactoryNumber);
         const deficitBatches = it.packsPerBatch > 0 ? Math.ceil(deficit / it.packsPerBatch) : 0;
         return { ...it, fridgeStock: newStock, estimatedFactoryNumber, deficit, deficitBatches };
