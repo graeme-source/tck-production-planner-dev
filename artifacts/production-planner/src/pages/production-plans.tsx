@@ -26,7 +26,7 @@ import {
   Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef, UtensilsCrossed,
   ArrowRight, GripVertical, AlertTriangle, AlertCircle, BookmarkCheck, ShoppingCart,
   FlaskConical, Printer, X, ChevronDown, ChevronUp, PoundSterling, ShieldCheck, RotateCcw,
-  Menu, MoreHorizontal, Lock, Unlock, SlidersHorizontal,
+  Menu, MoreHorizontal, Lock, Unlock, SlidersHorizontal, Users,
 } from "lucide-react";
 import { AddRecipeToPlanDialog } from "@/components/add-recipe-to-plan-dialog";
 import { AddDoughToPlanDialog } from "@/components/add-dough-to-plan-dialog";
@@ -210,6 +210,141 @@ function computeStockWarning(item: PlanItem): "ok" | "low" | "short" {
   if (surplus < 0) return "short";
   if (surplus <= 10) return "low";
   return "ok";
+}
+
+// ── Rota-driven batch suggestion ────────────────────────────────────────────
+// Imports the plan date's Planday schedule (same source as the morning
+// meeting's Who's On Today) and suggests a total-batches number from two
+// hard business rules: a Dough Prep person on shift unlocks the full daily
+// ceiling (110), no Dough Prep caps it (80); and the day's production
+// shouldn't leave the total factory number above 1,000 packs — the 1,000
+// rule only ever lowers the suggestion, never raises it past the rota cap.
+// Fried-chicken shifts (Frying/Breading) are irrelevant to calzone
+// production and are shown separately, uncounted.
+
+interface ScheduleCapacityData {
+  available: boolean;
+  reason?: string;
+  date?: string;
+  people?: Array<{ name: string; position: string; start: string | null; end: string | null }>;
+  excluded?: Array<{ name: string; position: string; start: string | null; end: string | null }>;
+  teamSize?: number;
+  hasDoughPrep?: boolean;
+  capacityBatches?: number;
+  capacityWithDoughPrep?: number;
+  capacityWithoutDoughPrep?: number;
+}
+
+const PACK_CEILING = 1000;
+
+function ScheduleCapacityPanel({ planDate, items, onUseSuggestion }: {
+  planDate: string;
+  items: PlanItem[];
+  onUseSuggestion: (batches: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState<ScheduleCapacityData | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/production-plans/schedule-capacity?planDate=${planDate}`, { credentials: "include" });
+      setData(res.ok ? await res.json() : { available: false, reason: `HTTP ${res.status}` });
+    } catch {
+      setData({ available: false, reason: "Request failed" });
+    } finally {
+      setLoading(false);
+    }
+  }, [planDate]);
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next && !data && !loading) void load();
+  };
+
+  const included = items.filter(i => i.included);
+  // Packs already in the system after the upcoming dispatches, before any of
+  // this plan's batches: the base the 1,000-pack ceiling is measured against.
+  const basePacks = included.reduce((s, i) =>
+    s + Math.max(0, i.estimatedFactoryNumber - bagPackEquivalents(i) - i.dispatch2Qty - i.dispatch3Qty), 0);
+  const packsPerBatch = Math.max(5, ...included.map(i => i.packsPerBatch || 0));
+  const ceilingBatches = Math.max(0, Math.floor((PACK_CEILING - basePacks) / packsPerBatch));
+  const totalDeficitBatches = included.reduce((s, i) => s + i.deficitBatches, 0);
+
+  const rotaCap = data?.available ? (data.capacityBatches ?? 0) : null;
+  const suggested = rotaCap != null ? Math.min(rotaCap, ceilingBatches) : null;
+
+  return (
+    <div className="border-t border-border pt-2 mt-2 space-y-2">
+      <button
+        onClick={toggle}
+        className="w-full flex items-center justify-between text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <span className="flex items-center gap-1.5"><Users className="w-3.5 h-3.5" /> Rota &amp; suggested batches</span>
+        {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+      </button>
+
+      {open && (
+        <div className="space-y-2 text-xs">
+          {loading ? (
+            <div className="flex items-center gap-2 text-muted-foreground py-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Fetching the rota…</div>
+          ) : !data ? null : !data.available ? (
+            <p className="text-muted-foreground">{data.reason ?? "Schedule unavailable."}</p>
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <span>Team on {planDate.slice(8, 10)}/{planDate.slice(5, 7)}</span>
+                <span className="font-semibold">{data.teamSize} people</span>
+              </div>
+              <ul className="space-y-0.5 max-h-36 overflow-y-auto pr-1">
+                {(data.people ?? []).map((p, i) => (
+                  <li key={i} className="flex items-center justify-between gap-2">
+                    <span className="truncate">{p.name}</span>
+                    <span className="text-muted-foreground flex-shrink-0">{p.position}{p.start ? ` · ${p.start}–${p.end ?? ""}` : ""}</span>
+                  </li>
+                ))}
+              </ul>
+              {(data.excluded?.length ?? 0) > 0 && (
+                <p className="text-muted-foreground/70">
+                  Not counted (fried chicken line): {data.excluded!.map(p => p.name).join(", ")}
+                </p>
+              )}
+              <div className={cn(
+                "rounded-lg px-2.5 py-1.5 flex items-center justify-between",
+                data.hasDoughPrep ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+              )}>
+                <span>{data.hasDoughPrep ? "Dough Prep on shift" : "No Dough Prep on shift"}</span>
+                <span className="font-semibold">cap {data.capacityBatches}</span>
+              </div>
+              <div className="flex items-center justify-between text-muted-foreground">
+                <span>{PACK_CEILING.toLocaleString()}-pack ceiling ({basePacks} banked)</span>
+                <span className="font-semibold text-foreground">≤ {ceilingBatches}</span>
+              </div>
+              {suggested != null && (
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <span className="font-semibold text-foreground">Suggested total: {suggested} batches</span>
+                  <button
+                    onClick={() => onUseSuggestion(suggested)}
+                    className="px-2.5 py-1 rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors"
+                  >
+                    Use {suggested}
+                  </button>
+                </div>
+              )}
+              {suggested != null && totalDeficitBatches > suggested && (
+                <p className="flex items-start gap-1.5 text-amber-700 dark:text-amber-400">
+                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                  Sales deficits alone need {totalDeficitBatches} batches — above today's cap. Cover the deficits first.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // Small "Updated 2h ago" label under the factory-number input. Re-renders
@@ -1895,6 +2030,11 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                     {effectiveTotalBatches}
                   </span>
                 </div>
+                <ScheduleCapacityPanel
+                  planDate={planDate}
+                  items={items}
+                  onUseSuggestion={handleTotalBatchesChange}
+                />
               </div>
             </div>
 

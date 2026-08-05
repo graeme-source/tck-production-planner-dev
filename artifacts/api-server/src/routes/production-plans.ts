@@ -1412,6 +1412,87 @@ router.get("/calculate", async (req, res) => {
 // GET /production-plans/calculate-mac-cheese?planDate=YYYY-MM-DD
 // Returns per-mac-cheese-recipe calculation data (packs-based).
 // ──────────────────────────────────────────────────────────────────────────────
+// ── Schedule capacity — the plan date's rota + suggested batch ceiling ─────
+// Imports the Planday schedule for the production day (same source as the
+// morning meeting's Who's On Today) and derives the calzone batch capacity:
+// a Dough Prep person on shift unlocks the full ceiling (default 110), no
+// Dough Prep caps the day (default 80). The fried-chicken line (Frying /
+// Breading positions) is irrelevant to calzone production, so those shifts
+// are listed separately and never counted. Absence-type shifts (sick,
+// holiday, leave) don't count as bodies on the floor either.
+router.get("/schedule-capacity", async (req, res) => {
+  const planDate = String(req.query.planDate ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(planDate)) {
+    res.status(400).json({ error: "planDate query param required (YYYY-MM-DD)" });
+    return;
+  }
+  try {
+    const { isPlandayConfigured, getPlandayShifts, getPlandayEmployees, getPlandayPositions, getPlandayShiftTypes } =
+      await import("../services/planday");
+    if (!isPlandayConfigured()) {
+      res.json({ available: false, reason: "Planday is not configured on this server." });
+      return;
+    }
+    const [shifts, employees, positions, shiftTypes] = await Promise.all([
+      getPlandayShifts(planDate, planDate),
+      getPlandayEmployees(),
+      getPlandayPositions(),
+      getPlandayShiftTypes(),
+    ]);
+    const empById = new Map(employees.map(e => [e.id, e]));
+    const posById = new Map(positions.map(p => [p.id, p]));
+    const absenceTypeIds = new Set(
+      shiftTypes.filter(t => /absent|sick|holiday|leave/i.test(t.name)).map(t => t.id),
+    );
+
+    const FRIED_CHICKEN_RE = /frying|breading|fried\s*chicken/i;
+    const DOUGH_PREP_RE = /^dough\s*prep$/i;
+
+    type Person = { name: string; position: string; start: string | null; end: string | null };
+    const people: Person[] = [];
+    const excluded: Person[] = [];
+    for (const s of shifts) {
+      if (s.shiftTypeId != null && absenceTypeIds.has(s.shiftTypeId)) continue;
+      const emp = s.employeeId != null ? empById.get(s.employeeId) : undefined;
+      const position = (s.positionId != null ? posById.get(s.positionId)?.name : null) ?? "No position";
+      const person: Person = {
+        name: emp ? `${emp.firstName ?? ""} ${emp.lastName ?? ""}`.trim() || "Unassigned" : "Unassigned",
+        position,
+        start: s.startDateTime?.slice(11, 16) ?? null,
+        end: s.endDateTime?.slice(11, 16) ?? null,
+      };
+      (FRIED_CHICKEN_RE.test(position) ? excluded : people).push(person);
+    }
+    people.sort((a, b) => (a.start ?? "").localeCompare(b.start ?? "") || a.name.localeCompare(b.name));
+
+    const hasDoughPrep = people.some(p => DOUGH_PREP_RE.test(p.position));
+    const settingNum = async (key: string, fallback: number) => {
+      const [row] = await db.select({ value: appSettingsTable.value })
+        .from(appSettingsTable).where(eq(appSettingsTable.key, key));
+      const n = Number(row?.value);
+      return Number.isFinite(n) && n > 0 ? n : fallback;
+    };
+    const capacityWithDoughPrep = await settingNum("plan_capacity_with_dough_prep", 110);
+    const capacityWithoutDoughPrep = await settingNum("plan_capacity_without_dough_prep", 80);
+    const capacityBatches = hasDoughPrep ? capacityWithDoughPrep : capacityWithoutDoughPrep;
+
+    res.json({
+      available: true,
+      date: planDate,
+      people,
+      excluded,
+      teamSize: people.length,
+      hasDoughPrep,
+      capacityBatches,
+      capacityWithDoughPrep,
+      capacityWithoutDoughPrep,
+    });
+  } catch (err) {
+    console.error("[production-plans] schedule-capacity error:", err instanceof Error ? err.message : String(err));
+    res.json({ available: false, reason: "Could not reach Planday." });
+  }
+});
+
 router.get("/calculate-mac-cheese", async (req, res) => {
   const planDate = String(req.query.planDate ?? "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(planDate)) {

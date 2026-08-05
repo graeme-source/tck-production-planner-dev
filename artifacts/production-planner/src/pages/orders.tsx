@@ -76,6 +76,12 @@ type OrderLine = {
   // When true, Required / Surplus / Ordered render in whole packs; recipes
   // and internal maths still use native units.
   stockInPacks?: boolean;
+  // Undelivered quantity already on the way on open purchase orders, with
+  // per-delivery expected dates. Advisory — shown under the stock figure so
+  // the person ordering knows what tomorrow's delivery brings; the order
+  // suggestion itself deliberately ignores it.
+  inboundQty?: number;
+  inboundDeliveries?: Array<{ date: string | null; qty: number; unit: string; poId: number }>;
   // Packs per supplier case. When set, the pack count to order rounds up to the
   // nearest whole case. Null/absent means order in individual packs.
   caseSizePacks?: number | null;
@@ -455,6 +461,27 @@ export default function Orders() {
   const [addSupplierDialogOpen, setAddSupplierDialogOpen] = useState(false);
   const [addSupplierSearch, setAddSupplierSearch] = useState("");
   const debouncedAddSupplierSearch = useDebouncedValue(addSupplierSearch);
+
+  // Supplier directory — powers the "+ Add supplier order" picker AND
+  // hydrates contact details onto manually-added / kanban-only / reopened
+  // supplier cards. Those cards used to be built with email/phone hardcoded
+  // to null (the producers only know id + name), which silently hid the
+  // Email order and WhatsApp buttons on supplies-only orders even when the
+  // supplier record had the contact saved. Declared early: the pending-card
+  // assembly below reads it during render.
+  const { data: pickerSuppliers = [] } = useQuery<Array<{
+    id: number; name: string; contactName: string | null; email: string | null;
+    phone: string | null; orderingPhone: string | null; website: string | null;
+    leadTimeDays?: number; cutoffTime?: string;
+  }>>({
+    queryKey: ["suppliers-directory"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/suppliers`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load suppliers");
+      return res.json();
+    },
+  });
+  const supplierDirectory = new Map(pickerSuppliers.map(s => [s.id, s]));
 
   // Confirmation modal state for deleting a placed PO from the inline edit
   // card (manager / admin only). Mirrors dismissConfirm — second click guard
@@ -1269,7 +1296,26 @@ export default function Orders() {
   const dptPendingSuppliersAll = suppliers.filter(s => !placedSupplierIds.has(s.supplier.id) || reopenedSupplierIds.has(s.supplier.id));
   const kanbanOnlyPendingAll = Object.values(kanbanOnlySupplierInfo)
     .filter(s => (!placedSupplierIds.has(s.id) || reopenedSupplierIds.has(s.id)) && !suppliers.some(ds => ds.supplier.id === s.id))
-    .map(s => ({ supplier: { id: s.id, name: s.name, contactName: null, email: null, phone: null, orderingPhone: null, website: null }, lines: [] as OrderLine[] }));
+    .map(s => {
+      // Hydrate contact details from the supplier directory — the producers
+      // of kanbanOnlySupplierInfo only carry id + name, and without this the
+      // Email order / WhatsApp buttons never appeared on these cards.
+      const dir = supplierDirectory.get(s.id);
+      return {
+        supplier: {
+          id: s.id,
+          name: dir?.name ?? s.name,
+          contactName: dir?.contactName ?? null,
+          email: dir?.email ?? null,
+          phone: dir?.phone ?? null,
+          orderingPhone: dir?.orderingPhone ?? null,
+          website: dir?.website ?? null,
+          leadTimeDays: dir?.leadTimeDays,
+          cutoffTime: dir?.cutoffTime,
+        },
+        lines: [] as OrderLine[],
+      };
+    });
   const allPendingSuppliers = [...dptPendingSuppliersAll, ...kanbanOnlyPendingAll];
   // Operator-dismissed cards drop out of the pending list but stay tracked so
   // a "Show N dismissed" link can restore them. Reopened POs always render
@@ -1301,17 +1347,6 @@ export default function Orders() {
     });
   }, [persistDismissed]);
 
-  // Suppliers picker for "+ Add supplier order" — fetched lazily when the
-  // dialog opens so the orders page doesn't pay for it on every load.
-  const { data: pickerSuppliers = [] } = useQuery<{ id: number; name: string }[]>({
-    queryKey: ["suppliers-for-add-supplier-order"],
-    queryFn: async () => {
-      const res = await fetch(`${BASE}/api/suppliers`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load suppliers");
-      return res.json();
-    },
-    enabled: addSupplierDialogOpen,
-  });
   const filteredPickerSuppliers = debouncedAddSupplierSearch.trim()
     ? pickerSuppliers.filter(s => s.name.toLowerCase().includes(debouncedAddSupplierSearch.toLowerCase()))
     : pickerSuppliers;
@@ -1834,6 +1869,30 @@ export default function Orders() {
                                 <span className="text-[10px] text-red-500 flex items-center gap-0.5">
                                   <AlertCircle className="w-2.5 h-2.5" />
                                   No stock check
+                                </span>
+                              )}
+                              {(line.inboundQty ?? 0) > 0 && (
+                                <span
+                                  className="text-[10px] text-sky-600 dark:text-sky-400 flex items-center gap-0.5"
+                                  title={(line.inboundDeliveries ?? [])
+                                    .map(d => `${d.qty} ${d.unit} — ${d.date ? new Date(d.date + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "2-digit" }) : "date TBC"} (PO #${d.poId})`)
+                                    .join("\n")}
+                                >
+                                  <Truck className="w-2.5 h-2.5" />
+                                  {(() => {
+                                    const first = (line.inboundDeliveries ?? [])[0];
+                                    const dateLabel = first?.date
+                                      ? (() => {
+                                          const d = new Date(first.date + "T00:00:00");
+                                          const today = new Date(); today.setHours(0, 0, 0, 0);
+                                          const diff = Math.round((d.getTime() - today.getTime()) / 86_400_000);
+                                          if (diff === 0) return "today";
+                                          if (diff === 1) return "tomorrow";
+                                          return d.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "2-digit" });
+                                        })()
+                                      : "date TBC";
+                                    return `+${line.inboundQty} ${line.unit} due ${dateLabel}`;
+                                  })()}
                                 </span>
                               )}
                             </div>

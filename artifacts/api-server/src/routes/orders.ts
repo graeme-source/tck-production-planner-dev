@@ -258,6 +258,46 @@ router.get("/calculate", async (req, res) => {
     dptLookup[d.ingredientId] = Number(d.dailyQtyRaw);
   }
 
+  // ── Inbound stock on open purchase orders ────────────────────────────────
+  // Suppliers with a lead time (NFS Meats: 2 days) often have goods already
+  // on the way when the next order is being built. Surface what's due in —
+  // per ingredient, with expected delivery dates — so the person ordering
+  // sees current stock AND what tomorrow's delivery brings before adding
+  // more. Open = placed or partially received; the undelivered remainder of
+  // each line counts. Expected dates more than 3 days gone are treated as
+  // dead so lost/cancelled orders don't inflate inbound forever.
+  const inboundCutoff = londonDateString(new Date(Date.now() - 3 * 86_400_000));
+  const openPoLines = await db
+    .select({
+      ingredientId: purchaseOrderLinesTable.ingredientId,
+      quantityOrdered: purchaseOrderLinesTable.quantityOrdered,
+      quantityReceived: purchaseOrderLinesTable.quantityReceived,
+      unit: purchaseOrderLinesTable.unit,
+      expectedDeliveryDate: purchaseOrdersTable.expectedDeliveryDate,
+      poId: purchaseOrdersTable.id,
+      poSupplierId: purchaseOrdersTable.supplierId,
+    })
+    .from(purchaseOrderLinesTable)
+    .innerJoin(purchaseOrdersTable, eq(purchaseOrderLinesTable.purchaseOrderId, purchaseOrdersTable.id))
+    .where(inArray(purchaseOrdersTable.status, ["placed", "partially_received"]));
+
+  const inboundByIngredient: Record<number, Array<{ date: string | null; qty: number; unit: string; poId: number }>> = {};
+  for (const l of openPoLines) {
+    if (l.ingredientId == null) continue;
+    const remaining = Number(l.quantityOrdered) - Number(l.quantityReceived);
+    if (remaining <= 0) continue;
+    if (l.expectedDeliveryDate && l.expectedDeliveryDate < inboundCutoff) continue;
+    (inboundByIngredient[l.ingredientId] ??= []).push({
+      date: l.expectedDeliveryDate ?? null,
+      qty: Math.round(remaining * 100) / 100,
+      unit: l.unit,
+      poId: l.poId,
+    });
+  }
+  for (const arr of Object.values(inboundByIngredient)) {
+    arr.sort((a, b) => (a.date ?? "9999").localeCompare(b.date ?? "9999"));
+  }
+
   // Scanned kanbans queue for the day they were scanned — but if no order was
   // generated that day (weekend, missed run), they must NOT vanish. Carry
   // anything still un-ordered from the past week into today's list; placing
@@ -304,6 +344,12 @@ router.get("/calculate", async (req, res) => {
       // Packs per case, when ordered by the case. Sent so the front-end can
       // re-apply case rounding after the operator edits the stock count.
       caseSizePacks: number | null;
+      // Undelivered quantity already on open (placed / partially received)
+      // purchase orders, with per-delivery expected dates. Advisory only —
+      // the suggested order maths deliberately ignores it so a failed
+      // delivery never silently under-orders.
+      inboundQty: number;
+      inboundDeliveries: Array<{ date: string | null; qty: number; unit: string; poId: number }>;
     }>;
   }> = {};
 
@@ -427,6 +473,8 @@ router.get("/calculate", async (req, res) => {
       lastStockCheckAt: stockCheckTimestamps[iid] ?? null,
       stockInPacks: (detail.stockInPacks ?? false) && packWeight > 0,
       caseSizePacks: caseSizePacks > 0 ? caseSizePacks : null,
+      inboundQty: Math.round((inboundByIngredient[iid] ?? []).reduce((s, d) => s + d.qty, 0) * 100) / 100,
+      inboundDeliveries: inboundByIngredient[iid] ?? [],
       belowRequirement,
     });
   }
@@ -505,6 +553,8 @@ router.get("/calculate", async (req, res) => {
         stockInPacks: (d.stockInPacks ?? false) && packWeight > 0,
         // Kanban order amounts are fixed quantities; no case rounding applies.
         caseSizePacks: null,
+        inboundQty: Math.round((inboundByIngredient[d.id] ?? []).reduce((s, x) => s + x.qty, 0) * 100) / 100,
+        inboundDeliveries: inboundByIngredient[d.id] ?? [],
       });
     }
   }
