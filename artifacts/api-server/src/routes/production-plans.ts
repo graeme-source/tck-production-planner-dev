@@ -1226,9 +1226,20 @@ router.get("/calculate", async (req, res) => {
     const predictedFridgeStock = useNewPrediction
       ? Math.max(0, Math.round(fridgeStock + wrapRemain - fulRemain))
       : Math.round(fridgeStock);
+    // When the plan is built AHEAD of time (planDate tomorrow or later),
+    // dispatch1 — the working day before planDate — hasn't left the fridge
+    // yet, and that day's planned production hasn't landed yet either.
+    // Neither is inside predictedFridgeStock (fulfilment-remaining only
+    // covers TODAY), so roll both forward: the factory number a plan-ahead
+    // screen needs is the stock at the START of planDate. Without this the
+    // deficit math treated dispatch1's packs as free stock and suggested 0
+    // for a Friday plan built on Wednesday while Thursday+Friday+Monday
+    // orders outran stock (Don Burger, 2026-08-05). Same-day plans are
+    // unchanged: dispatch1 is yesterday, already out of the fridge.
+    const planAhead = dispatchDates[0] > todayStr;
     const legacyEstimatedFactoryNumber = fridgeStock - dispatch1Qty + prevProduction;
     const estimatedFactoryNumber = useNewPrediction
-      ? predictedFridgeStock
+      ? Math.max(0, predictedFridgeStock + (planAhead ? prevProduction - dispatch1Qty : 0))
       : Math.round(legacyEstimatedFactoryNumber);
 
     const recipeSource: "shopify" | "dpt" = (hasRecipeMatch && shopifyDatesLoaded.size > 0) ? "shopify" : "dpt";
