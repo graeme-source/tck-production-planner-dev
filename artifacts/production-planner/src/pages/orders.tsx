@@ -83,6 +83,9 @@ type OrderLine = {
   // suggestion itself deliberately ignores it.
   inboundQty?: number;
   inboundDeliveries?: Array<{ date: string | null; qty: number; unit: string; poId: number }>;
+  // Raw units still to be consumed by TODAY'S outstanding prep — added to
+  // the requirement server-side; shown as the "−N still to prep" chip.
+  prepOutstandingQty?: number;
   // Packs per supplier case. When set, the pack count to order rounds up to the
   // nearest whole case. Null/absent means order in individual packs.
   caseSizePacks?: number | null;
@@ -1278,7 +1281,7 @@ export default function Orders() {
       // Recalculate packs based on new stock. Mirror the backend: deduct
       // undelivered inbound on open POs, round up to whole packs, then up to
       // the nearest whole case when ordered by the case.
-      const rawOrderQty = Math.max(0, line.totalRequired + line.surplusTarget - Math.max(0, newStock) - (line.inboundQty ?? 0));
+      const rawOrderQty = Math.max(0, line.totalRequired + line.surplusTarget + (line.prepOutstandingQty ?? 0) - Math.max(0, newStock) - (line.inboundQty ?? 0));
       let packsToOrder = line.packWeight > 0 ? Math.ceil(rawOrderQty / line.packWeight) : 0;
       const caseSizePacks = line.caseSizePacks ?? 0;
       if (caseSizePacks > 0 && packsToOrder > 0) {
@@ -1951,6 +1954,15 @@ export default function Orders() {
                                       : "date TBC";
                                     return `+${line.inboundQty} ${line.unit} due ${dateLabel}`;
                                   })()}
+                                </span>
+                              )}
+                              {(line.prepOutstandingQty ?? 0) > 0 && (
+                                <span
+                                  className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-0.5"
+                                  title={`Today's prep still needs ${line.prepOutstandingQty} ${line.unit} of this — it will come out of the counted stock before tonight, so the suggestion covers it.`}
+                                >
+                                  <Clock className="w-2.5 h-2.5" />
+                                  {`−${line.prepOutstandingQty} ${line.unit} still to prep today`}
                                 </span>
                               )}
                             </div>

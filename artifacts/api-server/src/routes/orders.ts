@@ -17,6 +17,7 @@ import {
 } from "@workspace/db";
 import { eq, and, desc, sql, inArray, notInArray, lte, gte } from "drizzle-orm";
 import { resolveRecipeIngredients, aggregateIngredients } from "../lib/ingredient-resolver";
+import { computeOutstandingPrepRaw } from "../lib/outstanding-prep";
 import { londonDateString, londonEndOfDay, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
 
 async function requireManagerOrAdmin(req: Request, res: Response, next: NextFunction) {
@@ -299,6 +300,16 @@ router.get("/calculate", async (req, res) => {
     arr.sort((a, b) => (a.date ?? "9999").localeCompare(b.date ?? "9999"));
   }
 
+  // ── Prep still outstanding TODAY, in raw units ─────────────────────────
+  // A shelf counted at 0 kg with 3 kg still to prep today is effectively at
+  // −3 kg by tonight, so the suggestion must cover it. Skipped when the
+  // SELECTED plan is the one being prepped today — its requirement already
+  // includes those quantities, so deducting again would double-count.
+  const outstandingPrep = await computeOutstandingPrepRaw(stockCheckTimestamps);
+  const prepOutstandingByIngredient = outstandingPrep.prepPlanIds.includes(planId)
+    ? {}
+    : outstandingPrep.byIngredient;
+
   // Scanned kanbans queue for the day they were scanned — but if no order was
   // generated that day (weekend, missed run), they must NOT vanish. Carry
   // anything still un-ordered from the past week into today's list; placing
@@ -352,6 +363,10 @@ router.get("/calculate", async (req, res) => {
       // 3 days past the expected date the inbound is written off anyway.
       inboundQty: number;
       inboundDeliveries: Array<{ date: string | null; qty: number; unit: string; poId: number }>;
+      // Raw units still to be consumed by TODAY'S outstanding prep (tin-
+      // tracked stations). Added to the requirement so counted stock that
+      // prep is about to eat doesn't read as available.
+      prepOutstandingQty: number;
     }>;
   }> = {};
 
@@ -407,7 +422,10 @@ router.get("/calculate", async (req, res) => {
     // to resurrect the suggestion. A failed delivery means the operator bumps
     // the quantity manually; the "+N due" chip keeps the deduction visible.
     const inboundQty = (inboundByIngredient[iid] ?? []).reduce((s, d) => s + d.qty, 0);
-    const rawOrderQty = Math.max(0, ing.totalRequired + surplusTarget - stockOnHand - inboundQty);
+    // Prep still to be done today consumes counted stock before tonight —
+    // counted 0 with 3 kg outstanding means effectively −3, so order more.
+    const prepOutstandingQty = prepOutstandingByIngredient[iid] ?? 0;
+    const rawOrderQty = Math.max(0, ing.totalRequired + surplusTarget + prepOutstandingQty - stockOnHand - inboundQty);
     let packsToOrder = packWeight > 0 ? Math.ceil(rawOrderQty / packWeight) : 0;
     // A scanned kanban is a person at the shelf saying "we're low — order
     // one kanban's worth", so it FLOORS the suggestion at the kanban order
@@ -484,6 +502,7 @@ router.get("/calculate", async (req, res) => {
       caseSizePacks: caseSizePacks > 0 ? caseSizePacks : null,
       inboundQty: Math.round((inboundByIngredient[iid] ?? []).reduce((s, d) => s + d.qty, 0) * 100) / 100,
       inboundDeliveries: inboundByIngredient[iid] ?? [],
+      prepOutstandingQty: Math.round(prepOutstandingQty * 100) / 100,
       belowRequirement,
     });
   }
@@ -564,6 +583,7 @@ router.get("/calculate", async (req, res) => {
         caseSizePacks: null,
         inboundQty: Math.round((inboundByIngredient[d.id] ?? []).reduce((s, x) => s + x.qty, 0) * 100) / 100,
         inboundDeliveries: inboundByIngredient[d.id] ?? [],
+        prepOutstandingQty: Math.round((prepOutstandingByIngredient[d.id] ?? 0) * 100) / 100,
       });
     }
   }
