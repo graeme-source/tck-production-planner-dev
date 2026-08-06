@@ -13,7 +13,12 @@ import { surveyShareUrl } from "../lib/survey-config";
 import { getRecipeImagesByName } from "../lib/recipe-images";
 import { questionOptions } from "../lib/survey-answers";
 import { getCollections, getCollectionProducts, getOrdersForPnl } from "../services/shopify";
-import { getSurveysKlaviyoKey, setSurveysKlaviyoKey, deleteSurveysKlaviyoKey, validateSurveysKlaviyoKey } from "../lib/klaviyo";
+import {
+  getSurveysKlaviyoKey, setSurveysKlaviyoKey, deleteSurveysKlaviyoKey, validateSurveysKlaviyoKey,
+  getOrCreateTestList, addTestRecipient, getTestListMembers,
+  createEmailTemplate, createCampaignForList, assignTemplateToMessage, createCampaignSendJob,
+} from "../lib/klaviyo";
+import { buildSurveyInviteHtml } from "../lib/survey-email";
 
 const router: IRouter = Router();
 
@@ -155,6 +160,124 @@ router.post("/klaviyo", async (req, res) => {
 router.delete("/klaviyo", async (_req, res) => {
   await deleteSurveysKlaviyoKey();
   res.json({ connected: false });
+});
+
+// ── Test-mode email invites ────────────────────────────────────────────────
+// Campaigns built here target the "TCK Survey Test Recipients" list and
+// NOTHING else — there is deliberately no live-audience code path yet.
+// Live sending is a separate build after the test flow is signed off.
+
+const FROM_EMAIL_SETTING = "klaviyo_surveys_from_email";
+const FROM_LABEL_SETTING = "klaviyo_surveys_from_label";
+
+async function getFounderSetting(key: string): Promise<string | null> {
+  const rows = await db.execute<{ value: string }>(sql`SELECT value FROM founder_settings WHERE key = ${key} LIMIT 1`);
+  return rows.rows[0]?.value ?? null;
+}
+
+async function setFounderSetting(key: string, value: string): Promise<void> {
+  await db.execute(sql`
+    INSERT INTO founder_settings (key, value, updated_at) VALUES (${key}, ${value}, NOW())
+    ON CONFLICT (key) DO UPDATE SET value = ${value}, updated_at = NOW()
+  `);
+}
+
+// GET /api/surveys/klaviyo/test-list — ensure the test list exists, return members + send defaults
+router.get("/klaviyo/test-list", async (_req, res) => {
+  const key = await getSurveysKlaviyoKey();
+  if (!key) { res.status(409).json({ error: "Connect Klaviyo first" }); return; }
+  try {
+    const listId = await getOrCreateTestList(key);
+    const members = await getTestListMembers(key, listId);
+    res.json({
+      listId,
+      members,
+      defaults: {
+        fromEmail: await getFounderSetting(FROM_EMAIL_SETTING),
+        fromLabel: (await getFounderSetting(FROM_LABEL_SETTING)) ?? "The Calzone Kitchen",
+      },
+    });
+  } catch (err) {
+    console.error("[surveys] test-list failed:", err instanceof Error ? err.message : String(err));
+    res.status(502).json({ error: "Klaviyo request failed" });
+  }
+});
+
+// POST /api/surveys/klaviyo/test-list/members — add a test recipient
+router.post("/klaviyo/test-list/members", async (req, res) => {
+  const key = await getSurveysKlaviyoKey();
+  if (!key) { res.status(409).json({ error: "Connect Klaviyo first" }); return; }
+  const parsed = z.object({ email: z.string().trim().email() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Enter a valid email address" }); return; }
+  try {
+    const listId = await getOrCreateTestList(key);
+    await addTestRecipient(key, listId, parsed.data.email.toLowerCase());
+    res.status(201).json({ members: await getTestListMembers(key, listId) });
+  } catch (err) {
+    console.error("[surveys] add test recipient failed:", err instanceof Error ? err.message : String(err));
+    res.status(502).json({ error: "Klaviyo request failed" });
+  }
+});
+
+const emailTestSchema = z.object({
+  subject: z.string().trim().min(1).max(200),
+  fromEmail: z.string().trim().email(),
+  fromLabel: z.string().trim().min(1).max(100),
+  // null/omitted = send as soon as the job fires; ISO string = scheduled.
+  sendAt: z.string().datetime({ offset: true }).nullable().optional(),
+  // true = create the campaign in Klaviyo but do NOT create a send job —
+  // lets Graeme inspect it in Klaviyo before anything is dispatched.
+  draft: z.boolean().optional().default(false),
+});
+
+// POST /api/surveys/:id/email-test — build the [TEST] campaign for this survey
+router.post("/:id/email-test", async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id == null) { res.status(400).json({ error: "Invalid survey id" }); return; }
+  const key = await getSurveysKlaviyoKey();
+  if (!key) { res.status(409).json({ error: "Connect Klaviyo first" }); return; }
+  const parsed = emailTestSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Validation failed", details: parsed.error.flatten() }); return; }
+  const [survey] = await db.select().from(surveysTable).where(eq(surveysTable.id, id));
+  if (!survey) { res.status(404).json({ error: "Survey not found" }); return; }
+
+  const { subject, fromEmail, fromLabel, sendAt, draft } = parsed.data;
+  try {
+    const listId = await getOrCreateTestList(key);
+    const members = await getTestListMembers(key, listId);
+    if (members.length === 0) {
+      res.status(422).json({ error: "The test list is empty — add yourself first" });
+      return;
+    }
+
+    const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
+    const html = buildSurveyInviteHtml({ title: survey.title, intro: survey.intro, shareUrl: surveyShareUrl(survey.token) });
+    const templateId = await createEmailTemplate(key, `[TEST] ${survey.title} invite ${stamp}`, html);
+    const { campaignId, messageId } = await createCampaignForList(key, {
+      name: `[TEST] ${survey.title} invite ${stamp}`,
+      listId,
+      subject,
+      previewText: "A minute of feedback shapes what we launch next",
+      fromEmail,
+      fromLabel,
+      sendAt: sendAt ?? null,
+    });
+    await assignTemplateToMessage(key, messageId, templateId);
+    if (!draft) await createCampaignSendJob(key, campaignId);
+
+    await setFounderSetting(FROM_EMAIL_SETTING, fromEmail);
+    await setFounderSetting(FROM_LABEL_SETTING, fromLabel);
+
+    res.status(201).json({
+      campaignId,
+      campaignUrl: `https://www.klaviyo.com/campaign/${campaignId}`,
+      recipients: members.length,
+      mode: draft ? "draft" : (sendAt ? "scheduled" : "sending"),
+    });
+  } catch (err) {
+    console.error("[surveys] email-test failed:", err instanceof Error ? err.message : String(err));
+    res.status(502).json({ error: "Klaviyo request failed — check the server log" });
+  }
 });
 
 // GET /api/surveys/collections — Shopify collections for the template picker

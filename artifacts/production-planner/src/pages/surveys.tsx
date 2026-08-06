@@ -12,7 +12,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Loader2, ArrowLeft, ArrowUp, ArrowDown, Trash2, Copy, Check,
   QrCode, BarChart2, Pencil, Star, AlertTriangle, Download, ExternalLink,
-  MessagesSquare, Lock, LockOpen, Eye, Boxes, Filter,
+  MessagesSquare, Lock, LockOpen, Eye, Boxes, Filter, Mail, ExternalLink as ExternalLinkIcon,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
@@ -326,6 +326,195 @@ function KlaviyoCard() {
         </Button>
       </div>
     </div>
+  );
+}
+
+// ── Test-mode email invites ────────────────────────────────────────────────
+// Sends ONLY to the Klaviyo "TCK Survey Test Recipients" list — there is no
+// live-audience path in this build. Campaigns are named [TEST] and smart
+// sending is off so the same inbox can be tested repeatedly.
+
+interface TestListData {
+  listId: string;
+  members: { email: string; consent: string }[];
+  defaults: { fromEmail: string | null; fromLabel: string };
+}
+
+interface EmailTestResult { campaignId: string; campaignUrl: string; recipients: number; mode: string }
+
+function EmailTestDialog({ survey, onClose }: { survey: SurveyListItem; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [newEmail, setNewEmail] = useState("");
+  const [subject, setSubject] = useState(`We'd love your feedback on the ${survey.title.replace(/ Feedback$/i, "")}`);
+  const [fromEmail, setFromEmail] = useState("");
+  const [fromLabel, setFromLabel] = useState("The Calzone Kitchen");
+  const [defaultsLoaded, setDefaultsLoaded] = useState(false);
+  const [when, setWhen] = useState<"now" | "schedule">("now");
+  const [sendAtLocal, setSendAtLocal] = useState("");
+  const [lastResult, setLastResult] = useState<EmailTestResult | null>(null);
+
+  const { data: testList, isLoading } = useQuery<TestListData>({
+    queryKey: ["surveys-klaviyo-test-list"],
+    queryFn: async () => jsonOrThrow(await fetch(`${BASE}/api/surveys/klaviyo/test-list`, { credentials: "include" }), "Failed to load the test list"),
+  });
+
+  if (testList && !defaultsLoaded) {
+    if (testList.defaults.fromEmail) setFromEmail(testList.defaults.fromEmail);
+    setFromLabel(testList.defaults.fromLabel);
+    setDefaultsLoaded(true);
+  }
+
+  const addMember = useMutation({
+    mutationFn: async () =>
+      jsonOrThrow(await fetch(`${BASE}/api/surveys/klaviyo/test-list/members`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email: newEmail.trim() }),
+      }), "Couldn't add that email"),
+    onSuccess: () => {
+      setNewEmail("");
+      queryClient.invalidateQueries({ queryKey: ["surveys-klaviyo-test-list"] });
+    },
+    onError: (e) => toast({ title: e instanceof Error ? e.message : "Couldn't add that email", variant: "destructive" }),
+  });
+
+  const send = useMutation({
+    mutationFn: async (draft: boolean) =>
+      jsonOrThrow(await fetch(`${BASE}/api/surveys/${survey.id}/email-test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          subject: subject.trim(),
+          fromEmail: fromEmail.trim(),
+          fromLabel: fromLabel.trim(),
+          sendAt: when === "schedule" && sendAtLocal ? new Date(sendAtLocal).toISOString() : null,
+          draft,
+        }),
+      }), "Klaviyo request failed") as Promise<EmailTestResult>,
+    onSuccess: (r) => {
+      setLastResult(r);
+      toast({
+        title: r.mode === "draft" ? "Draft created in Klaviyo" : r.mode === "scheduled" ? "Test email scheduled" : "Test email sending",
+        description: `${r.recipients} test recipient${r.recipients === 1 ? "" : "s"}`,
+      });
+    },
+    onError: (e) => toast({ title: e instanceof Error ? e.message : "Klaviyo request failed", variant: "destructive" }),
+  });
+
+  const canSend = subject.trim().length > 0 && /\S+@\S+\.\S+/.test(fromEmail.trim()) &&
+    fromLabel.trim().length > 0 && (when === "now" || sendAtLocal !== "") &&
+    (testList?.members.length ?? 0) > 0;
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Email invites — “{survey.title}”</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+            <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+            Test mode: emails go ONLY to the test list below — never to customers. Live sending is a
+            separate step once you've signed this off.
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-muted-foreground">Test recipients</p>
+            {isLoading ? (
+              <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+            ) : (
+              <>
+                {(testList?.members ?? []).length === 0 && (
+                  <p className="text-sm text-muted-foreground">Nobody on the test list yet — add your own email.</p>
+                )}
+                {(testList?.members ?? []).map(m => (
+                  <div key={m.email} className="flex items-center justify-between gap-2 rounded-md bg-muted/50 px-3 py-1.5 text-sm">
+                    <span className="truncate">{m.email}</span>
+                    {m.consent === "SUBSCRIBED" ? (
+                      <Badge className="bg-primary/15 text-primary text-xs">subscribed</Badge>
+                    ) : (
+                      <Badge className="bg-amber-500/15 text-amber-600 text-xs" title="Klaviyo only delivers campaigns to subscribed profiles">
+                        not subscribed — won't receive
+                      </Badge>
+                    )}
+                  </div>
+                ))}
+                <div className="flex gap-2">
+                  <Input
+                    value={newEmail}
+                    placeholder="you@thecalzonekitchen.co.uk"
+                    onChange={(e) => setNewEmail(e.target.value)}
+                  />
+                  <Button
+                    variant="outline"
+                    disabled={!/\S+@\S+\.\S+/.test(newEmail.trim()) || addMember.isPending}
+                    onClick={() => addMember.mutate()}
+                  >
+                    Add
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-muted-foreground">Email</p>
+            <Input value={subject} placeholder="Subject" onChange={(e) => setSubject(e.target.value)} />
+            <div className="flex gap-2">
+              <Input value={fromLabel} placeholder="From name" onChange={(e) => setFromLabel(e.target.value)} />
+              <Input value={fromEmail} placeholder="From email (your Klaviyo sender)" onChange={(e) => setFromEmail(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-muted-foreground">When</p>
+            <div className="flex gap-2">
+              <Select value={when} onValueChange={(v) => setWhen(v as "now" | "schedule")}>
+                <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="now">Send now</SelectItem>
+                  <SelectItem value="schedule">Schedule</SelectItem>
+                </SelectContent>
+              </Select>
+              {when === "schedule" && (
+                <Input
+                  type="datetime-local"
+                  value={sendAtLocal}
+                  onChange={(e) => setSendAtLocal(e.target.value)}
+                />
+              )}
+            </div>
+          </div>
+
+          {lastResult && (
+            <div className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-sm space-y-1">
+              <p className="font-medium">
+                {lastResult.mode === "draft" ? "Draft created" : lastResult.mode === "scheduled" ? "Scheduled" : "Sending"} —{" "}
+                {lastResult.recipients} test recipient{lastResult.recipients === 1 ? "" : "s"}
+              </p>
+              <a
+                href={lastResult.campaignUrl} target="_blank" rel="noreferrer"
+                className="inline-flex items-center gap-1 text-primary underline"
+              >
+                View in Klaviyo <ExternalLinkIcon className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          )}
+
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" disabled={!canSend || send.isPending} onClick={() => send.mutate(true)}>
+              Create draft in Klaviyo
+            </Button>
+            <Button disabled={!canSend || send.isPending} onClick={() => send.mutate(false)}>
+              {send.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              {when === "schedule" ? "Schedule test email" : "Send test email"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1182,12 +1371,13 @@ function ResultsView({ surveyId, onBack }: { surveyId: number; onBack: () => voi
 
 // ── List ───────────────────────────────────────────────────────────────────
 
-function SurveyCard({ survey, onEdit, onResults, onShare, onPreview }: {
+function SurveyCard({ survey, onEdit, onResults, onShare, onPreview, onEmail }: {
   survey: SurveyListItem;
   onEdit: () => void;
   onResults: () => void;
   onShare: () => void;
   onPreview: () => void;
+  onEmail: () => void;
 }) {
   const queryClient = useQueryClient();
 
@@ -1246,6 +1436,9 @@ function SurveyCard({ survey, onEdit, onResults, onShare, onPreview }: {
         <Button variant="outline" size="sm" onClick={onShare}>
           <QrCode className="w-3.5 h-3.5 mr-1.5" /> Share
         </Button>
+        <Button variant="outline" size="sm" onClick={onEmail}>
+          <Mail className="w-3.5 h-3.5 mr-1.5" /> Email
+        </Button>
         <Button variant="outline" size="sm" onClick={() => duplicate.mutate()} disabled={duplicate.isPending}>
           <Copy className="w-3.5 h-3.5 mr-1.5" /> Duplicate
         </Button>
@@ -1275,6 +1468,7 @@ export default function Surveys() {
   const [shareTarget, setShareTarget] = useState<{ id: number; title: string; shareUrl: string } | null>(null);
   const [previewId, setPreviewId] = useState<number | null>(null);
   const [fromCollectionOpen, setFromCollectionOpen] = useState(false);
+  const [emailTarget, setEmailTarget] = useState<SurveyListItem | null>(null);
 
   const { data: surveys, isLoading } = useQuery<SurveyListItem[]>({
     queryKey: ["surveys"],
@@ -1336,6 +1530,7 @@ export default function Surveys() {
                 onResults={() => setView({ name: "results", surveyId: s.id })}
                 onShare={() => setShareTarget({ id: s.id, title: s.title, shareUrl: s.shareUrl })}
                 onPreview={() => setPreviewId(s.id)}
+                onEmail={() => setEmailTarget(s)}
               />
             ))}
           </div>
@@ -1345,6 +1540,9 @@ export default function Surveys() {
       <ShareDialog survey={shareTarget} onClose={() => setShareTarget(null)} />
       {previewId != null && (
         <SavedSurveyPreview surveyId={previewId} onClose={() => setPreviewId(null)} />
+      )}
+      {emailTarget != null && (
+        <EmailTestDialog survey={emailTarget} onClose={() => setEmailTarget(null)} />
       )}
       {fromCollectionOpen && (
         <FromCollectionDialog
