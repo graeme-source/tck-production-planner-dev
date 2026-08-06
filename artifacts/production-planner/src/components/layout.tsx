@@ -36,6 +36,7 @@ import {
   AlertTriangle,
   FileText,
   Wrench,
+  MessagesSquare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/user-avatar";
@@ -78,6 +79,7 @@ export const productNavItems: NavItem[] = [
   { name: "Sub-Recipes", href: "/sub-recipes", icon: ClipboardList },
   { name: "Ingredients", href: "/inventory?tab=ingredients", icon: Carrot },
   { name: "Product Hub", href: "/product-hub", icon: Beaker },
+  { name: "Surveys", href: "/surveys", icon: MessagesSquare },
 ];
 
 export const bottomNavItems: NavItem[] = [
@@ -85,7 +87,7 @@ export const bottomNavItems: NavItem[] = [
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
-const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory", "/product-hub"];
+const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory", "/product-hub", "/surveys"];
 const DISPATCH_PATHS = ["/dispatches", "/locations"];
 
 type AccountButtonUser = { name?: string; role?: string; avatarUrl?: string | null } | null;

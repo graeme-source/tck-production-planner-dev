@@ -46,6 +46,7 @@ import FounderSales from "@/pages/founder-sales";
 import DocumentViewer from "@/pages/document-viewer";
 import StockControl from "@/pages/stock-control";
 import ProductHub from "@/pages/product-hub";
+import Surveys from "@/pages/surveys";
 import TrainingMatrix from "@/pages/training-matrix";
 import Onboarding from "@/pages/onboarding";
 import NotFound from "@/pages/not-found";
@@ -162,6 +163,7 @@ function Router() {
               <Route path="/deliveries" component={Deliveries} />
               <Route path="/stock-control" component={StockControl} />
               <Route path="/product-hub" component={ProductHub} />
+              <Route path="/surveys">{() => <ProtectedRoute component={Surveys} pageKey="/surveys" />}</Route>
               <Route path="/founder" component={FounderView} />
               <Route path="/founder/pnl" component={FounderPnL} />
               <Route path="/founder/focus" component={FounderFocus} />

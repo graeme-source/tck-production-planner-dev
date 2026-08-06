@@ -63,6 +63,7 @@ import collectionsRouter from "./collections";
 import caseOrdersRouter from "./case-orders";
 import founderFocusRouter from "./founder-focus";
 import founderSalesRouter from "./founder-sales";
+import surveysRouter from "./surveys";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -153,6 +154,9 @@ router.use("/collections", collectionsRouter);
 router.use("/case-orders", caseOrdersRouter);
 router.use("/stock-control", stockControlRouter);
 router.use("/founder-panels", founderPanelsRouter);
+// Customer surveys — admin builds/reads them here; the public submission API
+// is a separate unauthenticated router mounted directly in app.ts.
+router.use("/surveys", requireAdmin, surveysRouter);
 router.use("/founder-focus", founderFocusRouter);
 router.use("/founder-sales", founderSalesRouter);
 router.use("/improvements", improvementsRouter);

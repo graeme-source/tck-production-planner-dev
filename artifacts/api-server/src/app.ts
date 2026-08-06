@@ -6,6 +6,7 @@ import connectPgSimple from "connect-pg-simple";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import path from "path";
 import router from "./routes";
+import publicSurveysRouter from "./routes/public-surveys";
 
 const sessionSecret = process.env["SESSION_SECRET"];
 if (!sessionSecret) {
@@ -17,6 +18,13 @@ const PgSession = connectPgSimple(session);
 const app: Express = express();
 
 app.set("trust proxy", 1);
+
+// Public survey API for the Shopify feedback widget. Mounted ahead of the
+// app-wide CORS/session/limiter stack because it has a different audience:
+// the router carries its own CORS (Shopify origin, no credentials), its own
+// stricter rate limits and its own body parser. Everything else on /api is
+// untouched — requests that don't match this prefix fall through as before.
+app.use("/api/public/surveys", publicSurveysRouter);
 
 const allowedOrigin = process.env["ALLOWED_ORIGIN"] ?? `https://${process.env["REPLIT_DEV_DOMAIN"]}`;
 
