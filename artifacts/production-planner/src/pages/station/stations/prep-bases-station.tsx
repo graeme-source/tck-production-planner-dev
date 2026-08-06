@@ -141,12 +141,19 @@ export function SubRecipeMakeFlow({
   allSubRecipes,
   onClose,
   onDone,
+  completedIds,
+  onToggleDone,
 }: {
   mode: SubReplenishMode;
   planRequirements: SubRecipePlanRequirement[];
   allSubRecipes: SubRecipe[];
   onClose?: () => void;
-  onDone?: (subRecipeId: number) => void;
+  onDone?: (subRecipeId: number, batches: number) => void;
+  /** Sub-recipes already marked complete for this plan (plan mode only). */
+  completedIds?: Set<number>;
+  /** Direct tick on a pick-list row — mark done/undone without running the
+   *  flow, for when the base was assessed (or made) off-screen. */
+  onToggleDone?: (subRecipeId: number) => void;
 }) {
   const [search, setSearch] = useState("");
   const [state, setState] = useState<SubReplenishState>({
@@ -328,7 +335,7 @@ export function SubRecipeMakeFlow({
             {checkedCount === totalItems && totalItems > 0 && (
               <button
                 onClick={() => {
-                  if (state.sr) onDone?.(state.sr.subRecipeId);
+                  if (state.sr) onDone?.(state.sr.subRecipeId, state.batches);
                   setState(s => ({ ...s, phase: "done" }));
                 }}
                 className="w-full py-4 mt-4 rounded-2xl bg-emerald-500 text-white font-bold text-base hover:bg-emerald-600 transition-colors flex items-center justify-center gap-2"
@@ -424,7 +431,7 @@ export function SubRecipeMakeFlow({
             // as a normal completion, then jumps to the done screen.
             <button
               onClick={() => {
-                if (state.sr) onDone?.(state.sr.subRecipeId);
+                if (state.sr) onDone?.(state.sr.subRecipeId, 0);
                 setState(s => ({ ...s, phase: "done", batches: 0 }));
               }}
               className="w-full py-4 rounded-2xl bg-emerald-500 text-white font-bold text-base hover:bg-emerald-600 transition-colors flex items-center justify-center gap-2"
@@ -572,30 +579,59 @@ export function SubRecipeMakeFlow({
           const batchsNeeded = mode === "plan" && sr.totalRequired > 0 && sr.yield > 0
             ? Math.ceil(sr.totalRequired / sr.yield)
             : null;
+          const isDone = completedIds?.has(sr.subRecipeId) ?? false;
           return (
-            <button
+            <div
               key={sr.subRecipeId}
-              onClick={() => selectSr(sr)}
-              className="w-full flex items-center gap-4 px-5 py-4 rounded-2xl border-2 border-border bg-card hover:border-primary/40 hover:bg-primary/5 text-left transition-all active:scale-[0.99]"
-            >
-              <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center flex-shrink-0">
-                <FlaskConical className="w-5 h-5 text-accent" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-base truncate">{sr.subRecipeName}</p>
-                <p className="text-base text-muted-foreground">
-                  {sr.yield.toFixed(3)} {sr.yieldUnit} per batch
-                  {mode === "plan" && sr.totalRequired > 0 && ` · ${sr.totalRequired.toFixed(3)} ${sr.yieldUnit} required`}
-                </p>
-              </div>
-              {batchsNeeded !== null && (
-                <div className="text-right flex-shrink-0">
-                  <p className="text-2xl font-bold text-primary tabular-nums">{batchsNeeded}</p>
-                  <p className="text-sm text-muted-foreground">batch{batchsNeeded !== 1 ? "es" : ""}</p>
-                </div>
+              className={cn(
+                "w-full flex items-center gap-4 px-5 py-4 rounded-2xl border-2 transition-all",
+                isDone
+                  ? "border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20"
+                  : "border-border bg-card hover:border-primary/40 hover:bg-primary/5"
               )}
-              <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
-            </button>
+            >
+              {mode === "plan" && onToggleDone && (
+                <button
+                  onClick={() => onToggleDone(sr.subRecipeId)}
+                  aria-label={isDone ? `Mark ${sr.subRecipeName} not done` : `Mark ${sr.subRecipeName} done`}
+                  className="flex-shrink-0 p-1 -m-1 rounded-full transition-transform active:scale-90"
+                >
+                  {isDone ? (
+                    <CheckCircle2 className="w-8 h-8 text-emerald-500" />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full border-2 border-muted-foreground/40 hover:border-emerald-500 transition-colors" />
+                  )}
+                </button>
+              )}
+              <button
+                onClick={() => selectSr(sr)}
+                className="flex-1 flex items-center gap-4 text-left min-w-0 active:scale-[0.99] transition-transform"
+              >
+                <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center flex-shrink-0">
+                  <FlaskConical className="w-5 h-5 text-accent" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className={cn("font-semibold text-base truncate", isDone && "line-through text-emerald-700 dark:text-emerald-300")}>
+                    {sr.subRecipeName}
+                  </p>
+                  <p className="text-base text-muted-foreground">
+                    {isDone
+                      ? "✓ Completed today"
+                      : <>
+                          {sr.yield.toFixed(3)} {sr.yieldUnit} per batch
+                          {mode === "plan" && sr.totalRequired > 0 && ` · ${sr.totalRequired.toFixed(3)} ${sr.yieldUnit} required`}
+                        </>}
+                  </p>
+                </div>
+                {batchsNeeded !== null && !isDone && (
+                  <div className="text-right flex-shrink-0">
+                    <p className="text-2xl font-bold text-primary tabular-nums">{batchsNeeded}</p>
+                    <p className="text-sm text-muted-foreground">batch{batchsNeeded !== 1 ? "es" : ""}</p>
+                  </div>
+                )}
+                <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+              </button>
+            </div>
           );
         })}
       </div>
@@ -607,6 +643,32 @@ export function SubRecipeMakeFlow({
 // Bases & Sauces Prep Station
 // Left: recipe list overview. Right: focused ingredient detail for selected recipe.
 // ──────────────────────────────────────────────────────────────────────────────
+interface SubRecipeCompletionRow {
+  subRecipeId: number;
+  batches: number | null;
+  userId: number | null;
+  userName: string | null;
+  completedAt: string;
+}
+
+/** Persisted "base production done" rows for the plan — written by the direct
+ *  tick or by finishing the make flow, and what makes the Tomato Base card's
+ *  done state survive a page refresh and count toward progress. */
+function useSubRecipeCompletions(planId: number) {
+  const [rows, setRows] = useState<SubRecipeCompletionRow[]>([]);
+
+  const refetch = useCallback(() => {
+    fetch(`/api/production-plans/${planId}/sub-recipe-completions`, { credentials: "include" })
+      .then(r => r.json())
+      .then((d: { completions?: SubRecipeCompletionRow[] }) => setRows(d.completions ?? []))
+      .catch((err) => console.warn("[PrepBases] Sub-recipe completions fetch failed:", err));
+  }, [planId]);
+
+  useEffect(() => { refetch(); }, [refetch]);
+
+  return { completions: rows, refetch };
+}
+
 function usePlanSubRecipeRequirements(planId: number) {
   const [data, setData] = useState<SubRecipePlanRequirement[]>([]);
   const [loading, setLoading] = useState(true);
@@ -627,7 +689,6 @@ function usePlanSubRecipeRequirements(planId: number) {
 export function PrepBasesStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const [selectedItem, setSelectedItem] = useState<"tomato_base" | number>("tomato_base");
   const [hideCompleted, setHideCompleted] = useState(false);
-  const [completedSubRecipeIds, setCompletedSubRecipeIds] = useState<Set<number>>(new Set());
   // ?direct=1 — see main-prep-station for rationale.
   const search = useSearch();
   const isDirect = new URLSearchParams(search).get("direct") === "1";
@@ -641,10 +702,35 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
   const { subRecipes: planSubRecipes, loading: subRecipesLoading } = usePlanSubRecipeRequirements(targetPlanId);
   const { data: allSubRecipesData } = useListSubRecipes();
   const allSubRecipes = (allSubRecipesData ?? []) as SubRecipe[];
+  const { completions: subRecipeCompletions, refetch: refetchSubRecipeCompletions } = useSubRecipeCompletions(targetPlanId);
+  const completedSubRecipeIds = useMemo(
+    () => new Set(subRecipeCompletions.map(c => c.subRecipeId)),
+    [subRecipeCompletions]
+  );
 
-  const handleSubRecipeDone = (subRecipeId: number) => {
+  // Flow finished (or "nothing required") — persist with the batches made so
+  // the done state survives a refresh and counts toward progress.
+  const handleSubRecipeDone = async (subRecipeId: number, batches: number) => {
     if (isDraft) { toastDraftBlocked(); return; }
-    setCompletedSubRecipeIds(prev => new Set([...prev, subRecipeId]));
+    await fetch(`/api/production-plans/${targetPlanId}/sub-recipe-completions`, {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subRecipeId, batches }),
+    }).catch(() => toast({ title: "Error", description: "Failed to save completion", variant: "destructive" }));
+    refetchSubRecipeCompletions();
+  };
+
+  // Direct tick on a pick-list row — done/undone without running the flow.
+  const toggleSubRecipeDone = async (subRecipeId: number) => {
+    if (isOnBreak) return;
+    if (isDraft) { toastDraftBlocked(); return; }
+    const isDone = completedSubRecipeIds.has(subRecipeId);
+    await fetch(`/api/production-plans/${targetPlanId}/sub-recipe-completions`, {
+      method: isDone ? "DELETE" : "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subRecipeId }),
+    }).catch(() => toast({ title: "Error", description: "Failed to update completion", variant: "destructive" }));
+    refetchSubRecipeCompletions();
   };
 
   // Tomato Base is "done" when every base sub-recipe in the plan has been completed
@@ -775,7 +861,13 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
     const status = ingredientDoneStatus(ing);
     return s + status.completedTinCount;
   }, 0);
-  const overallPct = totalTins > 0 ? Math.round((Math.min(completedTins, totalTins) / totalTins) * 100) : 0;
+  // Base sub-recipes count as one unit each alongside the sauce tins, so the
+  // bar only reaches 100% once the bases are ticked off too.
+  const baseUnitsTotal = baseSubRecipes.length;
+  const baseUnitsDone = baseSubRecipes.filter(r => completedSubRecipeIds.has(r.subRecipeId)).length;
+  const totalUnits = totalTins + baseUnitsTotal;
+  const completedUnits = completedTins + baseUnitsDone;
+  const overallPct = totalUnits > 0 ? Math.round((Math.min(completedUnits, totalUnits) / totalUnits) * 100) : 0;
 
   if (loading || isNextPlanLoading) {
     return <div className="flex items-center justify-center py-20 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin mr-2" />Loading…</div>;
@@ -813,24 +905,27 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
 
       <StockCheckStatusPanel checkDate={nextPlan?.planDate ?? plan.planDate} />
 
-      {/* Sauce progress bar (excludes Tomato Base which tracks via sub-recipe) */}
+      {/* Progress bar — sauce tins plus base sub-recipes (one unit each) */}
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
             <Layers className="w-6 h-6 text-yellow-500" />
             <div>
-              <h2 className="font-semibold text-base">Sauces</h2>
+              <h2 className="font-semibold text-base">Bases & Sauces</h2>
               <p className="text-sm text-muted-foreground">
-                {ingredients.length > 0 ? `${completedTins} of ${totalTins} tins completed` : "No sauces to prep"}
+                {totalUnits > 0
+                  ? `${completedUnits} of ${totalUnits} completed`
+                    + (baseUnitsTotal > 0 ? ` (${completedTins}/${totalTins} tins · ${baseUnitsDone}/${baseUnitsTotal} base${baseUnitsTotal !== 1 ? "s" : ""})` : "")
+                  : "Nothing to prep"}
               </p>
             </div>
           </div>
-          <span className="text-2xl font-bold font-display">{ingredients.length > 0 ? `${overallPct}%` : "—"}</span>
+          <span className="text-2xl font-bold font-display">{totalUnits > 0 ? `${overallPct}%` : "—"}</span>
         </div>
         <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden mb-3">
           <div
-            className={cn("h-full rounded-full transition-all", overallPct >= 100 && ingredients.length > 0 ? "bg-yellow-500" : "bg-yellow-400")}
-            style={{ width: `${ingredients.length > 0 ? Math.min(overallPct, 100) : 0}%` }}
+            className={cn("h-full rounded-full transition-all", overallPct >= 100 && totalUnits > 0 ? "bg-yellow-500" : "bg-yellow-400")}
+            style={{ width: `${totalUnits > 0 ? Math.min(overallPct, 100) : 0}%` }}
           />
         </div>
       </div>
@@ -1022,9 +1117,16 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                     </p>
                     <ul className="mt-4 space-y-1.5">
                       {baseSubRecipes.map(sr => (
-                        <li key={sr.subRecipeId} className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-300">
-                          <Check className="w-4 h-4 flex-shrink-0" />
-                          <span className="line-through opacity-80">{sr.subRecipeName}</span>
+                        <li key={sr.subRecipeId}>
+                          <button
+                            onClick={() => toggleSubRecipeDone(sr.subRecipeId)}
+                            title="Tap to mark as not done"
+                            className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-300 rounded-lg px-2 py-1 -mx-2 hover:bg-emerald-100/60 dark:hover:bg-emerald-900/30 transition-colors"
+                          >
+                            <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                            <span className="line-through opacity-80">{sr.subRecipeName}</span>
+                            <span className="text-xs opacity-60 ml-1">tap to undo</span>
+                          </button>
                         </li>
                       ))}
                     </ul>
@@ -1048,6 +1150,8 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                     planRequirements={planSubRecipes}
                     allSubRecipes={allSubRecipes}
                     onDone={handleSubRecipeDone}
+                    completedIds={completedSubRecipeIds}
+                    onToggleDone={toggleSubRecipeDone}
                   />
                 )}
               </div>

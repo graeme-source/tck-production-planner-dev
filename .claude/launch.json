@@ -61,9 +61,17 @@
       "port": 5282
     },
     {
+      "name": "api-batchfix",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5283 PORT=59690 pnpm run dev"],
+      "cwd": "artifacts/api-server",
+      "port": 59690,
+      "autoPort": true
+    },
+    {
       "name": "frontend-batchfix",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:55305 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5283 --strictPort"],
+      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59690 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5283 --strictPort"],
       "cwd": "artifacts/production-planner",
       "port": 5283
     },

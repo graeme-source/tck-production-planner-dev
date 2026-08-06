@@ -2565,6 +2565,24 @@ async function runStartupMigrations() {
       WHERE NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'surveys_v1')
     `);
 
+    // Base sub-recipe production completions — see
+    // lib/db/migrations/0048_sub_recipe_completions.sql. The Bases & Sauces
+    // station's base card (Tomato Base) previously tracked "done" only in
+    // component state: a refresh lost it and it never counted toward prep
+    // progress. One row per (plan, sub-recipe) marks that base production
+    // as complete for the day, whether ticked directly or via the make flow.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS sub_recipe_completions (
+        id SERIAL PRIMARY KEY,
+        plan_id INTEGER NOT NULL REFERENCES production_plans(id) ON DELETE CASCADE,
+        sub_recipe_id INTEGER NOT NULL REFERENCES sub_recipes(id) ON DELETE CASCADE,
+        batches NUMERIC(10,2),
+        user_id INTEGER REFERENCES app_users(id),
+        completed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_sub_recipe_completion UNIQUE (plan_id, sub_recipe_id)
+      )
+    `);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

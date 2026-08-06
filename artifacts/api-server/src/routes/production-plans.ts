@@ -30,6 +30,22 @@ function calcTinCount(batchesTarget: number, maxBatchesPerTin: number | null): n
   return batchesTarget > 5 ? Math.max(2, raw) : raw;
 }
 
+/** Round fractional allocations to integers that sum to `total`: floor each,
+ *  then hand the leftover units to the largest remainders. */
+function largestRemainderRound(exact: number[], total: number): number[] {
+  const floors = exact.map(e => Math.floor(e));
+  let leftover = total - floors.reduce((s, f) => s + f, 0);
+  const order = exact
+    .map((e, idx) => ({ idx, remainder: e - Math.floor(e) }))
+    .sort((a, b) => b.remainder - a.remainder);
+  for (const { idx } of order) {
+    if (leftover <= 0) break;
+    floors[idx] += 1;
+    leftover--;
+  }
+  return floors;
+}
+
 const router: IRouter = Router();
 
 /** Applies a delta to the latest production_fridge stock_entries row
@@ -1315,54 +1331,59 @@ router.get("/calculate", async (req, res) => {
   const totalDeficitBatches = recipesWithData.reduce((s, r) => s + r.deficitBatches, 0);
   const remainingCapacity = Math.max(0, totalDailyBatches - totalDeficitBatches);
 
-  // Make-ahead surplus goes to the flavour with the LEAST stock cover, one
-  // batch at a time (water-fill), weighted by the curated DPT split — NOT a
-  // flat percentage split. The flat split ignored what's already in the
-  // fridge: a flavour sitting on 100+ surplus packs kept earning its full
-  // DPT share while a flavour scraping zero got nothing beyond its bare
-  // deficit (Godfather 10 vs Chicken & Chorizo 12 on 2026-08-06, with C&C
-  // projected +86 packs over demand and Godfather −19). Cover is measured
-  // as projected packs after this horizon's dispatches ÷ demand share;
-  // ranking by stock/share is identical to ranking by days-of-cover, so no
-  // absolute daily-packs figure is needed. When stocks are level this
-  // converges to the DPT proportions, so the curated split still governs
-  // steady state. DPT = 0 keeps meaning "never build surplus stock for
-  // this recipe" (e.g. a retiring special) — it still gets deficitBatches
-  // when real orders outrun stock, just no share of spare capacity. If no
-  // DPT packs are configured at all, fall back to the live sales split.
+  // Target-stock allocation (Graeme, 2026-08-06): the plan should RESULT in
+  // end-of-horizon factory numbers split by the DPT percentages. Batch counts
+  // are whatever closes each flavour's gap to its target — a flavour with a
+  // massive deficit gets heavily produced; one sitting above its share gets
+  // nothing until sales pull it back down (stock can't be unmade).
+  //
+  // Mechanics: find the level λ (end-stock packs per weight point) whose
+  // per-recipe targets λ·weight are exactly affordable with the day's
+  // capacity, i.e. Σ gap-batches = totalDailyBatches. Overstocked flavours
+  // contribute no gap; everyone else lands ON the DPT split around them.
+  // Weight 0 (retiring specials with DPT 0) means target 0 — the gap formula
+  // still produces up to zero stock when real orders drove it negative, so
+  // genuine demand is honoured without ever building surplus. If no DPT
+  // packs are configured at all, fall back to the live sales split.
   const useDptWeights = totalDptPacksSold > 0;
-  const surplusByIdx = new Array(recipesWithData.length).fill(0);
-  const coverPool = recipesWithData
-    .map((r, idx) => ({
-      idx,
-      weight: useDptWeights ? r.dptPercent : (totalPacksSold > 0 ? r.salesPercent : 0),
-      packsPerBatch: r.packsPerBatch > 0 ? r.packsPerBatch : 1,
-      // Projected packs left after the deficit is covered and this horizon's
-      // dispatches have gone out — the same maths as nextFactoryNumber, with
-      // production fixed at the deficit batches.
-      stock: r.estimatedFactoryNumber
-        + r.deficitBatches * r.packsPerBatch
-        - r.bagPackEquivalents
-        - (r.dispatch2Qty + r.dispatch3Qty),
-    }))
-    .filter(p => p.weight > 0);
-  for (let b = 0; b < remainingCapacity && coverPool.length > 0; b++) {
-    let best = coverPool[0];
-    for (const p of coverPool) {
-      const cover = p.stock / p.weight;
-      const bestCover = best.stock / best.weight;
-      // Ties go to the bigger seller — it burns through the tied cover faster.
-      if (cover < bestCover - 1e-9 || (Math.abs(cover - bestCover) <= 1e-9 && p.weight > best.weight)) {
-        best = p;
-      }
+  const allocPool = recipesWithData.map((r) => ({
+    weight: useDptWeights ? r.dptPercent : (totalPacksSold > 0 ? r.salesPercent : 0),
+    ppb: r.packsPerBatch > 0 ? r.packsPerBatch : 1,
+    // Projected end-of-horizon packs with NO production (can be negative).
+    proj: r.estimatedFactoryNumber - r.bagPackEquivalents - (r.dispatch2Qty + r.dispatch3Qty),
+  }));
+  // Batches needed to lift every under-target recipe to its λ-target.
+  const needBatches = (lambda: number) =>
+    allocPool.reduce((s, p) => s + Math.max(0, lambda * p.weight - p.proj) / p.ppb, 0);
+
+  let suggestedByIdx: number[];
+  let targetByIdx: Array<number | null>;
+  const floorNeed = needBatches(0); // just covering shortfalls to zero stock
+  if (floorNeed >= totalDailyBatches) {
+    // Capacity can't even cover the shortfalls — scale each gap pro-rata.
+    const gaps = allocPool.map(p => Math.max(0, -p.proj) / p.ppb);
+    const scale = floorNeed > 0 ? totalDailyBatches / floorNeed : 0;
+    suggestedByIdx = largestRemainderRound(gaps.map(g => g * scale), totalDailyBatches);
+    targetByIdx = allocPool.map(() => null);
+  } else {
+    // Bisect λ until the targets exactly spend the day's capacity.
+    let lo = 0, hi = 1;
+    while (needBatches(hi) < totalDailyBatches && hi < 1e9) hi *= 2;
+    for (let i = 0; i < 60; i++) {
+      const mid = (lo + hi) / 2;
+      if (needBatches(mid) < totalDailyBatches) lo = mid; else hi = mid;
     }
-    surplusByIdx[best.idx]++;
-    best.stock += best.packsPerBatch;
+    const lambda = (lo + hi) / 2;
+    const exact = allocPool.map(p => Math.max(0, lambda * p.weight - p.proj) / p.ppb);
+    suggestedByIdx = largestRemainderRound(exact, totalDailyBatches);
+    // The target shown in the UI: this flavour's DPT share of the achievable
+    // end-stock pool. Null for weight-0 recipes — they have no share.
+    targetByIdx = allocPool.map(p => p.weight > 0 ? Math.round(lambda * p.weight) : null);
   }
 
   const result = recipesWithData.map((r, idx) => {
-    const surplusBatches = surplusByIdx[idx];
-    const suggestedBatches = r.deficitBatches + surplusBatches;
+    const suggestedBatches = suggestedByIdx[idx];
+    const surplusBatches = Math.max(0, suggestedBatches - r.deficitBatches);
     const maxBatchesPerTin = r.maxBatchesPerTin;
     const tinCount = maxBatchesPerTin && suggestedBatches > 0
       ? Math.ceil(suggestedBatches / maxBatchesPerTin) : null;
@@ -1384,6 +1405,11 @@ router.get("/calculate", async (req, res) => {
       suggestedBatches,
       tinCount,
       nextFactoryNumber: Math.round(nextFactoryNumber),
+      // This flavour's DPT share of the achievable end-of-horizon stock pool —
+      // what the suggestion is steering nextFactoryNumber − remaining
+      // dispatches toward. Null when capacity can't cover shortfalls or the
+      // recipe has no demand share.
+      targetStockPacks: targetByIdx[idx],
       totalDailyBatches,
       totalPacksSold,
     };
@@ -7735,6 +7761,74 @@ router.delete("/:id/prep-deferrals/by-tin", async (req, res) => {
     `);
   }
   res.json({ ok: true });
+});
+
+// ── Base sub-recipe production completions ─────────────────────────────────
+// The Bases & Sauces station's base card (Tomato Base) previously tracked
+// "done" only in component state — a refresh lost it and it never counted
+// toward the station's progress. One row per (plan, sub-recipe), written by
+// the direct tick on the station page or by finishing the make flow.
+// `batches` is what was actually made (0 = stock covered it, nothing made;
+// null = direct tick, not asked).
+
+router.get("/:id/sub-recipe-completions", async (req, res) => {
+  const planId = Number(req.params.id);
+  try {
+    const result = await db.execute(sql`
+      SELECT src.sub_recipe_id AS "subRecipeId", src.batches, src.user_id AS "userId",
+             u.name AS "userName", src.completed_at AS "completedAt"
+      FROM sub_recipe_completions src
+      LEFT JOIN app_users u ON u.id = src.user_id
+      WHERE src.plan_id = ${planId}
+    `);
+    res.json({ completions: result.rows });
+  } catch (err) {
+    console.error("sub-recipe-completions GET error:", err);
+    res.status(500).json({ error: "Failed to load sub-recipe completions" });
+  }
+});
+
+router.post("/:id/sub-recipe-completions", async (req, res) => {
+  const planId = Number(req.params.id);
+  const { subRecipeId, batches } = req.body as { subRecipeId?: number; batches?: number | null };
+  if (!subRecipeId) { res.status(400).json({ error: "subRecipeId is required" }); return; }
+  if (await planDraftStatus(planId)) { res.status(409).json({ error: DRAFT_COMPLETION_ERROR }); return; }
+  const userId = (req.session as any)?.userId ?? null;
+  try {
+    // Upsert: re-completing (e.g. flow finish after a direct tick) refreshes
+    // who/when/batches rather than erroring — the newest signal wins.
+    const result = await db.execute(sql`
+      INSERT INTO sub_recipe_completions (plan_id, sub_recipe_id, batches, user_id, completed_at)
+      VALUES (${planId}, ${subRecipeId}, ${batches ?? null}, ${userId}, NOW())
+      ON CONFLICT ON CONSTRAINT uq_sub_recipe_completion
+      DO UPDATE SET batches = EXCLUDED.batches, user_id = EXCLUDED.user_id, completed_at = EXCLUDED.completed_at
+      RETURNING sub_recipe_id AS "subRecipeId", batches, user_id AS "userId", completed_at AS "completedAt"
+    `);
+    const row = result.rows[0] as Record<string, unknown>;
+    const userName = userId
+      ? (await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId)))?.[0]?.name ?? null
+      : null;
+    res.status(201).json({ ...row, userName });
+  } catch (err) {
+    console.error("sub-recipe-completions POST error:", err);
+    res.status(500).json({ error: "Failed to record sub-recipe completion" });
+  }
+});
+
+router.delete("/:id/sub-recipe-completions", async (req, res) => {
+  const planId = Number(req.params.id);
+  const { subRecipeId } = req.body as { subRecipeId?: number };
+  if (!subRecipeId) { res.status(400).json({ error: "subRecipeId is required" }); return; }
+  try {
+    await db.execute(sql`
+      DELETE FROM sub_recipe_completions
+      WHERE plan_id = ${planId} AND sub_recipe_id = ${subRecipeId}
+    `);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("sub-recipe-completions DELETE error:", err);
+    res.status(500).json({ error: "Failed to remove sub-recipe completion" });
+  }
 });
 
 // --- In-memory prep presence (ephemeral, no DB needed) ---
