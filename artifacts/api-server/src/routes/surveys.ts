@@ -193,7 +193,7 @@ router.get("/klaviyo/test-list", async (_req, res) => {
       listId,
       members,
       defaults: {
-        fromEmail: await getFounderSetting(FROM_EMAIL_SETTING),
+        fromEmail: (await getFounderSetting(FROM_EMAIL_SETTING)) ?? "noreply@thecalzonekitchen.co.uk",
         fromLabel: (await getFounderSetting(FROM_LABEL_SETTING)) ?? "The Calzone Kitchen",
       },
     });
