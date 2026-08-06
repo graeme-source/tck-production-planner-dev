@@ -825,6 +825,18 @@ export default function Orders() {
   // through. Only affects local edit state; the line is never sent to the
   // backend on save (POST/resubmit serialise editableLines).
   const removeLine = useCallback((supplierId: number, ingredientId: number) => {
+    // A queued kanban is persisted server-side so it survives navigation —
+    // deleting its line must un-queue it there too, or the next page load
+    // resurrects it.
+    const wasKanban = (editableLines[supplierId] ?? []).some(l => l.ingredientId === ingredientId && l.isKanban);
+    if (wasKanban) {
+      fetch(`${BASE}/api/kanbans/unqueue`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ingredientId }),
+      }).catch(() => {});
+    }
     setEditableLines(prev => {
       const lines = prev[supplierId] ?? [];
       const next = lines.filter(l => l.ingredientId !== ingredientId);
@@ -853,13 +865,21 @@ export default function Orders() {
         description: "It won't be re-added automatically this round. Use \u201c+ Add item\u201d to bring it back.",
       });
     }
-  }, [persistRemovedLines, persistMovedLines]);
+  }, [persistRemovedLines, persistMovedLines, editableLines]);
 
   // Remove a previously-pulled kanban from the pending order. Used when the
   // operator pulled one by accident — tapping the same item again drops the
   // order-table line, matching the mental model of putting the card back on
   // the board.
   const handleUnpullKanban = (ingredientId: number) => {
+    // Persisted server-side (scan or Add Kanbans queue) — put the card back
+    // there too, or the next page load resurrects the line.
+    fetch(`${BASE}/api/kanbans/unqueue`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ingredientId }),
+    }).catch(() => {});
     const suppliersLeftEmpty: number[] = [];
     setEditableLines(prev => {
       const updated: Record<number, EditableLine[]> = {};
@@ -894,6 +914,24 @@ export default function Orders() {
         !addedKanbanIngredientIds.has(k.ingredientId) &&
         effectiveSupplierIdFor(k) != null
     );
+    // Persist every pull server-side (kanban_items, queued for today) so the
+    // added lines survive navigation and plan regeneration — the lines below
+    // are just the optimistic view of what /calculate will now re-emit on
+    // every load. Placing the order flips the rows to 'ordered' as usual.
+    for (const kanban of toAdd) {
+      fetch(`${BASE}/api/kanbans/queue`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ingredientId: kanban.ingredientId, supplierId: effectiveSupplierIdFor(kanban) }),
+      }).catch(() => {
+        toast({
+          title: "Kanban not saved",
+          description: `${kanban.ingredientName ?? "Item"} was added to the screen but couldn't be saved — it may disappear if you leave the page.`,
+          variant: "destructive",
+        });
+      });
+    }
     for (const kanban of toAdd) {
       const qty = kanban.kanbanOrderAmount ?? kanban.kanbanQuantity ?? 1;
       const packWeight = kanban.packWeight ?? 1;

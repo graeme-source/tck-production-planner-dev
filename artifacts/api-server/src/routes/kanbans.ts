@@ -439,6 +439,95 @@ router.post("/scan", async (req, res) => {
   });
 });
 
+// ── Orders-page kanban queue ───────────────────────────────────────────────
+// The Add Kanbans dialog used to build order lines in browser state only —
+// navigating away wiped a round of pulls minutes before cutoff (2026-08-06).
+// These two endpoints give the dialog the same persistence as scanning a
+// physical card: a pulled kanban_items row queued for TODAY, which
+// /api/orders/calculate re-emits onto the page on every load until it's
+// un-queued here or the order is placed (which flips it to 'ordered').
+
+router.post("/queue", async (req, res) => {
+  const { ingredientId, supplierId } = (req.body ?? {}) as { ingredientId?: number; supplierId?: number | null };
+  if (!Number.isInteger(Number(ingredientId))) {
+    res.status(400).json({ error: "ingredientId is required" });
+    return;
+  }
+  const iid = Number(ingredientId);
+  const [ing] = await db
+    .select({
+      id: ingredientsTable.id,
+      name: ingredientsTable.name,
+      kanbanEnabled: ingredientsTable.kanbanEnabled,
+      supplierId: ingredientsTable.supplierId,
+    })
+    .from(ingredientsTable)
+    .where(eq(ingredientsTable.id, iid));
+  if (!ing) { res.status(404).json({ error: "Ingredient not found" }); return; }
+  if (!ing.kanbanEnabled) {
+    res.status(400).json({ error: `${ing.name} doesn't have kanban enabled — turn it on in the ingredient's settings first.` });
+    return;
+  }
+
+  const today = londonDateString();
+  const userId = req.session.userId ?? null;
+  // The dialog lets the operator order from a secondary supplier, so the
+  // chosen supplier wins over the ingredient's default.
+  const effectiveSupplierId = supplierId != null ? Number(supplierId) : (ing.supplierId ?? null);
+
+  // One live state row per ingredient — reuse the latest if present.
+  const [existing] = await db
+    .select({ id: kanbanItemsTable.id, status: kanbanItemsTable.status, orderDayTarget: kanbanItemsTable.orderDayTarget })
+    .from(kanbanItemsTable)
+    .where(eq(kanbanItemsTable.ingredientId, iid))
+    .orderBy(desc(kanbanItemsTable.id))
+    .limit(1);
+
+  const alreadyQueued = existing?.status === "pulled" && existing.orderDayTarget != null && existing.orderDayTarget <= today;
+  if (existing) {
+    await db.update(kanbanItemsTable)
+      .set({ status: "pulled", pulledAt: new Date(), pulledByUserId: userId, orderDayTarget: today, supplierId: effectiveSupplierId })
+      .where(eq(kanbanItemsTable.id, existing.id));
+  } else {
+    await db.insert(kanbanItemsTable).values({
+      ingredientId: iid,
+      sourceType: "ingredient",
+      supplierId: effectiveSupplierId,
+      status: "pulled",
+      pulledAt: new Date(),
+      pulledByUserId: userId,
+      orderDayTarget: today,
+    });
+  }
+  res.json({ ok: true, alreadyQueued });
+});
+
+// Put the card back: the operator deleted the kanban line from the pending
+// order (or un-pulled in the scan dialog), so the queued row must not
+// resurrect it on the next page load.
+router.post("/unqueue", async (req, res) => {
+  const { ingredientId } = (req.body ?? {}) as { ingredientId?: number };
+  if (!Number.isInteger(Number(ingredientId))) {
+    res.status(400).json({ error: "ingredientId is required" });
+    return;
+  }
+  const [existing] = await db
+    .select({ id: kanbanItemsTable.id, status: kanbanItemsTable.status })
+    .from(kanbanItemsTable)
+    .where(eq(kanbanItemsTable.ingredientId, Number(ingredientId)))
+    .orderBy(desc(kanbanItemsTable.id))
+    .limit(1);
+  if (existing && existing.status === "pulled") {
+    await db.update(kanbanItemsTable).set({
+      status: "active",
+      pulledAt: null,
+      pulledByUserId: null,
+      orderDayTarget: null,
+    }).where(eq(kanbanItemsTable.id, existing.id));
+  }
+  res.json({ ok: true });
+});
+
 router.post("/:id/pull", async (req, res) => {
   const id = Number(req.params.id);
   const userId = req.session.userId;
