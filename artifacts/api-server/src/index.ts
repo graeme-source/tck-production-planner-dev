@@ -2495,6 +2495,76 @@ async function runStartupMigrations() {
         ADD COLUMN IF NOT EXISTS nova_analyzed_at timestamp
     `);
 
+    // Forced password reset with 24h grace — see
+    // lib/db/migrations/0046_password_reset_policy.sql. No boot-time seed:
+    // each user's 24h clock starts the first time they authenticate after
+    // this ships (stamped in routes/auth.ts), so someone who first logs in
+    // on Wednesday gets the same full day's warning as someone who logged
+    // in on Monday. The founder is exempt.
+    await db.execute(sql`
+      ALTER TABLE app_users
+        ADD COLUMN IF NOT EXISTS password_reset_deadline TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP
+    `);
+
+    // Customer surveys — see lib/db/migrations/0047_surveys.sql. Pure
+    // additive table creation (idempotent by construction); the
+    // _migrations_done marker just records when the schema first landed.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS surveys (
+        id SERIAL PRIMARY KEY,
+        token TEXT NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        intro TEXT,
+        status TEXT NOT NULL DEFAULT 'draft',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS survey_questions (
+        id SERIAL PRIMARY KEY,
+        survey_id INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL DEFAULT 0,
+        type TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        recipe_id INTEGER REFERENCES recipes(id) ON DELETE SET NULL,
+        options JSONB,
+        required BOOLEAN NOT NULL DEFAULT TRUE,
+        max INTEGER NOT NULL DEFAULT 5
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_survey_questions_survey ON survey_questions (survey_id)`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS survey_responses (
+        id SERIAL PRIMARY KEY,
+        survey_id INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+        client_id TEXT NOT NULL,
+        user_agent TEXT,
+        skipped JSONB NOT NULL DEFAULT '[]'::jsonb,
+        submitted_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    // Belt-and-braces for DBs that created the table before skips existed.
+    await db.execute(sql`ALTER TABLE survey_responses ADD COLUMN IF NOT EXISTS skipped JSONB NOT NULL DEFAULT '[]'::jsonb`);
+    await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS ux_survey_responses_survey_client ON survey_responses (survey_id, client_id)`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS survey_answers (
+        id SERIAL PRIMARY KEY,
+        response_id INTEGER NOT NULL REFERENCES survey_responses(id) ON DELETE CASCADE,
+        question_id INTEGER NOT NULL REFERENCES survey_questions(id) ON DELETE CASCADE,
+        value JSONB NOT NULL
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_survey_answers_response ON survey_answers (response_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_survey_answers_question ON survey_answers (question_id)`);
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS _migrations_done (key TEXT PRIMARY KEY, done_at TIMESTAMP DEFAULT NOW())`);
+    await db.execute(sql`
+      INSERT INTO _migrations_done (key)
+      SELECT 'surveys_v1'
+      WHERE NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'surveys_v1')
+    `);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

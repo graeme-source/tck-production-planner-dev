@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { CreateUserBody, UpdateUserBody } from "@workspace/api-zod";
 import { validate } from "../middleware/validate";
+import { validatePassword } from "../lib/password-policy";
 
 const router: IRouter = Router();
 
@@ -25,8 +26,9 @@ router.get("/", async (_req, res) => {
 
 router.post("/", validate(CreateUserBody), async (req, res) => {
   const { name, email, password, role, isActive } = req.body;
-  if (!password || password.length < 8) {
-    res.status(400).json({ error: "Password must be at least 8 characters" });
+  const policyError = password ? validatePassword(password) : "Password is required";
+  if (!password || policyError) {
+    res.status(400).json({ error: policyError ?? "Password is required" });
     return;
   }
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
@@ -37,6 +39,8 @@ router.post("/", validate(CreateUserBody), async (req, res) => {
       passwordHash,
       role: role ?? "viewer",
       isActive: isActive ?? true,
+      // Set by an admin under the new policy — don't flag for forced reset.
+      passwordChangedAt: new Date(),
     }).returning();
     res.status(201).json(mapRow(row));
   } catch (err: any) {
@@ -66,11 +70,14 @@ router.put("/:id", validate(UpdateUserBody), async (req, res) => {
     updatedAt: new Date(),
   };
   if (password) {
-    if (password.length < 8) {
-      res.status(400).json({ error: "Password must be at least 8 characters" });
+    const policyError = validatePassword(password);
+    if (policyError) {
+      res.status(400).json({ error: policyError });
       return;
     }
     updates.passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+    updates.passwordChangedAt = new Date();
+    updates.passwordResetDeadline = null;
   }
   try {
     const [row] = await db.update(usersTable).set(updates).where(eq(usersTable.id, id)).returning();

@@ -182,6 +182,20 @@ interface PlanItem {
   totalSpecialCount: number;
 }
 
+/** Minimal shape allocateBatches needs. `salesPercent` is the surplus weight,
+ *  already normalised by the caller (DPT split → live sales → equal).
+ *  `stockAfterPacks` is the projected packs left after this horizon's
+ *  dispatches with NO production — estimatedFactoryNumber − bag equivalents
+ *  − dispatch2 − dispatch3, may be negative; the allocator adds the deficit
+ *  production back itself. */
+interface AllocRecipe {
+  deficitBatches: number;
+  salesPercent: number;
+  packsSold: number;
+  packsPerBatch: number;
+  stockAfterPacks: number;
+}
+
 /** 2-pack stock consumed by this item's 8-pack bags. A bag is 8 portions, so
  *  it costs (8 / packSize) packs — 4 for a calzone. Derived from packSize
  *  rather than hard-coded, and mirrors `bagPackEquivalents` on the server.
@@ -1314,7 +1328,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     return () => { cancelled = true; };
   }, [planDate, prepTouched, doughTouched]);
 
-  const allocateBatches = useCallback((recipes: CalcRecipe[], capacity: number): { suggestedBatches: number; surplusBatches: number }[] => {
+  const allocateBatches = useCallback((recipes: AllocRecipe[], capacity: number): { suggestedBatches: number; surplusBatches: number }[] => {
     if (capacity <= 0) {
       return recipes.map(() => ({ suggestedBatches: 0, surplusBatches: 0 }));
     }
@@ -1322,28 +1336,40 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     const totalDeficitBatches = recipes.reduce((s, r) => s + r.deficitBatches, 0);
 
     if (totalDeficitBatches <= capacity) {
-      // Normal case: capacity covers all deficits — distribute remainder as surplus by sales %
+      // Normal case: capacity covers all deficits — spend the remainder on
+      // the flavour with the LEAST stock cover, one batch at a time
+      // (water-fill), weighted by salesPercent. Mirrors the backend exactly:
+      // ranking by stock/share equals ranking by days-of-cover, converges to
+      // the weight proportions once stocks are level, and weight 0 means "no
+      // surplus for this recipe".
       const remaining = capacity - totalDeficitBatches;
       const totalPacksSold = recipes.reduce((s, r) => s + r.packsSold, 0);
 
-      const rawSurplus = recipes.map(r => {
-        const exact = totalPacksSold > 0 ? (r.salesPercent / 100) * remaining : 0;
-        return { exact, floor: Math.floor(exact) };
-      });
-
-      let leftover = remaining - rawSurplus.reduce((s, r) => s + r.floor, 0);
-      const sorted = rawSurplus
-        .map((r, idx) => ({ idx, remainder: r.exact - r.floor }))
-        .sort((a, b) => b.remainder - a.remainder);
-      const bonusSet = new Set<number>();
-      for (const { idx } of sorted) {
-        if (leftover <= 0) break;
-        bonusSet.add(idx);
-        leftover--;
+      const surplusByIdx = new Array(recipes.length).fill(0);
+      const coverPool = recipes
+        .map((r, idx) => ({
+          idx,
+          weight: totalPacksSold > 0 ? r.salesPercent : 0,
+          packsPerBatch: r.packsPerBatch > 0 ? r.packsPerBatch : 1,
+          stock: r.stockAfterPacks + r.deficitBatches * (r.packsPerBatch > 0 ? r.packsPerBatch : 1),
+        }))
+        .filter(p => p.weight > 0);
+      for (let b = 0; b < remaining && coverPool.length > 0; b++) {
+        let best = coverPool[0];
+        for (const p of coverPool) {
+          const cover = p.stock / p.weight;
+          const bestCover = best.stock / best.weight;
+          // Ties go to the bigger seller — it burns through tied cover faster.
+          if (cover < bestCover - 1e-9 || (Math.abs(cover - bestCover) <= 1e-9 && p.weight > best.weight)) {
+            best = p;
+          }
+        }
+        surplusByIdx[best.idx]++;
+        best.stock += best.packsPerBatch;
       }
 
       return recipes.map((r, idx) => {
-        const surplusBatches = rawSurplus[idx].floor + (bonusSet.has(idx) ? 1 : 0);
+        const surplusBatches = surplusByIdx[idx];
         return { suggestedBatches: r.deficitBatches + surplusBatches, surplusBatches };
       });
     } else {
@@ -1398,7 +1424,13 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       : sumCoreSales > 0
         ? coreRecipes.map((r: CalcRecipe) => ({ ...r, salesPercent: (r.salesPercent / sumCoreSales) * 100 }))
         : coreRecipes.map((r: CalcRecipe) => ({ ...r, salesPercent: 100 / Math.max(1, coreRecipes.length) }));
-    const alloc = allocateBatches(normCoreRecipes, capacity);
+    const alloc = allocateBatches(normCoreRecipes.map((r: CalcRecipe) => ({
+      deficitBatches: r.deficitBatches,
+      salesPercent: r.salesPercent,
+      packsSold: r.packsSold,
+      packsPerBatch: r.packsPerBatch,
+      stockAfterPacks: r.estimatedFactoryNumber - (r.bagPackEquivalents ?? 0) - r.dispatch2Qty - r.dispatch3Qty,
+    })), capacity);
     // Capture any manual batch edits the user has already made so we can preserve them
     const prevItems = itemsRef.current;
     const newItems: PlanItem[] = coreRecipes.map((r: CalcRecipe, idx: number) => {
@@ -1480,13 +1512,15 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       const sumDpt = dptItems.reduce((s, it) => s + (it.dptPercent ?? 0), 0);
       const sumSales = dptItems.reduce((s, it) => s + (it.salesPercent || 0), 0);
       const fallback = 100 / dptItems.length;
-      const recipesForAlloc = dptItems.map(it => ({
+      const recipesForAlloc: AllocRecipe[] = dptItems.map(it => ({
         deficitBatches: it.deficitBatches,
         salesPercent: sumDpt > 0
           ? ((it.dptPercent ?? 0) / sumDpt) * 100
           : sumSales > 0 ? (it.salesPercent / sumSales) * 100 : fallback,
         packsSold: 1,
-      })) as unknown as CalcRecipe[];
+        packsPerBatch: it.packsPerBatch,
+        stockAfterPacks: it.estimatedFactoryNumber - bagPackEquivalents(it) - it.dispatch2Qty - it.dispatch3Qty,
+      }));
       const alloc = allocateBatches(recipesForAlloc, newTotal);
       return prev.map(item => {
         if (!item.isFromDpt) return item;
@@ -1544,7 +1578,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     const sumDptPercent = includedItems.reduce((s, it) => s + (it.dptPercent ?? 0), 0);
     const sumSalesPercent = includedItems.reduce((s, it) => s + (it.salesPercent || 0), 0);
     const fallbackPercent = 100 / includedItems.length;
-    const recipesForAlloc = includedItems.map(it => ({
+    const recipesForAlloc: AllocRecipe[] = includedItems.map(it => ({
       deficitBatches: it.deficitBatches,
       salesPercent: sumDptPercent > 0
         ? ((it.dptPercent ?? 0) / sumDptPercent) * 100
@@ -1554,7 +1588,9 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       // allocateBatches only checks `totalPacksSold > 0` to decide whether to
       // distribute surplus at all — any positive value does the job here.
       packsSold: 1,
-    })) as unknown as CalcRecipe[];
+      packsPerBatch: it.packsPerBatch,
+      stockAfterPacks: it.estimatedFactoryNumber - bagPackEquivalents(it) - it.dispatch2Qty - it.dispatch3Qty,
+    }));
     const alloc = allocateBatches(recipesForAlloc, effectiveTotalBatches);
     isDirty.current = true;
     setItems(prev => prev.map(it => {

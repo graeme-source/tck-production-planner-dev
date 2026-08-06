@@ -46,6 +46,7 @@ import FounderSales from "@/pages/founder-sales";
 import DocumentViewer from "@/pages/document-viewer";
 import StockControl from "@/pages/stock-control";
 import ProductHub from "@/pages/product-hub";
+import Surveys from "@/pages/surveys";
 import TrainingMatrix from "@/pages/training-matrix";
 import Onboarding from "@/pages/onboarding";
 import NotFound from "@/pages/not-found";
@@ -59,6 +60,7 @@ import ForgotPassword from "@/pages/forgot-password";
 import ResetPassword from "@/pages/reset-password";
 import { Loader2 } from "lucide-react";
 import { PinLockOverlay } from "@/components/pin-lock-overlay";
+import { PasswordResetGate } from "@/components/password-reset-gate";
 import { toast } from "@/hooks/use-toast";
 
 function isApiError(error: unknown): error is { status: number; message: string } {
@@ -162,7 +164,12 @@ function Router() {
               <Route path="/deliveries" component={Deliveries} />
               <Route path="/stock-control" component={StockControl} />
               <Route path="/product-hub" component={ProductHub} />
-              <Route path="/founder" component={FounderView} />
+              <Route path="/surveys">{() => <ProtectedRoute component={Surveys} pageKey="/surveys" />}</Route>
+              {/* Founder area — a site within a site. The schedule is home:
+                  /founder always lands there, and FounderNav (shared tab
+                  strip on every founder page) covers the side-trips. */}
+              <Route path="/founder">{() => <Redirect to="/founder/focus" />}</Route>
+              <Route path="/founder/numbers" component={FounderView} />
               <Route path="/founder/pnl" component={FounderPnL} />
               <Route path="/founder/focus" component={FounderFocus} />
               <Route path="/founder/sales" component={FounderSales} />
@@ -230,6 +237,7 @@ function AuthGate() {
 
   return (
     <>
+      <PasswordResetGate />
       <Router />
       {pinLocked && <PinLockOverlay />}
     </>

@@ -1,9 +1,9 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { db, skuLocationsTable, skuBarcodesTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable, apcConsignmentsTable } from "@workspace/db";
+import { db, skuLocationsTable, skuBarcodesTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable, apcConsignmentsTable, pagePermissionsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
 import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
-import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService, lookupOrderByReference, lookupOrderByWaybill, parseApcBarcode, waybillCore, apcTrackingUrl, type ApcOrderLookup } from "../services/apc";
+import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService, lookupOrderByReference, lookupOrdersByReference, lookupOrderByWaybill, parseApcBarcode, waybillCore, apcTrackingUrl, type ApcOrderLookup } from "../services/apc";
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
 import { sql } from "drizzle-orm";
 
@@ -26,12 +26,25 @@ async function requireAdmin(req: Request, res: Response, next: NextFunction) {
   res.status(403).json({ error: "Admin access required" });
 }
 
-// Managers and admins can perform operational fulfilment actions (create shipments, complete orders).
-// Viewers cannot — they are read-only users.
-async function requireManagerOrAdmin(req: Request, res: Response, next: NextFunction) {
+const ROLE_RANK: Record<string, number> = { viewer: 0, manager: 1, admin: 2 };
+
+// Operational fulfilment endpoints (list orders, verify labels, complete)
+// honour the "/fulfilment" page permission set in Settings → Page Access
+// Control, so opening Order Packing Live to viewers there also opens the
+// API the page needs — one knob, not two. No stored row falls back to
+// "manager", matching the default the page-permissions route serves.
+// Admin-only endpoints (config, barcode sync, probes) stay requireAdmin.
+async function requireFulfilmentAccess(req: Request, res: Response, next: NextFunction) {
   const role = await resolveRole(req);
-  if (role === "admin" || role === "manager") { next(); return; }
-  res.status(403).json({ error: "Manager or admin access required to perform fulfilment operations" });
+  if (role) {
+    const [row] = await db
+      .select({ minRole: pagePermissionsTable.minRole })
+      .from(pagePermissionsTable)
+      .where(eq(pagePermissionsTable.pageKey, "/fulfilment"));
+    const minRole = row?.minRole ?? "manager";
+    if ((ROLE_RANK[role] ?? 0) >= (ROLE_RANK[minRole] ?? 1)) { next(); return; }
+  }
+  res.status(403).json({ error: "Your role doesn't have access to Order Packing Live — an admin can change this under Settings → Page Access Control" });
 }
 
 async function getAppSetting(key: string): Promise<string | null> {
@@ -182,7 +195,7 @@ async function validateOrderPostcode(
 // Used by the fulfilment landing page to show operators what needs to be done each day.
 const DATE_TAG_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-router.get("/dispatch-tags", requireManagerOrAdmin, async (_req: Request, res: Response) => {
+router.get("/dispatch-tags", requireFulfilmentAccess, async (_req: Request, res: Response) => {
   try {
     const orders = await getRecentUnfulfilledOrders(30);
 
@@ -237,7 +250,7 @@ router.get("/dispatch-tags", requireManagerOrAdmin, async (_req: Request, res: R
   }
 });
 
-router.get("/orders", requireManagerOrAdmin, async (req: Request, res: Response) => {
+router.get("/orders", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const { tag, includeAll } = req.query as { tag?: string; includeAll?: string };
 
   if (!tag) {
@@ -311,7 +324,7 @@ router.get("/orders", requireManagerOrAdmin, async (req: Request, res: Response)
 // covering every line-item variant in the queue. The packing-cycle scan
 // view uses this to verify scans against the order without needing a local
 // barcode mapping table — Shopify variant.barcode is the source of truth.
-router.get("/scan-queue", requireManagerOrAdmin, async (req: Request, res: Response) => {
+router.get("/scan-queue", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const { tag, category } = req.query as { tag?: string; category?: string };
   if (!tag) {
     res.status(400).json({ error: "tag query param required" });
@@ -371,7 +384,7 @@ const ScanCompleteBody = z.object({
   trackingUrl: z.string().optional(),
 });
 
-router.post("/orders/:id/scan-complete", requireManagerOrAdmin, async (req: Request, res: Response) => {
+router.post("/orders/:id/scan-complete", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const orderId = Number(req.params.id);
   if (isNaN(orderId)) {
     res.status(400).json({ error: "Invalid order ID" });
@@ -440,7 +453,7 @@ const CreateShipmentBody = z.object({
   dispatchDate: z.string().optional(), // ISO date string e.g. "2025-01-17"
 });
 
-router.post("/shipments", requireManagerOrAdmin, async (req: Request, res: Response) => {
+router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const parsed = CreateShipmentBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "orderId (number) and tag (string) are required" });
@@ -573,7 +586,7 @@ router.post("/shipments", requireManagerOrAdmin, async (req: Request, res: Respo
 // Returns 404 when APC has no consignment for the reference — the signal that
 // the reference was mistyped during the manual upload. The packer must not be
 // allowed to ship that order until it's fixed.
-router.get("/consignment-for-order", requireManagerOrAdmin, async (req: Request, res: Response) => {
+router.get("/consignment-for-order", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const orderName = typeof req.query.orderName === "string" ? req.query.orderName.trim() : "";
   if (!orderName) {
     res.status(400).json({ error: "orderName query param required, e.g. ?orderName=%23131377" });
@@ -590,7 +603,8 @@ router.get("/consignment-for-order", requireManagerOrAdmin, async (req: Request,
     // it up on the training server just returns a 419 that reads like bad
     // credentials. Nothing is booked here — it's a read — so there's no
     // side-effect risk in ignoring test mode.
-    const lookup = await lookupOrderByReference(orderName);
+    const matches = await lookupOrdersByReference(orderName);
+    const lookup = matches[0];
     if (!lookup || !lookup.waybill) {
       res.status(404).json({
         error: `APC has no consignment with reference "${orderName}". Check the reference in Hypaship before packing this order.`,
@@ -611,6 +625,13 @@ router.get("/consignment-for-order", requireManagerOrAdmin, async (req: Request,
       consigneePostcode: lookup.consigneePostcode,
       productCode: lookup.productCode,
       trackingUrl: apcTrackingUrl(lookup.waybill, lookup.consigneePostcode),
+      // A skipped-then-re-tagged order gets uploaded to Hypaship twice, so one
+      // reference can hold several live consignments (and several printed
+      // labels). The scan accepts whichever label matches; this count lets the
+      // UI warn the packer that spare labels for this order exist and must be
+      // binned.
+      duplicateCount: matches.length,
+      duplicateWaybills: matches.map(m => m.waybill),
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -632,7 +653,7 @@ const VerifyLabelBody = z.object({
   barcode: z.string().min(1),
 });
 
-router.post("/verify-label-scan", requireManagerOrAdmin, async (req: Request, res: Response) => {
+router.post("/verify-label-scan", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const parsed = VerifyLabelBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "orderId, orderName and barcode are required" });
@@ -659,8 +680,8 @@ router.post("/verify-label-scan", requireManagerOrAdmin, async (req: Request, re
 
   try {
     // Live regardless of apc_test_mode — see the note in /consignment-for-order.
-    const lookup = await lookupOrderByReference(orderName);
-    if (!lookup || !lookup.waybill) {
+    const matches = await lookupOrdersByReference(orderName);
+    if (!matches.length || !matches[0].waybill) {
       res.json({
         verified: false,
         problem: "no-consignment",
@@ -669,14 +690,19 @@ router.post("/verify-label-scan", requireManagerOrAdmin, async (req: Request, re
       return;
     }
 
-    const expectedCore = waybillCore(lookup.waybill);
-    if (scan.core !== expectedCore) {
+    // A skipped-then-re-tagged order holds several consignments under one
+    // reference, each with its own printed label. Any of them proves the label
+    // belongs to THIS order, so match the scan against all of them — the
+    // matched consignment is the one recorded and pushed to Shopify.
+    const lookup = matches.find(m => waybillCore(m.waybill ?? "") === scan.core);
+    if (!lookup || !lookup.waybill) {
       res.json({
         verified: false,
         problem: "wrong-order",
         message: "This label belongs to a DIFFERENT consignment — do not ship it on this order.",
         scannedCore: scan.core,
-        expectedCore,
+        expectedCore: waybillCore(matches[0].waybill ?? ""),
+        expectedCores: matches.map(m => waybillCore(m.waybill ?? "")),
       });
       return;
     }
@@ -730,7 +756,10 @@ router.post("/verify-label-scan", requireManagerOrAdmin, async (req: Request, re
       consigneeName: lookup.consigneeName,
       consigneePostcode: lookup.consigneePostcode,
       parcel: scan.itemNumber,
-      message: "Label verified.",
+      duplicateCount: matches.length,
+      message: matches.length > 1
+        ? `Label verified. NOTE: APC holds ${matches.length} consignments for this order (it was uploaded more than once) — bin any spare labels for it.`
+        : "Label verified.",
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -875,7 +904,7 @@ async function getTestModeApiBase(): Promise<string | undefined> {
   return testModeSetting === "true" ? APC_TRAINING_BASE : undefined;
 }
 
-router.post("/shipments/:waybill/add-parcel", requireManagerOrAdmin, async (req: Request, res: Response) => {
+router.post("/shipments/:waybill/add-parcel", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const { waybill } = req.params;
   const { weight, length, width, height } = (req.body ?? {}) as {
     weight?: number; length?: number; width?: number; height?: number;
@@ -913,7 +942,7 @@ router.post("/shipments/:waybill/add-parcel", requireManagerOrAdmin, async (req:
   }
 });
 
-router.post("/shipments/:waybill/reprint-label", requireManagerOrAdmin, async (req: Request, res: Response) => {
+router.post("/shipments/:waybill/reprint-label", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const { waybill } = req.params;
 
   if (!isApcConfigured()) {
@@ -940,7 +969,7 @@ router.post("/shipments/:waybill/reprint-label", requireManagerOrAdmin, async (r
 // state to reset is the APC consignment itself. The frontend removes the local
 // shipment reference and returns the operator to the order list, where the order
 // remains in the unfulfilled queue ready to be re-packed.
-router.post("/shipments/:waybill/cancel", requireManagerOrAdmin, async (req: Request, res: Response) => {
+router.post("/shipments/:waybill/cancel", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const { waybill } = req.params;
 
   if (!isApcConfigured()) {
@@ -963,7 +992,7 @@ router.post("/shipments/:waybill/cancel", requireManagerOrAdmin, async (req: Req
 
 // POST /tag-dispatch — find an order by name and add the "dispatch" tag.
 // Used by the Dispatch Tagging page to gate which orders appear in the packing queue.
-router.post("/tag-dispatch", requireManagerOrAdmin, async (req: Request, res: Response) => {
+router.post("/tag-dispatch", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const { orderName } = req.body as { orderName?: string };
   if (!orderName || typeof orderName !== "string" || !orderName.trim()) {
     res.status(400).json({ error: "orderName is required" });
@@ -1014,7 +1043,7 @@ router.post("/tag-dispatch", requireManagerOrAdmin, async (req: Request, res: Re
   }
 });
 
-router.post("/tag-dispatch-bulk", requireManagerOrAdmin, async (req: Request, res: Response) => {
+router.post("/tag-dispatch-bulk", requireFulfilmentAccess, async (req: Request, res: Response) => {
   // `orderIds` is the precise path: the picking screen can filter by multiple
   // box categories, arbitrary order tags and products, and the server cannot
   // re-derive that from a single `category` string. When the client sends the
@@ -1089,7 +1118,7 @@ router.post("/tag-dispatch-bulk", requireManagerOrAdmin, async (req: Request, re
   }
 });
 
-router.get("/postcode-validations", requireManagerOrAdmin, async (req: Request, res: Response) => {
+router.get("/postcode-validations", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const { tag } = req.query as { tag?: string };
   if (!tag) {
     res.status(400).json({ error: "tag query param required" });
@@ -1110,7 +1139,7 @@ router.get("/postcode-validations", requireManagerOrAdmin, async (req: Request, 
   }
 });
 
-router.post("/postcode-recheck", requireManagerOrAdmin, async (req: Request, res: Response) => {
+router.post("/postcode-recheck", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const { orderId, tag } = req.body as { orderId?: number; tag?: string };
   if (!orderId || !tag) {
     res.status(400).json({ error: "orderId and tag are required" });
@@ -1140,7 +1169,7 @@ router.post("/postcode-recheck", requireManagerOrAdmin, async (req: Request, res
   }
 });
 
-router.post("/postcode-validate-tag", requireManagerOrAdmin, async (req: Request, res: Response) => {
+router.post("/postcode-validate-tag", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const { tag } = req.body as { tag?: string };
   if (!tag) {
     res.status(400).json({ error: "tag is required" });
@@ -1195,7 +1224,7 @@ const CompleteOrderBody = z.object({
   trackingUrl: z.string().optional(),
 });
 
-router.post("/orders/:id/complete", requireManagerOrAdmin, async (req: Request, res: Response) => {
+router.post("/orders/:id/complete", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const orderId = Number(req.params.id);
   if (isNaN(orderId)) {
     res.status(400).json({ error: "Invalid order ID" });
@@ -1718,7 +1747,7 @@ router.post("/sync-barcodes", requireAdmin, async (_req: Request, res: Response)
 // its two completion tags. Lets the operator (or a future automated check)
 // answer "did everything I packed today actually ship + decrement stock?"
 // without manually opening each order in Shopify Admin.
-router.get("/dispatch-audit", requireManagerOrAdmin, async (req: Request, res: Response) => {
+router.get("/dispatch-audit", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const { tag } = req.query as { tag?: string };
   if (!tag) {
     res.status(400).json({ error: "tag query param required" });
@@ -1905,7 +1934,7 @@ router.get("/desserts-report", async (req: Request, res: Response) => {
 // which reads the configured codes from app_settings and picks per-order.
 // It also always hits APC production (never training) so the results
 // match what happens when you actually upload consignments.
-router.get("/service-check", requireManagerOrAdmin, async (req: Request, res: Response) => {
+router.get("/service-check", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const { tag } = req.query as { tag?: string };
 
   if (!tag) {
@@ -1949,12 +1978,12 @@ router.get("/service-check", requireManagerOrAdmin, async (req: Request, res: Re
 
 // Keep the old endpoint name alive as an alias so any bookmarked/cached
 // URLs don't break. Redirects to /service-check with the same query.
-router.get("/weekend-service-check", requireManagerOrAdmin, (req: Request, res: Response) => {
+router.get("/weekend-service-check", requireFulfilmentAccess, (req: Request, res: Response) => {
   const qs = new URLSearchParams(req.query as Record<string, string>).toString();
   res.redirect(307, `/api/fulfilment/service-check${qs ? `?${qs}` : ""}`);
 });
 
-router.get("/config-status", requireManagerOrAdmin, async (_req: Request, res: Response) => {
+router.get("/config-status", requireFulfilmentAccess, async (_req: Request, res: Response) => {
   try {
     const [smallWeekday, largeWeekday, smallFriday, largeFriday, testModeSetting, apcMode] = await Promise.all([
       getAppSetting("apc_service_code_small_weekday"),
@@ -1992,7 +2021,7 @@ router.get("/config-status", requireManagerOrAdmin, async (_req: Request, res: R
 
 // ── Tag audit: find unfulfilled orders with missing or malformed date tags ───
 
-router.get("/tag-audit", requireManagerOrAdmin, async (_req: Request, res: Response) => {
+router.get("/tag-audit", requireFulfilmentAccess, async (_req: Request, res: Response) => {
   try {
     // Fetch ALL unfulfilled orders (up to 365 days back to cover everything)
     const orders = await getRecentUnfulfilledOrders(365);
@@ -2074,7 +2103,7 @@ router.get("/tag-audit", requireManagerOrAdmin, async (_req: Request, res: Respo
 });
 
 // Fix a bad date tag on a Shopify order
-router.post("/tag-fix", requireManagerOrAdmin, async (req: Request, res: Response) => {
+router.post("/tag-fix", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const { orderId, currentTags, badTag, correctTag } = req.body as {
     orderId: number;
     currentTags: string;

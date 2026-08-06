@@ -36,10 +36,12 @@ import {
   AlertTriangle,
   FileText,
   Wrench,
+  MessagesSquare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/user-avatar";
 import { NotificationBell } from "@/components/notification-bell";
+import { CurrentUserBadge } from "@/components/current-user-badge";
 import { NotificationFlash } from "@/components/notification-flash";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assistant";
@@ -78,6 +80,7 @@ export const productNavItems: NavItem[] = [
   { name: "Sub-Recipes", href: "/sub-recipes", icon: ClipboardList },
   { name: "Ingredients", href: "/inventory?tab=ingredients", icon: Carrot },
   { name: "Product Hub", href: "/product-hub", icon: Beaker },
+  { name: "Surveys", href: "/surveys", icon: MessagesSquare },
 ];
 
 export const bottomNavItems: NavItem[] = [
@@ -85,7 +88,7 @@ export const bottomNavItems: NavItem[] = [
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
-const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory", "/product-hub"];
+const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory", "/product-hub", "/surveys"];
 const DISPATCH_PATHS = ["/dispatches", "/locations"];
 
 type AccountButtonUser = { name?: string; role?: string; avatarUrl?: string | null } | null;
@@ -715,6 +718,7 @@ function TopBar({ onMenu, fallbackTitle, onOpenSops }: { onMenu: () => void; fal
           {header.description}
         </span>
       )}
+      <CurrentUserBadge />
       <button
         onClick={onOpenSops}
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors flex-shrink-0"

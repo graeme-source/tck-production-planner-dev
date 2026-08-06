@@ -1315,34 +1315,53 @@ router.get("/calculate", async (req, res) => {
   const totalDeficitBatches = recipesWithData.reduce((s, r) => s + r.deficitBatches, 0);
   const remainingCapacity = Math.max(0, totalDailyBatches - totalDeficitBatches);
 
-  // Make-ahead surplus is distributed by the curated DPT split, NOT live
-  // sales share. That's what makes DPT = 0 mean "never suggest surplus
-  // production for this recipe" — e.g. a special being retired while stock
-  // is already banked. Such a recipe still gets deficitBatches whenever real
-  // orders outrun stock; it just earns no share of the spare capacity. If no
+  // Make-ahead surplus goes to the flavour with the LEAST stock cover, one
+  // batch at a time (water-fill), weighted by the curated DPT split — NOT a
+  // flat percentage split. The flat split ignored what's already in the
+  // fridge: a flavour sitting on 100+ surplus packs kept earning its full
+  // DPT share while a flavour scraping zero got nothing beyond its bare
+  // deficit (Godfather 10 vs Chicken & Chorizo 12 on 2026-08-06, with C&C
+  // projected +86 packs over demand and Godfather −19). Cover is measured
+  // as projected packs after this horizon's dispatches ÷ demand share;
+  // ranking by stock/share is identical to ranking by days-of-cover, so no
+  // absolute daily-packs figure is needed. When stocks are level this
+  // converges to the DPT proportions, so the curated split still governs
+  // steady state. DPT = 0 keeps meaning "never build surplus stock for
+  // this recipe" (e.g. a retiring special) — it still gets deficitBatches
+  // when real orders outrun stock, just no share of spare capacity. If no
   // DPT packs are configured at all, fall back to the live sales split.
   const useDptWeights = totalDptPacksSold > 0;
-  const rawSurplus = recipesWithData.map(r => {
-    const weightPercent = useDptWeights
-      ? r.dptPercent
-      : (totalPacksSold > 0 ? r.salesPercent : 0);
-    const exact = (weightPercent / 100) * remainingCapacity;
-    return { exact, floor: Math.floor(exact) };
-  });
-
-  let leftover = remainingCapacity - rawSurplus.reduce((s, r) => s + r.floor, 0);
-  const surplusSorted = rawSurplus
-    .map((r, idx) => ({ idx, remainder: r.exact - r.floor }))
-    .sort((a, b) => b.remainder - a.remainder);
-  const bonusSet = new Set<number>();
-  for (const { idx } of surplusSorted) {
-    if (leftover <= 0) break;
-    bonusSet.add(idx);
-    leftover--;
+  const surplusByIdx = new Array(recipesWithData.length).fill(0);
+  const coverPool = recipesWithData
+    .map((r, idx) => ({
+      idx,
+      weight: useDptWeights ? r.dptPercent : (totalPacksSold > 0 ? r.salesPercent : 0),
+      packsPerBatch: r.packsPerBatch > 0 ? r.packsPerBatch : 1,
+      // Projected packs left after the deficit is covered and this horizon's
+      // dispatches have gone out — the same maths as nextFactoryNumber, with
+      // production fixed at the deficit batches.
+      stock: r.estimatedFactoryNumber
+        + r.deficitBatches * r.packsPerBatch
+        - r.bagPackEquivalents
+        - (r.dispatch2Qty + r.dispatch3Qty),
+    }))
+    .filter(p => p.weight > 0);
+  for (let b = 0; b < remainingCapacity && coverPool.length > 0; b++) {
+    let best = coverPool[0];
+    for (const p of coverPool) {
+      const cover = p.stock / p.weight;
+      const bestCover = best.stock / best.weight;
+      // Ties go to the bigger seller — it burns through the tied cover faster.
+      if (cover < bestCover - 1e-9 || (Math.abs(cover - bestCover) <= 1e-9 && p.weight > best.weight)) {
+        best = p;
+      }
+    }
+    surplusByIdx[best.idx]++;
+    best.stock += best.packsPerBatch;
   }
 
   const result = recipesWithData.map((r, idx) => {
-    const surplusBatches = rawSurplus[idx].floor + (bonusSet.has(idx) ? 1 : 0);
+    const surplusBatches = surplusByIdx[idx];
     const suggestedBatches = r.deficitBatches + surplusBatches;
     const maxBatchesPerTin = r.maxBatchesPerTin;
     const tinCount = maxBatchesPerTin && suggestedBatches > 0

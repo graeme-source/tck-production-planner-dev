@@ -1,6 +1,7 @@
 import { useState, useEffect, type FormEvent } from "react";
 import { useSearch } from "wouter";
 import { Loader2, CheckCircle2 } from "lucide-react";
+import { validatePassword } from "@/lib/password-policy";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -25,7 +26,8 @@ export default function ResetPassword() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (password !== confirm) { setError("Passwords do not match."); return; }
-    if (password.length < 8) { setError("Password must be at least 8 characters."); return; }
+    const policyError = validatePassword(password);
+    if (policyError) { setError(policyError); return; }
     setSaving(true);
     setError("");
     const res = await fetch(`${BASE}/api/auth/reset-password/${token}`, {
@@ -68,12 +70,12 @@ export default function ResetPassword() {
           ) : (
             <>
               <h1 className="text-xl font-semibold mb-1">Choose a new password</h1>
-              <p className="text-sm text-muted-foreground mb-6">Must be at least 8 characters.</p>
+              <p className="text-sm text-muted-foreground mb-6">More than 8 characters, with a capital letter and a number.</p>
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                   <label className="text-sm font-medium mb-1.5 block">New password</label>
-                  <input type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={8}
-                    placeholder="Min. 8 characters"
+                  <input type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={9}
+                    placeholder="New password"
                     className="w-full px-3 py-2.5 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
                 </div>
                 <div>

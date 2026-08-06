@@ -3,6 +3,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { Redirect, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
+import { FounderNav } from "@/components/founder-nav";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { format, startOfMonth, subDays, subMonths, endOfMonth } from "date-fns";
@@ -331,14 +332,12 @@ function PnLDashboard() {
 
   return (
     <div className="space-y-6">
+      <FounderNav />
       <PageHeader
         title="P&L Dashboard"
         description="Estimated profit & loss from Shopify data"
         action={
           <div className="flex items-center gap-3">
-            <Link href="/founder" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
-              <ArrowLeft className="w-4 h-4" /> Founder View
-            </Link>
             <button
               onClick={() => { refreshSpin.triggerSpin(); handleRefresh(); }}
               disabled={isAnyFetching}

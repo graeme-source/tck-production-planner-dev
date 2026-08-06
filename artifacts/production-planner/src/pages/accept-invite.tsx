@@ -2,6 +2,7 @@ import { useState, useEffect, type FormEvent } from "react";
 import { useLocation, useSearch } from "wouter";
 import { Loader2, CheckCircle2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
+import { validatePassword } from "@/lib/password-policy";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -35,7 +36,8 @@ export default function AcceptInvite() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (password !== confirm) { setError("Passwords do not match."); return; }
-    if (password.length < 8) { setError("Password must be at least 8 characters."); return; }
+    const policyError = validatePassword(password);
+    if (policyError) { setError(policyError); return; }
     setSaving(true);
     setError("");
     const res = await fetch(`${BASE}/api/auth/invites/${token}/accept`, {
@@ -92,8 +94,8 @@ export default function AcceptInvite() {
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1.5 block">Password</label>
-                  <input type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={8}
-                    placeholder="Min. 8 characters"
+                  <input type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={9}
+                    placeholder="9+ chars, a capital & a number"
                     className="w-full px-3 py-2.5 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
                 </div>
                 <div>

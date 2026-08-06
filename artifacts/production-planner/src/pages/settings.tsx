@@ -63,10 +63,15 @@ const ROLES: { value: Role; label: string; description: string; icon: typeof Shi
   },
 ];
 
+const passwordFieldSchema = z.string()
+  .min(9, "Password must be more than 8 characters")
+  .regex(/[A-Z]/, "Password must include a capital letter")
+  .regex(/[0-9]/, "Password must include a number");
+
 const createSchema = z.object({
   name: z.string().min(1, "Name is required"),
   email: z.string().email("Valid email required"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
+  password: passwordFieldSchema,
   role: z.enum(["admin", "manager", "viewer"]),
   isActive: z.boolean(),
 });
@@ -74,7 +79,7 @@ const createSchema = z.object({
 const editSchema = z.object({
   name: z.string().min(1, "Name is required"),
   email: z.string().email("Valid email required"),
-  password: z.string().min(6, "Password must be at least 6 characters").optional().or(z.literal("")),
+  password: passwordFieldSchema.optional().or(z.literal("")),
   role: z.enum(["admin", "manager", "viewer"]),
   isActive: z.boolean(),
 });
@@ -259,7 +264,7 @@ function UserForm({
             {...register("password")}
             type="password"
             className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-            placeholder={mode === "edit" ? "Enter new password to change..." : "Min. 6 characters"}
+            placeholder={mode === "edit" ? "Enter new password to change..." : "9+ chars, a capital & a number"}
           />
           {errors.password && <span className="text-destructive text-xs">{String(errors.password.message)}</span>}
         </div>

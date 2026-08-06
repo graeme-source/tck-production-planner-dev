@@ -3,6 +3,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { Redirect } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
+import { FounderNav } from "@/components/founder-nav";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format, parseISO } from "date-fns";
 import {
@@ -100,6 +101,7 @@ export default function FounderSales() {
 
   return (
     <div className="space-y-6">
+      <FounderNav />
       <PageHeader
         title="Sales & Marketing"
         description="Revenue pace, email cadence and the marketing calendar — there's always something on."

@@ -734,6 +734,25 @@ export async function lookupOrderByReference(
   reference: string,
   apiBase?: string,
 ): Promise<(ApcOrderLookup & { matchedReferenceForm: string }) | null> {
+  const all = await lookupOrdersByReference(reference, apiBase);
+  return all[0] ?? null;
+}
+
+/**
+ * All consignments APC holds for a reference, newest first (the waybill's
+ * leading 8 digits are the send date, so a plain descending sort orders by
+ * date raised).
+ *
+ * One reference can genuinely match several consignments: an order that was
+ * skipped and later re-tagged gets uploaded to Hypaship twice, and APC keeps
+ * both. The API then returns Orders.Order as an ARRAY — callers that assume a
+ * single object silently read "not found" (this blocked packing of #132045 /
+ * #132031 on 2026-08-06).
+ */
+export async function lookupOrdersByReference(
+  reference: string,
+  apiBase?: string,
+): Promise<Array<ApcOrderLookup & { matchedReferenceForm: string }>> {
   const verbatim = (reference ?? "").trim();
   const sanitised = sanitiseApcReference(reference);
   if (!verbatim && !sanitised) throw new Error("Reference is empty.");
@@ -742,10 +761,14 @@ export async function lookupOrderByReference(
   const candidates = Array.from(new Set([verbatim, sanitised].filter(Boolean)));
 
   for (const candidate of candidates) {
-    const hit = await lookupOrder(candidate, "Reference", apiBase);
-    if (hit) return { ...hit, matchedReferenceForm: candidate };
+    const hits = await lookupOrders(candidate, "Reference", apiBase);
+    if (hits.length) {
+      return hits
+        .sort((a, b) => (b.waybill ?? "").localeCompare(a.waybill ?? ""))
+        .map(h => ({ ...h, matchedReferenceForm: candidate }));
+    }
   }
-  return null;
+  return [];
 }
 
 /** Look up a consignment by its 22-digit APC waybill. Read-only, same
@@ -766,6 +789,15 @@ async function lookupOrder(
   searchtype: "Reference" | "CarrierWaybill" | "OrderNumber",
   apiBase?: string,
 ): Promise<ApcOrderLookup | null> {
+  const hits = await lookupOrders(key, searchtype, apiBase);
+  return hits[0] ?? null;
+}
+
+async function lookupOrders(
+  key: string,
+  searchtype: "Reference" | "CarrierWaybill" | "OrderNumber",
+  apiBase?: string,
+): Promise<ApcOrderLookup[]> {
   if (!isConfigured()) {
     throw new Error("APC credentials not configured.");
   }
@@ -788,7 +820,7 @@ async function lookupOrder(
   if (!res.ok) {
     // A reference APC doesn't know is a normal, expected outcome — not an
     // error the caller should have to catch.
-    if (res.status === 404) return null;
+    if (res.status === 404) return [];
     let errMsg = `APC ${searchtype} lookup failed (${res.status})`;
     try {
       const json = JSON.parse(text);
@@ -807,26 +839,31 @@ async function lookupOrder(
     throw new Error(`APC returned invalid JSON: ${text.slice(0, 200)}`);
   }
 
-  const order = json?.Orders?.Order;
-  if (!order) return null;
-  // Some "not found" responses come back 200 with a non-SUCCESS message.
-  const waybill: string | null = order?.WayBill ?? null;
-  if (!waybill) return null;
+  // One order comes back as an object, several as an array — a reference
+  // uploaded twice (skip → re-tag → re-upload) matches multiple consignments.
+  const rawOrder = json?.Orders?.Order;
+  const orders: any[] = Array.isArray(rawOrder) ? rawOrder : rawOrder ? [rawOrder] : [];
 
-  const rawItem = order?.ShipmentDetails?.Items?.Item;
-  const items = rawItem ? (Array.isArray(rawItem) ? rawItem : [rawItem]) : [];
+  return orders.flatMap((order: any) => {
+    // Some "not found" responses come back 200 with a non-SUCCESS message.
+    const waybill: string | null = order?.WayBill ?? null;
+    if (!waybill) return [];
 
-  return {
-    waybill,
-    reference: order?.Reference ?? null,
-    consigneeName: order?.Delivery?.Contact?.PersonName ?? null,
-    consigneeCompany: order?.Delivery?.CompanyName ?? null,
-    consigneePostcode: order?.Delivery?.PostalCode ?? null,
-    productCode: order?.ProductCode ?? null,
-    itemNumbers: items
-      .map((it: any) => it?.ItemNumber)
-      .filter((n: unknown): n is string => typeof n === "string"),
-  };
+    const rawItem = order?.ShipmentDetails?.Items?.Item;
+    const items = rawItem ? (Array.isArray(rawItem) ? rawItem : [rawItem]) : [];
+
+    return [{
+      waybill,
+      reference: order?.Reference ?? null,
+      consigneeName: order?.Delivery?.Contact?.PersonName ?? null,
+      consigneeCompany: order?.Delivery?.CompanyName ?? null,
+      consigneePostcode: order?.Delivery?.PostalCode ?? null,
+      productCode: order?.ProductCode ?? null,
+      itemNumbers: items
+        .map((it: any) => it?.ItemNumber)
+        .filter((n: unknown): n is string => typeof n === "string"),
+    }];
+  });
 }
 
 /** Customer-facing tracking link. APC's WordPress site (apc.co.uk) prefills
