@@ -341,6 +341,7 @@ function FromCollectionDialog({ onClose, onBuilt }: {
 }) {
   const [collectionId, setCollectionId] = useState<number | null>(null);
   const [days, setDays] = useState(30);
+  const [search, setSearch] = useState("");
 
   const { data: collections, isLoading, error } = useQuery<CollectionOption[]>({
     queryKey: ["survey-collections"],
@@ -384,20 +385,35 @@ function FromCollectionDialog({ onClose, onBuilt }: {
             <>
               <div className="space-y-1.5">
                 <p className="text-xs font-medium text-muted-foreground">Shopify collection</p>
-                <Select
-                  value={collectionId == null ? "" : String(collectionId)}
-                  onValueChange={(v) => setCollectionId(Number(v))}
+                {/* Search + scrollable list rather than a dropdown: 40+
+                    collections overflow the viewport and Graeme wants
+                    type-to-filter. */}
+                <Input
+                  value={search}
+                  placeholder={isLoading ? "Loading collections…" : "Type to filter, e.g. test box"}
                   disabled={isLoading}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder={isLoading ? "Loading collections…" : "Pick a collection"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(collections ?? []).map(c => (
-                      <SelectItem key={c.id} value={String(c.id)}>{c.title}</SelectItem>
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+                <div className="max-h-56 overflow-y-auto rounded-lg border border-border divide-y divide-border/50">
+                  {(collections ?? [])
+                    .filter(c => c.title.toLowerCase().includes(search.trim().toLowerCase()))
+                    .map(c => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => setCollectionId(c.id)}
+                        className={cn(
+                          "w-full text-left text-sm px-3 py-2 transition-colors",
+                          collectionId === c.id ? "bg-primary/15 text-primary font-medium" : "hover:bg-muted/50",
+                        )}
+                      >
+                        {c.title}
+                      </button>
                     ))}
-                  </SelectContent>
-                </Select>
+                  {!isLoading && (collections ?? []).filter(c => c.title.toLowerCase().includes(search.trim().toLowerCase())).length === 0 && (
+                    <p className="text-sm text-muted-foreground px-3 py-4 text-center">No collections match “{search}”</p>
+                  )}
+                </div>
               </div>
               <div className="space-y-1.5">
                 <p className="text-xs font-medium text-muted-foreground">Capture delivery dates from orders in the last…</p>
