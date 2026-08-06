@@ -17,6 +17,7 @@ import {
 } from "@workspace/db";
 import { eq, and, desc, sql, inArray, notInArray, lte, gte } from "drizzle-orm";
 import { resolveRecipeIngredients, aggregateIngredients } from "../lib/ingredient-resolver";
+import { computeOutstandingPrepRaw } from "../lib/outstanding-prep";
 import { londonDateString, londonEndOfDay, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
 
 async function requireManagerOrAdmin(req: Request, res: Response, next: NextFunction) {
@@ -260,12 +261,13 @@ router.get("/calculate", async (req, res) => {
 
   // ── Inbound stock on open purchase orders ────────────────────────────────
   // Suppliers with a lead time (NFS Meats: 2 days) often have goods already
-  // on the way when the next order is being built. Surface what's due in —
-  // per ingredient, with expected delivery dates — so the person ordering
-  // sees current stock AND what tomorrow's delivery brings before adding
-  // more. Open = placed or partially received; the undelivered remainder of
-  // each line counts. Expected dates more than 3 days gone are treated as
-  // dead so lost/cancelled orders don't inflate inbound forever.
+  // on the way when the next order is being built. Surfaced per ingredient
+  // with expected delivery dates, AND deducted from the suggested order
+  // quantity (since 2026-08-06) so placing an order stops the same packs
+  // being suggested again on the next visit. Open = placed or partially
+  // received; the undelivered remainder of each line counts. Expected dates
+  // more than 3 days gone are treated as dead so lost/cancelled orders don't
+  // inflate inbound forever — after that the packs count as needed again.
   const inboundCutoff = londonDateString(new Date(Date.now() - 3 * 86_400_000));
   const openPoLines = await db
     .select({
@@ -297,6 +299,16 @@ router.get("/calculate", async (req, res) => {
   for (const arr of Object.values(inboundByIngredient)) {
     arr.sort((a, b) => (a.date ?? "9999").localeCompare(b.date ?? "9999"));
   }
+
+  // ── Prep still outstanding TODAY, in raw units ─────────────────────────
+  // A shelf counted at 0 kg with 3 kg still to prep today is effectively at
+  // −3 kg by tonight, so the suggestion must cover it. Skipped when the
+  // SELECTED plan is the one being prepped today — its requirement already
+  // includes those quantities, so deducting again would double-count.
+  const outstandingPrep = await computeOutstandingPrepRaw(stockCheckTimestamps);
+  const prepOutstandingByIngredient = outstandingPrep.prepPlanIds.includes(planId)
+    ? {}
+    : outstandingPrep.byIngredient;
 
   // Scanned kanbans queue for the day they were scanned — but if no order was
   // generated that day (weekend, missed run), they must NOT vanish. Carry
@@ -345,11 +357,16 @@ router.get("/calculate", async (req, res) => {
       // re-apply case rounding after the operator edits the stock count.
       caseSizePacks: number | null;
       // Undelivered quantity already on open (placed / partially received)
-      // purchase orders, with per-delivery expected dates. Advisory only —
-      // the suggested order maths deliberately ignores it so a failed
-      // delivery never silently under-orders.
+      // purchase orders, with per-delivery expected dates. Deducted from the
+      // suggested order (see rawOrderQty) and shown as the "+N due" chip; if
+      // a delivery fails the operator bumps the quantity manually, and after
+      // 3 days past the expected date the inbound is written off anyway.
       inboundQty: number;
       inboundDeliveries: Array<{ date: string | null; qty: number; unit: string; poId: number }>;
+      // Raw units still to be consumed by TODAY'S outstanding prep (tin-
+      // tracked stations). Added to the requirement so counted stock that
+      // prep is about to eat doesn't read as available.
+      prepOutstandingQty: number;
     }>;
   }> = {};
 
@@ -398,7 +415,17 @@ router.get("/calculate", async (req, res) => {
       ? Math.max(0, surplusAbsoluteQty ?? 0)
       : dailyRequirement * (surplusPercent / 100);
 
-    const rawOrderQty = Math.max(0, ing.totalRequired + surplusTarget - stockOnHand);
+    // Undelivered stock on open POs counts as already ordered (Graeme,
+    // 2026-08-06): once today's order is placed, coming back to the page must
+    // not suggest the same packs again — the placed-PO dedup below only
+    // catches POs raised against the SELECTED plan, so switching plans used
+    // to resurrect the suggestion. A failed delivery means the operator bumps
+    // the quantity manually; the "+N due" chip keeps the deduction visible.
+    const inboundQty = (inboundByIngredient[iid] ?? []).reduce((s, d) => s + d.qty, 0);
+    // Prep still to be done today consumes counted stock before tonight —
+    // counted 0 with 3 kg outstanding means effectively −3, so order more.
+    const prepOutstandingQty = prepOutstandingByIngredient[iid] ?? 0;
+    const rawOrderQty = Math.max(0, ing.totalRequired + surplusTarget + prepOutstandingQty - stockOnHand - inboundQty);
     let packsToOrder = packWeight > 0 ? Math.ceil(rawOrderQty / packWeight) : 0;
     // A scanned kanban is a person at the shelf saying "we're low — order
     // one kanban's worth", so it FLOORS the suggestion at the kanban order
@@ -475,6 +502,7 @@ router.get("/calculate", async (req, res) => {
       caseSizePacks: caseSizePacks > 0 ? caseSizePacks : null,
       inboundQty: Math.round((inboundByIngredient[iid] ?? []).reduce((s, d) => s + d.qty, 0) * 100) / 100,
       inboundDeliveries: inboundByIngredient[iid] ?? [],
+      prepOutstandingQty: Math.round(prepOutstandingQty * 100) / 100,
       belowRequirement,
     });
   }
@@ -555,6 +583,7 @@ router.get("/calculate", async (req, res) => {
         caseSizePacks: null,
         inboundQty: Math.round((inboundByIngredient[d.id] ?? []).reduce((s, x) => s + x.qty, 0) * 100) / 100,
         inboundDeliveries: inboundByIngredient[d.id] ?? [],
+        prepOutstandingQty: Math.round((prepOutstandingByIngredient[d.id] ?? 0) * 100) / 100,
       });
     }
   }

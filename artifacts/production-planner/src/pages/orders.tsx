@@ -31,6 +31,7 @@ import {
   Users,
   GripVertical,
   ScanLine,
+  Copy,
 } from "lucide-react";
 import { QrScanner } from "@/components/qr-scanner";
 import {
@@ -82,6 +83,9 @@ type OrderLine = {
   // suggestion itself deliberately ignores it.
   inboundQty?: number;
   inboundDeliveries?: Array<{ date: string | null; qty: number; unit: string; poId: number }>;
+  // Raw units still to be consumed by TODAY'S outstanding prep — added to
+  // the requirement server-side; shown as the "−N still to prep" chip.
+  prepOutstandingQty?: number;
   // Packs per supplier case. When set, the pack count to order rounds up to the
   // nearest whole case. Null/absent means order in individual packs.
   caseSizePacks?: number | null;
@@ -457,6 +461,20 @@ export default function Orders() {
 
   // "+ Add Supplier Order" dialog — picks any supplier, even ones the calc
   // didn't suggest. Adds an empty card the operator can fill via the existing
+  // "Copy order" feedback — which supplier's order text was just copied, so
+  // the button can flash "Copied" for a moment.
+  const [copiedOrderSupplierId, setCopiedOrderSupplierId] = useState<number | null>(null);
+  const copyOrderText = async (supplierId: number, supplierName: string, lines: EditableLine[], deliveryText: string) => {
+    const text = buildOrderMessage(supplierName, lines, deliveryText);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedOrderSupplierId(supplierId);
+      setTimeout(() => setCopiedOrderSupplierId(prev => (prev === supplierId ? null : prev)), 2000);
+    } catch {
+      toast({ title: "Couldn't copy", description: "Your browser blocked clipboard access — use Email order instead and copy from there.", variant: "destructive" });
+    }
+  };
+
   // "+ Add item" / Misc flow.
   const [addSupplierDialogOpen, setAddSupplierDialogOpen] = useState(false);
   const [addSupplierSearch, setAddSupplierSearch] = useState("");
@@ -825,6 +843,18 @@ export default function Orders() {
   // through. Only affects local edit state; the line is never sent to the
   // backend on save (POST/resubmit serialise editableLines).
   const removeLine = useCallback((supplierId: number, ingredientId: number) => {
+    // A queued kanban is persisted server-side so it survives navigation —
+    // deleting its line must un-queue it there too, or the next page load
+    // resurrects it.
+    const wasKanban = (editableLines[supplierId] ?? []).some(l => l.ingredientId === ingredientId && l.isKanban);
+    if (wasKanban) {
+      fetch(`${BASE}/api/kanbans/unqueue`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ingredientId }),
+      }).catch(() => {});
+    }
     setEditableLines(prev => {
       const lines = prev[supplierId] ?? [];
       const next = lines.filter(l => l.ingredientId !== ingredientId);
@@ -853,13 +883,21 @@ export default function Orders() {
         description: "It won't be re-added automatically this round. Use \u201c+ Add item\u201d to bring it back.",
       });
     }
-  }, [persistRemovedLines, persistMovedLines]);
+  }, [persistRemovedLines, persistMovedLines, editableLines]);
 
   // Remove a previously-pulled kanban from the pending order. Used when the
   // operator pulled one by accident — tapping the same item again drops the
   // order-table line, matching the mental model of putting the card back on
   // the board.
   const handleUnpullKanban = (ingredientId: number) => {
+    // Persisted server-side (scan or Add Kanbans queue) — put the card back
+    // there too, or the next page load resurrects the line.
+    fetch(`${BASE}/api/kanbans/unqueue`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ingredientId }),
+    }).catch(() => {});
     const suppliersLeftEmpty: number[] = [];
     setEditableLines(prev => {
       const updated: Record<number, EditableLine[]> = {};
@@ -894,6 +932,24 @@ export default function Orders() {
         !addedKanbanIngredientIds.has(k.ingredientId) &&
         effectiveSupplierIdFor(k) != null
     );
+    // Persist every pull server-side (kanban_items, queued for today) so the
+    // added lines survive navigation and plan regeneration — the lines below
+    // are just the optimistic view of what /calculate will now re-emit on
+    // every load. Placing the order flips the rows to 'ordered' as usual.
+    for (const kanban of toAdd) {
+      fetch(`${BASE}/api/kanbans/queue`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ingredientId: kanban.ingredientId, supplierId: effectiveSupplierIdFor(kanban) }),
+      }).catch(() => {
+        toast({
+          title: "Kanban not saved",
+          description: `${kanban.ingredientName ?? "Item"} was added to the screen but couldn't be saved — it may disappear if you leave the page.`,
+          variant: "destructive",
+        });
+      });
+    }
     for (const kanban of toAdd) {
       const qty = kanban.kanbanOrderAmount ?? kanban.kanbanQuantity ?? 1;
       const packWeight = kanban.packWeight ?? 1;
@@ -1222,9 +1278,10 @@ export default function Orders() {
       const updated = { ...prev };
       const lines = [...(updated[supplierId] || [])];
       const line = { ...lines[idx], editedStock: Math.max(0, newStock), stockDirty: true };
-      // Recalculate packs based on new stock. Mirror the backend: round up to
-      // whole packs, then up to the nearest whole case when ordered by the case.
-      const rawOrderQty = Math.max(0, line.totalRequired + line.surplusTarget - Math.max(0, newStock));
+      // Recalculate packs based on new stock. Mirror the backend: deduct
+      // undelivered inbound on open POs, round up to whole packs, then up to
+      // the nearest whole case when ordered by the case.
+      const rawOrderQty = Math.max(0, line.totalRequired + line.surplusTarget + (line.prepOutstandingQty ?? 0) - Math.max(0, newStock) - (line.inboundQty ?? 0));
       let packsToOrder = line.packWeight > 0 ? Math.ceil(rawOrderQty / line.packWeight) : 0;
       const caseSizePacks = line.caseSizePacks ?? 0;
       if (caseSizePacks > 0 && packsToOrder > 0) {
@@ -1689,11 +1746,15 @@ export default function Orders() {
         const reopenedPOId = reopenedPlacedOrders[so.supplier.id];
         const isReopened = !!reopenedPOId;
 
-        // Pre-filled order message links — shown only when the supplier has
-        // the relevant contact set and there are items to order.
+        // Pre-filled order message links. Email is available on EVERY order
+        // with items — a supplier without a saved address opens a blank-To
+        // compose with the order text ready, so the operator can look the
+        // address up and send rather than being stuck (supplies-only
+        // suppliers were the usual victims). WhatsApp-to-number still needs
+        // the number saved.
         const orderDeliveryText = formatDeliveryDate(getDeliveryDateForSupplier(so.supplier.id, so.supplier.leadTimeDays, so.supplier.cutoffTime));
-        const emailHref = so.supplier.email && orderableLines.length > 0
-          ? buildOrderMailto(so.supplier.name, so.supplier.email, orderableLines, orderDeliveryText)
+        const emailHref = orderableLines.length > 0
+          ? buildOrderMailto(so.supplier.name, so.supplier.email ?? "", orderableLines, orderDeliveryText)
           : null;
         const whatsAppHref = so.supplier.orderingPhone && orderableLines.length > 0
           ? buildOrderWhatsApp(so.supplier.orderingPhone, so.supplier.name, orderableLines, orderDeliveryText)
@@ -1895,6 +1956,15 @@ export default function Orders() {
                                   })()}
                                 </span>
                               )}
+                              {(line.prepOutstandingQty ?? 0) > 0 && (
+                                <span
+                                  className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-0.5"
+                                  title={`Today's prep still needs ${line.prepOutstandingQty} ${line.unit} of this — it will come out of the counted stock before tonight, so the suggestion covers it.`}
+                                >
+                                  <Clock className="w-2.5 h-2.5" />
+                                  {`−${line.prepOutstandingQty} ${line.unit} still to prep today`}
+                                </span>
+                              )}
                             </div>
                           </td>
                           <td className="p-3 text-right tabular-nums font-bold text-lg text-green-600 dark:text-green-400">
@@ -2043,14 +2113,36 @@ export default function Orders() {
                         Delete order
                       </button>
                     )}
+                    {orderableLines.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => copyOrderText(so.supplier.id, so.supplier.name, orderableLines, orderDeliveryText)}
+                        className="px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-border hover:bg-secondary text-foreground"
+                        title="Copy the order text — paste it into any email or message"
+                      >
+                        {copiedOrderSupplierId === so.supplier.id ? (
+                          <>
+                            <Check className="w-4 h-4 text-green-600" />
+                            Copied
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-4 h-4" />
+                            Copy order
+                          </>
+                        )}
+                      </button>
+                    )}
                     {emailHref && (
                       <a
                         href={emailHref}
                         className="px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-border hover:bg-secondary text-foreground"
-                        title={`Draft an order email to ${so.supplier.email}`}
+                        title={so.supplier.email
+                          ? `Draft an order email to ${so.supplier.email}`
+                          : "No email saved for this supplier — opens a blank email with the order text so you can add the address"}
                       >
                         <Mail className="w-4 h-4" />
-                        Email order
+                        {so.supplier.email ? "Email order" : "Email order (no address)"}
                       </a>
                     )}
                     {whatsAppHref && (
