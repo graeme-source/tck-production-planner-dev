@@ -11,6 +11,7 @@
  * launch?" stakes.
  */
 import { pgTable, serial, text, integer, boolean, timestamp, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { recipesTable } from "./recipes";
 
 export const surveysTable = pgTable("surveys", {
@@ -54,6 +55,10 @@ export const surveyResponsesTable = pgTable("survey_responses", {
   // Browser-generated id (localStorage) — the soft-dedupe key, not identity.
   clientId: text("client_id").notNull(),
   userAgent: text("user_agent"),
+  // Question ids the customer explicitly skipped ("I didn't try this one").
+  // A skip is NOT an answer: no survey_answers row exists for it, so
+  // averages and approval percentages exclude skips by construction.
+  skipped: jsonb("skipped").notNull().default(sql`'[]'::jsonb`),
   submittedAt: timestamp("submitted_at").notNull().defaultNow(),
 }, (t) => ({
   // One response per browser per survey — enforced at the DB so two racing

@@ -93,7 +93,7 @@ interface ResultsData {
   shareUrl: string;
   totalResponses: number;
   unfilteredResponses: number;
-  questions: (ServerQuestion & { aggregates: Aggregates })[];
+  questions: (ServerQuestion & { aggregates: Aggregates; skippedCount: number })[];
 }
 
 // Builder-local question (no server id until saved)
@@ -1192,9 +1192,16 @@ function QuestionResults({ question }: { question: ResultsData["questions"][numb
     <div className="rounded-lg border border-border bg-card p-4 space-y-3">
       <div className="flex items-start justify-between gap-2">
         <p className="font-medium text-sm">{question.prompt}</p>
-        <Badge variant="outline" className="flex-shrink-0 text-xs">
-          {agg.count} answer{agg.count === 1 ? "" : "s"}
-        </Badge>
+        <div className="flex gap-1.5 flex-shrink-0">
+          <Badge variant="outline" className="text-xs">
+            {agg.count} answer{agg.count === 1 ? "" : "s"}
+          </Badge>
+          {question.skippedCount > 0 && (
+            <Badge className="bg-muted text-muted-foreground text-xs" title="Explicitly marked 'I didn't try this one' — excluded from averages">
+              Didn't try: {question.skippedCount}
+            </Badge>
+          )}
+        </div>
       </div>
 
       {agg.kind === "rating" && (

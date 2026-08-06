@@ -14,7 +14,11 @@
 --
 -- survey_responses: soft dedupe on (survey_id, client_id) — client_id is a
 -- browser-generated localStorage id; unique index makes racing double-taps
--- impossible rather than merely unlikely.
+-- impossible rather than merely unlikely. skipped = JSONB array of question
+-- ids the customer explicitly marked "I didn't try this one" — a skip
+-- satisfies required but writes no answer row, so averages and approval
+-- percentages exclude skips by construction; results show a "didn't try"
+-- count per question.
 --
 -- survey_answers.value JSONB shape depends on question type:
 -- rating -> number, slider -> number 0-100, choice -> string,
@@ -51,8 +55,10 @@ CREATE TABLE IF NOT EXISTS survey_responses (
   survey_id INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
   client_id TEXT NOT NULL,
   user_agent TEXT,
+  skipped JSONB NOT NULL DEFAULT '[]'::jsonb,
   submitted_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+ALTER TABLE survey_responses ADD COLUMN IF NOT EXISTS skipped JSONB NOT NULL DEFAULT '[]'::jsonb;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_survey_responses_survey_client ON survey_responses (survey_id, client_id);
 
 CREATE TABLE IF NOT EXISTS survey_answers (

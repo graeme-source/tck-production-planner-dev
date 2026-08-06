@@ -600,6 +600,17 @@ router.get("/:id/results", async (req, res) => {
     answersByQuestion.set(a.questionId, list);
   }
 
+  // Explicit "didn't try" skips per question, counted over the (possibly
+  // filtered) response set. Skips have no answer rows, so the aggregates
+  // below exclude them from averages/percentages by construction.
+  const skipCounts = new Map<number, number>();
+  for (const r of responses) {
+    if (!Array.isArray(r.skipped)) continue;
+    for (const qid of r.skipped) {
+      if (typeof qid === "number") skipCounts.set(qid, (skipCounts.get(qid) ?? 0) + 1);
+    }
+  }
+
   const serialized = await serializeQuestions(questions);
 
   const results = serialized.map(q => {
@@ -675,7 +686,7 @@ router.get("/:id/results", async (req, res) => {
       }
     }
 
-    return { ...q, aggregates };
+    return { ...q, aggregates, skippedCount: skipCounts.get(q.id) ?? 0 };
   });
 
   res.json({
@@ -719,8 +730,10 @@ router.get("/:id/export.csv", async (req, res) => {
   const lines = [header.map(csvCell).join(",")];
   for (const r of responses) {
     const m = byResponse.get(r.id);
+    const skippedSet = new Set(Array.isArray(r.skipped) ? r.skipped : []);
     const cells = [String(r.id), r.submittedAt?.toISOString() ?? "", r.clientId];
     for (const q of questions) {
+      if (skippedSet.has(q.id)) { cells.push("(didn't try)"); continue; }
       const v = m?.get(q.id);
       if (v == null) cells.push("");
       else if (Array.isArray(v)) cells.push(v.join("; "));

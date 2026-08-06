@@ -124,6 +124,9 @@ const submitSchema = z.object({
     question_id: z.number().int().positive(),
     value: z.unknown(),
   })).max(200),
+  // Explicit "I didn't try this product" per question — excuses required
+  // questions and is stored on the response so results can count it.
+  skipped: z.array(z.number().int().positive()).max(200).optional().default([]),
 });
 
 // POST /api/public/surveys/:token/responses
@@ -138,23 +141,35 @@ router.post("/:token/responses", submitLimiter, async (req, res) => {
       res.status(422).json({ error: "Validation failed", details: parsed.error.flatten() });
       return;
     }
-    const { client_id, answers } = parsed.data;
+    const { client_id, answers, skipped } = parsed.data;
 
     const questions = await loadQuestions(survey.id);
     const questionById = new Map<number, SurveyQuestion>(questions.map(q => [q.id, q]));
 
     const errors: { question_id: number | null; error: string }[] = [];
+    const skippedSet = new Set<number>(skipped);
+    for (const id of skippedSet) {
+      if (!questionById.has(id)) errors.push({ question_id: id, error: "unknown question id in skipped" });
+    }
     const seen = new Set<number>();
     for (const a of answers) {
       const q = questionById.get(a.question_id);
       if (!q) { errors.push({ question_id: a.question_id, error: "unknown question id" }); continue; }
       if (seen.has(a.question_id)) { errors.push({ question_id: a.question_id, error: "duplicate answer for question" }); continue; }
       seen.add(a.question_id);
+      // Skipped means "didn't try" — an answer for the same question would
+      // make the response self-contradictory, so refuse rather than guess.
+      if (skippedSet.has(a.question_id)) {
+        errors.push({ question_id: a.question_id, error: "question is both answered and skipped" });
+        continue;
+      }
       const valueError = validateAnswerValue(q, a.value);
       if (valueError) errors.push({ question_id: a.question_id, error: valueError });
     }
     for (const q of questions) {
-      if (q.required && !seen.has(q.id)) errors.push({ question_id: q.id, error: "answer required" });
+      if (q.required && !seen.has(q.id) && !skippedSet.has(q.id)) {
+        errors.push({ question_id: q.id, error: "answer required" });
+      }
     }
     if (errors.length > 0) {
       res.status(422).json({ error: "Validation failed", details: errors });
@@ -167,6 +182,7 @@ router.post("/:token/responses", submitLimiter, async (req, res) => {
           surveyId: survey.id,
           clientId: client_id,
           userAgent: (req.headers["user-agent"] ?? "").slice(0, 500) || null,
+          skipped: [...skippedSet],
         }).returning({ id: surveyResponsesTable.id });
         if (answers.length > 0) {
           await tx.insert(surveyAnswersTable).values(answers.map(a => ({

@@ -2541,9 +2541,12 @@ async function runStartupMigrations() {
         survey_id INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
         client_id TEXT NOT NULL,
         user_agent TEXT,
+        skipped JSONB NOT NULL DEFAULT '[]'::jsonb,
         submitted_at TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `);
+    // Belt-and-braces for DBs that created the table before skips existed.
+    await db.execute(sql`ALTER TABLE survey_responses ADD COLUMN IF NOT EXISTS skipped JSONB NOT NULL DEFAULT '[]'::jsonb`);
     await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS ux_survey_responses_survey_client ON survey_responses (survey_id, client_id)`);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS survey_answers (
