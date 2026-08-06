@@ -45,7 +45,7 @@ import { CurrentUserBadge } from "@/components/current-user-badge";
 import { NotificationFlash } from "@/components/notification-flash";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assistant";
-import { BookOpen, Bot, GraduationCap } from "lucide-react";
+import { BookOpen, Bot, GraduationCap, ChevronLeft, ChevronRight } from "lucide-react";
 
 export type NavItem = { name: string; href: string; icon: React.ComponentType<{ className?: string }> };
 
@@ -668,7 +668,6 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
       </main>
 
-      <ReportButton />
       <StandardsSopsDialog open={sopsOpen} onClose={() => setSopsOpen(false)} currentStationType={null} />
       <NotificationFlash />
 
@@ -677,19 +676,66 @@ export function Layout({ children }: { children: ReactNode }) {
           assistant (enforced server-side, not just here). */}
       <>
         <FoundersAssistant open={assistantOpen} onClose={() => setAssistantOpen(false)} isFounder={isFounder} />
-        {!assistantOpen && (
+        <FloatingActionsTab assistantOpen={assistantOpen} onOpenAssistant={() => setAssistantOpen(true)} />
+      </>
+    </div>
+  );
+}
+
+// Quick Idea + Ask Caz, folded into one edge tab so they stay off the
+// content (they used to float over table footers and totals). Collapsed by
+// default: a slim orange/blue tab on the right edge, higher up the screen —
+// tap the arrow to slide the two buttons out. Remembered per device.
+function FloatingActionsTab({ assistantOpen, onOpenAssistant }: { assistantOpen: boolean; onOpenAssistant: () => void }) {
+  const [expanded, setExpanded] = useState<boolean>(() => {
+    try { return localStorage.getItem("floating_actions_expanded") === "1"; } catch { return false; }
+  });
+  const toggle = () => setExpanded(prev => {
+    const next = !prev;
+    try { localStorage.setItem("floating_actions_expanded", next ? "1" : "0"); } catch { /* private mode */ }
+    return next;
+  });
+
+  return (
+    <div className="fixed right-0 top-[38%] z-40 flex items-start">
+      {expanded ? (
+        <div className="flex flex-col items-end gap-2 pr-3">
           <button
             type="button"
-            onClick={() => setAssistantOpen(true)}
-            className="fixed bottom-20 right-5 z-30 flex items-center gap-2 px-4 h-12 rounded-full bg-orange-500 text-white shadow-lg shadow-orange-500/30 hover:bg-orange-600 active:scale-95 transition-all"
-            aria-label={`Ask ${ASSISTANT_NAME}`}
-            title={`Ask ${ASSISTANT_NAME}`}
+            onClick={toggle}
+            aria-label="Tuck the quick actions away"
+            title="Tuck away"
+            className="w-8 h-8 rounded-full border border-border bg-card/95 shadow flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
           >
-            <Bot className="w-5 h-5" />
-            <span className="text-sm font-semibold">Ask {ASSISTANT_NAME}</span>
+            <ChevronRight className="w-4 h-4" />
           </button>
-        )}
-      </>
+          <ReportButton className="relative bottom-auto right-auto z-auto" />
+          {!assistantOpen && (
+            <button
+              type="button"
+              onClick={onOpenAssistant}
+              className="flex items-center gap-2 px-4 h-12 rounded-full bg-orange-500 text-white shadow-lg shadow-orange-500/30 hover:bg-orange-600 active:scale-95 transition-all"
+              aria-label={`Ask ${ASSISTANT_NAME}`}
+              title={`Ask ${ASSISTANT_NAME}`}
+            >
+              <Bot className="w-5 h-5" />
+              <span className="text-sm font-semibold">Ask {ASSISTANT_NAME}</span>
+            </button>
+          )}
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label={`Show quick actions — Quick Idea and Ask ${ASSISTANT_NAME}`}
+          title={`Quick Idea · Ask ${ASSISTANT_NAME}`}
+          className="h-16 w-8 rounded-l-xl border border-r-0 border-border bg-card shadow-lg flex flex-col items-center justify-center gap-1 hover:w-9 transition-all"
+        >
+          <ChevronLeft className="w-4 h-4 text-muted-foreground" />
+          <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+          <span className="w-2.5 h-2.5 rounded-full bg-orange-500" />
+        </button>
+      )}
     </div>
   );
 }

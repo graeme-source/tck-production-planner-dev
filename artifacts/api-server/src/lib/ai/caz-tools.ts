@@ -32,6 +32,7 @@ export const CAZ_TOOL_PAGE_KEYS: Record<string, string> = {
   get_production_plan: "/plans",
   get_prep_requirements: "/plans",
   get_factory_numbers: "/plans",
+  get_ingredient_consumption: "/ingredients",
 };
 
 export const CAZ_TOOL_DEFINITIONS: Anthropic.Tool[] = [
@@ -78,6 +79,18 @@ export const CAZ_TOOL_DEFINITIONS: Anthropic.Tool[] = [
       type: "object",
       properties: {
         date: { type: "string", description: "YYYY-MM-DD. Defaults to today (London)." },
+      },
+    },
+  },
+  {
+    name: "get_ingredient_consumption",
+    description:
+      "Average ingredient consumption at DPT-standard production, from the stored DPT ingredient requirements (recipe trees fully expanded, so e.g. passata inside Tomato Base counts). Returns per ingredient: RAW quantity used on an average production day, per week (5 production days), pack size, and packs per week. Use for 'how much X do we get through a week/day', 'what's our usage of X'. These are planned averages at the curated DPT sales mix — not till-measured actuals. Mention the calculatedAt date if it's old.",
+    input_schema: {
+      type: "object",
+      properties: {
+        ingredientName: { type: "string", description: "Optional case-insensitive substring filter, e.g. 'passata'. Omit for the top consumers." },
+        limit: { type: "number", description: "Max rows when not filtering (default 25, ordered by daily usage)." },
       },
     },
   },
@@ -221,6 +234,51 @@ async function getFactoryNumbers(ctx: CazToolContext, input: { date?: string }):
   };
 }
 
+// The stored DPT ingredient consumption figures (dpt_ingredient_requirements):
+// each row is the raw quantity an average DPT-mix production day consumes,
+// recipe trees fully expanded by recalculateDptRequirements(). Weekly = ×5
+// production days (Graeme's convention, 2026-08-06).
+const PRODUCTION_DAYS_PER_WEEK = 5;
+
+async function getIngredientConsumption(input: { ingredientName?: string; limit?: number }) {
+  const filter = input.ingredientName?.trim();
+  const limit = Math.min(Math.max(Math.round(input.limit ?? 25), 1), 100);
+  const where = filter ? sql`WHERE i.name ILIKE ${"%" + filter + "%"}` : sql``;
+  const rows = await db.execute<{
+    name: string; unit: string; daily_qty_raw: string; daily_qty_cooked: string;
+    pack_weight: string | null; cost_per_pack: string | null; calculated_at: Date;
+  }>(sql`
+    SELECT i.name, r.unit, r.daily_qty_raw, r.daily_qty_cooked,
+           i.pack_weight, i.cost_per_pack, r.calculated_at
+    FROM dpt_ingredient_requirements r
+    JOIN ingredients i ON i.id = r.ingredient_id
+    ${where}
+    ORDER BY r.daily_qty_raw DESC
+    LIMIT ${limit}
+  `);
+  const items = (rows.rows as any[]).map(r => {
+    const daily = Number(r.daily_qty_raw) || 0;
+    const weekly = daily * PRODUCTION_DAYS_PER_WEEK;
+    const packWeight = Number(r.pack_weight) || 0;
+    const costPerPack = Number(r.cost_per_pack) || 0;
+    return {
+      ingredient: r.name,
+      unit: r.unit,
+      rawPerDay: Math.round(daily * 100) / 100,
+      rawPerWeek: Math.round(weekly * 100) / 100,
+      packWeight: packWeight > 0 ? packWeight : null,
+      packsPerWeek: packWeight > 0 ? Math.round((weekly / packWeight) * 10) / 10 : null,
+      costPerWeek: packWeight > 0 && costPerPack > 0 ? Math.round((weekly / packWeight) * costPerPack * 100) / 100 : null,
+      calculatedAt: r.calculated_at,
+    };
+  });
+  return {
+    basis: `Average DPT-mix production day, weekly = ${PRODUCTION_DAYS_PER_WEEK} production days. Planned averages, not till actuals.`,
+    matched: items.length,
+    items,
+  };
+}
+
 // ─── Dispatcher ──────────────────────────────────────────────────────────────
 
 export async function executeCazTool(name: string, input: unknown, ctx: CazToolContext): Promise<{ content: string; isError?: boolean }> {
@@ -238,6 +296,9 @@ export async function executeCazTool(name: string, input: unknown, ctx: CazToolC
         break;
       case "get_factory_numbers":
         result = await getFactoryNumbers(ctx, (input ?? {}) as { date?: string });
+        break;
+      case "get_ingredient_consumption":
+        result = await getIngredientConsumption((input ?? {}) as { ingredientName?: string; limit?: number });
         break;
       default:
         return { content: `Unknown tool: ${name}`, isError: true };
