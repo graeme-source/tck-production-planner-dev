@@ -13,6 +13,7 @@ import { surveyShareUrl } from "../lib/survey-config";
 import { getRecipeImagesByName } from "../lib/recipe-images";
 import { questionOptions } from "../lib/survey-answers";
 import { getCollections, getCollectionProducts, getOrdersForPnl } from "../services/shopify";
+import { getSurveysKlaviyoKey, setSurveysKlaviyoKey, deleteSurveysKlaviyoKey, klaviyoAccountName } from "../lib/klaviyo";
 
 const router: IRouter = Router();
 
@@ -123,6 +124,37 @@ router.get("/recipe-options", async (_req, res) => {
     category: r.category,
     imageUrl: images.get(r.name.trim().toLowerCase()) ?? null,
   })));
+});
+
+// ── Klaviyo connection (survey email invites) ──────────────────────────────
+// Separate key from Founder Sales on purpose: that one is read-only, this
+// one ("TCK planner 2") has list/profile/campaign/template write scopes.
+
+// GET /api/surveys/klaviyo — connection status
+router.get("/klaviyo", async (_req, res) => {
+  const key = await getSurveysKlaviyoKey();
+  if (!key) { res.json({ connected: false }); return; }
+  res.json({ connected: true });
+});
+
+// POST /api/surveys/klaviyo — validate + store the pasted key
+router.post("/klaviyo", async (req, res) => {
+  const parsed = z.object({ apiKey: z.string().trim().min(10).max(200) }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Paste the private API key (pk_…)" }); return; }
+  try {
+    const accountName = await klaviyoAccountName(parsed.data.apiKey);
+    await setSurveysKlaviyoKey(parsed.data.apiKey);
+    res.json({ connected: true, accountName });
+  } catch (err) {
+    console.error("[surveys] klaviyo connect failed:", err instanceof Error ? err.message : String(err));
+    res.status(422).json({ error: "Klaviyo rejected that key — check it and try again" });
+  }
+});
+
+// DELETE /api/surveys/klaviyo — disconnect
+router.delete("/klaviyo", async (_req, res) => {
+  await deleteSurveysKlaviyoKey();
+  res.json({ connected: false });
 });
 
 // GET /api/surveys/collections — Shopify collections for the template picker

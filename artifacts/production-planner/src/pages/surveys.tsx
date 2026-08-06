@@ -247,6 +247,88 @@ function ShareDialog({ survey, onClose }: { survey: { id: number; title: string;
   );
 }
 
+// ── Klaviyo connect card ───────────────────────────────────────────────────
+// Stores the surveys-only Klaviyo key ("TCK planner 2" — write scopes for
+// lists/profiles/campaigns/templates). Separate from the read-only Founder
+// Sales key. Powers the upcoming "Email the buyers" panel.
+
+function KlaviyoCard() {
+  const queryClient = useQueryClient();
+  const [apiKey, setApiKey] = useState("");
+
+  const { data } = useQuery<{ connected: boolean }>({
+    queryKey: ["surveys-klaviyo"],
+    queryFn: async () => jsonOrThrow(await fetch(`${BASE}/api/surveys/klaviyo`, { credentials: "include" }), "Failed to check Klaviyo"),
+  });
+
+  const connect = useMutation({
+    mutationFn: async () =>
+      jsonOrThrow(await fetch(`${BASE}/api/surveys/klaviyo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ apiKey: apiKey.trim() }),
+      }), "Klaviyo rejected that key") as Promise<{ accountName: string | null }>,
+    onSuccess: (d) => {
+      setApiKey("");
+      queryClient.invalidateQueries({ queryKey: ["surveys-klaviyo"] });
+      toast({ title: "Klaviyo connected", description: d.accountName ? `Account: ${d.accountName}` : undefined });
+    },
+    onError: (e) => toast({ title: e instanceof Error ? e.message : "Klaviyo rejected that key", variant: "destructive" }),
+  });
+
+  const disconnect = useMutation({
+    mutationFn: async () =>
+      jsonOrThrow(await fetch(`${BASE}/api/surveys/klaviyo`, { method: "DELETE", credentials: "include" }), "Failed to disconnect"),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["surveys-klaviyo"] });
+      toast({ title: "Klaviyo disconnected" });
+    },
+  });
+
+  if (!data) return null;
+
+  if (data.connected) {
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-2.5">
+        <p className="text-sm flex items-center gap-2">
+          <Check className="w-4 h-4 text-primary" />
+          Klaviyo connected — ready to email survey invites to recent buyers
+        </p>
+        <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => disconnect.mutate()}>
+          Disconnect
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-card px-4 py-3 space-y-2">
+      <p className="text-sm font-medium">Connect Klaviyo for survey email invites</p>
+      <p className="text-xs text-muted-foreground">
+        Paste the <b>“TCK planner 2”</b> private key (pk_…) — the one with list, profile, campaign and
+        template scopes. The read-only Founder Sales key stays as it is.
+      </p>
+      <div className="flex gap-2">
+        <Input
+          type="password"
+          value={apiKey}
+          placeholder="pk_…"
+          autoComplete="off"
+          onChange={(e) => setApiKey(e.target.value)}
+        />
+        <Button
+          disabled={apiKey.trim().length < 10 || connect.isPending}
+          onClick={() => connect.mutate()}
+        >
+          {connect.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+          Connect
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ── Build from collection ──────────────────────────────────────────────────
 // Picks a Shopify collection + look-back window, asks the server to build
 // the default test-box template (delivery-date question with auto-captured
@@ -1229,6 +1311,7 @@ export default function Surveys() {
           </div>
         ) : (
           <div className="max-w-3xl mx-auto grid gap-3">
+            <KlaviyoCard />
             {surveys.map(s => (
               <SurveyCard
                 key={s.id}
