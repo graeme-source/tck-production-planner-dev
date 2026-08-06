@@ -14,7 +14,7 @@ import { Router, type IRouter, json } from "express";
 import cors from "cors";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { db, surveysTable, surveyQuestionsTable, surveyResponsesTable, surveyAnswersTable, recipesTable, type SurveyQuestion } from "@workspace/db";
-import { eq, asc, inArray } from "drizzle-orm";
+import { eq, and, asc, inArray } from "drizzle-orm";
 import * as z from "zod";
 import { getRecipeImagesByName } from "../lib/recipe-images";
 import { validateAnswerValue } from "../lib/survey-answers";
@@ -75,12 +75,31 @@ async function loadQuestions(surveyId: number) {
 }
 
 // GET /api/public/surveys/:token
+// Optional ?client_id= lets a returning browser learn what it already did:
+// `previous` carries the ANSWERED and STILL-SKIPPED question ids (never the
+// answer values), so the widget can offer "complete the ones you skipped"
+// instead of a blank wall. Absent/unknown client_id -> previous: null.
 router.get("/:token", readLimiter, async (req, res) => {
   try {
     const survey = await loadSurveyByToken(req.params.token);
     if (!survey) { res.status(404).json({ error: "Survey not found" }); return; }
 
     const questions = await loadQuestions(survey.id);
+
+    let previous: { answered: number[]; skipped: number[] } | null = null;
+    const clientId = typeof req.query.client_id === "string" ? req.query.client_id.trim() : "";
+    if (clientId) {
+      const [existing] = await db.select().from(surveyResponsesTable)
+        .where(and(eq(surveyResponsesTable.surveyId, survey.id), eq(surveyResponsesTable.clientId, clientId)));
+      if (existing) {
+        const answerRows = await db.select({ questionId: surveyAnswersTable.questionId })
+          .from(surveyAnswersTable).where(eq(surveyAnswersTable.responseId, existing.id));
+        previous = {
+          answered: answerRows.map(a => a.questionId),
+          skipped: Array.isArray(existing.skipped) ? existing.skipped.filter((v): v is number => typeof v === "number") : [],
+        };
+      }
+    }
 
     const recipeIds = [...new Set(questions.map(q => q.recipeId).filter((id): id is number => id != null))];
     const recipes = recipeIds.length
@@ -95,6 +114,7 @@ router.get("/:token", readLimiter, async (req, res) => {
       title: survey.title,
       intro: survey.intro,
       status: survey.status as "open" | "closed",
+      previous,
       questions: questions.map(q => {
         const recipe = q.recipeId != null ? recipeById.get(q.recipeId) : undefined;
         return {
@@ -145,6 +165,72 @@ router.post("/:token/responses", submitLimiter, async (req, res) => {
 
     const questions = await loadQuestions(survey.id);
     const questionById = new Map<number, SurveyQuestion>(questions.map(q => [q.id, q]));
+
+    // Returning browser? They may COMPLETE questions they skipped (or left
+    // blank) last time — "I've tried it now" — but never change an existing
+    // answer. One response row per client, topped up over time.
+    const [existing] = await db.select().from(surveyResponsesTable)
+      .where(and(eq(surveyResponsesTable.surveyId, survey.id), eq(surveyResponsesTable.clientId, client_id)));
+    if (existing) {
+      const prevRows = await db.select({ questionId: surveyAnswersTable.questionId })
+        .from(surveyAnswersTable).where(eq(surveyAnswersTable.responseId, existing.id));
+      const previouslyAnswered = new Set(prevRows.map(r => r.questionId));
+      const oldSkipped: number[] = Array.isArray(existing.skipped)
+        ? existing.skipped.filter((v): v is number => typeof v === "number")
+        : [];
+
+      if (answers.length === 0) {
+        res.status(409).json({ error: "You have already responded to this survey" });
+        return;
+      }
+
+      const errors: { question_id: number | null; error: string }[] = [];
+      const payloadSkipped = new Set<number>(skipped);
+      for (const id of payloadSkipped) {
+        if (!questionById.has(id)) errors.push({ question_id: id, error: "unknown question id in skipped" });
+      }
+      const newlyAnswered = new Set<number>();
+      for (const a of answers) {
+        const q = questionById.get(a.question_id);
+        if (!q) { errors.push({ question_id: a.question_id, error: "unknown question id" }); continue; }
+        if (newlyAnswered.has(a.question_id)) { errors.push({ question_id: a.question_id, error: "duplicate answer for question" }); continue; }
+        if (previouslyAnswered.has(a.question_id)) {
+          errors.push({ question_id: a.question_id, error: "already answered — existing answers can't be changed" });
+          continue;
+        }
+        newlyAnswered.add(a.question_id);
+        if (payloadSkipped.has(a.question_id)) {
+          errors.push({ question_id: a.question_id, error: "question is both answered and skipped" });
+          continue;
+        }
+        const valueError = validateAnswerValue(q, a.value);
+        if (valueError) errors.push({ question_id: a.question_id, error: valueError });
+      }
+      if (errors.length > 0) {
+        res.status(422).json({ error: "Validation failed", details: errors });
+        return;
+      }
+
+      // Remaining skips = everything skipped before or now, minus anything
+      // that now has an answer. Skips for already-answered questions are
+      // dropped silently — an answer can't be retracted into a skip.
+      const finalSkipped = [...new Set([...oldSkipped, ...payloadSkipped])]
+        .filter(qid => questionById.has(qid) && !previouslyAnswered.has(qid) && !newlyAnswered.has(qid));
+
+      await db.transaction(async (tx) => {
+        await tx.insert(surveyAnswersTable).values(answers.map(a => ({
+          responseId: existing.id,
+          questionId: a.question_id,
+          value: a.value ?? null,
+        })));
+        await tx.update(surveyResponsesTable)
+          .set({ skipped: finalSkipped })
+          .where(eq(surveyResponsesTable.id, existing.id));
+      });
+
+      res.status(200).json({ ok: true, updated: true, completed: [...newlyAnswered] });
+      return;
+    }
 
     const errors: { question_id: number | null; error: string }[] = [];
     const skippedSet = new Set<number>(skipped);
