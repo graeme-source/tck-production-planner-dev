@@ -12,7 +12,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Loader2, ArrowLeft, ArrowUp, ArrowDown, Trash2, Copy, Check,
   QrCode, BarChart2, Pencil, Star, AlertTriangle, Download, ExternalLink,
-  MessagesSquare, Lock, LockOpen, Eye,
+  MessagesSquare, Lock, LockOpen, Eye, Boxes, Filter,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
@@ -53,6 +53,19 @@ interface SurveyListItem {
 
 interface RecipeOption { id: number; name: string; category: string | null; imageUrl: string | null }
 
+interface CollectionOption { id: number; title: string }
+
+interface CollectionTemplate {
+  collection: CollectionOption;
+  title: string;
+  intro: string;
+  questions: Array<{ type: QuestionType; prompt: string; recipeId: number | null; options: string[] | null; required: boolean; max: number }>;
+  deliveryDates: string[];
+  matchingOrders: number;
+  lookbackDays: number;
+  unmatchedProducts: string[];
+}
+
 interface ServerQuestion {
   id: number;
   type: QuestionType;
@@ -79,6 +92,7 @@ interface ResultsData {
   status: SurveyStatus;
   shareUrl: string;
   totalResponses: number;
+  unfilteredResponses: number;
   questions: (ServerQuestion & { aggregates: Aggregates })[];
 }
 
@@ -113,16 +127,19 @@ const RATING_MAX_MIN = 2;
 const RATING_MAX_MAX = 10;
 const clampRatingMax = (n: number) => Math.min(RATING_MAX_MAX, Math.max(RATING_MAX_MIN, n));
 
+// "the {name}" without doubling the article for names like "The Benji".
+const withArticle = (name: string) => /^the\s/i.test(name.trim()) ? name.trim() : `the ${name.trim()}`;
+
 // Prompt templates applied when a recipe is picked and the prompt hasn't
 // been hand-written (empty or still a previous auto-fill). Always editable
 // afterwards — auto-fill never overwrites a customised prompt.
 const PROMPT_TEMPLATES: Record<QuestionType, (name: string) => string> = {
-  rating: (name) => `How would you rate the ${name} recipe?`,
-  slider: (name) => `Overall, how likely are you to approve the ${name} for the menu?`,
-  choice: (name) => `Which best describes the ${name}?`,
-  multi: (name) => `Which of these apply to the ${name}?`,
-  text: (name) => `What did you think of the ${name}?`,
-  rank: (name) => `Rank what you enjoyed most about the ${name}`,
+  rating: (name) => `How would you rate ${withArticle(name)} recipe?`,
+  slider: (name) => `Overall, how likely are you to approve ${withArticle(name)} for the menu?`,
+  choice: (name) => `Which best describes ${withArticle(name)}?`,
+  multi: (name) => `Which of these apply to ${withArticle(name)}?`,
+  text: (name) => `What did you think of ${withArticle(name)}?`,
+  rank: (name) => `Rank what you enjoyed most about ${withArticle(name)}`,
 };
 
 const OPTION_TYPES: QuestionType[] = ["choice", "multi", "rank"];
@@ -224,6 +241,104 @@ function ShareDialog({ survey, onClose }: { survey: { id: number; title: string;
               </a>
             </Button>
           </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Build from collection ──────────────────────────────────────────────────
+// Picks a Shopify collection + look-back window, asks the server to build
+// the default test-box template (delivery-date question with auto-captured
+// dates, rating + optional notes per product, overall feedback), then opens
+// the builder pre-filled for editing.
+
+function FromCollectionDialog({ onClose, onBuilt }: {
+  onClose: () => void;
+  onBuilt: (tpl: CollectionTemplate) => void;
+}) {
+  const [collectionId, setCollectionId] = useState<number | null>(null);
+  const [days, setDays] = useState(30);
+
+  const { data: collections, isLoading, error } = useQuery<CollectionOption[]>({
+    queryKey: ["survey-collections"],
+    queryFn: async () => jsonOrThrow(await fetch(`${BASE}/api/surveys/collections`, { credentials: "include" }), "Failed to load collections"),
+  });
+
+  const build = useMutation({
+    mutationFn: async () =>
+      jsonOrThrow(await fetch(
+        `${BASE}/api/surveys/collection-template?collectionId=${collectionId}&days=${days}`,
+        { credentials: "include" },
+      ), "Failed to build the template") as Promise<CollectionTemplate>,
+    onSuccess: (tpl) => {
+      if (tpl.deliveryDates.length === 0) {
+        toast({
+          title: "No delivery dates found",
+          description: `No date-tagged orders with these products in the last ${tpl.lookbackDays} days — the delivery-date question was left out.`,
+        });
+      }
+      if (tpl.unmatchedProducts.length > 0) {
+        toast({
+          title: `${tpl.unmatchedProducts.length} product(s) without a matching recipe`,
+          description: `${tpl.unmatchedProducts.join(", ")} — their questions have no recipe image.`,
+        });
+      }
+      onBuilt(tpl);
+    },
+    onError: (e) => toast({ title: e instanceof Error ? e.message : "Failed to build the template", variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>New survey from a collection</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          {error != null ? (
+            <p className="text-sm text-destructive">Couldn't reach Shopify — try again in a minute.</p>
+          ) : (
+            <>
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground">Shopify collection</p>
+                <Select
+                  value={collectionId == null ? "" : String(collectionId)}
+                  onValueChange={(v) => setCollectionId(Number(v))}
+                  disabled={isLoading}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={isLoading ? "Loading collections…" : "Pick a collection"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(collections ?? []).map(c => (
+                      <SelectItem key={c.id} value={String(c.id)}>{c.title}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted-foreground">Capture delivery dates from orders in the last…</p>
+                <Select value={String(days)} onValueChange={(v) => setDays(Number(v))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="7">7 days</SelectItem>
+                    <SelectItem value="14">14 days</SelectItem>
+                    <SelectItem value="30">30 days</SelectItem>
+                    <SelectItem value="60">60 days</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                className="w-full"
+                disabled={collectionId == null || build.isPending}
+                onClick={() => build.mutate()}
+              >
+                {build.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Build survey
+              </Button>
+            </>
+          )}
         </div>
       </DialogContent>
     </Dialog>
@@ -577,15 +692,28 @@ function QuestionEditor({ question, recipes, onChange, onRemove, onMove, isFirst
   );
 }
 
-function BuilderView({ surveyId, onBack, onSaved }: {
+function BuilderView({ surveyId, initial, onBack, onSaved }: {
   surveyId: number | null; // null = creating new
+  // Pre-filled draft (e.g. built from a Shopify collection). New surveys only.
+  initial?: { title: string; intro: string; questions: CollectionTemplate["questions"] };
   onBack: () => void;
   onSaved: (id: number) => void;
 }) {
   const queryClient = useQueryClient();
-  const [title, setTitle] = useState("");
-  const [intro, setIntro] = useState("");
-  const [questions, setQuestions] = useState<DraftQuestion[]>([]);
+  const [title, setTitle] = useState(initial?.title ?? "");
+  const [intro, setIntro] = useState(initial?.intro ?? "");
+  const [questions, setQuestions] = useState<DraftQuestion[]>(() =>
+    (initial?.questions ?? []).map(q => ({
+      key: nextKey(),
+      type: q.type,
+      prompt: q.prompt,
+      // Template prompts are deliberate — protect them from auto-refill.
+      promptEdited: true,
+      recipeId: q.recipeId,
+      options: q.options ?? [],
+      required: q.required,
+      max: q.max,
+    })));
   const [loadedFor, setLoadedFor] = useState<number | null>(null);
   const [shareTarget, setShareTarget] = useState<{ id: number; title: string; shareUrl: string } | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -853,14 +981,26 @@ function QuestionResults({ question }: { question: ResultsData["questions"][numb
 }
 
 function ResultsView({ surveyId, onBack }: { surveyId: number; onBack: () => void }) {
+  // Filter results to responses that answered a choice question a certain
+  // way — built for the delivery-date question, so ratings can be compared
+  // across delivery days (different production days = different tweaks).
+  const [filter, setFilter] = useState<{ questionId: number; value: string } | null>(null);
+
   const { data, isLoading } = useQuery<ResultsData>({
-    queryKey: ["survey-results", surveyId],
-    queryFn: async () => jsonOrThrow(await fetch(`${BASE}/api/surveys/${surveyId}/results`, { credentials: "include" }), "Failed to load results"),
+    queryKey: ["survey-results", surveyId, filter],
+    queryFn: async () => {
+      const params = filter
+        ? `?filterQuestionId=${filter.questionId}&filterValue=${encodeURIComponent(filter.value)}`
+        : "";
+      return jsonOrThrow(await fetch(`${BASE}/api/surveys/${surveyId}/results${params}`, { credentials: "include" }), "Failed to load results");
+    },
   });
 
   if (isLoading || !data) {
     return <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
   }
+
+  const choiceQuestions = data.questions.filter(q => q.type === "choice" && (q.options?.length ?? 0) > 0);
 
   // Group questions under their recipe (spec: recipe sections first, in
   // question order; questions with no recipe fall into "General feedback").
@@ -888,11 +1028,43 @@ function ResultsView({ surveyId, onBack }: { surveyId: number; onBack: () => voi
         </Button>
       </div>
 
-      <div className="rounded-xl border border-border bg-card p-4">
-        <h2 className="font-semibold">{data.title}</h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          {data.totalResponses} response{data.totalResponses === 1 ? "" : "s"}
-        </p>
+      <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+        <div>
+          <h2 className="font-semibold">{data.title}</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            {filter
+              ? `${data.totalResponses} of ${data.unfilteredResponses} responses (filtered)`
+              : `${data.totalResponses} response${data.totalResponses === 1 ? "" : "s"}`}
+          </p>
+        </div>
+        {choiceQuestions.length > 0 && (
+          <div className="flex items-center gap-2">
+            <Filter className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+            <Select
+              value={filter ? `${filter.questionId}::${filter.value}` : "all"}
+              onValueChange={(v) => {
+                if (v === "all") { setFilter(null); return; }
+                const sep = v.indexOf("::");
+                setFilter({ questionId: Number(v.slice(0, sep)), value: v.slice(sep + 2) });
+              }}
+            >
+              <SelectTrigger className="flex-1">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All responses</SelectItem>
+                {choiceQuestions.map(q => (
+                  <SelectGroup key={q.id}>
+                    <SelectLabel>{q.prompt}</SelectLabel>
+                    {(q.options ?? []).map(opt => (
+                      <SelectItem key={opt} value={`${q.id}::${opt}`}>{opt}</SelectItem>
+                    ))}
+                  </SelectGroup>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
 
       {groups.map(group => (
@@ -995,12 +1167,16 @@ function SurveyCard({ survey, onEdit, onResults, onShare, onPreview }: {
 
 // ── Page ───────────────────────────────────────────────────────────────────
 
-type View = { name: "list" } | { name: "builder"; surveyId: number | null } | { name: "results"; surveyId: number };
+type View =
+  | { name: "list" }
+  | { name: "builder"; surveyId: number | null; initial?: { title: string; intro: string; questions: CollectionTemplate["questions"] } }
+  | { name: "results"; surveyId: number };
 
 export default function Surveys() {
   const [view, setView] = useState<View>({ name: "list" });
   const [shareTarget, setShareTarget] = useState<{ id: number; title: string; shareUrl: string } | null>(null);
   const [previewId, setPreviewId] = useState<number | null>(null);
+  const [fromCollectionOpen, setFromCollectionOpen] = useState(false);
 
   const { data: surveys, isLoading } = useQuery<SurveyListItem[]>({
     queryKey: ["surveys"],
@@ -1013,15 +1189,22 @@ export default function Surveys() {
         title="Customer Surveys"
         description="Test-product feedback collected on the website"
         action={view.name === "list" ? (
-          <Button onClick={() => setView({ name: "builder", surveyId: null })}>
-            <Plus className="w-4 h-4 mr-2" /> New survey
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setFromCollectionOpen(true)}>
+              <Boxes className="w-4 h-4 mr-2" /> From collection
+            </Button>
+            <Button onClick={() => setView({ name: "builder", surveyId: null })}>
+              <Plus className="w-4 h-4 mr-2" /> New survey
+            </Button>
+          </div>
         ) : undefined}
       />
 
       {view.name === "builder" && (
         <BuilderView
+          key={view.surveyId ?? "new"}
           surveyId={view.surveyId}
+          initial={view.initial}
           onBack={() => setView({ name: "list" })}
           onSaved={(id) => setView({ name: "builder", surveyId: id })}
         />
@@ -1063,6 +1246,15 @@ export default function Surveys() {
       <ShareDialog survey={shareTarget} onClose={() => setShareTarget(null)} />
       {previewId != null && (
         <SavedSurveyPreview surveyId={previewId} onClose={() => setPreviewId(null)} />
+      )}
+      {fromCollectionOpen && (
+        <FromCollectionDialog
+          onClose={() => setFromCollectionOpen(false)}
+          onBuilt={(tpl) => {
+            setFromCollectionOpen(false);
+            setView({ name: "builder", surveyId: null, initial: { title: tpl.title, intro: tpl.intro, questions: tpl.questions } });
+          }}
+        />
       )}
     </div>
   );

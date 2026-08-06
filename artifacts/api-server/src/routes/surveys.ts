@@ -12,6 +12,7 @@ import * as z from "zod";
 import { surveyShareUrl } from "../lib/survey-config";
 import { getRecipeImagesByName } from "../lib/recipe-images";
 import { questionOptions } from "../lib/survey-answers";
+import { getCollections, getCollectionProducts, getOrdersForPnl } from "../services/shopify";
 
 const router: IRouter = Router();
 
@@ -122,6 +123,124 @@ router.get("/recipe-options", async (_req, res) => {
     category: r.category,
     imageUrl: images.get(r.name.trim().toLowerCase()) ?? null,
   })));
+});
+
+// GET /api/surveys/collections — Shopify collections for the template picker
+router.get("/collections", async (_req, res) => {
+  try {
+    res.json(await getCollections());
+  } catch (err) {
+    console.error("[surveys] collections failed:", err instanceof Error ? err.message : String(err));
+    res.status(502).json({ error: "Could not load collections from Shopify" });
+  }
+});
+
+// Dispatch-date tag on orders (same convention as fulfilment). Delivery is
+// next-day APC, so delivery date = dispatch tag + 1 day.
+const DATE_TAG_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** "the {name}" without doubling the article for names like "The Benji". */
+function withArticle(name: string): string {
+  return /^the\s/i.test(name.trim()) ? name.trim() : `the ${name.trim()}`;
+}
+
+function formatDeliveryDate(dispatchTag: string): string {
+  const d = new Date(`${dispatchTag}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return new Intl.DateTimeFormat("en-GB", {
+    weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC",
+  }).format(d);
+}
+
+// GET /api/surveys/collection-template?collectionId=&days=
+// Builds (but does NOT save) the default test-box survey for a collection:
+//   1. "What delivery date did you receive your products?" — choice, options
+//      auto-captured from date-tagged orders containing the collection's
+//      products in the look-back window (+ "Not sure").
+//   2. Per product: overall rating + optional notes, linked to the matching
+//      recipe by name where one exists (brings the image along).
+//   3. One overall-experience free-text at the end.
+// The builder opens pre-filled with this; Graeme edits and saves as usual.
+router.get("/collection-template", async (req, res) => {
+  const collectionId = Number(req.query.collectionId);
+  if (!Number.isInteger(collectionId) || collectionId <= 0) {
+    res.status(400).json({ error: "collectionId is required" });
+    return;
+  }
+  const rawDays = Number(req.query.days);
+  const days = Number.isInteger(rawDays) ? Math.min(90, Math.max(1, rawDays)) : 30;
+
+  try {
+    const [collections, products] = await Promise.all([getCollections(), getCollectionProducts(collectionId)]);
+    const collection = collections.find(c => c.id === collectionId);
+    if (!collection) { res.status(404).json({ error: "Collection not found" }); return; }
+    if (products.length === 0) { res.status(422).json({ error: "That collection has no products" }); return; }
+
+    // Recipe links by exact name match (same rule as the images).
+    const recipes = await db.select({ id: recipesTable.id, name: recipesTable.name }).from(recipesTable);
+    const recipeByName = new Map(recipes.map(r => [r.name.trim().toLowerCase(), r.id]));
+
+    // Delivery dates from date-tagged orders containing these products.
+    const now = new Date();
+    const from = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    const orders = await getOrdersForPnl(iso(from), iso(now));
+    const productIds = new Set(products.map(p => p.id));
+    const dispatchTags = new Set<string>();
+    let matchingOrders = 0;
+    for (const order of orders) {
+      if (order.cancelled_at) continue;
+      if (!order.line_items?.some(li => li.product_id != null && productIds.has(li.product_id))) continue;
+      matchingOrders++;
+      const tag = order.tags.split(",").map(t => t.trim()).find(t => DATE_TAG_RE.test(t));
+      if (tag) dispatchTags.add(tag);
+    }
+    const deliveryDates = [...dispatchTags].sort().map(formatDeliveryDate);
+
+    const questions: Array<{ type: string; prompt: string; recipeId: number | null; options: string[] | null; required: boolean; max: number }> = [];
+    if (deliveryDates.length > 0) {
+      questions.push({
+        type: "choice",
+        prompt: "What delivery date did you receive your products?",
+        recipeId: null,
+        options: [...deliveryDates, "Not sure"],
+        required: true,
+        max: 5,
+      });
+    }
+    for (const product of products) {
+      const recipeId = recipeByName.get(product.title.trim().toLowerCase()) ?? null;
+      questions.push({
+        type: "rating",
+        prompt: `Please give your overall rating for ${withArticle(product.title)} recipe`,
+        recipeId, options: null, required: true, max: 5,
+      });
+      questions.push({
+        type: "text",
+        prompt: `Add any notes on ${withArticle(product.title)} (optional)`,
+        recipeId, options: null, required: false, max: 5,
+      });
+    }
+    questions.push({
+      type: "text",
+      prompt: "Any overall general feedback on this test box experience?",
+      recipeId: null, options: null, required: false, max: 5,
+    });
+
+    res.json({
+      collection,
+      title: `${collection.title} Feedback`,
+      intro: `You tried the ${collection.title} — tell us what you thought! It takes about a minute and directly shapes what we launch next.`,
+      questions,
+      deliveryDates,
+      matchingOrders,
+      lookbackDays: days,
+      unmatchedProducts: products.filter(p => !recipeByName.has(p.title.trim().toLowerCase())).map(p => p.title),
+    });
+  } catch (err) {
+    console.error("[surveys] collection-template failed:", err instanceof Error ? err.message : String(err));
+    res.status(502).json({ error: "Could not build the template from Shopify" });
+  }
 });
 
 // GET /api/surveys/:id — full survey for the builder
@@ -293,13 +412,30 @@ router.get("/:id/results", async (req, res) => {
   if (!survey) { res.status(404).json({ error: "Survey not found" }); return; }
 
   const questions = await loadQuestions(id);
-  const responses = await db.select().from(surveyResponsesTable)
+  const allResponses = await db.select().from(surveyResponsesTable)
     .where(eq(surveyResponsesTable.surveyId, id));
-  const responseById = new Map(responses.map(r => [r.id, r]));
-  const answers = responses.length
+  const allAnswers = allResponses.length
     ? await db.select().from(surveyAnswersTable)
-        .where(inArray(surveyAnswersTable.responseId, responses.map(r => r.id)))
+        .where(inArray(surveyAnswersTable.responseId, allResponses.map(r => r.id)))
     : [];
+
+  // Optional filter: only responses whose answer to one question equals a
+  // value (e.g. delivery date = "Thursday 7 August 2026"). String compare —
+  // built for choice questions, where values are option strings.
+  const filterQuestionId = Number(req.query.filterQuestionId);
+  const filterValue = typeof req.query.filterValue === "string" ? req.query.filterValue : null;
+  let responses = allResponses;
+  let answers = allAnswers;
+  if (Number.isInteger(filterQuestionId) && filterQuestionId > 0 && filterValue != null) {
+    const passing = new Set(
+      allAnswers
+        .filter(a => a.questionId === filterQuestionId && typeof a.value === "string" && a.value === filterValue)
+        .map(a => a.responseId),
+    );
+    responses = allResponses.filter(r => passing.has(r.id));
+    answers = allAnswers.filter(a => passing.has(a.responseId));
+  }
+  const responseById = new Map(responses.map(r => [r.id, r]));
   const answersByQuestion = new Map<number, typeof answers>();
   for (const a of answers) {
     const list = answersByQuestion.get(a.questionId) ?? [];
@@ -391,6 +527,7 @@ router.get("/:id/results", async (req, res) => {
     status: survey.status,
     shareUrl: surveyShareUrl(survey.token),
     totalResponses: responses.length,
+    unfilteredResponses: allResponses.length,
     questions: results,
   });
 });

@@ -254,6 +254,7 @@ export async function countOrdersByTag(
 export interface ShopifyLineItem {
   id: number;
   variant_id: number | null;
+  product_id: number | null;
   title: string;
   variant_title: string | null;
   quantity: number;
@@ -980,4 +981,42 @@ export async function replaceTagOnOrder(orderId: number, currentTags: string, ol
   const updated = filtered.join(", ");
   await shopifyPut(`/orders/${orderId}.json`, { order: { id: orderId, tags: updated } });
   return updated;
+}
+
+// ── Collections (survey builder) ───────────────────────────────────────────
+
+export interface ShopifyCollectionSummary {
+  id: number;
+  title: string;
+}
+
+/**
+ * All collections, custom (manual) and smart (rule-based) alike — the
+ * survey "build from collection" picker doesn't care which kind a
+ * collection is, only what's in it.
+ */
+export async function getCollections(): Promise<ShopifyCollectionSummary[]> {
+  const [custom, smart] = await Promise.all([
+    shopifyFetch("/custom_collections.json", { limit: "250", fields: "id,title" }) as Promise<{ custom_collections: ShopifyCollectionSummary[] }>,
+    shopifyFetch("/smart_collections.json", { limit: "250", fields: "id,title" }) as Promise<{ smart_collections: ShopifyCollectionSummary[] }>,
+  ]);
+  return [...(custom.custom_collections ?? []), ...(smart.smart_collections ?? [])]
+    .map(c => ({ id: c.id, title: c.title }))
+    .sort((a, b) => a.title.localeCompare(b.title));
+}
+
+/** Products in a collection (works for both custom and smart collections). */
+export async function getCollectionProducts(collectionId: number): Promise<Array<{ id: number; title: string }>> {
+  const products: Array<{ id: number; title: string }> = [];
+  let pageInfo: string | null = null;
+  do {
+    const params: Record<string, string> = pageInfo
+      ? { limit: "250", page_info: pageInfo }
+      : { limit: "250", fields: "id,title" };
+    const res = await shopifyFetchRaw(`/collections/${collectionId}/products.json`, params);
+    const data = (await res.json()) as { products: Array<{ id: number; title: string }> };
+    products.push(...(data.products ?? []));
+    pageInfo = parseNextPageInfo(res.headers.get("Link"));
+  } while (pageInfo);
+  return products;
 }
