@@ -248,7 +248,7 @@ function ShareDialog({ survey, onClose }: { survey: { id: number; title: string;
 }
 
 // ── Klaviyo connect card ───────────────────────────────────────────────────
-// Stores the surveys-only Klaviyo key ("TCK planner 2" — write scopes for
+// Stores the surveys-only Klaviyo key ("TCK Planner 2" — write scopes for
 // lists/profiles/campaigns/templates). Separate from the read-only Founder
 // Sales key. Powers the upcoming "Email the buyers" panel.
 
@@ -306,7 +306,7 @@ function KlaviyoCard() {
     <div className="rounded-xl border border-border bg-card px-4 py-3 space-y-2">
       <p className="text-sm font-medium">Connect Klaviyo for survey email invites</p>
       <p className="text-xs text-muted-foreground">
-        Paste the <b>“TCK planner 2”</b> private key (pk_…) — the one with list, profile, campaign and
+        Paste the <b>“TCK Planner 2”</b> private key (pk_…) — the one with list, profile, campaign and
         template scopes. The read-only Founder Sales key stays as it is.
       </p>
       <div className="flex gap-2">

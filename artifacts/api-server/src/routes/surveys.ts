@@ -128,7 +128,7 @@ router.get("/recipe-options", async (_req, res) => {
 
 // ── Klaviyo connection (survey email invites) ──────────────────────────────
 // Separate key from Founder Sales on purpose: that one is read-only, this
-// one ("TCK planner 2") has list/profile/campaign/template write scopes.
+// one ("TCK Planner 2") has list/profile/campaign/template write scopes.
 
 // GET /api/surveys/klaviyo — connection status
 router.get("/klaviyo", async (_req, res) => {

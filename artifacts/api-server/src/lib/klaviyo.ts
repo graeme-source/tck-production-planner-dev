@@ -1,7 +1,7 @@
 /**
  * Klaviyo API access for the surveys feature (email invites to recent
  * buyers). Deliberately SEPARATE from the Founder Sales key: that one is
- * read-only by design ("TCK planner"), this one ("TCK planner 2") carries
+ * read-only by design ("TCK planner"), this one ("TCK Planner 2") carries
  * list/profile/campaign/template write scopes. Both live in founder_settings
  * under different keys, pasted via their own connect cards — never env vars,
  * never chat.

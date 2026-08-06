@@ -33,11 +33,24 @@
       "port": 5274
     },
     {
+      "name": "survey-mock",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": ["-lc", "python3 '/private/tmp/claude-501/-Users-graemecarter-Dev-Projects-tck-production-planner-main/8f1c1d6f-0890-4c13-94b8-2409b52f87c7/scratchpad/mock_api.py'"],
+      "port": 8902
+    },
+    {
       "name": "frontend-preview-2",
       "runtimeExecutable": "/bin/bash",
       "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5280 --strictPort"],
       "cwd": "artifacts/production-planner",
       "port": 5280
+    },
+    {
+      "name": "frontend-preview-3",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5281 --strictPort"],
+      "cwd": "artifacts/production-planner",
+      "port": 5281
     }
   ]
 }
