@@ -270,7 +270,7 @@ router.post("/:id/email-test", async (req, res) => {
 
     res.status(201).json({
       campaignId,
-      campaignUrl: `https://www.klaviyo.com/campaign/${campaignId}`,
+      campaignUrl: `https://www.klaviyo.com/campaign/${campaignId}/wizard`,
       recipients: members.length,
       mode: draft ? "draft" : (sendAt ? "scheduled" : "sending"),
     });
