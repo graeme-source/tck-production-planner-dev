@@ -111,7 +111,13 @@ export interface TestListMember { email: string; consent: string }
 export async function getTestListMembers(apiKey: string, listId: string): Promise<TestListMember[]> {
   const data = await klaviyoFetch<{
     data: Array<{ attributes?: { email?: string; subscriptions?: { email?: { marketing?: { consent?: string } } } } }>;
-  }>(apiKey, `/api/lists/${listId}/profiles?${new URLSearchParams({ "fields[profile]": "email,subscriptions", "page[size]": "100" })}`);
+  }>(apiKey, `/api/lists/${listId}/profiles?${new URLSearchParams({
+    // Klaviyo quirk: `subscriptions` is a computed field — it must be asked
+    // for via additional-fields as well as the sparse fieldset, else 400.
+    "fields[profile]": "email,subscriptions",
+    "additional-fields[profile]": "subscriptions",
+    "page[size]": "100",
+  })}`);
   return (data.data ?? []).map(p => ({
     email: p.attributes?.email ?? "(no email)",
     consent: p.attributes?.subscriptions?.email?.marketing?.consent ?? "NEVER_SUBSCRIBED",
