@@ -165,7 +165,11 @@ function Router() {
               <Route path="/stock-control" component={StockControl} />
               <Route path="/product-hub" component={ProductHub} />
               <Route path="/surveys">{() => <ProtectedRoute component={Surveys} pageKey="/surveys" />}</Route>
-              <Route path="/founder" component={FounderView} />
+              {/* Founder area — a site within a site. The schedule is home:
+                  /founder always lands there, and FounderNav (shared tab
+                  strip on every founder page) covers the side-trips. */}
+              <Route path="/founder">{() => <Redirect to="/founder/focus" />}</Route>
+              <Route path="/founder/numbers" component={FounderView} />
               <Route path="/founder/pnl" component={FounderPnL} />
               <Route path="/founder/focus" component={FounderFocus} />
               <Route path="/founder/sales" component={FounderSales} />

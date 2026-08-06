@@ -3,6 +3,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { Redirect } from "wouter";
 import { useQuery, useMutation, useQueryClient, useIsFetching } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
+import { FounderNav } from "@/components/founder-nav";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { format, startOfMonth, getDaysInMonth, subDays, subMonths, endOfMonth, formatDistanceToNow } from "date-fns";
@@ -701,8 +702,9 @@ function FounderDashboard() {
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-8">
+      <FounderNav />
       <PageHeader
-        title="Founder View"
+        title="Numbers"
         description="Sales KPIs and order breakdown."
         action={
           <div className="flex items-center gap-3">
@@ -722,47 +724,6 @@ function FounderDashboard() {
           </div>
         }
       />
-
-      {/* ── Quick Nav ─────────────────────────────────────────────────────── */}
-      <a
-        href={`${BASE}/founder/pnl`}
-        className="glass-panel p-4 rounded-2xl flex items-center gap-3 hover:bg-secondary/50 transition-colors group"
-      >
-        <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-500">
-          <Calculator className="w-5 h-5" />
-        </div>
-        <div className="flex-1">
-          <p className="text-sm font-medium group-hover:text-primary transition-colors">P&L Dashboard</p>
-          <p className="text-xs text-muted-foreground">Estimated profit &amp; loss from Shopify data, COGS, fees &amp; overheads</p>
-        </div>
-        <ChevronDown className="w-4 h-4 text-muted-foreground -rotate-90" />
-      </a>
-      <a
-        href={`${BASE}/founder/focus`}
-        className="glass-panel p-4 rounded-2xl flex items-center gap-3 hover:bg-secondary/50 transition-colors group"
-      >
-        <div className="p-2.5 rounded-xl bg-primary/10 text-primary">
-          <Calendar className="w-5 h-5" />
-        </div>
-        <div className="flex-1">
-          <p className="text-sm font-medium group-hover:text-primary transition-colors">Founder Focus</p>
-          <p className="text-xs text-muted-foreground">Time-blocked days, pillars &amp; goals, parking lot — the plan for where your time goes</p>
-        </div>
-        <ChevronDown className="w-4 h-4 text-muted-foreground -rotate-90" />
-      </a>
-      <a
-        href={`${BASE}/founder/sales`}
-        className="glass-panel p-4 rounded-2xl flex items-center gap-3 hover:bg-secondary/50 transition-colors group"
-      >
-        <div className="p-2.5 rounded-xl bg-violet-500/10 text-violet-500">
-          <Megaphone className="w-5 h-5" />
-        </div>
-        <div className="flex-1">
-          <p className="text-sm font-medium group-hover:text-primary transition-colors">Sales &amp; Marketing</p>
-          <p className="text-xs text-muted-foreground">Revenue pace vs the £120k target, email cadence, and the always-on marketing calendar</p>
-        </div>
-        <ChevronDown className="w-4 h-4 text-muted-foreground -rotate-90" />
-      </a>
 
       {/* ── Section 1: Fixed At-a-Glance KPIs (always this month) ──────────── */}
       <section>
