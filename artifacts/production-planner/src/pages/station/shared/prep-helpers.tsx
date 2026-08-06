@@ -138,7 +138,8 @@ export function formatLineQtyParts(
     };
   }
   if (stockInPacks && hasPackSize) {
-    const count = Math.round(qty / pw);
+    // 2 dp, not whole packs — part-packs (0.5 of a box) are a real count.
+    const count = Math.round((qty / pw) * 100) / 100;
     return {
       primary: `${count} ${packNoun(native, count)}`,
       descriptor: buildDescriptor(count),
@@ -161,11 +162,13 @@ export function formatLineQty(
 }
 
 // Given a native-unit stock value and the ingredient's packWeight, return
-// how many packs that represents (rounded to nearest whole pack for display).
+// how many packs that represents. Rounded to 2 dp, NOT whole packs — the
+// team records part-packs (0.5 of a box) and whole-pack rounding both
+// displayed them wrong and clobbered the value on prefill-then-save.
 // Returns null if the ingredient can't be expressed in packs.
 export function nativeToPackCount(nativeQty: number, packWeight: number | null | undefined): number | null {
   if (packWeight == null || packWeight <= 0) return null;
-  return Math.round(nativeQty / packWeight);
+  return Math.round((nativeQty / packWeight) * 100) / 100;
 }
 
 // Convert a whole-pack count back to native units for storage. Keeps the
@@ -639,9 +642,12 @@ export function StockCheckStatusPanel({ checkDate }: { checkDate: string }) {
                   <span className="font-medium flex-1 min-w-0 truncate">{it.name}</span>
                   <input
                     type="number"
-                    step={inPacks ? "1" : "0.01"}
+                    // step "any" + decimal keyboard even in pack mode — the
+                    // team records part-packs (e.g. 0.5 of a box) and the old
+                    // integer step hid the decimal point on the iPad keypad.
+                    step="any"
                     min="0"
-                    inputMode={inPacks ? "numeric" : "decimal"}
+                    inputMode="decimal"
                     value={inputVal}
                     onChange={e => setInputValues(prev => ({ ...prev, [it.id]: e.target.value }))}
                     onKeyDown={e => { if (e.key === "Enter" && inputVal !== "") saveOne(it.id); }}

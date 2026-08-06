@@ -655,9 +655,9 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                           <div className="flex items-center gap-2 flex-wrap">
                             <input
                               type="number"
-                              step={inPacks ? "1" : "0.01"}
+                              step="any"
                               min="0"
-                              inputMode={inPacks ? "numeric" : "decimal"}
+                              inputMode="decimal"
                               placeholder={inPacks ? `Remaining ${packNoun(ing.unit, 0)}` : `Remaining ${ing.unit}`}
                               className="flex-1 max-w-[160px] text-base border-2 border-blue-300 dark:border-blue-600 rounded-lg px-3 py-2 text-right bg-background focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
                               value={inputDisplay}
