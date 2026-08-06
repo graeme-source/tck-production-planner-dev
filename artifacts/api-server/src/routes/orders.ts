@@ -260,12 +260,13 @@ router.get("/calculate", async (req, res) => {
 
   // ── Inbound stock on open purchase orders ────────────────────────────────
   // Suppliers with a lead time (NFS Meats: 2 days) often have goods already
-  // on the way when the next order is being built. Surface what's due in —
-  // per ingredient, with expected delivery dates — so the person ordering
-  // sees current stock AND what tomorrow's delivery brings before adding
-  // more. Open = placed or partially received; the undelivered remainder of
-  // each line counts. Expected dates more than 3 days gone are treated as
-  // dead so lost/cancelled orders don't inflate inbound forever.
+  // on the way when the next order is being built. Surfaced per ingredient
+  // with expected delivery dates, AND deducted from the suggested order
+  // quantity (since 2026-08-06) so placing an order stops the same packs
+  // being suggested again on the next visit. Open = placed or partially
+  // received; the undelivered remainder of each line counts. Expected dates
+  // more than 3 days gone are treated as dead so lost/cancelled orders don't
+  // inflate inbound forever — after that the packs count as needed again.
   const inboundCutoff = londonDateString(new Date(Date.now() - 3 * 86_400_000));
   const openPoLines = await db
     .select({
@@ -345,9 +346,10 @@ router.get("/calculate", async (req, res) => {
       // re-apply case rounding after the operator edits the stock count.
       caseSizePacks: number | null;
       // Undelivered quantity already on open (placed / partially received)
-      // purchase orders, with per-delivery expected dates. Advisory only —
-      // the suggested order maths deliberately ignores it so a failed
-      // delivery never silently under-orders.
+      // purchase orders, with per-delivery expected dates. Deducted from the
+      // suggested order (see rawOrderQty) and shown as the "+N due" chip; if
+      // a delivery fails the operator bumps the quantity manually, and after
+      // 3 days past the expected date the inbound is written off anyway.
       inboundQty: number;
       inboundDeliveries: Array<{ date: string | null; qty: number; unit: string; poId: number }>;
     }>;
@@ -398,7 +400,14 @@ router.get("/calculate", async (req, res) => {
       ? Math.max(0, surplusAbsoluteQty ?? 0)
       : dailyRequirement * (surplusPercent / 100);
 
-    const rawOrderQty = Math.max(0, ing.totalRequired + surplusTarget - stockOnHand);
+    // Undelivered stock on open POs counts as already ordered (Graeme,
+    // 2026-08-06): once today's order is placed, coming back to the page must
+    // not suggest the same packs again — the placed-PO dedup below only
+    // catches POs raised against the SELECTED plan, so switching plans used
+    // to resurrect the suggestion. A failed delivery means the operator bumps
+    // the quantity manually; the "+N due" chip keeps the deduction visible.
+    const inboundQty = (inboundByIngredient[iid] ?? []).reduce((s, d) => s + d.qty, 0);
+    const rawOrderQty = Math.max(0, ing.totalRequired + surplusTarget - stockOnHand - inboundQty);
     let packsToOrder = packWeight > 0 ? Math.ceil(rawOrderQty / packWeight) : 0;
     // A scanned kanban is a person at the shelf saying "we're low — order
     // one kanban's worth", so it FLOORS the suggestion at the kanban order
