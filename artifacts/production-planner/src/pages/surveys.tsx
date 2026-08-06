@@ -1449,12 +1449,15 @@ function SurveyCard({ survey, onEdit, onResults, onShare, onPreview, onEmail }: 
         <Button variant="outline" size="sm" onClick={() => duplicate.mutate()} disabled={duplicate.isPending}>
           <Copy className="w-3.5 h-3.5 mr-1.5" /> Duplicate
         </Button>
+        {/* Status action is colour-coded to the CURRENT state (green = live,
+            amber = not live) so the button never reads as the opposite of
+            the badge beside it. */}
         {survey.status === "open" ? (
-          <Button variant="outline" size="sm" onClick={() => setStatus.mutate("closed")} disabled={setStatus.isPending}>
+          <Button variant="outline" size="sm" className="border-primary/40 bg-primary/15 text-primary hover:bg-primary/25 hover:text-primary" onClick={() => setStatus.mutate("closed")} disabled={setStatus.isPending}>
             <Lock className="w-3.5 h-3.5 mr-1.5" /> Close
           </Button>
         ) : (
-          <Button size="sm" onClick={() => setStatus.mutate("open")} disabled={setStatus.isPending}>
+          <Button size="sm" className="bg-amber-500 hover:bg-amber-600 text-white" onClick={() => setStatus.mutate("open")} disabled={setStatus.isPending}>
             <LockOpen className="w-3.5 h-3.5 mr-1.5" /> {survey.status === "closed" ? "Reopen" : "Open"}
           </Button>
         )}
