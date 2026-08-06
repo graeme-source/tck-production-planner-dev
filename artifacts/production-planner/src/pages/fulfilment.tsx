@@ -12,6 +12,7 @@ import {
   Package, Scan, CheckCircle2, AlertCircle, ChevronRight, Printer,
   RefreshCw, MapPin, SkipForward, RotateCcw, XCircle, Loader2,
   ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter, ArrowUpDown,
+  Volume2, VolumeX,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -933,8 +934,8 @@ export default function Fulfilment() {
   const [, navigate] = useLocation();
   const [activeOrder, setActiveOrder] = useState<ShopifyOrder | null>(null);
   // Orders the packer pressed Skip on. They stay out of the auto-advance
-  // rotation until every other order in the wave is done, so a skipped
-  // order can't bounce straight back onto the screen after the next one.
+  // rotation entirely — they only rejoin when the packer picks one by hand
+  // from the list, or restores them all via the "bring back" banner.
   const [skippedIds, setSkippedIds] = useState<Set<number>>(new Set());
   const [shipment, setShipment] = useState<ShipmentResult | null>(null);
   const [printStatus, setPrintStatus] = useState<PrintStatus>("idle");
@@ -1042,6 +1043,17 @@ export default function Fulfilment() {
     staleTime: 60_000,
   });
   const speakNameEnabled = speakNameConfig?.enabled !== false;
+  // Per-device mute for the spoken customer name, on top of the global admin
+  // switch in Settings. Lets one bench go quiet mid-dispatch without turning
+  // speech off for every device. localStorage so it sticks per iPad.
+  const [speakMuted, setSpeakMuted] = useState(() => localStorage.getItem("fulfilment_speak_muted") === "1");
+  function toggleSpeakMuted() {
+    setSpeakMuted(prev => {
+      const next = !prev;
+      localStorage.setItem("fulfilment_speak_muted", next ? "1" : "0");
+      return next;
+    });
+  }
 
   const { data: dispatchTags, isLoading: tagsLoading, error: tagsError, refetch: refetchTags } = useQuery({
     queryKey: ["fulfilment-dispatch-tags"],
@@ -1176,6 +1188,10 @@ export default function Fulfilment() {
     ? [...filteredUnfulfilledBase].reverse()
     : filteredUnfulfilledBase;
   const filteredUntagged = untaggedOrders.filter(passesFilters);
+  // Skipped orders still showing in this wave — counted against the filtered
+  // list so ids left over from completed or filtered-out orders don't inflate
+  // the "bring back" banner.
+  const skippedInWave = filteredUnfulfilled.filter(o => skippedIds.has(o.id)).length;
 
   // Every tag / product actually present in today's orders — the operator only
   // ever sees things that are really there, so no typing and no stale options.
@@ -1704,16 +1720,14 @@ export default function Fulfilment() {
     // whatever filter the operator had set (the screen even defaults to Small
     // Box) and dropped them into an unrelated order.
     // After refetch, the completed order is removed from the list, so we
-    // pick the first remaining order. Skipped orders are held to the back:
-    // they only come round again once everything else in the wave is done.
+    // pick the first remaining order. Skipped orders never come back on
+    // their own: once everything else in the wave is done we return to the
+    // list, where the packer restores them deliberately (per order via
+    // Start Picking, or all at once via the "bring back" banner). The old
+    // behaviour — silently starting a fresh pass over the skipped ones —
+    // dropped the packer into an order they'd just skipped with no warning.
     const remaining = filteredUnfulfilled.filter(o => o.id !== activeOrder?.id);
-    const unskipped = remaining.filter(o => !skippedIds.has(o.id));
-    let nextOrder = unskipped[0];
-    if (!nextOrder && remaining.length > 0) {
-      // Only skipped orders are left — start a fresh pass over them.
-      setSkippedIds(new Set());
-      nextOrder = remaining[0];
-    }
+    const nextOrder = remaining.find(o => !skippedIds.has(o.id));
     if (nextOrder) {
       // Route through handleOrderSelect so that live-mode confirmation dialog
       // is shown before any real APC consignment is created.
@@ -1854,18 +1868,25 @@ export default function Fulfilment() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
+  // Keep the scan field focused whenever the picking view is showing it.
+  // Keyed on the order id — not just the view — because Skip and auto-advance
+  // move to the next order WITHOUT leaving the picking view, which left focus
+  // stranded on the Skip button: the next scan went nowhere and the scanner's
+  // trailing Enter could even press Skip again. Also re-fires when the form
+  // un-hides (shipment created / error cleared), since a hidden input
+  // silently refuses focus.
   useEffect(() => {
-    if (view === "picking" && barcodeRef.current) {
-      barcodeRef.current.focus();
-    }
-  }, [view]);
+    if (view !== "picking") return;
+    if (creatingShipment || shipmentError || expectedConsignmentError) return;
+    barcodeRef.current?.focus();
+  }, [view, activeOrder?.id, creatingShipment, shipmentError, expectedConsignmentError]);
 
   // Speak the customer's shipping name when an order opens. Gated by
   // spokenOrderIdsRef so we say each order's name exactly once per page
   // load — no repeats if the picking view re-mounts for the same order.
   // Skipped entirely if the admin has muted speech in Settings.
   useEffect(() => {
-    if (!speakNameEnabled) return;
+    if (!speakNameEnabled || speakMuted) return;
     if (view !== "picking" || !activeOrder) return;
     if (spokenOrderIdsRef.current.has(activeOrder.id)) return;
     const name = activeOrder.shipping_address?.name
@@ -1874,7 +1895,7 @@ export default function Fulfilment() {
     spokenOrderIdsRef.current.add(activeOrder.id);
     speakName(name);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeOrder?.id, view, speakNameEnabled]);
+  }, [activeOrder?.id, view, speakNameEnabled, speakMuted]);
 
   // Reconcile mode needs APC credentials (to look consignments up) but NOT the
   // four service codes — nothing is booked, so there's no service to pick.
@@ -2231,6 +2252,21 @@ export default function Fulfilment() {
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div className="flex-1" />
+          {speakNameEnabled && (
+            <button
+              onClick={toggleSpeakMuted}
+              title={speakMuted ? "Name announcements are muted on this device — tap to unmute" : "Tap to mute name announcements on this device"}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-colors",
+                speakMuted
+                  ? "border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300"
+                  : "border-border text-muted-foreground hover:bg-secondary/50 hover:text-foreground",
+              )}
+            >
+              {speakMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+              {speakMuted ? "Muted" : "Name on"}
+            </button>
+          )}
           <div className="flex items-center gap-2">
             {printStatus === "printing" && (
               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -3225,6 +3261,22 @@ export default function Fulfilment() {
               <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-green-500 opacity-60" />
               <p className="font-medium">All {boxFilter} orders done!</p>
               <p className="text-sm mt-1">Switch to another category to continue packing.</p>
+            </div>
+          )}
+
+          {skippedInWave > 0 && (
+            <div className="glass-panel px-4 py-3 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20 flex items-center gap-3">
+              <SkipForward className="w-4 h-4 text-amber-600 flex-shrink-0" />
+              <span className="flex-1 text-sm text-amber-900 dark:text-amber-200">
+                {skippedInWave} skipped {skippedInWave === 1 ? "order is" : "orders are"} held out of the wave.
+                They won't come round again until you bring them back.
+              </span>
+              <button
+                onClick={() => setSkippedIds(new Set())}
+                className="flex items-center gap-1.5 px-3 py-1.5 border border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-200 rounded-lg text-xs font-semibold hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors flex-shrink-0"
+              >
+                <RotateCcw className="w-3.5 h-3.5" /> Bring back
+              </button>
             </div>
           )}
 
