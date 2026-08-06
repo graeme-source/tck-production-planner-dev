@@ -55,10 +55,21 @@ export async function deleteSurveysKlaviyoKey(): Promise<void> {
   await db.execute(sql`DELETE FROM founder_settings WHERE key = ${SURVEYS_KLAVIYO_SETTING}`);
 }
 
-/** Validate a key and return the account name — used by the connect card. */
-export async function klaviyoAccountName(apiKey: string): Promise<string | null> {
-  const data = await klaviyoFetch<{ data: Array<{ attributes?: { contact_information?: { organization_name?: string } } }> }>(
-    apiKey, "/api/accounts",
-  );
-  return data.data?.[0]?.attributes?.contact_information?.organization_name ?? null;
+/**
+ * Validate a key for the connect card. Probes the LISTS endpoint — one of
+ * the four scopes the surveys key actually carries. (An earlier version
+ * probed /api/accounts, which needs accounts:read — a scope the key was
+ * never asked to have, so valid keys bounced with 403.) Account name is
+ * best-effort on top: nice in the toast, never required.
+ */
+export async function validateSurveysKlaviyoKey(apiKey: string): Promise<{ accountName: string | null }> {
+  await klaviyoFetch(apiKey, "/api/lists?page[size]=1");
+  try {
+    const data = await klaviyoFetch<{ data: Array<{ attributes?: { contact_information?: { organization_name?: string } } }> }>(
+      apiKey, "/api/accounts",
+    );
+    return { accountName: data.data?.[0]?.attributes?.contact_information?.organization_name ?? null };
+  } catch {
+    return { accountName: null };
+  }
 }

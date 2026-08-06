@@ -13,7 +13,7 @@ import { surveyShareUrl } from "../lib/survey-config";
 import { getRecipeImagesByName } from "../lib/recipe-images";
 import { questionOptions } from "../lib/survey-answers";
 import { getCollections, getCollectionProducts, getOrdersForPnl } from "../services/shopify";
-import { getSurveysKlaviyoKey, setSurveysKlaviyoKey, deleteSurveysKlaviyoKey, klaviyoAccountName } from "../lib/klaviyo";
+import { getSurveysKlaviyoKey, setSurveysKlaviyoKey, deleteSurveysKlaviyoKey, validateSurveysKlaviyoKey } from "../lib/klaviyo";
 
 const router: IRouter = Router();
 
@@ -142,7 +142,7 @@ router.post("/klaviyo", async (req, res) => {
   const parsed = z.object({ apiKey: z.string().trim().min(10).max(200) }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Paste the private API key (pk_…)" }); return; }
   try {
-    const accountName = await klaviyoAccountName(parsed.data.apiKey);
+    const { accountName } = await validateSurveysKlaviyoKey(parsed.data.apiKey);
     await setSurveysKlaviyoKey(parsed.data.apiKey);
     res.json({ connected: true, accountName });
   } catch (err) {
