@@ -175,6 +175,10 @@ interface PlanItem {
   deficit: number;
   deficitBatches: number;
   surplusBatches: number;
+  // This flavour's DPT share of the achievable end-of-horizon stock pool —
+  // what the suggested batches steer the post-dispatch stock toward. Null
+  // when capacity can't cover shortfalls or the recipe has no demand share.
+  targetStockPacks?: number | null;
   stockWarning: "ok" | "low" | "short";
   special1Count: number;
   special2Count: number;
@@ -194,6 +198,73 @@ interface AllocRecipe {
   packsSold: number;
   packsPerBatch: number;
   stockAfterPacks: number;
+}
+
+/** Round fractional allocations to integers that sum to `total`: floor each,
+ *  then hand the leftover units to the largest remainders. Mirrors the
+ *  backend helper of the same name. */
+function largestRemainderRound(exact: number[], total: number): number[] {
+  const floors = exact.map(e => Math.floor(e));
+  let leftover = total - floors.reduce((s, f) => s + f, 0);
+  const order = exact
+    .map((e, idx) => ({ idx, remainder: e - Math.floor(e) }))
+    .sort((a, b) => b.remainder - a.remainder);
+  for (const { idx } of order) {
+    if (leftover <= 0) break;
+    floors[idx] += 1;
+    leftover--;
+  }
+  return floors;
+}
+
+/** Target-stock allocation, mirroring the backend exactly: the plan should
+ *  RESULT in end-of-horizon factory numbers split by the DPT percentages
+ *  (Graeme, 2026-08-06). Find the level λ whose per-recipe targets λ·weight
+ *  exactly spend the capacity, then each recipe makes whatever closes its
+ *  gap to target — a flavour with a massive deficit gets heavily produced.
+ *  Overstocked flavours contribute no gap (stock can't be unmade); weight 0
+ *  means target 0 but genuine shortfalls still get produced back to zero.
+ *  Shared by BOTH plan dialogs — create and edit must never diverge. */
+function allocateBatchesToTargets(recipes: AllocRecipe[], capacity: number): { suggestedBatches: number; surplusBatches: number; targetStockPacks: number | null }[] {
+  if (capacity <= 0) {
+    return recipes.map(() => ({ suggestedBatches: 0, surplusBatches: 0, targetStockPacks: null }));
+  }
+
+  const totalPacksSold = recipes.reduce((s, r) => s + r.packsSold, 0);
+  const pool = recipes.map(r => ({
+    weight: totalPacksSold > 0 ? r.salesPercent : 0,
+    ppb: r.packsPerBatch > 0 ? r.packsPerBatch : 1,
+    proj: r.stockAfterPacks,
+  }));
+  const needBatches = (lambda: number) =>
+    pool.reduce((s, p) => s + Math.max(0, lambda * p.weight - p.proj) / p.ppb, 0);
+
+  let suggested: number[];
+  let targets: Array<number | null>;
+  const floorNeed = needBatches(0);
+  if (floorNeed >= capacity) {
+    // Capacity can't even cover the shortfalls — scale each gap pro-rata.
+    const gaps = pool.map(p => Math.max(0, -p.proj) / p.ppb);
+    const scale = floorNeed > 0 ? capacity / floorNeed : 0;
+    suggested = largestRemainderRound(gaps.map(g => g * scale), capacity);
+    targets = pool.map(() => null);
+  } else {
+    let lo = 0, hi = 1;
+    while (needBatches(hi) < capacity && hi < 1e9) hi *= 2;
+    for (let i = 0; i < 60; i++) {
+      const mid = (lo + hi) / 2;
+      if (needBatches(mid) < capacity) lo = mid; else hi = mid;
+    }
+    const lambda = (lo + hi) / 2;
+    suggested = largestRemainderRound(pool.map(p => Math.max(0, lambda * p.weight - p.proj) / p.ppb), capacity);
+    targets = pool.map(p => p.weight > 0 ? Math.round(lambda * p.weight) : null);
+  }
+
+  return recipes.map((r, idx) => ({
+    suggestedBatches: suggested[idx],
+    surplusBatches: Math.max(0, suggested[idx] - r.deficitBatches),
+    targetStockPacks: targets[idx],
+  }));
 }
 
 /** 2-pack stock consumed by this item's 8-pack bags. A bag is 8 portions, so
@@ -548,6 +619,18 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
             </span>
           );
         })()}
+        {/* The allocation's aim: end-of-horizon stock (after planned batches,
+            bags and the remaining dispatches) vs this flavour's DPT share of
+            the achievable pool. When every end ≈ its target, the fridge is
+            balanced to the DPT split — the whole point of the suggestion. */}
+        {item.included && item.targetStockPacks != null && (
+          <div
+            className="text-[9px] leading-tight mt-0.5 font-normal text-muted-foreground tabular-nums"
+            title={`After the planned batches and remaining dispatches this flavour is projected to end on ${computeNextFactory(item)} packs; its DPT share of the achievable stock pool is ${item.targetStockPacks}.`}
+          >
+            end {computeNextFactory(item)} · tgt {item.targetStockPacks}
+          </div>
+        )}
       </td>
       {/* D2 + D3 dispatches displayed for visual sense-check; the suggested
           batches still use these values via the deficit math on the server. */}
@@ -916,6 +999,7 @@ interface CalcRecipe {
   suggestedBatches: number;
   tinCount: number | null;
   nextFactoryNumber: number;
+  targetStockPacks?: number | null;
   totalDailyBatches: number;
   totalPacksSold: number;
   special1Count: number;
@@ -1328,74 +1412,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     return () => { cancelled = true; };
   }, [planDate, prepTouched, doughTouched]);
 
-  const allocateBatches = useCallback((recipes: AllocRecipe[], capacity: number): { suggestedBatches: number; surplusBatches: number }[] => {
-    if (capacity <= 0) {
-      return recipes.map(() => ({ suggestedBatches: 0, surplusBatches: 0 }));
-    }
-
-    const totalDeficitBatches = recipes.reduce((s, r) => s + r.deficitBatches, 0);
-
-    if (totalDeficitBatches <= capacity) {
-      // Normal case: capacity covers all deficits — spend the remainder on
-      // the flavour with the LEAST stock cover, one batch at a time
-      // (water-fill), weighted by salesPercent. Mirrors the backend exactly:
-      // ranking by stock/share equals ranking by days-of-cover, converges to
-      // the weight proportions once stocks are level, and weight 0 means "no
-      // surplus for this recipe".
-      const remaining = capacity - totalDeficitBatches;
-      const totalPacksSold = recipes.reduce((s, r) => s + r.packsSold, 0);
-
-      const surplusByIdx = new Array(recipes.length).fill(0);
-      const coverPool = recipes
-        .map((r, idx) => ({
-          idx,
-          weight: totalPacksSold > 0 ? r.salesPercent : 0,
-          packsPerBatch: r.packsPerBatch > 0 ? r.packsPerBatch : 1,
-          stock: r.stockAfterPacks + r.deficitBatches * (r.packsPerBatch > 0 ? r.packsPerBatch : 1),
-        }))
-        .filter(p => p.weight > 0);
-      for (let b = 0; b < remaining && coverPool.length > 0; b++) {
-        let best = coverPool[0];
-        for (const p of coverPool) {
-          const cover = p.stock / p.weight;
-          const bestCover = best.stock / best.weight;
-          // Ties go to the bigger seller — it burns through tied cover faster.
-          if (cover < bestCover - 1e-9 || (Math.abs(cover - bestCover) <= 1e-9 && p.weight > best.weight)) {
-            best = p;
-          }
-        }
-        surplusByIdx[best.idx]++;
-        best.stock += best.packsPerBatch;
-      }
-
-      return recipes.map((r, idx) => {
-        const surplusBatches = surplusByIdx[idx];
-        return { suggestedBatches: r.deficitBatches + surplusBatches, surplusBatches };
-      });
-    } else {
-      // Constrained case: capacity < total deficit — scale each recipe down proportionally
-      const rawAlloc = recipes.map(r => {
-        const exact = (r.deficitBatches / totalDeficitBatches) * capacity;
-        return { exact, floor: Math.floor(exact) };
-      });
-
-      let leftover = capacity - rawAlloc.reduce((s, r) => s + r.floor, 0);
-      const sorted = rawAlloc
-        .map((r, idx) => ({ idx, remainder: r.exact - r.floor }))
-        .sort((a, b) => b.remainder - a.remainder);
-      const bonusSet = new Set<number>();
-      for (const { idx } of sorted) {
-        if (leftover <= 0) break;
-        bonusSet.add(idx);
-        leftover--;
-      }
-
-      return recipes.map((r, idx) => {
-        const suggestedBatches = rawAlloc[idx].floor + (bonusSet.has(idx) ? 1 : 0);
-        return { suggestedBatches, surplusBatches: 0 };
-      });
-    }
-  }, []);
+  const allocateBatches = allocateBatchesToTargets;
 
   useEffect(() => {
     if (!calcData?.recipes) return;
@@ -1475,6 +1492,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
         deficit: r.deficit,
         deficitBatches: r.deficitBatches,
         surplusBatches: alloc[idx].surplusBatches,
+        targetStockPacks: alloc[idx].targetStockPacks,
         stockWarning: r.stockWarning,
         special1Count: r.special1Count ?? 0,
         special2Count: r.special2Count ?? 0,
@@ -1532,6 +1550,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
           suggestedBatches: suggested,
           batchesTarget: suggested,
           surplusBatches: alloc[idx].surplusBatches,
+          targetStockPacks: alloc[idx].targetStockPacks,
           tinCount: (() => { if (!item.maxBatchesPerTin || suggested <= 0) return null; const raw = Math.ceil(suggested / item.maxBatchesPerTin); return suggested > 5 ? Math.max(2, raw) : raw; })(),
         };
       });
@@ -1603,6 +1622,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
         suggestedBatches: suggested,
         batchesTarget: suggested,
         surplusBatches: alloc[idx].surplusBatches,
+        targetStockPacks: alloc[idx].targetStockPacks,
         tinCount: recalcTins(suggested, it.maxBatchesPerTin),
       };
     }));
@@ -2585,6 +2605,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
         totalDispatchQty: calc.totalDispatchQty,
         deficit: calc.deficit,
         deficitBatches: calc.deficitBatches,
+        targetStockPacks: calc.targetStockPacks ?? null,
         special1Count: calc.special1Count ?? 0,
         special2Count: calc.special2Count ?? 0,
         special3Count: calc.special3Count ?? 0,
@@ -2594,39 +2615,10 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   }, [editCalcData]);
 
   const editEffectiveTotalBatches = editCalcData?.totalDailyBatches ?? 0;
-  const editAllocateBatches = useCallback((recipes: CalcRecipe[], capacity: number): { suggestedBatches: number; surplusBatches: number }[] => {
-    if (capacity <= 0) return recipes.map(() => ({ suggestedBatches: 0, surplusBatches: 0 }));
-    const totalDeficitBatches = recipes.reduce((s, r) => s + r.deficitBatches, 0);
-    if (totalDeficitBatches <= capacity) {
-      const remaining = capacity - totalDeficitBatches;
-      const totalPacksSold = recipes.reduce((s, r) => s + r.packsSold, 0);
-      const rawSurplus = recipes.map(r => {
-        const exact = totalPacksSold > 0 ? (r.salesPercent / 100) * remaining : 0;
-        return { exact, floor: Math.floor(exact) };
-      });
-      let leftover = remaining - rawSurplus.reduce((s, r) => s + r.floor, 0);
-      const sorted = rawSurplus.map((r, idx) => ({ idx, remainder: r.exact - r.floor })).sort((a, b) => b.remainder - a.remainder);
-      const bonusSet = new Set<number>();
-      for (const { idx } of sorted) { if (leftover <= 0) break; bonusSet.add(idx); leftover--; }
-      return recipes.map((r, idx) => {
-        const surplusBatches = rawSurplus[idx].floor + (bonusSet.has(idx) ? 1 : 0);
-        return { suggestedBatches: r.deficitBatches + surplusBatches, surplusBatches };
-      });
-    } else {
-      const rawAlloc = recipes.map(r => {
-        const exact = (r.deficitBatches / totalDeficitBatches) * capacity;
-        return { exact, floor: Math.floor(exact) };
-      });
-      let leftover = capacity - rawAlloc.reduce((s, r) => s + r.floor, 0);
-      const sorted = rawAlloc.map((r, idx) => ({ idx, remainder: r.exact - r.floor })).sort((a, b) => b.remainder - a.remainder);
-      const bonusSet = new Set<number>();
-      for (const { idx } of sorted) { if (leftover <= 0) break; bonusSet.add(idx); leftover--; }
-      return recipes.map((r, idx) => {
-        const suggestedBatches = rawAlloc[idx].floor + (bonusSet.has(idx) ? 1 : 0);
-        return { suggestedBatches, surplusBatches: 0 };
-      });
-    }
-  }, []);
+  // Shared target-stock allocator — the edit dialog previously carried its own
+  // copy of the old flat-DPT-split maths, so Recalculate here silently
+  // disagreed with the create dialog and the backend. Never fork this again.
+  const editAllocateBatches = allocateBatchesToTargets;
 
   const [editRecalcFlash, setEditRecalcFlash] = useState(false);
   const handleEditRecalculateBatches = useCallback(() => {
@@ -2636,13 +2628,15 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
     const sumDptPercent = includedItems.reduce((s, it) => s + (it.dptPercent ?? 0), 0);
     const sumSalesPercent = includedItems.reduce((s, it) => s + (it.salesPercent || 0), 0);
     const fallbackPercent = 100 / includedItems.length;
-    const recipesForAlloc = includedItems.map(it => ({
+    const recipesForAlloc: AllocRecipe[] = includedItems.map(it => ({
       deficitBatches: it.deficitBatches,
       salesPercent: sumDptPercent > 0
         ? ((it.dptPercent ?? 0) / sumDptPercent) * 100
         : sumSalesPercent > 0 ? (it.salesPercent / sumSalesPercent) * 100 : fallbackPercent,
       packsSold: 1,
-    })) as unknown as CalcRecipe[];
+      packsPerBatch: it.packsPerBatch,
+      stockAfterPacks: it.estimatedFactoryNumber - bagPackEquivalents(it) - it.dispatch2Qty - it.dispatch3Qty,
+    }));
     const alloc = editAllocateBatches(recipesForAlloc, editEffectiveTotalBatches);
     isDirty.current = true;
     setItems(prev => prev.map(it => {
@@ -2656,6 +2650,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
         suggestedBatches: suggested,
         batchesTarget: suggested,
         surplusBatches: alloc[idx].surplusBatches,
+        targetStockPacks: alloc[idx].targetStockPacks,
         tinCount,
       };
     }));
