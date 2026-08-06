@@ -7737,6 +7737,74 @@ router.delete("/:id/prep-deferrals/by-tin", async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Base sub-recipe production completions ─────────────────────────────────
+// The Bases & Sauces station's base card (Tomato Base) previously tracked
+// "done" only in component state — a refresh lost it and it never counted
+// toward the station's progress. One row per (plan, sub-recipe), written by
+// the direct tick on the station page or by finishing the make flow.
+// `batches` is what was actually made (0 = stock covered it, nothing made;
+// null = direct tick, not asked).
+
+router.get("/:id/sub-recipe-completions", async (req, res) => {
+  const planId = Number(req.params.id);
+  try {
+    const result = await db.execute(sql`
+      SELECT src.sub_recipe_id AS "subRecipeId", src.batches, src.user_id AS "userId",
+             u.name AS "userName", src.completed_at AS "completedAt"
+      FROM sub_recipe_completions src
+      LEFT JOIN app_users u ON u.id = src.user_id
+      WHERE src.plan_id = ${planId}
+    `);
+    res.json({ completions: result.rows });
+  } catch (err) {
+    console.error("sub-recipe-completions GET error:", err);
+    res.status(500).json({ error: "Failed to load sub-recipe completions" });
+  }
+});
+
+router.post("/:id/sub-recipe-completions", async (req, res) => {
+  const planId = Number(req.params.id);
+  const { subRecipeId, batches } = req.body as { subRecipeId?: number; batches?: number | null };
+  if (!subRecipeId) { res.status(400).json({ error: "subRecipeId is required" }); return; }
+  if (await planDraftStatus(planId)) { res.status(409).json({ error: DRAFT_COMPLETION_ERROR }); return; }
+  const userId = (req.session as any)?.userId ?? null;
+  try {
+    // Upsert: re-completing (e.g. flow finish after a direct tick) refreshes
+    // who/when/batches rather than erroring — the newest signal wins.
+    const result = await db.execute(sql`
+      INSERT INTO sub_recipe_completions (plan_id, sub_recipe_id, batches, user_id, completed_at)
+      VALUES (${planId}, ${subRecipeId}, ${batches ?? null}, ${userId}, NOW())
+      ON CONFLICT ON CONSTRAINT uq_sub_recipe_completion
+      DO UPDATE SET batches = EXCLUDED.batches, user_id = EXCLUDED.user_id, completed_at = EXCLUDED.completed_at
+      RETURNING sub_recipe_id AS "subRecipeId", batches, user_id AS "userId", completed_at AS "completedAt"
+    `);
+    const row = result.rows[0] as Record<string, unknown>;
+    const userName = userId
+      ? (await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId)))?.[0]?.name ?? null
+      : null;
+    res.status(201).json({ ...row, userName });
+  } catch (err) {
+    console.error("sub-recipe-completions POST error:", err);
+    res.status(500).json({ error: "Failed to record sub-recipe completion" });
+  }
+});
+
+router.delete("/:id/sub-recipe-completions", async (req, res) => {
+  const planId = Number(req.params.id);
+  const { subRecipeId } = req.body as { subRecipeId?: number };
+  if (!subRecipeId) { res.status(400).json({ error: "subRecipeId is required" }); return; }
+  try {
+    await db.execute(sql`
+      DELETE FROM sub_recipe_completions
+      WHERE plan_id = ${planId} AND sub_recipe_id = ${subRecipeId}
+    `);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("sub-recipe-completions DELETE error:", err);
+    res.status(500).json({ error: "Failed to remove sub-recipe completion" });
+  }
+});
+
 // --- In-memory prep presence (ephemeral, no DB needed) ---
 type PresenceEntry = { userId: number; userName: string; ingredientId: number; updatedAt: number };
 const prepPresenceStore = new Map<string, PresenceEntry>(); // key = `${planId}-${userId}`
