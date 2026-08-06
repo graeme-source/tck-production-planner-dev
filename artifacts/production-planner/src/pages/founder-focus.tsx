@@ -606,6 +606,7 @@ export default function FounderFocus() {
             onSkip={b => patchBlock.mutate({ id: b.id, status: "skipped" })}
             onDelete={id => deleteBlock.mutate(id)}
             onTickRecurring={(id, ticked) => tickRecurring.mutate({ id, ticked })}
+            onToggleGoal={(id, done) => patchGoal.mutate({ id, status: done ? "done" : "active" })}
           />
         )}
 
@@ -1591,7 +1592,7 @@ function layoutLanes(items: Array<{ startMin: number; endMin: number }>): Array<
   return result;
 }
 
-function DayTimeline({ items, pillarById, recurringByBlockId, isToday, now, busy, statusControls = true, onMove, onResize, onToggleDone, onSkip, onDelete, onTickRecurring }: {
+function DayTimeline({ items, pillarById, recurringByBlockId, isToday, now, busy, statusControls = true, onMove, onResize, onToggleDone, onSkip, onDelete, onTickRecurring, onToggleGoal }: {
   items: TimelineCardItem[];
   pillarById: Map<number, Pillar>;
   recurringByBlockId?: Map<number, RecurringItem[]>;
@@ -1605,6 +1606,8 @@ function DayTimeline({ items, pillarById, recurringByBlockId, isToday, now, busy
   onSkip?: (b: Block) => void;
   onDelete: (id: number) => void;
   onTickRecurring?: (id: number, ticked: boolean) => void;
+  /** Tick a pillar goal off (or back on) from inside a block. */
+  onToggleGoal?: (goalId: number, done: boolean) => void;
 }) {
   const [drag, setDrag] = useState<TimelineDrag | null>(null);
 
@@ -1815,6 +1818,40 @@ function DayTimeline({ items, pillarById, recurringByBlockId, isToday, now, busy
                       ))}
                     </div>
                   )}
+                  {/* The pillar's goals, tickable in place — a standing
+                      reminder of what this block is FOR. Ticking marks the
+                      goal done everywhere (same PATCH as the pillar panel);
+                      tapping a done one brings it back. */}
+                  {onToggleGoal && pillar && h >= 84 && (() => {
+                    const goals = pillar.goals.filter(g => g.status !== "parked");
+                    if (goals.length === 0) return null;
+                    const shown = goals.slice(0, 6);
+                    return (
+                      <div className="mt-1 space-y-0.5">
+                        {shown.map(g => (
+                          <button
+                            key={g.id}
+                            onClick={() => onToggleGoal(g.id, g.status !== "done")}
+                            className={cn(
+                              "flex items-center gap-1.5 text-[11px] rounded-md px-1.5 py-0.5 border min-w-0 max-w-full",
+                              g.status === "done" ? "border-primary/40 bg-primary/10 text-muted-foreground line-through" : "border-border hover:border-primary",
+                            )}
+                          >
+                            <span className={cn(
+                              "w-3 h-3 rounded-full border flex items-center justify-center flex-shrink-0",
+                              g.status === "done" ? "bg-primary border-primary text-primary-foreground" : "border-border",
+                            )}>
+                              {g.status === "done" && <Check className="w-2 h-2" />}
+                            </span>
+                            <span className="truncate">{g.title}</span>
+                          </button>
+                        ))}
+                        {goals.length > shown.length && (
+                          <p className="text-[10px] text-muted-foreground pl-1">+{goals.length - shown.length} more in the pillar panel</p>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
                 <div className="flex-shrink-0 flex items-center gap-0.5">
                   {statusControls && onSkip && b.status === "planned" && !compact && (
