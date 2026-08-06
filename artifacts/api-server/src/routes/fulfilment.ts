@@ -3,7 +3,7 @@ import { db, skuLocationsTable, skuBarcodesTable, appSettingsTable, usersTable, 
 import { eq } from "drizzle-orm";
 import * as z from "zod";
 import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
-import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService, lookupOrderByReference, lookupOrderByWaybill, parseApcBarcode, waybillCore, apcTrackingUrl, type ApcOrderLookup } from "../services/apc";
+import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService, lookupOrderByReference, lookupOrdersByReference, lookupOrderByWaybill, parseApcBarcode, waybillCore, apcTrackingUrl, type ApcOrderLookup } from "../services/apc";
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
 import { sql } from "drizzle-orm";
 
@@ -603,7 +603,8 @@ router.get("/consignment-for-order", requireFulfilmentAccess, async (req: Reques
     // it up on the training server just returns a 419 that reads like bad
     // credentials. Nothing is booked here — it's a read — so there's no
     // side-effect risk in ignoring test mode.
-    const lookup = await lookupOrderByReference(orderName);
+    const matches = await lookupOrdersByReference(orderName);
+    const lookup = matches[0];
     if (!lookup || !lookup.waybill) {
       res.status(404).json({
         error: `APC has no consignment with reference "${orderName}". Check the reference in Hypaship before packing this order.`,
@@ -624,6 +625,13 @@ router.get("/consignment-for-order", requireFulfilmentAccess, async (req: Reques
       consigneePostcode: lookup.consigneePostcode,
       productCode: lookup.productCode,
       trackingUrl: apcTrackingUrl(lookup.waybill, lookup.consigneePostcode),
+      // A skipped-then-re-tagged order gets uploaded to Hypaship twice, so one
+      // reference can hold several live consignments (and several printed
+      // labels). The scan accepts whichever label matches; this count lets the
+      // UI warn the packer that spare labels for this order exist and must be
+      // binned.
+      duplicateCount: matches.length,
+      duplicateWaybills: matches.map(m => m.waybill),
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -672,8 +680,8 @@ router.post("/verify-label-scan", requireFulfilmentAccess, async (req: Request, 
 
   try {
     // Live regardless of apc_test_mode — see the note in /consignment-for-order.
-    const lookup = await lookupOrderByReference(orderName);
-    if (!lookup || !lookup.waybill) {
+    const matches = await lookupOrdersByReference(orderName);
+    if (!matches.length || !matches[0].waybill) {
       res.json({
         verified: false,
         problem: "no-consignment",
@@ -682,14 +690,19 @@ router.post("/verify-label-scan", requireFulfilmentAccess, async (req: Request, 
       return;
     }
 
-    const expectedCore = waybillCore(lookup.waybill);
-    if (scan.core !== expectedCore) {
+    // A skipped-then-re-tagged order holds several consignments under one
+    // reference, each with its own printed label. Any of them proves the label
+    // belongs to THIS order, so match the scan against all of them — the
+    // matched consignment is the one recorded and pushed to Shopify.
+    const lookup = matches.find(m => waybillCore(m.waybill ?? "") === scan.core);
+    if (!lookup || !lookup.waybill) {
       res.json({
         verified: false,
         problem: "wrong-order",
         message: "This label belongs to a DIFFERENT consignment — do not ship it on this order.",
         scannedCore: scan.core,
-        expectedCore,
+        expectedCore: waybillCore(matches[0].waybill ?? ""),
+        expectedCores: matches.map(m => waybillCore(m.waybill ?? "")),
       });
       return;
     }
@@ -743,7 +756,10 @@ router.post("/verify-label-scan", requireFulfilmentAccess, async (req: Request, 
       consigneeName: lookup.consigneeName,
       consigneePostcode: lookup.consigneePostcode,
       parcel: scan.itemNumber,
-      message: "Label verified.",
+      duplicateCount: matches.length,
+      message: matches.length > 1
+        ? `Label verified. NOTE: APC holds ${matches.length} consignments for this order (it was uploaded more than once) — bin any spare labels for it.`
+        : "Label verified.",
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
