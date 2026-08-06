@@ -12,7 +12,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Loader2, ArrowLeft, ArrowUp, ArrowDown, Trash2, Copy, Check,
   QrCode, BarChart2, Pencil, Star, AlertTriangle, Download, ExternalLink,
-  MessagesSquare, Lock, LockOpen,
+  MessagesSquare, Lock, LockOpen, Eye,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
@@ -38,7 +38,7 @@ async function jsonOrThrow(res: Response, fallback: string) {
 // ── Types (mirror routes/surveys.ts serialisation) ─────────────────────────
 
 type SurveyStatus = "draft" | "open" | "closed";
-type QuestionType = "rating" | "choice" | "multi" | "text" | "rank";
+type QuestionType = "rating" | "slider" | "choice" | "multi" | "text" | "rank";
 
 interface SurveyListItem {
   id: number;
@@ -68,6 +68,7 @@ interface SurveyDetail extends SurveyListItem { questions: ServerQuestion[] }
 
 type Aggregates =
   | { kind: "rating"; count: number; average: number | null; distribution: Record<string, number> }
+  | { kind: "slider"; count: number; average: number | null }
   | { kind: "options"; count: number; counts: Record<string, number> }
   | { kind: "rank"; count: number; averagePosition: Record<string, number | null> }
   | { kind: "text"; count: number; answers: { value: string; submittedAt: string | null }[] };
@@ -87,6 +88,10 @@ interface DraftQuestion {
   id?: number;
   type: QuestionType;
   prompt: string;
+  // False while the prompt is empty or still an auto-filled template —
+  // picking a recipe (or switching type) may then (re)write it. Goes true
+  // the moment the user types their own text, and auto-fill backs off.
+  promptEdited: boolean;
   recipeId: number | null;
   options: string[];
   required: boolean;
@@ -95,10 +100,29 @@ interface DraftQuestion {
 
 const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
   rating: "Rating (stars)",
+  slider: "Approval slider (0–100%)",
   choice: "Choice (one of)",
   multi: "Multi (any of)",
   text: "Free text",
   rank: "Rank the options",
+};
+
+// Stars stay coarse — 2..10. Bigger granular scales are what the slider
+// type is for. The server rejects anything outside this range too.
+const RATING_MAX_MIN = 2;
+const RATING_MAX_MAX = 10;
+const clampRatingMax = (n: number) => Math.min(RATING_MAX_MAX, Math.max(RATING_MAX_MIN, n));
+
+// Prompt templates applied when a recipe is picked and the prompt hasn't
+// been hand-written (empty or still a previous auto-fill). Always editable
+// afterwards — auto-fill never overwrites a customised prompt.
+const PROMPT_TEMPLATES: Record<QuestionType, (name: string) => string> = {
+  rating: (name) => `How would you rate the ${name} recipe?`,
+  slider: (name) => `Overall, how likely are you to approve the ${name} for the menu?`,
+  choice: (name) => `Which best describes the ${name}?`,
+  multi: (name) => `Which of these apply to the ${name}?`,
+  text: (name) => `What did you think of the ${name}?`,
+  rank: (name) => `Rank what you enjoyed most about the ${name}`,
 };
 
 const OPTION_TYPES: QuestionType[] = ["choice", "multi", "rank"];
@@ -206,6 +230,188 @@ function ShareDialog({ survey, onClose }: { survey: { id: number; title: string;
   );
 }
 
+// ── Customer preview ───────────────────────────────────────────────────────
+// An in-planner approximation of what the Shopify widget renders: same
+// content, question order, images and controls, in a narrow customer-width
+// card. Controls are interactive so the flow can be felt out, but nothing is
+// ever submitted from here. (The real thing lives in the tck-theme survey
+// section — this is a preview, not a pixel-perfect copy.)
+
+interface PreviewQuestion {
+  key: string;
+  type: QuestionType;
+  prompt: string;
+  required: boolean;
+  max: number;
+  options: string[];
+  recipe: { name: string; imageUrl: string | null } | null;
+}
+
+interface PreviewData { title: string; intro: string | null; questions: PreviewQuestion[] }
+
+function PreviewStars({ max }: { max: number }) {
+  const [value, setValue] = useState(0);
+  return (
+    <div className="flex gap-1">
+      {Array.from({ length: max }, (_, i) => (
+        <button key={i} type="button" onClick={() => setValue(i + 1)} className="p-0.5">
+          <Star className={cn(
+            "w-7 h-7 transition-colors",
+            i < value ? "fill-amber-400 text-amber-400" : "text-muted-foreground/40",
+          )} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function PreviewSlider() {
+  const [value, setValue] = useState<number | null>(null);
+  return (
+    <div className="space-y-1">
+      <input
+        type="range" min={0} max={100} step={1}
+        value={value ?? 50}
+        onChange={(e) => setValue(Number(e.target.value))}
+        className="w-full accent-primary"
+      />
+      <p className="text-sm text-muted-foreground text-right">{value == null ? "Slide to answer" : `${value}%`}</p>
+    </div>
+  );
+}
+
+function PreviewOptions({ options, multi }: { options: string[]; multi: boolean }) {
+  const [selected, setSelected] = useState<string[]>([]);
+  const toggle = (opt: string) => setSelected(prev =>
+    multi
+      ? (prev.includes(opt) ? prev.filter(o => o !== opt) : [...prev, opt])
+      : [opt]);
+  return (
+    <div className="space-y-1.5">
+      {options.map(opt => (
+        <button
+          key={opt} type="button" onClick={() => toggle(opt)}
+          className={cn(
+            "w-full text-left text-sm rounded-lg border px-3 py-2 transition-colors",
+            selected.includes(opt) ? "border-primary bg-primary/10" : "border-border bg-background",
+          )}
+        >
+          {opt}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function PreviewRank({ options }: { options: string[] }) {
+  const [order, setOrder] = useState(options);
+  const move = (idx: number, dir: -1 | 1) => setOrder(prev => {
+    const target = idx + dir;
+    if (target < 0 || target >= prev.length) return prev;
+    const next = [...prev];
+    [next[idx], next[target]] = [next[target], next[idx]];
+    return next;
+  });
+  return (
+    <div className="space-y-1.5">
+      {order.map((opt, i) => (
+        <div key={opt} className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-1.5 text-sm">
+          <span className="w-5 h-5 rounded-full bg-primary/15 text-primary text-xs font-semibold flex items-center justify-center flex-shrink-0">
+            {i + 1}
+          </span>
+          <span className="flex-1">{opt}</span>
+          <button type="button" disabled={i === 0} onClick={() => move(i, -1)} className="p-1 disabled:opacity-30">
+            <ArrowUp className="w-3.5 h-3.5" />
+          </button>
+          <button type="button" disabled={i === order.length - 1} onClick={() => move(i, 1)} className="p-1 disabled:opacity-30">
+            <ArrowDown className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PreviewQuestionCard({ q }: { q: PreviewQuestion }) {
+  return (
+    <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+      {q.recipe && (
+        <div className="flex items-center gap-3">
+          {q.recipe.imageUrl && (
+            <img src={q.recipe.imageUrl} alt={q.recipe.name} className="w-12 h-12 rounded-lg object-cover border border-border" />
+          )}
+          <span className="font-semibold text-sm">{q.recipe.name}</span>
+        </div>
+      )}
+      <p className="text-sm font-medium">
+        {q.prompt || <span className="text-muted-foreground italic">(no prompt yet)</span>}
+        {q.required && <span className="text-destructive ml-1">*</span>}
+      </p>
+      {q.type === "rating" && <PreviewStars max={q.max} />}
+      {q.type === "slider" && <PreviewSlider />}
+      {q.type === "choice" && <PreviewOptions options={q.options} multi={false} />}
+      {q.type === "multi" && <PreviewOptions options={q.options} multi />}
+      {q.type === "text" && <Textarea rows={3} placeholder="The customer types here…" />}
+      {q.type === "rank" && <PreviewRank options={q.options} />}
+    </div>
+  );
+}
+
+function SurveyPreviewDialog({ data, onClose }: { data: PreviewData | null; onClose: () => void }) {
+  if (!data) return null;
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+            <Eye className="w-4 h-4" /> Customer preview — nothing is recorded
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="text-center space-y-1 pb-1">
+            <h2 className="text-lg font-bold">{data.title || "Untitled survey"}</h2>
+            {data.intro && <p className="text-sm text-muted-foreground">{data.intro}</p>}
+          </div>
+          {data.questions.map(q => <PreviewQuestionCard key={q.key} q={q} />)}
+          <Button
+            className="w-full"
+            onClick={() => toast({ title: "Preview only", description: "Nothing is recorded from the preview." })}
+          >
+            Send feedback
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** List-card preview: fetches the saved survey, then shows the dialog. */
+function SavedSurveyPreview({ surveyId, onClose }: { surveyId: number; onClose: () => void }) {
+  const { data, isLoading } = useQuery<SurveyDetail>({
+    queryKey: ["survey", surveyId],
+    queryFn: async () => jsonOrThrow(await fetch(`${BASE}/api/surveys/${surveyId}`, { credentials: "include" }), "Failed to load survey"),
+  });
+  if (isLoading || !data) return null;
+  return (
+    <SurveyPreviewDialog
+      onClose={onClose}
+      data={{
+        title: data.title,
+        intro: data.intro,
+        questions: data.questions.map(q => ({
+          key: String(q.id),
+          type: q.type,
+          prompt: q.prompt,
+          required: q.required,
+          max: q.max,
+          options: q.options ?? [],
+          recipe: q.recipe ? { name: q.recipe.name, imageUrl: q.recipe.imageUrl } : null,
+        })),
+      }}
+    />
+  );
+}
+
 // ── Builder ────────────────────────────────────────────────────────────────
 
 function toDraftQuestions(questions: ServerQuestion[]): DraftQuestion[] {
@@ -214,6 +420,11 @@ function toDraftQuestions(questions: ServerQuestion[]): DraftQuestion[] {
     id: q.id,
     type: q.type,
     prompt: q.prompt,
+    // A saved prompt that still exactly matches its template counts as
+    // unedited, so re-picking the recipe keeps re-templating. Anything else
+    // the user wrote (or tweaked) is protected.
+    promptEdited: q.prompt.trim() !== "" &&
+      !(q.recipe && PROMPT_TEMPLATES[q.type](q.recipe.name) === q.prompt),
     recipeId: q.recipeId,
     options: q.options ?? [],
     required: q.required,
@@ -233,6 +444,15 @@ function QuestionEditor({ question, recipes, onChange, onRemove, onMove, isFirst
   const recipe = question.recipeId != null ? recipes.find(r => r.id === question.recipeId) : undefined;
   const needsOptions = OPTION_TYPES.includes(question.type);
 
+  /** Re-template the prompt if it hasn't been hand-written. */
+  const withAutoFill = (next: DraftQuestion): DraftQuestion => {
+    const nextRecipe = next.recipeId != null ? recipes.find(r => r.id === next.recipeId) : undefined;
+    if (nextRecipe && (!next.promptEdited || next.prompt.trim() === "")) {
+      return { ...next, prompt: PROMPT_TEMPLATES[next.type](nextRecipe.name), promptEdited: false };
+    }
+    return next;
+  };
+
   return (
     <div className="rounded-xl border border-border bg-card p-4 space-y-3">
       <div className="flex items-start gap-2">
@@ -241,7 +461,7 @@ function QuestionEditor({ question, recipes, onChange, onRemove, onMove, isFirst
             <div className="w-44">
               <Select
                 value={question.type}
-                onValueChange={(v) => onChange({ ...question, type: v as QuestionType })}
+                onValueChange={(v) => onChange(withAutoFill({ ...question, type: v as QuestionType }))}
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -255,14 +475,19 @@ function QuestionEditor({ question, recipes, onChange, onRemove, onMove, isFirst
               <RecipePicker
                 recipes={recipes}
                 value={question.recipeId}
-                onChange={(recipeId) => onChange({ ...question, recipeId })}
+                onChange={(recipeId) => onChange(withAutoFill({ ...question, recipeId }))}
               />
             </div>
           </div>
           <Input
             value={question.prompt}
             placeholder="Question prompt, e.g. How would you rate the Mexican Chicken calzone?"
-            onChange={(e) => onChange({ ...question, prompt: e.target.value })}
+            onChange={(e) => {
+              const prompt = e.target.value;
+              // Typing marks the prompt as hand-written; clearing it re-arms
+              // auto-fill for the next recipe/type pick.
+              onChange({ ...question, prompt, promptEdited: prompt.trim() !== "" });
+            }}
           />
         </div>
         <div className="flex flex-col gap-1">
@@ -330,15 +555,22 @@ function QuestionEditor({ question, recipes, onChange, onRemove, onMove, isFirst
           <label className="flex items-center gap-2 text-sm">
             Scale: 1–
             <Input
-              type="number" min={2} max={10}
+              type="number" min={RATING_MAX_MIN} max={RATING_MAX_MAX}
               className="w-16 h-8"
               value={question.max}
               onChange={(e) => {
+                // Let intermediate keystrokes through (typing "10" passes
+                // through 1); the blur below snaps into 2..10.
                 const max = Number(e.target.value);
                 if (Number.isInteger(max)) onChange({ ...question, max });
               }}
+              onBlur={() => onChange({ ...question, max: clampRatingMax(question.max) })}
             />
+            <span className="text-xs text-muted-foreground">max 10 — use the slider type for finer scales</span>
           </label>
+        )}
+        {question.type === "slider" && (
+          <span className="text-xs text-muted-foreground">0–100% approval slider on the public survey</span>
         )}
       </div>
     </div>
@@ -356,6 +588,7 @@ function BuilderView({ surveyId, onBack, onSaved }: {
   const [questions, setQuestions] = useState<DraftQuestion[]>([]);
   const [loadedFor, setLoadedFor] = useState<number | null>(null);
   const [shareTarget, setShareTarget] = useState<{ id: number; title: string; shareUrl: string } | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const { data: recipes } = useQuery<RecipeOption[]>({
     queryKey: ["survey-recipe-options"],
@@ -389,7 +622,7 @@ function BuilderView({ surveyId, onBack, onSaved }: {
           recipeId: q.recipeId,
           options: OPTION_TYPES.includes(q.type) ? q.options.map(o => o.trim()).filter(Boolean) : null,
           required: q.required,
-          max: q.max,
+          max: q.type === "rating" ? clampRatingMax(q.max) : q.max,
         })),
       };
       const url = surveyId == null ? `${BASE}/api/surveys` : `${BASE}/api/surveys/${surveyId}`;
@@ -426,10 +659,15 @@ function BuilderView({ surveyId, onBack, onSaved }: {
         <Button variant="ghost" onClick={onBack}>
           <ArrowLeft className="w-4 h-4 mr-2" /> Back to surveys
         </Button>
-        <Button onClick={() => save.mutate()} disabled={!canSave || save.isPending}>
-          {save.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-          Save survey
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setPreviewOpen(true)} disabled={questions.length === 0}>
+            <Eye className="w-4 h-4 mr-2" /> Preview
+          </Button>
+          <Button onClick={() => save.mutate()} disabled={!canSave || save.isPending}>
+            {save.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+            Save survey
+          </Button>
+        </div>
       </div>
 
       {existing != null && existing.responseCount > 0 && (
@@ -478,13 +716,36 @@ function BuilderView({ surveyId, onBack, onSaved }: {
       <Button
         variant="outline" className="w-full"
         onClick={() => setQuestions(qs => [...qs, {
-          key: nextKey(), type: "rating", prompt: "", recipeId: null, options: [], required: true, max: 5,
+          key: nextKey(), type: "rating", prompt: "", promptEdited: false, recipeId: null, options: [], required: true, max: 5,
         }])}
       >
         <Plus className="w-4 h-4 mr-2" /> Add question
       </Button>
 
       <ShareDialog survey={shareTarget} onClose={() => setShareTarget(null)} />
+
+      {previewOpen && (
+        <SurveyPreviewDialog
+          onClose={() => setPreviewOpen(false)}
+          // Built from the live draft state, so unsaved edits preview too.
+          data={{
+            title: title.trim(),
+            intro: intro.trim() || null,
+            questions: questions.map(q => {
+              const recipe = q.recipeId != null ? (recipes ?? []).find(r => r.id === q.recipeId) : undefined;
+              return {
+                key: q.key,
+                type: q.type,
+                prompt: q.prompt,
+                required: q.required,
+                max: q.type === "rating" ? clampRatingMax(q.max) : q.max,
+                options: q.options.map(o => o.trim()).filter(Boolean),
+                recipe: recipe ? { name: recipe.name, imageUrl: recipe.imageUrl } : null,
+              };
+            }),
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -532,6 +793,20 @@ function QuestionResults({ question }: { question: ResultsData["questions"][numb
             counts={Object.fromEntries(Object.entries(agg.distribution).map(([star, n]) => [`${star} star${star === "1" ? "" : "s"}`, n]))}
             total={agg.count}
           />
+        </div>
+      )}
+
+      {agg.kind === "slider" && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-2xl font-semibold">{agg.average != null ? `${agg.average}%` : "—"}</span>
+            <span className="text-sm text-muted-foreground">average approval</span>
+          </div>
+          {agg.average != null && (
+            <div className="h-2 rounded bg-muted overflow-hidden">
+              <div className="h-full bg-primary/70" style={{ width: `${agg.average}%` }} />
+            </div>
+          )}
         </div>
       )}
 
@@ -637,11 +912,12 @@ function ResultsView({ surveyId, onBack }: { surveyId: number; onBack: () => voi
 
 // ── List ───────────────────────────────────────────────────────────────────
 
-function SurveyCard({ survey, onEdit, onResults, onShare }: {
+function SurveyCard({ survey, onEdit, onResults, onShare, onPreview }: {
   survey: SurveyListItem;
   onEdit: () => void;
   onResults: () => void;
   onShare: () => void;
+  onPreview: () => void;
 }) {
   const queryClient = useQueryClient();
 
@@ -691,6 +967,9 @@ function SurveyCard({ survey, onEdit, onResults, onShare }: {
         <Button variant="outline" size="sm" onClick={onEdit}>
           <Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit
         </Button>
+        <Button variant="outline" size="sm" onClick={onPreview}>
+          <Eye className="w-3.5 h-3.5 mr-1.5" /> Preview
+        </Button>
         <Button variant="outline" size="sm" onClick={onResults}>
           <BarChart2 className="w-3.5 h-3.5 mr-1.5" /> Results
         </Button>
@@ -721,6 +1000,7 @@ type View = { name: "list" } | { name: "builder"; surveyId: number | null } | { 
 export default function Surveys() {
   const [view, setView] = useState<View>({ name: "list" });
   const [shareTarget, setShareTarget] = useState<{ id: number; title: string; shareUrl: string } | null>(null);
+  const [previewId, setPreviewId] = useState<number | null>(null);
 
   const { data: surveys, isLoading } = useQuery<SurveyListItem[]>({
     queryKey: ["surveys"],
@@ -773,6 +1053,7 @@ export default function Surveys() {
                 onEdit={() => setView({ name: "builder", surveyId: s.id })}
                 onResults={() => setView({ name: "results", surveyId: s.id })}
                 onShare={() => setShareTarget({ id: s.id, title: s.title, shareUrl: s.shareUrl })}
+                onPreview={() => setPreviewId(s.id)}
               />
             ))}
           </div>
@@ -780,6 +1061,9 @@ export default function Surveys() {
       )}
 
       <ShareDialog survey={shareTarget} onClose={() => setShareTarget(null)} />
+      {previewId != null && (
+        <SavedSurveyPreview surveyId={previewId} onClose={() => setPreviewId(null)} />
+      )}
     </div>
   );
 }

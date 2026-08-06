@@ -280,6 +280,7 @@ router.post("/:id/duplicate", async (req, res) => {
 
 type QuestionResults =
   | { kind: "rating"; count: number; average: number | null; distribution: Record<number, number> }
+  | { kind: "slider"; count: number; average: number | null }
   | { kind: "options"; count: number; counts: Record<string, number> }
   | { kind: "rank"; count: number; averagePosition: Record<string, number | null> }
   | { kind: "text"; count: number; answers: { value: string; submittedAt: Date | null }[] };
@@ -324,6 +325,15 @@ router.get("/:id/results", async (req, res) => {
           count: values.length,
           average: values.length ? Math.round((values.reduce((s, v) => s + v, 0) / values.length) * 100) / 100 : null,
           distribution,
+        };
+        break;
+      }
+      case "slider": {
+        const values = raw.map(a => a.value).filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+        aggregates = {
+          kind: "slider",
+          count: values.length,
+          average: values.length ? Math.round((values.reduce((s, v) => s + v, 0) / values.length) * 10) / 10 : null,
         };
         break;
       }

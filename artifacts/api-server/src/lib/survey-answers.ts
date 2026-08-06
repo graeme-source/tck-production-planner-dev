@@ -9,8 +9,9 @@ export function questionOptions(q: SurveyQuestion): string[] {
 /**
  * Validate one submitted answer value against its question. Returns an error
  * message, or null when the value is valid. Value shapes:
- *   rating -> integer 1..max, choice -> one option string,
- *   multi -> option string[], text -> string (<=2000 chars),
+ *   rating -> integer 1..max, slider -> number 0..100,
+ *   choice -> one option string, multi -> option string[],
+ *   text -> string (<=2000 chars),
  *   rank -> string[] that is exactly the option list in ranked order.
  */
 export function validateAnswerValue(q: SurveyQuestion, value: unknown): string | null {
@@ -18,6 +19,13 @@ export function validateAnswerValue(q: SurveyQuestion, value: unknown): string |
     case "rating": {
       if (typeof value !== "number" || !Number.isInteger(value)) return "rating must be a whole number";
       if (value < 1 || value > q.max) return `rating must be between 1 and ${q.max}`;
+      return null;
+    }
+    case "slider": {
+      // 0-100 approval percentage from the widget's slider. Not clamped to
+      // q.max — the scale is fixed by the type, not the builder.
+      if (typeof value !== "number" || !Number.isFinite(value)) return "slider must be a number";
+      if (value < 0 || value > 100) return "slider must be between 0 and 100";
       return null;
     }
     case "choice": {

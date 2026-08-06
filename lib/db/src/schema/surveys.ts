@@ -31,7 +31,8 @@ export const surveyQuestionsTable = pgTable("survey_questions", {
   id: serial("id").primaryKey(),
   surveyId: integer("survey_id").notNull().references(() => surveysTable.id, { onDelete: "cascade" }),
   position: integer("position").notNull().default(0),
-  // 'rating' | 'choice' | 'multi' | 'text' | 'rank'
+  // 'rating' | 'slider' | 'choice' | 'multi' | 'text' | 'rank'
+  // slider = 0-100 approval %, added for the Shopify widget's granular scale.
   type: text("type").notNull(),
   prompt: text("prompt").notNull(),
   // Optional link to a recipe — the public survey shows the recipe's name and
@@ -77,5 +78,5 @@ export type SurveyQuestion = typeof surveyQuestionsTable.$inferSelect;
 export type SurveyResponse = typeof surveyResponsesTable.$inferSelect;
 export type SurveyAnswer = typeof surveyAnswersTable.$inferSelect;
 
-export const SURVEY_QUESTION_TYPES = ["rating", "choice", "multi", "text", "rank"] as const;
+export const SURVEY_QUESTION_TYPES = ["rating", "slider", "choice", "multi", "text", "rank"] as const;
 export type SurveyQuestionType = (typeof SURVEY_QUESTION_TYPES)[number];
