@@ -290,8 +290,9 @@ router.get("/collections", async (_req, res) => {
   }
 });
 
-// Dispatch-date tag on orders (same convention as fulfilment). Delivery is
-// next-day APC, so delivery date = dispatch tag + 1 day.
+// Date tag on orders — this IS the delivery day (Graeme, 2026-08-06), not a
+// dispatch day to add a transit day to. (The fulfilment code calls these
+// "dispatch tags", but the tagged date is when the customer receives.)
 const DATE_TAG_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** "the {name}" without doubling the article for names like "The Benji". */
@@ -299,9 +300,8 @@ function withArticle(name: string): string {
   return /^the\s/i.test(name.trim()) ? name.trim() : `the ${name.trim()}`;
 }
 
-function formatDeliveryDate(dispatchTag: string): string {
-  const d = new Date(`${dispatchTag}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + 1);
+function formatDeliveryDate(dateTag: string): string {
+  const d = new Date(`${dateTag}T00:00:00Z`);
   return new Intl.DateTimeFormat("en-GB", {
     weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC",
   }).format(d);
@@ -358,16 +358,18 @@ router.get("/collection-template", async (req, res) => {
         type: "choice",
         prompt: "What delivery date did you receive your products?",
         recipeId: null,
-        options: [...deliveryDates, "Not sure"],
+        options: deliveryDates,
         required: true,
         max: 5,
       });
     }
     for (const product of products) {
       const recipeId = recipeByName.get(product.title.trim().toLowerCase()) ?? null;
+      // Approval slider by default (Graeme, 2026-08-06) — stars stay
+      // available in the builder for anyone who swaps the type by hand.
       questions.push({
-        type: "rating",
-        prompt: `Please give your overall rating for ${withArticle(product.title)} recipe`,
+        type: "slider",
+        prompt: `Overall, how likely are you to approve ${withArticle(product.title)} for the menu?`,
         recipeId, options: null, required: true, max: 5,
       });
       questions.push({
