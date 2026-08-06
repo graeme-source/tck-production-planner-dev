@@ -31,6 +31,7 @@ import {
   Users,
   GripVertical,
   ScanLine,
+  Copy,
 } from "lucide-react";
 import { QrScanner } from "@/components/qr-scanner";
 import {
@@ -457,6 +458,20 @@ export default function Orders() {
 
   // "+ Add Supplier Order" dialog — picks any supplier, even ones the calc
   // didn't suggest. Adds an empty card the operator can fill via the existing
+  // "Copy order" feedback — which supplier's order text was just copied, so
+  // the button can flash "Copied" for a moment.
+  const [copiedOrderSupplierId, setCopiedOrderSupplierId] = useState<number | null>(null);
+  const copyOrderText = async (supplierId: number, supplierName: string, lines: EditableLine[], deliveryText: string) => {
+    const text = buildOrderMessage(supplierName, lines, deliveryText);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedOrderSupplierId(supplierId);
+      setTimeout(() => setCopiedOrderSupplierId(prev => (prev === supplierId ? null : prev)), 2000);
+    } catch {
+      toast({ title: "Couldn't copy", description: "Your browser blocked clipboard access — use Email order instead and copy from there.", variant: "destructive" });
+    }
+  };
+
   // "+ Add item" / Misc flow.
   const [addSupplierDialogOpen, setAddSupplierDialogOpen] = useState(false);
   const [addSupplierSearch, setAddSupplierSearch] = useState("");
@@ -1260,9 +1275,10 @@ export default function Orders() {
       const updated = { ...prev };
       const lines = [...(updated[supplierId] || [])];
       const line = { ...lines[idx], editedStock: Math.max(0, newStock), stockDirty: true };
-      // Recalculate packs based on new stock. Mirror the backend: round up to
-      // whole packs, then up to the nearest whole case when ordered by the case.
-      const rawOrderQty = Math.max(0, line.totalRequired + line.surplusTarget - Math.max(0, newStock));
+      // Recalculate packs based on new stock. Mirror the backend: deduct
+      // undelivered inbound on open POs, round up to whole packs, then up to
+      // the nearest whole case when ordered by the case.
+      const rawOrderQty = Math.max(0, line.totalRequired + line.surplusTarget - Math.max(0, newStock) - (line.inboundQty ?? 0));
       let packsToOrder = line.packWeight > 0 ? Math.ceil(rawOrderQty / line.packWeight) : 0;
       const caseSizePacks = line.caseSizePacks ?? 0;
       if (caseSizePacks > 0 && packsToOrder > 0) {
@@ -1727,11 +1743,15 @@ export default function Orders() {
         const reopenedPOId = reopenedPlacedOrders[so.supplier.id];
         const isReopened = !!reopenedPOId;
 
-        // Pre-filled order message links — shown only when the supplier has
-        // the relevant contact set and there are items to order.
+        // Pre-filled order message links. Email is available on EVERY order
+        // with items — a supplier without a saved address opens a blank-To
+        // compose with the order text ready, so the operator can look the
+        // address up and send rather than being stuck (supplies-only
+        // suppliers were the usual victims). WhatsApp-to-number still needs
+        // the number saved.
         const orderDeliveryText = formatDeliveryDate(getDeliveryDateForSupplier(so.supplier.id, so.supplier.leadTimeDays, so.supplier.cutoffTime));
-        const emailHref = so.supplier.email && orderableLines.length > 0
-          ? buildOrderMailto(so.supplier.name, so.supplier.email, orderableLines, orderDeliveryText)
+        const emailHref = orderableLines.length > 0
+          ? buildOrderMailto(so.supplier.name, so.supplier.email ?? "", orderableLines, orderDeliveryText)
           : null;
         const whatsAppHref = so.supplier.orderingPhone && orderableLines.length > 0
           ? buildOrderWhatsApp(so.supplier.orderingPhone, so.supplier.name, orderableLines, orderDeliveryText)
@@ -2081,14 +2101,36 @@ export default function Orders() {
                         Delete order
                       </button>
                     )}
+                    {orderableLines.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => copyOrderText(so.supplier.id, so.supplier.name, orderableLines, orderDeliveryText)}
+                        className="px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-border hover:bg-secondary text-foreground"
+                        title="Copy the order text — paste it into any email or message"
+                      >
+                        {copiedOrderSupplierId === so.supplier.id ? (
+                          <>
+                            <Check className="w-4 h-4 text-green-600" />
+                            Copied
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-4 h-4" />
+                            Copy order
+                          </>
+                        )}
+                      </button>
+                    )}
                     {emailHref && (
                       <a
                         href={emailHref}
                         className="px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-border hover:bg-secondary text-foreground"
-                        title={`Draft an order email to ${so.supplier.email}`}
+                        title={so.supplier.email
+                          ? `Draft an order email to ${so.supplier.email}`
+                          : "No email saved for this supplier — opens a blank email with the order text so you can add the address"}
                       >
                         <Mail className="w-4 h-4" />
-                        Email order
+                        {so.supplier.email ? "Email order" : "Email order (no address)"}
                       </a>
                     )}
                     {whatsAppHref && (
