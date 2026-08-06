@@ -41,6 +41,7 @@ import {
 import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/user-avatar";
 import { NotificationBell } from "@/components/notification-bell";
+import { CurrentUserBadge } from "@/components/current-user-badge";
 import { NotificationFlash } from "@/components/notification-flash";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assistant";
@@ -717,6 +718,7 @@ function TopBar({ onMenu, fallbackTitle, onOpenSops }: { onMenu: () => void; fal
           {header.description}
         </span>
       )}
+      <CurrentUserBadge />
       <button
         onClick={onOpenSops}
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors flex-shrink-0"

@@ -2495,6 +2495,18 @@ async function runStartupMigrations() {
         ADD COLUMN IF NOT EXISTS nova_analyzed_at timestamp
     `);
 
+    // Forced password reset with 24h grace — see
+    // lib/db/migrations/0046_password_reset_policy.sql. No boot-time seed:
+    // each user's 24h clock starts the first time they authenticate after
+    // this ships (stamped in routes/auth.ts), so someone who first logs in
+    // on Wednesday gets the same full day's warning as someone who logged
+    // in on Monday. The founder is exempt.
+    await db.execute(sql`
+      ALTER TABLE app_users
+        ADD COLUMN IF NOT EXISTS password_reset_deadline TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP
+    `);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

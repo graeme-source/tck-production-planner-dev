@@ -11,6 +11,9 @@ export type AuthUser = {
   hasPin: boolean;
   onboardingRequired?: boolean;
   onboardingCompletedAt?: string | null;
+  // ISO timestamp of the forced password-reset deadline, or null when the
+  // user has no pending reset (founder, or already changed under the policy).
+  passwordResetDeadline?: string | null;
 };
 
 type AuthState =

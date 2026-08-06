@@ -23,6 +23,7 @@ import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
 import { ReportButton } from "@/components/report-modal";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
+import { CurrentUserBadge } from "@/components/current-user-badge";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -191,7 +192,7 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
           top of the document) */}
       <div className="border-b border-border bg-card sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-4 py-3">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center justify-between gap-x-4 gap-y-2 flex-wrap">
             <div className="flex items-center gap-3 min-w-0">
               {/* Hamburger — opens the real app nav */}
               <button
@@ -222,9 +223,10 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
                   )}
                 </div>
               </div>
+              <CurrentUserBadge />
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               {headerSlot}
               <BreakTracker planId={planId} stationType={stationType} onBreakActiveChange={onBreakActiveChange} />
               <button

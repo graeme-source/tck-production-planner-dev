@@ -6,6 +6,7 @@ import crypto from "crypto";
 import { z } from "zod";
 import { validate } from "../middleware/validate";
 import { sendEmail, inviteEmailHtml, inviteEmailText, resetEmailHtml, resetEmailText } from "../lib/email";
+import { passwordPolicySchema } from "../lib/password-policy";
 
 const router: IRouter = Router();
 
@@ -21,7 +22,7 @@ function generateToken(): string {
   return crypto.randomBytes(32).toString("hex");
 }
 
-const passwordSchema = z.string().min(8, "Password must be at least 8 characters");
+const passwordSchema = passwordPolicySchema;
 
 function requireAdmin(req: any, res: any, next: any) {
   if (!req.session?.userId || req.session?.userRole !== "admin") {
@@ -143,6 +144,9 @@ router.post("/invites/:token/accept", validate(AcceptInviteBody), async (req, re
       isActive: true,
       // Gate the new starter into the pre-arrival onboarding form once.
       onboardingRequired: true,
+      // Password chosen here already meets the policy — keep the boot-time
+      // forced-reset seed from flagging brand-new accounts.
+      passwordChangedAt: new Date(),
     }).returning();
 
     await db.update(userInvitesTable)
@@ -278,7 +282,12 @@ router.post("/reset-password/:token", validate(ResetPasswordBody), async (req, r
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
-  await db.update(usersTable).set({ passwordHash, updatedAt: new Date() }).where(eq(usersTable.id, reset.userId));
+  await db.update(usersTable).set({
+    passwordHash,
+    passwordChangedAt: new Date(),
+    passwordResetDeadline: null,
+    updatedAt: new Date(),
+  }).where(eq(usersTable.id, reset.userId));
   await db.update(passwordResetsTable).set({ usedAt: new Date() }).where(eq(passwordResetsTable.id, reset.id));
 
   res.json({ ok: true });

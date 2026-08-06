@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { validate } from "../middleware/validate";
+import { validatePassword } from "../lib/password-policy";
 import multer from "multer";
 
 const router: IRouter = Router();
@@ -24,6 +25,30 @@ const LoginBody = z.object({
   email: z.string().email(),
   password: z.string().min(1),
 });
+
+const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
+const PASSWORD_RESET_GRACE_MS = 24 * 60 * 60 * 1000;
+
+// Forced-reset deadline, stamped lazily: the 24h clock starts the first time
+// the user authenticates after the policy ships (fresh login, PIN login, or an
+// already-signed-in session's /me check) — i.e. the first time they can see
+// the warning banner. Someone who first works Wednesday gets the same full
+// 24 hours as someone who logged in Monday. Users who have already set a
+// policy-compliant password (passwordChangedAt) are done; the founder is
+// exempt. Returns the deadline to expose to the client, or null.
+async function ensurePasswordResetDeadline(
+  user: typeof usersTable.$inferSelect,
+): Promise<Date | null> {
+  if (user.email === FOUNDER_EMAIL) return null;
+  if (user.passwordResetDeadline) return user.passwordResetDeadline;
+  if (user.passwordChangedAt) return null;
+  const deadline = new Date(Date.now() + PASSWORD_RESET_GRACE_MS);
+  await db
+    .update(usersTable)
+    .set({ passwordResetDeadline: deadline })
+    .where(eq(usersTable.id, user.id));
+  return deadline;
+}
 
 // Returns true if the session needs PIN re-verification.
 // PIN lock resets at 4am UTC (morning shift start) and 10pm UK time (evening shift end).
@@ -92,6 +117,8 @@ router.post("/login", loginLimiter, validate(LoginBody), async (req, res) => {
     return;
   }
 
+  const resetDeadline = await ensurePasswordResetDeadline(user);
+
   req.session.userId = user.id;
   req.session.userRole = user.role as "admin" | "manager" | "viewer";
   req.session.pinVerifiedAt = new Date().toISOString();
@@ -110,6 +137,7 @@ router.post("/login", loginLimiter, validate(LoginBody), async (req, res) => {
       hasPin: !!user.pinHash,
       onboardingRequired: user.onboardingRequired ?? false,
       onboardingCompletedAt: user.onboardingCompletedAt ? user.onboardingCompletedAt.toISOString() : null,
+      passwordResetDeadline: resetDeadline ? resetDeadline.toISOString() : null,
     });
   });
 });
@@ -139,6 +167,7 @@ router.get("/me", async (req, res) => {
   }
 
   const pinRequired = isPinRequired(req.session.pinVerifiedAt);
+  const resetDeadline = await ensurePasswordResetDeadline(user);
 
   res.json({
     id: user.id,
@@ -150,7 +179,61 @@ router.get("/me", async (req, res) => {
     pinRequired,
     onboardingRequired: user.onboardingRequired ?? false,
     onboardingCompletedAt: user.onboardingCompletedAt ? user.onboardingCompletedAt.toISOString() : null,
+    passwordResetDeadline: resetDeadline ? resetDeadline.toISOString() : null,
   });
+});
+
+const ChangePasswordBody = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(1),
+});
+
+// In-app password change — used by the forced-reset banner/blocker and
+// available any time from the profile. Requires the current password, applies
+// the password policy, and clears any pending forced-reset deadline.
+router.post("/password/change", loginLimiter, validate(ChangePasswordBody), async (req, res) => {
+  if (!req.session.userId) {
+    res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+
+  const { currentPassword, newPassword } = req.body as z.infer<typeof ChangePasswordBody>;
+
+  const [user] = await db
+    .select()
+    .from(usersTable)
+    .where(eq(usersTable.id, req.session.userId));
+
+  if (!user || !user.isActive) {
+    req.session.destroy(() => {});
+    res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+
+  const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+  if (!valid) {
+    res.status(401).json({ error: "Current password is incorrect" });
+    return;
+  }
+
+  const policyError = validatePassword(newPassword);
+  if (policyError) {
+    res.status(400).json({ error: policyError });
+    return;
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+  await db
+    .update(usersTable)
+    .set({
+      passwordHash,
+      passwordChangedAt: new Date(),
+      passwordResetDeadline: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(usersTable.id, user.id));
+
+  res.json({ ok: true });
 });
 
 const PinSetBody = z.object({
@@ -262,6 +345,8 @@ router.post("/pin/login", loginLimiter, async (req, res) => {
     .set({ pinAttempts: 0, pinLockedUntil: null })
     .where(eq(usersTable.id, userId));
 
+  const resetDeadline = await ensurePasswordResetDeadline(user);
+
   req.session.userId = user.id;
   req.session.userRole = user.role as "admin" | "manager" | "viewer";
   req.session.pinVerifiedAt = new Date().toISOString();
@@ -280,6 +365,7 @@ router.post("/pin/login", loginLimiter, async (req, res) => {
       hasPin: true,
       onboardingRequired: user.onboardingRequired ?? false,
       onboardingCompletedAt: user.onboardingCompletedAt ? user.onboardingCompletedAt.toISOString() : null,
+      passwordResetDeadline: resetDeadline ? resetDeadline.toISOString() : null,
     });
   });
 });

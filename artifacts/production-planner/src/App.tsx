@@ -60,6 +60,7 @@ import ForgotPassword from "@/pages/forgot-password";
 import ResetPassword from "@/pages/reset-password";
 import { Loader2 } from "lucide-react";
 import { PinLockOverlay } from "@/components/pin-lock-overlay";
+import { PasswordResetGate } from "@/components/password-reset-gate";
 import { toast } from "@/hooks/use-toast";
 
 function isApiError(error: unknown): error is { status: number; message: string } {
@@ -232,6 +233,7 @@ function AuthGate() {
 
   return (
     <>
+      <PasswordResetGate />
       <Router />
       {pinLocked && <PinLockOverlay />}
     </>

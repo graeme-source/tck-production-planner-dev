@@ -22,6 +22,12 @@ export const usersTable = pgTable("app_users", {
   // into the pre-arrival onboarding form once. Existing staff stay false.
   onboardingRequired: boolean("onboarding_required").notNull().default(false),
   onboardingCompletedAt: timestamp("onboarding_completed_at"),
+  // Forced password reset. When set and in the future the client shows a
+  // countdown warning; once passed, a full-screen blocker forces the change.
+  // Cleared (and passwordChangedAt stamped) whenever the password is changed,
+  // which also keeps the boot-time seed from ever re-flagging the user.
+  passwordResetDeadline: timestamp("password_reset_deadline"),
+  passwordChangedAt: timestamp("password_changed_at"),
 });
 
 export const insertUserSchema = createInsertSchema(usersTable).omit({ id: true, createdAt: true, updatedAt: true });
