@@ -162,6 +162,9 @@ interface PlanItem {
   sopUrl: string | null;
   isFromDpt: boolean;
   fridgeStock: number;
+  // Fridge packs too old for this plan's dispatch window (server-computed
+  // from batch numbers + shelf life; already off estimatedFactoryNumber).
+  expiringPacks?: number;
   // ISO timestamp of the latest production_fridge stock_entries row for
   // this recipe (or null if no reading exists). Rendered as "Updated 2h
   // ago" next to the factory number so the operator can spot stale data.
@@ -582,6 +585,14 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
                 )}
               </div>
               <StockCheckedAtLabel checkedAt={item.stockCheckedAt} />
+              {(item.expiringPacks ?? 0) > 0 && (
+                <div
+                  className="text-[9px] leading-tight text-red-600 dark:text-red-400 font-semibold"
+                  title="These packs expire before this plan's dispatches can sell them (see the red panel below) — the calculation no longer counts them as stock."
+                >
+                  −{item.expiringPacks} expiring
+                </div>
+              )}
             </div>
           );
         })()}
@@ -981,6 +992,7 @@ function chilledToPlanItem(s: ChilledSuggestion, prev?: PlanItem): PlanItem {
     // deficit-only), so the plan's total stays the total.
     isFromDpt: true,
     fridgeStock: prev ? prev.fridgeStock : s.fridgeStock,
+    expiringPacks: s.expiringPacks ?? 0,
     stockCheckedAt: s.stockCheckedAt,
     prevProduction: s.prevProduction,
     estimatedFactoryNumber: s.estimatedFactoryNumber,
@@ -998,6 +1010,54 @@ function chilledToPlanItem(s: ChilledSuggestion, prev?: PlanItem): PlanItem {
     special3Count: 0,
     totalSpecialCount: 0,
   };
+}
+
+// Red strip: fridge packs whose last valid dispatch is before this plan's
+// window — calzones must land with ≥3 days of shelf life, mac cheese ≥2, so
+// use-by minus that margin minus the overnight delivery day is the last
+// dispatch that can sell a batch. These packs need freezing or moving to
+// Wonky/Clearance; the calc has already stopped counting them as stock.
+function ExpiryWarningsPanel({ warnings }: { warnings: ExpiryWarningRow[] }) {
+  const [open, setOpen] = useState(true);
+  if (warnings.length === 0) return null;
+  const totalPacks = warnings.reduce((s, w) => s + w.expiringPacks, 0);
+  const fmt = (d: string) => format(parseISO(d), "EEE d MMM");
+
+  return (
+    <div className="mb-3 border border-red-400/60 bg-red-500/10 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between gap-2 px-3 py-2 text-xs font-medium text-red-800 dark:text-red-300"
+      >
+        <span className="flex items-center gap-2 min-w-0">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <span className="truncate">
+            {totalPacks} pack{totalPacks === 1 ? "" : "s"} in the fridge will be too old for this plan's dispatches
+          </span>
+        </span>
+        {open ? <ChevronUp className="w-3.5 h-3.5 flex-shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 flex-shrink-0" />}
+      </button>
+      {open && (
+        <div className="px-3 pb-3 space-y-1.5">
+          {warnings.map(w => (
+            <div key={w.recipeId} className="text-xs">
+              <span className="font-semibold">{w.expiringPacks} × {w.recipeName}</span>
+              <span className="text-muted-foreground">
+                {" — "}
+                {w.batches.map(b =>
+                  `batch ${b.batchNumber} (${b.packs}): use by ${fmt(b.useByDate)}, last dispatch ${fmt(b.lastDispatchDate)}`
+                ).join("; ")}
+              </span>
+            </div>
+          ))}
+          <p className="text-[10px] text-red-700/80 dark:text-red-300/80 pt-1">
+            These packs can't reach customers with enough shelf life (calzones need 3 days on arrival, mac cheese 2).
+            They're no longer counted as available stock — freeze them or move them to Wonky/Clearance.
+          </p>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // Collapsible strip under the batch table: EVERY product with sales in this
@@ -1087,7 +1147,17 @@ function AdditionalChilledPanel({ suggestions, unmatched, excluded, dispatchDate
                       </td>
                       <td className="py-1.5 px-2 text-center">{s.dispatch2Qty}</td>
                       <td className="py-1.5 px-2 text-center">{s.dispatch3Qty}</td>
-                      <td className="py-1.5 px-2 text-center">{s.fridgeStock}</td>
+                      <td className="py-1.5 px-2 text-center">
+                        {s.fridgeStock}
+                        {(s.expiringPacks ?? 0) > 0 && (
+                          <span
+                            className="text-red-600 dark:text-red-400 font-semibold"
+                            title={`${s.expiringPacks} of these packs expire before this plan's dispatches can sell them — batches needed already re-makes them.`}
+                          >
+                            {" "}(−{s.expiringPacks} exp)
+                          </span>
+                        )}
+                      </td>
                       <td className="py-1.5 pl-2 text-center font-semibold">{s.suggestedBatches}</td>
                       <td className="py-1.5 pl-2 text-right">
                         <button
@@ -1408,6 +1478,9 @@ interface CalcRecipe {
   remainingFulfilmentPacksToday?: number;
   prevProduction: number;
   estimatedFactoryNumber: number;
+  // Fridge packs expiring before this plan's dispatches can sell them —
+  // already subtracted from estimatedFactoryNumber by the server.
+  expiringPacks?: number;
   // 8-pack bags planned on the plan being created/edited, and the 2-pack
   // stock they consume. Both come from /calculate.
   eightPackBagCount?: number;
@@ -1473,7 +1546,18 @@ interface ChilledSuggestion {
   deficit: number;
   deficitBatches: number;
   suggestedBatches: number;
+  // Packs in the fridge that expire before this plan's dispatches can sell
+  // them — already subtracted from estimatedFactoryNumber.
+  expiringPacks?: number;
   sourceTitles: string[];
+}
+
+interface ExpiryWarningRow {
+  recipeId: number;
+  recipeName: string;
+  recipeCategory: string | null;
+  expiringPacks: number;
+  batches: Array<{ batchNumber: number; packs: number; useByDate: string; lastDispatchDate: string; lastDeliveryDate: string }>;
 }
 
 interface UnmatchedWindowProduct {
@@ -1497,6 +1581,7 @@ interface CalcResponse {
   additionalChilled?: ChilledSuggestion[];
   unmatchedWindowProducts?: UnmatchedWindowProduct[];
   excludedWindowProducts?: Array<{ productTitle: string; totalQuantity: number }>;
+  expiryWarnings?: ExpiryWarningRow[];
   recipes: CalcRecipe[];
 }
 
@@ -2016,6 +2101,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
         // flag on) receive `predictedFridgeStock == fridgeStock` from
         // the backend.
         fridgeStock: prev ? prev.fridgeStock : (r.predictedFridgeStock ?? r.fridgeStock),
+        expiringPacks: r.expiringPacks ?? 0,
         stockCheckedAt: r.stockCheckedAt,
         prevProduction: r.prevProduction,
         estimatedFactoryNumber: r.estimatedFactoryNumber,
@@ -2933,6 +3019,8 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                 </div>
               )}
 
+              <ExpiryWarningsPanel warnings={calcData?.expiryWarnings ?? []} />
+
               <AdditionalChilledPanel
                 suggestions={calcData?.additionalChilled ?? []}
                 unmatched={calcData?.unmatchedWindowProducts ?? []}
@@ -3225,6 +3313,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
           tinSize: chilled.tinSize ?? it.tinSize,
           sopUrl: chilled.sopUrl ?? it.sopUrl,
           fridgeStock: chilled.fridgeStock,
+          expiringPacks: chilled.expiringPacks ?? 0,
           stockCheckedAt: chilled.stockCheckedAt,
           prevProduction: chilled.prevProduction,
           estimatedFactoryNumber: chilled.estimatedFactoryNumber,
@@ -3252,6 +3341,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
         sopUrl: calc.sopUrl ?? it.sopUrl,
         isFromDpt: true,
         fridgeStock: calc.predictedFridgeStock ?? calc.fridgeStock,
+        expiringPacks: calc.expiringPacks ?? 0,
         stockCheckedAt: calc.stockCheckedAt,
         prevProduction: calc.prevProduction,
         estimatedFactoryNumber: calc.estimatedFactoryNumber,
@@ -3811,6 +3901,8 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
               </DndContext>
             </div>
           )}
+
+          <ExpiryWarningsPanel warnings={editCalcData?.expiryWarnings ?? []} />
 
           <AdditionalChilledPanel
             suggestions={editCalcData?.additionalChilled ?? []}
