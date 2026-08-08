@@ -22,6 +22,9 @@ import { eq, and, gt, asc, desc, gte, lte, sql, isNull, inArray } from "drizzle-
 import * as z from "zod";
 import { londonDateString } from "../lib/london-time";
 import { LOCATION_DEFS } from "../lib/storage-location-defs";
+import { computeClosingFridgeActions } from "../lib/fridge-expiry";
+import { adjustFridgeStock, addRecipeFreezerStock } from "../lib/fridge-stock";
+import { resolveRecipeIngredients } from "../lib/ingredient-resolver";
 
 type ChecklistCompletion = typeof checklistCompletionsTable.$inferSelect;
 
@@ -837,6 +840,82 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
     return;
   }
 
+  // Closing fridge check: packs still in the production fridge whose last
+  // valid dispatch is today or already gone — after today's dispatches
+  // they can never be sold chilled (calzones must arrive with 3 days of
+  // life, mac cheese 2). Listed per recipe; the packing team freezes each
+  // via POST /closing-fridge-freeze below, which removes the rows from
+  // this payload on the next fetch (self-clearing).
+  if (type === "closing_fridge_check") {
+    const actions = await computeClosingFridgeActions(londonDateString());
+    res.json(actions);
+    return;
+  }
+
+  // Duck defrost: duck needs ~2 days in the fridge, so the closing check
+  // looks TWO production plans ahead of the plan being worked and totals
+  // the duck (kg) its recipes need — the quantity to pull from the freezer
+  // tonight. Falls back to the only future plan (flagged) when the second
+  // one hasn't been created yet.
+  if (type === "duck_defrost_quantity") {
+    const [currentPlan] = await db
+      .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate })
+      .from(productionPlansTable)
+      .where(eq(productionPlansTable.id, planId));
+    if (!currentPlan) { res.json([{ found: false }]); return; }
+    const futurePlans = await db
+      .select({
+        id: productionPlansTable.id,
+        name: productionPlansTable.name,
+        planDate: productionPlansTable.planDate,
+      })
+      .from(productionPlansTable)
+      .where(and(
+        gt(productionPlansTable.planDate, currentPlan.planDate),
+        inArray(productionPlansTable.status, ["draft", "active", "prep", "building"]),
+      ))
+      .orderBy(asc(productionPlansTable.planDate))
+      .limit(2);
+    const target = futurePlans[1] ?? futurePlans[0];
+    if (!target) { res.json([{ found: false }]); return; }
+
+    const items = await db
+      .select({
+        recipeId: productionPlanItemsTable.recipeId,
+        batchesTarget: productionPlanItemsTable.batchesTarget,
+        recipeName: recipesTable.name,
+        portionsPerBatch: recipesTable.portionsPerBatch,
+      })
+      .from(productionPlanItemsTable)
+      .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+      .where(eq(productionPlanItemsTable.planId, target.id));
+
+    const perRecipe: Array<{ recipeName: string; batches: number; kg: number }> = [];
+    let totalKg = 0;
+    for (const item of items) {
+      const batches = item.batchesTarget ?? 0;
+      if (batches <= 0 || item.recipeId == null) continue;
+      const resolved = await resolveRecipeIngredients(item.recipeId, Number(item.portionsPerBatch) || 10, { skipToppings: true });
+      const duckPerBatch = resolved
+        .filter(i => i.ingredientName.toLowerCase().includes("duck"))
+        .reduce((s, i) => s + i.quantityPerBatch, 0);
+      if (duckPerBatch <= 0) continue;
+      const kg = Math.round(duckPerBatch * batches * 100) / 100;
+      perRecipe.push({ recipeName: item.recipeName ?? `Recipe #${item.recipeId}`, batches, kg });
+      totalKg += kg;
+    }
+    res.json([{
+      found: true,
+      planId: target.id,
+      planName: target.name,
+      planDate: target.planDate,
+      plansAhead: futurePlans[1] ? 2 : 1,
+      totalKg: Math.round(totalKg * 100) / 100,
+      perRecipe,
+    }]);
+    return;
+  }
+
   // Both opening (first) and closing (last) pack-batch checklists pull
   // the same shape of payload — per-recipe fridge qty, suggested-oldest
   // batch, and whatever's already been recorded for first/last today.
@@ -1096,6 +1175,57 @@ router.post("/packing-batch-record", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("packing-batch-record error:", err);
     res.status(500).json({ error: "Failed to save batch record" });
+  }
+});
+
+// POST /closing-fridge-freeze — the action half of the closing fridge
+// check: move out-of-life packs from the production fridge into freezer
+// (Wonky) stock. Goes through the adjustFridgeStock chokepoint so the
+// aggregate, the FIFO batch rows and the audit log all move together;
+// packs are re-validated server-side against the live expiring list so a
+// stale screen can't freeze packs that were dispatched in the meantime.
+router.post("/closing-fridge-freeze", async (req: Request, res: Response) => {
+  const { recipeId, packs } = req.body as { recipeId?: number; packs?: number };
+  const packsToFreeze = Math.trunc(Number(packs));
+  if (!recipeId || !Number.isFinite(packsToFreeze) || packsToFreeze <= 0) {
+    res.status(400).json({ error: "recipeId and a positive packs count are required" });
+    return;
+  }
+  try {
+    const actions = await computeClosingFridgeActions(londonDateString());
+    const action = actions.find(a => a.recipeId === recipeId);
+    if (!action) {
+      res.status(409).json({ error: "Nothing left to freeze for this recipe — the list may be out of date. Refresh and check again." });
+      return;
+    }
+    if (packsToFreeze > action.actionPacks) {
+      res.status(409).json({ error: `Only ${action.actionPacks} pack(s) still need freezing for ${action.recipeName}. Refresh and check again.` });
+      return;
+    }
+    const userId = (req.session as any)?.userId ?? null;
+    const result = await adjustFridgeStock({
+      recipeId,
+      delta: -packsToFreeze,
+      packSize: 2,
+      reason: `Closing check: ${packsToFreeze} out-of-life pack(s) → freezer (Wonky)`,
+      source: "freeze",
+      userId,
+    });
+    const newFreezerQty = await addRecipeFreezerStock(
+      recipeId,
+      packsToFreeze,
+      `Closing check: frozen from production fridge (out of chilled life)`,
+    );
+    res.json({
+      ok: true,
+      recipeId,
+      frozenPacks: packsToFreeze,
+      newFridgeQty: result.newAggregateQty,
+      newFreezerQty,
+    });
+  } catch (err) {
+    console.error("closing-fridge-freeze error:", err);
+    res.status(500).json({ error: "Failed to freeze packs" });
   }
 });
 

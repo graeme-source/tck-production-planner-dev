@@ -1257,6 +1257,221 @@ function LocationTemperatures({ data, planId }: { data: unknown[]; planId: numbe
   );
 }
 
+// ── Closing fridge check ───────────────────────────────────────────────
+// Packs still in the production fridge whose last sellable dispatch was
+// today (or earlier) — they must be frozen into Wonky stock before close.
+// Deliberately slow to fire: per recipe, the operator taps Freeze, then
+// confirms an editable pack count on a second step, so nobody can dump a
+// pile of stock into the freezer with one stray tap. Rows disappear as
+// they're actioned (the server list self-clears); the all-clear state is
+// shown explicitly so "nothing listed" never reads as "didn't load".
+interface ClosingFridgeRow {
+  recipeId: number;
+  recipeName: string;
+  recipeColor: string | null;
+  fridgeQty: number;
+  actionPacks: number;
+  batches: Array<{ batchNumber: number; packs: number; useByDate: string; lastDispatchDate: string }>;
+}
+
+function ClosingFridgeCheck({ data }: { data: unknown[] }) {
+  // Guard the shape: useDynamicData keeps the PREVIOUS item's payload for
+  // one render after the selected item changes, so this can briefly receive
+  // rows from another dynamic type (e.g. pack-batch rows with no batches).
+  const rows = (data as ClosingFridgeRow[]).filter(r => r && typeof r.recipeId === "number" && Array.isArray(r.batches));
+  // recipeId → confirm-step state; done map keeps a ✓ row after freezing
+  // (the next data fetch no longer contains it).
+  const [confirming, setConfirming] = useState<Record<number, string>>({});
+  const [saving, setSaving] = useState<Record<number, boolean>>({});
+  const [done, setDone] = useState<Record<number, number>>({});
+
+  const fmtDate = (d: string) =>
+    new Date(d + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+
+  const freeze = async (row: ClosingFridgeRow) => {
+    const packs = parseInt(confirming[row.recipeId] ?? "");
+    if (!packs || isNaN(packs) || packs <= 0) return;
+    setSaving(s => ({ ...s, [row.recipeId]: true }));
+    try {
+      const res = await fetch(`${BASE}/api/checklists/closing-fridge-freeze`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recipeId: row.recipeId, packs }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error ?? "Failed to freeze packs");
+      setDone(d => ({ ...d, [row.recipeId]: packs }));
+      setConfirming(c => { const n = { ...c }; delete n[row.recipeId]; return n; });
+      toast({
+        title: `Frozen: ${packs} × ${row.recipeName}`,
+        description: `Fridge now ${body.newFridgeQty}, freezer (Wonky) now ${body.newFreezerQty}.`,
+      });
+    } catch (err) {
+      toast({
+        title: "Couldn't freeze packs",
+        description: err instanceof Error ? err.message : "Try refreshing the checklist.",
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(s => ({ ...s, [row.recipeId]: false }));
+    }
+  };
+
+  const pending = rows.filter(r => done[r.recipeId] == null);
+
+  if (pending.length === 0 && Object.keys(done).length === 0) {
+    return (
+      <div className="mb-4 p-3 bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-xl text-sm text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
+        <CheckCircle2 className="w-4 h-4 shrink-0" />
+        All clear — everything in the fridge still has enough shelf life to sell.
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-4 space-y-2">
+      <p className="text-sm font-semibold text-foreground">
+        These packs can no longer be dispatched with enough shelf life — freeze them into Wonky stock now.
+      </p>
+      {rows.map(row => {
+        const doneCount = done[row.recipeId];
+        if (doneCount != null) {
+          return (
+            <div key={row.recipeId} className="flex items-center gap-3 p-3 rounded-xl border bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800">
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold truncate">{row.recipeName}</p>
+                <p className="text-xs text-emerald-700 dark:text-emerald-300">{doneCount} pack{doneCount === 1 ? "" : "s"} moved to the freezer (Wonky stock)</p>
+              </div>
+            </div>
+          );
+        }
+        const confirmVal = confirming[row.recipeId];
+        const isConfirming = confirmVal != null;
+        return (
+          <div key={row.recipeId} className="p-3 rounded-xl border bg-red-50/60 dark:bg-red-950/20 border-red-200 dark:border-red-800 space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold truncate" style={row.recipeColor ? { color: row.recipeColor } : undefined}>
+                  {row.recipeName}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {row.actionPacks} of {row.fridgeQty} pack{row.fridgeQty === 1 ? "" : "s"} in the fridge{" "}
+                  {row.batches.map(b => `batch ${b.batchNumber} (${b.packs}p, use by ${fmtDate(b.useByDate)})`).join(", ")}
+                </p>
+              </div>
+              {!isConfirming && (
+                <button
+                  onClick={() => setConfirming(c => ({ ...c, [row.recipeId]: String(row.actionPacks) }))}
+                  className="shrink-0 px-3 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold hover:bg-red-700 transition-colors"
+                >
+                  Freeze {row.actionPacks}…
+                </button>
+              )}
+            </div>
+            {isConfirming && (
+              <div className="p-2.5 rounded-lg bg-background border border-border space-y-2">
+                <p className="text-xs text-foreground">
+                  Count the packs as you move them. How many {row.recipeName} packs are you putting in the freezer?
+                </p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={row.actionPacks}
+                    value={confirmVal}
+                    onChange={e => setConfirming(c => ({ ...c, [row.recipeId]: e.target.value }))}
+                    className="w-20 px-2 py-1.5 text-sm text-center font-bold border border-border rounded-lg bg-background tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                  <span className="text-xs text-muted-foreground">packs → freezer (Wonky)</span>
+                  <div className="flex-1" />
+                  <button
+                    onClick={() => setConfirming(c => { const n = { ...c }; delete n[row.recipeId]; return n; })}
+                    className="px-2.5 py-1.5 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => freeze(row)}
+                    disabled={saving[row.recipeId] || !confirmVal || parseInt(confirmVal) <= 0 || parseInt(confirmVal) > row.actionPacks}
+                    className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-700 disabled:opacity-50 transition-colors flex items-center gap-1.5"
+                  >
+                    {saving[row.recipeId] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                    Confirm freeze
+                  </button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  This takes them out of fridge stock and adds them to freezer (Wonky) stock — it can't be undone from here.
+                </p>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Duck defrost quantity ──────────────────────────────────────────────
+// Duck needs ~2 days defrosting, so the closing check shows the duck (kg)
+// needed by the plan TWO production days ahead — the amount to move from
+// the freezer to the fridge tonight.
+interface DuckDefrostData {
+  found: boolean;
+  planName?: string;
+  planDate?: string;
+  plansAhead?: number;
+  totalKg?: number;
+  perRecipe?: Array<{ recipeName: string; batches: number; kg: number }>;
+}
+
+function DuckDefrost({ data }: { data: unknown[] }) {
+  const report = (data as DuckDefrostData[])[0];
+  if (!report || !report.found) {
+    return (
+      <div className="mb-4 p-3 bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl text-sm text-amber-700 dark:text-amber-300">
+        No future production plan exists yet — create the next plan first, then this shows the duck to defrost.
+      </div>
+    );
+  }
+  const dateLabel = report.planDate
+    ? new Date(report.planDate + "T00:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short" })
+    : "";
+  return (
+    <div className="mb-4 p-4 bg-blue-50/60 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-xl">
+      <div className="flex items-center justify-between mb-1">
+        <p className="text-sm font-semibold text-blue-700 dark:text-blue-300">Duck to defrost tonight</p>
+        <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">for {dateLabel}</span>
+      </div>
+      {(report.totalKg ?? 0) <= 0 ? (
+        <p className="text-sm text-muted-foreground">No duck on that plan — nothing to defrost.</p>
+      ) : (
+        <>
+          <div className="space-y-1 mb-2">
+            {(report.perRecipe ?? []).map((r, i) => (
+              <div key={i} className="flex items-center justify-between text-sm">
+                <span className="truncate text-foreground/80">{r.recipeName} · {r.batches} batch{r.batches === 1 ? "" : "es"}</span>
+                <span className="font-bold tabular-nums text-blue-700 dark:text-blue-300">{r.kg} kg</span>
+              </div>
+            ))}
+          </div>
+          <div className="pt-2 border-t border-blue-200 dark:border-blue-700 flex items-center justify-between">
+            <span className="text-sm font-semibold text-blue-700 dark:text-blue-300">Move freezer → fridge</span>
+            <span className="text-lg font-bold tabular-nums text-blue-700 dark:text-blue-300">{report.totalKg} kg</span>
+          </div>
+        </>
+      )}
+      {report.plansAhead === 1 && (
+        <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-2 flex items-start gap-1">
+          <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+          Only one plan ahead has been created — this quantity is for that plan. Create the next plan for the usual two-days-ahead figure.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function DynamicDataDisplay({ type, data, loading, planId }: { type: string; data: unknown[]; loading: boolean; planId: number }) {
   if (type === "desserts_report") {
     if (loading) {
@@ -1314,6 +1529,30 @@ function DynamicDataDisplay({ type, data, loading, planId }: { type: string; dat
       );
     }
     return <PackBatchNumbers data={data} planId={planId} kind={type === "last_pack_batch_numbers" ? "last" : "first"} />;
+  }
+
+  if (type === "closing_fridge_check") {
+    if (loading) {
+      return (
+        <div className="mb-4 p-3 bg-blue-50/60 dark:bg-blue-950/20 rounded-lg flex items-center gap-2 text-sm text-blue-600">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Checking fridge stock shelf life...
+        </div>
+      );
+    }
+    return <ClosingFridgeCheck data={data} />;
+  }
+
+  if (type === "duck_defrost_quantity") {
+    if (loading) {
+      return (
+        <div className="mb-4 p-3 bg-blue-50/60 dark:bg-blue-950/20 rounded-lg flex items-center gap-2 text-sm text-blue-600">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Working out the duck to defrost...
+        </div>
+      );
+    }
+    return <DuckDefrost data={data} />;
   }
 
   if (type === "fridge_freezer_temps_opening" || type === "fridge_freezer_temps_closing") {

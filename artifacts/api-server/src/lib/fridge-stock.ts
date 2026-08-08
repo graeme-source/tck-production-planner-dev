@@ -229,6 +229,42 @@ export async function adjustFridgeStock(
   });
 }
 
+/** Add packs to a recipe's production_freezer aggregate (wonky/frozen
+ *  stock). Mirrors syncRecipeFreezerStock in production-plans.ts — a plain
+ *  aggregate upsert; freezer stock carries no batch tracking. Returns the
+ *  new freezer level. */
+export async function addRecipeFreezerStock(recipeId: number, delta: number, note: string): Promise<number> {
+  const rounded = Math.trunc(delta);
+  const [existing] = await db
+    .select({ id: stockEntriesTable.id, quantity: stockEntriesTable.quantity })
+    .from(stockEntriesTable)
+    .where(and(
+      eq(stockEntriesTable.recipeId, recipeId),
+      eq(stockEntriesTable.itemType, "recipe"),
+      eq(stockEntriesTable.location, "production_freezer"),
+    ))
+    .orderBy(desc(stockEntriesTable.checkedAt))
+    .limit(1);
+  if (existing) {
+    const newQty = Math.max(0, Number(existing.quantity) + rounded);
+    await db.update(stockEntriesTable)
+      .set({ quantity: String(newQty), checkedAt: new Date(), notes: note })
+      .where(eq(stockEntriesTable.id, existing.id));
+    return newQty;
+  }
+  const newQty = Math.max(0, rounded);
+  await db.insert(stockEntriesTable).values({
+    recipeId,
+    itemType: "recipe",
+    quantity: String(newQty),
+    unit: "packs",
+    location: "production_freezer",
+    packSize: 2,
+    notes: note,
+  });
+  return newQty;
+}
+
 async function readAggregate(recipeId: number, packSize: number): Promise<number> {
   const [row] = await db
     .select({ quantity: stockEntriesTable.quantity })
