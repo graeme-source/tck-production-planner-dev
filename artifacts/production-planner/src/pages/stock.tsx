@@ -343,7 +343,9 @@ export default function Stock() {
     if (recipes) {
       const fridgeItems = result["production_fridge"];
       for (const r of recipes as any[]) {
-        if (r.isCoreMenu) {
+        // Fridge products (test calzones etc.) are counted alongside the core
+        // menu — anything wrapped into the production fridge needs a row here.
+        if (r.isCoreMenu || r.isFridgeProduct) {
           const key = `r-${r.id}`;
           if (!fridgeItems[key]) {
             fridgeItems[key] = {

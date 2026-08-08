@@ -51,6 +51,7 @@ function mapRecipe(r: typeof recipesTable.$inferSelect) {
     baseWeightGrams: r.baseWeightGrams ? Number(r.baseWeightGrams) : null,
     isCoreMenu: r.isCoreMenu ?? false,
     isCurrentSpecial: r.isCurrentSpecial ?? false,
+    isFridgeProduct: r.isFridgeProduct ?? false,
     color: r.color ?? null,
     cookingLossPercent: r.cookingLossPercent != null ? Number(r.cookingLossPercent) : 3,
     dietaryCategory: r.dietaryCategory ?? null,
@@ -695,6 +696,25 @@ router.put("/:id/label-design", async (req, res) => {
     .set({ labelLiveDesignName: designName })
     .where(eq(recipesTable.id, parsed.data.id))
     .returning({ id: recipesTable.id, labelLiveDesignName: recipesTable.labelLiveDesignName });
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  res.json(row);
+});
+
+// Toggle "fridge product" — wrapped and held in the production fridge, as
+// opposed to frozen / F2F / clearance lines. Dedicated endpoint (like
+// /:id/special and /:id/label-design) so it needs no OpenAPI codegen round.
+router.put("/:id/fridge-product", async (req, res) => {
+  const parsed = RecipeIdParams.safeParse({ id: req.params.id });
+  if (!parsed.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
+  const raw = (req.body as { isFridgeProduct?: unknown } | undefined)?.isFridgeProduct;
+  if (typeof raw !== "boolean") {
+    res.status(400).json({ error: "isFridgeProduct must be a boolean" });
+    return;
+  }
+  const [row] = await db.update(recipesTable)
+    .set({ isFridgeProduct: raw })
+    .where(eq(recipesTable.id, parsed.data.id))
+    .returning({ id: recipesTable.id, isFridgeProduct: recipesTable.isFridgeProduct });
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.json(row);
 });

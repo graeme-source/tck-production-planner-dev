@@ -37,6 +37,11 @@ export const recipesTable = pgTable("recipes", {
   baseWeightGrams: numeric("base_weight_grams", { precision: 10, scale: 2 }),
   isCoreMenu: boolean("is_core_menu").notNull().default(false),
   isCurrentSpecial: boolean("is_current_special").notNull().default(false),
+  // Product is wrapped and held in the production fridge (core calzones, test
+  // calzones, mac cheese). Frozen / F2F / clearance / Wonky lines stay false.
+  // Drives the Create Plan "additional chilled dispatches" suggestions and
+  // which recipes appear on the fridge stock count.
+  isFridgeProduct: boolean("is_fridge_product").notNull().default(false),
   // Drives which oven defaults to apply at the building station's first-batch
   // overlay. Nullable for legacy rows; kept as text so we can extend without a
   // migration if a third profile is ever added.
