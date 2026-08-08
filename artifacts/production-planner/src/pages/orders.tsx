@@ -249,6 +249,21 @@ function DroppableSupplierCard({
 
 // How many to order for a line, in the same unit shown on screen (packs /
 // bottles / base unit). Mirrors the order-quantity cell in the table.
+// Inbound-PO quantities are stored in the ingredient's unit (kg), so whole
+// catering packs read as decimals — 2 × 2.27 kg tubs = "+4.54 kg", which
+// looks like a data error to anyone who orders in packs. When the quantity
+// is a whole number of packs, say so and keep the kg in brackets.
+function inboundQtyLabel(qty: number, unit: string, packWeight: number): string {
+  if (packWeight > 0) {
+    const packs = qty / packWeight;
+    const rounded = Math.round(packs);
+    if (rounded >= 1 && Math.abs(packs - rounded) < 0.02) {
+      return `${rounded} pack${rounded === 1 ? "" : "s"} (${qty} ${unit})`;
+    }
+  }
+  return `${qty} ${unit}`;
+}
+
 function lineOrderQty(line: EditableLine): string {
   if (line.stockInPacks || line.unit === "packs" || line.unit === "bottles") {
     return `${line.editedPacks} ${line.stockInPacks ? packNoun(line.unit, line.editedPacks) : line.unit}`;
@@ -1935,8 +1950,8 @@ export default function Orders() {
                               {(line.inboundQty ?? 0) > 0 && (
                                 <span
                                   className="text-[10px] text-sky-600 dark:text-sky-400 flex items-center gap-0.5"
-                                  title={(line.inboundDeliveries ?? [])
-                                    .map(d => `${d.qty} ${d.unit} — ${d.date ? new Date(d.date + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "2-digit" }) : "date TBC"} (PO #${d.poId})`)
+                                  title={"Already on order — deducted from the suggested quantity.\n" + (line.inboundDeliveries ?? [])
+                                    .map(d => `${inboundQtyLabel(d.qty, d.unit, line.packWeight)} — ${d.date ? new Date(d.date + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "2-digit" }) : "date TBC"} (PO #${d.poId})`)
                                     .join("\n")}
                                 >
                                   <Truck className="w-2.5 h-2.5" />
@@ -1952,7 +1967,7 @@ export default function Orders() {
                                           return d.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "2-digit" });
                                         })()
                                       : "date TBC";
-                                    return `+${line.inboundQty} ${line.unit} due ${dateLabel}`;
+                                    return `+${inboundQtyLabel(line.inboundQty ?? 0, line.unit, line.packWeight)} due ${dateLabel}`;
                                   })()}
                                 </span>
                               )}
