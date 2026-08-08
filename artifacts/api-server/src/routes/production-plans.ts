@@ -9,6 +9,7 @@ import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag, ty
 import { getFactoryNumberCoreMenuOnly, getShopifyFreezerSyncEnabled } from "../lib/inventory-sync";
 import { logFridgeStockChange, type FridgeChangeSource } from "../lib/fridge-stock-log";
 import { londonDateString, londonStartOfDay } from "../lib/london-time";
+import { productionDateFromJulianBatch } from "../lib/julian-batch";
 import { getStandardBreakConfig, computeBatchesPerHour } from "../lib/batches-per-hour";
 import { computeDaySchedule, parseClock, formatClock, DEFAULT_START_TIME, DEFAULT_CHANGEOVER_SECONDS, DEFAULT_BUILDERS } from "@workspace/production-schedule";
 // Type-only import — purely compile-time, no runtime cost. The actual
@@ -253,6 +254,20 @@ export async function getNextDispatchDayAsync(fromDate: string): Promise<string>
   const skip = await getNonDispatchDates();
   return getNextDispatchDay(fromDate, skip);
 }
+export function addCalendarDays(dateStr: string, days: number): string {
+  const d = new Date(`${dateStr}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Chilled products must reach the customer with a minimum shelf life left:
+ *  calzones 3 days, mac cheese 2 (Graeme, 2026-08-08). Delivered day D with
+ *  use-by E requires E ≥ D + minDays, so the last valid delivery for a batch
+ *  is E − minDays and (APC overnight) the last valid dispatch is E − minDays − 1. */
+export function minShelfDaysAtCustomer(category: string | null): number {
+  return (category ?? "").toLowerCase() === "macaroni cheese" ? 2 : 3;
+}
+
 export function getPreviousDispatchDay(fromDate: string, skip: Set<string>): string {
   const d = new Date(`${fromDate}T12:00:00Z`);
   do {
@@ -732,6 +747,105 @@ router.get("/calculate", async (req, res) => {
       latestStockCheckedAt[row.recipeId] = row.checkedAt;
     }
   }
+
+  // ─── Use-by aware batch stock ───────────────────────────────────────
+  // fridge_stock_batches carries a batch number per layer of fridge stock
+  // (written by the wrapping/fulfilment/stock-control chokepoint). Expiry is
+  // computed from the julian batch number + the recipe's CURRENT shelf life —
+  // not the stored use_by — so editing a recipe's shelf life immediately
+  // corrects the maths for stock already in the fridge. Unknown-batch
+  // sentinel rows (batch 0) are skipped: manual count corrections land
+  // there, and flagging them would false-alarm on every typed factory
+  // number. Recipes without a shelf life set are skipped entirely.
+  const shelfInfoRows = await db
+    .select({
+      id: recipesTable.id,
+      name: recipesTable.name,
+      category: recipesTable.category,
+      shelfLifeDays: recipesTable.shelfLifeDays,
+    })
+    .from(recipesTable);
+  const recipeShelfInfo = new Map(shelfInfoRows.map(r => [r.id, r]));
+
+  const batchStockRows = await db
+    .select({
+      recipeId: fridgeStockBatchesTable.recipeId,
+      batchNumber: fridgeStockBatchesTable.batchNumber,
+      quantity: fridgeStockBatchesTable.quantity,
+    })
+    .from(fridgeStockBatchesTable)
+    .where(and(eq(fridgeStockBatchesTable.packSize, 2), gt(fridgeStockBatchesTable.quantity, 0)));
+
+  const fridgeBatchesByRecipe = new Map<number, Array<{ packs: number; useBy: string; batchNumber: number }>>();
+  for (const b of batchStockRows) {
+    if (b.batchNumber === 0) continue; // unknown-age sentinel
+    const info = recipeShelfInfo.get(b.recipeId);
+    // ≤ 0 means the shelf life was never really set (several live recipes
+    // carry 0) — treating it literally would declare every pack expired on
+    // its production day and wallpaper the plan with false warnings.
+    if (!info || info.shelfLifeDays == null || Number(info.shelfLifeDays) <= 0) continue;
+    const prodDate = productionDateFromJulianBatch(b.batchNumber);
+    if (!prodDate) continue;
+    const useBy = addCalendarDays(prodDate, Number(info.shelfLifeDays));
+    const list = fridgeBatchesByRecipe.get(b.recipeId) ?? [];
+    list.push({ packs: b.quantity, useBy, batchNumber: b.batchNumber });
+    fridgeBatchesByRecipe.set(b.recipeId, list);
+  }
+  for (const list of fridgeBatchesByRecipe.values()) {
+    list.sort((a, b) => a.useBy.localeCompare(b.useBy));
+  }
+
+  // Batches whose last valid dispatch is before this plan's first forward
+  // dispatch can never be sold by this plan (or any later one) — they need
+  // freezing or moving to Wonky/Clearance. FIFO: when planning ahead, the
+  // day-before dispatch consumes the oldest batches first, exactly like the
+  // fulfilment path, so only what's left after it can expire.
+  type ExpiringBatch = { batchNumber: number; packs: number; useByDate: string; lastDispatchDate: string; lastDeliveryDate: string };
+  const planAheadForExpiry = dispatchDates[0] > londonDateString();
+  const firstForwardDispatch = dispatchDates[1];
+  function computeExpiring(recipeId: number, dispatch1Qty: number): { expiringPacks: number; batches: ExpiringBatch[] } {
+    const rows = fridgeBatchesByRecipe.get(recipeId);
+    if (!rows || rows.length === 0) return { expiringPacks: 0, batches: [] };
+    const aggregate = Math.max(0, Math.round(latestStock[recipeId] ?? fridgeStockFromPlans[recipeId] ?? 0));
+    if (aggregate <= 0) return { expiringPacks: 0, batches: [] };
+    // Attribute the aggregate count to the NEWEST batches first. Real-world
+    // dispatch is FIFO, so what's physically left is the newest layers — and
+    // the batch table is known to drift (ghost rows the consumption path
+    // never drained; live had 691 recorded Margherita packs vs 77 counted).
+    // Oldest-first attribution would flag ~aggregate-sized false warnings
+    // for every core recipe on day one.
+    let remaining = aggregate;
+    const layers: Array<{ packs: number; useBy: string; batchNumber: number }> = [];
+    for (let i = rows.length - 1; i >= 0 && remaining > 0; i--) {
+      const take = Math.min(rows[i].packs, remaining);
+      layers.push({ packs: take, useBy: rows[i].useBy, batchNumber: rows[i].batchNumber });
+      remaining -= take;
+    }
+    layers.reverse(); // oldest first, for FIFO d1 consumption below
+    const minDays = minShelfDaysAtCustomer(recipeShelfInfo.get(recipeId)?.category ?? null);
+    let toConsume = planAheadForExpiry ? Math.max(0, dispatch1Qty) : 0;
+    let expiringPacks = 0;
+    const batches: ExpiringBatch[] = [];
+    for (const b of layers) {
+      let packs = b.packs;
+      if (toConsume > 0) {
+        const take = Math.min(toConsume, packs);
+        packs -= take;
+        toConsume -= take;
+      }
+      if (packs <= 0) continue;
+      const lastDeliveryDate = addCalendarDays(b.useBy, -minDays);
+      const lastDispatchDate = addCalendarDays(lastDeliveryDate, -1);
+      if (lastDispatchDate < firstForwardDispatch) {
+        expiringPacks += packs;
+        batches.push({ batchNumber: b.batchNumber, packs, useByDate: b.useBy, lastDispatchDate, lastDeliveryDate });
+      }
+    }
+    return { expiringPacks, batches };
+  }
+  // dispatch1 quantities recorded per recipe during the main loop, so the
+  // final warnings sweep uses the same FIFO consumption as the netting.
+  const dispatch1QtyByRecipe = new Map<number, number>();
 
   // ─── Predicted end-of-today fridge stock ───────────────────────────
   // Two inputs feed the prediction: (1) remaining wrapping for TODAY's
@@ -1293,9 +1407,17 @@ router.get("/calculate", async (req, res) => {
     // unchanged: dispatch1 is yesterday, already out of the fridge.
     const planAhead = dispatchDates[0] > todayStr;
     const legacyEstimatedFactoryNumber = fridgeStock - dispatch1Qty + prevProduction;
-    const estimatedFactoryNumber = useNewPrediction
+    const estimatedFactoryNumberRaw = useNewPrediction
       ? Math.max(0, predictedFridgeStock + (planAhead ? prevProduction - dispatch1Qty : 0))
       : Math.round(legacyEstimatedFactoryNumber);
+
+    // Shelf-life netting: packs whose last valid dispatch is before this
+    // plan's window can't be sold by it — they mustn't count as available
+    // stock or the deficit maths under-produces. Capped at the aggregate
+    // estimate because batch rows can drift from the physical count.
+    dispatch1QtyByRecipe.set(recipeId, dispatch1Qty);
+    const expiringPacks = Math.min(computeExpiring(recipeId, dispatch1Qty).expiringPacks, Math.max(0, Math.round(estimatedFactoryNumberRaw)));
+    const estimatedFactoryNumber = Math.max(0, estimatedFactoryNumberRaw - expiringPacks);
 
     const recipeSource: "shopify" | "dpt" = (hasRecipeMatch && shopifyDatesLoaded.size > 0) ? "shopify" : "dpt";
     const effectivePacksSold = totalDispatchQty;
@@ -1334,6 +1456,9 @@ router.get("/calculate", async (req, res) => {
       remainingFulfilmentPacksToday: Math.round(fulRemain),
       prevProduction,
       estimatedFactoryNumber: Math.round(estimatedFactoryNumber),
+      // Packs in the fridge that expire before this plan's dispatches can
+      // sell them (already subtracted from estimatedFactoryNumber).
+      expiringPacks,
       // 8-pack bags allocated to THIS plan, and the 2-pack-equivalent stock
       // they consume (a bag is 8 portions; packSize 2 → 4 packs per bag).
       // The client needs both: the raw count to show "− N to bags", and the
@@ -1492,6 +1617,7 @@ router.get("/calculate", async (req, res) => {
     dispatch1Qty: number; dispatch2Qty: number; dispatch3Qty: number;
     totalDispatchQty: number; deficit: number; deficitBatches: number;
     suggestedBatches: number;
+    expiringPacks: number;
     // Shopify product titles this demand came from — what an Exclude on the
     // row actually excludes.
     sourceTitles: string[];
@@ -1610,9 +1736,14 @@ router.get("/calculate", async (req, res) => {
       // Mirror of the plan-ahead roll-forward in the main loop: when the plan
       // is built ahead of time, dispatch1 hasn't left the fridge yet and the
       // previous day's planned production hasn't landed yet.
-      const estimatedFactoryNumber = Math.max(0, Math.round(
+      const estimatedFactoryNumberRaw = Math.max(0, Math.round(
         fridgeStock + (planAheadWindow ? prevProduction - d1 : 0)
       ));
+      // Same shelf-life netting as the main loop: expiring packs can't serve
+      // this window, so the suggested batches must re-make them.
+      const expiringPacks = Math.min(computeExpiring(rid, d1).expiringPacks, estimatedFactoryNumberRaw);
+      const estimatedFactoryNumber = Math.max(0, estimatedFactoryNumberRaw - expiringPacks);
+      dispatch1QtyByRecipe.set(rid, d1);
       const deficit = Math.max(0, d2 + d3 - estimatedFactoryNumber);
       const deficitBatches = packsPerBatch > 0 ? Math.ceil(deficit / packsPerBatch) : 0;
       additionalChilled.push({
@@ -1637,6 +1768,7 @@ router.get("/calculate", async (req, res) => {
         deficit,
         deficitBatches,
         suggestedBatches: deficitBatches,
+        expiringPacks,
         sourceTitles: [...demand.sourceTitles],
       });
     }
@@ -1657,6 +1789,40 @@ router.get("/calculate", async (req, res) => {
     }
     excludedWindowProducts.sort((a, b) => b.totalQuantity - a.totalQuantity);
   }
+
+  // ─── Expiry warnings sweep ──────────────────────────────────────────
+  // Every recipe with batch-tracked fridge stock — core, suggestions, mac
+  // cheese, retired lines alike — gets checked: packs whose last valid
+  // dispatch is before this plan's window need freezing or moving to
+  // Wonky/Clearance, and the operator should hear about it while planning.
+  // Capped at the aggregate reading so drifted batch rows can't cry wolf
+  // about stock that isn't physically there.
+  const expiryWarnings: Array<{
+    recipeId: number; recipeName: string; recipeCategory: string | null;
+    expiringPacks: number;
+    batches: Array<{ batchNumber: number; packs: number; useByDate: string; lastDispatchDate: string; lastDeliveryDate: string }>;
+  }> = [];
+  for (const [rid] of fridgeBatchesByRecipe) {
+    const info = recipeShelfInfo.get(rid);
+    if (!info) continue;
+    const aggregate = Math.max(0, Math.round(latestStock[rid] ?? 0));
+    if (aggregate <= 0) continue;
+    const expiry = computeExpiring(rid, dispatch1QtyByRecipe.get(rid) ?? 0);
+    const packs = Math.min(expiry.expiringPacks, aggregate);
+    if (packs <= 0) continue;
+    expiryWarnings.push({
+      recipeId: rid,
+      recipeName: info.name,
+      recipeCategory: info.category ?? null,
+      expiringPacks: packs,
+      batches: expiry.batches,
+    });
+  }
+  expiryWarnings.sort((a, b) => {
+    const aFirst = a.batches[0]?.lastDispatchDate ?? "";
+    const bFirst = b.batches[0]?.lastDispatchDate ?? "";
+    return aFirst.localeCompare(bFirst) || a.recipeName.localeCompare(b.recipeName);
+  });
 
   // Default ordering for new plans: Mac & Cheese variants first (kitchen
   // convention — they share equipment and start the day), then everything
@@ -1685,6 +1851,7 @@ router.get("/calculate", async (req, res) => {
     additionalChilled,
     unmatchedWindowProducts,
     excludedWindowProducts,
+    expiryWarnings,
     recipes: orderedResult,
   });
 });

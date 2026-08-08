@@ -34,6 +34,7 @@ import {
   recipesTable,
 } from "@workspace/db";
 import { logFridgeStockChange, type FridgeChangeSource } from "./fridge-stock-log";
+import { productionDateFromJulianBatch } from "./julian-batch";
 
 /** Sentinel batch number used when an operator adds packs to the fridge
  *  but doesn't supply a real batch number. Stored as a real row in
@@ -156,7 +157,12 @@ export async function adjustFridgeStock(
             .from(recipesTable)
             .where(eq(recipesTable.id, recipeId));
           const shelfDays = recipe?.shelfLifeDays ?? 14;
-          const useBy = new Date();
+          // The julian batch number IS the production date (YYDDD) — count
+          // shelf life from it, not from when the operator typed the entry.
+          // Stock entered days after production previously got a use-by
+          // that was too generous by exactly that gap.
+          const prodDateStr = productionDateFromJulianBatch(batchNumber);
+          const useBy = prodDateStr ? new Date(`${prodDateStr}T12:00:00Z`) : new Date();
           useBy.setDate(useBy.getDate() + shelfDays);
           useByDate = useBy.toISOString().split("T")[0];
         }
