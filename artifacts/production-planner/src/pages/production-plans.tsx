@@ -1000,21 +1000,28 @@ function chilledToPlanItem(s: ChilledSuggestion, prev?: PlanItem): PlanItem {
   };
 }
 
-// Collapsible warning strip under the batch table: chilled products with real
-// orders in this plan's dispatch window that aren't on the plan. Take no
-// action and the plan is completely normal — rows only join via the button.
-function AdditionalChilledPanel({ suggestions, unmatched, dispatchDates, addedRecipeIds, onAddSelected }: {
+// Collapsible strip under the batch table: EVERY product with sales in this
+// plan's dispatch window that the plan isn't covering — suggestions for
+// recipes it can add, plus products matching no recipe — unless explicitly
+// excluded. Fail-loud by design: forgetting an exclusion means one visible
+// row with an Exclude button, never silently missing demand. Take no action
+// and the plan is completely normal — rows only join via the button.
+function AdditionalChilledPanel({ suggestions, unmatched, excluded, dispatchDates, addedRecipeIds, onAddSelected, onSetExclusion }: {
   suggestions: ChilledSuggestion[];
-  unmatched: Array<{ productTitle: string; totalQuantity: number }>;
+  unmatched: UnmatchedWindowProduct[];
+  excluded: Array<{ productTitle: string; totalQuantity: number }>;
   dispatchDates: string[];
   addedRecipeIds: Set<number>;
   onAddSelected: (recipeIds: number[]) => void;
+  onSetExclusion: (productTitles: string[], action: "exclude" | "include") => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [showExcluded, setShowExcluded] = useState(false);
   const [ticked, setTicked] = useState<Set<number>>(new Set());
 
   const pending = suggestions.filter(s => !addedRecipeIds.has(s.recipeId));
-  if (pending.length === 0 && unmatched.length === 0) return null;
+  const attention = pending.length + unmatched.length;
+  if (attention === 0 && excluded.length === 0) return null;
 
   const dayLabel = (d: string | undefined) => d ? format(parseISO(d), "EEE") : "";
   const toggleTick = (id: number) => setTicked(prev => {
@@ -1025,19 +1032,25 @@ function AdditionalChilledPanel({ suggestions, unmatched, dispatchDates, addedRe
   const tickedPending = pending.filter(s => ticked.has(s.recipeId));
 
   return (
-    <div className="mb-3 border border-amber-400/60 bg-amber-500/10 rounded-xl overflow-hidden">
+    <div className={cn(
+      "mb-3 border rounded-xl overflow-hidden",
+      attention > 0 ? "border-amber-400/60 bg-amber-500/10" : "border-border bg-secondary/30",
+    )}>
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between gap-2 px-3 py-2 text-xs font-medium text-amber-800 dark:text-amber-300"
+        className={cn(
+          "w-full flex items-center justify-between gap-2 px-3 py-2 text-xs font-medium",
+          attention > 0 ? "text-amber-800 dark:text-amber-300" : "text-muted-foreground",
+        )}
       >
         <span className="flex items-center gap-2 min-w-0">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-          {pending.length > 0 ? (
+          {attention > 0 ? (
             <span className="truncate">
-              {pending.length} chilled product{pending.length === 1 ? " has" : "s have"} sales in this window but {pending.length === 1 ? "isn't" : "aren't"} on this plan
+              {attention} product{attention === 1 ? "" : "s"} sold in this window {attention === 1 ? "isn't" : "aren't"} covered by this plan
             </span>
           ) : (
-            <span className="truncate">All chilled products with sales are on this plan</span>
+            <span className="truncate">Every product sold in this window is covered or excluded</span>
           )}
         </span>
         {open ? <ChevronUp className="w-3.5 h-3.5 flex-shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 flex-shrink-0" />}
@@ -1055,6 +1068,7 @@ function AdditionalChilledPanel({ suggestions, unmatched, dispatchDates, addedRe
                     <th className="py-1 px-2 font-medium text-center">{dayLabel(dispatchDates[2])} dispatch</th>
                     <th className="py-1 px-2 font-medium text-center">Fridge</th>
                     <th className="py-1 pl-2 font-medium text-center">Batches needed</th>
+                    <th className="py-1 pl-2"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1075,6 +1089,15 @@ function AdditionalChilledPanel({ suggestions, unmatched, dispatchDates, addedRe
                       <td className="py-1.5 px-2 text-center">{s.dispatch3Qty}</td>
                       <td className="py-1.5 px-2 text-center">{s.fridgeStock}</td>
                       <td className="py-1.5 pl-2 text-center font-semibold">{s.suggestedBatches}</td>
+                      <td className="py-1.5 pl-2 text-right">
+                        <button
+                          onClick={() => onSetExclusion(s.sourceTitles, "exclude")}
+                          className="text-[10px] text-muted-foreground hover:text-destructive underline-offset-2 hover:underline transition-colors"
+                          title={`Stop suggesting ${s.sourceTitles.join(", ")} — reversible from the excluded list below`}
+                        >
+                          Exclude
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1089,10 +1112,51 @@ function AdditionalChilledPanel({ suggestions, unmatched, dispatchDates, addedRe
             </>
           )}
           {unmatched.length > 0 && (
-            <p className="text-[10px] text-muted-foreground pt-1 border-t border-amber-400/30">
-              Also sold in this window with no matching recipe:{" "}
-              {unmatched.map(u => `${u.productTitle} (${u.totalQuantity})`).join(", ")}
-            </p>
+            <div className={cn("space-y-1", pending.length > 0 && "pt-2 border-t border-amber-400/30")}>
+              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+                Sold in this window, no matching recipe
+              </p>
+              {unmatched.map(u => (
+                <div key={u.productTitle} className="flex items-center justify-between gap-2 text-xs">
+                  <span className="truncate">
+                    {u.productTitle}
+                    <span className="text-muted-foreground"> — {u.dispatch2Qty + u.dispatch3Qty > 0 ? `${u.dispatch2Qty + u.dispatch3Qty} forward` : `${u.totalQuantity} in window`}</span>
+                  </span>
+                  <button
+                    onClick={() => onSetExclusion([u.productTitle], "exclude")}
+                    className="text-[10px] text-muted-foreground hover:text-destructive underline-offset-2 hover:underline transition-colors flex-shrink-0"
+                    title="Stop showing this product here — reversible from the excluded list below"
+                  >
+                    Exclude
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {excluded.length > 0 && (
+            <div className="pt-2 border-t border-border/60">
+              <button
+                onClick={() => setShowExcluded(!showExcluded)}
+                className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {showExcluded ? "Hide" : "Show"} excluded products with sales in this window ({excluded.length})
+              </button>
+              {showExcluded && (
+                <div className="mt-1 space-y-1">
+                  {excluded.map(e => (
+                    <div key={e.productTitle} className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                      <span className="truncate">{e.productTitle} — {e.totalQuantity} in window</span>
+                      <button
+                        onClick={() => onSetExclusion([e.productTitle], "include")}
+                        className="text-[10px] hover:text-foreground underline-offset-2 hover:underline transition-colors flex-shrink-0"
+                      >
+                        Re-include
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -1409,6 +1473,14 @@ interface ChilledSuggestion {
   deficit: number;
   deficitBatches: number;
   suggestedBatches: number;
+  sourceTitles: string[];
+}
+
+interface UnmatchedWindowProduct {
+  productTitle: string;
+  totalQuantity: number;
+  dispatch2Qty: number;
+  dispatch3Qty: number;
 }
 
 interface CalcResponse {
@@ -1423,7 +1495,8 @@ interface CalcResponse {
   unmatchedRecipes: string[];
   fulfilmentDiagnostics?: FulfilmentDiagnostics;
   additionalChilled?: ChilledSuggestion[];
-  unmatchedWindowProducts?: Array<{ productTitle: string; totalQuantity: number }>;
+  unmatchedWindowProducts?: UnmatchedWindowProduct[];
+  excludedWindowProducts?: Array<{ productTitle: string; totalQuantity: number }>;
   recipes: CalcRecipe[];
 }
 
@@ -1692,6 +1765,20 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   const deleteRecipeCollection = async (id: number) => {
     const res = await fetch(`${BASE}/api/recipe-collections/${id}`, { method: "DELETE", credentials: "include" });
     if (res.ok) queryClient.invalidateQueries({ queryKey: ["recipe-collections"] });
+  };
+
+  // Exclude / re-include a product from the chilled-suggestions panel, then
+  // refetch the calc so the panel reflects the new list.
+  const setChilledExclusion = async (productTitles: string[], action: "exclude" | "include") => {
+    for (const productTitle of productTitles) {
+      await fetch(`${BASE}/api/production-plans/chilled-exclusions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ productTitle, action }),
+      }).catch(() => {});
+    }
+    queryClient.invalidateQueries({ queryKey: ["production-plan-calculate", planDate] });
   };
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
@@ -2027,7 +2114,13 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   useEffect(() => {
     if (!open || capacityAutoApplied.current) return;
     if (!capacityData?.available || !calcData?.recipes) return;
-    if (totalBatchesOverride !== null) { capacityAutoApplied.current = true; return; }
+    // A non-null override means a total is already chosen — but do NOT mark
+    // the auto-apply as consumed here: on a date change this effect can run
+    // one commit before the calc effect's reset has re-rendered, and it would
+    // see the PREVIOUS date's auto-applied value and permanently skip the new
+    // date (the stuck-at-75 bug, 2026-08-08). Once the reset lands, the
+    // effect re-runs with override === null and applies normally.
+    if (totalBatchesOverride !== null) return;
     const included = items.filter(i => i.included);
     if (included.length === 0) return;
     const { ceilingBatches } = computeCeilingBatches(included);
@@ -2843,9 +2936,11 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
               <AdditionalChilledPanel
                 suggestions={calcData?.additionalChilled ?? []}
                 unmatched={calcData?.unmatchedWindowProducts ?? []}
+                excluded={calcData?.excludedWindowProducts ?? []}
                 dispatchDates={dispatchDates}
                 addedRecipeIds={new Set(items.map(it => it.recipeId))}
                 onAddSelected={addRecipesToList}
+                onSetExclusion={setChilledExclusion}
               />
 
               {availableToAdd.length > 0 && (
@@ -3079,6 +3174,20 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const deleteRecipeCollection = async (id: number) => {
     const res = await fetch(`${BASE}/api/recipe-collections/${id}`, { method: "DELETE", credentials: "include" });
     if (res.ok) queryClient.invalidateQueries({ queryKey: ["recipe-collections"] });
+  };
+
+  // Exclude / re-include a product from the chilled-suggestions panel, then
+  // refetch the calc so the panel reflects the new list.
+  const setChilledExclusion = async (productTitles: string[], action: "exclude" | "include") => {
+    for (const productTitle of productTitles) {
+      await fetch(`${BASE}/api/production-plans/chilled-exclusions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ productTitle, action }),
+      }).catch(() => {});
+    }
+    queryClient.invalidateQueries({ queryKey: ["production-plan-calculate", planDate] });
   };
 
   // ── Live /calculate overlay ──────────────────────────────────────────────────
@@ -3706,9 +3815,11 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
           <AdditionalChilledPanel
             suggestions={editCalcData?.additionalChilled ?? []}
             unmatched={editCalcData?.unmatchedWindowProducts ?? []}
+            excluded={editCalcData?.excludedWindowProducts ?? []}
             dispatchDates={(editCalcData as { dispatchDates?: string[] } | undefined)?.dispatchDates ?? []}
             addedRecipeIds={new Set(items.map(it => it.recipeId))}
             onAddSelected={addRecipesToList}
+            onSetExclusion={setChilledExclusion}
           />
 
           {availableToAdd.length > 0 && (

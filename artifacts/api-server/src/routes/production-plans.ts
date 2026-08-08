@@ -207,6 +207,41 @@ export async function getNonDispatchDates(): Promise<Set<string>> {
   return new Set();
 }
 
+// Shopify product titles the operator has excluded from the Create Plan
+// "additional chilled dispatches" panel (sauces, brownies, frozen lines…).
+// Stored as the original titles; matching is on normalised form. The panel
+// still lists excluded products that sold in the window, so an exclusion is
+// always reviewable and reversible — never an invisible hole.
+const CHILLED_EXCLUSIONS_SETTING_KEY = "chilled_excluded_products";
+
+async function getChilledExclusions(): Promise<string[]> {
+  const [row] = await db.select({ value: appSettingsTable.value })
+    .from(appSettingsTable)
+    .where(eq(appSettingsTable.key, CHILLED_EXCLUSIONS_SETTING_KEY))
+    .limit(1);
+  if (!row) return [];
+  try {
+    const parsed = JSON.parse(row.value);
+    if (Array.isArray(parsed)) return parsed.filter((s): s is string => typeof s === "string");
+  } catch {}
+  return [];
+}
+
+async function setChilledExclusions(titles: string[]): Promise<void> {
+  const value = JSON.stringify(titles);
+  const [existing] = await db.select({ key: appSettingsTable.key })
+    .from(appSettingsTable)
+    .where(eq(appSettingsTable.key, CHILLED_EXCLUSIONS_SETTING_KEY))
+    .limit(1);
+  if (existing) {
+    await db.update(appSettingsTable)
+      .set({ value, updatedAt: new Date() })
+      .where(eq(appSettingsTable.key, CHILLED_EXCLUSIONS_SETTING_KEY));
+  } else {
+    await db.insert(appSettingsTable).values({ key: CHILLED_EXCLUSIONS_SETTING_KEY, value });
+  }
+}
+
 // Top-level holiday-aware variants. Async because they read app_settings.
 // The inline sync versions inside /calculate are wrappers that pass the
 // resolved Set in to keep the per-request DB hit to one read.
@@ -1429,16 +1464,24 @@ router.get("/calculate", async (req, res) => {
     ? [...unmatchedRecipeNames, `Calzone Club Special (${clubSpecialSales} units — no special recipe is configured)`]
     : unmatchedRecipeNames;
 
-  // ─── Additional chilled products (test boxes etc.) ──────────────────
+  // ─── Additional chilled products — exclusion-based (fail-loud) ───────
   // The main loop is recipe-driven: only DPT/core recipes ever look up their
-  // sales, so orders for a fridge-flagged one-off (a test calzone) used to
-  // vanish without a trace. This reverse pass finds fridge products with
-  // real orders inside the plan's dispatch window that have no row on the
-  // plan, and returns them as opt-in suggestions — the operator must
-  // explicitly add them, nothing joins the plan by default. Mac cheese is
-  // deliberately excluded: it sells every day and is planned through its own
-  // day-before flow, so it would otherwise be a permanent false warning.
-  const candidateRecipeIds = new Set(dptRows.map(r => r.recipeId));
+  // sales. This pass walks EVERY product sold in the window instead and
+  // surfaces anything the plan isn't already covering, unless the operator
+  // has explicitly excluded that product (sauces, brownies, frozen lines,
+  // memberships…). Inverted by design (Graeme, 2026-08-08): a forgotten
+  // inclusion flag hides real demand silently; a forgotten exclusion is just
+  // one visible row with an Exclude button. Nothing is added to the plan by
+  // default either way. Mac cheese recipes are skipped: they sell every day
+  // and are planned through their own day-before flow, so they'd be a
+  // permanent false warning here.
+  // "Covered" means the plan table will actually SHOW the recipe by default —
+  // core menu only, matching the client's filter. NOT the whole DPT candidate
+  // set: retired flavours keep active dpt_settings rows (e.g. Pepperoni &
+  // Mushroom), which put them in the calc but never on screen — their orders
+  // used to vanish between the two layers. (Found 2026-08-08: Benji / Philly /
+  // Open Fire all had stale active DPT rows and never surfaced.)
+  const coveredRecipeIds = new Set(dptRows.filter(r => r.isCoreMenu).map(r => r.recipeId));
   const planAheadWindow = dispatchDates[0] > todayStr;
   type ChilledSuggestion = {
     recipeId: number; recipeName: string; recipeCategory: string | null;
@@ -1449,14 +1492,23 @@ router.get("/calculate", async (req, res) => {
     dispatch1Qty: number; dispatch2Qty: number; dispatch3Qty: number;
     totalDispatchQty: number; deficit: number; deficitBatches: number;
     suggestedBatches: number;
+    // Shopify product titles this demand came from — what an Exclude on the
+    // row actually excludes.
+    sourceTitles: string[];
   };
   const additionalChilled: ChilledSuggestion[] = [];
-  // Products in the window that match no recipe at all — surfaced so nothing
-  // silently disappears (the operator can decide whether it needs a recipe).
-  const unmatchedWindowProducts: Array<{ productTitle: string; totalQuantity: number }> = [];
+  // Products in the window that match no recipe at all — shown with an
+  // Exclude button so the operator decides once whether each matters.
+  const unmatchedWindowProducts: Array<{ productTitle: string; totalQuantity: number; dispatch2Qty: number; dispatch3Qty: number }> = [];
+  // Excluded products that DID sell in the window — listed so an exclusion
+  // can be reviewed and reversed, never invisible.
+  const excludedWindowProducts: Array<{ productTitle: string; totalQuantity: number }> = [];
 
   if (hasShopifyData) {
-    const fridgeRecipeRows = await db
+    const exclusionTitles = await getChilledExclusions();
+    const excludedNorms = new Set(exclusionTitles.map(normalizeForMatch));
+
+    const allRecipeRows = await db
       .select({
         id: recipesTable.id,
         name: recipesTable.name,
@@ -1468,46 +1520,93 @@ router.get("/calculate", async (req, res) => {
         sopUrl: recipesTable.sopUrl,
         color: recipesTable.color,
       })
-      .from(recipesTable)
-      .where(eq(recipesTable.isFridgeProduct, true));
+      .from(recipesTable);
+    const recipeById = new Map(allRecipeRows.map(r => [r.id, r]));
 
-    // Variant-first like the main loop; the name fallback runs over the RAW
-    // per-date product list rather than shopifySalesPerDate, because that map
-    // only holds products with a 2-pack variant — a test box or buns product
-    // with different pack variants would silently read as zero. No DPT
-    // fallback either way: a chilled one-off has no forecast, only orders.
-    const chilledQtyForDate = (recipeId: number, recipeName: string, date: string): number => {
-      if (recipeToVariantIds.has(recipeId)) {
-        const dateSales = variantSalesPerDate[date] ?? {};
-        let total = 0;
-        for (const vid of recipeToVariantIds.get(recipeId)!) total += dateSales[vid] ?? 0;
-        return total;
+    // variantId → recipeIds (a test-box variant can map to several recipes —
+    // each gets the box quantity).
+    const variantToRecipeIds = new Map<string, number[]>();
+    for (const [rid, vids] of recipeToVariantIds) {
+      for (const vid of vids) {
+        const list = variantToRecipeIds.get(vid) ?? [];
+        list.push(rid);
+        variantToRecipeIds.set(vid, list);
       }
-      const rNorm = normalizeForMatch(recipeName);
-      let bestQty = 0;
+    }
+
+    const bestRecipeForTitle = (titleNorm: string): number | null => {
+      let bestId: number | null = null;
       let bestLenDiff = Infinity;
-      for (const p of rawProductsByDate[date] ?? []) {
-        const pNorm = normalizeForMatch(p.productTitle);
-        if (pNorm.includes(rNorm) || rNorm.includes(pNorm)) {
-          const lenDiff = Math.abs(pNorm.length - rNorm.length);
-          if (lenDiff < bestLenDiff) { bestLenDiff = lenDiff; bestQty = p.totalQuantity; }
+      for (const r of allRecipeRows) {
+        const rNorm = normalizeForMatch(r.name);
+        if (rNorm.includes(titleNorm) || titleNorm.includes(rNorm)) {
+          const lenDiff = Math.abs(rNorm.length - titleNorm.length);
+          if (lenDiff < bestLenDiff) { bestLenDiff = lenDiff; bestId = r.id; }
         }
       }
-      return bestQty;
+      return bestId;
     };
 
-    for (const r of fridgeRecipeRows) {
-      if (candidateRecipeIds.has(r.id)) continue; // already on the plan calc
+    // Per-recipe demand accumulated product-first, so every unit traces back
+    // to a product title the operator can exclude.
+    const demandByRecipe = new Map<number, { perDate: Record<string, number>; sourceTitles: Set<string> }>();
+    const creditRecipe = (rid: number, date: string, qty: number, title: string) => {
+      const entry = demandByRecipe.get(rid) ?? { perDate: {}, sourceTitles: new Set<string>() };
+      entry.perDate[date] = (entry.perDate[date] ?? 0) + qty;
+      entry.sourceTitles.add(title);
+      demandByRecipe.set(rid, entry);
+    };
+    const unmatchedByTitle = new Map<string, { perDate: Record<string, number> }>();
+    const excludedByTitle = new Map<string, number>();
+
+    for (const date of deliveryDates) {
+      for (const p of rawProductsByDate[date] ?? []) {
+        const titleNorm = normalizeForMatch(p.productTitle);
+        // Club Special sales are merged into the is_current_special recipe
+        // above (and separately warned about when none is configured).
+        if (titleNorm === CALZONE_CLUB_SPECIAL_KEY) continue;
+        if (excludedNorms.has(titleNorm)) {
+          excludedByTitle.set(p.productTitle, (excludedByTitle.get(p.productTitle) ?? 0) + p.totalQuantity);
+          continue;
+        }
+        // Variant mappings first (authoritative, per-variant credit); fall
+        // back to a name match over the RAW product list — shopifySalesPerDate
+        // only holds products with a 2-pack variant, which would read a test
+        // box or buns product as zero.
+        let credited = false;
+        for (const v of p.variants) {
+          if (!v.variantId) continue;
+          const rids = variantToRecipeIds.get(String(v.variantId));
+          if (!rids) continue;
+          for (const rid of rids) creditRecipe(rid, date, v.quantity, p.productTitle);
+          credited = true;
+        }
+        if (credited) continue;
+        const rid = bestRecipeForTitle(titleNorm);
+        if (rid != null) {
+          creditRecipe(rid, date, p.totalQuantity, p.productTitle);
+          continue;
+        }
+        const entry = unmatchedByTitle.get(p.productTitle) ?? { perDate: {} };
+        entry.perDate[date] = (entry.perDate[date] ?? 0) + p.totalQuantity;
+        unmatchedByTitle.set(p.productTitle, entry);
+      }
+    }
+
+    for (const [rid, demand] of demandByRecipe) {
+      if (coveredRecipeIds.has(rid)) continue; // visible on the plan by default
+      const r = recipeById.get(rid);
+      if (!r) continue;
       if ((r.category ?? "").toLowerCase() === "macaroni cheese") continue;
-      const d1 = chilledQtyForDate(r.id, r.name, deliveryDates[0]);
-      const d2 = chilledQtyForDate(r.id, r.name, deliveryDates[1]);
-      const d3 = chilledQtyForDate(r.id, r.name, deliveryDates[2]);
+      const d1 = demand.perDate[deliveryDates[0]] ?? 0;
+      const d2 = demand.perDate[deliveryDates[1]] ?? 0;
+      const d3 = demand.perDate[deliveryDates[2]] ?? 0;
       if (d2 + d3 <= 0) continue; // nothing this plan's production must cover
       const portionsPerBatch = Number(r.portionsPerBatch) || 10;
       const packSize = Number(r.packSize) || 1;
       const packsPerBatch = portionsPerBatch / packSize;
-      const fridgeStock = Math.round(latestStock[r.id] ?? fridgeStockFromPlans[r.id] ?? 0);
-      const prevProduction = Math.round(prevProductionPacks[r.id] ?? 0);
+      const fridgeStock = Math.round(latestStock[rid] ?? fridgeStockFromPlans[rid] ?? 0);
+      const prevProduction = Math.round(prevProductionPacks[rid] ?? 0);
       // Mirror of the plan-ahead roll-forward in the main loop: when the plan
       // is built ahead of time, dispatch1 hasn't left the fridge yet and the
       // previous day's planned production hasn't landed yet.
@@ -1517,7 +1616,7 @@ router.get("/calculate", async (req, res) => {
       const deficit = Math.max(0, d2 + d3 - estimatedFactoryNumber);
       const deficitBatches = packsPerBatch > 0 ? Math.ceil(deficit / packsPerBatch) : 0;
       additionalChilled.push({
-        recipeId: r.id,
+        recipeId: rid,
         recipeName: r.name,
         recipeCategory: r.category ?? null,
         color: r.color ?? null,
@@ -1528,7 +1627,7 @@ router.get("/calculate", async (req, res) => {
         maxBatchesPerTin: r.maxBatchesPerTin ? Number(r.maxBatchesPerTin) : null,
         sopUrl: r.sopUrl ?? null,
         fridgeStock,
-        stockCheckedAt: latestStockCheckedAt[r.id]?.toISOString() ?? null,
+        stockCheckedAt: latestStockCheckedAt[rid]?.toISOString() ?? null,
         prevProduction,
         estimatedFactoryNumber,
         dispatch1Qty: d1,
@@ -1538,36 +1637,25 @@ router.get("/calculate", async (req, res) => {
         deficit,
         deficitBatches,
         suggestedBatches: deficitBatches,
+        sourceTitles: [...demand.sourceTitles],
       });
     }
     additionalChilled.sort((a, b) => a.recipeName.localeCompare(b.recipeName));
 
-    // Anything sold in the window whose variants map to no recipe and whose
-    // title name-matches no recipe either. Kept as bare info — quantities
-    // only, no batch maths is possible without a recipe.
-    const allRecipeNameRows = await db.select({ id: recipesTable.id, name: recipesTable.name }).from(recipesTable);
-    const allRecipeNorms = allRecipeNameRows.map(r => normalizeForMatch(r.name));
-    const mappedVariantIds = new Set<string>();
-    for (const vids of recipeToVariantIds.values()) for (const vid of vids) mappedVariantIds.add(vid);
-    const unmatchedTotals = new Map<string, number>();
-    for (const date of deliveryDates) {
-      for (const p of rawProductsByDate[date] ?? []) {
-        const hasMappedVariant = p.variants.some(v => v.variantId && mappedVariantIds.has(String(v.variantId)));
-        if (hasMappedVariant) continue;
-        const titleNorm = normalizeForMatch(p.productTitle);
-        // Club Special sales are merged into the is_current_special recipe
-        // above (and separately warned about when none is configured) — not
-        // an unmatched product.
-        if (titleNorm === CALZONE_CLUB_SPECIAL_KEY) continue;
-        const nameMatches = allRecipeNorms.some(n => n.includes(titleNorm) || titleNorm.includes(n));
-        if (nameMatches) continue;
-        unmatchedTotals.set(p.productTitle, (unmatchedTotals.get(p.productTitle) ?? 0) + p.totalQuantity);
-      }
-    }
-    for (const [productTitle, totalQuantity] of unmatchedTotals) {
-      unmatchedWindowProducts.push({ productTitle, totalQuantity });
+    for (const [productTitle, entry] of unmatchedByTitle) {
+      const totalQuantity = Object.values(entry.perDate).reduce((s, q) => s + q, 0);
+      unmatchedWindowProducts.push({
+        productTitle,
+        totalQuantity,
+        dispatch2Qty: entry.perDate[deliveryDates[1]] ?? 0,
+        dispatch3Qty: entry.perDate[deliveryDates[2]] ?? 0,
+      });
     }
     unmatchedWindowProducts.sort((a, b) => b.totalQuantity - a.totalQuantity);
+    for (const [productTitle, totalQuantity] of excludedByTitle) {
+      excludedWindowProducts.push({ productTitle, totalQuantity });
+    }
+    excludedWindowProducts.sort((a, b) => b.totalQuantity - a.totalQuantity);
   }
 
   // Default ordering for new plans: Mac & Cheese variants first (kitchen
@@ -1596,8 +1684,31 @@ router.get("/calculate", async (req, res) => {
     fulfilmentDiagnostics,
     additionalChilled,
     unmatchedWindowProducts,
+    excludedWindowProducts,
     recipes: orderedResult,
   });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// POST /production-plans/chilled-exclusions
+// Body: { productTitle: string, action: "exclude" | "include" }
+// Adds/removes a Shopify product title on the chilled-suggestions exclusion
+// list (matching is on normalised title). Returns the updated list.
+router.post("/chilled-exclusions", async (req, res) => {
+  const productTitle = typeof req.body?.productTitle === "string" ? req.body.productTitle.trim() : "";
+  const action = req.body?.action;
+  if (!productTitle || (action !== "exclude" && action !== "include")) {
+    res.status(400).json({ error: "productTitle and action ('exclude' | 'include') required" });
+    return;
+  }
+  const norm = productTitle.toLowerCase().trim().replace(/[''`]/g, "'").replace(/&/g, "and").replace(/\s+/g, " ");
+  const current = await getChilledExclusions();
+  const next = current.filter(t =>
+    t.toLowerCase().trim().replace(/[''`]/g, "'").replace(/&/g, "and").replace(/\s+/g, " ") !== norm
+  );
+  if (action === "exclude") next.push(productTitle);
+  await setChilledExclusions(next);
+  res.json({ excluded: next });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
