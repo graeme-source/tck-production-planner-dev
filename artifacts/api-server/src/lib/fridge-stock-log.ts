@@ -11,7 +11,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 
-export type FridgeChangeSource = "manual" | "wrapping" | "fulfilment" | "reset";
+export type FridgeChangeSource = "manual" | "wrapping" | "fulfilment" | "reset" | "freeze";
 
 export interface FridgeStockChange {
   recipeId: number;

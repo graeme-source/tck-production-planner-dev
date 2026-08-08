@@ -394,6 +394,8 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
                   <option value="last_pack_batch_numbers">Last Pack Batch Numbers</option>
                   <option value="fridge_freezer_temps_opening">Fridge/Freezer Temps (Opening)</option>
                   <option value="fridge_freezer_temps_closing">Fridge/Freezer Temps (Closing)</option>
+                  <option value="closing_fridge_check">Closing Fridge Check (freeze out-of-life packs)</option>
+                  <option value="duck_defrost_quantity">Duck Defrost Quantity (+2 plans ahead)</option>
                 </select>
               </div>
             </div>
