@@ -37,6 +37,9 @@ const schema = z.object({
   sopUrl: z.string().optional(),
   isCoreMenu: z.boolean().optional(),
   isCurrentSpecial: z.boolean().optional(),
+  // Saved via the dedicated /recipes/:id/fridge-product endpoint, not the
+  // main create/update body (whose validator is OpenAPI-generated).
+  isFridgeProduct: z.boolean().optional(),
   color: z.string().optional(),
   cookingLossPercent: z.preprocess(v => (v === "" || v == null ? null : Number(v)), z.number().min(0).max(50).nullable().optional()),
   dietaryCategory: z.preprocess(v => (v === "" ? null : v), z.enum(["meat", "vegetarian"]).nullable().optional()),
@@ -496,6 +499,11 @@ function RecipeForm({
               <input type="checkbox" id="isCoreMenu" {...register("isCoreMenu")} className="rounded border-border" />
               <label htmlFor="isCoreMenu" className="text-sm font-medium">Core Menu Item</label>
               <span className="text-xs text-muted-foreground">(always shows in Production Fridge stock &amp; calculator)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <input type="checkbox" id="isFridgeProduct" {...register("isFridgeProduct")} className="rounded border-border" />
+              <label htmlFor="isFridgeProduct" className="text-sm font-medium">Fridge Product</label>
+              <span className="text-xs text-muted-foreground">(wrapped into the production fridge — test calzones etc.; sales appear as chilled-dispatch suggestions on Create Plan. Not for frozen / F2F / clearance lines)</span>
             </div>
             <div className="flex flex-col gap-1">
               <div className="flex items-center gap-2">
@@ -1141,6 +1149,7 @@ function EditRecipeDialog({
         sopUrl: detail.sopUrl ?? "",
         isCoreMenu: detail.isCoreMenu ?? false,
         isCurrentSpecial: detail.isCurrentSpecial ?? false,
+        isFridgeProduct: (detail as Record<string, unknown>).isFridgeProduct === true,
         color: detail.color ?? "",
         cookingLossPercent: (detail as Record<string, unknown>).cookingLossPercent != null ? Number((detail as Record<string, unknown>).cookingLossPercent) : 3,
         dietaryCategory: ((detail as Record<string, unknown>).dietaryCategory as "meat" | "vegetarian" | null | undefined) ?? null,
@@ -1148,7 +1157,7 @@ function EditRecipeDialog({
         ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, quid: (i as Record<string, unknown>).quid === true, showInPrep: (i as Record<string, unknown>).showInPrep === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
         subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, quid: (s as Record<string, unknown>).quid === true, showInPrep: (s as Record<string, unknown>).showInPrep === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
       }
-    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", cookingLossPercent: 3, dietaryCategory: null, tags: [], ingredients: [], subRecipes: [] };
+    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", cookingLossPercent: 3, dietaryCategory: null, tags: [], ingredients: [], subRecipes: [] };
 
   return (
     <>
@@ -1199,12 +1208,20 @@ function EditRecipeDialog({
                 submitRef={submitRef}
                 allTags={allTags}
                 onSubmit={(data) => {
-                  const { targetBuildMinutes, ...rest } = data;
+                  // isFridgeProduct rides its own endpoint — the main update
+                  // body's validator is OpenAPI-generated and would drop it.
+                  const { targetBuildMinutes, isFridgeProduct, ...rest } = data;
                   const payload = {
                     ...rest,
                     targetBuildSeconds: targetBuildMinutes != null ? Math.round(targetBuildMinutes * 60) : null,
                   } as unknown as typeof data;
-                  updateRecipe.mutate({ id, data: payload }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: [`/api/recipes/${id}`] }); onOpenChange(false); } });
+                  const fridgeWrite = fetch(`/api/recipes/${id}/fridge-product`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    credentials: "include",
+                    body: JSON.stringify({ isFridgeProduct: isFridgeProduct === true }),
+                  }).catch(() => {});
+                  updateRecipe.mutate({ id, data: payload }, { onSuccess: () => { fridgeWrite.finally(() => { queryClient.invalidateQueries({ queryKey: [`/api/recipes/${id}`] }); queryClient.invalidateQueries({ queryKey: ["/api/recipes"] }); }); onOpenChange(false); } });
                 }}
               />
 
@@ -2076,6 +2093,7 @@ export default function Recipes() {
         sopUrl: duplicateDetail.sopUrl ?? "",
         isCoreMenu: duplicateDetail.isCoreMenu ?? false,
         isCurrentSpecial: false,
+        isFridgeProduct: (duplicateDetail as Record<string, unknown>).isFridgeProduct === true,
         color: duplicateDetail.color ?? "",
         cookingLossPercent: (duplicateDetail as Record<string, unknown>).cookingLossPercent != null ? Number((duplicateDetail as Record<string, unknown>).cookingLossPercent) : 3,
         dietaryCategory: ((duplicateDetail as Record<string, unknown>).dietaryCategory as "meat" | "vegetarian" | null | undefined) ?? null,
@@ -2116,7 +2134,7 @@ export default function Recipes() {
   const addDefaults: FormValues = {
     name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "",
     packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined,
-    tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, color: "", cookingLossPercent: 3, dietaryCategory: null, tags: [], ingredients: [], subRecipes: [],
+    tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", cookingLossPercent: 3, dietaryCategory: null, tags: [], ingredients: [], subRecipes: [],
   };
 
   // Shared filter for both card and table views.
@@ -2324,12 +2342,27 @@ export default function Recipes() {
             categoryDefaults={catDefaults}
             allTags={allTags}
             onSubmit={(data) => {
-              const { targetBuildMinutes, ...rest } = data;
+              // isFridgeProduct rides its own endpoint — the create body's
+              // validator is OpenAPI-generated and would drop it.
+              const { targetBuildMinutes, isFridgeProduct, ...rest } = data;
               const payload = {
                 ...rest,
                 targetBuildSeconds: targetBuildMinutes != null ? Math.round(targetBuildMinutes * 60) : null,
               } as unknown as typeof data;
-              createRecipe.mutate({ data: payload }, { onSuccess: () => { setIsAddOpen(false); setDuplicateDefaults(null); } });
+              createRecipe.mutate({ data: payload }, {
+                onSuccess: (created) => {
+                  const newId = (created as { id?: number } | undefined)?.id;
+                  if (isFridgeProduct === true && newId) {
+                    fetch(`/api/recipes/${newId}/fridge-product`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      credentials: "include",
+                      body: JSON.stringify({ isFridgeProduct: true }),
+                    }).catch(() => {});
+                  }
+                  setIsAddOpen(false); setDuplicateDefaults(null);
+                },
+              });
             }}
           />
         </DialogContent>

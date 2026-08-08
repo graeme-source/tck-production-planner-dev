@@ -2583,6 +2583,45 @@ async function runStartupMigrations() {
       )
     `);
 
+    // Fridge products: recipes that get wrapped and held in the production
+    // fridge (core calzones, test calzones, mac cheese) — as opposed to
+    // frozen / F2F / clearance / Wonky lines. Drives the Create Plan
+    // "additional chilled dispatches" suggestions and the fridge stock count.
+    // One-time backfill: everything currently core-menu or mac cheese is a
+    // fridge product; later unticks by an admin must stick, hence the marker.
+    await db.execute(sql`ALTER TABLE recipes ADD COLUMN IF NOT EXISTS is_fridge_product BOOLEAN NOT NULL DEFAULT FALSE`);
+    await db.execute(sql`
+      INSERT INTO _migrations_done (key)
+      SELECT 'fridge_product_backfill'
+      WHERE NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'fridge_product_backfill')
+    `);
+    {
+      const result = await db.execute<{ cnt: number }>(sql`SELECT count(*)::int as cnt FROM _migrations_done WHERE key = 'fridge_product_backfill' AND done_at > NOW() - INTERVAL '5 seconds'`);
+      if (Number(result.rows[0]?.cnt) > 0) {
+        await db.execute(sql`UPDATE recipes SET is_fridge_product = TRUE WHERE is_core_menu = TRUE OR category = 'Macaroni Cheese'`);
+      }
+    }
+
+    // Recipe collections — named groups of recipes for one-click adding to a
+    // production plan (e.g. "August Test Box"). Distinct from `collections`
+    // (goods leaving the unit).
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS recipe_collections (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS recipe_collection_items (
+        id SERIAL PRIMARY KEY,
+        collection_id INTEGER NOT NULL REFERENCES recipe_collections(id) ON DELETE CASCADE,
+        recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_recipe_collection_items_collection ON recipe_collection_items (collection_id)`);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);

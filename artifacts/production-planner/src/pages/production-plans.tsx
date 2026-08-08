@@ -322,67 +322,93 @@ interface ScheduleCapacityData {
 
 const PACK_CEILING = 1000;
 
-function ScheduleCapacityPanel({ planDate, items, onUseSuggestion }: {
-  planDate: string;
-  items: PlanItem[];
-  onUseSuggestion: (batches: number) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [data, setData] = useState<ScheduleCapacityData | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/production-plans/schedule-capacity?planDate=${planDate}`, { credentials: "include" });
-      setData(res.ok ? await res.json() : { available: false, reason: `HTTP ${res.status}` });
-    } catch {
-      setData({ available: false, reason: "Request failed" });
-    } finally {
-      setLoading(false);
-    }
-  }, [planDate]);
-
-  const toggle = () => {
-    const next = !open;
-    setOpen(next);
-    if (next && !data && !loading) void load();
-  };
-
-  const included = items.filter(i => i.included);
-  // Packs already in the system after the upcoming dispatches, before any of
-  // this plan's batches: the base the 1,000-pack ceiling is measured against.
+// The 1,000-pack ceiling on a plan's suggested batch total, derived from the
+// packs already in the system after the upcoming dispatches. Shared between
+// the panel display and the parent's auto-apply of the rota suggestion.
+function computeCeilingBatches(included: PlanItem[]): { basePacks: number; ceilingBatches: number } {
   const basePacks = included.reduce((s, i) =>
     s + Math.max(0, i.estimatedFactoryNumber - bagPackEquivalents(i) - i.dispatch2Qty - i.dispatch3Qty), 0);
   const packsPerBatch = Math.max(5, ...included.map(i => i.packsPerBatch || 0));
-  const ceilingBatches = Math.max(0, Math.floor((PACK_CEILING - basePacks) / packsPerBatch));
+  return { basePacks, ceilingBatches: Math.max(0, Math.floor((PACK_CEILING - basePacks) / packsPerBatch)) };
+}
+
+function ScheduleCapacityPanel({ planDate, items, data, loading, currentTotal, onUseSuggestion }: {
+  planDate: string;
+  items: PlanItem[];
+  data: ScheduleCapacityData | null;
+  loading: boolean;
+  currentTotal: number;
+  onUseSuggestion: (batches: number) => void;
+}) {
+  // The headline (team size, Dough Prep, cap, suggested total) is always
+  // visible — no click needed. Only the person-by-person list hides behind
+  // the toggle.
+  const [open, setOpen] = useState(false);
+
+  const included = items.filter(i => i.included);
+  const { basePacks, ceilingBatches } = computeCeilingBatches(included);
   const totalDeficitBatches = included.reduce((s, i) => s + i.deficitBatches, 0);
 
   const rotaCap = data?.available ? (data.capacityBatches ?? 0) : null;
   const suggested = rotaCap != null ? Math.min(rotaCap, ceilingBatches) : null;
 
   return (
-    <div className="border-t border-border pt-2 mt-2 space-y-2">
-      <button
-        onClick={toggle}
-        className="w-full flex items-center justify-between text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-      >
-        <span className="flex items-center gap-1.5"><Users className="w-3.5 h-3.5" /> Rota &amp; suggested batches</span>
-        {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-      </button>
-
-      {open && (
-        <div className="space-y-2 text-xs">
-          {loading ? (
-            <div className="flex items-center gap-2 text-muted-foreground py-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Fetching the rota…</div>
-          ) : !data ? null : !data.available ? (
-            <p className="text-muted-foreground">{data.reason ?? "Schedule unavailable."}</p>
-          ) : (
+    <div className="border-t border-border pt-2 mt-2 space-y-1.5 text-xs">
+      {loading ? (
+        <div className="flex items-center gap-2 text-muted-foreground py-1"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Fetching the rota…</div>
+      ) : !data || !data.available ? (
+        <div className="flex items-center justify-between text-muted-foreground py-1">
+          <span className="flex items-center gap-1.5"><Users className="w-3.5 h-3.5" /> Rota</span>
+          <span className="truncate max-w-[180px]" title={data?.reason ?? undefined}>{data?.reason ?? "unavailable"}</span>
+        </div>
+      ) : (
+        <>
+          <div className={cn(
+            "rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-2",
+            data.hasDoughPrep ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+          )}>
+            <span className="flex items-center gap-1.5 min-w-0">
+              <Users className="w-3.5 h-3.5 flex-shrink-0" />
+              <span className="truncate">{data.teamSize} on shift · {data.hasDoughPrep ? "Dough Prep ✓" : "no Dough Prep"}</span>
+            </span>
+            <span className="font-semibold flex-shrink-0">cap {data.capacityBatches}</span>
+          </div>
+          <div className="flex items-center justify-between text-muted-foreground">
+            <span>{PACK_CEILING.toLocaleString()}-pack ceiling ({basePacks} banked)</span>
+            <span className="font-semibold text-foreground">≤ {ceilingBatches}</span>
+          </div>
+          {suggested != null && (
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-semibold text-foreground">Suggested total: {suggested}</span>
+              {suggested === currentTotal ? (
+                <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" /> applied
+                </span>
+              ) : (
+                <button
+                  onClick={() => onUseSuggestion(suggested)}
+                  className="px-2.5 py-1 rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors"
+                >
+                  Use {suggested}
+                </button>
+              )}
+            </div>
+          )}
+          {suggested != null && totalDeficitBatches > suggested && (
+            <p className="flex items-start gap-1.5 text-amber-700 dark:text-amber-400">
+              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              Sales deficits alone need {totalDeficitBatches} batches — above today's cap. Cover the deficits first.
+            </p>
+          )}
+          <button
+            onClick={() => setOpen(!open)}
+            className="w-full flex items-center justify-between text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <span>Team on {planDate.slice(8, 10)}/{planDate.slice(5, 7)}</span>
+            {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
+          {open && (
             <>
-              <div className="flex items-center justify-between">
-                <span>Team on {planDate.slice(8, 10)}/{planDate.slice(5, 7)}</span>
-                <span className="font-semibold">{data.teamSize} people</span>
-              </div>
               <ul className="space-y-0.5 max-h-36 overflow-y-auto pr-1">
                 {(data.people ?? []).map((p, i) => (
                   <li key={i} className="flex items-center justify-between gap-2">
@@ -396,37 +422,9 @@ function ScheduleCapacityPanel({ planDate, items, onUseSuggestion }: {
                   Not counted (fried chicken line): {data.excluded!.map(p => p.name).join(", ")}
                 </p>
               )}
-              <div className={cn(
-                "rounded-lg px-2.5 py-1.5 flex items-center justify-between",
-                data.hasDoughPrep ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-amber-500/10 text-amber-700 dark:text-amber-400",
-              )}>
-                <span>{data.hasDoughPrep ? "Dough Prep on shift" : "No Dough Prep on shift"}</span>
-                <span className="font-semibold">cap {data.capacityBatches}</span>
-              </div>
-              <div className="flex items-center justify-between text-muted-foreground">
-                <span>{PACK_CEILING.toLocaleString()}-pack ceiling ({basePacks} banked)</span>
-                <span className="font-semibold text-foreground">≤ {ceilingBatches}</span>
-              </div>
-              {suggested != null && (
-                <div className="flex items-center justify-between gap-2 pt-1">
-                  <span className="font-semibold text-foreground">Suggested total: {suggested} batches</span>
-                  <button
-                    onClick={() => onUseSuggestion(suggested)}
-                    className="px-2.5 py-1 rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors"
-                  >
-                    Use {suggested}
-                  </button>
-                </div>
-              )}
-              {suggested != null && totalDeficitBatches > suggested && (
-                <p className="flex items-start gap-1.5 text-amber-700 dark:text-amber-400">
-                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-                  Sales deficits alone need {totalDeficitBatches} batches — above today's cap. Cover the deficits first.
-                </p>
-              )}
             </>
           )}
-        </div>
+        </>
       )}
     </div>
   );
@@ -525,7 +523,9 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
               <ExternalLink className="w-3 h-3" />
             </a>
           )}
-          {!item.isFromDpt && (
+          {item.id.startsWith("chilled-") ? (
+            <span className="text-[10px] bg-amber-500/15 text-amber-700 dark:text-amber-400 px-1 py-0.5 rounded" title="Added from the chilled-dispatches suggestions — batches sized from real orders only">chilled</span>
+          ) : !item.isFromDpt && (
             <span className="text-[10px] bg-secondary text-muted-foreground px-1 py-0.5 rounded">manual</span>
           )}
         </div>
@@ -947,6 +947,372 @@ function DptSettingsDialog({
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Additional chilled products (test boxes etc.)
+// ──────────────────────────────────────────────────────────────────────────────
+
+// Convert a server chilled suggestion into a plan row. The row joins the
+// allocation pool with zero demand weight (dptPercent/salesPercent 0), which
+// the allocator treats as "cover exactly the known-order deficit, never build
+// surplus" — the DPT balancing across core recipes is untouched, it just
+// works with whatever capacity these rows leave behind.
+function chilledToPlanItem(s: ChilledSuggestion, prev?: PlanItem): PlanItem {
+  const stockAfter = s.estimatedFactoryNumber - (s.dispatch2Qty + s.dispatch3Qty);
+  return {
+    id: `chilled-${s.recipeId}`,
+    recipeId: s.recipeId,
+    recipeName: s.recipeName,
+    recipeColor: s.color ?? null,
+    included: prev ? prev.included : true,
+    suggestedBatches: s.suggestedBatches,
+    // Keep a manual batch edit across refetches, same rule as core rows.
+    batchesTarget: prev && prev.batchesTarget !== prev.suggestedBatches ? prev.batchesTarget : s.suggestedBatches,
+    tinCount: s.maxBatchesPerTin && s.suggestedBatches > 0 ? Math.ceil(s.suggestedBatches / s.maxBatchesPerTin) : null,
+    maxBatchesPerTin: s.maxBatchesPerTin,
+    tinSize: s.tinSize,
+    salesPercent: 0,
+    dptPercent: 0,
+    packsSold: 0,
+    portionsPerBatch: s.portionsPerBatch,
+    packsPerBatch: s.packsPerBatch,
+    packSize: s.packSize,
+    eightPackBagCount: 0,
+    sopUrl: s.sopUrl,
+    // Participates in Recalculate / total-batches redistribution (weight 0 →
+    // deficit-only), so the plan's total stays the total.
+    isFromDpt: true,
+    fridgeStock: prev ? prev.fridgeStock : s.fridgeStock,
+    stockCheckedAt: s.stockCheckedAt,
+    prevProduction: s.prevProduction,
+    estimatedFactoryNumber: s.estimatedFactoryNumber,
+    dispatch1Qty: s.dispatch1Qty,
+    dispatch2Qty: s.dispatch2Qty,
+    dispatch3Qty: s.dispatch3Qty,
+    totalDispatchQty: s.totalDispatchQty,
+    deficit: s.deficit,
+    deficitBatches: s.deficitBatches,
+    surplusBatches: 0,
+    targetStockPacks: null,
+    stockWarning: stockAfter < 0 ? "short" : stockAfter <= 10 ? "low" : "ok",
+    special1Count: 0,
+    special2Count: 0,
+    special3Count: 0,
+    totalSpecialCount: 0,
+  };
+}
+
+// Collapsible warning strip under the batch table: chilled products with real
+// orders in this plan's dispatch window that aren't on the plan. Take no
+// action and the plan is completely normal — rows only join via the button.
+function AdditionalChilledPanel({ suggestions, unmatched, dispatchDates, addedRecipeIds, onAddSelected }: {
+  suggestions: ChilledSuggestion[];
+  unmatched: Array<{ productTitle: string; totalQuantity: number }>;
+  dispatchDates: string[];
+  addedRecipeIds: Set<number>;
+  onAddSelected: (recipeIds: number[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [ticked, setTicked] = useState<Set<number>>(new Set());
+
+  const pending = suggestions.filter(s => !addedRecipeIds.has(s.recipeId));
+  if (pending.length === 0 && unmatched.length === 0) return null;
+
+  const dayLabel = (d: string | undefined) => d ? format(parseISO(d), "EEE") : "";
+  const toggleTick = (id: number) => setTicked(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const tickedPending = pending.filter(s => ticked.has(s.recipeId));
+
+  return (
+    <div className="mb-3 border border-amber-400/60 bg-amber-500/10 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between gap-2 px-3 py-2 text-xs font-medium text-amber-800 dark:text-amber-300"
+      >
+        <span className="flex items-center gap-2 min-w-0">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          {pending.length > 0 ? (
+            <span className="truncate">
+              {pending.length} chilled product{pending.length === 1 ? " has" : "s have"} sales in this window but {pending.length === 1 ? "isn't" : "aren't"} on this plan
+            </span>
+          ) : (
+            <span className="truncate">All chilled products with sales are on this plan</span>
+          )}
+        </span>
+        {open ? <ChevronUp className="w-3.5 h-3.5 flex-shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 flex-shrink-0" />}
+      </button>
+      {open && (
+        <div className="px-3 pb-3 space-y-2">
+          {pending.length > 0 && (
+            <>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-muted-foreground text-left">
+                    <th className="py-1 pr-2 font-medium"></th>
+                    <th className="py-1 pr-2 font-medium">Product</th>
+                    <th className="py-1 px-2 font-medium text-center">{dayLabel(dispatchDates[1])} dispatch</th>
+                    <th className="py-1 px-2 font-medium text-center">{dayLabel(dispatchDates[2])} dispatch</th>
+                    <th className="py-1 px-2 font-medium text-center">Fridge</th>
+                    <th className="py-1 pl-2 font-medium text-center">Batches needed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pending.map(s => (
+                    <tr key={s.recipeId} className="border-t border-amber-400/30">
+                      <td className="py-1.5 pr-2">
+                        <input
+                          type="checkbox"
+                          checked={ticked.has(s.recipeId)}
+                          onChange={() => toggleTick(s.recipeId)}
+                          className="rounded border-border"
+                        />
+                      </td>
+                      <td className="py-1.5 pr-2">
+                        <span className="font-medium" style={s.color ? { color: s.color } : undefined}>{s.recipeName}</span>
+                      </td>
+                      <td className="py-1.5 px-2 text-center">{s.dispatch2Qty}</td>
+                      <td className="py-1.5 px-2 text-center">{s.dispatch3Qty}</td>
+                      <td className="py-1.5 px-2 text-center">{s.fridgeStock}</td>
+                      <td className="py-1.5 pl-2 text-center font-semibold">{s.suggestedBatches}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <button
+                onClick={() => { onAddSelected(tickedPending.map(s => s.recipeId)); setTicked(new Set()); }}
+                disabled={tickedPending.length === 0}
+                className="px-3 py-1.5 text-xs rounded-lg bg-primary text-primary-foreground font-medium disabled:opacity-50 hover:bg-primary/90 transition-colors flex items-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add {tickedPending.length > 0 ? tickedPending.length : ""} selected to plan
+              </button>
+            </>
+          )}
+          {unmatched.length > 0 && (
+            <p className="text-[10px] text-muted-foreground pt-1 border-t border-amber-400/30">
+              Also sold in this window with no matching recipe:{" "}
+              {unmatched.map(u => `${u.productTitle} (${u.totalQuantity})`).join(", ")}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Multi-select recipe picker with collections
+// ──────────────────────────────────────────────────────────────────────────────
+
+interface RecipeCollectionDto {
+  id: number;
+  name: string;
+  recipes: Array<{ recipeId: number; recipeName: string; recipeColor: string | null }>;
+}
+
+// Replaces the old single-select "Add a recipe to this plan…" dropdown:
+// searchable, colour-coded like the batch table, tick several recipes and add
+// them in one go, or tick a whole saved collection (e.g. "August Test Box").
+function RecipePickerPanel({ recipes, collections, onAdd, onSaveCollection, onDeleteCollection, canManageCollections }: {
+  recipes: Recipe[];
+  collections: RecipeCollectionDto[];
+  onAdd: (recipeIds: number[]) => void;
+  onSaveCollection: (name: string, recipeIds: number[]) => void;
+  onDeleteCollection: (id: number) => void;
+  canManageCollections: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [saveName, setSaveName] = useState("");
+  const [savingCollection, setSavingCollection] = useState(false);
+
+  const availableIds = useMemo(() => new Set(recipes.map(r => r.id)), [recipes]);
+  const filtered = search.trim()
+    ? recipes.filter(r => r.name.toLowerCase().includes(search.trim().toLowerCase()))
+    : recipes;
+
+  const toggle = (id: number) => setSelected(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  // Ticking a collection selects its still-available members (already-added
+  // ones are simply skipped); un-ticking clears them.
+  const collectionAvailable = (c: RecipeCollectionDto) => c.recipes.filter(r => availableIds.has(r.recipeId));
+  const collectionFullySelected = (c: RecipeCollectionDto) => {
+    const avail = collectionAvailable(c);
+    return avail.length > 0 && avail.every(r => selected.has(r.recipeId));
+  };
+  const toggleCollection = (c: RecipeCollectionDto) => {
+    const avail = collectionAvailable(c).map(r => r.recipeId);
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (avail.length > 0 && avail.every(id => next.has(id))) {
+        for (const id of avail) next.delete(id);
+      } else {
+        for (const id of avail) next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const selectedList = [...selected].filter(id => availableIds.has(id));
+  const doAdd = () => {
+    if (selectedList.length === 0) return;
+    onAdd(selectedList);
+    setSelected(new Set());
+    setSearch("");
+    setOpen(false);
+  };
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="px-3 py-2 text-sm border border-border rounded-xl text-muted-foreground hover:text-foreground hover:border-primary/50 transition-colors flex items-center gap-1.5"
+      >
+        <Plus className="w-4 h-4" /> Add recipes to this plan…
+      </button>
+    );
+  }
+
+  return (
+    <div className="border border-border rounded-xl p-3 space-y-2 bg-card">
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search recipes…"
+          autoFocus
+          className="flex-1 px-3 py-1.5 text-sm border border-border rounded-lg bg-background"
+        />
+        <button
+          onClick={() => { setOpen(false); setSelected(new Set()); setSearch(""); setSavingCollection(false); }}
+          className="p-1.5 text-muted-foreground hover:text-foreground transition-colors"
+          title="Close"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {collections.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Collections</p>
+          <div className="flex flex-wrap gap-1.5">
+            {collections.map(c => {
+              const avail = collectionAvailable(c);
+              const active = collectionFullySelected(c);
+              return (
+                <span key={c.id} className={cn(
+                  "inline-flex items-center gap-1 rounded-lg border text-xs overflow-hidden",
+                  active ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground",
+                )}>
+                  <button
+                    onClick={() => toggleCollection(c)}
+                    disabled={avail.length === 0}
+                    className="px-2 py-1 hover:text-foreground transition-colors disabled:opacity-50"
+                    title={avail.length === 0 ? "All recipes in this collection are already on the plan" : c.recipes.map(r => r.recipeName).join(", ")}
+                  >
+                    {c.name} ({avail.length})
+                  </button>
+                  {canManageCollections && (
+                    <button
+                      onClick={() => { if (window.confirm(`Delete the "${c.name}" collection? (Recipes themselves are unaffected.)`)) onDeleteCollection(c.id); }}
+                      className="pr-1.5 text-muted-foreground/60 hover:text-destructive transition-colors"
+                      title="Delete collection"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="max-h-52 overflow-y-auto grid grid-cols-2 lg:grid-cols-3 gap-x-3 gap-y-0.5">
+        {filtered.map(r => (
+          <label key={r.id} className="flex items-center gap-2 py-1 px-1 rounded-lg hover:bg-secondary/60 cursor-pointer min-w-0">
+            <input
+              type="checkbox"
+              checked={selected.has(r.id)}
+              onChange={() => toggle(r.id)}
+              className="rounded border-border flex-shrink-0"
+            />
+            <span
+              className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-border"
+              style={{ backgroundColor: (r as { color?: string | null }).color ?? "transparent" }}
+            />
+            <span
+              className="text-sm truncate"
+              style={(r as { color?: string | null }).color ? { color: (r as { color?: string | null }).color! } : undefined}
+            >
+              {r.name}
+            </span>
+          </label>
+        ))}
+        {filtered.length === 0 && (
+          <p className="text-xs text-muted-foreground col-span-full py-2">No recipes match "{search}".</p>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between gap-2 pt-1 border-t border-border">
+        <button
+          onClick={doAdd}
+          disabled={selectedList.length === 0}
+          className="px-3 py-1.5 text-sm rounded-lg bg-primary text-primary-foreground font-medium disabled:opacity-50 hover:bg-primary/90 transition-colors flex items-center gap-1.5"
+        >
+          <Plus className="w-4 h-4" /> Add {selectedList.length > 0 ? selectedList.length : ""} to plan
+        </button>
+        {canManageCollections && (
+          savingCollection ? (
+            <span className="flex items-center gap-1.5">
+              <input
+                type="text"
+                value={saveName}
+                onChange={e => setSaveName(e.target.value)}
+                placeholder="Collection name…"
+                className="w-40 px-2 py-1 text-xs border border-border rounded-lg bg-background"
+                onKeyDown={e => {
+                  if (e.key === "Enter" && saveName.trim() && selectedList.length > 0) {
+                    onSaveCollection(saveName.trim(), selectedList);
+                    setSaveName(""); setSavingCollection(false);
+                  }
+                }}
+              />
+              <button
+                onClick={() => {
+                  if (!saveName.trim() || selectedList.length === 0) return;
+                  onSaveCollection(saveName.trim(), selectedList);
+                  setSaveName(""); setSavingCollection(false);
+                }}
+                disabled={!saveName.trim() || selectedList.length === 0}
+                className="px-2 py-1 text-xs rounded-lg border border-border font-medium disabled:opacity-50 hover:bg-secondary transition-colors"
+              >
+                Save
+              </button>
+            </span>
+          ) : (
+            <button
+              onClick={() => setSavingCollection(true)}
+              disabled={selectedList.length === 0}
+              className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
+              title="Save the ticked recipes as a reusable collection"
+            >
+              Save selection as collection
+            </button>
+          )
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Create Plan Dialog
 // ──────────────────────────────────────────────────────────────────────────────
 interface CreatePlanDialogProps {
@@ -1018,6 +1384,33 @@ interface FulfilmentDiagnostics {
   error: string | null;
 }
 
+// A fridge-flagged recipe with real orders inside the plan's dispatch window
+// but no row on the plan (test boxes etc.). Opt-in: nothing joins the plan
+// unless the operator explicitly adds it.
+interface ChilledSuggestion {
+  recipeId: number;
+  recipeName: string;
+  recipeCategory: string | null;
+  color: string | null;
+  portionsPerBatch: number;
+  packSize: number;
+  packsPerBatch: number;
+  tinSize: string | null;
+  maxBatchesPerTin: number | null;
+  sopUrl: string | null;
+  fridgeStock: number;
+  stockCheckedAt: string | null;
+  prevProduction: number;
+  estimatedFactoryNumber: number;
+  dispatch1Qty: number;
+  dispatch2Qty: number;
+  dispatch3Qty: number;
+  totalDispatchQty: number;
+  deficit: number;
+  deficitBatches: number;
+  suggestedBatches: number;
+}
+
 interface CalcResponse {
   planDate: string;
   prevProductionDate: string;
@@ -1029,6 +1422,8 @@ interface CalcResponse {
   shopifyError: string | null;
   unmatchedRecipes: string[];
   fulfilmentDiagnostics?: FulfilmentDiagnostics;
+  additionalChilled?: ChilledSuggestion[];
+  unmatchedWindowProducts?: Array<{ productTitle: string; totalQuantity: number }>;
   recipes: CalcRecipe[];
 }
 
@@ -1187,7 +1582,6 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<PlanItem[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [addRecipeId, setAddRecipeId] = useState<string>("");
   const [dateWarning, setDateWarning] = useState<string | null>(null);
   const [totalBatchesOverride, setTotalBatchesOverride] = useState<number | null>(null);
   const [savedOrder, setSavedOrder] = useState<number[]>([]);
@@ -1212,6 +1606,23 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       .then(d => setFactoryConfig(d))
       .catch(() => setFactoryConfig(null));
   }, [open]);
+
+  // Rota capacity — fetched eagerly (not on panel expand) so the sidebar can
+  // always show the shift pattern and the suggested total can pre-populate
+  // the batch count without any clicks.
+  const [capacityData, setCapacityData] = useState<ScheduleCapacityData | null>(null);
+  const [capacityLoading, setCapacityLoading] = useState(false);
+  useEffect(() => {
+    if (!open || !planDate) return;
+    let cancelled = false;
+    setCapacityLoading(true);
+    setCapacityData(null);
+    fetch(`/api/production-plans/schedule-capacity?planDate=${planDate}`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : { available: false, reason: `HTTP ${r.status}` })
+      .catch(() => ({ available: false, reason: "Request failed" }))
+      .then(d => { if (!cancelled) { setCapacityData(d); setCapacityLoading(false); } });
+    return () => { cancelled = true; };
+  }, [open, planDate]);
 
   // Sync date when dialog opens with a selected date
   useEffect(() => {
@@ -1252,6 +1663,36 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   const { data: existingPlans } = useListProductionPlans(undefined, { query: { queryKey: getListProductionPlansQueryKey(), enabled: open } });
   const { createPlan, updatePlan } = useAppMutations();
   const queryClient = useQueryClient();
+
+  // Saved recipe collections for the picker ("August Test Box" → one tick).
+  const { data: recipeCollections } = useQuery<RecipeCollectionDto[]>({
+    queryKey: ["recipe-collections"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/recipe-collections`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch recipe collections");
+      return res.json();
+    },
+    enabled: open,
+  });
+  const saveRecipeCollection = async (name: string, recipeIds: number[]) => {
+    const res = await fetch(`${BASE}/api/recipe-collections`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ name, recipeIds }),
+    });
+    if (res.ok) {
+      toast({ title: `Collection "${name}" saved` });
+      queryClient.invalidateQueries({ queryKey: ["recipe-collections"] });
+    } else {
+      const body = await res.json().catch(() => null);
+      toast({ title: "Couldn't save collection", description: body?.error ?? `HTTP ${res.status}`, variant: "destructive" });
+    }
+  };
+  const deleteRecipeCollection = async (id: number) => {
+    const res = await fetch(`${BASE}/api/recipe-collections/${id}`, { method: "DELETE", credentials: "include" });
+    if (res.ok) queryClient.invalidateQueries({ queryKey: ["recipe-collections"] });
+  };
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
@@ -1414,9 +1855,15 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
 
   const allocateBatches = allocateBatchesToTargets;
 
+  // Guards the rota-suggestion auto-apply: reset whenever the calc reloads
+  // (which also resets totalBatchesOverride) so the suggestion re-applies to
+  // the fresh allocation, exactly once per calc load.
+  const capacityAutoApplied = useRef(false);
+
   useEffect(() => {
     if (!calcData?.recipes) return;
     setTotalBatchesOverride(null);
+    capacityAutoApplied.current = false;
     // Only render core menu recipes by default. Non-core recipes remain
     // available through the "Add Recipe" dropdown below the table for
     // manual inclusion — but the initial table is focused on the core
@@ -1500,6 +1947,15 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
         totalSpecialCount: r.totalSpecialCount ?? 0,
       };
     });
+    // Keep chilled rows the operator explicitly added across refetches —
+    // refreshed from the latest suggestion data when the server still
+    // returns one, carried over unchanged when it doesn't (e.g. its orders
+    // have been fulfilled since).
+    for (const p of prevItems.filter(it => it.id.startsWith("chilled-"))) {
+      if (newItems.some(n => n.recipeId === p.recipeId)) continue;
+      const fresh = (calcData.additionalChilled ?? []).find(s => s.recipeId === p.recipeId);
+      newItems.push(fresh ? chilledToPlanItem(fresh, p) : p);
+    }
     // Apply saved default order: known recipes sorted first, unknowns appended at the end
     if (savedOrder.length > 0) {
       newItems.sort((a, b) => {
@@ -1514,8 +1970,11 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     setItems(newItems);
   }, [calcData, allocateBatches, savedOrder]);
 
-  const handleTotalBatchesChange = useCallback((newTotal: number) => {
-    isDirty.current = true;
+  const applyTotalBatches = useCallback((newTotal: number, opts?: { markDirty?: boolean }) => {
+    // Auto-applying the rota suggestion on load must NOT mark the form dirty
+    // — otherwise merely opening the dialog would trigger the 30s draft
+    // auto-save and the unsaved-work prompt on close.
+    if (opts?.markDirty !== false) isDirty.current = true;
     setTotalBatchesOverride(newTotal);
     if (!calcData?.recipes) return;
     // Redistribute across the recipes currently in the dialog (the core menu
@@ -1556,6 +2015,28 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       });
     });
   }, [calcData, allocateBatches]);
+
+  const handleTotalBatchesChange = useCallback((newTotal: number) => {
+    applyTotalBatches(newTotal);
+  }, [applyTotalBatches]);
+
+  // Pre-populate Total Batches from the rota suggestion (80 / 110 capped by
+  // the 1,000-pack ceiling) instead of leaving the static DPT default. Runs
+  // once per calc load, only while the operator hasn't set their own value;
+  // the input stays fully editable afterwards.
+  useEffect(() => {
+    if (!open || capacityAutoApplied.current) return;
+    if (!capacityData?.available || !calcData?.recipes) return;
+    if (totalBatchesOverride !== null) { capacityAutoApplied.current = true; return; }
+    const included = items.filter(i => i.included);
+    if (included.length === 0) return;
+    const { ceilingBatches } = computeCeilingBatches(included);
+    const suggested = Math.min(capacityData.capacityBatches ?? 0, ceilingBatches);
+    capacityAutoApplied.current = true;
+    if (suggested > 0 && suggested !== (calcData.totalDailyBatches ?? 0)) {
+      applyTotalBatches(suggested, { markDirty: false });
+    }
+  }, [open, capacityData, calcData, items, totalBatchesOverride, applyTotalBatches]);
 
   const recalcTins = (batchesTarget: number, maxBatchesPerTin: number | null): number | null => {
     if (!maxBatchesPerTin || batchesTarget <= 0) return null;
@@ -1741,55 +2222,63 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     }
   };
 
-  const addRecipeToList = () => {
-    const recipeId = Number(addRecipeId);
-    if (!recipeId) return;
-    if (items.some(it => it.recipeId === recipeId)) {
-      setAddRecipeId("");
-      return;
+  // Add one or more recipes to the plan. A recipe the server flagged as an
+  // "additional chilled" suggestion arrives fully pre-filled (real dispatch
+  // quantities + fridge stock) so its batches are sized from actual orders;
+  // anything else gets the classic empty manual row.
+  const addRecipesToList = (recipeIds: number[]) => {
+    const toAdd: PlanItem[] = [];
+    for (const recipeId of recipeIds) {
+      if (items.some(it => it.recipeId === recipeId) || toAdd.some(it => it.recipeId === recipeId)) continue;
+      const suggestion = calcData?.additionalChilled?.find(s => s.recipeId === recipeId);
+      if (suggestion) {
+        toAdd.push(chilledToPlanItem(suggestion));
+        continue;
+      }
+      const recipe = allRecipes?.find((r: Recipe) => r.id === recipeId);
+      if (!recipe) continue;
+      const portionsPerBatch = recipe.portionsPerBatch ?? 10;
+      const packSize = recipe.packSize ?? 1;
+      toAdd.push({
+        id: `manual-${recipeId}`,
+        recipeId,
+        recipeName: recipe.name,
+        recipeColor: (recipe as any).color ?? null,
+        included: true,
+        suggestedBatches: 0,
+        batchesTarget: 0,
+        tinCount: null,
+        maxBatchesPerTin: recipe.maxBatchesPerTin ?? null,
+        tinSize: recipe.tinSize ?? null,
+        salesPercent: 0,
+        packsSold: 0,
+        portionsPerBatch,
+        packsPerBatch: portionsPerBatch / packSize,
+        packSize,
+        eightPackBagCount: 0,
+        sopUrl: recipe.sopUrl ?? null,
+        isFromDpt: false,
+        fridgeStock: 0,
+        stockCheckedAt: null,
+        prevProduction: 0,
+        estimatedFactoryNumber: 0,
+        dispatch1Qty: 0,
+        dispatch2Qty: 0,
+        dispatch3Qty: 0,
+        totalDispatchQty: 0,
+        deficit: 0,
+        deficitBatches: 0,
+        surplusBatches: 0,
+        stockWarning: "ok",
+        special1Count: 0,
+        special2Count: 0,
+        special3Count: 0,
+        totalSpecialCount: 0,
+      });
     }
-    const recipe = allRecipes?.find((r: Recipe) => r.id === recipeId);
-    if (!recipe) return;
-    const portionsPerBatch = recipe.portionsPerBatch ?? 10;
-    const packSize = recipe.packSize ?? 1;
-    const newItem: PlanItem = {
-      id: `manual-${recipeId}`,
-      recipeId,
-      recipeName: recipe.name,
-      recipeColor: (recipe as any).color ?? null,
-      included: true,
-      suggestedBatches: 0,
-      batchesTarget: 0,
-      tinCount: null,
-      maxBatchesPerTin: recipe.maxBatchesPerTin ?? null,
-      tinSize: recipe.tinSize ?? null,
-      salesPercent: 0,
-      portionsPerBatch,
-      packsPerBatch: portionsPerBatch / packSize,
-      packSize,
-      eightPackBagCount: 0,
-      sopUrl: recipe.sopUrl ?? null,
-      isFromDpt: false,
-      fridgeStock: 0,
-      stockCheckedAt: null,
-      prevProduction: 0,
-      estimatedFactoryNumber: 0,
-      dispatch1Qty: 0,
-      dispatch2Qty: 0,
-      dispatch3Qty: 0,
-      totalDispatchQty: 0,
-      deficit: 0,
-      deficitBatches: 0,
-      surplusBatches: 0,
-      stockWarning: "ok",
-      special1Count: 0,
-      special2Count: 0,
-      special3Count: 0,
-      totalSpecialCount: 0,
-    };
+    if (toAdd.length === 0) return;
     isDirty.current = true;
-    setItems(prev => [...prev, newItem]);
-    setAddRecipeId("");
+    setItems(prev => [...prev, ...toAdd]);
   };
 
   const handleSubmit = async (targetStatus: "draft" | "active") => {
@@ -2089,6 +2578,9 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                 <ScheduleCapacityPanel
                   planDate={planDate}
                   items={items}
+                  data={capacityData}
+                  loading={capacityLoading}
+                  currentTotal={effectiveTotalBatches}
                   onUseSuggestion={handleTotalBatchesChange}
                 />
               </div>
@@ -2348,26 +2840,24 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                 </div>
               )}
 
+              <AdditionalChilledPanel
+                suggestions={calcData?.additionalChilled ?? []}
+                unmatched={calcData?.unmatchedWindowProducts ?? []}
+                dispatchDates={dispatchDates}
+                addedRecipeIds={new Set(items.map(it => it.recipeId))}
+                onAddSelected={addRecipesToList}
+              />
+
               {availableToAdd.length > 0 && (
-                <div className="flex items-center gap-2 mb-3">
-                  <select
-                    value={addRecipeId}
-                    onChange={e => setAddRecipeId(e.target.value)}
-                    className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
-                  >
-                    <option value="">Add a recipe to this plan...</option>
-                    {availableToAdd.map((r: Recipe) => (
-                      <option key={r.id} value={r.id}>{r.name}</option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={addRecipeToList}
-                    disabled={!addRecipeId}
-                    className="px-3 py-2 bg-secondary text-secondary-foreground rounded-lg text-sm font-medium hover:bg-secondary/80 disabled:opacity-40 flex items-center gap-1.5 transition-colors"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Add
-                  </button>
+                <div className="mb-3">
+                  <RecipePickerPanel
+                    recipes={availableToAdd}
+                    collections={recipeCollections ?? []}
+                    onAdd={addRecipesToList}
+                    onSaveCollection={saveRecipeCollection}
+                    onDeleteCollection={deleteRecipeCollection}
+                    canManageCollections={userRole === "admin" || userRole === "manager"}
+                  />
                 </div>
               )}
 
@@ -2511,8 +3001,8 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const [notes, setNotes] = useState(plan.notes ?? "");
   const [dateWarning, setDateWarning] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [addRecipeId, setAddRecipeId] = useState<string>("");
   const [auditOpen, setAuditOpen] = useState(false);
+  const canManageCollections = editUserRole === "admin" || editUserRole === "manager";
 
   const [items, setItems] = useState<PlanItem[]>(() =>
     (plan.items ?? []).map(it => ({
@@ -2560,6 +3050,37 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const queryClient = useQueryClient();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
+  // Saved recipe collections for the picker — same source as the create dialog
+  // (react-query dedupes the fetch across both).
+  const { data: recipeCollections } = useQuery<RecipeCollectionDto[]>({
+    queryKey: ["recipe-collections"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/recipe-collections`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch recipe collections");
+      return res.json();
+    },
+    enabled: open,
+  });
+  const saveRecipeCollection = async (name: string, recipeIds: number[]) => {
+    const res = await fetch(`${BASE}/api/recipe-collections`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ name, recipeIds }),
+    });
+    if (res.ok) {
+      toast({ title: `Collection "${name}" saved` });
+      queryClient.invalidateQueries({ queryKey: ["recipe-collections"] });
+    } else {
+      const body = await res.json().catch(() => null);
+      toast({ title: "Couldn't save collection", description: body?.error ?? `HTTP ${res.status}`, variant: "destructive" });
+    }
+  };
+  const deleteRecipeCollection = async (id: number) => {
+    const res = await fetch(`${BASE}/api/recipe-collections/${id}`, { method: "DELETE", credentials: "include" });
+    if (res.ok) queryClient.invalidateQueries({ queryKey: ["recipe-collections"] });
+  };
+
   // ── Live /calculate overlay ──────────────────────────────────────────────────
   // Fetch the same calculation data the Create dialog uses, keyed on the
   // plan's date. When it arrives, overlay Factory Number, dispatches,
@@ -2579,7 +3100,33 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
     if (!editCalcData?.recipes) return;
     setItems(prev => prev.map(it => {
       const calc = editCalcData.recipes.find((r: CalcRecipe) => r.recipeId === it.recipeId);
-      if (!calc) return it; // recipe no longer appears in calc (e.g. removed from core menu) — leave zeros
+      if (!calc) {
+        // Not a core/DPT recipe — but a saved chilled add (test box etc.) may
+        // still have live suggestion data; overlay its real orders + stock so
+        // the edit view matches reality instead of showing saved zeros.
+        const chilled = editCalcData.additionalChilled?.find(s => s.recipeId === it.recipeId);
+        if (!chilled) return it;
+        return {
+          ...it,
+          recipeColor: chilled.color ?? it.recipeColor,
+          portionsPerBatch: chilled.portionsPerBatch,
+          packsPerBatch: chilled.packsPerBatch,
+          packSize: chilled.packSize,
+          maxBatchesPerTin: chilled.maxBatchesPerTin ?? it.maxBatchesPerTin,
+          tinSize: chilled.tinSize ?? it.tinSize,
+          sopUrl: chilled.sopUrl ?? it.sopUrl,
+          fridgeStock: chilled.fridgeStock,
+          stockCheckedAt: chilled.stockCheckedAt,
+          prevProduction: chilled.prevProduction,
+          estimatedFactoryNumber: chilled.estimatedFactoryNumber,
+          dispatch1Qty: chilled.dispatch1Qty,
+          dispatch2Qty: chilled.dispatch2Qty,
+          dispatch3Qty: chilled.dispatch3Qty,
+          totalDispatchQty: chilled.totalDispatchQty,
+          deficit: chilled.deficit,
+          deficitBatches: chilled.deficitBatches,
+        };
+      }
       return {
         ...it,
         recipeColor: calc.color ?? it.recipeColor,
@@ -2868,48 +3415,60 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
     }, 800);
   }, [items]);
 
-  const addRecipeToList = () => {
-    const recipeId = Number(addRecipeId);
-    if (!recipeId) return;
-    if (items.some(it => it.recipeId === recipeId)) { setAddRecipeId(""); return; }
-    const recipe = (allRecipes as Recipe[] | undefined)?.find(r => r.id === recipeId);
-    if (!recipe) return;
-    const ppb = recipe.portionsPerBatch ?? 10;
+  // Multi-add (same semantics as the create dialog): chilled suggestions come
+  // pre-filled with real orders + stock, anything else starts as a zero row.
+  const addRecipesToList = (recipeIds: number[]) => {
+    const toAdd: PlanItem[] = [];
+    for (const recipeId of recipeIds) {
+      if (items.some(it => it.recipeId === recipeId) || toAdd.some(it => it.recipeId === recipeId)) continue;
+      const suggestion = editCalcData?.additionalChilled?.find(s => s.recipeId === recipeId);
+      if (suggestion) {
+        toAdd.push(chilledToPlanItem(suggestion));
+        continue;
+      }
+      const recipe = (allRecipes as Recipe[] | undefined)?.find(r => r.id === recipeId);
+      if (!recipe) continue;
+      const ppb = recipe.portionsPerBatch ?? 10;
+      toAdd.push({
+        id: `add-${recipeId}`,
+        recipeId,
+        recipeName: recipe.name,
+        recipeColor: (recipe as any).color ?? null,
+        included: true,
+        suggestedBatches: 0,
+        batchesTarget: 0,
+        tinCount: null,
+        maxBatchesPerTin: recipe.maxBatchesPerTin ?? null,
+        tinSize: recipe.tinSize ?? null,
+        salesPercent: 0,
+        packsSold: 0,
+        portionsPerBatch: ppb,
+        packsPerBatch: ppb / (recipe.packSize ?? 1),
+        packSize: recipe.packSize ?? 1,
+        eightPackBagCount: 0,
+        sopUrl: recipe.sopUrl ?? null,
+        isFromDpt: false,
+        fridgeStock: 0,
+        stockCheckedAt: null,
+        prevProduction: 0,
+        estimatedFactoryNumber: 0,
+        dispatch1Qty: 0,
+        dispatch2Qty: 0,
+        dispatch3Qty: 0,
+        totalDispatchQty: 0,
+        deficit: 0,
+        deficitBatches: 0,
+        surplusBatches: 0,
+        stockWarning: "ok" as const,
+        special1Count: 0,
+        special2Count: 0,
+        special3Count: 0,
+        totalSpecialCount: 0,
+      });
+    }
+    if (toAdd.length === 0) return;
     isDirty.current = true;
-    setItems(prev => [...prev, {
-      id: `add-${recipeId}`,
-      recipeId,
-      recipeName: recipe.name,
-      recipeColor: (recipe as any).color ?? null,
-      included: true,
-      suggestedBatches: 0,
-      batchesTarget: 0,
-      tinCount: null,
-      maxBatchesPerTin: recipe.maxBatchesPerTin ?? null,
-      tinSize: recipe.tinSize ?? null,
-      salesPercent: 0,
-      portionsPerBatch: ppb,
-      packsPerBatch: ppb / (recipe.packSize ?? 1),
-      sopUrl: recipe.sopUrl ?? null,
-      isFromDpt: false,
-      fridgeStock: 0,
-      stockCheckedAt: null,
-      prevProduction: 0,
-      estimatedFactoryNumber: 0,
-      dispatch1Qty: 0,
-      dispatch2Qty: 0,
-      dispatch3Qty: 0,
-      totalDispatchQty: 0,
-      deficit: 0,
-      deficitBatches: 0,
-      surplusBatches: 0,
-      stockWarning: "ok" as const,
-      special1Count: 0,
-      special2Count: 0,
-      special3Count: 0,
-      totalSpecialCount: 0,
-    }]);
-    setAddRecipeId("");
+    setItems(prev => [...prev, ...toAdd]);
   };
 
   const handleSave = async (targetStatus: "draft" | "active") => {
@@ -3144,26 +3703,24 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
             </div>
           )}
 
+          <AdditionalChilledPanel
+            suggestions={editCalcData?.additionalChilled ?? []}
+            unmatched={editCalcData?.unmatchedWindowProducts ?? []}
+            dispatchDates={(editCalcData as { dispatchDates?: string[] } | undefined)?.dispatchDates ?? []}
+            addedRecipeIds={new Set(items.map(it => it.recipeId))}
+            onAddSelected={addRecipesToList}
+          />
+
           {availableToAdd.length > 0 && (
-            <div className="flex items-center gap-2 mb-3">
-              <select
-                value={addRecipeId}
-                onChange={e => setAddRecipeId(e.target.value)}
-                className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
-              >
-                <option value="">Add a recipe to this plan...</option>
-                {availableToAdd.map(r => (
-                  <option key={r.id} value={r.id}>{r.name}</option>
-                ))}
-              </select>
-              <button
-                onClick={addRecipeToList}
-                disabled={!addRecipeId}
-                className="px-3 py-2 bg-secondary text-secondary-foreground rounded-lg text-sm font-medium hover:bg-secondary/80 disabled:opacity-40 flex items-center gap-1.5 transition-colors"
-              >
-                <Plus className="w-4 h-4" />
-                Add
-              </button>
+            <div className="mb-3">
+              <RecipePickerPanel
+                recipes={availableToAdd}
+                collections={recipeCollections ?? []}
+                onAdd={addRecipesToList}
+                onSaveCollection={saveRecipeCollection}
+                onDeleteCollection={deleteRecipeCollection}
+                canManageCollections={canManageCollections}
+              />
             </div>
           )}
         </div>

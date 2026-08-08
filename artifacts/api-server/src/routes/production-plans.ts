@@ -5,7 +5,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
 import * as z from "zod";
 import { resolveRecipeIngredients, resolveSubRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
-import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag } from "../services/shopify";
+import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag, type ProductCount } from "../services/shopify";
 import { getFactoryNumberCoreMenuOnly, getShopifyFreezerSyncEnabled } from "../lib/inventory-sync";
 import { logFridgeStockChange, type FridgeChangeSource } from "../lib/fridge-stock-log";
 import { londonDateString, londonStartOfDay } from "../lib/london-time";
@@ -897,6 +897,9 @@ router.get("/calculate", async (req, res) => {
   // order and the report drifts into false shorts as the day progresses.
   const shopifyUnfulfilledPerDate: Record<string, Record<string, number>> = {};
   const variantUnfulfilledPerDate: Record<string, Record<string, number>> = {};
+  // Raw per-date product breakdown, kept for the reverse pass that surfaces
+  // chilled products with sales but no row on the plan (test boxes etc.).
+  const rawProductsByDate: Record<string, ProductCount[]> = {};
   const shopifyDatesLoaded = new Set<string>();
   let shopifyError: string | null = null;
 
@@ -913,6 +916,7 @@ router.get("/calculate", async (req, res) => {
         continue;
       }
       const { date, products } = result.value;
+      rawProductsByDate[date] = products;
       shopifySalesPerDate[date] = {};
       if (!variantSalesPerDate[date]) variantSalesPerDate[date] = {};
       shopifyUnfulfilledPerDate[date] = {};
@@ -1425,6 +1429,147 @@ router.get("/calculate", async (req, res) => {
     ? [...unmatchedRecipeNames, `Calzone Club Special (${clubSpecialSales} units — no special recipe is configured)`]
     : unmatchedRecipeNames;
 
+  // ─── Additional chilled products (test boxes etc.) ──────────────────
+  // The main loop is recipe-driven: only DPT/core recipes ever look up their
+  // sales, so orders for a fridge-flagged one-off (a test calzone) used to
+  // vanish without a trace. This reverse pass finds fridge products with
+  // real orders inside the plan's dispatch window that have no row on the
+  // plan, and returns them as opt-in suggestions — the operator must
+  // explicitly add them, nothing joins the plan by default. Mac cheese is
+  // deliberately excluded: it sells every day and is planned through its own
+  // day-before flow, so it would otherwise be a permanent false warning.
+  const candidateRecipeIds = new Set(dptRows.map(r => r.recipeId));
+  const planAheadWindow = dispatchDates[0] > todayStr;
+  type ChilledSuggestion = {
+    recipeId: number; recipeName: string; recipeCategory: string | null;
+    color: string | null; portionsPerBatch: number; packSize: number;
+    packsPerBatch: number; tinSize: string | null; maxBatchesPerTin: number | null;
+    sopUrl: string | null; fridgeStock: number; stockCheckedAt: string | null;
+    prevProduction: number; estimatedFactoryNumber: number;
+    dispatch1Qty: number; dispatch2Qty: number; dispatch3Qty: number;
+    totalDispatchQty: number; deficit: number; deficitBatches: number;
+    suggestedBatches: number;
+  };
+  const additionalChilled: ChilledSuggestion[] = [];
+  // Products in the window that match no recipe at all — surfaced so nothing
+  // silently disappears (the operator can decide whether it needs a recipe).
+  const unmatchedWindowProducts: Array<{ productTitle: string; totalQuantity: number }> = [];
+
+  if (hasShopifyData) {
+    const fridgeRecipeRows = await db
+      .select({
+        id: recipesTable.id,
+        name: recipesTable.name,
+        category: recipesTable.category,
+        portionsPerBatch: recipesTable.portionsPerBatch,
+        packSize: recipesTable.packSize,
+        tinSize: recipesTable.tinSize,
+        maxBatchesPerTin: recipesTable.maxBatchesPerTin,
+        sopUrl: recipesTable.sopUrl,
+        color: recipesTable.color,
+      })
+      .from(recipesTable)
+      .where(eq(recipesTable.isFridgeProduct, true));
+
+    // Variant-first like the main loop; the name fallback runs over the RAW
+    // per-date product list rather than shopifySalesPerDate, because that map
+    // only holds products with a 2-pack variant — a test box or buns product
+    // with different pack variants would silently read as zero. No DPT
+    // fallback either way: a chilled one-off has no forecast, only orders.
+    const chilledQtyForDate = (recipeId: number, recipeName: string, date: string): number => {
+      if (recipeToVariantIds.has(recipeId)) {
+        const dateSales = variantSalesPerDate[date] ?? {};
+        let total = 0;
+        for (const vid of recipeToVariantIds.get(recipeId)!) total += dateSales[vid] ?? 0;
+        return total;
+      }
+      const rNorm = normalizeForMatch(recipeName);
+      let bestQty = 0;
+      let bestLenDiff = Infinity;
+      for (const p of rawProductsByDate[date] ?? []) {
+        const pNorm = normalizeForMatch(p.productTitle);
+        if (pNorm.includes(rNorm) || rNorm.includes(pNorm)) {
+          const lenDiff = Math.abs(pNorm.length - rNorm.length);
+          if (lenDiff < bestLenDiff) { bestLenDiff = lenDiff; bestQty = p.totalQuantity; }
+        }
+      }
+      return bestQty;
+    };
+
+    for (const r of fridgeRecipeRows) {
+      if (candidateRecipeIds.has(r.id)) continue; // already on the plan calc
+      if ((r.category ?? "").toLowerCase() === "macaroni cheese") continue;
+      const d1 = chilledQtyForDate(r.id, r.name, deliveryDates[0]);
+      const d2 = chilledQtyForDate(r.id, r.name, deliveryDates[1]);
+      const d3 = chilledQtyForDate(r.id, r.name, deliveryDates[2]);
+      if (d2 + d3 <= 0) continue; // nothing this plan's production must cover
+      const portionsPerBatch = Number(r.portionsPerBatch) || 10;
+      const packSize = Number(r.packSize) || 1;
+      const packsPerBatch = portionsPerBatch / packSize;
+      const fridgeStock = Math.round(latestStock[r.id] ?? fridgeStockFromPlans[r.id] ?? 0);
+      const prevProduction = Math.round(prevProductionPacks[r.id] ?? 0);
+      // Mirror of the plan-ahead roll-forward in the main loop: when the plan
+      // is built ahead of time, dispatch1 hasn't left the fridge yet and the
+      // previous day's planned production hasn't landed yet.
+      const estimatedFactoryNumber = Math.max(0, Math.round(
+        fridgeStock + (planAheadWindow ? prevProduction - d1 : 0)
+      ));
+      const deficit = Math.max(0, d2 + d3 - estimatedFactoryNumber);
+      const deficitBatches = packsPerBatch > 0 ? Math.ceil(deficit / packsPerBatch) : 0;
+      additionalChilled.push({
+        recipeId: r.id,
+        recipeName: r.name,
+        recipeCategory: r.category ?? null,
+        color: r.color ?? null,
+        portionsPerBatch,
+        packSize,
+        packsPerBatch,
+        tinSize: r.tinSize ?? null,
+        maxBatchesPerTin: r.maxBatchesPerTin ? Number(r.maxBatchesPerTin) : null,
+        sopUrl: r.sopUrl ?? null,
+        fridgeStock,
+        stockCheckedAt: latestStockCheckedAt[r.id]?.toISOString() ?? null,
+        prevProduction,
+        estimatedFactoryNumber,
+        dispatch1Qty: d1,
+        dispatch2Qty: d2,
+        dispatch3Qty: d3,
+        totalDispatchQty: d1 + d2 + d3,
+        deficit,
+        deficitBatches,
+        suggestedBatches: deficitBatches,
+      });
+    }
+    additionalChilled.sort((a, b) => a.recipeName.localeCompare(b.recipeName));
+
+    // Anything sold in the window whose variants map to no recipe and whose
+    // title name-matches no recipe either. Kept as bare info — quantities
+    // only, no batch maths is possible without a recipe.
+    const allRecipeNameRows = await db.select({ id: recipesTable.id, name: recipesTable.name }).from(recipesTable);
+    const allRecipeNorms = allRecipeNameRows.map(r => normalizeForMatch(r.name));
+    const mappedVariantIds = new Set<string>();
+    for (const vids of recipeToVariantIds.values()) for (const vid of vids) mappedVariantIds.add(vid);
+    const unmatchedTotals = new Map<string, number>();
+    for (const date of deliveryDates) {
+      for (const p of rawProductsByDate[date] ?? []) {
+        const hasMappedVariant = p.variants.some(v => v.variantId && mappedVariantIds.has(String(v.variantId)));
+        if (hasMappedVariant) continue;
+        const titleNorm = normalizeForMatch(p.productTitle);
+        // Club Special sales are merged into the is_current_special recipe
+        // above (and separately warned about when none is configured) — not
+        // an unmatched product.
+        if (titleNorm === CALZONE_CLUB_SPECIAL_KEY) continue;
+        const nameMatches = allRecipeNorms.some(n => n.includes(titleNorm) || titleNorm.includes(n));
+        if (nameMatches) continue;
+        unmatchedTotals.set(p.productTitle, (unmatchedTotals.get(p.productTitle) ?? 0) + p.totalQuantity);
+      }
+    }
+    for (const [productTitle, totalQuantity] of unmatchedTotals) {
+      unmatchedWindowProducts.push({ productTitle, totalQuantity });
+    }
+    unmatchedWindowProducts.sort((a, b) => b.totalQuantity - a.totalQuantity);
+  }
+
   // Default ordering for new plans: Mac & Cheese variants first (kitchen
   // convention — they share equipment and start the day), then everything
   // else alphabetically by name. Plans that have been saved keep their
@@ -1449,6 +1594,8 @@ router.get("/calculate", async (req, res) => {
     shopifyError,
     unmatchedRecipes,
     fulfilmentDiagnostics,
+    additionalChilled,
+    unmatchedWindowProducts,
     recipes: orderedResult,
   });
 });

@@ -27,6 +27,7 @@ export * from "./product_specifications";
 export * from "./visitors";
 export * from "./apc";
 export * from "./collections";
+export * from "./recipe_collections";
 export * from "./case_orders";
 export * from "./founder_focus";
 export * from "./surveys";
