@@ -179,7 +179,7 @@ interface FridgeStockBatch {
 }
 
 async function fetchFridgeBatches(recipeId: number): Promise<FridgeStockBatch[]> {
-  const res = await fetch(`${BASE}/api/stock/fridge-batches/${recipeId}`, { credentials: "include" });
+  const res = await fetch(`${BASE}/api/stock-entries/fridge-batches/${recipeId}`, { credentials: "include" });
   if (!res.ok) throw new Error("Failed to fetch batch data");
   return res.json();
 }

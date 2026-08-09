@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, stationChangeoversTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, prepDeferralsTable, prepTinOverridesTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable, batchWeightRecordsTable, temperatureRecordsTable, productionPlanExtraDoughTable } from "@workspace/db";
+import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, stationChangeoversTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, prepDeferralsTable, prepTinOverridesTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable, batchWeightRecordsTable, temperatureRecordsTable, productionPlanExtraDoughTable, queuedProductionTable } from "@workspace/db";
 import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as drizzleSum, ne, isNotNull, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
@@ -624,6 +624,17 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
         status: "pending",
       }))
     );
+
+    // Queued test production that just landed on this plan: mark it planned
+    // so it can't land on a second plan for the same date. Deleting the plan
+    // resets these rows to 'queued' (see DELETE /:id).
+    await db.update(queuedProductionTable)
+      .set({ status: "planned", planId: plan.id })
+      .where(and(
+        eq(queuedProductionTable.productionDate, planDate),
+        eq(queuedProductionTable.status, "queued"),
+        inArray(queuedProductionTable.recipeId, recipeIds),
+      ));
   }
   res.status(201).json(mapPlan(plan));
 });
@@ -1790,6 +1801,53 @@ router.get("/calculate", async (req, res) => {
     excludedWindowProducts.sort((a, b) => b.totalQuantity - a.totalQuantity);
   }
 
+  // ─── Queued test production for this date ───────────────────────────
+  // Batches decided ahead of time on the queue page land on the plan
+  // automatically: the client pre-adds these rows with their queued batch
+  // counts (inside the daily total — the DPT balancing distributes what's
+  // left). Marked 'planned' when the plan is saved so they can't land twice.
+  const queuedRows = await db
+    .select({
+      queueId: queuedProductionTable.id,
+      recipeId: queuedProductionTable.recipeId,
+      batches: queuedProductionTable.batches,
+      recipeName: recipesTable.name,
+      color: recipesTable.color,
+      recipeCategory: recipesTable.category,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+      packSize: recipesTable.packSize,
+      tinSize: recipesTable.tinSize,
+      maxBatchesPerTin: recipesTable.maxBatchesPerTin,
+      sopUrl: recipesTable.sopUrl,
+    })
+    .from(queuedProductionTable)
+    .innerJoin(recipesTable, eq(queuedProductionTable.recipeId, recipesTable.id))
+    .where(and(
+      eq(queuedProductionTable.productionDate, planDate),
+      eq(queuedProductionTable.status, "queued"),
+    ))
+    .orderBy(asc(recipesTable.name));
+  const queuedProduction = queuedRows.map(q => {
+    const portionsPerBatch = Number(q.portionsPerBatch) || 10;
+    const packSize = Number(q.packSize) || 1;
+    return {
+      queueId: q.queueId,
+      recipeId: q.recipeId,
+      recipeName: q.recipeName,
+      recipeCategory: q.recipeCategory ?? null,
+      color: q.color ?? null,
+      batches: q.batches,
+      portionsPerBatch,
+      packSize,
+      packsPerBatch: portionsPerBatch / packSize,
+      tinSize: q.tinSize ?? null,
+      maxBatchesPerTin: q.maxBatchesPerTin ? Number(q.maxBatchesPerTin) : null,
+      sopUrl: q.sopUrl ?? null,
+      fridgeStock: Math.round(latestStock[q.recipeId] ?? 0),
+      stockCheckedAt: latestStockCheckedAt[q.recipeId]?.toISOString() ?? null,
+    };
+  });
+
   // ─── Expiry warnings sweep ──────────────────────────────────────────
   // Every recipe with batch-tracked fridge stock — core, suggestions, mac
   // cheese, retired lines alike — gets checked: packs whose last valid
@@ -1852,6 +1910,7 @@ router.get("/calculate", async (req, res) => {
     unmatchedWindowProducts,
     excludedWindowProducts,
     expiryWarnings,
+    queuedProduction,
     recipes: orderedResult,
   });
 });
@@ -3194,6 +3253,12 @@ router.patch("/:id/items/:itemId", validate(PatchItemBody), async (req, res) => 
 
 router.delete("/:id", async (req, res) => {
   const id = Number(req.params.id);
+  // Queued test production that landed on this plan goes back to 'queued'
+  // so it can land again on the replacement plan (plan_id would be nulled
+  // by the FK anyway; the status reset is what matters).
+  await db.update(queuedProductionTable)
+    .set({ status: "queued", planId: null })
+    .where(and(eq(queuedProductionTable.planId, id), eq(queuedProductionTable.status, "planned")));
   await db.delete(productionPlansTable).where(eq(productionPlansTable.id, id));
   res.status(204).send();
 });
