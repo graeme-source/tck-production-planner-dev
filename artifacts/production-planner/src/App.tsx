@@ -23,6 +23,7 @@ import LabelStockCheck from "@/pages/label-stock-check";
 import SubRecipes from "@/pages/sub-recipes";
 import Recipes from "@/pages/recipes";
 import ProductionPlans from "@/pages/production-plans";
+import QueuedProductionPage from "@/pages/queued-production";
 import StationPage from "@/pages/station";
 import Stock from "@/pages/stock";
 import Sales from "@/pages/sales";
@@ -147,6 +148,7 @@ function Router() {
               <Route path="/sub-recipes" component={SubRecipes} />
               <Route path="/recipes" component={Recipes} />
               <Route path="/plans" component={ProductionPlans} />
+              <Route path="/plans/queued" component={QueuedProductionPage} />
               <Route path="/improvements" component={Improvements} />
               <Route path="/stock" component={Stock} />
               <Route path="/sales">{() => <ProtectedRoute component={Sales} pageKey="/sales" />}</Route>

@@ -89,8 +89,8 @@ async function fetchConversion(from: string, to: string) {
   return res.json() as Promise<{
     from: string;
     to: string;
-    sessions: number;
-    orderCount: number;
+    sessions: number | null;
+    orderCount: number | null;
     conversionRate: number | null;
   }>;
 }
@@ -829,7 +829,8 @@ function FounderDashboard() {
             </div>
           </div>
 
-          {/* Conversion Rate — orderCount / sessions from ShopifyQL */}
+          {/* Conversion Rate — Shopify's own online-store metric via ShopifyQL.
+              Session-based, so subscription renewals are inherently excluded. */}
           <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
             <div className="p-3 rounded-xl bg-emerald-500/10 text-emerald-500 shrink-0">
               <BarChart2 className="w-5 h-5" />
@@ -842,7 +843,9 @@ function FounderDashboard() {
                 <>
                   <p className="text-2xl font-display font-bold">{(yesterdayConversion.conversionRate * 100).toFixed(2)}%</p>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    {yesterdayConversion.orderCount} / {yesterdayConversion.sessions} sessions
+                    {yesterdayConversion.orderCount != null && yesterdayConversion.sessions != null
+                      ? `${yesterdayConversion.orderCount} of ${yesterdayConversion.sessions} sessions · Shopify metric`
+                      : "Shopify metric"}
                   </p>
                 </>
               ) : (

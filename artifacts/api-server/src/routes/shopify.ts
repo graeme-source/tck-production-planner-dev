@@ -1,5 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { getOrdersByTag, getProducts, countProductsByTag, getOrdersByDateRange, countOrdersByTag, getOnlineStoreSessions, type ShopifyOrder } from "../services/shopify";
+import { getOrdersByTag, getProducts, countProductsByTag, getOrdersByDateRange, countOrdersByTag, getOnlineStoreConversion, type ShopifyOrder } from "../services/shopify";
 import { db, recipesTable, usersTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { londonDateString, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
@@ -348,11 +348,14 @@ router.get("/orders-by-type", requireFounder, async (req, res) => {
   }
 });
 
-// ── Founder View: Conversion (sessions → orders) ──────────────────────────────
+// ── Founder View: Conversion (Shopify's own metric) ───────────────────────────
 // GET /api/shopify/conversion?from=YYYY-MM-DD&to=YYYY-MM-DD
-// Pulls online-store session count via ShopifyQL and divides yesterday's
-// (or whatever range's) order count to give a true storefront conversion
-// rate matching Shopify Admin's report.
+// Returns Shopify's OWN online-store conversion rate + session count via
+// ShopifyQL — the identical number the Shopify Admin analytics home shows.
+// Session-based, so subscription recurring orders are inherently excluded
+// (a renewal never creates a storefront session). `orderCount` is the
+// implied converted-session count (rate × sessions), kept for the card's
+// sub-label and for response-shape compatibility.
 router.get("/conversion", requireFounder, async (req, res) => {
   const { from, to } = req.query as { from?: string; to?: string };
   if (!from || !to) {
@@ -360,12 +363,10 @@ router.get("/conversion", requireFounder, async (req, res) => {
     return;
   }
   try {
-    const [sessions, allOrders] = await Promise.all([
-      getOnlineStoreSessions(from, to),
-      getOrdersByDateRange(from, to).then(orders => orders.filter(isCountableOrder)),
-    ]);
-    const orderCount = allOrders.length;
-    const conversionRate = sessions > 0 ? orderCount / sessions : null;
+    const { sessions, conversionRate } = await getOnlineStoreConversion(from, to);
+    const orderCount = sessions != null && conversionRate != null
+      ? Math.round(sessions * conversionRate)
+      : null;
     res.json({ from, to, sessions, orderCount, conversionRate });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

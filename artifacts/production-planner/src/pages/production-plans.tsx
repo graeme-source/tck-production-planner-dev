@@ -528,6 +528,8 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
           )}
           {item.id.startsWith("chilled-") ? (
             <span className="text-[10px] bg-amber-500/15 text-amber-700 dark:text-amber-400 px-1 py-0.5 rounded" title="Added from the chilled-dispatches suggestions — batches sized from real orders only">chilled</span>
+          ) : item.id.startsWith("queued-") ? (
+            <span className="text-[10px] bg-violet-500/15 text-violet-700 dark:text-violet-400 px-1 py-0.5 rounded" title="Queued test production — fixed batches decided ahead of time on the queue page. Recalculate leaves them alone; they count inside the daily total.">queued</span>
           ) : !item.isFromDpt && (
             <span className="text-[10px] bg-secondary text-muted-foreground px-1 py-0.5 rounded">manual</span>
           )}
@@ -1060,6 +1062,51 @@ function ExpiryWarningsPanel({ warnings }: { warnings: ExpiryWarningRow[] }) {
   );
 }
 
+// Convert a queued-production row into a plan row. Queued rows are FIXED
+// batch counts decided ahead of time: they sit outside the DPT allocation
+// entirely (their batches are subtracted from the day's capacity before the
+// balancing distributes the rest) and survive Recalculate untouched.
+function queuedToPlanItem(q: QueuedProductionRow, prev?: PlanItem): PlanItem {
+  return {
+    id: `queued-${q.recipeId}`,
+    recipeId: q.recipeId,
+    recipeName: q.recipeName,
+    recipeColor: q.color ?? null,
+    included: prev ? prev.included : true,
+    suggestedBatches: q.batches,
+    batchesTarget: prev && prev.batchesTarget !== prev.suggestedBatches ? prev.batchesTarget : q.batches,
+    tinCount: q.maxBatchesPerTin && q.batches > 0 ? Math.ceil(q.batches / q.maxBatchesPerTin) : null,
+    maxBatchesPerTin: q.maxBatchesPerTin,
+    tinSize: q.tinSize,
+    salesPercent: 0,
+    dptPercent: 0,
+    packsSold: 0,
+    portionsPerBatch: q.portionsPerBatch,
+    packsPerBatch: q.packsPerBatch,
+    packSize: q.packSize,
+    eightPackBagCount: 0,
+    sopUrl: q.sopUrl,
+    isFromDpt: false,
+    fridgeStock: prev ? prev.fridgeStock : q.fridgeStock,
+    stockCheckedAt: q.stockCheckedAt,
+    prevProduction: 0,
+    estimatedFactoryNumber: q.fridgeStock,
+    dispatch1Qty: 0,
+    dispatch2Qty: 0,
+    dispatch3Qty: 0,
+    totalDispatchQty: 0,
+    deficit: 0,
+    deficitBatches: 0,
+    surplusBatches: 0,
+    targetStockPacks: null,
+    stockWarning: "ok",
+    special1Count: 0,
+    special2Count: 0,
+    special3Count: 0,
+    totalSpecialCount: 0,
+  };
+}
+
 // Collapsible strip under the batch table: EVERY product with sales in this
 // plan's dispatch window that the plan isn't covering — suggestions for
 // recipes it can add, plus products matching no recipe — unless explicitly
@@ -1567,6 +1614,25 @@ interface UnmatchedWindowProduct {
   dispatch3Qty: number;
 }
 
+// Test production queued ahead of the plan existing (queue page): these
+// land on the plan automatically with their queued batch counts.
+interface QueuedProductionRow {
+  queueId: number;
+  recipeId: number;
+  recipeName: string;
+  recipeCategory: string | null;
+  color: string | null;
+  batches: number;
+  portionsPerBatch: number;
+  packSize: number;
+  packsPerBatch: number;
+  tinSize: string | null;
+  maxBatchesPerTin: number | null;
+  sopUrl: string | null;
+  fridgeStock: number;
+  stockCheckedAt: string | null;
+}
+
 interface CalcResponse {
   planDate: string;
   prevProductionDate: string;
@@ -1582,6 +1648,7 @@ interface CalcResponse {
   unmatchedWindowProducts?: UnmatchedWindowProduct[];
   excludedWindowProducts?: Array<{ productTitle: string; totalQuantity: number }>;
   expiryWarnings?: ExpiryWarningRow[];
+  queuedProduction?: QueuedProductionRow[];
   recipes: CalcRecipe[];
 }
 
@@ -2045,7 +2112,15 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     // even when a mac recipe is flagged core menu (calzones vs mac are
     // kept split in every view).
     const coreRecipes = calcData.recipes.filter((r: CalcRecipe) => r.isCoreMenu && (r.recipeCategory ?? "") !== "Macaroni Cheese");
-    const capacity = calcData.totalDailyBatches;
+    // Queued test production lands with FIXED batch counts inside the daily
+    // total: subtract it up front so the DPT balancing distributes only
+    // what's left. Queued rows for recipes already on the core table are
+    // skipped (the core row's own maths wins).
+    const queuedForPlan = (calcData.queuedProduction ?? []).filter(
+      (q: QueuedProductionRow) => !coreRecipes.some((r: CalcRecipe) => r.recipeId === q.recipeId)
+    );
+    const queuedBatchesTotal = queuedForPlan.reduce((s: number, q: QueuedProductionRow) => s + q.batches, 0);
+    const capacity = Math.max(0, calcData.totalDailyBatches - queuedBatchesTotal);
     // Percentages were computed by the backend against the full recipe set,
     // so after filtering to core-only they no longer sum to 100 —
     // allocateBatches would leave capacity on the table (e.g. 69 of 75).
@@ -2129,6 +2204,13 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       const fresh = (calcData.additionalChilled ?? []).find(s => s.recipeId === p.recipeId);
       newItems.push(fresh ? chilledToPlanItem(fresh, p) : p);
     }
+    // Queued test production lands automatically, keeping any batch edits
+    // the operator already made in this dialog.
+    for (const q of queuedForPlan) {
+      if (newItems.some(n => n.recipeId === q.recipeId)) continue;
+      const prev = prevItems.find(p => p.recipeId === q.recipeId && p.id.startsWith("queued-"));
+      newItems.push(queuedToPlanItem(q, prev));
+    }
     // Apply saved default order: known recipes sorted first, unknowns appended at the end
     if (savedOrder.length > 0) {
       newItems.sort((a, b) => {
@@ -2157,6 +2239,11 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     setItems(prev => {
       const dptItems = prev.filter(it => it.isFromDpt);
       if (dptItems.length === 0) return prev;
+      // Queued test production keeps its fixed batches and eats into the
+      // total first; the balancing below distributes only the remainder.
+      const queuedSum = prev
+        .filter(it => it.included && it.id.startsWith("queued-"))
+        .reduce((s, it) => s + it.batchesTarget, 0);
       // Same weight preference as the backend and Recalculate Batches:
       // DPT split → live sales → equal.
       const sumDpt = dptItems.reduce((s, it) => s + (it.dptPercent ?? 0), 0);
@@ -2171,7 +2258,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
         packsPerBatch: it.packsPerBatch,
         stockAfterPacks: it.estimatedFactoryNumber - bagPackEquivalents(it) - it.dispatch2Qty - it.dispatch3Qty,
       }));
-      const alloc = allocateBatches(recipesForAlloc, newTotal);
+      const alloc = allocateBatches(recipesForAlloc, Math.max(0, newTotal - queuedSum));
       return prev.map(item => {
         if (!item.isFromDpt) return item;
         const idx = dptItems.findIndex(d => d.id === item.id);
@@ -2244,7 +2331,13 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   // decision: the whole point of the button is to re-balance after edits/deletes.
   const [recalcFlash, setRecalcFlash] = useState(false);
   const handleRecalculateBatches = useCallback(() => {
-    const includedItems = items.filter(it => it.included);
+    // Queued test production is deliberate, fixed work — Recalculate must
+    // never zero it (weight-0 rows with no sales deficit would otherwise be
+    // wiped). It keeps its batches and shrinks the pool being rebalanced.
+    const queuedSum = items
+      .filter(it => it.included && it.id.startsWith("queued-"))
+      .reduce((s, it) => s + it.batchesTarget, 0);
+    const includedItems = items.filter(it => it.included && !it.id.startsWith("queued-"));
     if (includedItems.length === 0) return;
     // Percentages are computed by the backend against the ORIGINAL set of
     // recipes, so once you delete a few the remaining percentages no longer
@@ -2270,10 +2363,10 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       packsPerBatch: it.packsPerBatch,
       stockAfterPacks: it.estimatedFactoryNumber - bagPackEquivalents(it) - it.dispatch2Qty - it.dispatch3Qty,
     }));
-    const alloc = allocateBatches(recipesForAlloc, effectiveTotalBatches);
+    const alloc = allocateBatches(recipesForAlloc, Math.max(0, effectiveTotalBatches - queuedSum));
     isDirty.current = true;
     setItems(prev => prev.map(it => {
-      if (!it.included) return it;
+      if (!it.included || it.id.startsWith("queued-")) return it;
       const idx = includedItems.findIndex(inc => inc.id === it.id);
       if (idx < 0) return it;
       const suggested = alloc[idx].suggestedBatches;
@@ -3016,6 +3109,17 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                       </table>
                     </SortableContext>
                   </DndContext>
+                </div>
+              )}
+
+              {(calcData?.queuedProduction?.length ?? 0) > 0 && (
+                <div className="mb-3 px-3 py-2 border border-violet-400/50 bg-violet-500/10 rounded-xl text-sm text-violet-800 dark:text-violet-300 flex items-center gap-2">
+                  <FlaskConical className="w-4 h-4 flex-shrink-0" />
+                  <span>
+                    Queued test production for this date is already on the plan:{" "}
+                    {(calcData!.queuedProduction ?? []).map(q => `${q.batches} × ${q.recipeName}`).join(", ")}
+                    {" — "}counted inside the daily total.
+                  </span>
                 </div>
               )}
 
@@ -6175,6 +6279,14 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
               >
                 {creatingDayPlan === "mac" ? <Loader2 className="w-4 h-4 animate-spin" /> : <UtensilsCrossed className="w-4 h-4" />}
                 Mac &amp; Cheese only
+              </button>
+              <button
+                onClick={() => navigate(`/plans/queued?date=${selectedDateKey}`)}
+                className="px-4 py-2 border border-violet-400/50 bg-violet-500/10 hover:bg-violet-500/20 rounded-xl text-sm font-medium flex items-center gap-1.5 text-violet-800 dark:text-violet-300"
+                title="Decide test-production batches for this date ahead of time and order their unusual ingredients early — they'll land on the plan automatically when it's created."
+              >
+                <FlaskConical className="w-4 h-4" />
+                Queue test production
               </button>
             </div>
             <p className="text-[11px] mt-3 opacity-60 max-w-sm text-center px-4">

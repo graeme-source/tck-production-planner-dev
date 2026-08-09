@@ -172,56 +172,53 @@ export async function shopifyGraphQL<T>(query: string, variables?: Record<string
 }
 
 /**
- * Total online-store sessions (visits) in the inclusive date range.
+ * Shopify's OWN online-store conversion metric for the inclusive date range,
+ * straight from ShopifyQL: `FROM sessions SHOW sessions, conversion_rate`.
  *
- * Uses Shopify's `shopifyqlQuery` GraphQL endpoint with a ShopifyQL
- * statement targeting the `sessions` schema. This is the same data
- * source that powers the Online Store conversion-rate report in
- * Shopify Admin, so dividing yesterday's order count by this number
- * gives the same conversion rate the storefront reports.
+ * This is the exact number the Shopify Admin analytics home reports, so the
+ * dashboard card can never disagree with what Graeme sees in Shopify. Being
+ * session-based it inherently excludes subscription recurring orders — a
+ * renewal charge never creates a storefront session.
  *
- * Requires the `read_reports` scope on the app's access token AND a
- * `TableResponse` type in the schema — the latter changed names in
- * recent API versions, so the inline fragment can fail with
- * "No such type TableResponse". When that (or any other ShopifyQL
- * issue) happens we log it and return 0 instead of throwing, so the
- * Conversion Rate card on the dashboard degrades to "—" rather than
- * lighting up an error banner. Update the query once the right
- * type name for the current API version is confirmed.
+ * Schema notes (verified against API 2026-01 on 2026-08-09): the old
+ * `... on TableResponse` union is gone — `shopifyqlQuery` now returns a plain
+ * `ShopifyqlQueryResponse` with `parseErrors: [String]` and
+ * `tableData { columns { name } rows }` where `rows` is a JSON array of
+ * objects keyed by column name. Column names are `sessions` and
+ * `conversion_rate` (`total_sessions` no longer exists). Failures degrade to
+ * nulls so the card shows "—" rather than an error banner.
  */
-export async function getOnlineStoreSessions(from: string, to: string): Promise<number> {
+export async function getOnlineStoreConversion(from: string, to: string): Promise<{ sessions: number | null; conversionRate: number | null }> {
   try {
-    const shopifyql = `FROM sessions SHOW total_sessions SINCE ${from} UNTIL ${to}`;
-    const escaped = shopifyql.replace(/"/g, '\\"');
+    const shopifyql = `FROM sessions SHOW sessions, conversion_rate SINCE ${from} UNTIL ${to}`;
     const gql = `{
-      shopifyqlQuery(query: "${escaped}") {
-        __typename
-        ... on TableResponse {
-          parseErrors { code message }
-          tableData { rowData }
-        }
+      shopifyqlQuery(query: ${JSON.stringify(shopifyql)}) {
+        parseErrors
+        tableData { columns { name } rows }
       }
     }`;
     const data = await shopifyGraphQL<{
       shopifyqlQuery: {
-        __typename: string;
-        parseErrors?: Array<{ code: string; message: string }>;
-        tableData?: { rowData: string[][] };
+        parseErrors: string[] | null;
+        tableData: { columns: Array<{ name: string }>; rows: Array<Record<string, unknown>> } | null;
       };
     }>(gql);
     const q = data.shopifyqlQuery;
     if (q.parseErrors && q.parseErrors.length > 0) {
-      console.warn("[Shopify] sessions ShopifyQL parse error:", q.parseErrors.map(e => e.message).join("; "));
-      return 0;
+      console.warn("[Shopify] conversion ShopifyQL parse error:", q.parseErrors.join("; "));
+      return { sessions: null, conversionRate: null };
     }
-    const rows = q.tableData?.rowData ?? [];
-    if (rows.length === 0) return 0;
-    const cell = rows[0]?.[0];
-    const n = Number(cell);
-    return Number.isFinite(n) ? n : 0;
+    const row = q.tableData?.rows?.[0];
+    if (!row) return { sessions: null, conversionRate: null };
+    const sessions = Number(row.sessions);
+    const rate = Number(row.conversion_rate);
+    return {
+      sessions: Number.isFinite(sessions) ? sessions : null,
+      conversionRate: Number.isFinite(rate) ? rate : null,
+    };
   } catch (err) {
-    console.warn("[Shopify] sessions query unavailable (schema or scope mismatch):", err instanceof Error ? err.message : err);
-    return 0;
+    console.warn("[Shopify] conversion query unavailable (schema or scope mismatch):", err instanceof Error ? err.message : err);
+    return { sessions: null, conversionRate: null };
   }
 }
 

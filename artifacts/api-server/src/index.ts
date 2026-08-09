@@ -2622,6 +2622,23 @@ async function runStartupMigrations() {
     `);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_recipe_collection_items_collection ON recipe_collection_items (collection_id)`);
 
+    // Queued test production — batches decided ahead of the plan existing,
+    // so unusual ingredients can be ordered early. See schema/queued_production.ts.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS queued_production (
+        id SERIAL PRIMARY KEY,
+        production_date DATE NOT NULL,
+        recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+        batches INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        plan_id INTEGER REFERENCES production_plans(id) ON DELETE SET NULL,
+        notes TEXT,
+        created_by_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_queued_production_date ON queued_production (production_date)`);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);
