@@ -23,7 +23,7 @@ import {
   Sparkles, ChefHat, Truck, ShoppingBag, AlertCircle, FileText, MessageCircle,
   HeartHandshake, Activity, BookOpen, Award, Loader2, ClipboardCheck, Sun,
   CheckCircle2, Heart, Settings, Edit3, Calendar, GripVertical, Plus, Trash2, Save,
-  Shuffle, Camera, Image as ImageIcon, Info, Users,
+  Shuffle, Camera, Image as ImageIcon, Info, Users, AlertTriangle,
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
@@ -1593,8 +1593,19 @@ type ProductionPlanRow = {
   category: string | null;
   seq: number | null;            // production order number; null when not in today's plan
   target: number | null;         // batches/packs target; null when not in today's plan
+  // Today's production converted to 2-packs (batches × packsPerBatch, net of
+  // any packs going into 8-pack bags) — the number you compare against "The
+  // difference" without doing times-tables in your head.
+  packs: number | null;
+  bags: number;                  // 8-pack bags allocated out of those batches
   unit: "batches" | "packs";
-  stock: { have: number; need: number; surplus: number; tone: "ok" | "warn" | "bad" } | null;
+  stock: {
+    have: number; need: number; surplus: number; tone: "ok" | "warn" | "bad";
+    // Production coverage: live fridge + what wrapping still has to push in
+    // − what's still to dispatch. Negative = even today's make can't cover
+    // today's pack (the oversell pre-warning).
+    cover: number; prodTone: "ok" | "warn" | "bad";
+  } | null;
 };
 
 function HeaderInfo({ children }: { children: React.ReactNode }) {
@@ -1682,19 +1693,39 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
   // also been deducted from fridge stock, so counting them here would
   // double-count every packed order and drift the table into false shorts as
   // the day progresses. Surplus +ve = enough, -ve = short.
-  const calcById = new Map<number, { have: number; need: number; surplus: number; tone: "ok" | "warn" | "bad" }>();
+  const calcById = new Map<number, NonNullable<ProductionPlanRow["stock"]>>();
+  const calcRowById = new Map<number, CalcRecipeRow>();
   for (const r of calc?.recipes ?? []) {
+    calcRowById.set(r.recipeId, r);
     // "actual" is deliberately the default: the team reads this table to answer
     // "can I pack the rest of the dispatch from what's in the fridge right
-    // now". The predicted view answers a different question — where we'll land
-    // by close of play — and is opt-in via the toggle on the pack report.
-    const have = stockMode === "predicted" ? r.predictedFridgeStock : r.fridgeStock;
+    // now". The predicted view answers a different question — where we'll
+    // land by close of play — and is opt-in via the toggle on the pack report.
+    //
+    // Predicted mode does NOT use predictedFridgeStock: that figure already
+    // has today's remaining dispatch deducted server-side, so subtracting the
+    // "Left to dispatch" column from it again double-counted every un-packed
+    // order and showed false shorts. Instead the row reads left to right with
+    // dispatch deducted exactly once — (fridge + still to wrap) − left to
+    // dispatch = predicted end of day — the same formula the Create Plan
+    // screen uses. Unclamped, so a genuine oversell shows as a negative.
+    const wrapRemain = r.remainingWrappingPacksToday ?? 0;
+    const have = stockMode === "predicted" ? r.fridgeStock + wrapRemain : r.fridgeStock;
     const need = r.dispatch2RemainingQty ?? r.dispatch2Qty;
     const surplus = have - need;
     // Red when short (negative spare); amber when only 0–10 spare;
     // uncoloured once we have more than 10 to spare.
     const tone: "ok" | "warn" | "bad" = surplus < 0 ? "bad" : surplus <= 10 ? "warn" : "ok";
-    calcById.set(r.recipeId, { have, need, surplus, tone });
+    // Production coverage — "even after everything we make today, do we run
+    // out?". Always built from the LIVE fridge figure plus what wrapping
+    // still has to push in (already net of 8-pack bags server-side),
+    // whichever stock toggle is showing: the oversell warning has one honest
+    // answer and shouldn't move with the view. Stays right all day because
+    // wrapped packs migrate from "remaining wrapping" into fridge stock.
+    // (In predicted mode this equals the difference column by construction.)
+    const cover = r.fridgeStock + wrapRemain - need;
+    const prodTone: "ok" | "warn" | "bad" = cover < 0 ? "bad" : cover <= 10 ? "warn" : "ok";
+    calcById.set(r.recipeId, { have, need, surplus, tone, cover, prodTone });
   }
 
   const plannedIds = new Set(data.todayPlan.items.map(it => it.recipeId));
@@ -1702,6 +1733,17 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
   // 1) Everything being made today, in production order.
   const plannedRows: ProductionPlanRow[] = data.todayPlan.items.map((it, i) => {
     const c = calcById.get(it.recipeId);
+    const cr = calcRowById.get(it.recipeId);
+    const isMac = it.recipeCategory === "Macaroni Cheese";
+    // Mac plans already store packs in batchesTarget (packsPerBatch = 1);
+    // calzones convert via the recipe yield. Packs headed into 8-pack bags
+    // never reach the 2-pack fridge, so they come off here too.
+    const ppb = cr?.packsPerBatch ?? (isMac ? 1 : null);
+    const bags = it.eightPackBagCount ?? 0;
+    const bagEquiv = cr?.packSize ? 8 / Number(cr.packSize) : 4;
+    const packs = ppb != null
+      ? Math.max(0, Math.round((it.batchesTarget ?? 0) * ppb - bags * bagEquiv))
+      : null;
     return {
       recipeId: it.recipeId,
       recipeName: it.recipeName,
@@ -1709,7 +1751,9 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
       category: it.recipeCategory,
       seq: i + 1,
       target: it.batchesTarget,
-      unit: it.recipeCategory === "Macaroni Cheese" ? "packs" : "batches",
+      packs,
+      bags,
+      unit: isMac ? "packs" : "batches",
       stock: c ?? null,
     };
   });
@@ -1730,6 +1774,8 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
       category: null,
       seq: null,
       target: null,
+      packs: null,
+      bags: 0,
       unit: "batches" as const,
       stock: calcById.get(r.recipeId) ?? null,
     }))
@@ -1746,18 +1792,52 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
   const sumNeed = withStock.reduce((s, r) => s + r.stock!.need, 0);
   const sumSurplus = sumHave - sumNeed;
   const calzoneBatches = rows.reduce((s, r) => s + (r.unit === "batches" ? (r.target ?? 0) : 0), 0);
-  const macPacks = rows.reduce((s, r) => s + (r.unit === "packs" ? (r.target ?? 0) : 0), 0);
+  const totalPacks = rows.reduce((s, r) => s + (r.packs ?? 0), 0);
+
+  // The oversell pre-warning: recipes where fridge + today's entire
+  // production still doesn't cover what's left to dispatch. Last week this
+  // was only discovered at the packing bench, after orders had sold.
+  const uncovered = rows
+    .filter(r => r.stock && r.stock.cover < 0)
+    .sort((a, b) => a.stock!.cover - b.stock!.cover);
 
   const fmtDay = (iso?: string) => iso ? format(new Date(`${iso}T00:00:00`), "EEE d MMM") : "—";
   const dispatchLabel = fmtDay(calc?.dispatchDates?.[1]);
   const deliveryLabel = fmtDay(calc?.deliveryDates?.[1]);
 
-  const cols = "grid-cols-[2rem_4rem_1fr_5.25rem_6rem_5.25rem_6.5rem]";
+  const packDayLabel = showTomorrowPack || isPreviewing ? "tomorrow's" : "today's";
+  // minmax on the recipe column: without it the 1fr track collapses to zero
+  // on an iPad in portrait and the names vanish before anything truncates.
+  const cols = "grid-cols-[1.75rem_4.5rem_minmax(8rem,1fr)_4.75rem_5.25rem_4.75rem_5.75rem_5rem]";
 
   return (
     <div>
       <SectionTitle>{slide.title || "Order of Production"}</SectionTitle>
-      <SectionLead>Today's order — Mac &amp; Cheese first, then the calzones. Red = short · amber = within 10 spare.</SectionLead>
+      <SectionLead>Today's order — Mac &amp; Cheese first, then the calzones. Red = short · amber = within 10 spare. Production columns go red when even today's make won't cover the pack.</SectionLead>
+
+      {/* Oversell pre-warning — shown in the morning meeting AND the pack
+          report. Fires when fridge + today's whole production still leaves a
+          recipe short of its pack, i.e. orders WILL go unfulfilled unless
+          something changes this morning. */}
+      {uncovered.length > 0 && (
+        <div className="rounded-2xl border-2 border-red-500/60 bg-red-500/10 px-5 py-4 mb-4">
+          <p className="flex items-center gap-2.5 text-xl font-display font-bold text-red-700 dark:text-red-300">
+            <AlertTriangle className="w-6 h-6 shrink-0" />
+            Not making enough for {packDayLabel} pack
+          </p>
+          <p className="mt-1.5 text-lg font-semibold leading-snug">
+            Even after today's full production:{" "}
+            {uncovered.map((r, i) => (
+              <span key={r.recipeId} className="whitespace-nowrap">
+                {i > 0 && <span className="text-muted-foreground font-normal"> · </span>}
+                {r.recipeName} <span className="text-red-700 dark:text-red-300 tabular-nums">{r.stock!.cover} pk</span>
+                {r.seq === null && <span className="text-muted-foreground font-normal"> (not on the plan)</span>}
+              </span>
+            ))}
+            <span className="block mt-1 text-base font-normal text-muted-foreground">Orders will oversell — add production or delay orders this morning.</span>
+          </p>
+        </div>
+      )}
 
       {isLoading && data.todayPlan.items.length === 0 ? (
         <div className="glass-panel rounded-2xl p-6 flex justify-center">
@@ -1766,26 +1846,36 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
       ) : rows.length === 0 ? (
         <div className="glass-panel rounded-2xl p-6 text-muted-foreground">No plan published for today yet.</div>
       ) : (
-        <div className="glass-panel rounded-2xl overflow-hidden">
+        <div className="glass-panel rounded-2xl overflow-hidden overflow-x-auto">
+         <div className="min-w-[44rem]">
           {/* Header */}
           <div className={cn("grid gap-1.5 px-5 py-3 bg-secondary/30 text-base leading-snug font-bold text-muted-foreground items-start", cols)}>
             <span>#</span>
             <span>Start</span>
             <span>Recipe</span>
             <span className="text-center">
-              {stockMode === "predicted" ? "Predicted end of day" : "What's in stock"}
+              {stockMode === "predicted" ? "Fridge + still to wrap" : "What's in stock"}
               <HeaderInfo>
                 {stockMode === "predicted"
-                  ? "Where the fridge lands by close of play: what's in it now, plus what wrapping still has to push in, minus what fulfilment still has to pull out. Not what you can pack from right now."
+                  ? "What's in the fridge right now PLUS what the wrapping station still has to push in from today's production. Nothing has been dispatched from this number yet — that comes off in the next column, landing at Predicted end of day."
                   : "What's counted in the fridge right now — we pack from this before making anything new."}
               </HeaderInfo>
             </span>
             <span className="text-center">
               Left to dispatch {showTomorrowPack ? "tomorrow" : "today"}
-              <HeaderInfo>Orders still to be fulfilled for this pack: dispatch {dispatchLabel} · delivery {deliveryLabel}. Orders already packed drop off this count — they've also left the stock column — so the difference stays honest all day. Before packing starts this is the full dispatch.</HeaderInfo>
+              <HeaderInfo>Orders still to be fulfilled for this pack: dispatch {dispatchLabel} · delivery {deliveryLabel}. Orders already packed drop off this count — they've also left the stock column — so the numbers stay honest all day. Before packing starts this is the full dispatch.</HeaderInfo>
             </span>
-            <span className="text-center">The difference</span>
-            <span className="text-center self-stretch border-l-2 border-border/60 pl-3">Today's production</span>
+            <span className="text-center">
+              {stockMode === "predicted" ? "Predicted end of day" : "The difference"}
+              {stockMode === "predicted" && (
+                <HeaderInfo>Where each recipe lands at close of play, with everything wrapped in and every remaining order out: fridge + still to wrap − left to dispatch. Negative means today's orders oversell what we'll have.</HeaderInfo>
+              )}
+            </span>
+            <span className="text-center self-stretch border-l-[3px] border-border pl-3 bg-secondary/40 -my-3 py-3">
+              Today's packs
+              <HeaderInfo>Today's production in 2-packs — batches × packs per batch, minus any packs going into 8-pack bags. Compare it straight against The difference: red means even this production won't cover what's left to dispatch, amber means it only just does (10 or fewer spare).</HeaderInfo>
+            </span>
+            <span className="text-center self-stretch bg-secondary/40 -my-3 py-3">Today's batches</span>
           </div>
           {rows.map((r, i) => {
             const tone = r.stock?.tone;
@@ -1829,9 +1919,35 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
                   <span className={cn("text-2xl font-bold tabular-nums text-center", numClass)}>
                     {r.stock ? (r.stock.surplus > 0 ? `+${r.stock.surplus}` : r.stock.surplus) : "—"}
                   </span>
-                  <span className="text-2xl font-bold tabular-nums text-center whitespace-nowrap self-stretch flex items-center justify-center border-l-2 border-border/60 pl-3">
-                    {r.target ?? "—"}
-                    {r.target !== null && <span className="text-xs font-medium text-muted-foreground ml-1">{r.unit === "packs" ? "pk" : "bt"}</span>}
+                  <span className={cn(
+                    "self-stretch -my-3 py-1 flex flex-col items-center justify-center border-l-[3px] border-border pl-3 bg-secondary/20",
+                    r.stock?.prodTone === "bad" && r.packs !== null && "bg-red-500/15",
+                    r.stock?.prodTone === "warn" && r.packs !== null && "bg-amber-500/15",
+                  )}>
+                    <span className={cn(
+                      "text-2xl font-bold tabular-nums whitespace-nowrap",
+                      r.packs !== null && (
+                        r.stock?.prodTone === "bad" ? "text-red-700 dark:text-red-300" :
+                        r.stock?.prodTone === "warn" ? "text-amber-800 dark:text-amber-300" :
+                        tone === "bad" || tone === "warn" ? "text-emerald-700 dark:text-emerald-400" : ""
+                      ),
+                    )}>
+                      {r.packs ?? <span className="text-muted-foreground font-normal">—</span>}
+                      {r.packs !== null && <span className="text-xs font-medium text-muted-foreground ml-1">pk</span>}
+                    </span>
+                    {r.bags > 0 && (
+                      <span className="text-[10px] font-medium text-muted-foreground leading-tight whitespace-nowrap">after {r.bags} × 8-pk bags</span>
+                    )}
+                  </span>
+                  <span className="self-stretch -my-3 py-1 flex items-center justify-center bg-secondary/20 text-2xl font-bold tabular-nums whitespace-nowrap">
+                    {r.unit === "batches" && r.target !== null ? (
+                      <>
+                        {r.target}
+                        <span className="text-xs font-medium text-muted-foreground ml-1">bt</span>
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground font-normal">—</span>
+                    )}
                   </span>
                 </div>
               </div>
@@ -1846,19 +1962,16 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
             <span className="text-2xl font-bold tabular-nums text-center">
               {sumSurplus > 0 ? `+${sumSurplus}` : sumSurplus}
             </span>
-            <span className="text-center self-stretch border-l-2 border-border/60 pl-3 flex flex-col items-center justify-center leading-tight">
-              <span className="text-2xl font-bold tabular-nums whitespace-nowrap">
-                {calzoneBatches}
-                <span className="text-xs font-medium text-muted-foreground ml-1">bt</span>
-              </span>
-              {macPacks > 0 && (
-                <span className="text-2xl font-bold tabular-nums whitespace-nowrap">
-                  {macPacks}
-                  <span className="text-xs font-medium text-muted-foreground ml-1">pk</span>
-                </span>
-              )}
+            <span className="text-center self-stretch -my-3 flex items-center justify-center border-l-[3px] border-border pl-3 bg-secondary/20 text-2xl font-bold tabular-nums whitespace-nowrap">
+              {totalPacks}
+              <span className="text-xs font-medium text-muted-foreground ml-1">pk</span>
+            </span>
+            <span className="text-center self-stretch -my-3 flex items-center justify-center bg-secondary/20 text-2xl font-bold tabular-nums whitespace-nowrap">
+              {calzoneBatches}
+              <span className="text-xs font-medium text-muted-foreground ml-1">bt</span>
             </span>
           </div>
+         </div>
         </div>
       )}
 
@@ -1898,15 +2011,11 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
             <div className="text-center flex-1 border-l-2 border-border/60 pl-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Today's production</p>
               <p className="text-3xl font-display font-bold tabular-nums whitespace-nowrap">
+                {totalPacks}
+                <span className="text-sm font-medium text-muted-foreground ml-1">pk</span>
+                <span className="text-muted-foreground/60 mx-2">·</span>
                 {calzoneBatches}
                 <span className="text-sm font-medium text-muted-foreground ml-1">bt</span>
-                {macPacks > 0 && (
-                  <>
-                    <span className="text-muted-foreground/60 mx-2">·</span>
-                    {macPacks}
-                    <span className="text-sm font-medium text-muted-foreground ml-1">pk</span>
-                  </>
-                )}
               </p>
             </div>
           </div>
@@ -2008,6 +2117,14 @@ interface CalcRecipeRow {
   recipeName: string;
   color: string | null;
   isCoreMenu: boolean;
+  // Recipe yield: how many 2-packs one batch makes (portionsPerBatch /
+  // packSize — 5 for a standard calzone recipe, 1 for mac cheese, whose
+  // plans therefore store packs directly in batchesTarget).
+  packsPerBatch: number;
+  packSize: number;
+  // 8-pack bags allocated to this plan — made from the same batches, so
+  // each bag removes (8 / packSize) 2-packs from what the day yields.
+  eightPackBagCount: number;
   fridgeStock: number;
   // Predicted end-of-today fridge stock: what's in the fridge NOW, plus what
   // the wrapping station still has to push in, minus what fulfilment still has
