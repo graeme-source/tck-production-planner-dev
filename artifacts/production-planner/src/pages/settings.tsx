@@ -4690,6 +4690,106 @@ function EightPackBannerRolesSection() {
 
 interface SysUpdate { id: number; title: string | null; body: string; published: boolean; createdAt: string; updatedAt: string; }
 
+// Validation card for the AUTOMATIC commit feed — deliberately in Settings,
+// not the morning meeting: the old slide failed silently for months and
+// burned trust, so the feed proves itself here (what it produced, when, from
+// which source, and any error) before it's allowed anywhere louder.
+function AutomaticFeedCard() {
+  const [status, setStatus] = useState<{
+    exists: boolean;
+    refreshedAt?: string;
+    available?: boolean;
+    source?: string | null;
+    lastError?: string | null;
+    summary?: string[] | null;
+    commitCount7d?: number;
+    latestCommits?: Array<{ shortSha: string; date: string; subject: string }>;
+  } | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [showCommits, setShowCommits] = useState(false);
+
+  const load = () => fetch(`${BASE}/api/system-updates/feed-status`, { credentials: "include" })
+    .then(r => (r.ok ? r.json() : null))
+    .then(setStatus)
+    .catch(() => setStatus(null));
+  useEffect(() => { load(); }, []);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      await fetch(`${BASE}/api/system-updates/refresh-feed`, { method: "POST", credentials: "include" });
+      await load();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h3 className="text-sm font-semibold">Automatic change feed (validation)</h3>
+          <p className="text-xs text-muted-foreground">
+            What the automatic weekly summary would show — check it here for a while before trusting it anywhere else.
+          </p>
+        </div>
+        <button
+          onClick={refresh}
+          disabled={refreshing}
+          className="flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-xs font-medium hover:bg-secondary/60 disabled:opacity-50"
+        >
+          {refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+          Refresh now
+        </button>
+      </div>
+
+      {!status ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : !status.exists ? (
+        <p className="text-sm text-amber-700 dark:text-amber-400">
+          No snapshot exists yet in this environment — press "Refresh now" to build one. If it still doesn't appear, the error will show here afterwards.
+        </p>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span>Refreshed: <span className="font-medium text-foreground">{status.refreshedAt ? new Date(status.refreshedAt).toLocaleString("en-GB") : "—"}</span></span>
+            <span>Source: <span className="font-medium text-foreground">{status.source ?? "none"}</span></span>
+            <span>Commits (7d): <span className="font-medium text-foreground">{status.commitCount7d ?? 0}</span></span>
+          </div>
+          {status.lastError && (
+            <p className="text-xs text-amber-700 dark:text-amber-400 border border-amber-400/40 bg-amber-500/10 rounded-lg px-2.5 py-1.5">
+              {status.lastError}
+            </p>
+          )}
+          {status.summary && status.summary.length > 0 ? (
+            <ul className="text-sm space-y-1">
+              {status.summary.map((s, i) => (
+                <li key={i} className="flex gap-2"><span className="text-primary">•</span><span>{s}</span></li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">No summary produced{status.available ? " (raw commits only)" : ""}.</p>
+          )}
+          {(status.latestCommits?.length ?? 0) > 0 && (
+            <div>
+              <button onClick={() => setShowCommits(s => !s)} className="text-xs text-muted-foreground hover:text-foreground">
+                {showCommits ? "Hide" : "Show"} latest commits
+              </button>
+              {showCommits && (
+                <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground font-mono">
+                  {status.latestCommits!.map(c => (
+                    <li key={c.shortSha} className="truncate">{c.shortSha} · {c.subject}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function SystemUpdatesSection() {
   const [entries, setEntries] = useState<SysUpdate[] | null>(null);
   const [title, setTitle] = useState("");
@@ -4754,6 +4854,8 @@ function SystemUpdatesSection() {
           Bulleted changes shown on the morning-meeting "System Updates" slide. The most recent published entry is displayed. One bullet per line.
         </p>
       </div>
+
+      <AutomaticFeedCard />
 
       <div className="bg-card border border-border rounded-xl p-4 space-y-3">
         <input

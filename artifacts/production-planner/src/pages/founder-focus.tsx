@@ -354,6 +354,10 @@ export default function FounderFocus() {
 
   // ── AI replan ────────────────────────────────────────────────────────────
   const [replanOpen, setReplanOpen] = useState(false);
+  // Quick-add form visibility + a sensible default start: the next full
+  // hour when looking at today, 09:00 for any other day.
+  const [addOpen, setAddOpen] = useState(false);
+  const defaultAddStartMin = isToday ? Math.min(Math.ceil(now / 60) * 60, 23 * 60) : 9 * 60;
   const [replanPrompt, setReplanPrompt] = useState("");
   const [replanNote, setReplanNote] = useState<string | null>(null);
   const replan = useMutation({
@@ -532,6 +536,12 @@ export default function FounderFocus() {
               </button>
             )}
             <button
+              onClick={() => setAddOpen(o => !o)}
+              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-secondary/50 flex items-center gap-1.5"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add block
+            </button>
+            <button
               onClick={() => applyTemplate.mutate()}
               disabled={applyTemplate.isPending || (data?.templates.length ?? 0) === 0}
               title={(data?.templates.length ?? 0) === 0 ? "No template rows for this weekday yet — add some below." : undefined}
@@ -547,6 +557,22 @@ export default function FounderFocus() {
             </button>
           </div>
         </div>
+
+        {/* Quick manual add — no AI, no template: pick times, pillar or
+            title, done. Lives at the TOP of the section so it's findable
+            (the old copy at the bottom of a full day's timeline was
+            effectively invisible). Pre-fills the next full hour. */}
+        {addOpen && (
+          <div className="rounded-xl border border-primary/30 bg-primary/5 p-3">
+            <AddBlockForm
+              pillars={data?.pillars ?? []}
+              pending={addBlock.isPending}
+              defaultStartMin={defaultAddStartMin}
+              onAdd={(startMin, endMin, pillarId, title) =>
+                addBlock.mutate({ date: dateStr, startMin, endMin, pillarId, ...(title ? { title } : {}) })}
+            />
+          </div>
+        )}
 
         {replanOpen && (
           <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 space-y-2">
@@ -610,12 +636,6 @@ export default function FounderFocus() {
           />
         )}
 
-        <AddBlockForm
-          pillars={data?.pillars ?? []}
-          pending={addBlock.isPending}
-          onAdd={(startMin, endMin, pillarId, title) =>
-            addBlock.mutate({ date: dateStr, startMin, endMin, pillarId, ...(title ? { title } : {}) })}
-        />
       </section>
 
       {/* ── Weekly template (edits like a normal day once opened) ───────── */}
@@ -1074,13 +1094,16 @@ function AppleCalendarCard() {
 // ── Add block form ─────────────────────────────────────────────────────────
 // The pillar IS the block: pick a pillar and a time range and go. The title
 // is an optional override for one-offs that don't fit a pillar.
-function AddBlockForm({ pillars, pending, onAdd }: {
+function AddBlockForm({ pillars, pending, onAdd, defaultStartMin }: {
   pillars: Pillar[];
   pending: boolean;
   onAdd: (startMin: number, endMin: number, pillarId: number | null, title: string | null) => void;
+  defaultStartMin?: number;
 }) {
-  const [start, setStart] = useState("09:00");
-  const [end, setEnd] = useState("10:00");
+  const minToTime = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  const s0 = defaultStartMin ?? 9 * 60;
+  const [start, setStart] = useState(minToTime(s0));
+  const [end, setEnd] = useState(minToTime(Math.min(s0 + 60, 1440)));
   const [title, setTitle] = useState("");
   const [pillarId, setPillarId] = useState<string>("");
 
