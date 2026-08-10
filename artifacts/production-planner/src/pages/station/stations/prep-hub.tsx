@@ -354,9 +354,20 @@ function PrepModeToggle({
   );
 }
 
-export function PrepHub({ planId, planDate }: { planId: number; planDate?: string }) {
+export function PrepHub({ planId, planDate, planName, planStatus, planPrepDate }: { planId: number; planDate?: string; planName?: string | null; planStatus?: string | null; planPrepDate?: string | null }) {
   const [, navigate] = useLocation();
-  const { data: nextPlan, isLoading } = useNextActivePlan(planDate, "prep") as { data: NextActivePlan | null; isLoading: boolean };
+  const search = useSearch();
+  // ?direct=1 — the caller (dashboard prep card, calendar prep card) has
+  // already resolved WHICH plan's prep is due by date, so stay anchored to
+  // the URL plan instead of auto-routing to "next active plan" — that hop
+  // re-resolves from this plan's own plan_date and lands one prep day
+  // further ahead (tomorrow's prep). Mirrors usePrepByRecipe's direct flag.
+  const direct = new URLSearchParams(search).get("direct") === "1";
+  const { data: autoPlan, isLoading: autoLoading } = useNextActivePlan(direct ? undefined : planDate, "prep") as { data: NextActivePlan | null; isLoading: boolean };
+  const nextPlan: NextActivePlan | null = direct
+    ? { planId, planDate: planDate ?? null, planName: planName ?? null, prepDate: planPrepDate ?? null, doughDate: null, status: planStatus ?? null }
+    : autoPlan;
+  const isLoading = direct ? false : autoLoading;
   const [showReplenish, setShowReplenish] = useState(false);
   const { data: allSubRecipesData } = useListSubRecipes();
   const allSubRecipes = (allSubRecipesData ?? []) as SubRecipe[];
@@ -391,7 +402,7 @@ export function PrepHub({ planId, planDate }: { planId: number; planDate?: strin
     },
   ] as const;
 
-  const noFuturePlan = !isLoading && nextPlan != null && nextPlan.planId == null;
+  const noFuturePlan = !direct && !isLoading && nextPlan != null && nextPlan.planId == null;
   const isDraft = nextPlan?.status === "draft";
 
   if (noFuturePlan) {
@@ -444,7 +455,9 @@ export function PrepHub({ planId, planDate }: { planId: number; planDate?: strin
         />
       )}
       <PrepDateBanner
-        currentPlanDate={planDate}
+        // Direct flow: "current" is the day the prep is actually happening
+        // (the plan's prep_date), since the target plan IS the URL plan.
+        currentPlanDate={direct ? planPrepDate : planDate}
         targetPlanDate={nextPlan?.planDate ?? null}
         targetPlanName={nextPlan?.planName ?? null}
         isLoading={isLoading}
@@ -470,7 +483,7 @@ export function PrepHub({ planId, planDate }: { planId: number; planDate?: strin
             return (
               <button
                 key={s.key}
-                onClick={() => navigate(`/plans/${planId}/station/${s.key}`)}
+                onClick={() => navigate(`/plans/${planId}/station/${s.key}${direct ? "?direct=1" : ""}`)}
                 className={cn(
                   "flex items-center gap-4 p-5 border-2 rounded-2xl text-left transition-all hover:scale-[1.01] active:scale-[0.99]",
                   s.borderColor,
