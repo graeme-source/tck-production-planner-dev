@@ -191,7 +191,12 @@ router.get("/queue", async (_req, res) => {
   }
 });
 
-// ── POST /process — { orderId, deliveryDate } — add bags to plan + tag order ──
+// ── POST /process — { orderId, deliveryDate, productionDate? } ──
+// Adds bags to a plan + tags the order. productionDate (optional) picks WHICH
+// plan gets the bags — it defaults to the despatch day (delivery − 1) but can
+// be any earlier plan, so bags can be made days ahead of a delivery (Graeme,
+// 2026-08: deliver the 13th, make on the 10th). The order tag is always the
+// DELIVERY date, so despatch routing is untouched by the override.
 router.post("/process", async (req, res) => {
   const orderId = Number(req.body?.orderId);
   const deliveryDate = String(req.body?.deliveryDate ?? "");
@@ -201,6 +206,23 @@ router.post("/process", async (req, res) => {
   }
   if (!isDeliveryDay(deliveryDate)) {
     res.status(400).json({ error: "Delivery date must be a Tue–Sat" });
+    return;
+  }
+  const rawProductionDate = req.body?.productionDate;
+  if (rawProductionDate != null && rawProductionDate !== "" && !DATE_TAG_RE.test(String(rawProductionDate))) {
+    res.status(400).json({ error: "productionDate must be YYYY-MM-DD when supplied" });
+    return;
+  }
+  const requestedProductionDate: string | null =
+    rawProductionDate != null && rawProductionDate !== "" ? String(rawProductionDate) : null;
+  if (requestedProductionDate && requestedProductionDate > despatchDateFor(deliveryDate)) {
+    res.status(400).json({ error: `Production day must be on or before the despatch day (${despatchDateFor(deliveryDate)} for delivery ${deliveryDate}) — bags must exist before they ship.` });
+    return;
+  }
+  // No more than three days ahead of delivery (Graeme, 2026-08): bags made
+  // earlier than that arrive with too little life left.
+  if (requestedProductionDate && requestedProductionDate < addDays(deliveryDate, -3)) {
+    res.status(400).json({ error: `Production day can be at most 3 days before delivery (${addDays(deliveryDate, -3)} at the earliest for delivery ${deliveryDate}).` });
     return;
   }
 
@@ -233,9 +255,17 @@ router.post("/process", async (req, res) => {
     }
 
     const despatchDate = despatchDateFor(deliveryDate);
-    const plan = (await loadPlansByDate(despatchDate, despatchDate)).get(despatchDate);
+    // The plan that gets the bags: the override when given, else the despatch day.
+    const productionDate = requestedProductionDate ?? despatchDate;
+    const plan = (await loadPlansByDate(productionDate, productionDate)).get(productionDate);
     if (!plan) {
-      res.status(409).json({ error: `No production plan exists for ${despatchDate} (despatch day for delivery ${deliveryDate}).`, despatchDate });
+      res.status(409).json({
+        error: productionDate === despatchDate
+          ? `No production plan exists for ${despatchDate} (despatch day for delivery ${deliveryDate}).`
+          : `No production plan exists for ${productionDate} (chosen production day).`,
+        despatchDate,
+        productionDate,
+      });
       return;
     }
 
@@ -299,11 +329,11 @@ router.post("/process", async (req, res) => {
     if (failedToAdd.length) {
       res.status(207).json({
         warning: "Order tagged, but some bags couldn't be added — add these manually on the production overview.",
-        orderId, deliveryDate, despatchDate, planId: plan.planId, tags: updatedTags, added, failedToAdd,
+        orderId, deliveryDate, despatchDate, productionDate, planId: plan.planId, tags: updatedTags, added, failedToAdd,
       });
       return;
     }
-    res.json({ ok: true, orderId, deliveryDate, despatchDate, planId: plan.planId, tags: updatedTags, added });
+    res.json({ ok: true, orderId, deliveryDate, despatchDate, productionDate, planId: plan.planId, tags: updatedTags, added });
   } catch (err) {
     console.error("[wholesale-bags] process failed:", err);
     res.status(502).json({ error: err instanceof Error ? err.message : "Failed to process order" });

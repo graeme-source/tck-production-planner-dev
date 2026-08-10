@@ -59,24 +59,54 @@ function fmtNice(s: string): string {
 }
 
 type OrderStatus =
-  | { ok: true; planId: number; despatchDate: string; tagOnly?: boolean }
+  | { ok: true; planId: number; despatchDate: string; productionDate: string; tagOnly?: boolean }
   | { ok: false; reason: string };
 
-function evaluate(order: QueueOrder, deliveryDate: string, plans: Record<string, PlanInfo>): OrderStatus {
-  // Wholesale 2-pack-only orders are tag-only: no plan needed, always ready once a
-  // delivery day is chosen (the 2-packs reach the plan via the normal order sync).
-  if (order.kind === "wholesale_2pack") {
-    return { ok: true, planId: -1, despatchDate: addDaysStr(deliveryDate, -1), tagOnly: true };
-  }
-  const despatchDate = addDaysStr(deliveryDate, -1);
-  const plan = plans[despatchDate];
-  if (!plan) return { ok: false, reason: `No production plan for ${fmtNice(despatchDate)} (despatch day)` };
+// Bags don't have to be made on the despatch day — any plan from 1 to 3 days
+// before delivery can carry them (Graeme, 2026-08). This checks ONE candidate
+// production date for an order.
+function evaluateProduction(order: QueueOrder, productionDate: string, plans: Record<string, PlanInfo>): OrderStatus {
+  const plan = plans[productionDate];
+  if (!plan) return { ok: false, reason: `No production plan for ${fmtNice(productionDate)}` };
   const planRecipes = new Set(plan.recipeIds);
   const unmapped = order.lines.filter(l => l.recipeId == null);
   if (unmapped.length) return { ok: false, reason: `Unrecognised product: ${unmapped.map(l => l.productTitle ?? "?").join(", ")}` };
   const missing = order.lines.filter(l => l.recipeId != null && !planRecipes.has(l.recipeId));
-  if (missing.length) return { ok: false, reason: `Not on the ${fmtNice(plan.planDate)} plan: ${missing.map(l => l.recipeName).join(", ")}` };
-  return { ok: true, planId: plan.planId, despatchDate };
+  if (missing.length) return { ok: false, reason: `Not on the ${fmtNice(plan.planDate)} plan: ${[...new Set(missing.map(l => l.recipeName))].join(", ")}` };
+  return { ok: true, planId: plan.planId, despatchDate: "", productionDate };
+}
+
+function evaluate(order: QueueOrder, deliveryDate: string, productionDate: string, plans: Record<string, PlanInfo>): OrderStatus {
+  // Wholesale 2-pack-only orders are tag-only: no plan needed, always ready once a
+  // delivery day is chosen (the 2-packs reach the plan via the normal order sync).
+  if (order.kind === "wholesale_2pack") {
+    return { ok: true, planId: -1, despatchDate: addDaysStr(deliveryDate, -1), productionDate: addDaysStr(deliveryDate, -1), tagOnly: true };
+  }
+  const status = evaluateProduction(order, productionDate, plans);
+  if (!status.ok) return status;
+  return { ...status, despatchDate: addDaysStr(deliveryDate, -1) };
+}
+
+// Candidate production days for a delivery: despatch day (delivery − 1) back
+// to delivery − 3, never in the past. Earliest first.
+function productionCandidates(deliveryDate: string, today: string): string[] {
+  const out: string[] = [];
+  for (let back = 3; back >= 1; back--) {
+    const d = addDaysStr(deliveryDate, -back);
+    if (d >= today) out.push(d);
+  }
+  return out;
+}
+
+// Default production day: the EARLIEST candidate whose plan already has every
+// product on it — make it as soon as possible. Falls back to the despatch day
+// (so the warning explains what's missing there) when none qualifies.
+function defaultProductionDate(order: QueueOrder, deliveryDate: string, today: string, plans: Record<string, PlanInfo>): string {
+  const candidates = productionCandidates(deliveryDate, today);
+  for (const d of candidates) {
+    if (evaluateProduction(order, d, plans).ok) return d;
+  }
+  return addDaysStr(deliveryDate, -1);
 }
 
 export function EightPackOrdersBanner({ userRole }: { userRole?: string }) {
@@ -147,22 +177,44 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
     for (const o of data.orders) init[o.orderId] = o.proposedDeliveryDate;
     return init;
   });
+  // per-order selected production day — defaults to the EARLIEST plan (within
+  // delivery − 3 … − 1) that already has all the order's products on it.
+  const [selectedProduction, setSelectedProduction] = useState<Record<number, string>>(() => {
+    const init: Record<number, string> = {};
+    for (const o of data.orders) init[o.orderId] = defaultProductionDate(o, o.proposedDeliveryDate, data.today, data.plansByDespatchDate);
+    return init;
+  });
   const [processing, setProcessing] = useState<number | null>(null);
   const [done, setDone] = useState<Set<number>>(new Set());
 
+  const changeDelivery = (order: QueueOrder, deliveryDate: string) => {
+    setSelected(prev => ({ ...prev, [order.orderId]: deliveryDate }));
+    // Re-derive the best production day for the new delivery date.
+    setSelectedProduction(prev => ({
+      ...prev,
+      [order.orderId]: defaultProductionDate(order, deliveryDate, data.today, data.plansByDespatchDate),
+    }));
+  };
+
   async function processOrder(order: QueueOrder) {
     const deliveryDate = selected[order.orderId];
+    const productionDate = selectedProduction[order.orderId];
     setProcessing(order.orderId);
     try {
       const res = await fetch(`${BASE}/api/wholesale-bags/process`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId: order.orderId, deliveryDate }),
+        body: JSON.stringify({ orderId: order.orderId, deliveryDate, productionDate }),
       });
       const body = await res.json().catch(() => ({}));
       if (res.ok) {
-        toast({ title: `Processed ${order.name}`, description: `Bags added for delivery ${fmtNice(deliveryDate)}.` });
+        toast({
+          title: `Processed ${order.name}`,
+          description: order.kind === "eight_pack"
+            ? `Bags on the ${fmtNice(productionDate)} plan · delivering ${fmtNice(deliveryDate)}.`
+            : `Tagged for delivery ${fmtNice(deliveryDate)}.`,
+        });
         setDone(prev => new Set(prev).add(order.orderId));
         onProcessed();
       } else if (res.status === 207) {
@@ -185,13 +237,13 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
   }
 
   const remaining = data.orders.filter(o => !done.has(o.orderId));
-  const readyCount = remaining.filter(o => evaluate(o, selected[o.orderId], data.plansByDespatchDate).ok).length;
+  const readyCount = remaining.filter(o => evaluate(o, selected[o.orderId], selectedProduction[o.orderId], data.plansByDespatchDate).ok).length;
   const eightPackOrders = data.orders.filter(o => o.kind === "eight_pack");
   const wholesaleOrders = data.orders.filter(o => o.kind === "wholesale_2pack");
 
   async function processAllReady() {
     for (const o of remaining) {
-      if (evaluate(o, selected[o.orderId], data.plansByDespatchDate).ok) {
+      if (evaluate(o, selected[o.orderId], selectedProduction[o.orderId], data.plansByDespatchDate).ok) {
         // sequential to keep Shopify writes orderly
         // eslint-disable-next-line no-await-in-loop
         await processOrder(o);
@@ -202,8 +254,10 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
   const renderCard = (order: QueueOrder) => {
     const isDone = done.has(order.orderId);
     const delivery = selected[order.orderId];
-    const status = evaluate(order, delivery, data.plansByDespatchDate);
+    const production = selectedProduction[order.orderId];
+    const status = evaluate(order, delivery, production, data.plansByDespatchDate);
     const isWholesale = order.kind === "wholesale_2pack";
+    const prodCandidates = productionCandidates(delivery, data.today);
     // merge the proposed date into options if it's outside the standard window
     const options = data.deliveryDates.includes(order.proposedDeliveryDate)
       ? data.deliveryDates
@@ -245,15 +299,38 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
             <label className="text-sm text-muted-foreground">Deliver</label>
             <select
               value={delivery}
-              onChange={e => setSelected(prev => ({ ...prev, [order.orderId]: e.target.value }))}
+              onChange={e => changeDelivery(order, e.target.value)}
               className="px-2 py-1.5 border border-border rounded-lg text-sm bg-background"
             >
               {options.map(d => <option key={d} value={d}>{fmtNice(d)}</option>)}
             </select>
 
+            {!isWholesale && (
+              <>
+                <label className="text-sm text-muted-foreground">Make</label>
+                <select
+                  value={production}
+                  onChange={e => setSelectedProduction(prev => ({ ...prev, [order.orderId]: e.target.value }))}
+                  className="px-2 py-1.5 border border-border rounded-lg text-sm bg-background"
+                  title="Which production plan the bags go on — up to 3 days before delivery. Defaults to the earliest plan that already has these products."
+                >
+                  {prodCandidates.map(d => {
+                    const s = evaluateProduction(order, d, data.plansByDespatchDate);
+                    return (
+                      <option key={d} value={d}>
+                        {fmtNice(d)}{s.ok ? "" : ` — ${data.plansByDespatchDate[d] ? "missing products" : "no plan"}`}
+                      </option>
+                    );
+                  })}
+                </select>
+              </>
+            )}
+
             {status.ok ? (
               <span className="text-xs text-muted-foreground">
-                {status.tagOnly ? `→ tag ${fmtNice(delivery)} + production` : `→ ${fmtNice(status.despatchDate)} production`}
+                {status.tagOnly
+                  ? `→ tag ${fmtNice(delivery)} + production`
+                  : `→ bags on the ${fmtNice(production)} plan · delivers ${fmtNice(delivery)}`}
               </span>
             ) : (
               <span className="flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400">
@@ -283,7 +360,7 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
             <PackageCheck className="w-5 h-5 text-indigo-500" /> Process 8-pack &amp; wholesale orders
           </DialogTitle>
           <DialogDescription>
-            Pick a delivery day (Tue–Sat) for each order. <span className="font-medium">8-pack bag orders</span> add the bags to the despatch-day production plan; <span className="font-medium">wholesale 2-pack orders</span> are just tagged for despatch. Both get tagged with the delivery date + <span className="font-medium">production</span>.
+            Pick a delivery day (Tue–Sat) for each order. <span className="font-medium">8-pack bag orders</span> add the bags to a production plan up to 3 days before delivery — Make defaults to the earliest plan that already has the products, and you can change it. <span className="font-medium">Wholesale 2-pack orders</span> are just tagged for despatch. Both get tagged with the delivery date + <span className="font-medium">production</span>.
           </DialogDescription>
         </DialogHeader>
 
