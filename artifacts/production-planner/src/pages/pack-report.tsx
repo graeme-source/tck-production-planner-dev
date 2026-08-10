@@ -53,7 +53,7 @@ export default function PackReport() {
       <PageHeader
         title="Pack Report"
         description={stockMode === "predicted"
-          ? "Predicted end-of-day stock vs the next dispatch — includes what's still to wrap"
+          ? "Where each recipe lands tonight: fridge + still to wrap − left to dispatch"
           : "The morning-meeting table: fridge stock vs the next dispatch, red where we're short"}
         action={
           <Link href="/stock-control">
@@ -79,7 +79,7 @@ export default function PackReport() {
             key: "predicted" as const,
             label: "Predicted end of day",
             icon: TrendingUp,
-            hint: "Adds what wrapping still has to push in, less what fulfilment still has to pull out.",
+            hint: "Fridge + what wrapping still has to push in, then everything left to dispatch comes off — the last column is where each recipe lands tonight.",
           },
         ]).map(opt => {
           const Icon = opt.icon;

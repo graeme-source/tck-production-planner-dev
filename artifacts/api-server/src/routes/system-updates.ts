@@ -37,6 +37,12 @@ interface CachedFeed {
   /** Bullet-pointed plain-English summary of the last 24h. null when
    *  there's nothing to summarise OR Claude isn't configured. */
   summary: string[] | null;
+  /** Which commit source produced the feed — "git" (local clone) or
+   *  "github" (REST fallback for containers without .git). Null when
+   *  neither worked; lastError says why. Diagnosability was the missing
+   *  piece the whole time this feature "never worked" in prod. */
+  source?: "git" | "github" | null;
+  lastError?: string | null;
 }
 
 // The rendered feed is computed once per deploy (and on a slow timer)
@@ -73,12 +79,40 @@ interface SourceResult {
  *  week's deploys. Reads master so the feed reflects what's live. */
 async function buildFeed(): Promise<CachedFeed> {
   const now = Date.now();
-  const src = (await loadCommitsFromLocalGit()) ?? (await loadCommitsFromGithub());
+  const fromGit = await loadCommitsFromLocalGit();
+  const src = fromGit ?? (await loadCommitsFromGithub());
   if (!src) {
-    return { fetchedAt: now, available: false, last24h: [], last7Days: [], summary: null };
+    return {
+      fetchedAt: now,
+      available: false,
+      last24h: [],
+      last7Days: [],
+      summary: null,
+      source: null,
+      lastError: "No commit source: no usable .git in this environment AND the GitHub API fallback failed (see server logs for the fetch status).",
+    };
   }
-  const summary = await summariseCommits(src.last7Days);
-  return { fetchedAt: now, available: true, last24h: src.last24h, last7Days: src.last7Days, summary };
+  let summary: string[] | null = null;
+  let lastError: string | null = null;
+  try {
+    summary = await summariseCommits(src.last7Days);
+    if (summary == null && src.last7Days.length > 0) {
+      lastError = isClaudeConfigured()
+        ? "Claude returned no usable bullets — raw commit list shown instead."
+        : "Claude isn't configured in this environment — raw commit list shown instead.";
+    }
+  } catch (err) {
+    lastError = `Summary failed: ${err instanceof Error ? err.message : String(err)}`;
+  }
+  return {
+    fetchedAt: now,
+    available: true,
+    last24h: src.last24h,
+    last7Days: src.last7Days,
+    summary,
+    source: fromGit ? "git" : "github",
+    lastError,
+  };
 }
 
 /** Read the persisted feed from the DB. Returns null if the snapshot
@@ -99,30 +133,50 @@ async function readSnapshot(): Promise<CachedFeed | null> {
  *  so a transient source failure (GitHub rate limit, network blip) never
  *  clobbers a previously-good snapshot with an empty one. Exported for
  *  the startup wiring in index.ts. */
+async function writeSnapshot(feed: CachedFeed): Promise<void> {
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS system_updates_snapshot (
+      id integer PRIMARY KEY,
+      payload jsonb NOT NULL,
+      refreshed_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await db.execute(sql`
+    INSERT INTO system_updates_snapshot (id, payload, refreshed_at)
+    VALUES (${SNAPSHOT_ID}, ${JSON.stringify(feed)}::jsonb, now())
+    ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, refreshed_at = now()
+  `);
+}
+
 export async function refreshSystemUpdatesSnapshot(): Promise<void> {
   try {
     const feed = await buildFeed();
     if (!feed.available) {
       const existing = await readSnapshot();
       if (existing?.available) {
+        // Keep the good content but surface that the latest attempt failed,
+        // so the Settings validation card never lies about freshness.
         console.warn("[system-updates] refresh got no commits; keeping previous snapshot");
+        await writeSnapshot({ ...existing, lastError: feed.lastError ?? "Refresh returned no commits — kept the previous snapshot." });
         return;
       }
     }
-    await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS system_updates_snapshot (
-        id integer PRIMARY KEY,
-        payload jsonb NOT NULL,
-        refreshed_at timestamptz NOT NULL DEFAULT now()
-      )
-    `);
-    await db.execute(sql`
-      INSERT INTO system_updates_snapshot (id, payload, refreshed_at)
-      VALUES (${SNAPSHOT_ID}, ${JSON.stringify(feed)}::jsonb, now())
-      ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, refreshed_at = now()
-    `);
+    await writeSnapshot(feed);
   } catch (err) {
-    console.warn("[system-updates] snapshot refresh failed:", err instanceof Error ? err.message : err);
+    // The old version bailed out here WITHOUT writing anything — in an
+    // environment where every attempt failed the snapshot table never even
+    // existed, and there was nowhere to see why ("this never works").
+    // Always persist the failure so it's visible in Settings.
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn("[system-updates] snapshot refresh failed:", message);
+    try {
+      const existing = await readSnapshot();
+      await writeSnapshot(existing?.available
+        ? { ...existing, lastError: `Refresh failed: ${message}` }
+        : { fetchedAt: Date.now(), available: false, last24h: [], last7Days: [], summary: null, source: null, lastError: `Refresh failed: ${message}` });
+    } catch (writeErr) {
+      console.warn("[system-updates] failure snapshot write also failed:", writeErr instanceof Error ? writeErr.message : writeErr);
+    }
   }
 }
 
@@ -444,6 +498,40 @@ router.get("/", async (_req: Request, res: Response) => {
     console.error("[system-updates] handler failed:", err);
     res.status(500).json({ error: "Failed to load system updates" });
   }
+});
+
+// ── Automatic-feed validation (Settings card, NOT the meeting) ─────────
+// The slide burned trust by failing silently for months, so the feed gets
+// validated somewhere low-stakes first: an admin card showing exactly what
+// the feed produced, when, from which source, and any error.
+router.get("/feed-status", requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const rows = toRows<{ payload: CachedFeed; refreshed_at: string | Date }>(await db.execute(sql`
+      SELECT payload, refreshed_at FROM system_updates_snapshot WHERE id = ${SNAPSHOT_ID} LIMIT 1
+    `));
+    const row = rows[0];
+    if (!row) {
+      res.json({ exists: false });
+      return;
+    }
+    res.json({
+      exists: true,
+      refreshedAt: iso(row.refreshed_at),
+      available: row.payload.available,
+      source: row.payload.source ?? null,
+      lastError: row.payload.lastError ?? null,
+      summary: row.payload.summary ?? null,
+      commitCount7d: row.payload.last7Days?.length ?? 0,
+      latestCommits: (row.payload.last7Days ?? []).slice(0, 8).map(c => ({ shortSha: c.shortSha, date: c.date, subject: c.subject })),
+    });
+  } catch {
+    res.json({ exists: false });
+  }
+});
+
+router.post("/refresh-feed", requireAdmin, async (_req: Request, res: Response) => {
+  await refreshSystemUpdatesSnapshot();
+  res.json({ ok: true });
 });
 
 // Admin list — all entries, newest first.
