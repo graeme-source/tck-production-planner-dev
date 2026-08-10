@@ -13,7 +13,7 @@ import {
   Camera, User, CircleDot, ToggleRight, Boxes, UtensilsCrossed,
   AlertTriangle, Scale, ThermometerSnowflake, BookOpen, Megaphone, CalendarDays,
   Copy, Check, IdCard, FileText, ExternalLink, Bell, RefreshCw, Smartphone, Thermometer,
-  AlarmClock,
+  AlarmClock, Search,
 } from "lucide-react";
 import { STATIONS } from "@/pages/station/shared/constants";
 import { TIMED_REMINDERS_KEY, parseReminders, type TimedReminder } from "@/pages/station/shared/timed-reminders";
@@ -635,6 +635,53 @@ const NAV_ITEMS: { id: SettingsSection; label: string; icon: typeof User }[] = [
   { id: "sops", label: "Standards & SOPs", icon: BookOpen },
   { id: "sensors", label: "Temperature Sensors", icon: Thermometer },
   { id: "features", label: "Features", icon: ToggleRight },
+];
+
+// ── Settings search ────────────────────────────────────────────────────
+// Settings has ~40 sections spread over 7 tabs — finding one by memory is
+// hopeless ("where do I change X?"). This index powers the search box above
+// the nav: title = the section's rendered heading (also used to scroll to
+// it after switching tab), keywords = whatever someone might type instead.
+const SETTINGS_SEARCH_INDEX: { tab: SettingsSection; title: string; keywords: string }[] = [
+  { tab: "profile", title: "Profile & Avatar", keywords: "name email avatar photo picture my account" },
+  { tab: "profile", title: "Password", keywords: "password change reset login credentials" },
+  { tab: "profile", title: "Quick-Sign PIN", keywords: "pin quick sign 4 digit lock switch user" },
+  { tab: "team", title: "Team & Access", keywords: "users invite employee roles admin manager viewer deactivate accounts staff" },
+  { tab: "team", title: "Page Access Control", keywords: "permissions pages who can see access role gate" },
+  { tab: "team", title: "Broadcast notification", keywords: "announce message everyone notify team push" },
+  { tab: "production", title: "Admin Date Override", keywords: "pretend date testing simulate today" },
+  { tab: "production", title: "Non-dispatch days", keywords: "bank holiday shutdown closed no dispatch dates christmas" },
+  { tab: "production", title: "Timed reminders", keywords: "reminder alarm notification station time" },
+  { tab: "production", title: "Prep & Dough Schedule", keywords: "prep date dough date offsets day before defaults" },
+  { tab: "production", title: "Daily Production Targets", keywords: "dpt packs sold split percentages total daily batches 75 target" },
+  { tab: "production", title: "Macaroni Cheese Defaults", keywords: "mac cheese extra packs buffer" },
+  { tab: "production", title: "Factory Number Scope", keywords: "core menu only stock count fridge factory number" },
+  { tab: "production", title: "Shopify Freezer Stock Sync", keywords: "wonky freezer shopify inventory push frozen" },
+  { tab: "production", title: "Fulfilment — Manual Tick", keywords: "packing scan skip tick orders fulfilment" },
+  { tab: "production", title: "Fulfilment — Speak Customer Name", keywords: "voice speak name packing announce mute" },
+  { tab: "production", title: "Building Timer", keywords: "batch built countdown timer target build seconds station" },
+  { tab: "production", title: "Station Timing Standards", keywords: "timing standards station speed batches per hour bph" },
+  { tab: "production", title: "Mixer Capacity (Flour)", keywords: "mixer flour kg capacity dough" },
+  { tab: "production", title: "Daily Fixed Extras", keywords: "extras fixed daily additional packs" },
+  { tab: "production", title: "Pack Weights & HACCP Chill", keywords: "weight grams chill haccp cooling check pack weight" },
+  { tab: "production", title: "Oven Defaults", keywords: "oven temperature steam meat vegetarian cooking defaults" },
+  { tab: "production", title: "Extra Tomato Base", keywords: "tomato base extra sauce batches" },
+  { tab: "production", title: "Despatch Ice Packs", keywords: "ice packs boxes weather forecast summer despatch" },
+  { tab: "production", title: "Pasta Cooking", keywords: "pasta cook mac cheese boil" },
+  { tab: "production", title: "Break Durations", keywords: "breaks snack lunch minutes schedule" },
+  { tab: "production", title: "Day Schedule", keywords: "start time changeover builders schedule defaults timeline" },
+  { tab: "production", title: "APC Service Codes", keywords: "apc courier hypaship tracking labels shipping service codes" },
+  { tab: "storage", title: "Category Defaults", keywords: "category packaging labour cost defaults recipe" },
+  { tab: "storage", title: "Storage Locations", keywords: "fridge freezer dry store locations zones" },
+  { tab: "storage", title: "Ingredient Default Locations", keywords: "ingredient storage where kept location assignment" },
+  { tab: "sops", title: "Standards & SOPs", keywords: "sop standard operating procedure documents steps" },
+  { tab: "sops", title: "Lean Curriculum (Morning Meeting)", keywords: "lean lessons morning meeting curriculum weekly training" },
+  { tab: "sensors", title: "Temperature Sensors", keywords: "govee sensors fridge freezer temperature monitoring alerts battery" },
+  { tab: "features", title: "Feature Flags", keywords: "features toggle enable disable flags experiments" },
+  { tab: "features", title: "Quick Idea Tabs", keywords: "quick idea improvements tabs suggestion" },
+  { tab: "features", title: "Dashboard Issue Banner", keywords: "issue banner andon dashboard roles" },
+  { tab: "features", title: "8-Pack Orders Banner", keywords: "eight pack wholesale banner orders processing roles" },
+  { tab: "features", title: "System Updates", keywords: "system updates changelog morning meeting slide automatic change feed commits what changed" },
 ];
 
 function TeamAccessContent({
@@ -1392,6 +1439,48 @@ export default function Settings() {
     }
   }, [activeSection, search]);
 
+  // ── Settings search ──────────────────────────────────────────────────
+  const [settingsSearch, setSettingsSearch] = useState("");
+  // Every typed word must appear somewhere in title+keywords (any order),
+  // so "freezer sync" finds "Shopify Freezer Stock Sync".
+  const searchTokens = settingsSearch.trim().toLowerCase().split(/\s+/).filter(t => t.length > 0);
+  const searchResults = settingsSearch.trim().length > 1
+    ? SETTINGS_SEARCH_INDEX.filter(e => {
+        const hay = `${e.title} ${e.keywords}`.toLowerCase();
+        return searchTokens.every(t => hay.includes(t));
+      }).slice(0, 8)
+    : [];
+
+  const jumpToSection = (entry: { tab: SettingsSection; title: string }) => {
+    setSection(entry.tab);
+    setSettingsSearch("");
+    // Sections carry no anchors — find the heading by its rendered text
+    // once the tab has mounted, scroll to it and flash it briefly.
+    const target = entry.title.toLowerCase().replace(/\s*\(.*\)$/, "");
+    // Two attempts: the router scrolls to top on tab navigation, and slow
+    // sections may still be fetching at the first tick — the second pass
+    // wins whichever race we lose.
+    const attempt = () => {
+      const headings = [...document.querySelectorAll("h2, h3")];
+      const el = headings.find(h => (h.textContent ?? "").toLowerCase().includes(target));
+      if (!el) return false;
+      // Instant, not smooth: sections above keep growing as their data
+      // lands, and overlapping smooth animations overshoot to the bottom.
+      el.scrollIntoView({ behavior: "auto", block: "start" });
+      const card = el.closest("div");
+      if (card) {
+        card.classList.add("ring-2", "ring-primary", "rounded-xl");
+        setTimeout(() => card.classList.remove("ring-2", "ring-primary", "rounded-xl"), 2200);
+      }
+      return true;
+    };
+    setTimeout(() => { if (!attempt()) setTimeout(attempt, 600); }, 350);
+    // Sections above the target keep growing as their data lands, dragging
+    // the anchored position around — the late passes win the layout war.
+    setTimeout(attempt, 1400);
+    setTimeout(attempt, 2800);
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -1401,7 +1490,37 @@ export default function Settings() {
 
       <div className="flex gap-6 items-start">
         {/* Left nav */}
-        <nav className="w-52 flex-shrink-0 sticky top-6">
+        <nav className="w-52 flex-shrink-0 sticky top-6 space-y-3">
+          {/* Search across every section in every tab — type, pick, and it
+              switches tab, scrolls there and flashes the section. */}
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+            <input
+              value={settingsSearch}
+              onChange={e => setSettingsSearch(e.target.value)}
+              placeholder="Search settings…"
+              className="w-full pl-8 pr-2.5 py-2 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+            {searchResults.length > 0 && (
+              <div className="absolute z-30 mt-1 w-72 rounded-xl border border-border bg-card shadow-lg overflow-hidden">
+                {searchResults.map((r, i) => (
+                  <button
+                    key={i}
+                    onClick={() => jumpToSection(r)}
+                    className="w-full text-left px-3 py-2 hover:bg-secondary/60 transition-colors"
+                  >
+                    <span className="text-sm font-medium block">{r.title}</span>
+                    <span className="text-xs text-muted-foreground">{NAV_ITEMS.find(n => n.id === r.tab)?.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {settingsSearch.trim().length > 1 && searchResults.length === 0 && (
+              <div className="absolute z-30 mt-1 w-72 rounded-xl border border-border bg-card shadow-lg px-3 py-2 text-sm text-muted-foreground">
+                Nothing matches "{settingsSearch.trim()}".
+              </div>
+            )}
+          </div>
           <ul className="space-y-1">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
