@@ -2219,6 +2219,38 @@ async function runStartupMigrations() {
         END IF;
       END $$;
     `);
+    // System Updates slide RE-ADDED (2026-08-10, Graeme): the automatic
+    // change-feed validation now works, so the slide returns to the default
+    // template in its old slot (position 7 — the gap left by the removal).
+    // Same guarded one-shot pattern as the removal above: if the team pulls
+    // it via the template editor again, later deploys won't resurrect it.
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'readd_system_updates_slide_v1') THEN
+          INSERT INTO template_slides (template_id, kind, title, order_position)
+          SELECT mt.id, 'system_updates', 'System Updates', 7
+          FROM meeting_templates mt
+          WHERE mt.is_default = true
+            AND NOT EXISTS (
+              SELECT 1 FROM template_slides ts
+              WHERE ts.template_id = mt.id AND ts.kind = 'system_updates'
+            );
+          -- Meetings already prepared but not yet held pick the slide up too,
+          -- so it doesn't miss a meeting whose slides were cloned early.
+          INSERT INTO meeting_slides (meeting_id, kind, title, order_position)
+          SELECT mm.id, 'system_updates', 'System Updates', 7
+          FROM morning_meetings mm
+          WHERE mm.ended_at IS NULL
+            AND EXISTS (SELECT 1 FROM meeting_slides ms WHERE ms.meeting_id = mm.id)
+            AND NOT EXISTS (
+              SELECT 1 FROM meeting_slides ms
+              WHERE ms.meeting_id = mm.id AND ms.kind = 'system_updates'
+            );
+          INSERT INTO _migrations_done (key) VALUES ('readd_system_updates_slide_v1');
+        END IF;
+      END $$;
+    `);
     await db.execute(sql`
       UPDATE template_slides ts
       SET order_position = m.new_pos, title = m.new_title
