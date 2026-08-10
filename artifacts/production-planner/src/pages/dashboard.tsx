@@ -680,7 +680,13 @@ export default function Dashboard() {
           icon={Salad}
           color="text-green-500"
           bg="bg-green-500/10"
-          href={prepPlanId ? `/plans/${prepPlanId}/station/prep` : "/plans"}
+          // direct=1 anchors the prep station to THIS plan — the card has
+          // already resolved "whose prep is due today" by date. Without it
+          // the station re-runs the next-active auto-route from the landed
+          // plan's own plan_date and hops one prep day further ahead
+          // (tomorrow's prep), which is only wanted when arriving from a
+          // production plan's page, not from this date-based card.
+          href={prepPlanId ? `/plans/${prepPlanId}/station/prep?direct=1` : "/plans"}
           progress={prepProgress && prepProgress.totalTins > 0 ? {
             done: prepProgress.completedTins,
             total: prepProgress.totalTins,

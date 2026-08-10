@@ -7,7 +7,7 @@ import { FounderNav, FocusLink } from "@/components/founder-nav";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format, addDays, parseISO } from "date-fns";
 import {
-  ChevronLeft, ChevronRight, Plus, Trash2, Check, X, Play,
+  ChevronLeft, ChevronRight, ChevronDown, Plus, Trash2, Check, X, Play,
   CalendarDays, Inbox, Target, LayoutTemplate, CircleDashed,
   SkipForward, Pencil, Repeat, Copy, Video, ExternalLink, Eye, EyeOff,
   BellRing, BellOff, GripVertical, Sparkles, Loader2,
@@ -1633,6 +1633,11 @@ function DayTimeline({ items, pillarById, recurringByBlockId, isToday, now, busy
   onToggleGoal?: (goalId: number, done: boolean) => void;
 }) {
   const [drag, setDrag] = useState<TimelineDrag | null>(null);
+  // Tap-to-expand: a block card only has room for a preview of its rituals
+  // and goals (short blocks clip everything). Expanding pops the card out
+  // over the timeline at full width with the complete, tickable list;
+  // tapping again (or the chevron) collapses it back. One at a time.
+  const [expandedId, setExpandedId] = useState<number | null>(null);
 
   // Displayed positions, with the in-flight drag applied.
   const displayed = items.map(t => {
@@ -1761,17 +1766,29 @@ function DayTimeline({ items, pillarById, recurringByBlockId, isToday, now, busy
           const isNow = isToday && t.dispStart <= now && now < t.dispEnd;
           const rituals = recurringByBlockId?.get(b.id) ?? [];
           const dragging = drag?.id === b.id;
+          const expanded = expandedId === b.id;
+          const toggleExpanded = () => setExpandedId(expanded ? null : b.id);
 
           return (
             <div key={`b-${b.id}`}
               className={cn(
-                "absolute rounded-lg border border-border bg-background shadow-sm overflow-hidden",
+                "absolute rounded-lg border border-border bg-background shadow-sm",
+                expanded ? "z-40 shadow-xl overflow-visible" : "overflow-hidden",
                 b.status === "done" && "opacity-60",
                 b.status === "skipped" && "opacity-40",
                 isNow && b.status === "planned" && "ring-2 ring-primary/60",
                 dragging && "z-30 shadow-lg",
               )}
-              style={{ top, height: h, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`, borderLeft: `4px solid ${color}` }}
+              style={{
+                top,
+                // Expanded: pop out to full width and grow to fit every item —
+                // the card floats over the timeline instead of clipping.
+                height: expanded ? "auto" : h,
+                minHeight: h,
+                left: expanded ? "2px" : `calc(${leftPct}% + 2px)`,
+                width: expanded ? "calc(100% - 4px)" : `calc(${widthPct}% - 4px)`,
+                borderLeft: `4px solid ${color}`,
+              }}
             >
               <div className="flex items-start gap-1.5 px-1.5 py-1 h-full min-h-0">
                 {/* Drag handle */}
@@ -1797,15 +1814,23 @@ function DayTimeline({ items, pillarById, recurringByBlockId, isToday, now, busy
                   </button>
                 )}
                 <div className="flex-1 min-w-0">
-                  <p className={cn("text-xs font-medium truncate", b.status !== "planned" && "line-through")}>{b.title}</p>
-                  {!compact && (
+                  {/* Title doubles as the expand/collapse tap target — the
+                      chips below are their own buttons, so only the title
+                      (and the chevron) toggles. */}
+                  <p
+                    onClick={toggleExpanded}
+                    className={cn("text-xs font-medium cursor-pointer", expanded ? "whitespace-normal" : "truncate", b.status !== "planned" && "line-through")}
+                  >
+                    {b.title}
+                  </p>
+                  {(!compact || expanded) && (
                     <p className="text-[10px] text-muted-foreground truncate">
                       {minToTime(t.dispStart)}–{minToTime(t.dispEnd)}
                       {pillar && pillar.name !== b.title && <span className="ml-1" style={{ color }}>{pillar.name}</span>}
                       {b.status === "skipped" && <span className="ml-1">skipped</span>}
                     </p>
                   )}
-                  {onTickRecurring && rituals.length > 0 && h >= 84 && (
+                  {onTickRecurring && rituals.length > 0 && (h >= 84 || expanded) && (
                     <div className="mt-1 space-y-0.5">
                       {rituals.map(r => (
                         <div key={r.id} className="flex items-center gap-1">
@@ -1845,12 +1870,12 @@ function DayTimeline({ items, pillarById, recurringByBlockId, isToday, now, busy
                       reminder of what this block is FOR. Ticking marks the
                       goal done everywhere (same PATCH as the pillar panel);
                       tapping a done one brings it back. */}
-                  {onToggleGoal && pillar && h >= 84 && (() => {
+                  {onToggleGoal && pillar && (h >= 84 || expanded) && (() => {
                     const goals = pillar.goals.filter(g => g.status !== "parked");
                     if (goals.length === 0) return null;
-                    const shown = goals.slice(0, 6);
+                    const shown = expanded ? goals : goals.slice(0, 6);
                     return (
-                      <div className="mt-1 space-y-0.5">
+                      <div className={cn("mt-1 space-y-0.5", expanded && "pb-2")}>
                         {shown.map(g => (
                           <button
                             key={g.id}
@@ -1870,13 +1895,24 @@ function DayTimeline({ items, pillarById, recurringByBlockId, isToday, now, busy
                           </button>
                         ))}
                         {goals.length > shown.length && (
-                          <p className="text-[10px] text-muted-foreground pl-1">+{goals.length - shown.length} more in the pillar panel</p>
+                          <button onClick={toggleExpanded} className="text-[10px] text-primary pl-1 hover:underline">
+                            +{goals.length - shown.length} more — tap to expand
+                          </button>
                         )}
                       </div>
                     );
                   })()}
                 </div>
                 <div className="flex-shrink-0 flex items-center gap-0.5">
+                  <button
+                    onClick={toggleExpanded}
+                    className="p-1 rounded-md text-muted-foreground hover:bg-secondary/50"
+                    aria-expanded={expanded}
+                    aria-label={expanded ? "Collapse block" : "Expand block to see everything in it"}
+                    title={expanded ? "Collapse" : "Expand — see everything in this block"}
+                  >
+                    <ChevronDown className={cn("w-3 h-3 transition-transform", expanded && "rotate-180")} />
+                  </button>
                   {statusControls && onSkip && b.status === "planned" && !compact && (
                     <button onClick={() => onSkip(b)}
                       className="p-1 rounded-md text-muted-foreground hover:bg-secondary/50" title="Skip" aria-label="Skip block">

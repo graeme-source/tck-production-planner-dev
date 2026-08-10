@@ -165,7 +165,7 @@ export default function StationPage() {
       case "dough_sheeting":
         return <DoughSheetingStation plan={plan} isOnBreak={isOnBreak} />;
       case "prep":
-        return <PrepHub planId={planId} planDate={plan.planDate} />;
+        return <PrepHub planId={planId} planDate={plan.planDate} planName={plan.name} planStatus={plan.status} planPrepDate={(plan as { prepDate?: string | null }).prepDate ?? null} />;
       case "main_prep":
         return <MainPrepStation plan={plan} isOnBreak={isOnBreak} />;
       case "prep_bases":

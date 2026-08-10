@@ -952,6 +952,22 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
         : "text-red-600 dark:text-red-400"
       : "text-foreground";
 
+  // Traffic-light pace tile — the builders' version of the packing team's
+  // strip on the fulfilment screen (same look, same message style). Band
+  // edges come from this station's timing standard rather than fulfilment's
+  // fixed 50/55/60, so tightening the standard in Settings moves the bands.
+  // The bottom band stays encouraging — builders look at this all day, and
+  // the point is to lift the pace, not tell anyone off. Purple kicks in 10%
+  // above target: genuinely flying, worth celebrating.
+  const paceBand = (bph: number): { tile: string; label: string } | null => {
+    if (!targetBph || !minBph || bph <= 0) return null;
+    if (bph >= targetBph * 1.1) return { tile: "bg-purple-600 text-white animate-pulse", label: "SMASHING IT! 🔥" };
+    if (bph >= targetBph) return { tile: "bg-green-600 text-white", label: "On target — keep going!" };
+    if (bph >= minBph) return { tile: "bg-amber-500 text-white", label: "Almost there — push on!" };
+    return { tile: "bg-red-600 text-white", label: "Every batch counts — let's go!" };
+  };
+  const teamBand = paceBand(serverKpi?.batchesPerHour ?? 0);
+
   return (
     <div className="space-y-4">
       {/* Daily progress + KPI + break buttons */}
@@ -978,6 +994,25 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
             style={{ width: `${Math.min(overallProgress, 100)}%` }}
           />
         </div>
+
+        {/* Pace tile — behind / on pace / ahead at a glance, mirroring the
+            packing strip. Hidden once building is finished (the green
+            confirmation below takes over) and until BPH means something. */}
+        {teamBand && !buildingFinishedAt && (
+          <div
+            className={cn(
+              "mt-3 rounded-xl px-4 py-2.5 flex items-center justify-between gap-3 transition-colors",
+              teamBand.tile,
+            )}
+            aria-label={`Building pace ${teamBph.toFixed(1)} batches per hour`}
+          >
+            <span className="text-2xl md:text-3xl font-extrabold tabular-nums leading-none">
+              {teamBph.toFixed(1)}
+              <span className="text-sm font-bold opacity-90 ml-1.5">batches/hr</span>
+            </span>
+            <span className="text-lg md:text-xl font-bold text-right leading-tight">{teamBand.label}</span>
+          </div>
+        )}
 
         {/* KPI: Team batches/hr + You batches/hr — calzone only, standard method */}
         {(teamBph > 0 || yourBph > 0) && (
