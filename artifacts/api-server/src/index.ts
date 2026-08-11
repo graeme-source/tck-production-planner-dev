@@ -2251,14 +2251,18 @@ async function runStartupMigrations() {
         END IF;
       END $$;
     `);
+    // Who's On Today leads the meeting (Graeme, 2026-08-11): the rota is
+    // the first thing the room needs, before stretches. Slides 0-4 shift
+    // down one; the 4 slot the old numbering skipped gets used.
     await db.execute(sql`
       UPDATE template_slides ts
       SET order_position = m.new_pos, title = m.new_title
       FROM (VALUES
-        ('stretches'::text, 0, 'Stretches'::text),
-        ('safety_issues', 1, 'Safety Issues'),
-        ('order_of_production', 2, 'Order of Production'),
-        ('special_prep', 3, 'Test Product Prep'),
+        ('station_assignments'::text, 0, 'Who''s On Today'::text),
+        ('stretches', 1, 'Stretches'),
+        ('safety_issues', 2, 'Safety Issues'),
+        ('order_of_production', 3, 'Order of Production'),
+        ('special_prep', 4, 'Test Product Prep'),
         ('local_delivery', 5, 'Local Despatch'),
         ('bag_orders', 6, 'Bag Orders'),
         ('yesterday_kpis', 8, 'Yesterday''s Numbers'),
@@ -2275,10 +2279,11 @@ async function runStartupMigrations() {
       SET order_position = m.new_pos,
           title = CASE WHEN ms.title IN ('Special Prep','Local Delivery','Struggles') THEN m.new_title ELSE ms.title END
       FROM (VALUES
-        ('stretches'::text, 0, 'Stretches'::text),
-        ('safety_issues', 1, 'Safety Issues'),
-        ('order_of_production', 2, 'Order of Production'),
-        ('special_prep', 3, 'Test Product Prep'),
+        ('station_assignments'::text, 0, 'Who''s On Today'::text),
+        ('stretches', 1, 'Stretches'),
+        ('safety_issues', 2, 'Safety Issues'),
+        ('order_of_production', 3, 'Order of Production'),
+        ('special_prep', 4, 'Test Product Prep'),
         ('local_delivery', 5, 'Local Despatch'),
         ('bag_orders', 6, 'Bag Orders'),
         ('yesterday_kpis', 8, 'Yesterday''s Numbers'),
