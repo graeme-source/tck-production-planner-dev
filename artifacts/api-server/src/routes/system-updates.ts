@@ -13,6 +13,7 @@ import { Router, type IRouter, type Request, type Response, type NextFunction } 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { db, usersTable } from "@workspace/db";
 import { sql, eq } from "drizzle-orm";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
@@ -79,8 +80,16 @@ interface SourceResult {
  *  week's deploys. Reads master so the feed reflects what's live. */
 async function buildFeed(): Promise<CachedFeed> {
   const now = Date.now();
-  const fromGit = await loadCommitsFromLocalGit();
-  const src = fromGit ?? (await loadCommitsFromGithub());
+  // Each source is fully fenced: an unexpected throw from the local-git
+  // path must fall through to the GitHub fallback, never abort the build.
+  const fromGit = await loadCommitsFromLocalGit().catch((err) => {
+    console.warn("[system-updates] local git source threw:", err instanceof Error ? err.message : err);
+    return null;
+  });
+  const src = fromGit ?? (await loadCommitsFromGithub().catch((err) => {
+    console.warn("[system-updates] github source threw:", err instanceof Error ? err.message : err);
+    return null;
+  }));
   if (!src) {
     return {
       fetchedAt: now,
@@ -405,18 +414,27 @@ async function findRepoRoot(): Promise<string | null> {
     // fall through to fs walk
   }
 
-  // Last-resort: walk up from __dirname looking for a .git directory.
-  const fs = await import("node:fs/promises");
-  let dir = path.resolve(__dirname);
-  for (let i = 0; i < 8; i++) {
-    try {
-      await fs.access(path.join(dir, ".git"));
-      return dir;
-    } catch {
-      const parent = path.dirname(dir);
-      if (parent === dir) break;
-      dir = parent;
+  // Last-resort: walk up from this module's directory looking for a .git
+  // directory. ESM-safe: `__dirname` does not exist in the production ESM
+  // bundle — referencing it threw a ReferenceError that escaped every
+  // try/catch on the prod boot path and killed the whole refresh before
+  // the GitHub fallback was even attempted ("Refresh failed: __dirname is
+  // not defined" in the 2026-08-10 live snapshot).
+  try {
+    const fs = await import("node:fs/promises");
+    let dir = path.dirname(fileURLToPath(import.meta.url));
+    for (let i = 0; i < 8; i++) {
+      try {
+        await fs.access(path.join(dir, ".git"));
+        return dir;
+      } catch {
+        const parent = path.dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+      }
     }
+  } catch (err) {
+    console.warn("[system-updates] repo-root walk failed:", err instanceof Error ? err.message : err);
   }
   return null;
 }
