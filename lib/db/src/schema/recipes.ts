@@ -59,6 +59,11 @@ export const recipeIngredientsTable = pgTable("recipe_ingredients", {
   ingredientId: integer("ingredient_id").notNull().references(() => ingredientsTable.id, { onDelete: "restrict" }),
   quantity: numeric("quantity", { precision: 10, scale: 4 }).notNull(),
   marinadeForIngredientId: integer("marinade_for_ingredient_id").references(() => ingredientsTable.id, { onDelete: "set null" }),
+  // Marinade timing: false (default) = added at raw meat prep the day
+  // before; true = held back and added at the mixing/cooking station on
+  // production day (e.g. Philly beef stock). Still counts toward raw-meat
+  // tray capacity either way — the trays end up holding it.
+  marinadeAddAtCooking: boolean("marinade_add_at_cooking").notNull().default(false),
   includeInFillingMix: boolean("include_in_filling_mix").notNull().default(false),
   quid: boolean("quid").notNull().default(false),
   isTopping: boolean("is_topping").notNull().default(false),
@@ -75,6 +80,11 @@ export const recipeSubRecipesTable = pgTable("recipe_sub_recipes", {
   subRecipeId: integer("sub_recipe_id").notNull().references(() => subRecipesTable.id, { onDelete: "restrict" }),
   quantity: numeric("quantity", { precision: 10, scale: 4 }).notNull(),
   marinadeForIngredientId: integer("marinade_for_ingredient_id").references(() => ingredientsTable.id, { onDelete: "set null" }),
+  // Marinade timing: false (default) = added at raw meat prep the day
+  // before; true = held back and added at the mixing/cooking station on
+  // production day (e.g. Philly beef stock). Still counts toward raw-meat
+  // tray capacity either way — the trays end up holding it.
+  marinadeAddAtCooking: boolean("marinade_add_at_cooking").notNull().default(false),
   includeInFillingMix: boolean("include_in_filling_mix").notNull().default(false),
   quid: boolean("quid").notNull().default(false),
   isTopping: boolean("is_topping").notNull().default(false),

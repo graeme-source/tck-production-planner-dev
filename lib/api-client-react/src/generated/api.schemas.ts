@@ -339,6 +339,7 @@ export type CreateRecipeIngredientsItem = {
   ingredientId: number;
   quantity: number;
   marinadeForIngredientId?: number | null;
+  marinadeAddAtCooking?: boolean;
   includeInFillingMix?: boolean;
   isTopping?: boolean;
   quid?: boolean;
@@ -350,6 +351,7 @@ export type CreateRecipeSubRecipesItem = {
   subRecipeId: number;
   quantity: number;
   marinadeForIngredientId?: number | null;
+  marinadeAddAtCooking?: boolean;
   includeInFillingMix?: boolean;
   isTopping?: boolean;
   quid?: boolean;

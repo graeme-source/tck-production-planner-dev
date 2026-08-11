@@ -352,6 +352,17 @@ async function runStartupMigrations() {
     await db.execute(sql`
       ALTER TABLE recipe_sub_recipes ADD COLUMN IF NOT EXISTS show_in_prep BOOLEAN NOT NULL DEFAULT FALSE
     `);
+    // marinade_add_at_cooking: a marinade item held back from prep day and
+    // added at the mixing/cooking station on production day instead (e.g.
+    // the Philly beef stock, which must NOT go into the trays the day
+    // before). Drizzle alignment in lib/db/src/schema/recipes.ts lands in
+    // the same commit — see the show_in_prep note above for why.
+    await db.execute(sql`
+      ALTER TABLE recipe_ingredients ADD COLUMN IF NOT EXISTS marinade_add_at_cooking BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+    await db.execute(sql`
+      ALTER TABLE recipe_sub_recipes ADD COLUMN IF NOT EXISTS marinade_add_at_cooking BOOLEAN NOT NULL DEFAULT FALSE
+    `);
     // Per-recipe build-time target in seconds, nullable. Drives the
     // countdown timer inside the BATCH BUILT button on the building
     // station. Null = fall back to building_timer_default_seconds app

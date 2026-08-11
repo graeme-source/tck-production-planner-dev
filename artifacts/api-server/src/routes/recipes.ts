@@ -234,9 +234,10 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
 
   if (ingredients?.length) {
     await db.insert(recipeIngredientsTable).values(
-      ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
+      ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
         recipeId: recipe.id, ingredientId: i.ingredientId, quantity: String(i.quantity),
         marinadeForIngredientId: i.marinadeForIngredientId ?? null,
+        marinadeAddAtCooking: i.marinadeAddAtCooking ?? false,
         includeInFillingMix: i.includeInFillingMix ?? false,
         quid: i.quid ?? false,
         isTopping: i.isTopping ?? false,
@@ -247,9 +248,10 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
   }
   if (subRecipes?.length) {
     await db.insert(recipeSubRecipesTable).values(
-      subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
+      subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
         recipeId: recipe.id, subRecipeId: s.subRecipeId, quantity: String(s.quantity),
         marinadeForIngredientId: s.marinadeForIngredientId ?? null,
+        marinadeAddAtCooking: s.marinadeAddAtCooking ?? false,
         includeInFillingMix: s.includeInFillingMix ?? false,
         quid: s.quid ?? false,
         isTopping: s.isTopping ?? false,
@@ -293,6 +295,7 @@ router.get("/:id", async (req, res) => {
       costPerPack: ingredientsTable.costPerPack,
       processingRatio: ingredientsTable.processingRatio,
       marinadeForIngredientId: recipeIngredientsTable.marinadeForIngredientId,
+      marinadeAddAtCooking: recipeIngredientsTable.marinadeAddAtCooking,
       includeInFillingMix: recipeIngredientsTable.includeInFillingMix,
       quid: recipeIngredientsTable.quid,
       isTopping: recipeIngredientsTable.isTopping,
@@ -312,6 +315,7 @@ router.get("/:id", async (req, res) => {
       yieldUnit: subRecipesTable.yieldUnit,
       subYield: subRecipesTable.yield,
       marinadeForIngredientId: recipeSubRecipesTable.marinadeForIngredientId,
+      marinadeAddAtCooking: recipeSubRecipesTable.marinadeAddAtCooking,
       includeInFillingMix: recipeSubRecipesTable.includeInFillingMix,
       quid: recipeSubRecipesTable.quid,
       isTopping: recipeSubRecipesTable.isTopping,
@@ -354,6 +358,7 @@ router.get("/:id", async (req, res) => {
       lineCostBatch,
       lineCostPortion,
       marinadeForIngredientId: i.marinadeForIngredientId ?? null,
+      marinadeAddAtCooking: i.marinadeAddAtCooking ?? false,
       includeInFillingMix: i.includeInFillingMix,
       quid: i.quid ?? false,
       isTopping: i.isTopping ?? false,
@@ -438,6 +443,7 @@ router.get("/:id", async (req, res) => {
       lineCostPortion,
       breakdown,
       marinadeForIngredientId: s.marinadeForIngredientId ?? null,
+      marinadeAddAtCooking: s.marinadeAddAtCooking ?? false,
       includeInFillingMix: s.includeInFillingMix,
       quid: s.quid ?? false,
       isTopping: s.isTopping ?? false,
@@ -565,9 +571,10 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
 
     if (ingredients?.length) {
       await tx.insert(recipeIngredientsTable).values(
-        ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
+        ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
           recipeId: id, ingredientId: i.ingredientId, quantity: String(i.quantity),
           marinadeForIngredientId: i.marinadeForIngredientId ?? null,
+        marinadeAddAtCooking: i.marinadeAddAtCooking ?? false,
           includeInFillingMix: i.includeInFillingMix ?? false,
           quid: i.quid ?? false,
           isTopping: i.isTopping ?? false,
@@ -579,9 +586,10 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
     }
     if (subRecipes?.length) {
       await tx.insert(recipeSubRecipesTable).values(
-        subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
+        subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
           recipeId: id, subRecipeId: s.subRecipeId, quantity: String(s.quantity),
           marinadeForIngredientId: s.marinadeForIngredientId ?? null,
+        marinadeAddAtCooking: s.marinadeAddAtCooking ?? false,
           includeInFillingMix: s.includeInFillingMix ?? false,
           quid: s.quid ?? false,
           isTopping: s.isTopping ?? false,

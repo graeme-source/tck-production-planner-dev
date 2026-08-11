@@ -252,6 +252,9 @@ export interface PrepMarinadeDetail {
   marinadeSubRecipeName: string | null;
   gramsPerKg?: number;
   totalGrams: number;
+  /** Held back from prep day — the mixing/cooking station adds it on
+   *  production day. Still counted in the tray-capacity maths. */
+  addAtCooking?: boolean;
 }
 
 export interface PrepRecipeDetail {

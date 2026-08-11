@@ -48,6 +48,7 @@ const schema = z.object({
     ingredientId: z.coerce.number().min(1, "Select ingredient"),
     quantity: z.coerce.number().min(0.001, "Must be > 0"),
     marinadeForIngredientId: z.preprocess(v => (v === "" || v === "0" || v == null ? null : Number(v)), z.number().nullable().optional()),
+    marinadeAddAtCooking: z.boolean().optional(),
     includeInFillingMix: z.boolean().optional(),
     isTopping: z.boolean().optional(),
     quid: z.boolean().optional(),
@@ -58,6 +59,7 @@ const schema = z.object({
     subRecipeId: z.coerce.number().min(1, "Select sub-recipe"),
     quantity: z.coerce.number().min(0.001, "Must be > 0"),
     marinadeForIngredientId: z.preprocess(v => (v === "" || v === "0" || v == null ? null : Number(v)), z.number().nullable().optional()),
+    marinadeAddAtCooking: z.boolean().optional(),
     includeInFillingMix: z.boolean().optional(),
     isTopping: z.boolean().optional(),
     quid: z.boolean().optional(),
@@ -770,6 +772,13 @@ function RecipeForm({
                                 {targets.map(m => <option key={m.id} value={m.id}>Linked to {m.name}</option>)}
                               </select>
                               <button type="button" onClick={() => setValue(`ingredients.${index}.marinadeForIngredientId`, null)} className="text-muted-foreground/60 hover:text-muted-foreground"><X className="w-3 h-3" /></button>
+                              {/* Held back from prep day — the mixing/cooking station
+                                  adds it on production day (e.g. Philly beef stock).
+                                  Weight still counts toward the raw-meat tray sizing. */}
+                              <label className="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer" title="Don't add at raw meat prep — the mixing station adds this at cooking on production day. Still counted in tray sizing.">
+                                <input type="checkbox" {...register(`ingredients.${index}.marinadeAddAtCooking`)} className="w-3 h-3 accent-primary" />
+                                at cooking
+                              </label>
                             </div>
                           ) : (
                             <button type="button" onClick={() => { setValue(`ingredients.${index}.marinadeForIngredientId`, targets[0]?.id ?? 0); }} className="pl-1 text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors">
@@ -783,7 +792,7 @@ function RecipeForm({
                 </div>
                 <button
                   type="button"
-                  onClick={() => appendIng({ ingredientId: 0, quantity: 0, marinadeForIngredientId: null, includeInFillingMix: false, isTopping: false, showInPrep: false, mixingOverage: 0 })}
+                  onClick={() => appendIng({ ingredientId: 0, quantity: 0, marinadeForIngredientId: null, marinadeAddAtCooking: false, includeInFillingMix: false, isTopping: false, showInPrep: false, mixingOverage: 0 })}
                   className="mt-1.5 w-full px-2 py-1.5 rounded-lg border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-colors text-xs font-medium"
                 >
                   + Add ingredient to recipe
@@ -900,6 +909,10 @@ function RecipeForm({
                                 {linkableIngs.map(m => <option key={m.id} value={m.id}>Linked to {m.name}</option>)}
                               </select>
                               <button type="button" onClick={() => setValue(`subRecipes.${index}.marinadeForIngredientId`, null)} className="text-muted-foreground/60 hover:text-muted-foreground"><X className="w-3 h-3" /></button>
+                              <label className="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer" title="Don't add at raw meat prep — the mixing station adds this at cooking on production day. Still counted in tray sizing.">
+                                <input type="checkbox" {...register(`subRecipes.${index}.marinadeAddAtCooking`)} className="w-3 h-3 accent-primary" />
+                                at cooking
+                              </label>
                             </div>
                           ) : (
                             <button type="button" onClick={() => { setValue(`subRecipes.${index}.marinadeForIngredientId`, linkableIngs[0]?.id ?? 0); }} className="pl-1 text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors">
@@ -913,7 +926,7 @@ function RecipeForm({
                 </div>
                 <button
                   type="button"
-                  onClick={() => appendSub({ subRecipeId: 0, quantity: 0, marinadeForIngredientId: null, includeInFillingMix: false, isTopping: false, showInPrep: false, mixingOverage: 0 })}
+                  onClick={() => appendSub({ subRecipeId: 0, quantity: 0, marinadeForIngredientId: null, marinadeAddAtCooking: false, includeInFillingMix: false, isTopping: false, showInPrep: false, mixingOverage: 0 })}
                   className="mt-1.5 w-full px-2 py-1.5 rounded-lg border border-dashed border-accent/40 text-accent hover:bg-accent/10 transition-colors text-xs font-medium"
                 >
                   + Add sub-recipe to recipe
@@ -1154,8 +1167,8 @@ function EditRecipeDialog({
         cookingLossPercent: (detail as Record<string, unknown>).cookingLossPercent != null ? Number((detail as Record<string, unknown>).cookingLossPercent) : 3,
         dietaryCategory: ((detail as Record<string, unknown>).dietaryCategory as "meat" | "vegetarian" | null | undefined) ?? null,
         tags: Array.isArray((detail as Record<string, unknown>).tags) ? ((detail as Record<string, unknown>).tags as string[]) : [],
-        ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, quid: (i as Record<string, unknown>).quid === true, showInPrep: (i as Record<string, unknown>).showInPrep === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
-        subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, quid: (s as Record<string, unknown>).quid === true, showInPrep: (s as Record<string, unknown>).showInPrep === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
+        ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, marinadeAddAtCooking: (i as { marinadeAddAtCooking?: boolean | null }).marinadeAddAtCooking === true, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, quid: (i as Record<string, unknown>).quid === true, showInPrep: (i as Record<string, unknown>).showInPrep === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
+        subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, marinadeAddAtCooking: (s as { marinadeAddAtCooking?: boolean | null }).marinadeAddAtCooking === true, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, quid: (s as Record<string, unknown>).quid === true, showInPrep: (s as Record<string, unknown>).showInPrep === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
       }
     : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", cookingLossPercent: 3, dietaryCategory: null, tags: [], ingredients: [], subRecipes: [] };
 
@@ -2098,8 +2111,8 @@ export default function Recipes() {
         cookingLossPercent: (duplicateDetail as Record<string, unknown>).cookingLossPercent != null ? Number((duplicateDetail as Record<string, unknown>).cookingLossPercent) : 3,
         dietaryCategory: ((duplicateDetail as Record<string, unknown>).dietaryCategory as "meat" | "vegetarian" | null | undefined) ?? null,
         tags: Array.isArray((duplicateDetail as Record<string, unknown>).tags) ? ((duplicateDetail as Record<string, unknown>).tags as string[]) : [],
-        ingredients: (duplicateDetail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, quid: (i as Record<string, unknown>).quid === true, showInPrep: (i as Record<string, unknown>).showInPrep === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
-        subRecipes: (duplicateDetail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, quid: (s as Record<string, unknown>).quid === true, showInPrep: (s as Record<string, unknown>).showInPrep === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
+        ingredients: (duplicateDetail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, marinadeAddAtCooking: (i as { marinadeAddAtCooking?: boolean | null }).marinadeAddAtCooking === true, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, quid: (i as Record<string, unknown>).quid === true, showInPrep: (i as Record<string, unknown>).showInPrep === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
+        subRecipes: (duplicateDetail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, marinadeAddAtCooking: (s as { marinadeAddAtCooking?: boolean | null }).marinadeAddAtCooking === true, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, quid: (s as Record<string, unknown>).quid === true, showInPrep: (s as Record<string, unknown>).showInPrep === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
       };
       setDuplicateDefaults(vals);
       setIsAddOpen(true);

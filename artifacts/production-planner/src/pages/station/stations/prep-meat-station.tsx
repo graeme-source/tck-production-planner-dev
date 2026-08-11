@@ -535,8 +535,13 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                       )}
                     </div>
 
-                    {/* Linked ingredient sub-rows */}
-                    {meatMarinades.map((m, mi) => {
+                    {/* Linked ingredient sub-rows. Add-at-cooking items are NOT
+                        in the add-list — they're held back for the mixing
+                        station on production day (pouring them in today is
+                        exactly the mistake this exists to prevent). They still
+                        count in the tray sizing, so a clearly-marked hold-back
+                        row keeps the tray maths explainable. */}
+                    {meatMarinades.filter(m => !m.addAtCooking).map((m, mi) => {
                       const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
                       const perTrayG = ingTrays && ingTrays > 0 ? Math.round(m.totalGrams / ingTrays) : null;
                       return (
@@ -555,6 +560,20 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                               <span className="tabular-nums font-medium text-foreground">{m.totalGrams}g</span>
                             )}
                           </div>
+                        </div>
+                      );
+                    })}
+                    {meatMarinades.filter(m => m.addAtCooking).map((m, mi) => {
+                      const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
+                      return (
+                        <div key={`aac-${mi}`} className="flex items-center justify-between px-4 py-2 border-t border-amber-300/60 dark:border-amber-700/60 text-sm bg-amber-50 dark:bg-amber-950/30">
+                          <span className="flex items-center gap-2 font-semibold text-amber-800 dark:text-amber-300">
+                            <span>✋</span>
+                            <span>{name} — do NOT add today</span>
+                          </span>
+                          <span className="text-right text-amber-800/80 dark:text-amber-300/80">
+                            goes in at cooking tomorrow · {(m.totalGrams / 1000).toFixed(2)}kg (counted in trays)
+                          </span>
                         </div>
                       );
                     })}
