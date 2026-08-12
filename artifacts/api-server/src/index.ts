@@ -2704,6 +2704,12 @@ async function runStartupMigrations() {
     `);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_queued_production_date ON queued_production (production_date)`);
 
+    // When the APC label for a consignment was last sent to a printer.
+    // Lets the picking screen print a label once automatically and then
+    // offer a manual reprint, instead of firing the printer every time an
+    // order is reopened.
+    await db.execute(sql`ALTER TABLE apc_consignments ADD COLUMN IF NOT EXISTS label_printed_at TIMESTAMP`);
+
     // Stock-gate holds — see lib/db/migrations/0049_stock_gate_holds.sql.
     // Products automatically held back from next-day delivery (Shopify tag
     // + Zapiet prep-time rule) when fridge-vs-despatch surplus runs low.

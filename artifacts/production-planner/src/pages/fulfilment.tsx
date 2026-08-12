@@ -486,6 +486,36 @@ interface AddressReviewRow {
   normalised: { address1: string; address2: string | null; city: string; postcode: string };
 }
 
+/** Consignments already booked for this dispatch day, so the picking screen
+ *  can say whether opening an order will raise a new one or reuse what's
+ *  there. Local ledger read — no APC call. */
+interface BookedConsignment {
+  orderId: number;
+  waybill: string;
+  trackingUrl: string | null;
+  labelPrintedAt: string | null;
+}
+
+async function fetchBookedConsignments(tag: string): Promise<BookedConsignment[]> {
+  const res = await fetch(`${BASE}/api/fulfilment/consignments?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.consignments ?? []) as BookedConsignment[];
+}
+
+/** What the "Ship order?" dialog should actually say. An order that already
+ *  has a consignment will REUSE it — telling the packer it's about to raise
+ *  a new one is both wrong and alarming (2026-08-12). */
+function pickDialogDescription(order: ShopifyOrder, booked: Map<number, BookedConsignment>): string {
+  const who = order.shipping_address?.name
+    ?? `${order.customer?.first_name ?? ""} ${order.customer?.last_name ?? ""}`.trim();
+  const existing = booked.get(order.id);
+  if (existing) {
+    return `This order already has APC consignment ${existing.waybill}. Its existing label will be used — nothing new will be booked.`;
+  }
+  return `This will create a real APC consignment for ${who}. This cannot be undone.`;
+}
+
 async function fetchAddressReview(tag: string): Promise<AddressReviewRow[]> {
   const res = await fetch(`${BASE}/api/fulfilment/address-review?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
   if (!res.ok) return [];
@@ -1167,6 +1197,17 @@ export default function Fulfilment() {
   const addressReviewMap = new Map<number, AddressReviewRow>();
   for (const row of addressReview ?? []) addressReviewMap.set(Number(row.orderId), row);
 
+  // Which orders already have a consignment. Only meaningful when the app
+  // books labels itself; in reconcile mode consignments come from Hypaship.
+  const { data: bookedConsignments, refetch: refetchBooked } = useQuery({
+    queryKey: ["fulfilment-booked-consignments", queryTag],
+    queryFn: () => fetchBookedConsignments(queryTag),
+    staleTime: 30_000,
+    enabled: !!queryTag && apcMode === "full",
+  });
+  const bookedMap = new Map<number, BookedConsignment>();
+  for (const row of bookedConsignments ?? []) bookedMap.set(Number(row.orderId), row);
+
   const [recheckingId, setRecheckingId] = useState<number | null>(null);
 
   const allUnfulfilledOrders = orders?.filter(o => o.fulfillment_status !== "fulfilled") ?? [];
@@ -1486,6 +1527,8 @@ export default function Fulfilment() {
         result = await createShipment(order.id, queryTag, queryTag);
       }
       setShipment(result);
+      // A new booking changes what the queue should show next time.
+      if (!result.reused) void refetchBooked();
 
       // Check whether the label was already background-printed (pre-print)
       const prePrinted = prePrintRef.current.get(order.id);
@@ -2248,7 +2291,7 @@ export default function Fulfilment() {
         {pendingPickOrder && (
           <ShopifyConfirmDialog
             title={`Ship order ${pendingPickOrder.name}?`}
-            description={`This will create a real APC consignment for ${pendingPickOrder.shipping_address?.name ?? `${pendingPickOrder.customer?.first_name ?? ""} ${pendingPickOrder.customer?.last_name ?? ""}`.trim()}. This cannot be undone.`}
+            description={pickDialogDescription(pendingPickOrder, bookedMap)}
             products={pendingPickOrder.line_items.map(li => ({ name: li.title, quantity: li.quantity, quantityLabel: "ordered", noPlus: true }))}
             confirmLabel="Start packing"
             onConfirm={() => { const o = pendingPickOrder; setPendingPickOrder(null); startPicking(o); }}
@@ -2315,7 +2358,7 @@ export default function Fulfilment() {
         {pendingPickOrder && (
           <ShopifyConfirmDialog
             title={`Ship order ${pendingPickOrder.name}?`}
-            description={`This will create a real APC consignment for ${pendingPickOrder.shipping_address?.name ?? `${pendingPickOrder.customer?.first_name ?? ""} ${pendingPickOrder.customer?.last_name ?? ""}`.trim()}. This cannot be undone.`}
+            description={pickDialogDescription(pendingPickOrder, bookedMap)}
             products={pendingPickOrder.line_items.map(li => ({ name: li.title, quantity: li.quantity, quantityLabel: "×" }))}
             confirmLabel="Start packing"
             onConfirm={() => { const o = pendingPickOrder; setPendingPickOrder(null); startPicking(o); }}
@@ -3044,7 +3087,7 @@ export default function Fulfilment() {
       {pendingPickOrder && (
         <ShopifyConfirmDialog
           title={`Ship order ${pendingPickOrder.name}?`}
-          description={`This will create a real APC consignment for ${pendingPickOrder.shipping_address?.name ?? `${pendingPickOrder.customer?.first_name ?? ""} ${pendingPickOrder.customer?.last_name ?? ""}`.trim()}. This cannot be undone.`}
+          description={pickDialogDescription(pendingPickOrder, bookedMap)}
           products={pendingPickOrder.line_items.map(li => ({ name: li.title, quantity: li.quantity, quantityLabel: "ordered", noPlus: true }))}
           confirmLabel="Start packing"
           onConfirm={() => { const o = pendingPickOrder; setPendingPickOrder(null); startPicking(o); }}
@@ -3439,6 +3482,14 @@ export default function Fulfilment() {
                     {localOrder && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300 font-medium flex items-center gap-1">
                         <Truck className="w-2.5 h-2.5" /> Local Delivery
+                      </span>
+                    )}
+                    {bookedMap.has(order.id) && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 font-medium flex items-center gap-1"
+                        title={`Consignment ${bookedMap.get(order.id)!.waybill} already booked — opening this order reuses it`}
+                      >
+                        <CheckCircle2 className="w-2.5 h-2.5" /> Label booked
                       </span>
                     )}
                     {skippedIds.has(order.id) && (

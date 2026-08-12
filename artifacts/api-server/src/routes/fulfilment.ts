@@ -1184,6 +1184,44 @@ router.post("/tag-dispatch-bulk", requireFulfilmentAccess, async (req: Request, 
   }
 });
 
+// GET /consignments?tag=YYYY-MM-DD
+// Which orders on this dispatch day already have an APC consignment booked.
+// Lets the picking screen tell the packer the truth BEFORE they commit —
+// "this order already has a consignment, it will be reused" rather than
+// "this will create a real consignment". Reads our own ledger only, so it's
+// a cheap local query with no APC round-trip.
+router.get("/consignments", requireFulfilmentAccess, async (req: Request, res: Response) => {
+  const { tag } = req.query as { tag?: string };
+  if (!tag) {
+    res.status(400).json({ error: "tag query param required" });
+    return;
+  }
+  try {
+    const orders = await getOrdersByTag(tag);
+    const ids = orders.map(o => o.id);
+    if (ids.length === 0) { res.json({ tag, consignments: [] }); return; }
+    const rows = await db.execute<{ shopify_order_id: string; waybill: string; tracking_url: string | null; label_printed_at: Date | null }>(sql`
+      SELECT DISTINCT ON (shopify_order_id) shopify_order_id, waybill, tracking_url, label_printed_at
+      FROM apc_consignments
+      WHERE shopify_order_id IN (${sql.join(ids.map(id => sql`${id}`), sql`, `)})
+      ORDER BY shopify_order_id, created_at DESC
+    `);
+    res.json({
+      tag,
+      consignments: rows.rows.map(r => ({
+        orderId: Number(r.shopify_order_id),
+        waybill: r.waybill,
+        trackingUrl: r.tracking_url,
+        labelPrintedAt: r.label_printed_at,
+      })),
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Fulfilment] consignments error:", msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
 router.get("/postcode-validations", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const { tag } = req.query as { tag?: string };
   if (!tag) {
