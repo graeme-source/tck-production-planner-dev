@@ -13,7 +13,7 @@ import {
   Camera, User, CircleDot, ToggleRight, Boxes, UtensilsCrossed,
   AlertTriangle, Scale, ThermometerSnowflake, BookOpen, Megaphone, CalendarDays,
   Copy, Check, IdCard, FileText, ExternalLink, Bell, RefreshCw, Smartphone, Thermometer,
-  AlarmClock, Search,
+  AlarmClock, Search, ShieldAlert,
 } from "lucide-react";
 import { STATIONS } from "@/pages/station/shared/constants";
 import { TIMED_REMINDERS_KEY, parseReminders, type TimedReminder } from "@/pages/station/shared/timed-reminders";
@@ -1575,6 +1575,7 @@ export default function Settings() {
               </div>
               {user?.role === "admin" && <FactoryNumberSection />}
               {user?.role === "admin" && <ShopifyFreezerSyncSection />}
+              {user?.role === "admin" && <StockGateSection />}
               {user?.role === "admin" && <FulfilmentManualTickSection />}
               {user?.role === "admin" && <FulfilmentSpeakNameSection />}
               {(user?.role === "admin" || user?.role === "manager") && <BuildingTimerSection />}
@@ -3343,6 +3344,153 @@ function ShopifyFreezerSyncSection() {
           disabled={saving}
           aria-label="Toggle Shopify freezer stock sync"
         />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Stock gate — automatically holds products back from next-day delivery
+ * (Shopify tag + Zapiet prep-time rule) when the fridge-vs-despatch surplus
+ * runs low. Settings are stock_gate_* rows in app_settings, read live by
+ * the poller each cycle.
+ */
+function StockGateSection() {
+  type GateSettings = {
+    enabled: boolean; dryRun: boolean; thresholdPacks: number; releasePacks: number;
+    autoRelease: boolean; tag: string; intervalMinutes: number; zapietLocationId: string;
+  };
+  const [settings, setSettings] = useState<GateSettings | null>(null);
+  const [zapietKeyConfigured, setZapietKeyConfigured] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  // Text-input drafts so typing doesn't fire a save per keystroke.
+  const [drafts, setDrafts] = useState<{ thresholdPacks: string; releasePacks: string; tag: string; intervalMinutes: string } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/stock-gating/status", { credentials: "include" })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (!d?.settings) return;
+        setSettings(d.settings);
+        setZapietKeyConfigured(Boolean(d.zapietKeyConfigured));
+        setDrafts({
+          thresholdPacks: String(d.settings.thresholdPacks),
+          releasePacks: String(d.settings.releasePacks),
+          tag: d.settings.tag,
+          intervalMinutes: String(d.settings.intervalMinutes),
+        });
+      })
+      .catch(() => {});
+  }, []);
+
+  async function save(patch: Record<string, string | boolean | number>) {
+    setSaving(true);
+    setSavedMsg(null);
+    try {
+      const res = await fetch("/api/stock-gating/config", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      const data = (await res.json()) as { settings: GateSettings };
+      setSettings(data.settings);
+      setDrafts({
+        thresholdPacks: String(data.settings.thresholdPacks),
+        releasePacks: String(data.settings.releasePacks),
+        tag: data.settings.tag,
+        intervalMinutes: String(data.settings.intervalMinutes),
+      });
+      setSavedMsg("Saved");
+      setTimeout(() => setSavedMsg(null), 2000);
+    } catch {
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!settings || !drafts) return null;
+
+  const numberField = (
+    label: string, field: "thresholdPacks" | "releasePacks" | "intervalMinutes", hint: string,
+  ) => (
+    <label className="flex items-center justify-between gap-3 text-sm">
+      <span className="min-w-0">
+        <span className="font-medium">{label}</span>
+        <span className="block text-xs text-muted-foreground">{hint}</span>
+      </span>
+      <input
+        type="number"
+        min={field === "intervalMinutes" ? 1 : 0}
+        value={drafts[field]}
+        onChange={e => setDrafts(prev => prev ? { ...prev, [field]: e.target.value } : prev)}
+        onBlur={() => { if (drafts[field] !== "" && Number(drafts[field]) !== settings[field]) save({ [field]: Number(drafts[field]) }); }}
+        className="w-20 px-2 py-1.5 border border-border rounded-lg text-sm bg-background text-right"
+      />
+    </label>
+  );
+
+  const toggleRow = (
+    label: string, field: "enabled" | "dryRun" | "autoRelease", hint: string,
+  ) => (
+    <div className="flex items-center justify-between gap-3 text-sm">
+      <span className="min-w-0">
+        <span className="font-medium">{label}</span>
+        <span className="block text-xs text-muted-foreground">{hint}</span>
+      </span>
+      <Switch
+        checked={settings[field]}
+        onCheckedChange={(v: boolean) => save({ [field]: v })}
+        disabled={saving}
+        aria-label={label}
+      />
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-base font-semibold flex items-center gap-2">
+          <ShieldAlert className="w-4 h-4 text-primary" /> Next-Day Delivery Stock Gate
+          {saving && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+          {savedMsg && <span className="text-xs text-emerald-600 font-medium">{savedMsg}</span>}
+        </h2>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          Watches the fridge-vs-despatch surplus per product (fridge + still to wrap − today's
+          remaining despatch). At the threshold it tags the Shopify product so the Zapiet
+          preparation-time rule removes tomorrow from the date picker; the tag comes off when
+          stock recovers. Needs the Zapiet rule set up once: tag → 2-day preparation time.
+        </p>
+        {!zapietKeyConfigured && (
+          <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+            <AlertTriangle className="w-3.5 h-3.5" /> ZAPIET_API_KEY isn't set on the server — holds still work, but can't be verified against Zapiet.
+          </p>
+        )}
+      </div>
+
+      <div className="bg-card border border-border rounded-xl p-4 space-y-4">
+        {toggleRow("Stock gate active", "enabled", "Master switch — nothing is checked or tagged while this is off.")}
+        {toggleRow("Dry run", "dryRun", "Record what would be held, but never write the Shopify tag. Turn off once the Zapiet rule is confirmed.")}
+        {numberField("Hold at surplus ≤", "thresholdPacks", "Packs of headroom left when the product gets held.")}
+        {toggleRow("Auto-release", "autoRelease", "Take the tag off automatically once the surplus recovers past the release level.")}
+        {numberField("Release at surplus ≥", "releasePacks", "Set comfortably above the hold level so the gate doesn't flap.")}
+        {numberField("Check every (minutes)", "intervalMinutes", "How often the surplus is recomputed.")}
+        <label className="flex items-center justify-between gap-3 text-sm">
+          <span className="min-w-0">
+            <span className="font-medium">Shopify tag</span>
+            <span className="block text-xs text-muted-foreground">Must exactly match the tag on the Zapiet preparation-time rule (case-sensitive).</span>
+          </span>
+          <input
+            type="text"
+            value={drafts.tag}
+            onChange={e => setDrafts(prev => prev ? { ...prev, tag: e.target.value } : prev)}
+            onBlur={() => { const t = drafts.tag.trim(); if (t && t !== settings.tag) save({ tag: t }); }}
+            className="w-44 px-2 py-1.5 border border-border rounded-lg text-sm bg-background font-mono"
+          />
+        </label>
       </div>
     </div>
   );
