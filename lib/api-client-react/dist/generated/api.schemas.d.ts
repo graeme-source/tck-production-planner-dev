@@ -272,6 +272,8 @@ export interface Recipe {
     grossMargin?: number | null;
     /** Hex colour used to identify the recipe */
     color?: string | null;
+    /** Grams trimmed off the filling weight shown at the building station, per batch. Display only. */
+    builderFillingDeductionGrams?: number | null;
     /** Whether this recipe is on the core menu */
     isCoreMenu?: boolean;
     /** Whether this recipe is the current Calzone Club Special */
@@ -313,6 +315,7 @@ export type CreateRecipeIngredientsItem = {
     ingredientId: number;
     quantity: number;
     marinadeForIngredientId?: number | null;
+    marinadeAddAtCooking?: boolean;
     includeInFillingMix?: boolean;
     isTopping?: boolean;
     quid?: boolean;
@@ -323,6 +326,7 @@ export type CreateRecipeSubRecipesItem = {
     subRecipeId: number;
     quantity: number;
     marinadeForIngredientId?: number | null;
+    marinadeAddAtCooking?: boolean;
     includeInFillingMix?: boolean;
     isTopping?: boolean;
     quid?: boolean;
@@ -360,6 +364,7 @@ export interface CreateRecipe {
     isCoreMenu?: boolean;
     isCurrentSpecial?: boolean;
     cookingLossPercent?: number | null;
+    builderFillingDeductionGrams?: number | null;
     ingredients: CreateRecipeIngredientsItem[];
     subRecipes: CreateRecipeSubRecipesItem[];
     marinades?: CreateRecipeMarinadesItem[];

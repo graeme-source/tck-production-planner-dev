@@ -108,8 +108,8 @@ async function getWeekFocusPrinciple(weekStart: string) {
  *  changed topic every morning) while avoiding the older repeat problem
  *  by cycling examples inside the theme. Host can still override a single
  *  day on the meeting slide via configJson.exampleId / the library picker. */
-async function getTodayPrincipleAndExample() {
-  const todayIso = londonDateString();
+async function getTodayPrincipleAndExample(forDateIso?: string) {
+  const todayIso = forDateIso ?? londonDateString();
   const weekStart = mondayOf(todayIso);
   const { principle } = await getWeekFocusPrinciple(weekStart);
   if (!principle) return { principle: null, example: null };
@@ -128,8 +128,8 @@ async function getTodayPrincipleAndExample() {
 /** Backwards-compat shim — returns the legacy lean_lessons-shaped row
  *  the dashboard already exposes. New code reads principle/example
  *  directly. */
-async function getTodayLessonLegacy() {
-  const { principle, example } = await getTodayPrincipleAndExample();
+async function getTodayLessonLegacy(forDateIso?: string) {
+  const { principle, example } = await getTodayPrincipleAndExample(forDateIso);
   if (!principle || !example) return null;
   return {
     id: example.id,
@@ -1223,6 +1223,74 @@ router.post("/schedule", async (req: Request, res: Response) => {
   }
   await cloneTemplateSlidesIfEmpty(meetingId);
   res.json({ id: meetingId, meetingDate });
+});
+
+// What a host can set up ahead of time for a given day: the gratitude
+// photo and the lean lesson. Deliberately narrow — the full dashboard is
+// a snapshot of today's live numbers and can't be projected forward, so
+// this returns only the two things that genuinely are per-day settings.
+// Read-only: meetingId comes back null until something is actually saved,
+// at which point the client calls /schedule to create the row.
+router.get("/day-setup", async (req: Request, res: Response) => {
+  const date = String(req.query.date ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    res.status(400).json({ error: "date (YYYY-MM-DD) is required" });
+    return;
+  }
+  try {
+    const [meeting] = await db
+      .select({
+        id: morningMeetingsTable.id,
+        exampleId: morningMeetingsTable.exampleId,
+        gratitudeCaption: morningMeetingsTable.gratitudeCaption,
+        hasGratitudePhoto: sql<boolean>`${morningMeetingsTable.gratitudePhoto} IS NOT NULL`,
+      })
+      .from(morningMeetingsTable)
+      .where(eq(morningMeetingsTable.meetingDate, date))
+      .limit(1);
+
+    // The rotation's pick for that date, then the host's override if set.
+    const defaultLesson = await getTodayLessonLegacy(date);
+    let lesson = defaultLesson;
+    if (meeting?.exampleId) {
+      const [override] = await db
+        .select({
+          id: leanExamplesTable.id,
+          title: leanExamplesTable.title,
+          summary: leanExamplesTable.summary,
+          principleTitle: leanPrinciplesTable.title,
+          weekPosition: leanPrinciplesTable.weekPosition,
+        })
+        .from(leanExamplesTable)
+        .innerJoin(leanPrinciplesTable, eq(leanPrinciplesTable.id, leanExamplesTable.principleId))
+        .where(eq(leanExamplesTable.id, meeting.exampleId))
+        .limit(1);
+      if (override) {
+        lesson = {
+          ...(defaultLesson ?? {}),
+          id: override.id,
+          weekNumber: override.weekPosition,
+          title: override.title,
+          summary: override.summary,
+          principleTitle: override.principleTitle,
+        } as typeof defaultLesson;
+      }
+    }
+
+    res.json({
+      meetingDate: date,
+      meetingId: meeting?.id ?? null,
+      hasGratitudePhoto: meeting?.hasGratitudePhoto ?? false,
+      gratitudeCaption: meeting?.gratitudeCaption ?? null,
+      exampleId: meeting?.exampleId ?? null,
+      isLessonOverridden: meeting?.exampleId != null,
+      lesson,
+      defaultLessonTitle: defaultLesson?.title ?? null,
+    });
+  } catch (err) {
+    console.error("[morning-meetings] day-setup failed:", err);
+    res.status(500).json({ error: "Failed to load day setup" });
+  }
 });
 
 // ── Curriculum admin: principles + examples ─────────────────────────

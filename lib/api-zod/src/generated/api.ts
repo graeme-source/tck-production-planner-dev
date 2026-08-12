@@ -765,6 +765,7 @@ export const CreateRecipeBody = zod.object({
   isCoreMenu: zod.boolean().optional(),
   isCurrentSpecial: zod.boolean().optional(),
   cookingLossPercent: zod.number().nullish(),
+  builderFillingDeductionGrams: zod.number().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -948,6 +949,7 @@ export const UpdateRecipeBody = zod.object({
   isCoreMenu: zod.boolean().optional(),
   isCurrentSpecial: zod.boolean().optional(),
   cookingLossPercent: zod.number().nullish(),
+  builderFillingDeductionGrams: zod.number().nullish(),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),

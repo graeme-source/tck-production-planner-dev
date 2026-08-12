@@ -48,6 +48,12 @@ export const recipesTable = pgTable("recipes", {
   dietaryCategory: text("dietary_category"),
   color: text("color"),
   cookingLossPercent: numeric("cooking_loss_percent", { precision: 5, scale: 2 }).notNull().default("3"),
+  // Grams trimmed off the filling weight shown to the builders, per batch.
+  // Display only: costing, prep quantities, the filling mix and the printed
+  // plan all stay on the recipe's real number. It exists so that when we come
+  // up a couple of packs short every run, we can build fractionally lighter
+  // and land on the pack count instead of re-cutting the recipe.
+  builderFillingDeductionGrams: integer("builder_filling_deduction_grams").notNull().default(0),
   fillingAssemblyOrder: integer("filling_assembly_order"),
   tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
   createdAt: timestamp("created_at").notNull().defaultNow(),

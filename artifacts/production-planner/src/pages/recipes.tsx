@@ -42,6 +42,7 @@ const schema = z.object({
   isFridgeProduct: z.boolean().optional(),
   color: z.string().optional(),
   cookingLossPercent: z.preprocess(v => (v === "" || v == null ? null : Number(v)), z.number().min(0).max(50).nullable().optional()),
+  builderFillingDeductionGrams: z.preprocess(v => (v === "" || v == null ? 0 : Number(v)), z.number().int().min(0).max(500, "Max 500 g").optional()),
   dietaryCategory: z.preprocess(v => (v === "" ? null : v), z.enum(["meat", "vegetarian"]).nullable().optional()),
   tags: z.array(z.string()).optional(),
   ingredients: z.array(z.object({
@@ -468,6 +469,12 @@ function RecipeForm({
             <label className="text-sm font-medium mb-1 block">Cooking Loss %</label>
             <input type="number" step="0.5" min="0" max="50" {...register("cookingLossPercent")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="3" />
             <p className="text-xs text-muted-foreground mt-0.5">Weight lost during cooking (default 3%)</p>
+          </div>
+          <div>
+            <label className="text-sm font-medium mb-1 block">Builder Filling Trim (g)</label>
+            <input type="number" step="1" min="0" max="500" {...register("builderFillingDeductionGrams")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0" />
+            <p className="text-xs text-muted-foreground mt-0.5">Grams off the filling weight the builders see, per batch. Display only — prep, costing and the printed plan are unchanged.</p>
+            {errors.builderFillingDeductionGrams && <span className="text-destructive text-xs">{String(errors.builderFillingDeductionGrams.message)}</span>}
           </div>
           <div>
             <label className="text-sm font-medium mb-1 block">Tin Size</label>
@@ -1165,12 +1172,13 @@ function EditRecipeDialog({
         isFridgeProduct: (detail as Record<string, unknown>).isFridgeProduct === true,
         color: detail.color ?? "",
         cookingLossPercent: (detail as Record<string, unknown>).cookingLossPercent != null ? Number((detail as Record<string, unknown>).cookingLossPercent) : 3,
+        builderFillingDeductionGrams: Number(detail.builderFillingDeductionGrams ?? 0),
         dietaryCategory: ((detail as Record<string, unknown>).dietaryCategory as "meat" | "vegetarian" | null | undefined) ?? null,
         tags: Array.isArray((detail as Record<string, unknown>).tags) ? ((detail as Record<string, unknown>).tags as string[]) : [],
         ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, marinadeAddAtCooking: (i as { marinadeAddAtCooking?: boolean | null }).marinadeAddAtCooking === true, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, quid: (i as Record<string, unknown>).quid === true, showInPrep: (i as Record<string, unknown>).showInPrep === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
         subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, marinadeAddAtCooking: (s as { marinadeAddAtCooking?: boolean | null }).marinadeAddAtCooking === true, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, quid: (s as Record<string, unknown>).quid === true, showInPrep: (s as Record<string, unknown>).showInPrep === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
       }
-    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", cookingLossPercent: 3, dietaryCategory: null, tags: [], ingredients: [], subRecipes: [] };
+    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", cookingLossPercent: 3, builderFillingDeductionGrams: 0, dietaryCategory: null, tags: [], ingredients: [], subRecipes: [] };
 
   return (
     <>
@@ -2109,6 +2117,7 @@ export default function Recipes() {
         isFridgeProduct: (duplicateDetail as Record<string, unknown>).isFridgeProduct === true,
         color: duplicateDetail.color ?? "",
         cookingLossPercent: (duplicateDetail as Record<string, unknown>).cookingLossPercent != null ? Number((duplicateDetail as Record<string, unknown>).cookingLossPercent) : 3,
+        builderFillingDeductionGrams: Number(duplicateDetail.builderFillingDeductionGrams ?? 0),
         dietaryCategory: ((duplicateDetail as Record<string, unknown>).dietaryCategory as "meat" | "vegetarian" | null | undefined) ?? null,
         tags: Array.isArray((duplicateDetail as Record<string, unknown>).tags) ? ((duplicateDetail as Record<string, unknown>).tags as string[]) : [],
         ingredients: (duplicateDetail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, marinadeAddAtCooking: (i as { marinadeAddAtCooking?: boolean | null }).marinadeAddAtCooking === true, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, quid: (i as Record<string, unknown>).quid === true, showInPrep: (i as Record<string, unknown>).showInPrep === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
@@ -2147,7 +2156,7 @@ export default function Recipes() {
   const addDefaults: FormValues = {
     name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "",
     packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined,
-    tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", cookingLossPercent: 3, dietaryCategory: null, tags: [], ingredients: [], subRecipes: [],
+    tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", cookingLossPercent: 3, builderFillingDeductionGrams: 0, dietaryCategory: null, tags: [], ingredients: [], subRecipes: [],
   };
 
   // Shared filter for both card and table views.

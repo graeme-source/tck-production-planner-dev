@@ -257,7 +257,7 @@ function metaForKind(kind: string) {
 }
 
 // ── Page ─────────────────────────────────────────────────────────────
-type Mode = "setup" | "prep" | "meeting" | "done" | "edit_today" | "edit_tomorrow" | "edit_template" | "edit_curriculum";
+type Mode = "setup" | "prep" | "meeting" | "done" | "edit_today" | "edit_template" | "edit_curriculum";
 
 export default function MeetingPage() {
   const { state } = useAuth();
@@ -268,13 +268,6 @@ export default function MeetingPage() {
   const [mode, setMode] = useState<Mode>("setup");
   const [hostName, setHostName] = useState(currentUserName);
   const [slideIndex, setSlideIndex] = useState(0);
-  const [tomorrowMeetingId, setTomorrowMeetingId] = useState<number | null>(null);
-  // When the host clicks "Preview tomorrow's meeting", we fetch
-  // tomorrow's meeting_slides and stash them here. The slideshow's
-  // `slides` memo picks them up via override, so the runner uses
-  // tomorrow's slide order/titles/content with today's dynamic data
-  // (deliveries, plan, KPIs etc) as a stand-in.
-  const [previewSlides, setPreviewSlides] = useState<MeetingSlide[] | null>(null);
 
   useEffect(() => { if (!hostName && currentUserName) setHostName(currentUserName); }, [currentUserName, hostName]);
 
@@ -320,14 +313,38 @@ export default function MeetingPage() {
   // The runner's slide list comes from meeting_slides in the DB. If
   // the meeting hasn't been started yet `data.slides` is empty and the
   // user is still on the setup screen, so this is only consulted in
-  // meeting mode. When `previewSlides` is set we're previewing
-  // tomorrow's meeting, so those override today's slides.
-  const slides = useMemo<MeetingSlide[]>(() => previewSlides ?? data?.slides ?? [], [previewSlides, data?.slides]);
-  const isPreviewing = previewSlides !== null;
+  // meeting mode.
+  const slides = useMemo<MeetingSlide[]>(() => data?.slides ?? [], [data?.slides]);
+  // The runner always shows the live day. "Preview tomorrow's meeting" used
+  // to set this, but it could only ever borrow tomorrow's slide list — the
+  // numbers stayed today's — so it read as broken and was removed. The prop
+  // stays because ProductionPlanSlide is shared with the pack report.
+  const isPreviewing = false;
   const slideCount = slides.length;
 
-  const advance = useCallback(() => setSlideIndex(i => Math.min(Math.max(0, slideCount - 1), i + 1)), [slideCount]);
-  const retreat = useCallback(() => setSlideIndex(i => Math.max(0, i - 1)), []);
+  // Sub-slides. A slide can break itself into steps the deck walks through
+  // before moving on — System Updates uses this to show one change at a
+  // time instead of a wall of bullets. The count is reported up by the
+  // slide (only it knows how much content it fetched) and is tracked
+  // against the slide it came from, so a stale count can never leak onto
+  // the next slide and swallow a Next press.
+  const [sub, setSub] = useState({ forSlide: 0, index: 0, count: 1 });
+  const subIndex = sub.forSlide === slideIndex ? sub.index : 0;
+  const subCount = sub.forSlide === slideIndex ? sub.count : 1;
+  const reportSubCount = useCallback((n: number) => {
+    setSub(s => (s.forSlide === slideIndex && s.count === n)
+      ? s
+      : { forSlide: slideIndex, index: s.forSlide === slideIndex ? s.index : 0, count: Math.max(1, n) });
+  }, [slideIndex]);
+
+  const advance = useCallback(() => {
+    if (subIndex < subCount - 1) { setSub({ forSlide: slideIndex, index: subIndex + 1, count: subCount }); return; }
+    setSlideIndex(i => Math.min(Math.max(0, slideCount - 1), i + 1));
+  }, [subIndex, subCount, slideIndex, slideCount]);
+  const retreat = useCallback(() => {
+    if (subIndex > 0) { setSub({ forSlide: slideIndex, index: subIndex - 1, count: subCount }); return; }
+    setSlideIndex(i => Math.max(0, i - 1));
+  }, [subIndex, subCount, slideIndex]);
 
   useEffect(() => {
     if (mode !== "meeting") return;
@@ -373,51 +390,6 @@ export default function MeetingPage() {
       onEditToday={() => setMode("edit_today")}
       onEditTemplate={() => setMode("edit_template")}
       onEditCurriculum={() => setMode("edit_curriculum")}
-      onEditTomorrow={async () => {
-        const tomorrow = format(addDays(new Date(), 1), "yyyy-MM-dd");
-        try {
-          // Idempotent — /schedule clones the template on first call,
-          // returns the existing meeting id on subsequent calls.
-          const res = await fetch(`${BASE}/api/morning-meetings/schedule`, {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ meetingDate: tomorrow }),
-          });
-          if (!res.ok) throw new Error();
-          const body = await res.json() as { id: number };
-          setTomorrowMeetingId(body.id);
-          setMode("edit_tomorrow");
-        } catch {
-          toast({ title: "Couldn't open tomorrow's meeting", variant: "destructive" });
-        }
-      }}
-      onPreviewTomorrow={async () => {
-        const tomorrow = format(addDays(new Date(), 1), "yyyy-MM-dd");
-        try {
-          const schedRes = await fetch(`${BASE}/api/morning-meetings/schedule`, {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ meetingDate: tomorrow }),
-          });
-          if (!schedRes.ok) throw new Error();
-          const schedBody = await schedRes.json() as { id: number };
-          setTomorrowMeetingId(schedBody.id);
-          // Fetch tomorrow's slides and drop straight into the
-          // slideshow runner. The slides memo picks them up via the
-          // previewSlides override; dynamic data (deliveries, plan
-          // etc.) stays as today's snapshot — it'll refresh tomorrow.
-          const slidesRes = await fetch(`${BASE}/api/morning-meetings/${schedBody.id}/slides`, { credentials: "include" });
-          if (!slidesRes.ok) throw new Error();
-          const slidesBody = await slidesRes.json() as MeetingSlide[];
-          setPreviewSlides(slidesBody);
-          setSlideIndex(0);
-          setMode("meeting");
-        } catch {
-          toast({ title: "Couldn't open tomorrow's meeting", variant: "destructive" });
-        }
-      }}
       isAdmin={isAdmin}
     />;
   }
@@ -445,14 +417,6 @@ export default function MeetingPage() {
     />;
   }
 
-  if (mode === "edit_tomorrow" && tomorrowMeetingId != null) {
-    return <SlideEditor
-      mode="meeting"
-      id={tomorrowMeetingId}
-      titleSuffix={`${format(new Date(data.tomorrow + "T00:00:00"), "EEEE d MMMM")} — Tomorrow`}
-      onClose={() => { queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] }); setMode("setup"); }}
-    />;
-  }
 
 
   if (mode === "edit_template") {
@@ -484,10 +448,7 @@ export default function MeetingPage() {
   const slide = slides[Math.min(slideIndex, slideCount - 1)];
   const meta = metaForKind(slide.kind);
   const SlideIcon = meta.icon;
-  const exitMeeting = () => {
-    if (isPreviewing) setPreviewSlides(null);
-    setMode("setup");
-  };
+  const exitMeeting = () => setMode("setup");
   return (
     <MeetingShell
       slide={slide}
@@ -497,6 +458,8 @@ export default function MeetingPage() {
       meta={meta}
       SlideIcon={SlideIcon}
       isPreviewing={isPreviewing}
+      subIndex={subIndex}
+      reportSubCount={reportSubCount}
       data={data}
       onRefresh={() => refetch()}
       advance={advance}
@@ -516,6 +479,8 @@ interface MeetingShellProps {
   meta: { icon: React.ElementType; color: string; fallbackTitle: string };
   SlideIcon: React.ElementType;
   isPreviewing: boolean;
+  subIndex: number;
+  reportSubCount: (n: number) => void;
   data: DashboardData;
   onRefresh: () => void;
   advance: () => void;
@@ -531,7 +496,7 @@ interface MeetingShellProps {
  *  instead of buttons). Also disables pull-to-refresh while mounted so
  *  the host can't accidentally reload the meeting by scrolling. */
 function MeetingShell({
-  slide, slides, slideIndex, slideCount, meta, SlideIcon, isPreviewing,
+  slide, slides, slideIndex, slideCount, meta, SlideIcon, isPreviewing, subIndex, reportSubCount,
   data, onRefresh, advance, retreat, setSlideIndex, onEnd, onExit,
 }: MeetingShellProps) {
   // Suppress the global pull-to-refresh — the host has been accidentally
@@ -624,10 +589,10 @@ function MeetingShell({
         slide.kind === "gratitude" ? "overflow-hidden p-4 sm:p-6" : "overflow-y-auto px-8 py-6",
       )}>
         {slide.kind === "gratitude" ? (
-          <SlideBody slide={slide} data={data} onRefresh={onRefresh} isPreviewing={isPreviewing} />
+          <SlideBody slide={slide} data={data} onRefresh={onRefresh} isPreviewing={isPreviewing} subIndex={subIndex} reportSubCount={reportSubCount} />
         ) : (
           <div className="max-w-6xl mx-auto w-full my-auto">
-            <SlideBody slide={slide} data={data} onRefresh={onRefresh} isPreviewing={isPreviewing} />
+            <SlideBody slide={slide} data={data} onRefresh={onRefresh} isPreviewing={isPreviewing} subIndex={subIndex} reportSubCount={reportSubCount} />
           </div>
         )}
       </div>
@@ -849,6 +814,217 @@ function SetupGratitudeCard({ data, ensureMeeting }: {
   );
 }
 
+/** Get-ahead setup for a future day — the photo and the lesson, which are
+ *  the only two things about a meeting that can meaningfully be decided in
+ *  advance. This replaced "Preview/Edit tomorrow's meeting": the preview
+ *  wrapped tomorrow's slide list around *today's* live numbers (deliveries,
+ *  plan, KPIs are all snapshots of the current day), so it always read as
+ *  broken, and per-day slide edits were being reverted by the slide-order
+ *  normaliser on every deploy anyway. */
+function SetupTomorrowCard({ date }: { date: string }) {
+  const queryClient = useQueryClient();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const [cacheBust, setCacheBust] = useState(0);
+  const queryKey = ["meeting-day-setup", date];
+
+  const { data: setup } = useQuery<{
+    meetingId: number | null;
+    hasGratitudePhoto: boolean;
+    exampleId: number | null;
+    isLessonOverridden: boolean;
+    lesson: { id: number; title: string; summary: string; weekNumber: number; principleTitle?: string } | null;
+    defaultLessonTitle: string | null;
+  }>({
+    queryKey,
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/morning-meetings/day-setup?date=${date}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+
+  const { data: allExamples = [] } = useQuery<Array<{ id: number; title: string; principleTitle: string }>>({
+    queryKey: ["lesson-all-examples"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/morning-meetings/examples`, { credentials: "include" });
+      return res.ok ? res.json() : [];
+    },
+    enabled: picking,
+  });
+  const grouped = useMemo(() => {
+    const g = new Map<string, Array<{ id: number; title: string }>>();
+    for (const ex of allExamples) {
+      const key = ex.principleTitle ?? "Other";
+      if (!g.has(key)) g.set(key, []);
+      g.get(key)!.push({ id: ex.id, title: ex.title });
+    }
+    return [...g.entries()];
+  }, [allExamples]);
+
+  /** The meeting row is only created once the host actually saves something. */
+  async function ensureTomorrowMeeting(): Promise<number | null> {
+    if (setup?.meetingId) return setup.meetingId;
+    const res = await fetch(`${BASE}/api/morning-meetings/schedule`, {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ meetingDate: date }),
+    });
+    if (!res.ok) return null;
+    const row = await res.json() as { id: number };
+    return row?.id ?? null;
+  }
+
+  async function uploadPhoto(file: File) {
+    setBusy(true);
+    try {
+      const id = await ensureTomorrowMeeting();
+      if (!id) throw new Error("Couldn't create tomorrow's meeting");
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`${BASE}/api/morning-meetings/${id}/gratitude-photo`, {
+        method: "POST", credentials: "include", body: form,
+      });
+      if (!res.ok) throw new Error("Upload failed");
+      setCacheBust(Date.now());
+      queryClient.invalidateQueries({ queryKey });
+      toast({ title: "Photo set for tomorrow" });
+    } catch (e) {
+      toast({ title: "Upload failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  async function removePhoto() {
+    if (!setup?.meetingId) return;
+    setBusy(true);
+    try {
+      await fetch(`${BASE}/api/morning-meetings/${setup.meetingId}/gratitude-photo`, { method: "DELETE", credentials: "include" });
+      queryClient.invalidateQueries({ queryKey });
+    } finally { setBusy(false); }
+  }
+
+  async function swapLesson(exampleId: number | null) {
+    setBusy(true);
+    try {
+      const id = await ensureTomorrowMeeting();
+      if (!id) throw new Error("Couldn't create tomorrow's meeting");
+      await fetch(`${BASE}/api/morning-meetings/${id}/example`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ exampleId }),
+      });
+      queryClient.invalidateQueries({ queryKey });
+      toast({ title: exampleId ? "Tomorrow's lesson set" : "Back to the rotation's lesson" });
+      setPicking(false);
+    } catch (e) {
+      toast({ title: "Couldn't set the lesson", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  const hasPhoto = !!setup?.hasGratitudePhoto;
+  return (
+    <div className="glass-panel rounded-2xl p-6 mb-6 border border-amber-500/30">
+      <div className="flex items-start justify-between mb-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400 mb-1">
+            Get ahead — {format(new Date(date + "T00:00:00"), "EEEE d MMMM")}
+          </p>
+          <h2 className="text-xl font-display font-bold">Set up tomorrow</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            The photo and the lesson can be chosen now. Everything else — the plan, deliveries, yesterday's numbers — is read live on the day.
+          </p>
+        </div>
+        <Calendar className="w-6 h-6 text-amber-500 shrink-0" />
+      </div>
+
+      {/* Lesson */}
+      <div className="border-t border-border/60 pt-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Tomorrow's lesson</p>
+            {setup?.lesson ? (
+              <>
+                <p className="font-semibold">{setup.lesson.title}</p>
+                <p className="text-sm text-muted-foreground mt-0.5">{setup.lesson.summary}</p>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">No lesson scheduled.</p>
+            )}
+            {setup?.isLessonOverridden && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                Hand-picked{setup.defaultLessonTitle ? ` — the rotation would have run "${setup.defaultLessonTitle}"` : ""}
+              </p>
+            )}
+          </div>
+          <BookOpen className="w-5 h-5 text-purple-500 shrink-0" />
+        </div>
+        <div className="flex flex-wrap items-center gap-3 mt-3">
+          <button onClick={() => setPicking(p => !p)} disabled={busy}
+            className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground disabled:opacity-50">
+            <Shuffle className="w-4 h-4" /> {picking ? "Keep this lesson" : "Choose lesson"}
+          </button>
+          {setup?.isLessonOverridden && (
+            <button onClick={() => swapLesson(null)} disabled={busy}
+              className="text-sm text-muted-foreground hover:text-foreground underline disabled:opacity-50">
+              Reset to the rotation
+            </button>
+          )}
+        </div>
+        {picking && (
+          <select
+            className="mt-3 w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+            defaultValue=""
+            onChange={e => { if (e.target.value) swapLesson(Number(e.target.value)); }}
+          >
+            <option value="" disabled>Pick a lesson from the library…</option>
+            {grouped.map(([principle, items]) => (
+              <optgroup key={principle} label={principle}>
+                {items.map(i => <option key={i.id} value={i.id}>{i.title}</option>)}
+              </optgroup>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {/* Photo */}
+      <div className="border-t border-border/60 pt-4 mt-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Tomorrow's photo</p>
+            <p className="text-sm text-muted-foreground">
+              {hasPhoto ? "Loaded — it'll fill tomorrow's gratitude slide." : "Add a team photo for the gratitude slide (optional)."}
+            </p>
+          </div>
+          {hasPhoto && setup?.meetingId && (
+            <img
+              src={`${BASE}/api/morning-meetings/${setup.meetingId}/gratitude-photo?v=${cacheBust}`}
+              alt="Tomorrow's gratitude"
+              className="w-16 h-16 rounded-xl object-cover border border-border flex-shrink-0"
+            />
+          )}
+        </div>
+        <div className="flex gap-2 mt-3">
+          <input ref={fileRef} type="file" accept="image/*" className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(f); e.target.value = ""; }} />
+          <button onClick={() => fileRef.current?.click()} disabled={busy}
+            className="px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImageIcon className="w-4 h-4" />}
+            {hasPhoto ? "Replace photo" : "Add photo"}
+          </button>
+          {hasPhoto && (
+            <button onClick={removePhoto} disabled={busy}
+              className="px-3 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:opacity-50 inline-flex items-center gap-1.5">
+              <Trash2 className="w-4 h-4" /> Remove
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SetupSlidesCard({ data, ensureMeeting, onEditToday }: {
   data: DashboardData;
   ensureMeeting: () => Promise<number | null>;
@@ -1005,7 +1181,7 @@ function SetupSlidesCard({ data, ensureMeeting, onEditToday }: {
 
 function SetupScreen({
   data, ensureMeeting, onReadBriefing, onStart, starting, onExit,
-  onEditToday, onEditTemplate, onEditCurriculum, onEditTomorrow, onPreviewTomorrow, isAdmin,
+  onEditToday, onEditTemplate, onEditCurriculum, isAdmin,
 }: {
   data: DashboardData;
   ensureMeeting: () => Promise<number | null>;
@@ -1016,8 +1192,6 @@ function SetupScreen({
   onEditToday: () => void;
   onEditTemplate: () => void;
   onEditCurriculum: () => void;
-  onEditTomorrow: () => void;
-  onPreviewTomorrow: () => void;
   isAdmin: boolean;
 }) {
   return (
@@ -1046,20 +1220,6 @@ function SetupScreen({
             <Edit3 className="w-3.5 h-3.5" />
             Edit today's meeting
           </button>
-          <button
-            onClick={onPreviewTomorrow}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40"
-          >
-            <Calendar className="w-3.5 h-3.5" />
-            Preview tomorrow's meeting
-          </button>
-          <button
-            onClick={onEditTomorrow}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40"
-          >
-            <Edit3 className="w-3.5 h-3.5" />
-            Edit tomorrow's meeting
-          </button>
           {isAdmin && (
             <>
               <button
@@ -1083,6 +1243,7 @@ function SetupScreen({
         <SetupLessonCard data={data} ensureMeeting={ensureMeeting} onReadBriefing={onReadBriefing} />
         <SetupGratitudeCard data={data} ensureMeeting={ensureMeeting} />
         <SetupSlidesCard data={data} ensureMeeting={ensureMeeting} onEditToday={onEditToday} />
+        <SetupTomorrowCard date={format(addDays(new Date(data.today + "T00:00:00"), 1), "yyyy-MM-dd")} />
 
         <button
           onClick={onStart}
@@ -1282,7 +1443,7 @@ function DoneScreen({ data, onClose }: { data: DashboardData; onClose: () => voi
 }
 
 // ── Slide body switcher ─────────────────────────────────────────────
-function SlideBody({ slide, data, onRefresh, isPreviewing }: { slide: MeetingSlide; data: DashboardData; onRefresh: () => void; isPreviewing: boolean }) {
+function SlideBody({ slide, data, onRefresh, isPreviewing, subIndex, reportSubCount }: { slide: MeetingSlide; data: DashboardData; onRefresh: () => void; isPreviewing: boolean; subIndex: number; reportSubCount: (n: number) => void }) {
   switch (slide.kind) {
     case "special_prep": return <SpecialPrepSlide data={data} slide={slide} />;
     case "stretches": return <StretchesPanel />;
@@ -1293,7 +1454,7 @@ function SlideBody({ slide, data, onRefresh, isPreviewing }: { slide: MeetingSli
     case "bag_orders": return <BagOrdersSlide data={data} slide={slide} />;
     case "short_on_pack": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} stickyTotals />;
     case "safety_issues": return <SafetyIssuesSlide data={data} onRefresh={onRefresh} slide={slide} />;
-    case "system_updates": return <SystemUpdatesSlide slide={slide} />;
+    case "system_updates": return <SystemUpdatesSlide slide={slide} subIndex={subIndex} reportSubCount={reportSubCount} />;
     case "new_sops": return <NewSopsSlide data={data} slide={slide} />;
     case "struggles": return <StrugglesSlide data={data} onRefresh={onRefresh} slide={slide} />;
     case "recent_improvements": return <RecentImprovementsSlide data={data} slide={slide} />;
@@ -2245,11 +2406,24 @@ interface SystemCommit {
   body: string;
 }
 
-function SystemUpdatesSlide({ slide }: { slide: MeetingSlide }) {
+interface SystemUpdateCard {
+  id: number;
+  title: string | null;
+  bullets: string[];
+  hasImage: boolean;
+  createdAt: string;
+}
+
+function SystemUpdatesSlide({ slide, subIndex, reportSubCount }: {
+  slide: MeetingSlide;
+  subIndex: number;
+  reportSubCount: (n: number) => void;
+}) {
   const [show7Days, setShow7Days] = useState(false);
 
   const { data, isLoading } = useQuery<{
     available: boolean;
+    updates?: SystemUpdateCard[];
     last24h: SystemCommit[];
     last7Days: SystemCommit[];
     summary: string[] | null;
@@ -2269,6 +2443,75 @@ function SystemUpdatesSlide({ slide }: { slide: MeetingSlide }) {
   const last7 = data?.last7Days ?? [];
   const updateTitle = data?.updateTitle ?? null;
   const updateDate = data?.updateDate ?? null;
+  const cards = data?.updates ?? [];
+
+  // One card per step, so the deck walks the changes one at a time. Told to
+  // the parent because only this slide knows how many updates it fetched.
+  useEffect(() => { reportSubCount(Math.max(1, cards.length)); }, [cards.length, reportSubCount]);
+
+  if (cards.length > 0) {
+    const card = cards[Math.min(subIndex, cards.length - 1)];
+    return (
+      <div>
+        <div className="flex items-baseline justify-between gap-4 mb-1">
+          <SectionTitle>{slide.title || "System Updates"}</SectionTitle>
+          {cards.length > 1 && (
+            <span className="text-lg font-semibold text-muted-foreground tabular-nums shrink-0">
+              {Math.min(subIndex, cards.length - 1) + 1} of {cards.length}
+            </span>
+          )}
+        </div>
+
+        {/* Headline first and big — this is the whole point of the slide. */}
+        <h3 className="text-4xl font-display font-bold leading-tight mt-4 mb-1">
+          {card.title || "What changed"}
+        </h3>
+        <p className="text-base text-muted-foreground mb-4">
+          {format(new Date(card.createdAt), "EEE d MMM")}
+        </p>
+
+        {/* The screenshot carries the explanation — people recognise a screen
+            far quicker than they parse a sentence describing it. */}
+        {card.hasImage && (
+          <div className="rounded-2xl overflow-hidden border-2 border-border bg-card mb-4">
+            <img
+              src={`${BASE}/api/system-updates/${card.id}/image`}
+              alt={card.title ?? "Screenshot of the update"}
+              className="w-full max-h-[46vh] object-contain bg-secondary/30"
+              onError={e => { (e.currentTarget.closest("div") as HTMLElement).style.display = "none"; }}
+            />
+          </div>
+        )}
+
+        {card.bullets.length > 0 && (
+          <ul className={cn("space-y-2", card.hasImage ? "text-xl" : "text-3xl space-y-4 mt-6")}>
+            {card.bullets.map((line, i) => (
+              <li key={i} className="flex items-start gap-3 leading-snug">
+                <span className="text-primary font-bold shrink-0">•</span>
+                <span>{line}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {cards.length > 1 && (
+          <div className="flex items-center gap-2 mt-6" aria-hidden>
+            {cards.map((c, i) => (
+              <span
+                key={c.id}
+                className={cn(
+                  "h-1.5 rounded-full transition-all",
+                  i === Math.min(subIndex, cards.length - 1)
+                    ? "w-8 bg-primary"
+                    : "w-4 bg-border",
+                )}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div>
