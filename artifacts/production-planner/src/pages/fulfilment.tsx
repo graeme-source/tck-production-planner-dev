@@ -36,7 +36,15 @@ interface LineItem {
   recipeColor: string | null;
 }
 
-type BoxCategory = "small box" | "large box" | "wholesale" | "other";
+type BoxCategory = "small box" | "large box" | "wholesale" | "local delivery" | "other";
+
+/** Orders tagged local-delivery go on the van, not APC — no consignment to
+ *  book or look up, no label to print or verify. The tag is put on the order
+ *  in Shopify when the local delivery is arranged. */
+const LOCAL_DELIVERY_TAG = "local-delivery";
+function isLocalDelivery(order: { tags: string }): boolean {
+  return order.tags.split(",").map(t => t.trim().toLowerCase()).includes(LOCAL_DELIVERY_TAG);
+}
 
 /** A row of tri-state filter chips. Green = include, red = exclude, plain =
  *  ignored. Used for both order tags and products so the two behave identically. */
@@ -82,7 +90,7 @@ function FilterChipRow({ label, items, include, exclude, onToggle, emptyText }: 
 
 /** The box-category tags, kept out of the generic tag chips so they aren't
  *  offered twice (they already have their own multi-select row). */
-const BOX_CATEGORIES: string[] = ["small box", "large box", "wholesale"];
+const BOX_CATEGORIES: string[] = ["small box", "large box", "wholesale", LOCAL_DELIVERY_TAG];
 
 /** Cycle a chip through untouched → include → exclude → untouched, keeping the
  *  two sets mutually exclusive so a tag can never be both. */
@@ -1129,8 +1137,11 @@ export default function Fulfilment() {
     !o.tags.split(",").map(t => t.trim()).includes("dispatch")
   );
 
-  function getOrderCategory(order: ShopifyOrder): "small box" | "large box" | "wholesale" | "other" {
+  function getOrderCategory(order: ShopifyOrder): BoxCategory {
     const tags = order.tags.split(",").map(t => t.trim().toLowerCase());
+    // Local delivery wins over everything — however big the box is, it goes
+    // on the van, and the packer needs it in the no-label wave.
+    if (tags.includes(LOCAL_DELIVERY_TAG)) return "local delivery";
     if (tags.includes("wholesale")) return "wholesale";
     if (tags.includes("large box")) return "large box";
     if (tags.includes("small box")) return "small box";
@@ -1252,6 +1263,7 @@ export default function Fulfilment() {
     "small box": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "small box").length,
     "large box": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "large box").length,
     "wholesale": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "wholesale").length,
+    "local delivery": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "local delivery").length,
     "other": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "other").length,
   };
 
@@ -1259,6 +1271,7 @@ export default function Fulfilment() {
     "small box": unfulfilledOrders.filter(o => getOrderCategory(o) === "small box").length,
     "large box": unfulfilledOrders.filter(o => getOrderCategory(o) === "large box").length,
     "wholesale": unfulfilledOrders.filter(o => getOrderCategory(o) === "wholesale").length,
+    "local delivery": unfulfilledOrders.filter(o => getOrderCategory(o) === "local delivery").length,
     "other": unfulfilledOrders.filter(o => getOrderCategory(o) === "other").length,
   };
 
@@ -1371,6 +1384,14 @@ export default function Fulfilment() {
     setExpectedConsignmentError(null);
     setView("picking");
 
+    // Local delivery: the van does the last mile, APC is never involved.
+    // No consignment to look up (reconcile) or book (full) — straight to
+    // item scanning, and completion runs without a tracking number.
+    if (isLocalDelivery(order)) {
+      setCreatingShipment(false);
+      return;
+    }
+
     // Reconcile mode: the consignment already exists in Hypaship, so nothing
     // is booked here. Fetch it (usually already prefetched) so the label-scan
     // gate knows which waybill to expect, then wait for the packer to scan the
@@ -1398,7 +1419,7 @@ export default function Fulfilment() {
       // unlike "full" mode this books nothing, it's just a read.
       const pos = filteredUnfulfilled.findIndex(o => o.id === order.id);
       const next = filteredUnfulfilled.slice(pos + 1).find(o => !skippedIds.has(o.id));
-      if (next) preQueueConsignment(next.name);
+      if (next && !isLocalDelivery(next)) preQueueConsignment(next.name);
       return;
     }
 
@@ -1449,7 +1470,7 @@ export default function Fulfilment() {
       if (configStatus?.testMode) {
         const currentPos = filteredUnfulfilled.findIndex(o => o.id === order.id);
         const nextOrder = filteredUnfulfilled.slice(currentPos + 1).find(o => !skippedIds.has(o.id));
-        if (nextOrder) preQueueNextOrder(nextOrder.id);
+        if (nextOrder && !isLocalDelivery(nextOrder)) preQueueNextOrder(nextOrder.id);
       }
     } catch (err: any) {
       setShipmentError(err.message ?? "Failed to create APC shipment");
@@ -1526,10 +1547,14 @@ export default function Fulfilment() {
   const pickedUnits = groupedItems.reduce((sum, g) => sum + Math.min(pickedCounts.get(g._groupKey) ?? 0, g.totalQty), 0);
   const allChecked = totalUnits > 0 && pickedUnits >= totalUnits;
 
+  // Local orders bypass every courier gate — computed once here so the label
+  // gate, completion and auto-complete all agree.
+  const activeIsLocal = !!activeOrder && isLocalDelivery(activeOrder);
+
   // True while the packer still owes us a verified APC label for this order.
   // Only meaningful in reconcile mode, and only once we know which consignment
   // to expect — a lookup failure shows its own blocking message instead.
-  const labelGateOpen = reconcileMode && !!expectedConsignment && !labelVerified?.verified;
+  const labelGateOpen = reconcileMode && !activeIsLocal && !!expectedConsignment && !labelVerified?.verified;
 
   async function handleLabelScan(scanned: string) {
     if (!activeOrder || verifyingLabel) return;
@@ -1649,10 +1674,12 @@ export default function Fulfilment() {
     // Reconcile mode gates on the verified label instead of a booked shipment —
     // shipping without a verified consignment is the exact failure this flow
     // exists to prevent.
-    if (reconcileMode) {
-      if (!labelVerified?.verified) return;
-    } else if (apcEnabled && !shipment) {
-      return;
+    if (!activeIsLocal) {
+      if (reconcileMode) {
+        if (!labelVerified?.verified) return;
+      } else if (apcEnabled && !shipment) {
+        return;
+      }
     }
 
     // Snapshot what we need for the background call before we move on.
@@ -1844,9 +1871,11 @@ export default function Fulfilment() {
   // disabled); `completing` prevents a re-entrant call while the request
   // is in flight.
   useEffect(() => {
-    const courierReady = reconcileMode
-      ? !!labelVerified?.verified
-      : (!apcEnabled || !!shipment);
+    const courierReady = activeIsLocal
+      ? true
+      : reconcileMode
+        ? !!labelVerified?.verified
+        : (!apcEnabled || !!shipment);
     if (
       view === "picking" &&
       allChecked &&
@@ -2482,6 +2511,18 @@ export default function Fulfilment() {
           </div>
         )}
 
+        {/* Local delivery: no courier, no label — make that loudly obvious so
+            nobody stands at the printer waiting for a label that won't come. */}
+        {activeIsLocal && (
+          <div className="flex items-start gap-2 text-sm rounded-xl border border-teal-300 dark:border-teal-800 bg-teal-50 dark:bg-teal-950/30 px-4 py-3">
+            <Truck className="w-4 h-4 text-teal-600 dark:text-teal-400 flex-shrink-0 mt-0.5" />
+            <span className="text-teal-800 dark:text-teal-200">
+              <strong>Local delivery</strong> — no APC label needed. Pick and complete as
+              normal, then set the box aside for the van run.
+            </span>
+          </div>
+        )}
+
         {/* ── Reconcile mode: APC label gate ──────────────────────────────
             Blocks picking until the printed label on the box is proven to
             belong to this order. */}
@@ -2686,7 +2727,7 @@ export default function Fulfilment() {
           </button>
           <button
             onClick={() => handleComplete()}
-            disabled={!allChecked || (apcEnabled && !shipment) || completing}
+            disabled={!allChecked || (apcEnabled && !activeIsLocal && !shipment && !labelVerified?.verified) || completing}
             className="flex-1 py-3 bg-primary text-primary-foreground rounded-xl font-semibold text-lg hover:bg-primary/90 transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
           >
             {allChecked ? (
@@ -3083,6 +3124,7 @@ export default function Fulfilment() {
               { key: "small box" as const, label: "Small Box" },
               { key: "large box" as const, label: "Large Box" },
               { key: "wholesale" as const, label: "Wholesale" },
+              { key: "local delivery" as const, label: "Local Delivery" },
               { key: "other" as const, label: "Other" },
             ] as const).map(tab => {
               const count = boxCounts[tab.key];
@@ -3304,7 +3346,10 @@ export default function Fulfilment() {
             // by hand and APC flags service problems there — so a stored
             // failure here must never block the scanner (2026-07-29: stale
             // LW16 rejections froze the entire pick list).
-            const postcodeIssue = apcMode === "full" ? postcodeIssueMap.get(order.id) : undefined;
+            // Local deliveries never touch APC, so APC postcode coverage can't
+            // block them — the van doesn't care what APC thinks of the postcode.
+            const localOrder = isLocalDelivery(order);
+            const postcodeIssue = apcMode === "full" && !localOrder ? postcodeIssueMap.get(order.id) : undefined;
             const isBlocked = !!postcodeIssue;
 
             return (
@@ -3337,6 +3382,11 @@ export default function Fulfilment() {
                     {hasUnassigned && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300 font-medium">
                         Unassigned SKUs
+                      </span>
+                    )}
+                    {localOrder && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300 font-medium flex items-center gap-1">
+                        <Truck className="w-2.5 h-2.5" /> Local Delivery
                       </span>
                     )}
                     {skippedIds.has(order.id) && (

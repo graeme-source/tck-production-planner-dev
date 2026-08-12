@@ -32,3 +32,4 @@ export * from "./queued_production";
 export * from "./case_orders";
 export * from "./founder_focus";
 export * from "./surveys";
+export * from "./stock_gating";

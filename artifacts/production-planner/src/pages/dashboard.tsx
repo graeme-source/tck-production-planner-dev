@@ -3,6 +3,7 @@ import { useListProductionPlans, useListDispatchOrders, useGetProductionPlan } f
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
 import { EightPackOrdersBanner } from "@/components/eight-pack-orders-banner";
+import { StockGateBanner } from "@/components/stock-gate-banner";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { format, isToday, startOfWeek, addWeeks, addDays } from "date-fns";
 import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X, Sparkles, Salad, UserPlus } from "lucide-react";
@@ -650,6 +651,7 @@ export default function Dashboard() {
       {showIssueBanner && <AndonBanner userRole={userRole} />}
 
       <EightPackOrdersBanner userRole={userRole} />
+      <StockGateBanner userRole={userRole} />
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <StatCard

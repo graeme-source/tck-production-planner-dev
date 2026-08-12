@@ -653,6 +653,12 @@ router.get("/calculate", async (req, res) => {
     return;
   }
 
+  res.json(await calculatePlanData(planDate));
+});
+
+// Callable form of GET /calculate — the stock-gating poller consumes the same
+// numbers the Create Plan screen sees, so the two can never disagree.
+export async function calculatePlanData(planDate: string) {
   // Holiday-aware dispatch-day helpers. Bank holidays / factory shutdowns
   // come from app_settings.non_dispatch_dates. We resolve the Set once
   // per request and reuse it for both walks.
@@ -1894,7 +1900,7 @@ router.get("/calculate", async (req, res) => {
     return a.recipeName.localeCompare(b.recipeName);
   });
 
-  res.json({
+  return {
     planDate,
     prevProductionDate,
     deliveryDates,
@@ -1912,8 +1918,8 @@ router.get("/calculate", async (req, res) => {
     expiryWarnings,
     queuedProduction,
     recipes: orderedResult,
-  });
-});
+  };
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // POST /production-plans/chilled-exclusions
