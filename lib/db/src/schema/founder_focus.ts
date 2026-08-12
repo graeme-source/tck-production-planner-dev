@@ -108,6 +108,41 @@ export const founderRecurringTicksTable = pgTable(
   (t) => [unique("founder_recurring_ticks_item_date").on(t.itemId, t.date)],
 );
 
+// One-off things to do on a given day — the layer between a long-term goal
+// and a recurring ritual. A task belongs to a DATE (the day it's meant to
+// happen) and optionally to a pillar and a specific block. Ticking sets
+// doneAt; unfinished tasks stay on their original date and surface as
+// "overdue" for the founder to reschedule, rather than silently rolling
+// forward (Graeme, 2026-08-12).
+export const founderTasksTable = pgTable(
+  "founder_tasks",
+  {
+    id: serial("id").primaryKey(),
+    title: text("title").notNull(),
+    detail: text("detail"),
+    // Dashboard/report link rendered as a button, same as goals and rituals.
+    url: text("url"),
+    pillarId: integer("pillar_id").references(() => founderPillarsTable.id, {
+      onDelete: "set null",
+    }),
+    // Pinned to one block of the day. Null = show against the pillar's first
+    // block (same rule as rituals), or in the unassigned list if no pillar.
+    blockId: integer("block_id").references(() => founderBlocksTable.id, {
+      onDelete: "set null",
+    }),
+    date: date("date").notNull(),
+    // open | done
+    status: text("status").notNull().default("open"),
+    doneAt: timestamp("done_at"),
+    // manual | ai | parking — where the task came from. 'ai' means the
+    // quick-add router chose the pillar/block and the founder confirmed it.
+    source: text("source").notNull().default("manual"),
+    sort: integer("sort").notNull().default(0),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("ix_founder_tasks_date").on(t.date, t.status)],
+);
+
 export const founderParkingLotTable = pgTable("founder_parking_lot", {
   id: serial("id").primaryKey(),
   text: text("text").notNull(),
@@ -122,3 +157,4 @@ export type FounderBlockTemplate = typeof founderBlockTemplatesTable.$inferSelec
 export type FounderParkingLotItem = typeof founderParkingLotTable.$inferSelect;
 export type FounderRecurringItem = typeof founderRecurringItemsTable.$inferSelect;
 export type FounderRecurringTick = typeof founderRecurringTicksTable.$inferSelect;
+export type FounderTask = typeof founderTasksTable.$inferSelect;

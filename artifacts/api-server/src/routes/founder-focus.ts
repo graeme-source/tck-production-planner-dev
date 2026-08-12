@@ -8,8 +8,9 @@ import {
   founderParkingLotTable,
   founderRecurringItemsTable,
   founderRecurringTicksTable,
+  founderTasksTable,
 } from "@workspace/db";
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { verifyCaldav, getDayEvents, resetCaldavCache, type CalendarEvent } from "../lib/caldav";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
@@ -121,7 +122,7 @@ router.get("/overview", async (req: Request, res: Response) => {
   try {
     await autofillFromTemplate(dateStr, weekday);
 
-    const [pillars, goals, blocks, templates, parkingLot, recurringItems, ticks, appleId, appPassword] = await Promise.all([
+    const [pillars, goals, blocks, templates, parkingLot, recurringItems, ticks, tasks, overdueTasks, appleId, appPassword] = await Promise.all([
       db.select().from(founderPillarsTable).where(isNull(founderPillarsTable.archivedAt)).orderBy(asc(founderPillarsTable.sort), asc(founderPillarsTable.id)),
       db.select().from(founderGoalsTable).orderBy(asc(founderGoalsTable.sort), asc(founderGoalsTable.id)),
       db.select().from(founderBlocksTable).where(eq(founderBlocksTable.date, dateStr)).orderBy(asc(founderBlocksTable.startMin)),
@@ -129,6 +130,13 @@ router.get("/overview", async (req: Request, res: Response) => {
       db.select().from(founderParkingLotTable).where(isNull(founderParkingLotTable.resolvedAt)).orderBy(asc(founderParkingLotTable.createdAt)),
       db.select().from(founderRecurringItemsTable).where(isNull(founderRecurringItemsTable.archivedAt)).orderBy(asc(founderRecurringItemsTable.sort), asc(founderRecurringItemsTable.id)),
       db.select().from(founderRecurringTicksTable).where(eq(founderRecurringTicksTable.date, dateStr)),
+      db.select().from(founderTasksTable).where(eq(founderTasksTable.date, dateStr)).orderBy(asc(founderTasksTable.sort), asc(founderTasksTable.id)),
+      // Anything still open on a date before TODAY — not before the date being
+      // viewed, so paging back through the week doesn't invent overdue work
+      // that was fine at the time.
+      db.select().from(founderTasksTable)
+        .where(and(eq(founderTasksTable.status, "open"), lt(founderTasksTable.date, todayLondonStr())))
+        .orderBy(asc(founderTasksTable.date), asc(founderTasksTable.id)),
       getFounderSetting(CALDAV_ID_KEY),
       getFounderSetting(CALDAV_PW_KEY),
     ]);
@@ -163,6 +171,11 @@ router.get("/overview", async (req: Request, res: Response) => {
         ticked: tickedItemIds.has(i.id),
         dueOnDate: recurringMatchesDate(i, dateStr, weekday),
       })),
+      tasks,
+      // Open tasks left behind on earlier days. The day view shows these in a
+      // review strip so they get rescheduled on purpose rather than rolling
+      // forward silently (Graeme, 2026-08-12).
+      overdueTasks,
       objectives: await listObjectives(),
       calendarConfigured,
       events,
@@ -393,6 +406,163 @@ router.delete("/goals/:id", async (req: Request, res: Response) => {
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   await db.delete(founderGoalsTable).where(eq(founderGoalsTable.id, id));
   res.json({ ok: true });
+});
+
+// ── Tasks ──────────────────────────────────────────────────────────────────
+// Day-to-day to-dos. A task belongs to a DATE; pillar and block are optional
+// (an unrouted task shows in the day's "Unassigned" tray). Ticking one hides
+// it behind the day's "show completed" toggle; leaving one undone keeps it on
+// its own date, where the overdue strip picks it up the next morning.
+const TaskBody = z.object({
+  title: z.string().trim().min(1).max(300),
+  detail: z.string().trim().max(2000).nullish(),
+  url: z.string().trim().max(500).nullish(),
+  date: z.string().regex(DATE_RE),
+  pillarId: z.number().int().nullish(),
+  blockId: z.number().int().nullish(),
+  source: z.enum(["manual", "ai", "parking"]).optional(),
+});
+
+router.post("/tasks", async (req: Request, res: Response) => {
+  const parsed = TaskBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid body" }); return; }
+  const t = parsed.data;
+  const [row] = await db.insert(founderTasksTable).values({
+    title: t.title,
+    detail: t.detail ?? null,
+    url: t.url || null,
+    date: t.date,
+    pillarId: t.pillarId ?? null,
+    blockId: t.blockId ?? null,
+    source: t.source ?? "manual",
+  }).returning();
+  res.status(201).json(row);
+});
+
+router.patch("/tasks/:id", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const parsed = TaskBody.partial().extend({
+    status: z.enum(["open", "done"]).optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid body" }); return; }
+  const { status, url, date, pillarId, blockId, ...fields } = parsed.data;
+  // Moving a task to another day drops its block pin — block ids belong to a
+  // single date, so keeping one would point at yesterday's timeline. Callers
+  // that mean to re-pin send blockId explicitly in the same request.
+  const movedDay = date !== undefined;
+  const [row] = await db.update(founderTasksTable)
+    .set({
+      ...fields,
+      ...(url !== undefined ? { url: url || null } : {}),
+      ...(date !== undefined ? { date } : {}),
+      ...(pillarId !== undefined ? { pillarId: pillarId ?? null } : {}),
+      ...(blockId !== undefined ? { blockId: blockId ?? null } : movedDay ? { blockId: null } : {}),
+      ...(status !== undefined ? { status, doneAt: status === "done" ? new Date() : null } : {}),
+    })
+    .where(eq(founderTasksTable.id, id))
+    .returning();
+  if (!row) { res.status(404).json({ error: "Task not found" }); return; }
+  res.json(row);
+});
+
+router.delete("/tasks/:id", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  await db.delete(founderTasksTable).where(eq(founderTasksTable.id, id));
+  res.json({ ok: true });
+});
+
+// Where should a typed task go? Reads the pillars and the day's blocks and
+// proposes a home for it. This ONLY suggests — nothing is written until the
+// founder confirms in the quick-add bar, so a bad guess costs one dropdown.
+const CLASSIFY_TOOL = {
+  name: "route_task",
+  description: "Choose which pillar and time block a new task belongs to.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      pillarId: { type: ["integer", "null"], description: "Pillar id from the provided list, or null if it fits none of them" },
+      blockId: { type: ["integer", "null"], description: "Block id from the day's list, or null to leave it unpinned" },
+      recurring: { type: "boolean", description: "True only if the founder's wording says this repeats (every day, weekly, each morning…)" },
+      reason: { type: "string", description: "A short phrase, max 12 words, saying why — shown next to the confirm button." },
+    },
+    required: ["pillarId", "blockId", "recurring", "reason"],
+  },
+};
+
+router.post("/tasks/classify", async (req: Request, res: Response) => {
+  const parsed = z.object({
+    title: z.string().trim().min(1).max(300),
+    date: z.string().regex(DATE_RE),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "title and date required" }); return; }
+  const { title, date: dateStr } = parsed.data;
+
+  const [pillars, blocks] = await Promise.all([
+    db.select().from(founderPillarsTable).where(isNull(founderPillarsTable.archivedAt)).orderBy(asc(founderPillarsTable.sort)),
+    db.select().from(founderBlocksTable).where(eq(founderBlocksTable.date, dateStr)).orderBy(asc(founderBlocksTable.startMin)),
+  ]);
+
+  // No AI configured is not an error — quick-add still works, it just doesn't
+  // pre-fill. Same for any failure below.
+  if (!isClaudeConfigured()) { res.json({ pillarId: null, blockId: null, recurring: false, reason: null, available: false }); return; }
+
+  const fmt = (min: number) => `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+  const context = [
+    `Pillars (id · name):`,
+    ...pillars.map(p => `  ${p.id} · ${p.name}${p.notes ? ` — ${p.notes}` : ""}`),
+    blocks.length ? `Blocks on ${dateStr} (id · time · title · pillar):` : `No blocks on ${dateStr}.`,
+    ...blocks.map(b => `  ${b.id} · ${fmt(b.startMin)}-${fmt(b.endMin)} · ${b.title} · pillar ${b.pillarId ?? "none"}`),
+  ].join("\n");
+
+  try {
+    const client = getClaudeClient();
+    const response = await client.messages.create({
+      model: CLAUDE_MODELS.sonnet,
+      max_tokens: 300,
+      system: [
+        "You route a new to-do into The Calzone Kitchen founder's day planner.",
+        "Pick the pillar whose remit the task falls under, and the block on that pillar it best fits.",
+        "Prefer a block belonging to the chosen pillar; if the pillar has no block today, return blockId null.",
+        "If the task matches no pillar, return null rather than forcing a fit.",
+        "Set recurring true ONLY when the wording itself says it repeats.",
+      ].join(" "),
+      messages: [{ role: "user", content: `${context}\n\nNew task: ${title}` }],
+      tools: [CLASSIFY_TOOL],
+      tool_choice: { type: "tool", name: "route_task" },
+    });
+    const toolUse = response.content.find(c => c.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") { res.json({ pillarId: null, blockId: null, recurring: false, reason: null, available: true }); return; }
+    const out = toolUse.input as { pillarId?: number | null; blockId?: number | null; recurring?: boolean; reason?: string };
+
+    // Never trust the ids back — a hallucinated pillar would silently file the
+    // task under nothing, and a stale block id would pin it to another day.
+    const pillarId = out.pillarId != null && pillars.some(p => p.id === out.pillarId) ? out.pillarId : null;
+    const block = out.blockId != null ? blocks.find(b => b.id === out.blockId) : undefined;
+    res.json({
+      pillarId,
+      blockId: block ? block.id : null,
+      recurring: !!out.recurring,
+      reason: out.reason?.trim() || null,
+      available: true,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[founder-focus] task classify error:", msg);
+    res.json({ pillarId: null, blockId: null, recurring: false, reason: null, available: false });
+  }
+});
+
+// Completed-task history, newest first. Separate from /overview because the
+// day view only ever needs its own date.
+router.get("/tasks/history", async (req: Request, res: Response) => {
+  const days = Math.min(180, Math.max(1, Number(req.query.days) || 30));
+  const from = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+  const rows = await db.select().from(founderTasksTable)
+    .where(and(eq(founderTasksTable.status, "done"), gte(founderTasksTable.date, from)))
+    .orderBy(desc(founderTasksTable.doneAt));
+  res.json(rows);
 });
 
 // ── Blocks ─────────────────────────────────────────────────────────────────

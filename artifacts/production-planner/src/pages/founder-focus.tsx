@@ -89,6 +89,31 @@ interface RecurringItem {
   dueOnDate: boolean;
 }
 
+// A one-off to-do for a given day. Distinct from a Goal (long-term, lives on
+// the pillar for ever) and a RecurringItem (repeats on a schedule).
+interface Task {
+  id: number;
+  title: string;
+  detail: string | null;
+  url: string | null;
+  pillarId: number | null;
+  blockId: number | null;
+  date: string;
+  status: "open" | "done";
+  doneAt: string | null;
+  source: string;
+  sort: number;
+}
+
+// What the AI quick-add router proposes. Nothing is written until confirmed.
+interface TaskRoute {
+  pillarId: number | null;
+  blockId: number | null;
+  recurring: boolean;
+  reason: string | null;
+  available: boolean;
+}
+
 const SCHEDULE_LABELS: Record<RecurringSchedule, string> = {
   daily: "Every day",
   weekdays: "Weekdays",
@@ -124,6 +149,8 @@ interface Overview {
   templates: TemplateRow[];
   parkingLot: ParkingItem[];
   recurringItems: RecurringItem[];
+  tasks: Task[];
+  overdueTasks: Task[];
   calendarConfigured: boolean;
   events: CalEvent[];
   calendarError: string | null;
@@ -265,6 +292,20 @@ export default function FounderFocus() {
       api(`/recurring-items/${id}/tick`, { method: "POST", body: JSON.stringify({ date: dateStr, ticked }) }),
     onSuccess: invalidate,
   });
+  const addTask = useMutation({
+    mutationFn: (t: { title: string; date: string; pillarId?: number | null; blockId?: number | null; source?: string }) =>
+      api("/tasks", { method: "POST", body: JSON.stringify(t) }),
+    onSuccess: invalidate,
+  });
+  const patchTask = useMutation({
+    mutationFn: ({ id, ...fields }: { id: number; status?: Task["status"]; title?: string; date?: string; pillarId?: number | null; blockId?: number | null }) =>
+      api(`/tasks/${id}`, { method: "PATCH", body: JSON.stringify(fields) }),
+    onSuccess: invalidate,
+  });
+  const deleteTask = useMutation({
+    mutationFn: (id: number) => api(`/tasks/${id}`, { method: "DELETE" }),
+    onSuccess: invalidate,
+  });
   const addTemplateRow = useMutation({
     mutationFn: (t: { weekday: number; startMin: number; endMin: number; title?: string; pillarId: number | null }) =>
       api("/templates", { method: "POST", body: JSON.stringify(t) }),
@@ -311,7 +352,8 @@ export default function FounderFocus() {
     t.kind === "block"
       ? t.block.status !== "planned"
       : (isToday && t.endMin <= now);
-  const completedCount = isToday ? timeline.filter(isCompleted).length : 0;
+  const completedCount = (isToday ? timeline.filter(isCompleted).length : 0)
+    + (data?.tasks ?? []).filter(t => t.status === "done").length;
   const visibleTimeline = isToday && !showCompleted ? timeline.filter(t => !isCompleted(t)) : timeline;
 
   // ── Reminders ────────────────────────────────────────────────────────────
@@ -438,6 +480,33 @@ export default function FounderFocus() {
     return m;
   }, [blocks, data?.recurringItems]);
 
+  // Tasks land in a block the same way rituals do: an explicit blockId wins,
+  // otherwise they fall to the first block of their pillar. Anything with no
+  // pillar (or a pillar with no block today) collects in the unassigned tray
+  // below the timeline rather than disappearing.
+  const tasks = data?.tasks ?? [];
+  const { tasksByBlockId, unassignedTasks } = useMemo(() => {
+    const firstBlockForPillar = new Map<number, number>();
+    for (const b of blocks) {
+      if (b.pillarId != null && !firstBlockForPillar.has(b.pillarId)) firstBlockForPillar.set(b.pillarId, b.id);
+    }
+    const blockIds = new Set(blocks.map(b => b.id));
+    const byBlock = new Map<number, Task[]>();
+    const loose: Task[] = [];
+    for (const t of tasks) {
+      const target = t.blockId != null && blockIds.has(t.blockId)
+        ? t.blockId
+        : t.pillarId != null ? firstBlockForPillar.get(t.pillarId) : undefined;
+      if (target == null) { loose.push(t); continue; }
+      if (!byBlock.has(target)) byBlock.set(target, []);
+      byBlock.get(target)!.push(t);
+    }
+    return { tasksByBlockId: byBlock, unassignedTasks: loose };
+  }, [blocks, tasks]);
+
+  // Done tasks follow the same "show completed" toggle as finished blocks.
+  const visibleTask = (t: Task) => showCompleted || t.status === "open";
+
   if (state.status !== "authenticated" || state.user.email !== FOUNDER_EMAIL) {
     return <Redirect to="/" />;
   }
@@ -558,6 +627,31 @@ export default function FounderFocus() {
           </div>
         </div>
 
+        {/* ── Add a task ───────────────────────────────────────────────────
+            The main way things get onto the day. Type it, let the AI say
+            where it belongs, confirm or override, done. */}
+        <QuickAddTask
+          pillars={data?.pillars ?? []}
+          blocks={blocks}
+          dateStr={dateStr}
+          pending={addTask.isPending}
+          onAdd={t => addTask.mutate(t)}
+          onAddRecurring={(pillarId, title) => addRecurring.mutate({ pillarId, title })}
+        />
+
+        {/* Yesterday's unfinished work, surfaced once so it gets rescheduled
+            deliberately instead of rolling forward on its own. */}
+        {(data?.overdueTasks.length ?? 0) > 0 && (
+          <OverdueStrip
+            tasks={data!.overdueTasks}
+            pillarById={pillarById}
+            todayStr={todayStr}
+            onReschedule={(id, date) => patchTask.mutate({ id, date })}
+            onDone={id => patchTask.mutate({ id, status: "done" })}
+            onDrop={id => deleteTask.mutate(id)}
+          />
+        )}
+
         {/* Quick manual add — no AI, no template: pick times, pillar or
             title, done. Lives at the TOP of the section so it's findable
             (the old copy at the bottom of a full day's timeline was
@@ -623,6 +717,8 @@ export default function FounderFocus() {
             items={visibleTimeline}
             pillarById={pillarById}
             recurringByBlockId={recurringByBlockId}
+            tasksByBlockId={tasksByBlockId}
+            showTask={visibleTask}
             isToday={isToday}
             now={now}
             busy={timelineBusy}
@@ -633,7 +729,28 @@ export default function FounderFocus() {
             onDelete={id => deleteBlock.mutate(id)}
             onTickRecurring={(id, ticked) => tickRecurring.mutate({ id, ticked })}
             onToggleGoal={(id, done) => patchGoal.mutate({ id, status: done ? "done" : "active" })}
+            onToggleTask={(id, done) => patchTask.mutate({ id, status: done ? "done" : "open" })}
+            onDeleteTask={id => deleteTask.mutate(id)}
+            onAddTaskToBlock={(block, title) =>
+              addTask.mutate({ title, date: dateStr, pillarId: block.pillarId, blockId: block.id })}
           />
+        )}
+
+        {/* Tasks with no pillar, or whose pillar has no block today. They'd
+            otherwise be invisible — the timeline has nowhere to draw them. */}
+        {unassignedTasks.filter(visibleTask).length > 0 && (
+          <div className="rounded-xl border border-border bg-secondary/20 p-3 space-y-1.5">
+            <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              <CircleDashed className="w-3.5 h-3.5" /> Not in a block yet
+            </p>
+            {unassignedTasks.filter(visibleTask).map(t => (
+              <TaskRow key={t.id} task={t}
+                pillar={t.pillarId != null ? pillarById.get(t.pillarId) : undefined}
+                onToggle={done => patchTask.mutate({ id: t.id, status: done ? "done" : "open" })}
+                onDelete={() => deleteTask.mutate(t.id)}
+              />
+            ))}
+          </div>
         )}
 
       </section>
@@ -1615,10 +1732,14 @@ function layoutLanes(items: Array<{ startMin: number; endMin: number }>): Array<
   return result;
 }
 
-function DayTimeline({ items, pillarById, recurringByBlockId, isToday, now, busy, statusControls = true, onMove, onResize, onToggleDone, onSkip, onDelete, onTickRecurring, onToggleGoal }: {
+function DayTimeline({ items, pillarById, recurringByBlockId, tasksByBlockId, showTask, isToday, now, busy, statusControls = true, onMove, onResize, onToggleDone, onSkip, onDelete, onTickRecurring, onToggleGoal, onToggleTask, onDeleteTask, onAddTaskToBlock }: {
   items: TimelineCardItem[];
   pillarById: Map<number, Pillar>;
   recurringByBlockId?: Map<number, RecurringItem[]>;
+  /** Today's one-off tasks, grouped by the block they belong to. */
+  tasksByBlockId?: Map<number, Task[]>;
+  /** Honours the day's "show completed" toggle. */
+  showTask?: (t: Task) => boolean;
   isToday: boolean;
   now: number;
   busy: boolean;
@@ -1631,6 +1752,9 @@ function DayTimeline({ items, pillarById, recurringByBlockId, isToday, now, busy
   onTickRecurring?: (id: number, ticked: boolean) => void;
   /** Tick a pillar goal off (or back on) from inside a block. */
   onToggleGoal?: (goalId: number, done: boolean) => void;
+  onToggleTask?: (taskId: number, done: boolean) => void;
+  onDeleteTask?: (taskId: number) => void;
+  onAddTaskToBlock?: (block: Block, title: string) => void;
 }) {
   const [drag, setDrag] = useState<TimelineDrag | null>(null);
   // Tap-to-expand: a block card only has room for a preview of its rituals
@@ -1638,6 +1762,9 @@ function DayTimeline({ items, pillarById, recurringByBlockId, isToday, now, busy
   // over the timeline at full width with the complete, tickable list;
   // tapping again (or the chevron) collapses it back. One at a time.
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  // Which block currently has its inline "add a task" box open. Opening one
+  // also expands that card, so the new task is visible the moment it lands.
+  const [addingToId, setAddingToId] = useState<number | null>(null);
 
   // Displayed positions, with the in-flight drag applied.
   const displayed = items.map(t => {
@@ -1765,9 +1892,12 @@ function DayTimeline({ items, pillarById, recurringByBlockId, isToday, now, busy
           const color = pillar?.color ?? DEFAULT_PILLAR_COLOR;
           const isNow = isToday && t.dispStart <= now && now < t.dispEnd;
           const rituals = recurringByBlockId?.get(b.id) ?? [];
+          const blockTasks = (tasksByBlockId?.get(b.id) ?? []).filter(t => showTask ? showTask(t) : true);
           const dragging = drag?.id === b.id;
           const expanded = expandedId === b.id;
+          const adding = addingToId === b.id;
           const toggleExpanded = () => setExpandedId(expanded ? null : b.id);
+          const openAdd = () => { setAddingToId(b.id); setExpandedId(b.id); };
 
           return (
             <div key={`b-${b.id}`}
@@ -1813,7 +1943,18 @@ function DayTimeline({ items, pillarById, recurringByBlockId, isToday, now, busy
                     {b.status === "done" && <Check className="w-3 h-3" />}
                   </button>
                 )}
-                <div className="flex-1 min-w-0">
+                {/* The whole body is the tap target: the title toggles
+                    expand, and any dead space below opens the add-a-task box.
+                    Before this, a three-hour block was mostly unclickable —
+                    tapping it did nothing at all. */}
+                {/* self-stretch matters: the parent is items-start, so
+                    without it this column is only as tall as its content and
+                    the empty space in a long block belongs to the parent —
+                    i.e. still unclickable, which was the original complaint. */}
+                <div
+                  className="flex-1 min-w-0 self-stretch"
+                  onClick={e => { if (e.target === e.currentTarget && onAddTaskToBlock) openAdd(); }}
+                >
                   {/* Title doubles as the expand/collapse tap target — the
                       chips below are their own buttons, so only the title
                       (and the chevron) toggles. */}
@@ -1829,6 +1970,57 @@ function DayTimeline({ items, pillarById, recurringByBlockId, isToday, now, busy
                       {pillar && pillar.name !== b.title && <span className="ml-1" style={{ color }}>{pillar.name}</span>}
                       {b.status === "skipped" && <span className="ml-1">skipped</span>}
                     </p>
+                  )}
+                  {/* Today's to-dos come first — they're the reason you're
+                      looking at the block. */}
+                  {onToggleTask && blockTasks.length > 0 && (h >= 68 || expanded) && (
+                    <div className="mt-1 space-y-0.5">
+                      {(expanded ? blockTasks : blockTasks.slice(0, 4)).map(t => (
+                        <div key={t.id} className="flex items-center gap-1 group/task">
+                          <button
+                            onClick={() => onToggleTask(t.id, t.status !== "done")}
+                            className={cn(
+                              "flex items-center gap-1.5 text-[11px] rounded-md px-1.5 py-0.5 border min-w-0",
+                              t.status === "done"
+                                ? "border-primary/40 bg-primary/10 text-muted-foreground line-through"
+                                : "border-border hover:border-primary",
+                            )}
+                          >
+                            <span className={cn(
+                              "w-3 h-3 rounded-sm border flex items-center justify-center flex-shrink-0",
+                              t.status === "done" ? "bg-primary border-primary text-primary-foreground" : "border-border",
+                            )}>
+                              {t.status === "done" && <Check className="w-2 h-2" />}
+                            </span>
+                            <span className="truncate">{t.title}</span>
+                          </button>
+                          {t.url && (
+                            <FocusLink url={t.url} label={`Open link for ${t.title}`}
+                              className="flex-shrink-0 p-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20">
+                              <ExternalLink className="w-3 h-3" />
+                            </FocusLink>
+                          )}
+                          {onDeleteTask && expanded && (
+                            <button onClick={() => onDeleteTask(t.id)}
+                              className="p-0.5 rounded text-muted-foreground opacity-0 group-hover/task:opacity-100 hover:text-destructive"
+                              aria-label={`Delete task ${t.title}`}>
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      {!expanded && blockTasks.length > 4 && (
+                        <button onClick={toggleExpanded} className="text-[10px] text-primary pl-1 hover:underline">
+                          +{blockTasks.length - 4} more — tap to expand
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {adding && onAddTaskToBlock && (
+                    <InlineTaskInput
+                      onCancel={() => setAddingToId(null)}
+                      onSubmit={title => { onAddTaskToBlock(b, title); }}
+                    />
                   )}
                   {onTickRecurring && rituals.length > 0 && (h >= 84 || expanded) && (
                     <div className="mt-1 space-y-0.5">
@@ -1866,16 +2058,19 @@ function DayTimeline({ items, pillarById, recurringByBlockId, isToday, now, busy
                       ))}
                     </div>
                   )}
-                  {/* The pillar's goals, tickable in place — a standing
-                      reminder of what this block is FOR. Ticking marks the
-                      goal done everywhere (same PATCH as the pillar panel);
-                      tapping a done one brings it back. */}
-                  {onToggleGoal && pillar && (h >= 84 || expanded) && (() => {
+                  {/* The pillar's long-term goals — EXPANDED ONLY (2026-08-12).
+                      They used to render on the collapsed card, which meant
+                      every block of a pillar showed the same standing goals
+                      every day and buried the day's actual to-dos. They're
+                      still tickable here, and fully managed on the pillar
+                      panel; one tap on the card brings them back. */}
+                  {onToggleGoal && pillar && expanded && (() => {
                     const goals = pillar.goals.filter(g => g.status !== "parked");
                     if (goals.length === 0) return null;
-                    const shown = expanded ? goals : goals.slice(0, 6);
+                    const shown = goals;
                     return (
-                      <div className={cn("mt-1 space-y-0.5", expanded && "pb-2")}>
+                      <div className="mt-1 space-y-0.5 pb-2">
+                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground pt-1">Goals — {pillar.name}</p>
                         {shown.map(g => (
                           <button
                             key={g.id}
@@ -1904,6 +2099,16 @@ function DayTimeline({ items, pillarById, recurringByBlockId, isToday, now, busy
                   })()}
                 </div>
                 <div className="flex-shrink-0 flex items-center gap-0.5">
+                  {onAddTaskToBlock && b.status === "planned" && (
+                    <button
+                      onClick={openAdd}
+                      className="p-1 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10"
+                      title="Add a task to this block"
+                      aria-label={`Add a task to ${b.title}`}
+                    >
+                      <Plus className="w-3 h-3" />
+                    </button>
+                  )}
                   <button
                     onClick={toggleExpanded}
                     className="p-1 rounded-md text-muted-foreground hover:bg-secondary/50"
@@ -1940,6 +2145,295 @@ function DayTimeline({ items, pillarById, recurringByBlockId, isToday, now, busy
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// ── Tasks ──────────────────────────────────────────────────────────────────
+
+/** The add-a-task box that opens inside a block card. */
+function InlineTaskInput({ onSubmit, onCancel }: {
+  onSubmit: (title: string) => void;
+  onCancel: () => void;
+}) {
+  const [title, setTitle] = useState("");
+  const submit = () => {
+    const t = title.trim();
+    if (!t) return;
+    onSubmit(t);
+    // Stay open so several tasks can be typed in a row — Escape closes it.
+    setTitle("");
+  };
+  return (
+    <div className="mt-1 flex items-center gap-1" onClick={e => e.stopPropagation()}>
+      <input
+        value={title}
+        onChange={e => setTitle(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === "Enter") { e.preventDefault(); submit(); }
+          if (e.key === "Escape") onCancel();
+        }}
+        placeholder="Add a task…"
+        autoFocus
+        className="flex-1 min-w-0 px-1.5 py-0.5 rounded-md border border-primary/40 bg-background text-[11px]"
+      />
+      <button onClick={submit} disabled={!title.trim()}
+        className="p-1 rounded-md text-primary hover:bg-primary/10 disabled:opacity-40" aria-label="Save task">
+        <Check className="w-3 h-3" />
+      </button>
+      <button onClick={onCancel} className="p-1 rounded-md text-muted-foreground hover:bg-secondary/50" aria-label="Close">
+        <X className="w-3 h-3" />
+      </button>
+    </div>
+  );
+}
+
+/** A task outside the timeline — the unassigned tray and the overdue strip. */
+function TaskRow({ task, pillar, onToggle, onDelete }: {
+  task: Task;
+  pillar?: Pillar;
+  onToggle: (done: boolean) => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 group/row">
+      <button
+        onClick={() => onToggle(task.status !== "done")}
+        className={cn(
+          "flex items-center gap-2 text-sm rounded-lg px-2 py-1 border flex-1 min-w-0 text-left",
+          task.status === "done"
+            ? "border-primary/40 bg-primary/10 text-muted-foreground line-through"
+            : "border-border hover:border-primary",
+        )}
+      >
+        <span className={cn(
+          "w-3.5 h-3.5 rounded-sm border flex items-center justify-center flex-shrink-0",
+          task.status === "done" ? "bg-primary border-primary text-primary-foreground" : "border-border",
+        )}>
+          {task.status === "done" && <Check className="w-2.5 h-2.5" />}
+        </span>
+        <span className="truncate flex-1">{task.title}</span>
+        {pillar && (
+          <span className="text-[10px] flex-shrink-0" style={{ color: pillar.color ?? DEFAULT_PILLAR_COLOR }}>
+            {pillar.name}
+          </span>
+        )}
+      </button>
+      <button onClick={onDelete}
+        className="p-1 rounded-md text-muted-foreground opacity-0 group-hover/row:opacity-100 hover:text-destructive"
+        aria-label={`Delete task ${task.title}`}>
+        <Trash2 className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Quick add with AI routing. Type a task, the router proposes a pillar and a
+ * block, and nothing is written until it's confirmed — a wrong guess costs
+ * one dropdown, not a misfiled task. Works with the AI switched off too: the
+ * dropdowns just start empty.
+ */
+function QuickAddTask({ pillars, blocks, dateStr, pending, onAdd, onAddRecurring }: {
+  pillars: Pillar[];
+  blocks: Block[];
+  dateStr: string;
+  pending: boolean;
+  onAdd: (t: { title: string; date: string; pillarId: number | null; blockId: number | null; source: string }) => void;
+  onAddRecurring: (pillarId: number, title: string) => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [route, setRoute] = useState<TaskRoute | null>(null);
+  const [pillarId, setPillarId] = useState<number | null>(null);
+  const [blockId, setBlockId] = useState<number | null>(null);
+  const [makeRecurring, setMakeRecurring] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const classify = useMutation({
+    mutationFn: (t: string) => api("/tasks/classify", { method: "POST", body: JSON.stringify({ title: t, date: dateStr }) }) as Promise<TaskRoute>,
+    onSuccess: r => {
+      setRoute(r);
+      setPillarId(r.pillarId);
+      setBlockId(r.blockId);
+      setMakeRecurring(r.recurring);
+    },
+    // A router failure must never block capture — fall through to the manual
+    // dropdowns with nothing pre-filled.
+    onError: () => setRoute({ pillarId: null, blockId: null, recurring: false, reason: null, available: false }),
+  });
+
+  const reset = () => {
+    setTitle(""); setRoute(null); setPillarId(null); setBlockId(null); setMakeRecurring(false); setError(null);
+  };
+
+  const confirm = () => {
+    const t = title.trim();
+    if (!t) return;
+    if (makeRecurring) {
+      if (pillarId == null) { setError("A repeating item needs a pillar."); return; }
+      onAddRecurring(pillarId, t);
+    } else {
+      onAdd({ title: t, date: dateStr, pillarId, blockId, source: route?.available ? "ai" : "manual" });
+    }
+    reset();
+  };
+
+  // Only blocks of the chosen pillar are offered — pinning a Sales task to a
+  // Product block is nearly always a mis-tap.
+  const blockChoices = pillarId == null ? blocks : blocks.filter(b => b.pillarId === pillarId);
+
+  return (
+    <div className="rounded-xl border border-border bg-secondary/20 p-3 space-y-2">
+      <div className="flex items-center gap-2">
+        <input
+          value={title}
+          onChange={e => { setTitle(e.target.value); setRoute(null); setError(null); }}
+          onKeyDown={e => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            if (route) confirm();
+            else if (title.trim()) classify.mutate(title.trim());
+          }}
+          placeholder="Add a task for today — e.g. chase Salvo about the pallet rate"
+          className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-border bg-background text-sm"
+        />
+        {!route ? (
+          <button
+            onClick={() => title.trim() && classify.mutate(title.trim())}
+            disabled={!title.trim() || classify.isPending}
+            className="text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5 flex-shrink-0"
+          >
+            {classify.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+            {classify.isPending ? "Thinking…" : "Add task"}
+          </button>
+        ) : (
+          <>
+            <button
+              onClick={confirm}
+              disabled={pending}
+              className="text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5 flex-shrink-0"
+            >
+              <Check className="w-3.5 h-3.5" /> Confirm
+            </button>
+            <button onClick={reset} className="p-2 rounded-lg text-muted-foreground hover:bg-secondary/50 flex-shrink-0" aria-label="Cancel">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </>
+        )}
+      </div>
+
+      {route && (
+        <div className="flex items-center gap-2 flex-wrap text-xs">
+          <span className="text-muted-foreground">
+            {route.available
+              ? route.reason ? `Suggested — ${route.reason}` : "Suggested"
+              : "AI routing unavailable — pick a home:"}
+          </span>
+          <select
+            value={pillarId ?? ""}
+            onChange={e => { const v = e.target.value ? Number(e.target.value) : null; setPillarId(v); setBlockId(null); }}
+            className="px-2 py-1 rounded-md border border-border bg-background text-xs"
+            aria-label="Pillar"
+          >
+            <option value="">No pillar</option>
+            {pillars.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          {!makeRecurring && (
+            <select
+              value={blockId ?? ""}
+              onChange={e => setBlockId(e.target.value ? Number(e.target.value) : null)}
+              className="px-2 py-1 rounded-md border border-border bg-background text-xs"
+              aria-label="Block"
+            >
+              <option value="">No specific block</option>
+              {blockChoices.map(b => (
+                <option key={b.id} value={b.id}>{minToTime(b.startMin)} {b.title}</option>
+              ))}
+            </select>
+          )}
+          <label className="flex items-center gap-1.5 text-muted-foreground cursor-pointer">
+            <input type="checkbox" checked={makeRecurring} onChange={e => setMakeRecurring(e.target.checked)} />
+            <Repeat className="w-3 h-3" /> Every day
+          </label>
+          {error && <span className="text-destructive">{error}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Open tasks left on earlier days. They stay on their own date until dealt
+ * with here — Graeme's call (2026-08-12): overdue work should be rescheduled
+ * on purpose, not silently carried forward.
+ */
+function OverdueStrip({ tasks, pillarById, todayStr, onReschedule, onDone, onDrop }: {
+  tasks: Task[];
+  pillarById: Map<number, Pillar>;
+  todayStr: string;
+  onReschedule: (id: number, date: string) => void;
+  onDone: (id: number) => void;
+  onDrop: (id: number) => void;
+}) {
+  const [open, setOpen] = useState(true);
+  const tomorrow = format(addDays(parseISO(todayStr), 1), "yyyy-MM-dd");
+
+  return (
+    <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
+      <button onClick={() => setOpen(o => !o)} className="w-full flex items-center gap-2 text-left">
+        <CircleDashed className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+        <span className="text-sm font-medium text-amber-700 dark:text-amber-400 flex-1">
+          {tasks.length} overdue {tasks.length === 1 ? "task" : "tasks"} — needs rescheduling
+        </span>
+        <ChevronDown className={cn("w-4 h-4 text-amber-700 dark:text-amber-400 transition-transform", open && "rotate-180")} />
+      </button>
+      {open && (
+        <ul className="space-y-1.5">
+          {tasks.map(t => {
+            const pillar = t.pillarId != null ? pillarById.get(t.pillarId) : undefined;
+            return (
+              <li key={t.id} className="flex items-center gap-2 flex-wrap rounded-lg bg-background/60 px-2 py-1.5">
+                <span className="text-xs text-muted-foreground flex-shrink-0 tabular-nums">
+                  {format(parseISO(t.date), "d MMM")}
+                </span>
+                <span className="text-sm flex-1 min-w-0 truncate">{t.title}</span>
+                {pillar && (
+                  <span className="text-[10px] flex-shrink-0" style={{ color: pillar.color ?? DEFAULT_PILLAR_COLOR }}>
+                    {pillar.name}
+                  </span>
+                )}
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <button onClick={() => onReschedule(t.id, todayStr)}
+                    className="text-[11px] px-2 py-1 rounded-md border border-border bg-background hover:bg-secondary/50">
+                    Today
+                  </button>
+                  <button onClick={() => onReschedule(t.id, tomorrow)}
+                    className="text-[11px] px-2 py-1 rounded-md border border-border bg-background hover:bg-secondary/50">
+                    Tomorrow
+                  </button>
+                  <input
+                    type="date"
+                    value={t.date}
+                    onChange={e => e.target.value && onReschedule(t.id, e.target.value)}
+                    className="text-[11px] px-1.5 py-1 rounded-md border border-border bg-background"
+                    aria-label={`Pick a new date for ${t.title}`}
+                  />
+                  <button onClick={() => onDone(t.id)}
+                    className="p-1 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10"
+                    title="Already done" aria-label={`Mark ${t.title} done`}>
+                    <Check className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => onDrop(t.id)}
+                    className="p-1 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                    title="Drop it" aria-label={`Delete ${t.title}`}>
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }
