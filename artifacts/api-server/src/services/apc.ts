@@ -86,7 +86,9 @@ interface NormalisedAddress {
   warnings: string[];
 }
 
-function normaliseAddress(
+/** Exported so address handling can be inspected and tested without booking
+ *  anything with APC — a wrong address only shows up as a failed delivery. */
+export function normaliseAddress(
   address1: string,
   address2: string | undefined,
   city: string,
