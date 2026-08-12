@@ -113,6 +113,7 @@ function SortableFillingRow({
   id,
   weightPerBatch,
   weightHalfBatch,
+  deductionGrams,
   checked,
   locked,
   showHandle,
@@ -121,6 +122,7 @@ function SortableFillingRow({
   id: string;
   weightPerBatch: number;
   weightHalfBatch: number;
+  deductionGrams: number;
   checked: boolean;
   locked: boolean;
   showHandle: boolean;
@@ -159,7 +161,14 @@ function SortableFillingRow({
         {locked || checked
           ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
           : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
-        <span className="text-2xl font-bold text-blue-700 dark:text-blue-400 flex-1 leading-tight">Filling</span>
+        <span className="text-2xl font-bold text-blue-700 dark:text-blue-400 flex-1 leading-tight">
+          Filling
+          {/* The weight beside this row is already trimmed. Naming the trim
+              keeps it obvious why the screen and the printed plan differ. */}
+          {deductionGrams > 0 && (
+            <span className="ml-2 text-sm font-semibold text-slate-500 dark:text-slate-400 tabular-nums">−{Math.round(deductionGrams)}g adj</span>
+          )}
+        </span>
         <span className="text-2xl font-bold font-mono tabular-nums flex-shrink-0">{Math.round(weightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(weightHalfBatch)}g</span></span>
       </button>
     </div>
@@ -167,7 +176,14 @@ function SortableFillingRow({
 }
 
 type AssemblyItemData = { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number; sourceType: "ingredient" | "sub_recipe"; sourceId: number; assemblyOrder: number | null; isTopping?: boolean };
-type AssemblyData = { itemId: number; recipeId: number; fillingWeightPerBatch: number; fillingWeightHalfBatch: number; fillingAssemblyOrder: number; assemblyItems: AssemblyItemData[]; postOvenItems?: AssemblyItemData[] };
+/** `fillingWeightPerBatch` is the recipe's real filling weight — keep using it
+ *  for "does this recipe have filling at all" checks, and leave it alone when
+ *  handing weights to anything outside this station. `builderWeightPerBatch` is
+ *  that weight minus the recipe's builder deduction, and is the only number the
+ *  builders should ever see: when a run reliably finishes a couple of packs
+ *  short, trimming a few grams per batch here recovers the pack count without
+ *  touching prep quantities, costing, or the printed plan. */
+type AssemblyData = { itemId: number; recipeId: number; fillingWeightPerBatch: number; fillingWeightHalfBatch: number; builderFillingDeductionGrams: number; builderWeightPerBatch: number; builderWeightHalfBatch: number; fillingAssemblyOrder: number; assemblyItems: AssemblyItemData[]; postOvenItems?: AssemblyItemData[] };
 
 function ChecklistItems({
   asm, hasFilling, isLocked, checkedItems, toggleCheck, dndSensors, onDragEnd,
@@ -202,8 +218,9 @@ function ChecklistItems({
                 <SortableFillingRow
                   key="filling"
                   id="filling"
-                  weightPerBatch={asm.fillingWeightPerBatch}
-                  weightHalfBatch={asm.fillingWeightHalfBatch}
+                  weightPerBatch={asm.builderWeightPerBatch}
+                  weightHalfBatch={asm.builderWeightHalfBatch}
+                  deductionGrams={asm.builderFillingDeductionGrams}
                   checked={!!checkedItems["filling"]}
                   locked={isLocked}
                   showHandle={true}
@@ -263,7 +280,7 @@ function ReadOnlyAssemblyList({ asm }: { asm: AssemblyData }) {
             {!entry.isFilling && entry.ai!.isTopping
               ? <span className="text-xl font-bold font-mono flex-shrink-0 text-slate-500 dark:text-slate-400">Sprinkle</span>
               : <span className="text-xl font-bold font-mono tabular-nums flex-shrink-0">
-                  {Math.round(entry.isFilling ? asm.fillingWeightPerBatch : entry.ai!.weightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(entry.isFilling ? asm.fillingWeightHalfBatch : entry.ai!.weightHalfBatch)}g</span>
+                  {Math.round(entry.isFilling ? asm.builderWeightPerBatch : entry.ai!.weightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(entry.isFilling ? asm.builderWeightHalfBatch : entry.ai!.weightHalfBatch)}g</span>
                 </span>
             }
           </div>
@@ -409,7 +426,16 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
       .then(d => {
         if (d?.items) {
           const map: Record<number, AssemblyData> = {};
-          for (const it of d.items) map[it.itemId] = it;
+          for (const it of d.items) {
+            const deduction = Math.max(0, Number(it.builderFillingDeductionGrams ?? 0));
+            const adjusted = Math.max(0, (Number(it.fillingWeightPerBatch) || 0) - deduction);
+            map[it.itemId] = {
+              ...it,
+              builderFillingDeductionGrams: deduction,
+              builderWeightPerBatch: adjusted,
+              builderWeightHalfBatch: adjusted / 2,
+            };
+          }
           setAssemblyMap(map);
         }
       })
@@ -2003,7 +2029,7 @@ function BatchDivision({ assemblyData, portionsPerBatch }: { assemblyData: Assem
           {allItems.map((entry) => {
             const isTopping = !entry.isFilling && entry.ai?.isTopping;
             const weight = entry.isFilling
-              ? assemblyData.fillingWeightPerBatch * scale
+              ? assemblyData.builderWeightPerBatch * scale
               : (entry.ai?.weightPerBatch ?? 0) * scale;
             return (
               <div key={entry.key} className="flex items-center justify-between px-1 py-2">

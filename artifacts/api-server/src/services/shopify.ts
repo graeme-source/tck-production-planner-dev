@@ -553,23 +553,29 @@ export async function fulfillOrder(
   // customer, but without an APC consignment to point at. Skip the
   // tracking_info block entirely in that case so we don't ship a
   // broken https://apc.co.uk/tracking/ URL.
-  const hasTracking = !!trackingNumber;
+  //
+  // A company WITHOUT a number (e.g. "TCK Local Delivery" for van orders)
+  // sends carrier-only tracking_info: the customer's email names the
+  // carrier but carries no tracking link.
+  const trackingInfo = trackingNumber
+    ? {
+        number: trackingNumber,
+        company: trackingCompany,
+        // Callers pass the proper link (built by apcTrackingUrl, which adds
+        // the consignee postcode so the customer skips APC's CAPTCHA). The
+        // fallback is the same host without the postcode — the old
+        // apc.co.uk/tracking/ path this used to emit is not a live URL.
+        url: trackingUrl ?? apcTrackingUrl(trackingNumber, null),
+      }
+    : trackingCompany
+      ? { company: trackingCompany }
+      : null;
   await shopifyPost(`/fulfillments.json`, {
     fulfillment: {
       line_items_by_fulfillment_order: pendingFulfillmentOrders.map(fo => ({
         fulfillment_order_id: fo.id,
       })),
-      ...(hasTracking ? {
-        tracking_info: {
-          number: trackingNumber,
-          company: trackingCompany,
-          // Callers pass the proper link (built by apcTrackingUrl, which adds
-          // the consignee postcode so the customer skips APC's CAPTCHA). The
-          // fallback is the same host without the postcode — the old
-          // apc.co.uk/tracking/ path this used to emit is not a live URL.
-          url: trackingUrl ?? apcTrackingUrl(trackingNumber, null),
-        },
-      } : {}),
+      ...(trackingInfo ? { tracking_info: trackingInfo } : {}),
       notify_customer: true,
     },
   });
@@ -951,6 +957,10 @@ export async function getOrderTransactionFees(
 export async function addTagToOrder(orderId: number, currentTags: string, newTag: string): Promise<void> {
   const existing = currentTags.split(",").map(t => t.trim()).filter(Boolean);
   if (existing.includes(newTag)) return;
+  if (shouldSkipSideEffect()) {
+    logSkippedSideEffect("shopify.addTagToOrder", { orderId, newTag });
+    return;
+  }
   const updated = [...existing, newTag].join(", ");
   await shopifyPut(`/orders/${orderId}.json`, { order: { id: orderId, tags: updated } });
 }
@@ -966,6 +976,10 @@ export async function addTagsToOrder(orderId: number, currentTags: string, newTa
     result.push(t);
   }
   const updated = result.join(", ");
+  if (shouldSkipSideEffect()) {
+    logSkippedSideEffect("shopify.addTagsToOrder", { orderId, newTags });
+    return updated;
+  }
   await shopifyPut(`/orders/${orderId}.json`, { order: { id: orderId, tags: updated } });
   return updated;
 }
@@ -976,6 +990,10 @@ export async function replaceTagOnOrder(orderId: number, currentTags: string, ol
   const filtered = existing.filter(t => t !== oldTag);
   if (!filtered.includes(newTag)) filtered.push(newTag);
   const updated = filtered.join(", ");
+  if (shouldSkipSideEffect()) {
+    logSkippedSideEffect("shopify.replaceTagOnOrder", { orderId, oldTag, newTag });
+    return updated;
+  }
   await shopifyPut(`/orders/${orderId}.json`, { order: { id: orderId, tags: updated } });
   return updated;
 }

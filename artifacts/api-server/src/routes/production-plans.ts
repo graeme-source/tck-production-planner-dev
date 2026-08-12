@@ -653,6 +653,12 @@ router.get("/calculate", async (req, res) => {
     return;
   }
 
+  res.json(await calculatePlanData(planDate));
+});
+
+// Callable form of GET /calculate — the stock-gating poller consumes the same
+// numbers the Create Plan screen sees, so the two can never disagree.
+export async function calculatePlanData(planDate: string) {
   // Holiday-aware dispatch-day helpers. Bank holidays / factory shutdowns
   // come from app_settings.non_dispatch_dates. We resolve the Set once
   // per request and reuse it for both walks.
@@ -1894,7 +1900,7 @@ router.get("/calculate", async (req, res) => {
     return a.recipeName.localeCompare(b.recipeName);
   });
 
-  res.json({
+  return {
     planDate,
     prevProductionDate,
     deliveryDates,
@@ -1912,8 +1918,8 @@ router.get("/calculate", async (req, res) => {
     expiryWarnings,
     queuedProduction,
     recipes: orderedResult,
-  });
-});
+  };
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // POST /production-plans/chilled-exclusions
@@ -5011,7 +5017,8 @@ router.get("/:id/assembly-items", async (req, res) => {
     const planItemsResult = await db.execute(sql`
       SELECT ppi.id, ppi.recipe_id as "recipeId", r.name as "recipeName",
              ppi.batches_target as "batchesTarget", r.portions_per_batch as "portionsPerBatch",
-             r.filling_assembly_order as "fillingAssemblyOrder"
+             r.filling_assembly_order as "fillingAssemblyOrder",
+             r.builder_filling_deduction_grams as "builderFillingDeductionGrams"
       FROM production_plan_items ppi
       LEFT JOIN recipes r ON ppi.recipe_id = r.id
       WHERE ppi.plan_id = ${planId}
@@ -5021,6 +5028,7 @@ router.get("/:id/assembly-items", async (req, res) => {
       id: number; recipeId: number; recipeName: string | null;
       batchesTarget: number | null; portionsPerBatch: number | null;
       fillingAssemblyOrder: number | null;
+      builderFillingDeductionGrams: number | null;
     }>;
 
     if (planItems.length === 0) {
@@ -5030,7 +5038,7 @@ router.get("/:id/assembly-items", async (req, res) => {
 
     const recipeIds = [...new Set(planItems.map(i => i.recipeId))].filter((x): x is number => x != null);
     if (recipeIds.length === 0) {
-      res.json({ items: planItems.map(item => ({ itemId: item.id, recipeId: item.recipeId, recipeName: item.recipeName, fillingWeightPerBatch: 0, fillingWeightHalfBatch: 0, assemblyItems: [] })) });
+      res.json({ items: planItems.map(item => ({ itemId: item.id, recipeId: item.recipeId, recipeName: item.recipeName, fillingWeightPerBatch: 0, fillingWeightHalfBatch: 0, builderFillingDeductionGrams: 0, assemblyItems: [] })) });
       return;
     }
 
@@ -5142,8 +5150,12 @@ router.get("/:id/assembly-items", async (req, res) => {
         itemId: item.id,
         recipeId: item.recipeId,
         recipeName: item.recipeName,
+        // Left at the recipe's real weight — the production-plan PDF and the
+        // wrapping station both read this. The builders' trim is sent
+        // alongside and applied by the building station alone.
         fillingWeightPerBatch,
         fillingWeightHalfBatch,
+        builderFillingDeductionGrams: Math.max(0, Number(item.builderFillingDeductionGrams ?? 0)),
         fillingAssemblyOrder: item.fillingAssemblyOrder ?? 0,
         assemblyItems,
         postOvenItems,

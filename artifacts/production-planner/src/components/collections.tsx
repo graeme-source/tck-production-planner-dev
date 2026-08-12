@@ -17,7 +17,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
   PackageOpen, PenLine, Camera, Check, X, Loader2, Plus, Trash2,
-  AlertTriangle, CheckCircle2, Image as ImageIcon, Undo2,
+  AlertTriangle, CheckCircle2, Image as ImageIcon, Undo2, Edit2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -344,12 +344,253 @@ function CompleteCollectionDialog({
   );
 }
 
+// ── Edit / reschedule / delete a scheduled collection ──────────────────────
+// Signed-for collections are immutable (the server enforces it too): the
+// signature is evidence for a specific list on a specific day.
+function EditCollectionDialog({
+  collection, onClose,
+}: { collection: Collection; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [collectionDate, setCollectionDate] = useState(collection.collectionDate);
+  const [reference, setReference] = useState(collection.reference ?? "");
+  const [notes, setNotes] = useState(collection.notes ?? "");
+  const [lines, setLines] = useState<Array<{ description: string; quantity: string; unit: string }>>(
+    collection.lines.map(l => ({ description: l.description, quantity: String(l.quantity), unit: l.unit })),
+  );
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const validLines = lines
+    .map(l => ({ ...l, description: l.description.trim() }))
+    .filter(l => l.description.length > 0);
+  // Replacing lines re-creates them un-ticked, so only send them when the
+  // list itself changed.
+  const linesChanged = JSON.stringify(validLines) !== JSON.stringify(
+    collection.lines.map(l => ({ description: l.description, quantity: String(l.quantity), unit: l.unit })),
+  );
+  const anyTicked = collection.lines.some(l => l.checkedOff);
+  const canSubmit = collectionDate && validLines.length > 0;
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const body: Record<string, unknown> = {
+        collectionDate,
+        reference: reference.trim() || null,
+        notes: notes.trim() || null,
+      };
+      if (linesChanged) {
+        body.lines = validLines.map(l => ({
+          description: l.description,
+          quantity: Number(l.quantity) || 1,
+          unit: l.unit.trim() || "items",
+        }));
+      }
+      const res = await fetch(`${BASE}/api/collections/${collection.id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Could not save the collection");
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["collections"] });
+      queryClient.invalidateQueries({ queryKey: ["weekly-deliveries"] });
+      toast({ title: "Collection updated" });
+      onClose();
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "Could not save the collection"),
+  });
+
+  const remove = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${BASE}/api/collections/${collection.id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Could not delete the collection");
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["collections"] });
+      queryClient.invalidateQueries({ queryKey: ["weekly-deliveries"] });
+      toast({ title: "Collection deleted" });
+      onClose();
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "Could not delete the collection"),
+  });
+
+  const busy = save.isPending || remove.isPending;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
+      <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-lg my-8">
+        <div className="p-5 border-b border-border flex items-start gap-3">
+          <PackageOpen className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <h3 className="font-display font-bold text-lg leading-tight">Edit collection</h3>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              {collection.supplierName ?? "Collection"} — change the date to move it to another day.
+            </p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-secondary/50 text-muted-foreground">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <label className="block">
+              <span className="text-sm font-semibold">Date <span className="text-red-500">*</span></span>
+              <input
+                type="date"
+                value={collectionDate}
+                onChange={e => setCollectionDate(e.target.value)}
+                className="mt-1.5 w-full px-3 py-2.5 border border-border rounded-xl bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              />
+            </label>
+            <label className="block">
+              <span className="text-sm font-semibold">Reference <span className="text-muted-foreground font-normal">(optional)</span></span>
+              <input
+                value={reference}
+                onChange={e => setReference(e.target.value)}
+                placeholder="e.g. Empty water bottles"
+                className="mt-1.5 w-full px-3 py-2.5 border border-border rounded-xl bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              />
+            </label>
+          </div>
+
+          <div>
+            <span className="text-sm font-semibold">Items being collected <span className="text-red-500">*</span></span>
+            {anyTicked && (
+              <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                Changing the items un-ticks anything already ticked off.
+              </p>
+            )}
+            <div className="mt-1.5 space-y-2">
+              {lines.map((line, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input
+                    value={line.description}
+                    onChange={e => setLines(ls => ls.map((l, j) => j === i ? { ...l, description: e.target.value } : l))}
+                    placeholder="Item name"
+                    className="flex-1 px-3 py-2.5 border border-border rounded-xl bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={line.quantity}
+                    onChange={e => setLines(ls => ls.map((l, j) => j === i ? { ...l, quantity: e.target.value } : l))}
+                    className="w-20 px-3 py-2.5 border border-border rounded-xl bg-background text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  />
+                  <input
+                    value={line.unit}
+                    onChange={e => setLines(ls => ls.map((l, j) => j === i ? { ...l, unit: e.target.value } : l))}
+                    placeholder="items"
+                    className="w-24 px-3 py-2.5 border border-border rounded-xl bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  />
+                  <button
+                    onClick={() => setLines(ls => ls.length === 1 ? ls : ls.filter((_, j) => j !== i))}
+                    disabled={lines.length === 1}
+                    className="p-2.5 rounded-xl border border-border text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-30"
+                    title="Remove item"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={() => setLines(ls => [...ls, { description: "", quantity: "1", unit: "items" }])}
+              className="mt-2 flex items-center gap-1.5 text-xs px-3 py-2 border border-border rounded-lg hover:bg-secondary/50 transition-colors font-medium"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add another item
+            </button>
+          </div>
+
+          <label className="block">
+            <span className="text-sm font-semibold">Notes <span className="text-muted-foreground font-normal">(optional)</span></span>
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              rows={2}
+              className="mt-1.5 w-full px-3 py-2.5 border border-border rounded-xl bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+            />
+          </label>
+
+          {error && (
+            <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/10 rounded-xl px-3 py-2.5">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="p-5 border-t border-border flex items-center gap-3">
+          {confirmingDelete ? (
+            <>
+              <span className="text-sm font-medium text-destructive">Delete this collection?</span>
+              <button
+                onClick={() => { setError(null); remove.mutate(); }}
+                disabled={busy}
+                className="flex items-center gap-1.5 px-4 py-3 bg-destructive text-destructive-foreground rounded-xl text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-40"
+              >
+                {remove.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                Yes, delete
+              </button>
+              <button
+                onClick={() => setConfirmingDelete(false)}
+                disabled={busy}
+                className="px-4 py-3 border border-border rounded-xl text-sm font-medium hover:bg-secondary/50 transition-colors"
+              >
+                Keep it
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => setConfirmingDelete(true)}
+                disabled={busy}
+                className="flex items-center gap-1.5 px-4 py-3 border border-destructive/40 text-destructive rounded-xl text-sm font-medium hover:bg-destructive/10 transition-colors disabled:opacity-40"
+              >
+                <Trash2 className="w-4 h-4" /> Delete
+              </button>
+              <div className="flex-1" />
+              <button
+                onClick={onClose}
+                disabled={busy}
+                className="px-5 py-3 border border-border rounded-xl text-sm font-medium hover:bg-secondary/50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { setError(null); save.mutate(); }}
+                disabled={!canSubmit || busy}
+                className="flex items-center justify-center gap-2 px-5 py-3 bg-primary text-primary-foreground rounded-xl font-semibold hover:opacity-90 transition-opacity disabled:opacity-40"
+              >
+                {save.isPending
+                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</>
+                  : <><Check className="w-4 h-4" /> Save changes</>}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── The panel itself ───────────────────────────────────────────────────────
 export function CollectionPanel({
   collection, nested, canEdit,
 }: { collection: Collection; nested: boolean; canEdit: boolean }) {
   const queryClient = useQueryClient();
   const [completing, setCompleting] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [showPhoto, setShowPhoto] = useState(false);
 
   const tickLine = useMutation({
@@ -414,12 +655,21 @@ export function CollectionPanel({
             </p>
           </div>
           {!done && canEdit && (
-            <button
-              onClick={(e) => { e.stopPropagation(); setCompleting(true); }}
-              className="shrink-0 flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition-colors"
-            >
-              <PenLine className="w-4 h-4" /> Hand over &amp; sign
-            </button>
+            <div className="shrink-0 flex items-center gap-2">
+              <button
+                onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+                className="p-2.5 rounded-xl border border-border text-muted-foreground hover:bg-secondary/50 transition-colors"
+                title="Edit, move or delete this collection"
+              >
+                <Edit2 className="w-4 h-4" />
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setCompleting(true); }}
+                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition-colors"
+              >
+                <PenLine className="w-4 h-4" /> Hand over &amp; sign
+              </button>
+            </div>
           )}
           {done && (
             <div className="shrink-0 flex items-center gap-2" onClick={e => e.stopPropagation()}>
@@ -478,6 +728,10 @@ export function CollectionPanel({
 
       {completing && (
         <CompleteCollectionDialog collection={collection} onClose={() => setCompleting(false)} />
+      )}
+
+      {editing && (
+        <EditCollectionDialog collection={collection} onClose={() => setEditing(false)} />
       )}
 
       {showPhoto && (

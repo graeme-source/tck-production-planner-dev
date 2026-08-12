@@ -3,6 +3,7 @@ import { useListProductionPlans, useListDispatchOrders, useGetProductionPlan } f
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
 import { EightPackOrdersBanner } from "@/components/eight-pack-orders-banner";
+import { StockGateBanner } from "@/components/stock-gate-banner";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { format, isToday, startOfWeek, addWeeks, addDays } from "date-fns";
 import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X, Sparkles, Salad, UserPlus } from "lucide-react";
@@ -650,6 +651,7 @@ export default function Dashboard() {
       {showIssueBanner && <AndonBanner userRole={userRole} />}
 
       <EightPackOrdersBanner userRole={userRole} />
+      <StockGateBanner userRole={userRole} />
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <StatCard
@@ -701,7 +703,10 @@ export default function Dashboard() {
           icon={Truck}
           color="text-blue-500"
           bg="bg-blue-500/10"
-          href="/dispatches"
+          // Straight into today's packing wave. Shopify date tags are the
+          // DELIVERY date and an overnight courier means today's packing
+          // delivers tomorrow, so the wave to open is today + 1.
+          href={`/fulfilment?tag=${format(addDays(new Date(), 1), "yyyy-MM-dd")}`}
           progress={todayIndex >= 0 && (currentWeekOrders![todayIndex].orderCount ?? 0) > 0 ? {
             done: currentWeekOrders![todayIndex].fulfilledCount,
             total: currentWeekOrders![todayIndex].orderCount,

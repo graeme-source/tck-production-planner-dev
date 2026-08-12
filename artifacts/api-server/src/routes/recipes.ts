@@ -54,6 +54,7 @@ function mapRecipe(r: typeof recipesTable.$inferSelect) {
     isFridgeProduct: r.isFridgeProduct ?? false,
     color: r.color ?? null,
     cookingLossPercent: r.cookingLossPercent != null ? Number(r.cookingLossPercent) : 3,
+    builderFillingDeductionGrams: r.builderFillingDeductionGrams != null ? Number(r.builderFillingDeductionGrams) : 0,
     dietaryCategory: r.dietaryCategory ?? null,
     tags: r.tags ?? [],
     createdAt: r.createdAt.toISOString(),
@@ -187,7 +188,7 @@ function validateMarinades(marinades: MarinadeInput[], recipeIngredientIds: numb
 // never stripped, and the OpenAPI spec has been updated with all fields.
 
 router.post("/", validate(CreateRecipeBody), async (req, res) => {
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, dietaryCategory, tags, ingredients, subRecipes, marinades } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, builderFillingDeductionGrams, dietaryCategory, tags, ingredients, subRecipes, marinades } = req.body;
 
   if (marinades?.length) {
     const recipeIngIds = (ingredients ?? []).map(i => i.ingredientId);
@@ -221,6 +222,7 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
     isCurrentSpecial: isCurrentSpecial ?? false,
     color: color ?? null,
     cookingLossPercent: cookingLossPercent != null ? String(cookingLossPercent) : "3",
+    builderFillingDeductionGrams: builderFillingDeductionGrams != null ? Math.round(Number(builderFillingDeductionGrams)) : 0,
     dietaryCategory: dietaryCategory ?? null,
     tags: normaliseTags(tags),
   };
@@ -497,7 +499,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, dietaryCategory, tags, ingredients, subRecipes, marinades } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, builderFillingDeductionGrams, dietaryCategory, tags, ingredients, subRecipes, marinades } = req.body;
 
   if (marinades?.length) {
     const recipeIngIds = (ingredients ?? []).map(i => i.ingredientId);
@@ -530,6 +532,7 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
     isCoreMenu: isCoreMenu ?? false,
     color: color ?? null,
     cookingLossPercent: cookingLossPercent != null ? String(cookingLossPercent) : "3",
+    builderFillingDeductionGrams: builderFillingDeductionGrams != null ? Math.round(Number(builderFillingDeductionGrams)) : 0,
     ...(dietaryCategory !== undefined ? { dietaryCategory: dietaryCategory ?? null } : {}),
     ...(isCurrentSpecial !== undefined ? { isCurrentSpecial } : {}),
     ...(tags !== undefined ? { tags: normaliseTags(tags) } : {}),

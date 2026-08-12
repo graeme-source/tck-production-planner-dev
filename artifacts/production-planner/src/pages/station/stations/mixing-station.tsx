@@ -43,6 +43,13 @@ function formatQtyForUnit(qty: number, unit: string | null): string {
   if (unit === "g" || unit === "ml") return `${Math.round(qty)} ${unit}`;
   return `${qty.toFixed(2)} ${unit ?? ""}`.trim();
 }
+
+function qtyToGrams(qty: number, unit: string | null): number {
+  const u = (unit ?? "").toLowerCase();
+  if (u === "kg" || u === "l") return qty * 1000;
+  if (u === "mg") return qty / 1000;
+  return qty;
+}
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
@@ -56,7 +63,27 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { BreakTracker } from "../shared/break-tracker";
 import { getStationCount, isMacCheese } from "../shared/constants";
-import type { PrepRecipeDetail, PrepMarinadeDetail } from "./prep-hub";
+import type { PrepRecipeDetail, PrepMarinadeDetail, PrepIngredientDetail } from "./prep-hub";
+
+// Weight the cooked meat filling should come to once every tray is out of the
+// oven, in grams. Recipe quantities are cooked weights — prep divides by the
+// processing ratio to work out how much raw meat to put in — so the recipe's
+// own numbers already describe the far side of the reduction. Everything that
+// cooks with the meat counts, which is why the marinades are added in: the
+// Philly's white onions come back out of the oven as part of the filling.
+function cookedTargetGrams(recipe: PrepRecipeDetail, meats: PrepIngredientDetail[]) {
+  const marinadeGramsFor = (ingredientId: number) =>
+    (recipe.marinades ?? [])
+      .filter(m => m.rawMeatIngredientId === ingredientId)
+      .reduce((sum, m) => sum + m.totalGrams, 0);
+  const perMeat = meats.map(m => ({
+    ingredientId: m.ingredientId,
+    ingredientName: m.ingredientName,
+    grams: qtyToGrams(m.cookedQty, m.unit) + marinadeGramsFor(m.ingredientId),
+  }));
+  const marinadeG = meats.reduce((sum, m) => sum + marinadeGramsFor(m.ingredientId), 0);
+  return { perMeat, marinadeG, totalG: perMeat.reduce((sum, m) => sum + m.grams, 0) };
+}
 
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1166,6 +1193,53 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                               </div>
                             );
                           })}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Target cooked weight — the one number the mixing prep
+                        person weighs against once the trays are out, so a bad
+                        reduction is caught before the filling reaches the tins. */}
+                    {(() => {
+                      const { perMeat, marinadeG, totalG } = cookedTargetGrams(recipe, rawMeatIngs);
+                      if (totalG <= 0) return null;
+                      const batches = recipe.batchesTarget || 0;
+                      const perBatchG = batches > 0 ? totalG / batches : null;
+                      return (
+                        <div className="px-4 py-3 border-b border-border bg-blue-50/60 dark:bg-blue-950/20">
+                          <div className="flex items-baseline justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-bold uppercase tracking-wide text-blue-700 dark:text-blue-300">
+                                Target cooked weight
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                Weigh the cooked filling — it should land here
+                              </p>
+                            </div>
+                            <p className="flex-shrink-0 text-3xl font-extrabold tabular-nums leading-none text-blue-700 dark:text-blue-300">
+                              {(totalG / 1000).toFixed(2)}
+                              <span className="text-base font-semibold ml-0.5">kg</span>
+                            </p>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1.5">
+                            {batches} batch{batches !== 1 ? "es" : ""}
+                            {perBatchG != null && (
+                              <> × <span className="font-semibold text-foreground tabular-nums">{Math.round(perBatchG)} g</span> per batch</>
+                            )}
+                            {marinadeG > 0 && (
+                              <> · includes <span className="tabular-nums">{(marinadeG / 1000).toFixed(2)} kg</span> marinade</>
+                            )}
+                          </p>
+                          {perMeat.length > 1 && (
+                            <div className="mt-2 pt-2 border-t border-border/50 space-y-0.5">
+                              {perMeat.map(m => (
+                                <div key={m.ingredientId} className="flex items-baseline justify-between gap-3 text-xs">
+                                  <span className="text-muted-foreground">{m.ingredientName}</span>
+                                  <span className="font-semibold tabular-nums">{(m.grams / 1000).toFixed(2)} kg</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       );
                     })()}

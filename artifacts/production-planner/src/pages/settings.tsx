@@ -13,7 +13,7 @@ import {
   Camera, User, CircleDot, ToggleRight, Boxes, UtensilsCrossed,
   AlertTriangle, Scale, ThermometerSnowflake, BookOpen, Megaphone, CalendarDays,
   Copy, Check, IdCard, FileText, ExternalLink, Bell, RefreshCw, Smartphone, Thermometer,
-  AlarmClock, Search,
+  AlarmClock, Search, ShieldAlert, Image as ImageIcon,
 } from "lucide-react";
 import { STATIONS } from "@/pages/station/shared/constants";
 import { TIMED_REMINDERS_KEY, parseReminders, type TimedReminder } from "@/pages/station/shared/timed-reminders";
@@ -1575,6 +1575,7 @@ export default function Settings() {
               </div>
               {user?.role === "admin" && <FactoryNumberSection />}
               {user?.role === "admin" && <ShopifyFreezerSyncSection />}
+              {user?.role === "admin" && <StockGateSection />}
               {user?.role === "admin" && <FulfilmentManualTickSection />}
               {user?.role === "admin" && <FulfilmentSpeakNameSection />}
               {(user?.role === "admin" || user?.role === "manager") && <BuildingTimerSection />}
@@ -3349,6 +3350,153 @@ function ShopifyFreezerSyncSection() {
 }
 
 /**
+ * Stock gate — automatically holds products back from next-day delivery
+ * (Shopify tag + Zapiet prep-time rule) when the fridge-vs-despatch surplus
+ * runs low. Settings are stock_gate_* rows in app_settings, read live by
+ * the poller each cycle.
+ */
+function StockGateSection() {
+  type GateSettings = {
+    enabled: boolean; dryRun: boolean; thresholdPacks: number; releasePacks: number;
+    autoRelease: boolean; tag: string; intervalMinutes: number; zapietLocationId: string;
+  };
+  const [settings, setSettings] = useState<GateSettings | null>(null);
+  const [zapietKeyConfigured, setZapietKeyConfigured] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  // Text-input drafts so typing doesn't fire a save per keystroke.
+  const [drafts, setDrafts] = useState<{ thresholdPacks: string; releasePacks: string; tag: string; intervalMinutes: string } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/stock-gating/status", { credentials: "include" })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (!d?.settings) return;
+        setSettings(d.settings);
+        setZapietKeyConfigured(Boolean(d.zapietKeyConfigured));
+        setDrafts({
+          thresholdPacks: String(d.settings.thresholdPacks),
+          releasePacks: String(d.settings.releasePacks),
+          tag: d.settings.tag,
+          intervalMinutes: String(d.settings.intervalMinutes),
+        });
+      })
+      .catch(() => {});
+  }, []);
+
+  async function save(patch: Record<string, string | boolean | number>) {
+    setSaving(true);
+    setSavedMsg(null);
+    try {
+      const res = await fetch("/api/stock-gating/config", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+      const data = (await res.json()) as { settings: GateSettings };
+      setSettings(data.settings);
+      setDrafts({
+        thresholdPacks: String(data.settings.thresholdPacks),
+        releasePacks: String(data.settings.releasePacks),
+        tag: data.settings.tag,
+        intervalMinutes: String(data.settings.intervalMinutes),
+      });
+      setSavedMsg("Saved");
+      setTimeout(() => setSavedMsg(null), 2000);
+    } catch {
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!settings || !drafts) return null;
+
+  const numberField = (
+    label: string, field: "thresholdPacks" | "releasePacks" | "intervalMinutes", hint: string,
+  ) => (
+    <label className="flex items-center justify-between gap-3 text-sm">
+      <span className="min-w-0">
+        <span className="font-medium">{label}</span>
+        <span className="block text-xs text-muted-foreground">{hint}</span>
+      </span>
+      <input
+        type="number"
+        min={field === "intervalMinutes" ? 1 : 0}
+        value={drafts[field]}
+        onChange={e => setDrafts(prev => prev ? { ...prev, [field]: e.target.value } : prev)}
+        onBlur={() => { if (drafts[field] !== "" && Number(drafts[field]) !== settings[field]) save({ [field]: Number(drafts[field]) }); }}
+        className="w-20 px-2 py-1.5 border border-border rounded-lg text-sm bg-background text-right"
+      />
+    </label>
+  );
+
+  const toggleRow = (
+    label: string, field: "enabled" | "dryRun" | "autoRelease", hint: string,
+  ) => (
+    <div className="flex items-center justify-between gap-3 text-sm">
+      <span className="min-w-0">
+        <span className="font-medium">{label}</span>
+        <span className="block text-xs text-muted-foreground">{hint}</span>
+      </span>
+      <Switch
+        checked={settings[field]}
+        onCheckedChange={(v: boolean) => save({ [field]: v })}
+        disabled={saving}
+        aria-label={label}
+      />
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-base font-semibold flex items-center gap-2">
+          <ShieldAlert className="w-4 h-4 text-primary" /> Next-Day Delivery Stock Gate
+          {saving && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+          {savedMsg && <span className="text-xs text-emerald-600 font-medium">{savedMsg}</span>}
+        </h2>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          Watches the fridge-vs-despatch surplus per product (fridge + still to wrap − today's
+          remaining despatch). At the threshold it tags the Shopify product so the Zapiet
+          preparation-time rule removes tomorrow from the date picker; the tag comes off when
+          stock recovers. Needs the Zapiet rule set up once: tag → 2-day preparation time.
+        </p>
+        {!zapietKeyConfigured && (
+          <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+            <AlertTriangle className="w-3.5 h-3.5" /> ZAPIET_API_KEY isn't set on the server — holds still work, but can't be verified against Zapiet.
+          </p>
+        )}
+      </div>
+
+      <div className="bg-card border border-border rounded-xl p-4 space-y-4">
+        {toggleRow("Stock gate active", "enabled", "Master switch — nothing is checked or tagged while this is off.")}
+        {toggleRow("Dry run", "dryRun", "Record what would be held, but never write the Shopify tag. Turn off once the Zapiet rule is confirmed.")}
+        {numberField("Hold at surplus ≤", "thresholdPacks", "Packs of headroom left when the product gets held.")}
+        {toggleRow("Auto-release", "autoRelease", "Take the tag off automatically once the surplus recovers past the release level.")}
+        {numberField("Release at surplus ≥", "releasePacks", "Set comfortably above the hold level so the gate doesn't flap.")}
+        {numberField("Check every (minutes)", "intervalMinutes", "How often the surplus is recomputed.")}
+        <label className="flex items-center justify-between gap-3 text-sm">
+          <span className="min-w-0">
+            <span className="font-medium">Shopify tag</span>
+            <span className="block text-xs text-muted-foreground">Must exactly match the tag on the Zapiet preparation-time rule (case-sensitive).</span>
+          </span>
+          <input
+            type="text"
+            value={drafts.tag}
+            onChange={e => setDrafts(prev => prev ? { ...prev, tag: e.target.value } : prev)}
+            onBlur={() => { const t = drafts.tag.trim(); if (t && t !== settings.tag) save({ tag: t }); }}
+            className="w-44 px-2 py-1.5 border border-border rounded-lg text-sm bg-background font-mono"
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Lets the picker manually tick line items by tapping the row, in addition
  * to scanning. Some sites want scan-only to enforce that every dispatched
  * unit was physically present at packing time. Backed by the
@@ -4807,7 +4955,7 @@ function EightPackBannerRolesSection() {
   );
 }
 
-interface SysUpdate { id: number; title: string | null; body: string; published: boolean; createdAt: string; updatedAt: string; }
+interface SysUpdate { id: number; title: string | null; body: string; published: boolean; hasImage?: boolean; createdAt: string; updatedAt: string; }
 
 // Validation card for the AUTOMATIC commit feed — deliberately in Settings,
 // not the morning meeting: the old slide failed silently for months and
@@ -4909,6 +5057,69 @@ function AutomaticFeedCard() {
   );
 }
 
+/** Screenshot attached to one system update. It leads the morning-meeting
+ *  sub-slide for that update, so this is the highest-leverage field on the
+ *  form even though it's optional. */
+function UpdateScreenshot({ entry, onChange }: { entry: SysUpdate; onChange: () => void }) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [bust, setBust] = useState(0);
+
+  const upload = async (file: File) => {
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const r = await fetch(`${BASE}/api/system-updates/${entry.id}/image`, {
+        method: "POST", credentials: "include", body: form,
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? "Upload failed");
+      setBust(Date.now());
+      onChange();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Upload failed");
+    } finally { setBusy(false); }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await fetch(`${BASE}/api/system-updates/${entry.id}/image`, { method: "DELETE", credentials: "include" });
+      onChange();
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="mt-3 pt-3 border-t border-border/60 flex items-center gap-3">
+      {entry.hasImage ? (
+        <img
+          src={`${BASE}/api/system-updates/${entry.id}/image?v=${bust}`}
+          alt="Update screenshot"
+          className="w-24 h-16 rounded-lg object-cover border border-border shrink-0"
+        />
+      ) : (
+        <div className="w-24 h-16 rounded-lg border border-dashed border-border grid place-items-center text-muted-foreground shrink-0">
+          <ImageIcon className="w-5 h-5" />
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <input ref={fileRef} type="file" accept="image/*" className="hidden"
+          onChange={ev => { const f = ev.target.files?.[0]; if (f) upload(f); ev.target.value = ""; }} />
+        <button onClick={() => fileRef.current?.click()} disabled={busy}
+          className="px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-secondary/40 disabled:opacity-50">
+          {busy ? "Working…" : entry.hasImage ? "Replace screenshot" : "Add screenshot"}
+        </button>
+        {entry.hasImage && (
+          <button onClick={remove} disabled={busy}
+            className="px-3 py-1.5 border border-border rounded-lg text-sm text-muted-foreground hover:text-destructive disabled:opacity-50">
+            Remove
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SystemUpdatesSection() {
   const [entries, setEntries] = useState<SysUpdate[] | null>(null);
   const [title, setTitle] = useState("");
@@ -4970,7 +5181,7 @@ function SystemUpdatesSection() {
           <Megaphone className="w-4 h-4 text-primary" /> System Updates
         </h2>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Bulleted changes shown on the morning-meeting "System Updates" slide. The most recent published entry is displayed. One bullet per line.
+          Changes shown on the morning-meeting "System Updates" slide. Each entry is its own step in the deck — title, screenshot, then the detail lines. Attach a screenshot of the feature; the team reads a picture far faster than a paragraph. One bullet per line.
         </p>
       </div>
 
@@ -5034,6 +5245,7 @@ function SystemUpdatesSection() {
                   <ul className="text-sm text-muted-foreground list-disc pl-5 space-y-0.5">
                     {bullets(e.body).map((l, i) => <li key={i}>{l}</li>)}
                   </ul>
+                  <UpdateScreenshot entry={e} onChange={load} />
                 </>
               )}
             </div>

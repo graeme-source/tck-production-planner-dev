@@ -6,13 +6,14 @@ import { PageHeader } from "@/components/page-header";
 import { IcePackBadge } from "@/components/ice-pack-callout";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
+import { ApcBatchBookingDialog } from "@/components/apc-batch-booking";
 import { format, addDays, parseISO } from "date-fns";
 import { useLocation } from "wouter";
 import {
   Package, Scan, CheckCircle2, AlertCircle, ChevronRight, Printer,
   RefreshCw, MapPin, SkipForward, RotateCcw, XCircle, Loader2,
   ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter, ArrowUpDown,
-  Volume2, VolumeX,
+  Volume2, VolumeX, AlertTriangle, PackageCheck,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -36,7 +37,15 @@ interface LineItem {
   recipeColor: string | null;
 }
 
-type BoxCategory = "small box" | "large box" | "wholesale" | "other";
+type BoxCategory = "small box" | "large box" | "wholesale" | "local delivery" | "other";
+
+/** Orders tagged local-delivery go on the van, not APC — no consignment to
+ *  book or look up, no label to print or verify. The tag is put on the order
+ *  in Shopify when the local delivery is arranged. */
+const LOCAL_DELIVERY_TAG = "local-delivery";
+function isLocalDelivery(order: { tags: string }): boolean {
+  return order.tags.split(",").map(t => t.trim().toLowerCase()).includes(LOCAL_DELIVERY_TAG);
+}
 
 /** A row of tri-state filter chips. Green = include, red = exclude, plain =
  *  ignored. Used for both order tags and products so the two behave identically. */
@@ -82,7 +91,7 @@ function FilterChipRow({ label, items, include, exclude, onToggle, emptyText }: 
 
 /** The box-category tags, kept out of the generic tag chips so they aren't
  *  offered twice (they already have their own multi-select row). */
-const BOX_CATEGORIES: string[] = ["small box", "large box", "wholesale"];
+const BOX_CATEGORIES: string[] = ["small box", "large box", "wholesale", LOCAL_DELIVERY_TAG];
 
 /** Cycle a chip through untouched → include → exclude → untouched, keeping the
  *  two sets mutually exclusive so a tag can never be both. */
@@ -136,6 +145,9 @@ interface ShipmentResult {
   orderId: number;
   orderName: string;
   warnings?: string[];
+  /** True when the server returned a consignment that already existed for
+   *  this order rather than booking a second one. */
+  reused?: boolean;
 }
 
 /** Result of scanning the printed APC label at the bench. The verdict is
@@ -466,6 +478,64 @@ async function fetchPostcodeValidations(tag: string): Promise<PostcodeValidation
   return res.json();
 }
 
+/** Orders whose address the app could not reshape for APC with confidence —
+ *  a conflicting postcode, a town too long for the label. Read-only check. */
+interface AddressReviewRow {
+  orderId: number;
+  orderName: string;
+  review: Array<{ kind: string; message: string }>;
+  normalised: { address1: string; address2: string | null; city: string; postcode: string };
+}
+
+/** Consignments already booked for this dispatch day, so the picking screen
+ *  can say whether opening an order will raise a new one or reuse what's
+ *  there. Local ledger read — no APC call. */
+interface BookedConsignment {
+  orderId: number;
+  waybill: string;
+  trackingUrl: string | null;
+  labelPrintedAt: string | null;
+}
+
+/** Mark our record of a consignment dead after it was cancelled inside
+ *  Hypaship. APC's API can't tell us that happened, so it has to be said
+ *  explicitly. The order can then be re-booked under the same reference. */
+async function markConsignmentCancelled(waybill: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/fulfilment/consignments/${encodeURIComponent(waybill)}/mark-cancelled`, {
+    method: "POST",
+    credentials: "include",
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? "Could not mark it cancelled");
+}
+
+async function fetchBookedConsignments(tag: string): Promise<BookedConsignment[]> {
+  const res = await fetch(`${BASE}/api/fulfilment/consignments?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.consignments ?? []) as BookedConsignment[];
+}
+
+/** What the "Ship order?" dialog should actually say. An order that already
+ *  has a consignment will REUSE it — telling the packer it's about to raise
+ *  a new one is both wrong and alarming (2026-08-12). */
+function pickDialogDescription(order: ShopifyOrder, booked: Map<number, BookedConsignment>): string {
+  const who = order.shipping_address?.name
+    ?? `${order.customer?.first_name ?? ""} ${order.customer?.last_name ?? ""}`.trim();
+  const existing = booked.get(order.id);
+  if (existing) {
+    return `This order already has APC consignment ${existing.waybill}. Its existing label will be used — nothing new will be booked.`;
+  }
+  return `This will create a real APC consignment for ${who}. This cannot be undone.`;
+}
+
+async function fetchAddressReview(tag: string): Promise<AddressReviewRow[]> {
+  const res = await fetch(`${BASE}/api/fulfilment/address-review?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.flagged ?? []) as AddressReviewRow[];
+}
+
 async function recheckPostcode(orderId: number, tag: string): Promise<{ available: boolean; reason?: string }> {
   const res = await fetch(`${BASE}/api/fulfilment/postcode-recheck`, {
     method: "POST",
@@ -592,20 +662,15 @@ const ZONE_STYLES: Record<string, { bg: string; border: string; text: string; ba
 
 // Wraps the PDF in an HTML page with explicit @page sizing for 100mm×150mm thermal labels.
 // This ensures Chrome respects the label dimensions regardless of default printer paper settings.
-function makeLabelHtml(base64Pdf: string): string {
-  return `<!DOCTYPE html>
-<html>
-<head>
-<style>
-@page { size: 100mm 150mm; margin: 0; }
-html, body { margin: 0; padding: 0; width: 100mm; height: 150mm; overflow: hidden; }
-embed { width: 100%; height: 100%; display: block; }
-</style>
-</head>
-<body>
-<embed src="data:application/pdf;base64,${base64Pdf}" type="application/pdf" />
-</body>
-</html>`;
+/** Decode the label into a Blob. Chrome refuses to instantiate its PDF
+ *  viewer for a `data:` URL inside an embedded frame — the <embed> stays
+ *  inert markup and the print preview comes out BLANK (2026-08-12, first
+ *  live label). A blob: URL loads into the viewer normally. */
+function base64PdfToBlobUrl(base64Pdf: string): string {
+  const binary = atob(base64Pdf);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
 }
 
 function printLabel(
@@ -618,12 +683,23 @@ function printLabel(
   if (!iframe) { onPrintFailed(); return; }
 
   let settled = false;
+  const blobUrl = base64PdfToBlobUrl(base64Pdf);
 
   function settle(success: boolean) {
     if (settled) return;
     settled = true;
     window.removeEventListener("afterprint", handleAfterPrint);
     clearTimeout(fallbackTimer);
+    // Hand the label back to the caller so it can be reopened without
+    // re-booking, then release it once the browser has finished with it.
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    // The print dialog steals focus from the scan input — and a barcode
+    // scanner's keystrokes would land in the dialog, not the pick list.
+    // Put focus back the moment printing ends, however it ended.
+    requestAnimationFrame(() => {
+      const input = document.querySelector<HTMLInputElement>('input[data-scan-input="true"]');
+      input?.focus();
+    });
     if (success) onPrinted(); else onPrintFailed();
   }
 
@@ -632,9 +708,10 @@ function printLabel(
   // Kiosk mode fires afterprint immediately after sending job to printer.
   // Non-kiosk: fires when the print dialog is dismissed (could be cancel).
   // We treat dismiss as "done" — the user is responsible for printer setup.
-  // Fallback: 10 s timeout in case afterprint never fires (e.g. data-URL sandbox).
+  // Fallback timeout in case afterprint never fires. Generous, because a
+  // real printer dialog can legitimately sit open while the packer works.
   // Resolves as failure so the operator sees a deterministic state and can retry.
-  const fallbackTimer = setTimeout(() => settle(false), 10_000);
+  const fallbackTimer = setTimeout(() => settle(false), 60_000);
 
   iframe.onerror = () => settle(false);
 
@@ -648,7 +725,11 @@ function printLabel(
     }
   };
 
-  iframe.srcdoc = makeLabelHtml(base64Pdf);
+  // Point the frame straight at the PDF. Do NOT wrap it in HTML with an
+  // <embed src="data:…"> — Chrome blocks the PDF plugin for data: URLs and
+  // the print preview comes out blank.
+  iframe.src = blobUrl;
+  return blobUrl;
 }
 
 type PrintStatus = "idle" | "printing" | "done" | "failed";
@@ -980,7 +1061,13 @@ export default function Fulfilment() {
   // Box categories are multi-select now: the operator can pick a wave of
   // Small + Large together. An empty set means "no category constraint".
   // Defaults to Small Box, matching the team's existing muscle memory.
-  const [boxFilter, setBoxFilter] = useState<Set<BoxCategory>>(new Set<BoxCategory>(["small box"]));
+  // Empty set = no category constraint = All Boxes. The day now starts by
+  // tagging and booking the WHOLE wave, so the default view must be
+  // everything; narrowing to a category is a deliberate choice afterwards.
+  const [boxFilter, setBoxFilter] = useState<Set<BoxCategory>>(new Set<BoxCategory>());
+  // Fourth filter axis, only meaningful when the app books labels itself:
+  // work through the wave a slice at a time by hiding what's already booked.
+  const [labelFilter, setLabelFilter] = useState<"all" | "booked" | "unbooked">("all");
   // Tri-state chips: a tag/product is either untouched, included, or excluded.
   const [includeTags, setIncludeTags] = useState<Set<string>>(new Set());
   const [excludeTags, setExcludeTags] = useState<Set<string>>(new Set());
@@ -1117,6 +1204,29 @@ export default function Fulfilment() {
     }
   }
 
+  // Addresses the app can't reshape for a label without a judgement call.
+  // Advisory only — it never blocks picking, it just puts the handful of
+  // orders worth a look in front of the packer instead of in a spreadsheet.
+  const { data: addressReview } = useQuery({
+    queryKey: ["fulfilment-address-review", queryTag],
+    queryFn: () => fetchAddressReview(queryTag),
+    staleTime: 5 * 60_000,
+    enabled: !!queryTag,
+  });
+  const addressReviewMap = new Map<number, AddressReviewRow>();
+  for (const row of addressReview ?? []) addressReviewMap.set(Number(row.orderId), row);
+
+  // Which orders already have a consignment. Only meaningful when the app
+  // books labels itself; in reconcile mode consignments come from Hypaship.
+  const { data: bookedConsignments, refetch: refetchBooked } = useQuery({
+    queryKey: ["fulfilment-booked-consignments", queryTag],
+    queryFn: () => fetchBookedConsignments(queryTag),
+    staleTime: 30_000,
+    enabled: !!queryTag && apcMode === "full",
+  });
+  const bookedMap = new Map<number, BookedConsignment>();
+  for (const row of bookedConsignments ?? []) bookedMap.set(Number(row.orderId), row);
+
   const [recheckingId, setRecheckingId] = useState<number | null>(null);
 
   const allUnfulfilledOrders = orders?.filter(o => o.fulfillment_status !== "fulfilled") ?? [];
@@ -1129,8 +1239,11 @@ export default function Fulfilment() {
     !o.tags.split(",").map(t => t.trim()).includes("dispatch")
   );
 
-  function getOrderCategory(order: ShopifyOrder): "small box" | "large box" | "wholesale" | "other" {
+  function getOrderCategory(order: ShopifyOrder): BoxCategory {
     const tags = order.tags.split(",").map(t => t.trim().toLowerCase());
+    // Local delivery wins over everything — however big the box is, it goes
+    // on the van, and the packer needs it in the no-label wave.
+    if (tags.includes(LOCAL_DELIVERY_TAG)) return "local delivery";
     if (tags.includes("wholesale")) return "wholesale";
     if (tags.includes("large box")) return "large box";
     if (tags.includes("small box")) return "small box";
@@ -1166,6 +1279,10 @@ export default function Fulfilment() {
 
     // Box category: empty selection = no category constraint (all).
     if (boxFilter.size > 0 && !boxFilter.has(getOrderCategory(o))) return false;
+
+    // Label state — lets a batch be worked through a slice at a time.
+    if (labelFilter === "booked" && !bookedMap.has(o.id)) return false;
+    if (labelFilter === "unbooked" && bookedMap.has(o.id)) return false;
 
     // Exclusions win over everything.
     if ([...excludeTags].some(t => tags.includes(t))) return false;
@@ -1252,6 +1369,7 @@ export default function Fulfilment() {
     "small box": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "small box").length,
     "large box": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "large box").length,
     "wholesale": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "wholesale").length,
+    "local delivery": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "local delivery").length,
     "other": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "other").length,
   };
 
@@ -1259,9 +1377,12 @@ export default function Fulfilment() {
     "small box": unfulfilledOrders.filter(o => getOrderCategory(o) === "small box").length,
     "large box": unfulfilledOrders.filter(o => getOrderCategory(o) === "large box").length,
     "wholesale": unfulfilledOrders.filter(o => getOrderCategory(o) === "wholesale").length,
+    "local delivery": unfulfilledOrders.filter(o => getOrderCategory(o) === "local delivery").length,
     "other": unfulfilledOrders.filter(o => getOrderCategory(o) === "other").length,
   };
 
+  const [showBatchBooking, setShowBatchBooking] = useState(false);
+  const [rebookingWaybill, setRebookingWaybill] = useState<string | null>(null);
   const [bulkTagging, setBulkTagging] = useState(false);
   const [showBulkTagConfirm, setShowBulkTagConfirm] = useState(false);
   const [consignmentAction, setConsignmentAction] = useState<"idle" | "adding-box" | "reprinting" | "cancelling">("idle");
@@ -1371,6 +1492,14 @@ export default function Fulfilment() {
     setExpectedConsignmentError(null);
     setView("picking");
 
+    // Local delivery: the van does the last mile, APC is never involved.
+    // No consignment to look up (reconcile) or book (full) — straight to
+    // item scanning, and completion runs without a tracking number.
+    if (isLocalDelivery(order)) {
+      setCreatingShipment(false);
+      return;
+    }
+
     // Reconcile mode: the consignment already exists in Hypaship, so nothing
     // is booked here. Fetch it (usually already prefetched) so the label-scan
     // gate knows which waybill to expect, then wait for the packer to scan the
@@ -1398,7 +1527,7 @@ export default function Fulfilment() {
       // unlike "full" mode this books nothing, it's just a read.
       const pos = filteredUnfulfilled.findIndex(o => o.id === order.id);
       const next = filteredUnfulfilled.slice(pos + 1).find(o => !skippedIds.has(o.id));
-      if (next) preQueueConsignment(next.name);
+      if (next && !isLocalDelivery(next)) preQueueConsignment(next.name);
       return;
     }
 
@@ -1423,6 +1552,8 @@ export default function Fulfilment() {
         result = await createShipment(order.id, queryTag, queryTag);
       }
       setShipment(result);
+      // A new booking changes what the queue should show next time.
+      if (!result.reused) void refetchBooked();
 
       // Check whether the label was already background-printed (pre-print)
       const prePrinted = prePrintRef.current.get(order.id);
@@ -1449,7 +1580,7 @@ export default function Fulfilment() {
       if (configStatus?.testMode) {
         const currentPos = filteredUnfulfilled.findIndex(o => o.id === order.id);
         const nextOrder = filteredUnfulfilled.slice(currentPos + 1).find(o => !skippedIds.has(o.id));
-        if (nextOrder) preQueueNextOrder(nextOrder.id);
+        if (nextOrder && !isLocalDelivery(nextOrder)) preQueueNextOrder(nextOrder.id);
       }
     } catch (err: any) {
       setShipmentError(err.message ?? "Failed to create APC shipment");
@@ -1526,10 +1657,14 @@ export default function Fulfilment() {
   const pickedUnits = groupedItems.reduce((sum, g) => sum + Math.min(pickedCounts.get(g._groupKey) ?? 0, g.totalQty), 0);
   const allChecked = totalUnits > 0 && pickedUnits >= totalUnits;
 
+  // Local orders bypass every courier gate — computed once here so the label
+  // gate, completion and auto-complete all agree.
+  const activeIsLocal = !!activeOrder && isLocalDelivery(activeOrder);
+
   // True while the packer still owes us a verified APC label for this order.
   // Only meaningful in reconcile mode, and only once we know which consignment
   // to expect — a lookup failure shows its own blocking message instead.
-  const labelGateOpen = reconcileMode && !!expectedConsignment && !labelVerified?.verified;
+  const labelGateOpen = reconcileMode && !activeIsLocal && !!expectedConsignment && !labelVerified?.verified;
 
   async function handleLabelScan(scanned: string) {
     if (!activeOrder || verifyingLabel) return;
@@ -1649,10 +1784,12 @@ export default function Fulfilment() {
     // Reconcile mode gates on the verified label instead of a booked shipment —
     // shipping without a verified consignment is the exact failure this flow
     // exists to prevent.
-    if (reconcileMode) {
-      if (!labelVerified?.verified) return;
-    } else if (apcEnabled && !shipment) {
-      return;
+    if (!activeIsLocal) {
+      if (reconcileMode) {
+        if (!labelVerified?.verified) return;
+      } else if (apcEnabled && !shipment) {
+        return;
+      }
     }
 
     // Snapshot what we need for the background call before we move on.
@@ -1844,9 +1981,11 @@ export default function Fulfilment() {
   // disabled); `completing` prevents a re-entrant call while the request
   // is in flight.
   useEffect(() => {
-    const courierReady = reconcileMode
-      ? !!labelVerified?.verified
-      : (!apcEnabled || !!shipment);
+    const courierReady = activeIsLocal
+      ? true
+      : reconcileMode
+        ? !!labelVerified?.verified
+        : (!apcEnabled || !!shipment);
     if (
       view === "picking" &&
       allChecked &&
@@ -2012,6 +2151,12 @@ export default function Fulfilment() {
               <span className="text-muted-foreground">Service</span>
               <span className="font-mono text-xs">{shipment.serviceCode}</span>
             </div>
+            {shipment.reused && (
+              <p className="flex items-start gap-1.5 text-xs text-muted-foreground pt-1">
+                <CheckCircle2 className="w-3.5 h-3.5 text-green-600 flex-shrink-0 mt-0.5" />
+                <span>This order already had a consignment — reusing it. Nothing new was booked with APC.</span>
+              </p>
+            )}
           </div>
 
           {/* Consequence warning — always shown, because Shopify fulfillment and email are always real */}
@@ -2171,7 +2316,7 @@ export default function Fulfilment() {
         {pendingPickOrder && (
           <ShopifyConfirmDialog
             title={`Ship order ${pendingPickOrder.name}?`}
-            description={`This will create a real APC consignment for ${pendingPickOrder.shipping_address?.name ?? `${pendingPickOrder.customer?.first_name ?? ""} ${pendingPickOrder.customer?.last_name ?? ""}`.trim()}. This cannot be undone.`}
+            description={pickDialogDescription(pendingPickOrder, bookedMap)}
             products={pendingPickOrder.line_items.map(li => ({ name: li.title, quantity: li.quantity, quantityLabel: "ordered", noPlus: true }))}
             confirmLabel="Start packing"
             onConfirm={() => { const o = pendingPickOrder; setPendingPickOrder(null); startPicking(o); }}
@@ -2238,7 +2383,7 @@ export default function Fulfilment() {
         {pendingPickOrder && (
           <ShopifyConfirmDialog
             title={`Ship order ${pendingPickOrder.name}?`}
-            description={`This will create a real APC consignment for ${pendingPickOrder.shipping_address?.name ?? `${pendingPickOrder.customer?.first_name ?? ""} ${pendingPickOrder.customer?.last_name ?? ""}`.trim()}. This cannot be undone.`}
+            description={pickDialogDescription(pendingPickOrder, bookedMap)}
             products={pendingPickOrder.line_items.map(li => ({ name: li.title, quantity: li.quantity, quantityLabel: "×" }))}
             confirmLabel="Start packing"
             onConfirm={() => { const o = pendingPickOrder; setPendingPickOrder(null); startPicking(o); }}
@@ -2482,6 +2627,18 @@ export default function Fulfilment() {
           </div>
         )}
 
+        {/* Local delivery: no courier, no label — make that loudly obvious so
+            nobody stands at the printer waiting for a label that won't come. */}
+        {activeIsLocal && (
+          <div className="flex items-start gap-2 text-sm rounded-xl border border-teal-300 dark:border-teal-800 bg-teal-50 dark:bg-teal-950/30 px-4 py-3">
+            <Truck className="w-4 h-4 text-teal-600 dark:text-teal-400 flex-shrink-0 mt-0.5" />
+            <span className="text-teal-800 dark:text-teal-200">
+              <strong>Local delivery</strong> — no APC label needed. Pick and complete as
+              normal, then set the box aside for the van run.
+            </span>
+          </div>
+        )}
+
         {/* ── Reconcile mode: APC label gate ──────────────────────────────
             Blocks picking until the printed label on the box is proven to
             belong to this order. */}
@@ -2553,6 +2710,7 @@ export default function Fulfilment() {
                 value can't keep up with a scanner's burst and truncates. */}
             <input
               ref={barcodeRef}
+              data-scan-input="true"
               defaultValue=""
               placeholder={labelGateOpen ? "Scan the APC label…" : "Scan barcode or type SKU…"}
               className={`w-full pl-12 pr-4 py-4 text-lg bg-background border rounded-xl focus:outline-none focus:ring-2 font-mono ${
@@ -2686,7 +2844,7 @@ export default function Fulfilment() {
           </button>
           <button
             onClick={() => handleComplete()}
-            disabled={!allChecked || (apcEnabled && !shipment) || completing}
+            disabled={!allChecked || (apcEnabled && !activeIsLocal && !shipment && !labelVerified?.verified) || completing}
             className="flex-1 py-3 bg-primary text-primary-foreground rounded-xl font-semibold text-lg hover:bg-primary/90 transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
           >
             {allChecked ? (
@@ -2954,7 +3112,7 @@ export default function Fulfilment() {
       {pendingPickOrder && (
         <ShopifyConfirmDialog
           title={`Ship order ${pendingPickOrder.name}?`}
-          description={`This will create a real APC consignment for ${pendingPickOrder.shipping_address?.name ?? `${pendingPickOrder.customer?.first_name ?? ""} ${pendingPickOrder.customer?.last_name ?? ""}`.trim()}. This cannot be undone.`}
+          description={pickDialogDescription(pendingPickOrder, bookedMap)}
           products={pendingPickOrder.line_items.map(li => ({ name: li.title, quantity: li.quantity, quantityLabel: "ordered", noPlus: true }))}
           confirmLabel="Start packing"
           onConfirm={() => { const o = pendingPickOrder; setPendingPickOrder(null); startPicking(o); }}
@@ -3083,6 +3241,7 @@ export default function Fulfilment() {
               { key: "small box" as const, label: "Small Box" },
               { key: "large box" as const, label: "Large Box" },
               { key: "wholesale" as const, label: "Wholesale" },
+              { key: "local delivery" as const, label: "Local Delivery" },
               { key: "other" as const, label: "Other" },
             ] as const).map(tab => {
               const count = boxCounts[tab.key];
@@ -3123,6 +3282,50 @@ export default function Fulfilment() {
             >
               All Boxes
             </button>
+
+            {showBatchBooking && (
+              <ApcBatchBookingDialog
+                tag={queryTag}
+                onClose={() => setShowBatchBooking(false)}
+                onBooked={() => { void refetchBooked(); void refetch(); }}
+              />
+            )}
+
+            {apcMode === "full" && (
+              <>
+                {/* Work the wave in slices: book a few, hide them, carry on. */}
+                {bookedMap.size > 0 && (
+                  <div className="flex items-center gap-1 rounded-xl bg-secondary/60 p-0.5">
+                    {([
+                      { key: "all" as const, label: "All" },
+                      { key: "unbooked" as const, label: `No label (${allUnfulfilledOrders.filter(o => !bookedMap.has(o.id)).length})` },
+                      { key: "booked" as const, label: `Label booked (${bookedMap.size})` },
+                    ]).map(opt => (
+                      <button
+                        key={opt.key}
+                        onClick={() => setLabelFilter(opt.key)}
+                        className={cn(
+                          "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                          labelFilter === opt.key
+                            ? "bg-primary text-primary-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <button
+                  onClick={() => setShowBatchBooking(true)}
+                  className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-2"
+                  title="Raise APC consignments — pick how many to do at a time"
+                >
+                  <PackageCheck className="w-4 h-4" /> Book APC labels
+                </button>
+              </>
+            )}
 
             <button
               onClick={() => setFiltersOpen(v => !v)}
@@ -3304,8 +3507,14 @@ export default function Fulfilment() {
             // by hand and APC flags service problems there — so a stored
             // failure here must never block the scanner (2026-07-29: stale
             // LW16 rejections froze the entire pick list).
-            const postcodeIssue = apcMode === "full" ? postcodeIssueMap.get(order.id) : undefined;
+            // Local deliveries never touch APC, so APC postcode coverage can't
+            // block them — the van doesn't care what APC thinks of the postcode.
+            const localOrder = isLocalDelivery(order);
+            const postcodeIssue = apcMode === "full" && !localOrder ? postcodeIssueMap.get(order.id) : undefined;
             const isBlocked = !!postcodeIssue;
+            // Advisory: the address needs a human decision before a label is
+            // printed. Never blocks — local deliveries don't get a label at all.
+            const addressFlags = localOrder ? undefined : addressReviewMap.get(order.id);
 
             return (
               // Compact on purpose: a dispatch day is 60+ orders and the packer
@@ -3339,6 +3548,48 @@ export default function Fulfilment() {
                         Unassigned SKUs
                       </span>
                     )}
+                    {localOrder && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300 font-medium flex items-center gap-1">
+                        <Truck className="w-2.5 h-2.5" /> Local Delivery
+                      </span>
+                    )}
+                    {bookedMap.has(order.id) && (
+                      <>
+                        <span
+                          className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 font-medium flex items-center gap-1"
+                          title={`Consignment ${bookedMap.get(order.id)!.waybill} already booked — opening this order reuses it`}
+                        >
+                          <CheckCircle2 className="w-2.5 h-2.5" /> Label booked
+                        </span>
+                        {/* APC's API reports a cancelled consignment exactly
+                            like a live one, so a cancellation made inside
+                            Hypaship can only be told to us by hand. */}
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            const wb = bookedMap.get(order.id)!.waybill;
+                            setRebookingWaybill(wb);
+                            try {
+                              await markConsignmentCancelled(wb);
+                              await refetchBooked();
+                              toast({ title: `${order.name}: consignment cleared`, description: "Start Picking will now raise a fresh one under the same reference." });
+                            } catch (err) {
+                              toast({ title: "Couldn't clear it", description: err instanceof Error ? err.message : "Request failed", variant: "destructive" });
+                            } finally {
+                              setRebookingWaybill(null);
+                            }
+                          }}
+                          disabled={rebookingWaybill === bookedMap.get(order.id)!.waybill}
+                          className="text-[10px] px-1.5 py-0.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors flex items-center gap-1 disabled:opacity-40"
+                          title="Use this if you cancelled the consignment in APC — the app can't detect that on its own"
+                        >
+                          {rebookingWaybill === bookedMap.get(order.id)!.waybill
+                            ? <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                            : <Ban className="w-2.5 h-2.5" />}
+                          Cancelled in APC
+                        </button>
+                      </>
+                    )}
                     {skippedIds.has(order.id) && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground font-medium flex items-center gap-1">
                         <SkipForward className="w-2.5 h-2.5" /> Skipped
@@ -3349,7 +3600,21 @@ export default function Fulfilment() {
                         Postcode Issue
                       </span>
                     )}
+                    {addressFlags && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-medium flex items-center gap-1"
+                        title={addressFlags.review.map(r => r.message).join("\n")}
+                      >
+                        <AlertTriangle className="w-2.5 h-2.5" /> Check Address
+                      </span>
+                    )}
                   </div>
+                  {addressFlags && (
+                    <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5 flex items-start gap-1">
+                      <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                      <span>{addressFlags.review.map(r => r.message).join(" · ")}</span>
+                    </p>
+                  )}
                   {isBlocked && (
                     <p className="text-xs text-red-600 dark:text-red-400 mt-0.5 flex items-center gap-1">
                       <AlertCircle className="w-3 h-3" />

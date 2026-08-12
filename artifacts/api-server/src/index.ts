@@ -278,6 +278,17 @@ async function runStartupMigrations() {
         updated_at timestamp NOT NULL DEFAULT now()
       )
     `);
+    // Each update carries an optional screenshot of the feature it describes.
+    // The morning-meeting slide leads with the picture — a wall of bullets was
+    // being skipped over, and the team recognises a screen far faster than a
+    // sentence about it. Stored inline as bytea, same as every other image in
+    // this app (gratitude photo, improvement attachments).
+    await db.execute(sql`
+      ALTER TABLE system_updates ADD COLUMN IF NOT EXISTS image BYTEA
+    `);
+    await db.execute(sql`
+      ALTER TABLE system_updates ADD COLUMN IF NOT EXISTS image_mime TEXT
+    `);
     // Improvements consolidation: "struggles" are now just improvements.
     // Idempotent — a no-op once no struggle rows remain.
     await db.execute(sql`
@@ -369,6 +380,12 @@ async function runStartupMigrations() {
     // setting (default 480s = 8 minutes).
     await db.execute(sql`
       ALTER TABLE recipes ADD COLUMN IF NOT EXISTS target_build_seconds INTEGER
+    `);
+    // Grams knocked off the filling weight the building station displays, per
+    // batch. Display only — nothing else reads it, so prep quantities, costing
+    // and the printed plan keep using the recipe's real filling weight.
+    await db.execute(sql`
+      ALTER TABLE recipes ADD COLUMN IF NOT EXISTS builder_filling_deduction_grams INTEGER NOT NULL DEFAULT 0
     `);
     await db.execute(sql`
       ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS surplus_percent NUMERIC(5,2) NOT NULL DEFAULT 10
@@ -2687,6 +2704,69 @@ async function runStartupMigrations() {
     `);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_queued_production_date ON queued_production (production_date)`);
 
+    // When the APC label for a consignment was last sent to a printer.
+    // Lets the picking screen print a label once automatically and then
+    // offer a manual reprint, instead of firing the printer every time an
+    // order is reopened.
+    await db.execute(sql`ALTER TABLE apc_consignments ADD COLUMN IF NOT EXISTS label_printed_at TIMESTAMP`);
+    // Batch booking + cancel/re-raise support.
+    //   cancelled_at      — a cancelled consignment must stop counting as
+    //                       "this order is booked", or the duplicate guard
+    //                       would hand back a dead waybill.
+    //   booking_reference — what was actually sent to APC. A re-raise for the
+    //                       same order reuses the same order number, since
+    //                       APC's search is exact-match only.
+    //   service_code      — what it was booked on, for the end-of-day report.
+    //   dispatch_tag      — which dispatch day this booking belongs to.
+    //   booked_by         — who pressed the button.
+    await db.execute(sql`ALTER TABLE apc_consignments ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP`);
+    await db.execute(sql`ALTER TABLE apc_consignments ADD COLUMN IF NOT EXISTS booking_reference TEXT`);
+    await db.execute(sql`ALTER TABLE apc_consignments ADD COLUMN IF NOT EXISTS service_code TEXT`);
+    await db.execute(sql`ALTER TABLE apc_consignments ADD COLUMN IF NOT EXISTS dispatch_tag TEXT`);
+    await db.execute(sql`ALTER TABLE apc_consignments ADD COLUMN IF NOT EXISTS booked_by TEXT`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_apc_consignments_dispatch_tag ON apc_consignments (dispatch_tag)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_apc_consignments_order ON apc_consignments (shopify_order_id)`);
+
+    // Stock-gate holds — see lib/db/migrations/0049_stock_gate_holds.sql.
+    // Products automatically held back from next-day delivery (Shopify tag
+    // + Zapiet prep-time rule) when fridge-vs-despatch surplus runs low.
+    // Rows double as the audit trail: released_at IS NULL = hold is live.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS stock_gate_holds (
+        id SERIAL PRIMARY KEY,
+        recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+        recipe_name TEXT NOT NULL,
+        tag TEXT NOT NULL,
+        product_gid TEXT,
+        product_title TEXT,
+        shopify_variant_id TEXT,
+        surplus_at_hold INTEGER NOT NULL,
+        threshold_at_hold INTEGER NOT NULL,
+        dry_run BOOLEAN NOT NULL DEFAULT FALSE,
+        verify_status TEXT,
+        verify_note TEXT,
+        held_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        released_at TIMESTAMP,
+        released_by TEXT,
+        surplus_at_release INTEGER
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_stock_gate_holds_recipe ON stock_gate_holds (recipe_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_stock_gate_holds_held_at ON stock_gate_holds (held_at)`);
+    await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_gate_holds_active ON stock_gate_holds (recipe_id) WHERE released_at IS NULL`);
+    await db.execute(sql`
+      INSERT INTO app_settings (key, value, updated_at) VALUES
+        ('stock_gate_enabled', 'false', NOW()),
+        ('stock_gate_dry_run', 'true', NOW()),
+        ('stock_gate_threshold_packs', '5', NOW()),
+        ('stock_gate_release_packs', '10', NOW()),
+        ('stock_gate_auto_release', 'true', NOW()),
+        ('stock_gate_tag', 'low-stock-hold', NOW()),
+        ('stock_gate_interval_minutes', '5', NOW()),
+        ('stock_gate_zapiet_location_id', '270812', NOW())
+      ON CONFLICT (key) DO NOTHING
+    `);
+
     console.log("Startup migrations OK");
   } catch (err) {
     console.error("Startup migration failed (non-fatal):", err);
@@ -2780,6 +2860,13 @@ async function startup() {
     // until configured. Lean: one Govee fetch per cycle.
     const { startGoveePoller } = await import("./lib/govee-poller");
     startGoveePoller();
+
+    // Stock gate — holds products back from next-day delivery when the
+    // fridge-vs-despatch surplus runs low. Self-gates on stock_gate_enabled
+    // (default false) + dry-run, so it's a no-op until configured. One
+    // calculate pass per cycle, same engine as the Create Plan screen.
+    const { startStockGatePoller } = await import("./lib/stock-gating");
+    startStockGatePoller();
 
     // System-updates feed for the morning-meeting slide. Computed once
     // per deploy (this boot) and refreshed on a slow timer, then written
