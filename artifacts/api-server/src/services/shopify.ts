@@ -957,6 +957,10 @@ export async function getOrderTransactionFees(
 export async function addTagToOrder(orderId: number, currentTags: string, newTag: string): Promise<void> {
   const existing = currentTags.split(",").map(t => t.trim()).filter(Boolean);
   if (existing.includes(newTag)) return;
+  if (shouldSkipSideEffect()) {
+    logSkippedSideEffect("shopify.addTagToOrder", { orderId, newTag });
+    return;
+  }
   const updated = [...existing, newTag].join(", ");
   await shopifyPut(`/orders/${orderId}.json`, { order: { id: orderId, tags: updated } });
 }
@@ -972,6 +976,10 @@ export async function addTagsToOrder(orderId: number, currentTags: string, newTa
     result.push(t);
   }
   const updated = result.join(", ");
+  if (shouldSkipSideEffect()) {
+    logSkippedSideEffect("shopify.addTagsToOrder", { orderId, newTags });
+    return updated;
+  }
   await shopifyPut(`/orders/${orderId}.json`, { order: { id: orderId, tags: updated } });
   return updated;
 }
@@ -982,6 +990,10 @@ export async function replaceTagOnOrder(orderId: number, currentTags: string, ol
   const filtered = existing.filter(t => t !== oldTag);
   if (!filtered.includes(newTag)) filtered.push(newTag);
   const updated = filtered.join(", ");
+  if (shouldSkipSideEffect()) {
+    logSkippedSideEffect("shopify.replaceTagOnOrder", { orderId, oldTag, newTag });
+    return updated;
+  }
   await shopifyPut(`/orders/${orderId}.json`, { order: { id: orderId, tags: updated } });
   return updated;
 }
