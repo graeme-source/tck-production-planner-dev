@@ -1,19 +1,21 @@
 /**
- * Book the day's APC consignments in one go, replacing the spreadsheet upload.
+ * Book APC consignments for a dispatch day, in whatever size batch the
+ * operator chooses.
  *
- * The danger here is not booking — it's a partial run nobody notices, leaving
+ * The danger is not booking — it's a partial run nobody notices, leaving
  * some orders without a label and no way to tell which. So the flow is:
  *
- *   1. PREFLIGHT   — nothing is booked. Shows what would be booked, what is
- *                    blocked, what needs a human look, what is already done.
- *   2. CONFIRM     — an explicit second step stating the exact count and that
- *                    real consignments will be raised.
- *   3. REPORT      — every order's individual outcome, failures first, kept
- *                    on screen until dismissed and copyable as text.
+ *   1. PREFLIGHT — nothing is booked. Shows what would be booked, what is
+ *                  blocked, what needs a human look, what is already done.
+ *                  Orders are TICKED INDIVIDUALLY; nothing is selected by
+ *                  default, so a full run is a deliberate act.
+ *   2. CONFIRM   — a second explicit step naming the exact count and the
+ *                  service-code mix.
+ *   3. REPORT    — every order's own outcome, failures first, copyable.
  *
- * Nothing is ever booked without the operator seeing stage 1 and 2.
+ * Nothing is booked without the operator seeing stages 1 and 2.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import {
   Loader2, AlertTriangle, CheckCircle2, XCircle, PackageCheck,
@@ -67,9 +69,13 @@ interface BookResponse {
   results: BookResult[];
 }
 
-function OrderLine({ o, tone }: { o: PreflightOrder; tone: "ready" | "review" | "blocked" | "done" }) {
-  return (
-    <div className="flex items-start gap-3 py-1.5 text-sm border-b border-border/50 last:border-0">
+type Tone = "ready" | "review" | "blocked" | "done";
+
+function OrderLine({ o, tone, selectable, checked, onToggle }: {
+  o: PreflightOrder; tone: Tone; selectable?: boolean; checked?: boolean; onToggle?: () => void;
+}) {
+  const body = (
+    <>
       <span className="font-semibold w-[4.5rem] shrink-0">{o.orderName}</span>
       <span className="flex-1 min-w-0">
         <span className="text-muted-foreground">{o.customerName}</span>
@@ -86,12 +92,27 @@ function OrderLine({ o, tone }: { o: PreflightOrder; tone: "ready" | "review" | 
         {o.serviceCode && <span className="font-mono">{o.serviceCode}</span>}
         <span className="block">{o.weightKg} kg</span>
       </span>
-    </div>
+    </>
+  );
+
+  if (!selectable) {
+    return <div className="flex items-start gap-3 py-1.5 text-sm border-b border-border/50 last:border-0">{body}</div>;
+  }
+
+  return (
+    <label className={cn(
+      "flex items-start gap-3 py-1.5 text-sm border-b border-border/50 last:border-0 cursor-pointer -mx-1 px-1 rounded",
+      checked && "bg-primary/5",
+    )}>
+      <input type="checkbox" checked={!!checked} onChange={onToggle} className="mt-1 shrink-0" />
+      {body}
+    </label>
   );
 }
 
-function Section({ title, count, tone, orders, defaultOpen = false }: {
-  title: string; count: number; tone: "ready" | "review" | "blocked" | "done"; orders: PreflightOrder[]; defaultOpen?: boolean;
+function Section({ title, count, tone, orders, defaultOpen = false, selectable, selected, onToggle }: {
+  title: string; count: number; tone: Tone; orders: PreflightOrder[]; defaultOpen?: boolean;
+  selectable?: boolean; selected?: Set<number>; onToggle?: (id: number) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   if (count === 0) return null;
@@ -101,6 +122,7 @@ function Section({ title, count, tone, orders, defaultOpen = false }: {
     blocked: "border-red-300 dark:border-red-800 bg-red-50/60 dark:bg-red-950/20",
     done: "border-border bg-secondary/30",
   }[tone];
+  const chosen = selectable && selected ? orders.filter(o => selected.has(o.orderId)).length : 0;
   return (
     <div className={cn("rounded-xl border overflow-hidden", toneClass)}>
       <button onClick={() => setOpen(v => !v)} className="w-full flex items-center gap-2 px-3 py-2 text-sm font-semibold text-left">
@@ -109,9 +131,24 @@ function Section({ title, count, tone, orders, defaultOpen = false }: {
         {tone === "blocked" && <XCircle className="w-4 h-4 text-red-600" />}
         {tone === "done" && <PackageCheck className="w-4 h-4 text-muted-foreground" />}
         {title}
-        <span className="ml-auto tabular-nums text-muted-foreground">{count}</span>
+        <span className="ml-auto tabular-nums text-muted-foreground">
+          {selectable && chosen > 0 ? `${chosen} of ${count} ticked` : count}
+        </span>
       </button>
-      {open && <div className="px-3 pb-2 max-h-56 overflow-y-auto">{orders.map(o => <OrderLine key={o.orderId} o={o} tone={tone} />)}</div>}
+      {open && (
+        <div className="px-3 pb-2 max-h-60 overflow-y-auto">
+          {orders.map(o => (
+            <OrderLine
+              key={o.orderId}
+              o={o}
+              tone={tone}
+              selectable={selectable}
+              checked={selected?.has(o.orderId)}
+              onToggle={() => onToggle?.(o.orderId)}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -124,28 +161,44 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
   const [preflight, setPreflight] = useState<Preflight | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [includeReviewed, setIncludeReviewed] = useState(false);
   const [stage, setStage] = useState<"review" | "confirm" | "booking" | "report">("review");
   const [report, setReport] = useState<BookResponse | null>(null);
+  // Nothing ticked to begin with: booking the whole wave has to be chosen,
+  // not defaulted into.
+  const [selected, setSelected] = useState<Set<number>>(new Set());
 
-  useState(() => {
+  useEffect(() => {
+    let cancelled = false;
     fetch(`${BASE}/api/fulfilment/batch-preflight?tag=${encodeURIComponent(tag)}`, { credentials: "include" })
       .then(async r => {
         const d = await r.json();
         if (!r.ok) throw new Error(d.error ?? "Preflight failed");
-        setPreflight(d);
+        if (!cancelled) setPreflight(d);
       })
-      .catch(e => setError(e instanceof Error ? e.message : "Preflight failed"))
-      .finally(() => setLoading(false));
-    return undefined;
-  });
+      .catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : "Preflight failed"); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [tag]);
 
-  const toBook = preflight
-    ? [...preflight.ready, ...(includeReviewed ? preflight.needsReview : [])]
-    : [];
+  const selectable: PreflightOrder[] = preflight ? [...preflight.ready, ...preflight.needsReview] : [];
+  const toBook = selectable.filter(o => selected.has(o.orderId));
+
+  function toggle(id: number) {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  /** Tick the first N bookable orders — the way to run a small trial batch
+   *  without hunting through a list of 150. */
+  function selectFirst(n: number) {
+    setSelected(new Set(preflight!.ready.slice(0, n).map(o => o.orderId)));
+  }
 
   async function book() {
-    if (!preflight || toBook.length === 0) return;
+    if (toBook.length === 0) return;
     setStage("booking");
     try {
       const res = await fetch(`${BASE}/api/fulfilment/batch-book`, {
@@ -175,6 +228,17 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
       .catch(() => toast({ title: "Could not copy", variant: "destructive" }));
   }
 
+  const quickPick = (n: number) => (
+    <button
+      key={n}
+      onClick={() => selectFirst(n)}
+      disabled={!preflight || preflight.ready.length === 0}
+      className="px-2.5 py-1 rounded-lg text-xs font-medium border border-border hover:bg-secondary/60 disabled:opacity-40"
+    >
+      First {n}
+    </button>
+  );
+
   return (
     <Dialog open onOpenChange={(v) => { if (!v && stage !== "booking") onClose(); }}>
       <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
@@ -185,7 +249,7 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
           <DialogDescription>
             {stage === "report"
               ? "Every order's outcome is listed below. Anything that failed still has no label."
-              : "Nothing is booked until you confirm. Check what's flagged first."}
+              : "Tick the orders to book. Nothing is booked until you confirm on the next step."}
           </DialogDescription>
         </DialogHeader>
 
@@ -197,7 +261,7 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
           </div>
         )}
 
-        {/* ── Stage 1: review ── */}
+        {/* ── Stage 1: review + pick ── */}
         {preflight && stage === "review" && (
           <div className="space-y-3">
             {!preflight.codesConfigured && (
@@ -207,25 +271,44 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
               </div>
             )}
 
-            <Section title="Ready to book" count={preflight.counts.ready} tone="ready" orders={preflight.ready} defaultOpen />
-            <Section title="Needs a look before booking" count={preflight.counts.needsReview} tone="review" orders={preflight.needsReview} defaultOpen />
+            {preflight.ready.length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap text-sm">
+                <span className="text-muted-foreground">Quick pick:</span>
+                {[5, 10, 15, 25].map(quickPick)}
+                <button
+                  onClick={() => setSelected(new Set(preflight.ready.map(o => o.orderId)))}
+                  className="px-2.5 py-1 rounded-lg text-xs font-medium border border-border hover:bg-secondary/60"
+                >
+                  All ready ({preflight.ready.length})
+                </button>
+                <button
+                  onClick={() => setSelected(new Set())}
+                  disabled={selected.size === 0}
+                  className="px-2.5 py-1 rounded-lg text-xs font-medium border border-border hover:bg-secondary/60 disabled:opacity-40"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
+
+            <Section title="Ready to book" count={preflight.counts.ready} tone="ready" orders={preflight.ready} defaultOpen
+              selectable selected={selected} onToggle={toggle} />
+            <Section title="Needs a look before booking" count={preflight.counts.needsReview} tone="review" orders={preflight.needsReview} defaultOpen
+              selectable selected={selected} onToggle={toggle} />
             <Section title="Can't be booked — fix in Shopify first" count={preflight.counts.blocked} tone="blocked" orders={preflight.blocked} defaultOpen />
             <Section title="Already booked" count={preflight.counts.alreadyBooked} tone="done" orders={preflight.alreadyBooked} />
             <Section title="Local delivery — no label needed" count={preflight.counts.localDeliveries} tone="done" orders={preflight.localDeliveries} />
 
             {preflight.counts.needsReview > 0 && (
-              <label className="flex items-start gap-2 text-sm rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2.5 cursor-pointer">
-                <input type="checkbox" checked={includeReviewed} onChange={e => setIncludeReviewed(e.target.checked)} className="mt-0.5" />
-                <span>
-                  Also book the <strong>{preflight.counts.needsReview}</strong> flagged for a look. Their addresses were reshaped
-                  for the label — read the notes above before ticking this.
-                </span>
-              </label>
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                Orders under "needs a look" can be ticked too — read their notes first. Their addresses
+                were reshaped to fit the label.
+              </p>
             )}
 
             <div className="flex items-center gap-3 pt-2 border-t border-border">
               <span className="text-sm text-muted-foreground">
-                {toBook.length === 0 ? "Nothing to book" : <>Will book <strong className="text-foreground">{toBook.length}</strong> consignment{toBook.length !== 1 ? "s" : ""}</>}
+                {toBook.length === 0 ? "Nothing ticked" : <><strong className="text-foreground">{toBook.length}</strong> order{toBook.length !== 1 ? "s" : ""} ticked</>}
               </span>
               <div className="flex-1" />
               <button onClick={onClose} className="px-4 py-2 border border-border rounded-xl text-sm font-medium hover:bg-secondary/50">Cancel</button>
@@ -256,6 +339,9 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
                   const k = o.serviceCode ?? "?"; acc[k] = (acc[k] ?? 0) + 1; return acc;
                 }, {})).map(([code, n]) => `${code} × ${n}`).join("   ")}
               </div>
+              <div className="text-xs text-amber-900/70 dark:text-amber-200/70 pt-1 max-h-24 overflow-y-auto">
+                {toBook.map(o => o.orderName).join(", ")}
+              </div>
             </div>
             <div className="flex items-center gap-3">
               <button onClick={() => setStage("review")} className="px-4 py-2 border border-border rounded-xl text-sm font-medium hover:bg-secondary/50">Back</button>
@@ -270,7 +356,7 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
         {stage === "booking" && (
           <div className="flex items-center gap-3 py-8 text-sm">
             <Loader2 className="w-5 h-5 animate-spin text-primary" />
-            <span>Booking {toBook.length} consignments with APC — don't close this window…</span>
+            <span>Booking {toBook.length} consignment{toBook.length !== 1 ? "s" : ""} with APC — don't close this window…</span>
           </div>
         )}
 

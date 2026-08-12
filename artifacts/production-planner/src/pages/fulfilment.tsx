@@ -1065,6 +1065,9 @@ export default function Fulfilment() {
   // tagging and booking the WHOLE wave, so the default view must be
   // everything; narrowing to a category is a deliberate choice afterwards.
   const [boxFilter, setBoxFilter] = useState<Set<BoxCategory>>(new Set<BoxCategory>());
+  // Fourth filter axis, only meaningful when the app books labels itself:
+  // work through the wave a slice at a time by hiding what's already booked.
+  const [labelFilter, setLabelFilter] = useState<"all" | "booked" | "unbooked">("all");
   // Tri-state chips: a tag/product is either untouched, included, or excluded.
   const [includeTags, setIncludeTags] = useState<Set<string>>(new Set());
   const [excludeTags, setExcludeTags] = useState<Set<string>>(new Set());
@@ -1276,6 +1279,10 @@ export default function Fulfilment() {
 
     // Box category: empty selection = no category constraint (all).
     if (boxFilter.size > 0 && !boxFilter.has(getOrderCategory(o))) return false;
+
+    // Label state — lets a batch be worked through a slice at a time.
+    if (labelFilter === "booked" && !bookedMap.has(o.id)) return false;
+    if (labelFilter === "unbooked" && bookedMap.has(o.id)) return false;
 
     // Exclusions win over everything.
     if ([...excludeTags].some(t => tags.includes(t))) return false;
@@ -3285,13 +3292,39 @@ export default function Fulfilment() {
             )}
 
             {apcMode === "full" && (
-              <button
-                onClick={() => setShowBatchBooking(true)}
-                className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-2"
-                title="Raise APC consignments for this whole dispatch day"
-              >
-                <PackageCheck className="w-4 h-4" /> Book APC labels
-              </button>
+              <>
+                {/* Work the wave in slices: book a few, hide them, carry on. */}
+                {bookedMap.size > 0 && (
+                  <div className="flex items-center gap-1 rounded-xl bg-secondary/60 p-0.5">
+                    {([
+                      { key: "all" as const, label: "All" },
+                      { key: "unbooked" as const, label: `No label (${allUnfulfilledOrders.filter(o => !bookedMap.has(o.id)).length})` },
+                      { key: "booked" as const, label: `Label booked (${bookedMap.size})` },
+                    ]).map(opt => (
+                      <button
+                        key={opt.key}
+                        onClick={() => setLabelFilter(opt.key)}
+                        className={cn(
+                          "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                          labelFilter === opt.key
+                            ? "bg-primary text-primary-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <button
+                  onClick={() => setShowBatchBooking(true)}
+                  className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-2"
+                  title="Raise APC consignments — pick how many to do at a time"
+                >
+                  <PackageCheck className="w-4 h-4" /> Book APC labels
+                </button>
+              </>
             )}
 
             <button
