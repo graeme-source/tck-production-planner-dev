@@ -1139,6 +1139,51 @@ router.get("/postcode-validations", requireFulfilmentAccess, async (req: Request
   }
 });
 
+// GET /address-review?tag=YYYY-MM-DD
+// Runs every order for a dispatch day through the APC address normaliser and
+// returns only the ones it could not resolve confidently — a conflicting
+// postcode, a town too long for APC's 35-character field. Read-only: it books
+// nothing and calls no external service, it just reshapes the addresses we
+// already hold and reports what a human should look at before a label is
+// printed. Replaces hunting for yellow cells in the spreadsheet.
+router.get("/address-review", requireFulfilmentAccess, async (req: Request, res: Response) => {
+  const { tag } = req.query as { tag?: string };
+  if (!tag) {
+    res.status(400).json({ error: "tag query param required" });
+    return;
+  }
+  try {
+    const { normaliseAddress } = await import("../services/apc");
+    const orders = await getOrdersByTag(tag);
+    const flagged = orders
+      .filter(o => o.fulfillment_status !== "fulfilled" && o.shipping_address)
+      .map(o => {
+        const sa = o.shipping_address!;
+        const result = normaliseAddress(sa.address1, sa.address2, sa.city, {
+          postcode: sa.zip,
+          countryCode: sa.country_code ?? "GB",
+        });
+        return {
+          orderId: o.id,
+          orderName: o.name,
+          review: result.review,
+          normalised: {
+            address1: result.address1,
+            address2: result.address2 ?? null,
+            city: result.city,
+            postcode: sa.zip,
+          },
+        };
+      })
+      .filter(r => r.review.length > 0);
+    res.json({ tag, checked: orders.length, flagged });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Fulfilment] address-review error:", msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
 router.post("/postcode-recheck", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const { orderId, tag } = req.body as { orderId?: number; tag?: string };
   if (!orderId || !tag) {

@@ -12,7 +12,7 @@ import {
   Package, Scan, CheckCircle2, AlertCircle, ChevronRight, Printer,
   RefreshCw, MapPin, SkipForward, RotateCcw, XCircle, Loader2,
   ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter, ArrowUpDown,
-  Volume2, VolumeX,
+  Volume2, VolumeX, AlertTriangle,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -472,6 +472,22 @@ async function fetchPostcodeValidations(tag: string): Promise<PostcodeValidation
   const res = await fetch(`${BASE}/api/fulfilment/postcode-validations?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
   if (!res.ok) return [];
   return res.json();
+}
+
+/** Orders whose address the app could not reshape for APC with confidence —
+ *  a conflicting postcode, a town too long for the label. Read-only check. */
+interface AddressReviewRow {
+  orderId: number;
+  orderName: string;
+  review: Array<{ kind: string; message: string }>;
+  normalised: { address1: string; address2: string | null; city: string; postcode: string };
+}
+
+async function fetchAddressReview(tag: string): Promise<AddressReviewRow[]> {
+  const res = await fetch(`${BASE}/api/fulfilment/address-review?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.flagged ?? []) as AddressReviewRow[];
 }
 
 async function recheckPostcode(orderId: number, tag: string): Promise<{ available: boolean; reason?: string }> {
@@ -1124,6 +1140,18 @@ export default function Fulfilment() {
       }
     }
   }
+
+  // Addresses the app can't reshape for a label without a judgement call.
+  // Advisory only — it never blocks picking, it just puts the handful of
+  // orders worth a look in front of the packer instead of in a spreadsheet.
+  const { data: addressReview } = useQuery({
+    queryKey: ["fulfilment-address-review", queryTag],
+    queryFn: () => fetchAddressReview(queryTag),
+    staleTime: 5 * 60_000,
+    enabled: !!queryTag,
+  });
+  const addressReviewMap = new Map<number, AddressReviewRow>();
+  for (const row of addressReview ?? []) addressReviewMap.set(Number(row.orderId), row);
 
   const [recheckingId, setRecheckingId] = useState<number | null>(null);
 
@@ -3351,6 +3379,9 @@ export default function Fulfilment() {
             const localOrder = isLocalDelivery(order);
             const postcodeIssue = apcMode === "full" && !localOrder ? postcodeIssueMap.get(order.id) : undefined;
             const isBlocked = !!postcodeIssue;
+            // Advisory: the address needs a human decision before a label is
+            // printed. Never blocks — local deliveries don't get a label at all.
+            const addressFlags = localOrder ? undefined : addressReviewMap.get(order.id);
 
             return (
               // Compact on purpose: a dispatch day is 60+ orders and the packer
@@ -3399,7 +3430,21 @@ export default function Fulfilment() {
                         Postcode Issue
                       </span>
                     )}
+                    {addressFlags && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-medium flex items-center gap-1"
+                        title={addressFlags.review.map(r => r.message).join("\n")}
+                      >
+                        <AlertTriangle className="w-2.5 h-2.5" /> Check Address
+                      </span>
+                    )}
                   </div>
+                  {addressFlags && (
+                    <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5 flex items-start gap-1">
+                      <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                      <span>{addressFlags.review.map(r => r.message).join(" · ")}</span>
+                    </p>
+                  )}
                   {isBlocked && (
                     <p className="text-xs text-red-600 dark:text-red-400 mt-0.5 flex items-center gap-1">
                       <AlertCircle className="w-3 h-3" />

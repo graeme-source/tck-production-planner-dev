@@ -79,72 +79,227 @@ interface PlaceOrderResult {
   warnings: string[];
 }
 
-interface NormalisedAddress {
+/** Something the app could not resolve confidently. These stop an address
+ *  being booked blind — they surface on the packing queue for a human. */
+export interface AddressReviewFlag {
+  kind: "conflicting-postcode" | "town-too-long" | "truncated";
+  message: string;
+}
+
+export interface NormalisedAddress {
   address1: string;
   address2?: string;
   city: string;
   warnings: string[];
+  /** Free text lifted out of an address line (delivery notes typed into
+   *  address2). Callers should append it to the consignment Instructions
+   *  rather than let it eat an address line. */
+  instructions?: string;
+  review: AddressReviewFlag[];
 }
 
-/** Exported so address handling can be inspected and tested without booking
- *  anything with APC — a wrong address only shows up as a failed delivery. */
+const ADDRESS_LINE_MAX = 35;
+
+/** Loose UK postcode matcher — good enough to spot a postcode typed into a
+ *  street line. Deliberately permissive about the inner space. */
+const UK_POSTCODE_RE = /\b[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}\b/gi;
+
+/** Components that carry no delivery information because the field they
+ *  belong to is sent separately. */
+const COUNTRY_COMPONENTS = new Set([
+  "unitedkingdom", "greatbritain", "england", "scotland", "wales",
+  "northernireland", "uk", "gb", "u k",
+]);
+
+/** Words a place name can end on ("Aston in Makerfield", "Newcastle upon
+ *  Tyne", "Bourton on the Water"). Never leave a line dangling on one — that
+ *  is how "Aston in Makerfield" became "Aston in". */
+const CONNECTOR_WORDS = new Set([
+  "in", "on", "upon", "under", "by", "le", "cum", "next", "super",
+  "the", "of", "and", "at", "de", "la",
+]);
+
+/** Phrases that mean the customer typed a delivery note where an address
+ *  line belongs. Kept tight on purpose: a false positive would delete part
+ *  of a real address. */
+const INSTRUCTION_HINTS = [
+  /\bcan leave\b/i, /\bplease leave\b/i, /\bleave (it |in |with |at |by |round)/i,
+  /\bif (out|no answer|nobody)\b/i, /\bsafe place\b/i, /\bknock\b/i,
+  /\bring (the )?(bell|door)/i, /\bcall on arrival\b/i, /\bround the back\b/i,
+];
+
+const squash = (s: string | undefined) =>
+  (s ?? "").replace(/\s+/g, " ").trim().replace(/^[,\s]+|[,\s]+$/g, "");
+const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+const components = (line: string) => line.split(",").map(p => p.trim()).filter(Boolean);
+
+/** Drop components that repeat an earlier one ("London, London, W3 2JH"). */
+function dedupeComponents(line: string): string {
+  const seen = new Set<string>();
+  const kept = components(line).filter(part => {
+    const k = key(part);
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  return kept.length > 0 ? kept.join(", ") : line;
+}
+
+/** Remove a town only when it is a SEPARATE trailing component — the line is
+ *  exactly the town, or the town follows a comma or full stop. A town that
+ *  merely ends the line is part of the place name ("Lower Darwen" ends with
+ *  "Darwen" but is not a duplicate of it). */
+function stripTrailingTown(line: string, town: string): string {
+  if (!line || !town) return line;
+  const l = line.trim(), t = town.trim();
+  if (key(l) === key(t)) return "";
+  if (!l.toLowerCase().endsWith(t.toLowerCase())) return line;
+  const before = l.slice(0, l.length - t.length).trimEnd();
+  if (before.endsWith(",") || before.endsWith(".")) {
+    return before.replace(/[,.\s]+$/, "").trim();
+  }
+  return line;
+}
+
+/** Split a line to fit, preferring a real boundary over an arbitrary word
+ *  gap: comma first, then full stop, then a word break that does not leave a
+ *  connector word dangling. */
+function splitToFit(line: string): { head: string; tail: string } {
+  if (line.length <= ADDRESS_LINE_MAX) return { head: line, tail: "" };
+
+  const parts = components(line);
+  if (parts.length > 1) {
+    let head = "";
+    let i = 0;
+    for (; i < parts.length; i++) {
+      const candidate = head ? `${head}, ${parts[i]}` : parts[i];
+      if (candidate.length > ADDRESS_LINE_MAX) break;
+      head = candidate;
+    }
+    if (head && i < parts.length) return { head, tail: parts.slice(i).join(", ") };
+  }
+
+  const dot = line.lastIndexOf(". ", ADDRESS_LINE_MAX);
+  if (dot > 0) return { head: line.slice(0, dot + 1).trim(), tail: line.slice(dot + 2).trim() };
+
+  // A connector binds the words on BOTH sides of it ("Aston in Makerfield"),
+  // so a cut is only safe when neither the word before it nor the word after
+  // it is a connector. Checking just the head would still strand "in
+  // makerfield" on line 2.
+  let cut = line.lastIndexOf(" ", ADDRESS_LINE_MAX);
+  while (cut > 0) {
+    const before = (line.slice(0, cut).trim().split(" ").pop() ?? "").toLowerCase();
+    const after = (line.slice(cut + 1).trim().split(" ")[0] ?? "").toLowerCase();
+    if (!CONNECTOR_WORDS.has(before) && !CONNECTOR_WORDS.has(after)) break;
+    cut = line.lastIndexOf(" ", cut - 1);
+  }
+  if (cut > 0) return { head: line.slice(0, cut).trim(), tail: line.slice(cut + 1).trim() };
+
+  return { head: line.slice(0, ADDRESS_LINE_MAX).trim(), tail: line.slice(ADDRESS_LINE_MAX).trim() };
+}
+
+/**
+ * Reshape a Shopify address into APC's 35-character lines — the automated
+ * version of carving an address up by hand before a CSV upload.
+ *
+ * Order matters: strip what is redundant BEFORE splitting, because most
+ * over-long lines are only over-long because they repeat the postcode or
+ * country we already send in their own fields. Removing those usually makes
+ * the line fit with no split at all, which is what a human would do.
+ *
+ * Exported so address handling can be inspected and tested without booking
+ * anything with APC — a wrong address only shows up as a failed delivery.
+ */
 export function normaliseAddress(
   address1: string,
   address2: string | undefined,
   city: string,
+  opts: { postcode?: string; countryCode?: string } = {},
 ): NormalisedAddress {
-  const MAX = 35;
   const warnings: string[] = [];
-  const originalA1 = (address1 ?? "").replace(/\s+/g, " ").trim();
+  const review: AddressReviewFlag[] = [];
+
+  const originalA1 = squash(address1);
   let a1 = originalA1;
-  let a2 = (address2 ?? "").replace(/\s+/g, " ").trim();
-  const rawCity = (city ?? "").replace(/\s+/g, " ").trim();
+  let a2 = squash(address2);
+  const rawCity = squash(city);
+  const postcodeKey = key(opts.postcode ?? "");
 
   let c = rawCity;
-  if (c.length > MAX) {
-    c = c.slice(0, MAX);
+  if (c.length > ADDRESS_LINE_MAX) {
+    c = c.slice(0, ADDRESS_LINE_MAX).trim();
     warnings.push(`City truncated from "${rawCity}" to "${c}"`);
+    review.push({
+      kind: "town-too-long",
+      message: `Town "${rawCity}" is ${rawCity.length} characters — APC allows ${ADDRESS_LINE_MAX}. Check the correct post town before booking.`,
+    });
   }
 
-  if (c && a1.toLowerCase().endsWith(c.toLowerCase())) {
-    const stripped = a1.slice(0, a1.length - c.length).replace(/[,\s]+$/, "").trim();
-    if (stripped) a1 = stripped;
-  }
-  if (c && a2.toLowerCase().endsWith(c.toLowerCase())) {
-    a2 = a2.slice(0, a2.length - c.length).replace(/[,\s]+$/, "").trim();
-  }
+  // ── 1. Lift delivery notes out of an address line ────────────────────────
+  let instructions: string | undefined;
+  const looksLikeNote = (s: string) =>
+    s.length > ADDRESS_LINE_MAX && INSTRUCTION_HINTS.some(re => re.test(s));
+  if (looksLikeNote(a2)) { instructions = a2; a2 = ""; }
 
-  if (a1.length > MAX) {
-    const cutPoint = a1.lastIndexOf(" ", MAX);
-    const overflow = cutPoint > 0
-      ? a1.slice(cutPoint + 1).trim()
-      : a1.slice(MAX).trim();
-    a1 = cutPoint > 0
-      ? a1.slice(0, cutPoint).trim()
-      : a1.slice(0, MAX).trim();
+  // ── 2. Remove what other fields already carry ────────────────────────────
+  const stripRedundant = (line: string, label: string): string => {
+    if (!line) return line;
+    let out = line;
 
-    if (overflow) {
-      a2 = a2 ? `${overflow}, ${a2}` : overflow;
+    // Postcodes: drop one that matches the order's postcode; flag one that
+    // does not, because guessing between two postcodes ships to the wrong
+    // address half the time.
+    const found = out.match(UK_POSTCODE_RE) ?? [];
+    for (const match of found) {
+      if (postcodeKey && key(match) === postcodeKey) {
+        out = out.replace(match, " ");
+      } else if (postcodeKey) {
+        review.push({
+          kind: "conflicting-postcode",
+          message: `${label} contains "${match}" but the order's postcode is "${opts.postcode}". Confirm which is right before booking.`,
+        });
+      }
     }
-  }
 
-  if (!a1) {
-    a1 = originalA1.slice(0, MAX);
-    if (originalA1.length > MAX) {
-      warnings.push(`Address line 1 truncated from "${originalA1}" to "${a1}"`);
+    out = components(out)
+      .filter(part => !COUNTRY_COMPONENTS.has(key(part)))
+      .join(", ");
+    // A country name trailing without a comma ("… London United Kingdom").
+    for (const word of ["United Kingdom", "Great Britain"]) {
+      if (out.toLowerCase().endsWith(word.toLowerCase())) {
+        out = out.slice(0, out.length - word.length).trim();
+      }
     }
-  }
 
-  if (a1.length > MAX) {
-    const full = a1;
-    a1 = a1.slice(0, MAX);
-    warnings.push(`Address line 1 truncated from "${full}" to "${a1}"`);
-  }
+    return squash(dedupeComponents(squash(out)));
+  };
 
-  if (a2 && a2.length > MAX) {
-    const full = a2;
-    a2 = a2.slice(0, MAX);
-    warnings.push(`Address line 2 truncated from "${full}" to "${a2}"`);
+  a1 = stripRedundant(a1, "Address line 1");
+  a2 = stripRedundant(a2, "Address line 2");
+
+  // ── 3. Duplicate town / duplicate line ───────────────────────────────────
+  a1 = stripTrailingTown(a1, c);
+  a2 = stripTrailingTown(a2, c);
+  if (a2 && key(a1).includes(key(a2)) && key(a2).length > 3) a2 = "";
+  if (!a1 && a2) { a1 = a2; a2 = ""; }
+  if (!a1) a1 = originalA1.slice(0, ADDRESS_LINE_MAX);
+
+  // ── 4. Fit to 35 characters, overflow cascading down ─────────────────────
+  const fitted = splitToFit(a1);
+  a1 = fitted.head;
+  if (fitted.tail) a2 = a2 ? `${fitted.tail}, ${a2}` : fitted.tail;
+
+  if (a2) {
+    a2 = squash(dedupeComponents(a2));
+    if (a2.length > ADDRESS_LINE_MAX) {
+      const full = a2;
+      a2 = splitToFit(a2).head.slice(0, ADDRESS_LINE_MAX).trim();
+      warnings.push(`Address line 2 truncated from "${full}" to "${a2}"`);
+      review.push({
+        kind: "truncated",
+        message: `Address line 2 was too long and lost "${full.slice(a2.length).trim()}". Check the address before booking.`,
+      });
+    }
   }
 
   return {
@@ -152,6 +307,8 @@ export function normaliseAddress(
     ...(a2 ? { address2: a2 } : {}),
     city: c,
     warnings,
+    ...(instructions ? { instructions } : {}),
+    review,
   };
 }
 
@@ -164,11 +321,25 @@ async function placeOrder(req: ApcShipmentRequest): Promise<PlaceOrderResult> {
   const totalWeightKg = req.parcels.reduce((sum, p) => sum + p.weight, 0);
   const firstParcel = req.parcels[0] ?? { weight: totalWeightKg };
 
+  // Postcode + country are passed in so the normaliser can drop them when a
+  // customer has typed the whole address into the street line — they already
+  // travel in their own fields.
   const addr = normaliseAddress(
     req.recipient.address1,
     req.recipient.address2,
     req.recipient.city,
+    { postcode: req.recipient.postcode, countryCode: req.recipient.country },
   );
+
+  // Anything the normaliser could not resolve confidently is a warning on the
+  // booking, not a silent guess.
+  for (const flag of addr.review) addr.warnings.push(flag.message);
+
+  // Delivery notes typed into an address line belong in Instructions.
+  const combinedInstructions = [req.specialInstructions, addr.instructions]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
 
   const rawCompanyName = (req.companyName ?? req.recipient.name);
   const companyName = rawCompanyName.slice(0, 35);
@@ -196,7 +367,7 @@ async function placeOrder(req: ApcShipmentRequest): Promise<PlaceOrderResult> {
             ...(req.recipient.phone ? { PhoneNumber: req.recipient.phone } : {}),
             ...(req.recipient.email ? { Email: req.recipient.email } : {}),
           },
-          ...(req.specialInstructions ? { Instructions: req.specialInstructions.slice(0, 50) } : {}),
+          ...(combinedInstructions ? { Instructions: combinedInstructions.slice(0, 50) } : {}),
           Safeplace: "Allowed",
         },
         GoodsInfo: {
