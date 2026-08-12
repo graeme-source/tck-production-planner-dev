@@ -9,6 +9,14 @@ import { sql } from "drizzle-orm";
 
 const router = Router();
 
+/** Who is booking — recorded against each consignment so the end-of-day
+ *  report can say who raised what. */
+async function resolveUserName(req: Request): Promise<string> {
+  if (!req.session.userId) return "unknown";
+  const [user] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, req.session.userId));
+  return user?.name ?? `user ${req.session.userId}`;
+}
+
 async function resolveRole(req: Request): Promise<"admin" | "manager" | "viewer" | null> {
   if (req.session.userRole) return req.session.userRole as "admin" | "manager" | "viewer";
   if (!req.session.userId) return null;
@@ -123,6 +131,63 @@ function pickServiceCode(
   if (isLargeBox) return codes.largeWeekday;
   if (isWeekendDispatch) return codes.smallFriday;
   return codes.smallWeekday;
+}
+
+/** The live consignment for an order, ignoring anything cancelled. */
+async function liveConsignmentFor(orderId: number): Promise<{ waybill: string; trackingUrl: string | null } | null> {
+  const rows = await db.execute<{ waybill: string; tracking_url: string | null }>(sql`
+    SELECT waybill, tracking_url FROM apc_consignments
+    WHERE shopify_order_id = ${orderId} AND cancelled_at IS NULL
+    ORDER BY created_at DESC LIMIT 1
+  `);
+  const r = rows.rows[0];
+  return r?.waybill ? { waybill: String(r.waybill), trackingUrl: r.tracking_url ?? null } : null;
+}
+
+/** Reference to send APC for a booking.
+ *
+ *  First booking for an order is the plain Shopify order name ("#131249").
+ *  A re-raise after a cancellation carries the suffix the team already uses
+ *  by hand — "-M1" for the second consignment, "-M2" for the third — so the
+ *  reference stays recognisable and unique per attempt. */
+async function nextBookingReference(orderId: number, orderName: string): Promise<string> {
+  const rows = await db.execute<{ n: number }>(sql`
+    SELECT count(*)::int AS n FROM apc_consignments WHERE shopify_order_id = ${orderId}
+  `);
+  const priorAttempts = Number(rows.rows[0]?.n ?? 0);
+  return priorAttempts === 0 ? orderName : `${orderName}-M${priorAttempts}`;
+}
+
+/** Record a booking the moment APC accepts it. Losing this row is the one
+ *  failure that could let the same order be booked twice, so a failure here
+ *  is logged loudly and reported back to the caller. */
+async function recordConsignment(params: {
+  waybill: string;
+  reference: string;
+  orderId: number;
+  orderName: string;
+  postcode: string | null;
+  trackingUrl: string | null;
+  serviceCode: string;
+  dispatchTag: string;
+  bookedBy: string;
+}): Promise<string | null> {
+  try {
+    await db.execute(sql`
+      INSERT INTO apc_consignments
+        (waybill, reference, booking_reference, shopify_order_id, shopify_order_name,
+         consignee_postcode, tracking_url, service_code, dispatch_tag, booked_by)
+      VALUES
+        (${params.waybill}, ${params.orderName}, ${params.reference}, ${params.orderId}, ${params.orderName},
+         ${params.postcode}, ${params.trackingUrl}, ${params.serviceCode}, ${params.dispatchTag}, ${params.bookedBy})
+      ON CONFLICT DO NOTHING
+    `);
+    return null;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Fulfilment] CRITICAL: consignment ${params.waybill} booked for ${params.orderName} but NOT recorded:`, msg);
+    return msg;
+  }
 }
 
 async function validateOrderPostcode(
@@ -542,14 +607,10 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
     let reusedWaybill: string | null = null;
     let reusedTrackingUrl: string | null = null;
 
-    const priorRows = await db.execute<{ waybill: string; tracking_url: string | null }>(sql`
-      SELECT waybill, tracking_url FROM apc_consignments
-      WHERE shopify_order_id = ${orderId}
-      ORDER BY created_at DESC LIMIT 1
-    `);
-    if (priorRows.rows[0]?.waybill) {
-      reusedWaybill = String(priorRows.rows[0].waybill);
-      reusedTrackingUrl = priorRows.rows[0].tracking_url ?? null;
+    const prior = await liveConsignmentFor(orderId);
+    if (prior) {
+      reusedWaybill = prior.waybill;
+      reusedTrackingUrl = prior.trackingUrl;
       console.log(`[Fulfilment] ${order.name} already has consignment ${reusedWaybill} — reusing, not re-booking`);
     } else {
       try {
@@ -596,6 +657,8 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
       specialInstructions = combined.slice(0, 50);
     }
 
+    const bookingReference = await nextBookingReference(orderId, order.name);
+
     const result = await createShipment({
       serviceCode,
       companyName,
@@ -610,24 +673,27 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
         email: order.customer?.email,
       },
       parcels: [{ weight: Math.max(0.1, weightKg) }],
-      reference: order.name,
+      reference: bookingReference,
       specialInstructions,
       ...(apiBase ? { apiBase } : {}),
     });
 
     // Record it immediately — this row is what stops a second booking if the
     // packer backs out and re-opens the order, or the page is refreshed.
-    try {
-      await db.execute(sql`
-        INSERT INTO apc_consignments (waybill, reference, shopify_order_id, shopify_order_name, consignee_postcode, tracking_url)
-        VALUES (${result.consignmentNumber}, ${order.name}, ${orderId}, ${order.name}, ${postcode}, ${result.trackingUrl ?? null})
-        ON CONFLICT DO NOTHING
-      `);
-    } catch (recordErr) {
-      console.error(`[Fulfilment] FAILED to record consignment ${result.consignmentNumber} for ${order.name} — a retry could double-book:`, recordErr);
-    }
+    const recordError = await recordConsignment({
+      waybill: result.consignmentNumber,
+      reference: bookingReference,
+      orderId,
+      orderName: order.name,
+      postcode,
+      trackingUrl: result.trackingUrl ?? null,
+      serviceCode,
+      dispatchTag: tag,
+      bookedBy: await resolveUserName(req),
+    });
 
     res.json({
+      ...(recordError ? { recordError } : {}),
       consignmentNumber: result.consignmentNumber,
       labelPdfBase64: result.labelPdfBase64,
       trackingUrl: result.trackingUrl,
@@ -1048,6 +1114,10 @@ router.post("/shipments/:waybill/cancel", requireFulfilmentAccess, async (req: R
 
     await cancelShipment(waybill, apiBase);
 
+    // Stamp our ledger too. Without this the duplicate guard would keep
+    // handing back this dead waybill and the order could never be re-raised.
+    await db.execute(sql`UPDATE apc_consignments SET cancelled_at = NOW() WHERE waybill = ${waybill}`);
+
     res.json({ ok: true });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1184,6 +1254,327 @@ router.post("/tag-dispatch-bulk", requireFulfilmentAccess, async (req: Request, 
   }
 });
 
+// ── Batch consignment booking ──────────────────────────────────────────────
+// Booking the whole wave in one go replaces the spreadsheet upload. The risk
+// Graeme named is not the booking itself — it's a partial failure nobody
+// notices, leaving some orders without a label and no way to tell which.
+// So the flow is deliberately two-stage: a preflight that reports everything
+// questionable BEFORE anything is booked, then a batch that reports the
+// outcome of every single order individually and never fails silently.
+
+type PreflightOrder = {
+  orderId: number;
+  orderName: string;
+  customerName: string;
+  serviceCode: string | null;
+  boxCategory: "small box" | "large box" | "wholesale" | "other";
+  weightKg: number;
+  existingWaybill: string | null;
+  problems: string[];
+  reviews: string[];
+};
+
+async function buildPreflight(tag: string, dispatchDate: Date) {
+  const [smallWeekday, largeWeekday, smallFriday, largeFriday, weightThreshStr] = await Promise.all([
+    getAppSetting("apc_service_code_small_weekday"),
+    getAppSetting("apc_service_code_large_weekday"),
+    getAppSetting("apc_service_code_small_friday"),
+    getAppSetting("apc_service_code_large_friday"),
+    getAppSetting("apc_weight_threshold_grams"),
+  ]);
+  const codesConfigured = !!(smallWeekday && largeWeekday && smallFriday && largeFriday);
+  const weightThresholdG = Number(weightThreshStr) || 1000;
+
+  const { normaliseAddress } = await import("../services/apc");
+  const orders = (await getOrdersByTag(tag)).filter(o =>
+    o.fulfillment_status !== "fulfilled" &&
+    o.tags.split(",").map(t => t.trim().toLowerCase()).includes("dispatch"),
+  );
+
+  const ready: PreflightOrder[] = [];
+  const needsReview: PreflightOrder[] = [];
+  const blocked: PreflightOrder[] = [];
+  const alreadyBooked: PreflightOrder[] = [];
+  const localDeliveries: PreflightOrder[] = [];
+
+  for (const order of orders) {
+    const tags = order.tags.split(",").map(t => t.trim().toLowerCase());
+    const boxCategory: PreflightOrder["boxCategory"] =
+      tags.includes("wholesale") ? "wholesale"
+        : tags.includes("large box") ? "large box"
+          : tags.includes("small box") ? "small box"
+            : "other";
+
+    const row: PreflightOrder = {
+      orderId: order.id,
+      orderName: order.name,
+      customerName: order.shipping_address?.name
+        ?? `${order.customer?.first_name ?? ""} ${order.customer?.last_name ?? ""}`.trim(),
+      serviceCode: codesConfigured
+        ? pickServiceCode(order, { smallWeekday: smallWeekday!, largeWeekday: largeWeekday!, smallFriday: smallFriday!, largeFriday: largeFriday! }, weightThresholdG, dispatchDate)
+        : null,
+      boxCategory,
+      weightKg: Math.round((order.total_weight ?? 0) / 100) / 10,
+      existingWaybill: null,
+      problems: [],
+      reviews: [],
+    };
+
+    // Local deliveries go on the van — they must never get a consignment.
+    if (tags.includes("local-delivery")) {
+      localDeliveries.push(row);
+      continue;
+    }
+
+    const live = await liveConsignmentFor(order.id);
+    if (live) {
+      row.existingWaybill = live.waybill;
+      alreadyBooked.push(row);
+      continue;
+    }
+
+    const sa = order.shipping_address;
+    if (!sa) row.problems.push("No shipping address");
+    else {
+      if (!sa.address1?.trim()) row.problems.push("No street address");
+      if (!sa.zip?.trim()) row.problems.push("No postcode");
+      if (!sa.city?.trim()) row.problems.push("No town");
+      const norm = normaliseAddress(sa.address1 ?? "", sa.address2 ?? undefined, sa.city ?? "", { postcode: sa.zip, countryCode: sa.country_code ?? "GB" });
+      for (const flag of norm.review) row.reviews.push(flag.message);
+      for (const w of norm.warnings) row.reviews.push(w);
+    }
+    if (!codesConfigured) row.problems.push("APC service codes not configured in Settings");
+
+    if (row.problems.length > 0) blocked.push(row);
+    else if (row.reviews.length > 0) needsReview.push(row);
+    else ready.push(row);
+  }
+
+  return {
+    tag,
+    codesConfigured,
+    counts: {
+      total: orders.length,
+      ready: ready.length,
+      needsReview: needsReview.length,
+      blocked: blocked.length,
+      alreadyBooked: alreadyBooked.length,
+      localDeliveries: localDeliveries.length,
+    },
+    ready, needsReview, blocked, alreadyBooked, localDeliveries,
+  };
+}
+
+// GET /batch-preflight?tag=YYYY-MM-DD — what WOULD happen. Books nothing.
+router.get("/batch-preflight", requireFulfilmentAccess, async (req: Request, res: Response) => {
+  const { tag, dispatchDate } = req.query as { tag?: string; dispatchDate?: string };
+  if (!tag) { res.status(400).json({ error: "tag query param required" }); return; }
+  try {
+    res.json(await buildPreflight(tag, dispatchDate ? new Date(dispatchDate) : new Date(tag)));
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Fulfilment] batch-preflight error:", msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
+// POST /batch-book — body { tag, orderIds[], dispatchDate? }
+// Books each order in turn. One order failing never stops the rest, and every
+// order comes back with its own outcome so a partial run is fully accounted
+// for. Orders that already hold a live consignment are skipped, not re-booked.
+router.post("/batch-book", requireFulfilmentAccess, async (req: Request, res: Response) => {
+  const parsed = z.object({
+    tag: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    orderIds: z.array(z.number()).min(1).max(500),
+    dispatchDate: z.string().optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "tag and orderIds[] are required" }); return; }
+  if (!isApcConfigured()) { res.status(503).json({ error: "APC credentials not configured." }); return; }
+
+  const { tag, orderIds } = parsed.data;
+  const dispatchDate = parsed.data.dispatchDate ? new Date(parsed.data.dispatchDate) : new Date(tag);
+  const bookedBy = await resolveUserName(req);
+
+  try {
+    const [smallWeekday, largeWeekday, smallFriday, largeFriday, weightThreshStr, testModeSetting] = await Promise.all([
+      getAppSetting("apc_service_code_small_weekday"),
+      getAppSetting("apc_service_code_large_weekday"),
+      getAppSetting("apc_service_code_small_friday"),
+      getAppSetting("apc_service_code_large_friday"),
+      getAppSetting("apc_weight_threshold_grams"),
+      getAppSetting("apc_test_mode"),
+    ]);
+    if (!smallWeekday || !largeWeekday || !smallFriday || !largeFriday) {
+      res.status(400).json({ error: "APC service codes not configured. Set all four in Settings." });
+      return;
+    }
+    const apiBase = testModeSetting === "true" ? APC_TRAINING_BASE : undefined;
+    const weightThresholdG = Number(weightThreshStr) || 1000;
+
+    const all = await getOrdersByTag(tag);
+    const wanted = new Set(orderIds);
+    const orders = all.filter(o => wanted.has(o.id));
+
+    const results: Array<{
+      orderId: number; orderName: string;
+      status: "booked" | "skipped" | "failed";
+      waybill?: string; serviceCode?: string; reference?: string;
+      reason?: string; recordError?: string;
+    }> = [];
+
+    for (const order of orders) {
+      const tagsLower = order.tags.split(",").map(t => t.trim().toLowerCase());
+      if (tagsLower.includes("local-delivery")) {
+        results.push({ orderId: order.id, orderName: order.name, status: "skipped", reason: "Local delivery — no courier label" });
+        continue;
+      }
+      const live = await liveConsignmentFor(order.id);
+      if (live) {
+        results.push({ orderId: order.id, orderName: order.name, status: "skipped", reason: "Already has a consignment", waybill: live.waybill });
+        continue;
+      }
+      if (!order.shipping_address?.address1 || !order.shipping_address?.zip) {
+        results.push({ orderId: order.id, orderName: order.name, status: "failed", reason: "Missing address or postcode" });
+        continue;
+      }
+
+      const serviceCode = pickServiceCode(order, { smallWeekday, largeWeekday, smallFriday, largeFriday }, weightThresholdG, dispatchDate);
+      const reference = await nextBookingReference(order.id, order.name);
+      const sa = order.shipping_address;
+      let specialInstructions = "X227 - PERISHABLE";
+      if (order.note?.trim()) specialInstructions = `${specialInstructions} ${order.note.trim()}`.slice(0, 50);
+
+      try {
+        const result = await createShipment({
+          serviceCode,
+          companyName: sa.company?.trim() || "Home Delivery",
+          recipient: {
+            name: sa.name || `${order.customer?.first_name ?? ""} ${order.customer?.last_name ?? ""}`.trim(),
+            address1: sa.address1,
+            address2: sa.address2,
+            city: sa.city,
+            postcode: sa.zip,
+            country: sa.country_code ?? "GB",
+            phone: sa.phone ?? order.customer?.phone,
+            email: order.customer?.email,
+          },
+          parcels: [{ weight: Math.max(0.1, (order.total_weight ?? 500) / 1000) }],
+          reference,
+          specialInstructions,
+          ...(apiBase ? { apiBase } : {}),
+        });
+
+        const recordError = await recordConsignment({
+          waybill: result.consignmentNumber,
+          reference,
+          orderId: order.id,
+          orderName: order.name,
+          postcode: sa.zip,
+          trackingUrl: result.trackingUrl ?? null,
+          serviceCode,
+          dispatchTag: tag,
+          bookedBy,
+        });
+
+        results.push({
+          orderId: order.id, orderName: order.name, status: "booked",
+          waybill: result.consignmentNumber, serviceCode, reference,
+          ...(recordError ? { recordError } : {}),
+        });
+      } catch (bookErr) {
+        const msg = bookErr instanceof Error ? bookErr.message : String(bookErr);
+        console.error(`[Fulfilment] batch-book FAILED for ${order.name}:`, msg);
+        results.push({ orderId: order.id, orderName: order.name, status: "failed", reason: msg });
+      }
+    }
+
+    const missing = orderIds.filter(id => !results.some(r => r.orderId === id));
+    for (const id of missing) {
+      results.push({ orderId: id, orderName: `(order ${id})`, status: "failed", reason: "Order not found on this dispatch day" });
+    }
+
+    res.json({
+      tag,
+      booked: results.filter(r => r.status === "booked").length,
+      skipped: results.filter(r => r.status === "skipped").length,
+      failed: results.filter(r => r.status === "failed").length,
+      recordErrors: results.filter(r => r.recordError).length,
+      results,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Fulfilment] batch-book error:", msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
+// GET /booked-not-dispatched?tag= — end of day: consignments raised for this
+// dispatch day whose Shopify order never got fulfilled. Each one is a label
+// APC may still collect against, so they need cancelling or explaining.
+router.get("/booked-not-dispatched", requireFulfilmentAccess, async (req: Request, res: Response) => {
+  const { tag } = req.query as { tag?: string };
+  if (!tag) { res.status(400).json({ error: "tag query param required" }); return; }
+  try {
+    const rows = await db.execute<{ waybill: string; shopify_order_id: string; shopify_order_name: string; service_code: string | null; booked_by: string | null; created_at: Date; label_printed_at: Date | null }>(sql`
+      SELECT waybill, shopify_order_id, shopify_order_name, service_code, booked_by, created_at, label_printed_at
+      FROM apc_consignments
+      WHERE dispatch_tag = ${tag} AND cancelled_at IS NULL
+      ORDER BY created_at
+    `);
+    if (rows.rows.length === 0) { res.json({ tag, outstanding: [] }); return; }
+
+    const orders = await getOrdersByTag(tag);
+    const fulfilled = new Set(orders.filter(o => o.fulfillment_status === "fulfilled").map(o => o.id));
+    const outstanding = rows.rows
+      .filter(r => !fulfilled.has(Number(r.shopify_order_id)))
+      .map(r => ({
+        waybill: r.waybill,
+        orderId: Number(r.shopify_order_id),
+        orderName: r.shopify_order_name,
+        serviceCode: r.service_code,
+        bookedBy: r.booked_by,
+        bookedAt: r.created_at,
+        labelPrinted: !!r.label_printed_at,
+      }));
+    res.json({ tag, checked: rows.rows.length, outstanding });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Fulfilment] booked-not-dispatched error:", msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
+// POST /consignments/:waybill/mark-cancelled
+// APC's API reports a cancelled consignment exactly like a live one — the
+// reference lookup still returns it and the waybill lookup still answers
+// SUCCESS with a label (verified 2026-08-12). So a cancellation made inside
+// Hypaship is invisible to us and we cannot detect it automatically. This is
+// the manual escape hatch: it marks our record dead so the order can be
+// re-booked, which then goes out with a "-M1" reference like the team's
+// existing hand-raised convention. It does NOT call APC — the consignment is
+// already cancelled there.
+router.post("/consignments/:waybill/mark-cancelled", requireFulfilmentAccess, async (req: Request, res: Response) => {
+  const { waybill } = req.params;
+  if (!waybill) { res.status(400).json({ error: "waybill required" }); return; }
+  try {
+    const result = await db.execute(sql`
+      UPDATE apc_consignments SET cancelled_at = NOW()
+      WHERE waybill = ${waybill} AND cancelled_at IS NULL
+      RETURNING shopify_order_name
+    `);
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: "No live consignment with that number" });
+      return;
+    }
+    console.log(`[Fulfilment] ${waybill} marked cancelled by hand (cancelled in APC directly)`);
+    res.json({ ok: true, orderName: (result.rows[0] as { shopify_order_name: string }).shopify_order_name });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Fulfilment] mark-cancelled error:", msg);
+    res.status(500).json({ error: msg });
+  }
+});
+
 // GET /consignments?tag=YYYY-MM-DD
 // Which orders on this dispatch day already have an APC consignment booked.
 // Lets the picking screen tell the packer the truth BEFORE they commit —
@@ -1204,6 +1595,7 @@ router.get("/consignments", requireFulfilmentAccess, async (req: Request, res: R
       SELECT DISTINCT ON (shopify_order_id) shopify_order_id, waybill, tracking_url, label_printed_at
       FROM apc_consignments
       WHERE shopify_order_id IN (${sql.join(ids.map(id => sql`${id}`), sql`, `)})
+        AND cancelled_at IS NULL
       ORDER BY shopify_order_id, created_at DESC
     `);
     res.json({

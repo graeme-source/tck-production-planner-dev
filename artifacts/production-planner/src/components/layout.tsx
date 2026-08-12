@@ -37,6 +37,7 @@ import {
   FileText,
   Wrench,
   MessagesSquare,
+  Scan,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/user-avatar";
@@ -89,7 +90,7 @@ export const bottomNavItems: NavItem[] = [
 ];
 
 const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory", "/product-hub", "/surveys"];
-const DISPATCH_PATHS = ["/dispatches", "/locations"];
+const DISPATCH_PATHS = ["/dispatches", "/locations", "/fulfilment", "/case-orders"];
 
 type AccountButtonUser = { name?: string; role?: string; avatarUrl?: string | null } | null;
 
@@ -227,6 +228,7 @@ export function NavLinks({
 
   const dispatchSubItems = [
     { name: "Dispatches", href: "/dispatches", icon: Truck },
+    { name: "Order Packing Live", href: "/fulfilment", icon: Scan },
     { name: "Case Orders", href: "/case-orders", icon: Box },
     { name: "Bin Locations", href: "/locations", icon: MapPin },
   ];

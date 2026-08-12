@@ -6,13 +6,14 @@ import { PageHeader } from "@/components/page-header";
 import { IcePackBadge } from "@/components/ice-pack-callout";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
+import { ApcBatchBookingDialog } from "@/components/apc-batch-booking";
 import { format, addDays, parseISO } from "date-fns";
 import { useLocation } from "wouter";
 import {
   Package, Scan, CheckCircle2, AlertCircle, ChevronRight, Printer,
   RefreshCw, MapPin, SkipForward, RotateCcw, XCircle, Loader2,
   ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter, ArrowUpDown,
-  Volume2, VolumeX, AlertTriangle,
+  Volume2, VolumeX, AlertTriangle, PackageCheck,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -494,6 +495,18 @@ interface BookedConsignment {
   waybill: string;
   trackingUrl: string | null;
   labelPrintedAt: string | null;
+}
+
+/** Mark our record of a consignment dead after it was cancelled inside
+ *  Hypaship. APC's API can't tell us that happened, so it has to be said
+ *  explicitly. The order can then be re-booked (reference gains "-M1"). */
+async function markConsignmentCancelled(waybill: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/fulfilment/consignments/${encodeURIComponent(waybill)}/mark-cancelled`, {
+    method: "POST",
+    credentials: "include",
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? "Could not mark it cancelled");
 }
 
 async function fetchBookedConsignments(tag: string): Promise<BookedConsignment[]> {
@@ -1048,7 +1061,10 @@ export default function Fulfilment() {
   // Box categories are multi-select now: the operator can pick a wave of
   // Small + Large together. An empty set means "no category constraint".
   // Defaults to Small Box, matching the team's existing muscle memory.
-  const [boxFilter, setBoxFilter] = useState<Set<BoxCategory>>(new Set<BoxCategory>(["small box"]));
+  // Empty set = no category constraint = All Boxes. The day now starts by
+  // tagging and booking the WHOLE wave, so the default view must be
+  // everything; narrowing to a category is a deliberate choice afterwards.
+  const [boxFilter, setBoxFilter] = useState<Set<BoxCategory>>(new Set<BoxCategory>());
   // Tri-state chips: a tag/product is either untouched, included, or excluded.
   const [includeTags, setIncludeTags] = useState<Set<string>>(new Set());
   const [excludeTags, setExcludeTags] = useState<Set<string>>(new Set());
@@ -1358,6 +1374,8 @@ export default function Fulfilment() {
     "other": unfulfilledOrders.filter(o => getOrderCategory(o) === "other").length,
   };
 
+  const [showBatchBooking, setShowBatchBooking] = useState(false);
+  const [rebookingWaybill, setRebookingWaybill] = useState<string | null>(null);
   const [bulkTagging, setBulkTagging] = useState(false);
   const [showBulkTagConfirm, setShowBulkTagConfirm] = useState(false);
   const [consignmentAction, setConsignmentAction] = useState<"idle" | "adding-box" | "reprinting" | "cancelling">("idle");
@@ -3258,6 +3276,24 @@ export default function Fulfilment() {
               All Boxes
             </button>
 
+            {showBatchBooking && (
+              <ApcBatchBookingDialog
+                tag={queryTag}
+                onClose={() => setShowBatchBooking(false)}
+                onBooked={() => { void refetchBooked(); void refetch(); }}
+              />
+            )}
+
+            {apcMode === "full" && (
+              <button
+                onClick={() => setShowBatchBooking(true)}
+                className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-2"
+                title="Raise APC consignments for this whole dispatch day"
+              >
+                <PackageCheck className="w-4 h-4" /> Book APC labels
+              </button>
+            )}
+
             <button
               onClick={() => setFiltersOpen(v => !v)}
               className={cn(
@@ -3485,12 +3521,41 @@ export default function Fulfilment() {
                       </span>
                     )}
                     {bookedMap.has(order.id) && (
-                      <span
-                        className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 font-medium flex items-center gap-1"
-                        title={`Consignment ${bookedMap.get(order.id)!.waybill} already booked — opening this order reuses it`}
-                      >
-                        <CheckCircle2 className="w-2.5 h-2.5" /> Label booked
-                      </span>
+                      <>
+                        <span
+                          className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 font-medium flex items-center gap-1"
+                          title={`Consignment ${bookedMap.get(order.id)!.waybill} already booked — opening this order reuses it`}
+                        >
+                          <CheckCircle2 className="w-2.5 h-2.5" /> Label booked
+                        </span>
+                        {/* APC's API reports a cancelled consignment exactly
+                            like a live one, so a cancellation made inside
+                            Hypaship can only be told to us by hand. */}
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            const wb = bookedMap.get(order.id)!.waybill;
+                            setRebookingWaybill(wb);
+                            try {
+                              await markConsignmentCancelled(wb);
+                              await refetchBooked();
+                              toast({ title: `${order.name}: consignment cleared`, description: "Start Picking will now raise a fresh one (reference gains -M1)." });
+                            } catch (err) {
+                              toast({ title: "Couldn't clear it", description: err instanceof Error ? err.message : "Request failed", variant: "destructive" });
+                            } finally {
+                              setRebookingWaybill(null);
+                            }
+                          }}
+                          disabled={rebookingWaybill === bookedMap.get(order.id)!.waybill}
+                          className="text-[10px] px-1.5 py-0.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors flex items-center gap-1 disabled:opacity-40"
+                          title="Use this if you cancelled the consignment in APC — the app can't detect that on its own"
+                        >
+                          {rebookingWaybill === bookedMap.get(order.id)!.waybill
+                            ? <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                            : <Ban className="w-2.5 h-2.5" />}
+                          Cancelled in APC
+                        </button>
+                      </>
                     )}
                     {skippedIds.has(order.id) && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground font-medium flex items-center gap-1">

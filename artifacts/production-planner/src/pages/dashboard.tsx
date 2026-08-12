@@ -703,7 +703,10 @@ export default function Dashboard() {
           icon={Truck}
           color="text-blue-500"
           bg="bg-blue-500/10"
-          href="/dispatches"
+          // Straight into today's packing wave. Shopify date tags are the
+          // DELIVERY date and an overnight courier means today's packing
+          // delivers tomorrow, so the wave to open is today + 1.
+          href={`/fulfilment?tag=${format(addDays(new Date(), 1), "yyyy-MM-dd")}`}
           progress={todayIndex >= 0 && (currentWeekOrders![todayIndex].orderCount ?? 0) > 0 ? {
             done: currentWeekOrders![todayIndex].fulfilledCount,
             total: currentWeekOrders![todayIndex].orderCount,

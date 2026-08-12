@@ -2709,6 +2709,23 @@ async function runStartupMigrations() {
     // offer a manual reprint, instead of firing the printer every time an
     // order is reopened.
     await db.execute(sql`ALTER TABLE apc_consignments ADD COLUMN IF NOT EXISTS label_printed_at TIMESTAMP`);
+    // Batch booking + cancel/re-raise support.
+    //   cancelled_at      — a cancelled consignment must stop counting as
+    //                       "this order is booked", or the duplicate guard
+    //                       would hand back a dead waybill.
+    //   booking_reference — what was actually sent to APC. A re-raise for the
+    //                       same order carries a -M1 / -M2 suffix, so this is
+    //                       not always the plain order name.
+    //   service_code      — what it was booked on, for the end-of-day report.
+    //   dispatch_tag      — which dispatch day this booking belongs to.
+    //   booked_by         — who pressed the button.
+    await db.execute(sql`ALTER TABLE apc_consignments ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP`);
+    await db.execute(sql`ALTER TABLE apc_consignments ADD COLUMN IF NOT EXISTS booking_reference TEXT`);
+    await db.execute(sql`ALTER TABLE apc_consignments ADD COLUMN IF NOT EXISTS service_code TEXT`);
+    await db.execute(sql`ALTER TABLE apc_consignments ADD COLUMN IF NOT EXISTS dispatch_tag TEXT`);
+    await db.execute(sql`ALTER TABLE apc_consignments ADD COLUMN IF NOT EXISTS booked_by TEXT`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_apc_consignments_dispatch_tag ON apc_consignments (dispatch_tag)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_apc_consignments_order ON apc_consignments (shopify_order_id)`);
 
     // Stock-gate holds — see lib/db/migrations/0049_stock_gate_holds.sql.
     // Products automatically held back from next-day delivery (Shopify tag
