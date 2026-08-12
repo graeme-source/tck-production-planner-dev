@@ -499,7 +499,7 @@ interface BookedConsignment {
 
 /** Mark our record of a consignment dead after it was cancelled inside
  *  Hypaship. APC's API can't tell us that happened, so it has to be said
- *  explicitly. The order can then be re-booked (reference gains "-M1"). */
+ *  explicitly. The order can then be re-booked under the same reference. */
 async function markConsignmentCancelled(waybill: string): Promise<void> {
   const res = await fetch(`${BASE}/api/fulfilment/consignments/${encodeURIComponent(waybill)}/mark-cancelled`, {
     method: "POST",
@@ -3572,7 +3572,7 @@ export default function Fulfilment() {
                             try {
                               await markConsignmentCancelled(wb);
                               await refetchBooked();
-                              toast({ title: `${order.name}: consignment cleared`, description: "Start Picking will now raise a fresh one (reference gains -M1)." });
+                              toast({ title: `${order.name}: consignment cleared`, description: "Start Picking will now raise a fresh one under the same reference." });
                             } catch (err) {
                               toast({ title: "Couldn't clear it", description: err instanceof Error ? err.message : "Request failed", variant: "destructive" });
                             } finally {

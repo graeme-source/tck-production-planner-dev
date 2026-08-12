@@ -144,18 +144,19 @@ async function liveConsignmentFor(orderId: number): Promise<{ waybill: string; t
   return r?.waybill ? { waybill: String(r.waybill), trackingUrl: r.tracking_url ?? null } : null;
 }
 
-/** Reference to send APC for a booking.
+/** Every waybill we already know about for an order, cancelled or not.
  *
- *  First booking for an order is the plain Shopify order name ("#131249").
- *  A re-raise after a cancellation carries the suffix the team already uses
- *  by hand — "-M1" for the second consignment, "-M2" for the third — so the
- *  reference stays recognisable and unique per attempt. */
-async function nextBookingReference(orderId: number, orderName: string): Promise<string> {
-  const rows = await db.execute<{ n: number }>(sql`
-    SELECT count(*)::int AS n FROM apc_consignments WHERE shopify_order_id = ${orderId}
+ *  Used to stop the APC-side duplicate check resurrecting a consignment we
+ *  have deliberately marked dead: APC's lookup still returns cancelled
+ *  consignments (it has no status field at all), so "found at APC" only
+ *  means "reuse this" when it is a consignment we have never seen — one
+ *  raised by hand in Hypaship, say. Anything already in our ledger has
+ *  already been judged. */
+async function knownWaybillsFor(orderId: number): Promise<Set<string>> {
+  const rows = await db.execute<{ waybill: string }>(sql`
+    SELECT waybill FROM apc_consignments WHERE shopify_order_id = ${orderId}
   `);
-  const priorAttempts = Number(rows.rows[0]?.n ?? 0);
-  return priorAttempts === 0 ? orderName : `${orderName}-M${priorAttempts}`;
+  return new Set(rows.rows.map(r => String(r.waybill)));
 }
 
 /** Record a booking the moment APC accepts it. Losing this row is the one
@@ -614,13 +615,18 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
       console.log(`[Fulfilment] ${order.name} already has consignment ${reusedWaybill} — reusing, not re-booking`);
     } else {
       try {
-        const live = (await lookupOrdersByReference(order.name, apiBase)).find(c => c.waybill);
+        // Only a consignment we have NEVER seen counts as a reason not to
+        // book — one we recorded and then marked cancelled must not be
+        // resurrected here, and APC cannot tell us it is cancelled.
+        const known = await knownWaybillsFor(orderId);
+        const live = (await lookupOrdersByReference(order.name, apiBase))
+          .find(c => c.waybill && !known.has(c.waybill));
         if (live?.waybill) {
           reusedWaybill = live.waybill;
           console.log(`[Fulfilment] APC already holds ${live.waybill} for ${order.name} — reusing`);
           await db.execute(sql`
-            INSERT INTO apc_consignments (waybill, reference, shopify_order_id, shopify_order_name, consignee_postcode)
-            VALUES (${live.waybill}, ${order.name}, ${orderId}, ${order.name}, ${postcode})
+            INSERT INTO apc_consignments (waybill, reference, booking_reference, shopify_order_id, shopify_order_name, consignee_postcode, dispatch_tag)
+            VALUES (${live.waybill}, ${order.name}, ${order.name}, ${orderId}, ${order.name}, ${postcode}, ${tag})
             ON CONFLICT DO NOTHING
           `);
         }
@@ -657,7 +663,10 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
       specialInstructions = combined.slice(0, 50);
     }
 
-    const bookingReference = await nextBookingReference(orderId, order.name);
+    // APC's booking platform only searches references by exact match, so
+    // the reference must stay exactly the Shopify order number — a suffix
+    // would make the consignment unfindable by the number staff search for.
+    const bookingReference = order.name;
 
     const result = await createShipment({
       serviceCode,
@@ -1439,7 +1448,7 @@ router.post("/batch-book", requireFulfilmentAccess, async (req: Request, res: Re
       }
 
       const serviceCode = pickServiceCode(order, { smallWeekday, largeWeekday, smallFriday, largeFriday }, weightThresholdG, dispatchDate);
-      const reference = await nextBookingReference(order.id, order.name);
+      const reference = order.name;
       const sa = order.shipping_address;
       let specialInstructions = "X227 - PERISHABLE";
       if (order.note?.trim()) specialInstructions = `${specialInstructions} ${order.note.trim()}`.slice(0, 50);
@@ -1550,9 +1559,8 @@ router.get("/booked-not-dispatched", requireFulfilmentAccess, async (req: Reques
 // SUCCESS with a label (verified 2026-08-12). So a cancellation made inside
 // Hypaship is invisible to us and we cannot detect it automatically. This is
 // the manual escape hatch: it marks our record dead so the order can be
-// re-booked, which then goes out with a "-M1" reference like the team's
-// existing hand-raised convention. It does NOT call APC — the consignment is
-// already cancelled there.
+// re-booked under the same order number. It does NOT call APC — the
+// consignment is already cancelled there.
 router.post("/consignments/:waybill/mark-cancelled", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const { waybill } = req.params;
   if (!waybill) { res.status(400).json({ error: "waybill required" }); return; }

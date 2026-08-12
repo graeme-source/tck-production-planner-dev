@@ -2714,8 +2714,8 @@ async function runStartupMigrations() {
     //                       "this order is booked", or the duplicate guard
     //                       would hand back a dead waybill.
     //   booking_reference — what was actually sent to APC. A re-raise for the
-    //                       same order carries a -M1 / -M2 suffix, so this is
-    //                       not always the plain order name.
+    //                       same order reuses the same order number, since
+    //                       APC's search is exact-match only.
     //   service_code      — what it was booked on, for the end-of-day report.
     //   dispatch_tag      — which dispatch day this booking belongs to.
     //   booked_by         — who pressed the button.
