@@ -2405,6 +2405,12 @@ components:
         isCurrentSpecial:
           type: boolean
           description: Whether this recipe is the current Calzone Club Special
+        builderFillingDeductionGrams:
+          type: integer
+          nullable: true
+          description: >-
+            Grams trimmed off the filling weight shown at the building station,
+            per batch. Display only.
         createdAt:
           type: string
       required:
@@ -2576,6 +2582,13 @@ components:
         cookingLossPercent:
           type: number
           nullable: true
+        builderFillingDeductionGrams:
+          type: integer
+          nullable: true
+          description: >-
+            Grams trimmed off the filling weight shown at the building station,
+            per batch. Display only — every other calculation uses the recipe's
+            real filling weight.
         ingredients:
           type: array
           items:

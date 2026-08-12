@@ -370,6 +370,12 @@ async function runStartupMigrations() {
     await db.execute(sql`
       ALTER TABLE recipes ADD COLUMN IF NOT EXISTS target_build_seconds INTEGER
     `);
+    // Grams knocked off the filling weight the building station displays, per
+    // batch. Display only — nothing else reads it, so prep quantities, costing
+    // and the printed plan keep using the recipe's real filling weight.
+    await db.execute(sql`
+      ALTER TABLE recipes ADD COLUMN IF NOT EXISTS builder_filling_deduction_grams INTEGER NOT NULL DEFAULT 0
+    `);
     await db.execute(sql`
       ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS surplus_percent NUMERIC(5,2) NOT NULL DEFAULT 10
     `);
