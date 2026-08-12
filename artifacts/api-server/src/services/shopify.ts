@@ -553,23 +553,29 @@ export async function fulfillOrder(
   // customer, but without an APC consignment to point at. Skip the
   // tracking_info block entirely in that case so we don't ship a
   // broken https://apc.co.uk/tracking/ URL.
-  const hasTracking = !!trackingNumber;
+  //
+  // A company WITHOUT a number (e.g. "TCK Local Delivery" for van orders)
+  // sends carrier-only tracking_info: the customer's email names the
+  // carrier but carries no tracking link.
+  const trackingInfo = trackingNumber
+    ? {
+        number: trackingNumber,
+        company: trackingCompany,
+        // Callers pass the proper link (built by apcTrackingUrl, which adds
+        // the consignee postcode so the customer skips APC's CAPTCHA). The
+        // fallback is the same host without the postcode — the old
+        // apc.co.uk/tracking/ path this used to emit is not a live URL.
+        url: trackingUrl ?? apcTrackingUrl(trackingNumber, null),
+      }
+    : trackingCompany
+      ? { company: trackingCompany }
+      : null;
   await shopifyPost(`/fulfillments.json`, {
     fulfillment: {
       line_items_by_fulfillment_order: pendingFulfillmentOrders.map(fo => ({
         fulfillment_order_id: fo.id,
       })),
-      ...(hasTracking ? {
-        tracking_info: {
-          number: trackingNumber,
-          company: trackingCompany,
-          // Callers pass the proper link (built by apcTrackingUrl, which adds
-          // the consignee postcode so the customer skips APC's CAPTCHA). The
-          // fallback is the same host without the postcode — the old
-          // apc.co.uk/tracking/ path this used to emit is not a live URL.
-          url: trackingUrl ?? apcTrackingUrl(trackingNumber, null),
-        },
-      } : {}),
+      ...(trackingInfo ? { tracking_info: trackingInfo } : {}),
       notify_customer: true,
     },
   });

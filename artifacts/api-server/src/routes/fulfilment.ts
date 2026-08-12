@@ -1243,9 +1243,22 @@ router.post("/orders/:id/complete", requireFulfilmentAccess, async (req: Request
   // Both "full" (label booked via API) and "reconcile" (label scanned off a
   // hand-raised consignment) must arrive with a number — shipping an order
   // with no tracking is exactly the failure this flow exists to prevent.
+  // The one exception: orders tagged local-delivery go on the van, not APC,
+  // so there is no consignment by definition. Verified from the order's own
+  // tags in Shopify — never a client flag — because this is the
+  // anti-mis-ship gate.
+  let order: Awaited<ReturnType<typeof getOrderById>> = null;
+  let localDelivery = false;
   if (apcEnabled && !consignmentNumber) {
-    res.status(400).json({ error: `consignmentNumber is required when apc_mode is "${apcMode}"` });
-    return;
+    order = await getOrderById(orderId);
+    localDelivery = (order?.tags ?? "")
+      .split(",")
+      .map(t => t.trim().toLowerCase())
+      .includes("local-delivery");
+    if (!localDelivery) {
+      res.status(400).json({ error: `consignmentNumber is required when apc_mode is "${apcMode}"` });
+      return;
+    }
   }
 
   // Order of operations is deliberate: Shopify fulfilment FIRST, stock
@@ -1261,13 +1274,15 @@ router.post("/orders/:id/complete", requireFulfilmentAccess, async (req: Request
   //   both tags      → fully successful
 
   // 1. Shopify fulfilment — the slow, fragile, customer-facing call.
-  let order: Awaited<ReturnType<typeof getOrderById>> = null;
+  // Local deliveries fulfil with a carrier name but no tracking number, so
+  // the customer's dispatch email says "TCK Local Delivery" instead of
+  // carrying an APC tracking link.
   try {
     await fulfillOrder(
       orderId,
-      apcEnabled ? consignmentNumber! : "",
-      apcEnabled ? "APC Overnight" : "",
-      apcEnabled ? trackingUrl : undefined,
+      apcEnabled && !localDelivery ? consignmentNumber! : "",
+      localDelivery ? "TCK Local Delivery" : apcEnabled ? "APC Overnight" : "",
+      apcEnabled && !localDelivery ? trackingUrl : undefined,
     );
     // Shopify has the tracking number — close the ledger row so an
     // end-of-dispatch audit can tell "scanned but never pushed" from "done".
@@ -1280,7 +1295,7 @@ router.post("/orders/:id/complete", requireFulfilmentAccess, async (req: Request
 
   // 2. Tag the order so the audit can confirm we shipped it.
   try {
-    order = await getOrderById(orderId);
+    if (!order) order = await getOrderById(orderId);
     await addTagToOrder(orderId, order?.tags ?? "", FULFILLED_BY_APP_TAG);
   } catch (tagErr) {
     const msg = tagErr instanceof Error ? tagErr.message : String(tagErr);
