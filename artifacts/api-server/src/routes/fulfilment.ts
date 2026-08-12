@@ -530,6 +530,60 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
       return;
     }
 
+    // ── Never book the same order twice ──────────────────────────────────
+    // Backing out and re-opening an order, a page refresh mid-pick, or two
+    // packers on the same order would each fire this endpoint again, and
+    // every call is a real consignment APC will invoice. Check two places
+    // before booking: our own ledger (instant), then APC itself by
+    // reference (authoritative — catches a consignment raised by hand in
+    // Hypaship, or by another device). Either hit returns the EXISTING
+    // label rather than raising a second one.
+    const postcode = order.shipping_address.zip;
+    let reusedWaybill: string | null = null;
+    let reusedTrackingUrl: string | null = null;
+
+    const priorRows = await db.execute<{ waybill: string; tracking_url: string | null }>(sql`
+      SELECT waybill, tracking_url FROM apc_consignments
+      WHERE shopify_order_id = ${orderId}
+      ORDER BY created_at DESC LIMIT 1
+    `);
+    if (priorRows.rows[0]?.waybill) {
+      reusedWaybill = String(priorRows.rows[0].waybill);
+      reusedTrackingUrl = priorRows.rows[0].tracking_url ?? null;
+      console.log(`[Fulfilment] ${order.name} already has consignment ${reusedWaybill} — reusing, not re-booking`);
+    } else {
+      try {
+        const live = (await lookupOrdersByReference(order.name, apiBase)).find(c => c.waybill);
+        if (live?.waybill) {
+          reusedWaybill = live.waybill;
+          console.log(`[Fulfilment] APC already holds ${live.waybill} for ${order.name} — reusing`);
+          await db.execute(sql`
+            INSERT INTO apc_consignments (waybill, reference, shopify_order_id, shopify_order_name, consignee_postcode)
+            VALUES (${live.waybill}, ${order.name}, ${orderId}, ${order.name}, ${postcode})
+            ON CONFLICT DO NOTHING
+          `);
+        }
+      } catch (lookupErr) {
+        // A lookup outage must not stop packing — but say so loudly, because
+        // the duplicate check was weaker for this order.
+        console.warn(`[Fulfilment] duplicate-check lookup failed for ${order.name}:`, lookupErr instanceof Error ? lookupErr.message : lookupErr);
+      }
+    }
+
+    if (reusedWaybill) {
+      const labels = await fetchLabel(reusedWaybill, apiBase);
+      res.json({
+        consignmentNumber: reusedWaybill,
+        labelPdfBase64: labels[0],
+        trackingUrl: reusedTrackingUrl ?? apcTrackingUrl(reusedWaybill, postcode),
+        serviceCode,
+        orderId,
+        orderName: order.name,
+        reused: true,
+      });
+      return;
+    }
+
     const weightKg = (order.total_weight ?? 500) / 1000;
     const customerName = order.shipping_address.name ||
       `${order.customer?.first_name ?? ""} ${order.customer?.last_name ?? ""}`.trim();
@@ -560,6 +614,18 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
       specialInstructions,
       ...(apiBase ? { apiBase } : {}),
     });
+
+    // Record it immediately — this row is what stops a second booking if the
+    // packer backs out and re-opens the order, or the page is refreshed.
+    try {
+      await db.execute(sql`
+        INSERT INTO apc_consignments (waybill, reference, shopify_order_id, shopify_order_name, consignee_postcode, tracking_url)
+        VALUES (${result.consignmentNumber}, ${order.name}, ${orderId}, ${order.name}, ${postcode}, ${result.trackingUrl ?? null})
+        ON CONFLICT DO NOTHING
+      `);
+    } catch (recordErr) {
+      console.error(`[Fulfilment] FAILED to record consignment ${result.consignmentNumber} for ${order.name} — a retry could double-book:`, recordErr);
+    }
 
     res.json({
       consignmentNumber: result.consignmentNumber,

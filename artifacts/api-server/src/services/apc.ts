@@ -354,7 +354,12 @@ async function placeOrder(req: ApcShipmentRequest): Promise<PlaceOrderResult> {
         ReadyAt: "09:00",
         ClosedAt: "17:00",
         ProductCode: req.serviceCode,
-        Reference: (req.reference ?? "").replace(/[^a-zA-Z0-9\-\.]/g, "-").slice(0, 25),
+        // Keep the "#" — the Shopify order name IS the reference everyone
+        // searches Hypaship by, and stripping it produced "-131249", which
+        // no one could find. APC accepts "#": the hand-raised consignments
+        // uploaded from the spreadsheet have always carried it, which is why
+        // reconcile-mode lookup tries the verbatim "#131249" form first.
+        Reference: (req.reference ?? "").replace(/[^a-zA-Z0-9\-\.#]/g, "-").slice(0, 25),
         Delivery: {
           CompanyName: companyName,
           AddressLine1: addr.address1,
@@ -465,7 +470,8 @@ async function placeOrder(req: ApcShipmentRequest): Promise<PlaceOrderResult> {
   return { waybill, warnings };
 }
 
-async function fetchLabel(waybill: string, apiBase: string, retries = 4, delayMs = 3000): Promise<string[]> {
+async function fetchLabel(waybill: string, apiBaseIn?: string, retries = 4, delayMs = 3000): Promise<string[]> {
+  const apiBase = apiBaseIn ?? APC_API_BASE;
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) {
       await new Promise(resolve => setTimeout(resolve, delayMs));

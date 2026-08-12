@@ -144,6 +144,9 @@ interface ShipmentResult {
   orderId: number;
   orderName: string;
   warnings?: string[];
+  /** True when the server returned a consignment that already existed for
+   *  this order rather than booking a second one. */
+  reused?: boolean;
 }
 
 /** Result of scanning the printed APC label at the bench. The verdict is
@@ -616,20 +619,15 @@ const ZONE_STYLES: Record<string, { bg: string; border: string; text: string; ba
 
 // Wraps the PDF in an HTML page with explicit @page sizing for 100mm×150mm thermal labels.
 // This ensures Chrome respects the label dimensions regardless of default printer paper settings.
-function makeLabelHtml(base64Pdf: string): string {
-  return `<!DOCTYPE html>
-<html>
-<head>
-<style>
-@page { size: 100mm 150mm; margin: 0; }
-html, body { margin: 0; padding: 0; width: 100mm; height: 150mm; overflow: hidden; }
-embed { width: 100%; height: 100%; display: block; }
-</style>
-</head>
-<body>
-<embed src="data:application/pdf;base64,${base64Pdf}" type="application/pdf" />
-</body>
-</html>`;
+/** Decode the label into a Blob. Chrome refuses to instantiate its PDF
+ *  viewer for a `data:` URL inside an embedded frame — the <embed> stays
+ *  inert markup and the print preview comes out BLANK (2026-08-12, first
+ *  live label). A blob: URL loads into the viewer normally. */
+function base64PdfToBlobUrl(base64Pdf: string): string {
+  const binary = atob(base64Pdf);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
 }
 
 function printLabel(
@@ -642,12 +640,23 @@ function printLabel(
   if (!iframe) { onPrintFailed(); return; }
 
   let settled = false;
+  const blobUrl = base64PdfToBlobUrl(base64Pdf);
 
   function settle(success: boolean) {
     if (settled) return;
     settled = true;
     window.removeEventListener("afterprint", handleAfterPrint);
     clearTimeout(fallbackTimer);
+    // Hand the label back to the caller so it can be reopened without
+    // re-booking, then release it once the browser has finished with it.
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    // The print dialog steals focus from the scan input — and a barcode
+    // scanner's keystrokes would land in the dialog, not the pick list.
+    // Put focus back the moment printing ends, however it ended.
+    requestAnimationFrame(() => {
+      const input = document.querySelector<HTMLInputElement>('input[data-scan-input="true"]');
+      input?.focus();
+    });
     if (success) onPrinted(); else onPrintFailed();
   }
 
@@ -656,9 +665,10 @@ function printLabel(
   // Kiosk mode fires afterprint immediately after sending job to printer.
   // Non-kiosk: fires when the print dialog is dismissed (could be cancel).
   // We treat dismiss as "done" — the user is responsible for printer setup.
-  // Fallback: 10 s timeout in case afterprint never fires (e.g. data-URL sandbox).
+  // Fallback timeout in case afterprint never fires. Generous, because a
+  // real printer dialog can legitimately sit open while the packer works.
   // Resolves as failure so the operator sees a deterministic state and can retry.
-  const fallbackTimer = setTimeout(() => settle(false), 10_000);
+  const fallbackTimer = setTimeout(() => settle(false), 60_000);
 
   iframe.onerror = () => settle(false);
 
@@ -672,7 +682,11 @@ function printLabel(
     }
   };
 
-  iframe.srcdoc = makeLabelHtml(base64Pdf);
+  // Point the frame straight at the PDF. Do NOT wrap it in HTML with an
+  // <embed src="data:…"> — Chrome blocks the PDF plugin for data: URLs and
+  // the print preview comes out blank.
+  iframe.src = blobUrl;
+  return blobUrl;
 }
 
 type PrintStatus = "idle" | "printing" | "done" | "failed";
@@ -2069,6 +2083,12 @@ export default function Fulfilment() {
               <span className="text-muted-foreground">Service</span>
               <span className="font-mono text-xs">{shipment.serviceCode}</span>
             </div>
+            {shipment.reused && (
+              <p className="flex items-start gap-1.5 text-xs text-muted-foreground pt-1">
+                <CheckCircle2 className="w-3.5 h-3.5 text-green-600 flex-shrink-0 mt-0.5" />
+                <span>This order already had a consignment — reusing it. Nothing new was booked with APC.</span>
+              </p>
+            )}
           </div>
 
           {/* Consequence warning — always shown, because Shopify fulfillment and email are always real */}
@@ -2622,6 +2642,7 @@ export default function Fulfilment() {
                 value can't keep up with a scanner's burst and truncates. */}
             <input
               ref={barcodeRef}
+              data-scan-input="true"
               defaultValue=""
               placeholder={labelGateOpen ? "Scan the APC label…" : "Scan barcode or type SKU…"}
               className={`w-full pl-12 pr-4 py-4 text-lg bg-background border rounded-xl focus:outline-none focus:ring-2 font-mono ${
