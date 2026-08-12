@@ -10,6 +10,7 @@
  * state rather than hanging or 500-ing.
  */
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
+import multer from "multer";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -482,16 +483,28 @@ async function requireAdmin(req: Request, res: Response, next: NextFunction) {
 // override forever, which froze the slide on a stale entry.)
 router.get("/", async (_req: Request, res: Response) => {
   try {
-    const rows = toRows<UpdateRow>(await db.execute(sql`
-      SELECT id, title, body, published, created_at, updated_at
+    // Every curated entry from the last 24 hours, not just the newest one.
+    // The slide walks them one at a time — headline, screenshot, detail —
+    // rather than flattening the lot into a single wall of bullets.
+    const rows = toRows<UpdateRow & { has_image: boolean }>(await db.execute(sql`
+      SELECT id, title, body, published, created_at, updated_at,
+             (image IS NOT NULL) AS has_image
       FROM system_updates
       WHERE published = true AND created_at >= now() - interval '24 hours'
-      ORDER BY created_at DESC LIMIT 1
+      ORDER BY created_at DESC, id DESC
     `));
-    const latest = rows[0];
-    if (latest) {
+    if (rows.length > 0) {
+      const latest = rows[0];
       res.json({
         available: true,
+        updates: rows.map(r => ({
+          id: r.id,
+          title: r.title,
+          bullets: bodyToBullets(r.body),
+          hasImage: r.has_image,
+          createdAt: iso(r.created_at),
+        })),
+        // Kept so the older single-entry consumers keep working unchanged.
         summary: bodyToBullets(latest.body),
         updateTitle: latest.title,
         updateDate: iso(latest.created_at),
@@ -555,8 +568,9 @@ router.post("/refresh-feed", requireAdmin, async (_req: Request, res: Response) 
 // Admin list — all entries, newest first.
 router.get("/admin", requireAdmin, async (_req: Request, res: Response) => {
   try {
-    const rows = toRows<UpdateRow>(await db.execute(sql`
-      SELECT id, title, body, published, created_at, updated_at
+    const rows = toRows<UpdateRow & { has_image: boolean }>(await db.execute(sql`
+      SELECT id, title, body, published, created_at, updated_at,
+             (image IS NOT NULL) AS has_image
       FROM system_updates ORDER BY created_at DESC
     `));
     res.json(rows.map(r => ({
@@ -564,6 +578,7 @@ router.get("/admin", requireAdmin, async (_req: Request, res: Response) => {
       title: r.title,
       body: r.body,
       published: r.published,
+      hasImage: r.has_image,
       createdAt: iso(r.created_at),
       updatedAt: iso(r.updated_at),
     })));
@@ -607,6 +622,53 @@ router.delete("/:id", requireAdmin, async (req: Request, res: Response) => {
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   await db.execute(sql`DELETE FROM system_updates WHERE id = ${id}`);
   res.json({ ok: true });
+});
+
+// ── Screenshot for one update ────────────────────────────────────────
+// Stored inline as bytea, mirroring the gratitude photo. Screenshots of a
+// UI are wide and detailed, so the cap is higher than the 10MB used for
+// phone photos elsewhere — a retina PNG of a full station screen is big.
+const IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+const imageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_IMAGE_BYTES } });
+
+router.post("/:id/image", requireAdmin, imageUpload.single("file"), async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const file = (req as Request & { file?: Express.Multer.File }).file;
+  if (!file) { res.status(400).json({ error: "file is required" }); return; }
+  if (!IMAGE_MIMES.has(file.mimetype)) {
+    res.status(400).json({ error: "Image must be a JPEG, PNG, WebP or GIF" });
+    return;
+  }
+  const rows = toRows<{ id: number }>(await db.execute(sql`
+    UPDATE system_updates SET image = ${file.buffer}, image_mime = ${file.mimetype}, updated_at = now()
+    WHERE id = ${id} RETURNING id
+  `));
+  if (!rows[0]) { res.status(404).json({ error: "Update not found" }); return; }
+  res.json({ ok: true });
+});
+
+router.delete("/:id/image", requireAdmin, async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  await db.execute(sql`UPDATE system_updates SET image = NULL, image_mime = NULL, updated_at = now() WHERE id = ${id}`);
+  res.json({ ok: true });
+});
+
+// Streamed separately from the JSON feed so the slide payload stays small
+// and the picture loads lazily, only for the sub-slide being shown.
+router.get("/:id/image", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const rows = toRows<{ image: Buffer | null; image_mime: string | null }>(await db.execute(sql`
+    SELECT image, image_mime FROM system_updates WHERE id = ${id} LIMIT 1
+  `));
+  const row = rows[0];
+  if (!row?.image) { res.status(404).json({ error: "No image" }); return; }
+  res.setHeader("Content-Type", row.image_mime ?? "image/png");
+  res.setHeader("Cache-Control", "private, max-age=300");
+  res.send(row.image);
 });
 
 export default router;

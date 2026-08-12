@@ -13,7 +13,7 @@ import {
   Camera, User, CircleDot, ToggleRight, Boxes, UtensilsCrossed,
   AlertTriangle, Scale, ThermometerSnowflake, BookOpen, Megaphone, CalendarDays,
   Copy, Check, IdCard, FileText, ExternalLink, Bell, RefreshCw, Smartphone, Thermometer,
-  AlarmClock, Search,
+  AlarmClock, Search, Image as ImageIcon,
 } from "lucide-react";
 import { STATIONS } from "@/pages/station/shared/constants";
 import { TIMED_REMINDERS_KEY, parseReminders, type TimedReminder } from "@/pages/station/shared/timed-reminders";
@@ -4807,7 +4807,7 @@ function EightPackBannerRolesSection() {
   );
 }
 
-interface SysUpdate { id: number; title: string | null; body: string; published: boolean; createdAt: string; updatedAt: string; }
+interface SysUpdate { id: number; title: string | null; body: string; published: boolean; hasImage?: boolean; createdAt: string; updatedAt: string; }
 
 // Validation card for the AUTOMATIC commit feed — deliberately in Settings,
 // not the morning meeting: the old slide failed silently for months and
@@ -4909,6 +4909,69 @@ function AutomaticFeedCard() {
   );
 }
 
+/** Screenshot attached to one system update. It leads the morning-meeting
+ *  sub-slide for that update, so this is the highest-leverage field on the
+ *  form even though it's optional. */
+function UpdateScreenshot({ entry, onChange }: { entry: SysUpdate; onChange: () => void }) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [bust, setBust] = useState(0);
+
+  const upload = async (file: File) => {
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const r = await fetch(`${BASE}/api/system-updates/${entry.id}/image`, {
+        method: "POST", credentials: "include", body: form,
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? "Upload failed");
+      setBust(Date.now());
+      onChange();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Upload failed");
+    } finally { setBusy(false); }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await fetch(`${BASE}/api/system-updates/${entry.id}/image`, { method: "DELETE", credentials: "include" });
+      onChange();
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="mt-3 pt-3 border-t border-border/60 flex items-center gap-3">
+      {entry.hasImage ? (
+        <img
+          src={`${BASE}/api/system-updates/${entry.id}/image?v=${bust}`}
+          alt="Update screenshot"
+          className="w-24 h-16 rounded-lg object-cover border border-border shrink-0"
+        />
+      ) : (
+        <div className="w-24 h-16 rounded-lg border border-dashed border-border grid place-items-center text-muted-foreground shrink-0">
+          <ImageIcon className="w-5 h-5" />
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <input ref={fileRef} type="file" accept="image/*" className="hidden"
+          onChange={ev => { const f = ev.target.files?.[0]; if (f) upload(f); ev.target.value = ""; }} />
+        <button onClick={() => fileRef.current?.click()} disabled={busy}
+          className="px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-secondary/40 disabled:opacity-50">
+          {busy ? "Working…" : entry.hasImage ? "Replace screenshot" : "Add screenshot"}
+        </button>
+        {entry.hasImage && (
+          <button onClick={remove} disabled={busy}
+            className="px-3 py-1.5 border border-border rounded-lg text-sm text-muted-foreground hover:text-destructive disabled:opacity-50">
+            Remove
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SystemUpdatesSection() {
   const [entries, setEntries] = useState<SysUpdate[] | null>(null);
   const [title, setTitle] = useState("");
@@ -4970,7 +5033,7 @@ function SystemUpdatesSection() {
           <Megaphone className="w-4 h-4 text-primary" /> System Updates
         </h2>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Bulleted changes shown on the morning-meeting "System Updates" slide. The most recent published entry is displayed. One bullet per line.
+          Changes shown on the morning-meeting "System Updates" slide. Each entry is its own step in the deck — title, screenshot, then the detail lines. Attach a screenshot of the feature; the team reads a picture far faster than a paragraph. One bullet per line.
         </p>
       </div>
 
@@ -5034,6 +5097,7 @@ function SystemUpdatesSection() {
                   <ul className="text-sm text-muted-foreground list-disc pl-5 space-y-0.5">
                     {bullets(e.body).map((l, i) => <li key={i}>{l}</li>)}
                   </ul>
+                  <UpdateScreenshot entry={e} onChange={load} />
                 </>
               )}
             </div>

@@ -278,6 +278,17 @@ async function runStartupMigrations() {
         updated_at timestamp NOT NULL DEFAULT now()
       )
     `);
+    // Each update carries an optional screenshot of the feature it describes.
+    // The morning-meeting slide leads with the picture — a wall of bullets was
+    // being skipped over, and the team recognises a screen far faster than a
+    // sentence about it. Stored inline as bytea, same as every other image in
+    // this app (gratitude photo, improvement attachments).
+    await db.execute(sql`
+      ALTER TABLE system_updates ADD COLUMN IF NOT EXISTS image BYTEA
+    `);
+    await db.execute(sql`
+      ALTER TABLE system_updates ADD COLUMN IF NOT EXISTS image_mime TEXT
+    `);
     // Improvements consolidation: "struggles" are now just improvements.
     // Idempotent — a no-op once no struggle rows remain.
     await db.execute(sql`
