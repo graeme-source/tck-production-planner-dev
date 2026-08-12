@@ -1513,6 +1513,28 @@ async function runStartupMigrations() {
       )
     `);
 
+    // Founder Focus day-to-day tasks — see lib/db/migrations/0050_founder_tasks.sql.
+    // The layer between a long-term goal and a recurring ritual: a one-off
+    // item that belongs to a DATE. Unfinished ones stay put and surface as
+    // overdue rather than rolling forward on their own.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS founder_tasks (
+        id SERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        detail TEXT,
+        url TEXT,
+        pillar_id INTEGER REFERENCES founder_pillars(id) ON DELETE SET NULL,
+        block_id INTEGER REFERENCES founder_blocks(id) ON DELETE SET NULL,
+        date DATE NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        done_at TIMESTAMP,
+        source TEXT NOT NULL DEFAULT 'manual',
+        sort INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_founder_tasks_date ON founder_tasks (date, status)`);
+
     // Sales & Marketing assistant — see lib/db/migrations/0043_marketing_events.sql.
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS marketing_events (
