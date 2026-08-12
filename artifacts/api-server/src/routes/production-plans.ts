@@ -4581,6 +4581,9 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       marinadeSubRecipeId: number | null;
       marinadeSubRecipeName: string | null;
       totalGrams: number;
+      // True = held back from prep day; the mixing/cooking station adds it
+      // on production day. Weight still counts toward tray capacity.
+      addAtCooking: boolean;
     }> = [];
 
     if (station === "prep_meat" || station === "all") {
@@ -4592,6 +4595,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
           quantity: recipeIngredientsTable.quantity,
           unit: ingredientsTable.unit,
           marinadeForIngredientId: recipeIngredientsTable.marinadeForIngredientId,
+          marinadeAddAtCooking: recipeIngredientsTable.marinadeAddAtCooking,
           targetCategory: marinadeTargetAlias.category,
         })
         .from(recipeIngredientsTable)
@@ -4612,6 +4616,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
           marinadeSubRecipeId: null,
           marinadeSubRecipeName: null,
           totalGrams,
+          addAtCooking: mr.marinadeAddAtCooking ?? false,
         });
       }
 
@@ -4622,6 +4627,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
           subRecipeName: subRecipesTable.name,
           quantity: recipeSubRecipesTable.quantity,
           marinadeForIngredientId: recipeSubRecipesTable.marinadeForIngredientId,
+          marinadeAddAtCooking: recipeSubRecipesTable.marinadeAddAtCooking,
           targetCategory: marinadeSubTargetAlias.category,
         })
         .from(recipeSubRecipesTable)
@@ -4642,6 +4648,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
           marinadeSubRecipeId: sr.subRecipeId,
           marinadeSubRecipeName: sr.subRecipeName ?? null,
           totalGrams,
+          addAtCooking: sr.marinadeAddAtCooking ?? false,
         });
       }
 
@@ -4679,6 +4686,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
             marinadeSubRecipeId: mr.marinadeSubRecipeId ?? null,
             marinadeSubRecipeName: mr.marinadeSubRecipeName ?? null,
             totalGrams,
+            addAtCooking: false,
           });
         }
       }

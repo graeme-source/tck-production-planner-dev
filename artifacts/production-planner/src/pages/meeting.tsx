@@ -1217,25 +1217,28 @@ function StationAssignmentsSlide() {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+      {/* One row per station, top to bottom in production-flow order (the
+          mapping's order in Settings mirrors the plan-day station list) —
+          the room reads it like the day's flow, not a wall of tiles. */}
+      <div className="space-y-1.5">
         {data.stations.map(st => (
           <div key={st.title}
             className={cn(
-              "rounded-2xl border p-4",
+              "rounded-xl border px-4 py-2 flex items-center gap-4",
               st.people.length > 0 ? "border-border bg-card" : "border-dashed border-border bg-secondary/20",
             )}>
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">{st.title}</p>
+            <p className="w-44 flex-shrink-0 text-sm font-semibold uppercase tracking-wide text-muted-foreground">{st.title}</p>
             {st.people.length === 0 ? (
-              <p className="text-2xl font-display font-bold text-muted-foreground/50">—</p>
+              <p className="text-xl font-display font-bold text-muted-foreground/40">—</p>
             ) : (
-              <div className="space-y-1.5">
+              <div className="flex flex-wrap items-baseline gap-x-6 gap-y-0.5 min-w-0">
                 {st.people.map((p, i) => (
-                  <div key={i}>
-                    <p className="text-xl font-display font-bold leading-tight">{p.name}</p>
+                  <span key={i} className="flex items-baseline gap-2 min-w-0">
+                    <span className="text-2xl font-display font-bold leading-tight whitespace-nowrap">{p.name}</span>
                     {p.start && (
-                      <p className="text-xs text-muted-foreground tabular-nums">{p.start}–{p.end ?? ""}</p>
+                      <span className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">{p.start}–{p.end ?? ""}</span>
                     )}
-                  </div>
+                  </span>
                 ))}
               </div>
             )}

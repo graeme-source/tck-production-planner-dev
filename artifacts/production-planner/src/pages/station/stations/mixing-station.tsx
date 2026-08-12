@@ -56,7 +56,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { BreakTracker } from "../shared/break-tracker";
 import { getStationCount, isMacCheese } from "../shared/constants";
-import type { PrepRecipeDetail } from "./prep-hub";
+import type { PrepRecipeDetail, PrepMarinadeDetail } from "./prep-hub";
 
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -187,6 +187,87 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
   const [runTrayAction, trayBusy] = useGuardedAction();
   const [trayPending, setTrayPending] = useState<string | null>(null);
 
+  // ── Add-at-cooking marinades (e.g. the Philly beef stock) ──────────
+  // Held back from prep day (marinade_add_at_cooking on the recipe link);
+  // they must be poured into the trays HERE, before the meat goes in the
+  // oven. Confirmations persist as prep_completions rows with sentinel
+  // tinNumber 0 — they survive reloads and land in the prep audit trail.
+  // The first oven-in for the recipe is gated on the confirmation, so
+  // forgetting is impossible rather than merely unlikely.
+  type CookingAddConfirmation = {
+    ingredientId: number | null; subRecipeId?: number | null; recipeId: number;
+    tinNumber: number; userName?: string | null;
+  };
+  const [cookingAddConfirmations, setCookingAddConfirmations] = useState<CookingAddConfirmation[]>([]);
+  const fetchCookingAddConfirmations = useCallback(() => {
+    const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
+    fetch(`${base}/api/production-plans/${plan.id}/main-prep?station=prep_meat`, { credentials: "include" })
+      .then(r => r.json())
+      .then(d => {
+        if (Array.isArray(d?.completions)) {
+          setCookingAddConfirmations(d.completions.filter((c: CookingAddConfirmation) => c.tinNumber === 0));
+        }
+      })
+      .catch(() => { /* next poll retries */ });
+  }, [plan.id]);
+  useEffect(() => {
+    fetchCookingAddConfirmations();
+    const t = setInterval(fetchCookingAddConfirmations, 10_000);
+    return () => clearInterval(t);
+  }, [fetchCookingAddConfirmations]);
+  const cookingAddsFor = (r: PrepRecipeDetail): PrepMarinadeDetail[] =>
+    (r.marinades ?? []).filter(m => m.addAtCooking);
+  const findCookingAddConfirmation = (recipeId: number, m: PrepMarinadeDetail) =>
+    cookingAddConfirmations.find(c =>
+      c.recipeId === recipeId && c.tinNumber === 0 &&
+      (m.marinadeIngredientId != null
+        ? c.ingredientId === m.marinadeIngredientId
+        : (c.subRecipeId ?? c.ingredientId) === m.marinadeSubRecipeId));
+  const unconfirmedCookingAdds = (r: PrepRecipeDetail) =>
+    cookingAddsFor(r).filter(m => !findCookingAddConfirmation(r.recipeId, m));
+  const recipeTrayTotal = (r: PrepRecipeDetail) =>
+    r.ingredients.filter(i => i.isRawMeat).reduce((sum, i) => sum + (i.trayCount ?? 0), 0);
+  const [stockPrompt, setStockPrompt] = useState<{
+    recipe: PrepRecipeDetail;
+    resume: [number, string, number, string, number, number, string] | null;
+  } | null>(null);
+  const [confirmingStock, setConfirmingStock] = useState(false);
+  const confirmCookingAdds = async (recipe: PrepRecipeDetail) => {
+    if (confirmingStock) return;
+    setConfirmingStock(true);
+    const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
+    try {
+      for (const m of unconfirmedCookingAdds(recipe)) {
+        const body = m.marinadeIngredientId != null
+          ? { ingredientId: m.marinadeIngredientId, recipeId: recipe.recipeId, tinNumber: 0 }
+          : { ingredientId: m.marinadeSubRecipeId, recipeId: recipe.recipeId, tinNumber: 0, isSubRecipe: true };
+        try {
+          const res = await fetch(`${base}/api/production-plans/${plan.id}/prep-completions`, {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          // Optimistic append so the oven-in gate opens immediately —
+          // the slow-poll refetch would otherwise re-block the resume.
+          // 409 = already confirmed by someone else: equally fine.
+          if (res.ok || res.status === 409) {
+            setCookingAddConfirmations(prev => [...prev, {
+              ingredientId: m.marinadeIngredientId ?? null,
+              subRecipeId: m.marinadeSubRecipeId ?? null,
+              recipeId: recipe.recipeId,
+              tinNumber: 0,
+              userName: authUser?.name ?? null,
+            }]);
+          }
+        } catch { /* leave unconfirmed; banner stays red */ }
+      }
+    } finally {
+      setConfirmingStock(false);
+      fetchCookingAddConfirmations();
+    }
+  };
+
   const advanceTray = async (
     recipeId: number, recipeName: string,
     ingredientId: number, ingredientName: string,
@@ -201,6 +282,17 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
     if (cur === 0) next = 1;
     else if (cur === 1) next = 2;
     else next = 0;
+
+    // Gate: no tray goes in the oven while an add-at-cooking marinade is
+    // unconfirmed — the blocking prompt records it, then resumes this tap.
+    if (next === 1) {
+      const rec = cookingRecipes.find(r => r.recipeId === recipeId);
+      if (rec && unconfirmedCookingAdds(rec).length > 0) {
+        setStockPrompt({ recipe: rec, resume: [recipeId, recipeName, ingredientId, ingredientName, trayIdx, planId, planName] });
+        setTrayPending(null);
+        return;
+      }
+    }
 
     setTrayStates(prev => ({ ...prev, [key]: { ...prev[key], [trayIdx]: next } }));
 
@@ -798,6 +890,57 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
         </div>
       </div>
     )}
+    {/* Add-at-cooking gate — blocks the first oven-in until the held-back
+        marinade (e.g. Philly beef stock) is confirmed in the trays. */}
+    {stockPrompt && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+        <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+          <div>
+            <h3 className="font-bold text-lg">⚠️ Hold on — add the marinade first</h3>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              {stockPrompt.recipe.recipeName}: this goes into the trays BEFORE any meat goes in the oven.
+            </p>
+            {authUser && <p className="text-xs text-muted-foreground">Confirming as: {authUser.name}</p>}
+          </div>
+          <div className="space-y-2">
+            {unconfirmedCookingAdds(stockPrompt.recipe).map((m, i) => {
+              const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
+              const trays = recipeTrayTotal(stockPrompt.recipe);
+              const perTrayG = trays > 0 ? Math.round(m.totalGrams / trays) : null;
+              return (
+                <div key={i} className="rounded-xl border-2 border-red-500/60 bg-red-500/10 px-4 py-3">
+                  <p className="font-bold text-red-700 dark:text-red-300">{name}</p>
+                  <p className="text-sm tabular-nums">
+                    {(m.totalGrams / 1000).toFixed(2)} kg total
+                    {perTrayG != null && <> · <span className="font-semibold">{perTrayG} g per tray</span> × {trays} trays</>}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex gap-3">
+            <button
+              onClick={() => setStockPrompt(null)}
+              className="flex-1 py-2.5 rounded-xl border border-border font-medium text-sm hover:bg-secondary"
+            >
+              Not yet
+            </button>
+            <button
+              onClick={async () => {
+                const prompt = stockPrompt;
+                await confirmCookingAdds(prompt.recipe);
+                setStockPrompt(null);
+                if (prompt.resume) void advanceTray(...prompt.resume);
+              }}
+              disabled={confirmingStock}
+              className="flex-1 py-2.5 rounded-xl bg-green-600 text-white font-semibold text-sm hover:bg-green-700 disabled:opacity-50"
+            >
+              {confirmingStock ? "Saving…" : "It's in — continue"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     {/* Temperature entry dialog */}
     {tempPrompt && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
@@ -980,6 +1123,52 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                         )}
                       </div>
                     </div>
+
+                    {/* Add-at-cooking marinades — red until confirmed in,
+                        green with who-confirmed after. Per-tray dose is live:
+                        change the tray capacity and this recalculates. */}
+                    {(() => {
+                      const adds = cookingAddsFor(recipe);
+                      if (adds.length === 0) return null;
+                      return (
+                        <div className="px-4 py-3 border-b border-border space-y-2">
+                          {adds.map((m, i) => {
+                            const conf = findCookingAddConfirmation(recipe.recipeId, m);
+                            const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
+                            const perTrayG = totalTraysForRecipe > 0 ? Math.round(m.totalGrams / totalTraysForRecipe) : null;
+                            return (
+                              <div key={i} className={cn(
+                                "rounded-xl border-2 px-4 py-3 flex items-center justify-between gap-3",
+                                conf ? "border-green-400 dark:border-green-600 bg-green-50 dark:bg-green-900/20"
+                                     : "border-red-500/70 bg-red-500/10",
+                              )}>
+                                <div>
+                                  <p className={cn("font-bold text-lg leading-tight", conf ? "text-green-700 dark:text-green-300" : "text-red-700 dark:text-red-300")}>
+                                    {conf ? `✓ ${name} added` : `⚠️ Add ${name} to the trays now — before the oven`}
+                                  </p>
+                                  <p className="text-sm text-muted-foreground mt-0.5">
+                                    {(m.totalGrams / 1000).toFixed(2)} kg total
+                                    {perTrayG != null && (
+                                      <> · <span className="font-semibold text-foreground tabular-nums">{perTrayG} g per tray</span> × {totalTraysForRecipe} trays</>
+                                    )}
+                                    {conf?.userName && <> · confirmed by {conf.userName}</>}
+                                  </p>
+                                </div>
+                                {!conf && (
+                                  <button
+                                    onClick={() => confirmCookingAdds(recipe)}
+                                    disabled={confirmingStock}
+                                    className="flex-shrink-0 px-4 py-2.5 rounded-xl bg-red-600 text-white font-bold text-sm hover:bg-red-700 disabled:opacity-50"
+                                  >
+                                    {confirmingStock ? "Saving…" : "It's in — confirm"}
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
 
                     {/* Per-meat-ingredient sections */}
                     <div className="divide-y divide-border/50">
