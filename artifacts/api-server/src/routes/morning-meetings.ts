@@ -387,7 +387,29 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       .where(eq(productionPlansTable.planDate, tomorrow))
       .limit(1);
     let tomorrowNonCoreItems: Array<{ recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null }> = [];
+    // Full item list for tomorrow's plan, same shape and ordering as
+    // todayPlanItems. The pack report flips to tomorrow's dispatch after 3pm —
+    // its production columns must flip to tomorrow's PLAN with it, or the
+    // table compares tomorrow's orders against today's make (Graeme,
+    // 2026-08-13).
+    let tomorrowPlanItems: typeof todayPlanItems = [];
     if (tomorrowPlan) {
+      tomorrowPlanItems = await db
+        .select({
+          recipeId: productionPlanItemsTable.recipeId,
+          recipeName: recipesTable.name,
+          recipeColor: recipesTable.color,
+          batchesTarget: productionPlanItemsTable.batchesTarget,
+          recipeCategory: recipesTable.category,
+          eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
+        })
+        .from(productionPlanItemsTable)
+        .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+        .where(eq(productionPlanItemsTable.planId, tomorrowPlan.id))
+        .orderBy(
+          sql`CASE WHEN ${recipesTable.category} = 'Macaroni Cheese' THEN 0 ELSE 1 END`,
+          productionPlanItemsTable.orderPosition,
+        );
       tomorrowNonCoreItems = await db
         .select({
           recipeId: productionPlanItemsTable.recipeId,
@@ -571,6 +593,10 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       todayPlan: {
         id: todayPlan?.id ?? null,
         items: todayPlanItems,
+      },
+      tomorrowPlan: {
+        id: tomorrowPlan?.id ?? null,
+        items: tomorrowPlanItems,
       },
       yesterdayKpis: {
         wonkyCount,
