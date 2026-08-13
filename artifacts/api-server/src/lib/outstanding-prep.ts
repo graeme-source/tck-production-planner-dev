@@ -16,8 +16,18 @@ import { londonDateString } from "./london-time";
 // so it doesn't deduct again. A tin still open at count time — or ticked
 // after — will consume counted stock, so it does. An ingredient with no
 // recorded check gets the full non-deferred deduction (its baseline is
-// yesterday's stock by definition). Deferred tins won't be prepped today at
-// all and never deduct.
+// yesterday's stock by definition).
+//
+// Deferred tins DEDUCT until they're completed (2026-08-13). They were
+// originally excluded ("won't be prepped today"), but a deferral is an IOU:
+// the tin gets prepped the NEXT day, from that day's counted stock — and by
+// then its plan's prep day is yesterday, so the old logic couldn't see it
+// from either direction. Real case: no beef on Wednesday → Thursday's beef
+// trays deferred → 19 kg prepped Thursday morning was invisible, the orders
+// page said 1.36 kg left to prep and suppressed the order. Plans from the
+// last few prep days are now swept for deferred-and-uncompleted tins;
+// non-deferred tins of past prep days stay excluded (an unticked tin from
+// two days ago is a missed tick, not future consumption).
 //
 // Scope: tin-tracked prep only (main prep, veg and raw meat stations — the
 // same reconstruction /prep-progress uses, plus raw_meat). Base/sauce
@@ -25,10 +35,14 @@ import { londonDateString } from "./london-time";
 // tin-tracked, so there's nothing reliable to deduct from.
 
 export interface OutstandingPrep {
-  /** Plans whose prep day is today (usually one; empty when none). */
+  /** Plans whose prep day is today (usually one; empty when none). Deferral
+   *  backlog plans are NOT listed here — their inclusion is tin-level. */
   prepPlanIds: number[];
-  /** Raw native units still to be consumed by today's outstanding prep. */
+  /** Raw native units still to be consumed by outstanding prep. */
   byIngredient: Record<number, number>;
+  /** Each plan's share of byIngredient, so the caller can exclude exactly
+   *  the plan whose own requirement already counts that consumption. */
+  byPlan: Record<number, Record<number, number>>;
 }
 
 function calcTinCount(batchesTarget: number, maxBatchesPerTin: number | null): number | null {
@@ -44,21 +58,36 @@ export async function computeOutstandingPrepRaw(
   checkedAtByIngredient: Record<number, string | undefined>,
 ): Promise<OutstandingPrep> {
   const today = londonDateString();
+  // Deferral look-back: how many prep days behind we sweep for deferred,
+  // still-uncompleted tins. 5 covers a weekend plus a bank holiday.
+  const backlogFrom = londonDateString(new Date(Date.now() - 5 * 86_400_000));
 
+  // 'prep' and 'building' are legal mid-day statuses — a plan mustn't drop
+  // out of the ordering maths the moment a station moves it forward.
   const plansRes = await db.execute(sql`
-    SELECT id FROM production_plans
-    WHERE status IN ('draft', 'active')
-      AND COALESCE(prep_date, plan_date) = ${today}
+    SELECT id, COALESCE(prep_date, plan_date) AS prep_day FROM production_plans
+    WHERE status IN ('draft', 'active', 'prep', 'building')
+      AND COALESCE(prep_date, plan_date) BETWEEN ${backlogFrom} AND ${today}
   `);
-  const planIds = (plansRes.rows as Array<{ id: number }>).map(r => r.id);
-  if (planIds.length === 0) return { prepPlanIds: [], byIngredient: {} };
+  const planRows = plansRes.rows as Array<{ id: number; prep_day: string }>;
+  const todayPlanIds = planRows.filter(r => String(r.prep_day).slice(0, 10) === today).map(r => r.id);
+  const backlogPlanIds = new Set(planRows.filter(r => String(r.prep_day).slice(0, 10) !== today).map(r => r.id));
+  const planIds = planRows.map(r => r.id);
+  if (planIds.length === 0) return { prepPlanIds: [], byIngredient: {}, byPlan: {} };
 
   const idList = sql.join(planIds.map(id => sql`${id}`), sql`, `);
 
+  // portions_per_batch is essential: recipe_ingredients.quantity is PER
+  // PORTION, so a batch consumes quantity × portionsPerBatch — same as
+  // resolveRecipeIngredients. Multiplying by batches alone understated every
+  // deduction 10× (the 2026-08-13 burger beef bug: 19 kg of prep reported
+  // as 1.36 kg outstanding, which suppressed the order suggestion).
   const itemsRes = await db.execute(sql`
-    SELECT plan_id, recipe_id, batches_target, max_batches_per_tin, mixing_tin_override
-    FROM production_plan_items
-    WHERE plan_id IN (${idList}) AND recipe_id IS NOT NULL AND batches_target > 0
+    SELECT pi.plan_id, pi.recipe_id, pi.batches_target, pi.max_batches_per_tin,
+           pi.mixing_tin_override, COALESCE(r.portions_per_batch, 10) AS portions_per_batch
+    FROM production_plan_items pi
+    LEFT JOIN recipes r ON r.id = pi.recipe_id
+    WHERE pi.plan_id IN (${idList}) AND pi.recipe_id IS NOT NULL AND pi.batches_target > 0
   `);
 
   const overridesRes = await db.execute(sql`
@@ -90,13 +119,20 @@ export async function computeOutstandingPrepRaw(
     WHERE plan_id IN (${idList})
   `);
   const deferredTins = new Set<string>();
+  const deferredPlanRecipes = new Set<string>();
   for (const d of deferralsRes.rows as any[]) {
     deferredTins.add(`${d.plan_id}_${d.recipe_id}_${d.ingredient_id}_${d.tin_number}`);
+    deferredPlanRecipes.add(`${d.plan_id}_${d.recipe_id}`);
   }
 
   const byIngredient: Record<number, number> = {};
+  const byPlan: Record<number, Record<number, number>> = {};
 
   for (const item of itemsRes.rows as any[]) {
+    const isBacklog = backlogPlanIds.has(item.plan_id);
+    // Backlog plans only ever contribute deferred tins — skip recipes with
+    // no deferrals at all rather than resolving their whole ingredient tree.
+    if (isBacklog && !deferredPlanRecipes.has(`${item.plan_id}_${item.recipe_id}`)) continue;
     const batches = Number(item.batches_target) || 0;
     if (batches <= 0) continue;
     const defaultTinCount = calcTinCount(batches, item.max_batches_per_tin ?? null) ?? 1;
@@ -130,7 +166,7 @@ export async function computeOutstandingPrepRaw(
       }
       if (tinCount <= 0) continue;
 
-      const cookedQty = (Number(row.quantity) || 0) * batches;
+      const cookedQty = (Number(row.quantity) || 0) * (Number(item.portions_per_batch) || 10) * batches;
       const ratio = Number(row.processing_ratio) || 1;
       const rawQty = ratio > 0 ? cookedQty / ratio : cookedQty;
       if (rawQty <= 0) continue;
@@ -141,10 +177,16 @@ export async function computeOutstandingPrepRaw(
 
       for (let tin = 1; tin <= tinCount; tin++) {
         const key = `${item.plan_id}_${item.recipe_id}_${row.ingredient_id}_${tin}`;
-        if (deferredTins.has(key)) continue;
+        // Backlog plans: only tins the team explicitly deferred are still
+        // owed. Today's plans: every tin counts, deferred included — a
+        // deferred tin is prepped tomorrow from stock counted today, so the
+        // order still has to cover it.
+        if (isBacklog && !deferredTins.has(key)) continue;
         const doneAt = completedAtByTin.get(key);
         if (doneAt && checkedAt && doneAt.getTime() <= checkedAt.getTime()) continue;
         byIngredient[row.ingredient_id] = (byIngredient[row.ingredient_id] ?? 0) + perTin;
+        (byPlan[item.plan_id] ??= {})[row.ingredient_id] =
+          ((byPlan[item.plan_id] ?? {})[row.ingredient_id] ?? 0) + perTin;
       }
     }
   }
@@ -152,6 +194,11 @@ export async function computeOutstandingPrepRaw(
   for (const k of Object.keys(byIngredient)) {
     byIngredient[Number(k)] = Math.round(byIngredient[Number(k)] * 100) / 100;
   }
+  for (const plan of Object.values(byPlan)) {
+    for (const k of Object.keys(plan)) {
+      plan[Number(k)] = Math.round(plan[Number(k)] * 100) / 100;
+    }
+  }
 
-  return { prepPlanIds: planIds, byIngredient };
+  return { prepPlanIds: todayPlanIds, byIngredient, byPlan };
 }
