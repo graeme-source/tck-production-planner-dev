@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useListProductionPlans, useListDispatchOrders, useGetProductionPlan } from "@workspace/api-client-react";
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
@@ -499,6 +499,35 @@ export default function Dashboard() {
     staleTime: 5 * 60 * 1000,
   });
 
+  // Seven days plus a WEEK TOTAL column on the end, so the week's making vs
+  // dispatching can be read at a glance instead of added up in your head
+  // (Graeme, 2026-08-12). The total is a synthetic row: it carries isTotal so
+  // the tooltip, the axis label and the bar colour can treat it as a summary
+  // rather than an eighth day.
+  const dispatchChartData = useMemo(() => {
+    if (!weeklyOrders) return undefined;
+    const days = weeklyOrders.map(d => ({
+      ...d,
+      madePacks: madePacksByDate.get(d.date) ?? 0,
+      isTotal: false,
+    }));
+    const sum = (pick: (d: typeof days[number]) => number) => days.reduce((s, d) => s + pick(d), 0);
+    return [
+      ...days,
+      {
+        date: "__total__",
+        deliveryDate: "",
+        day: "Total",
+        orderCount: sum(d => d.orderCount),
+        fulfilledCount: sum(d => d.fulfilledCount),
+        unfulfilledCount: sum(d => d.unfulfilledCount),
+        packCount: sum(d => d.packCount),
+        madePacks: sum(d => d.madePacks),
+        isTotal: true,
+      },
+    ];
+  }, [weeklyOrders, weekPacksMade]);
+
   const { data: todayDeliveriesCount } = useQuery({
     queryKey: ["today-deliveries-count"],
     queryFn: fetchTodayDeliveriesCount,
@@ -605,6 +634,22 @@ export default function Dashboard() {
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const item = payload[0].payload;
+      // The week-total column is a summary, not a dispatch day — it has no
+      // delivery date and its fulfilled/unfulfilled split isn't meaningful.
+      if (item.isTotal) {
+        const diff = (item.madePacks ?? 0) - (item.packCount ?? 0);
+        return (
+          <div className="bg-card border border-border rounded-xl px-4 py-3 shadow-lg text-sm space-y-1">
+            <p className="font-semibold">Week total</p>
+            <p className="font-bold pt-1">{item.packCount} packs dispatching</p>
+            <p className="font-bold text-blue-500">{item.madePacks} calzone packs making</p>
+            <p className={`text-xs pt-1 font-medium ${diff < 0 ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"}`}>
+              {diff === 0 ? "Level" : diff > 0 ? `${diff} packs ahead` : `${Math.abs(diff)} packs behind`}
+            </p>
+            <p className="text-xs text-muted-foreground">{item.orderCount} orders this week</p>
+          </div>
+        );
+      }
       return (
         <div className="bg-card border border-border rounded-xl px-4 py-3 shadow-lg text-sm space-y-1">
           <p className="font-semibold">Dispatch: {item.date}</p>
@@ -856,7 +901,7 @@ export default function Dashboard() {
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
-                  data={weeklyOrders?.map(d => ({ ...d, madePacks: madePacksByDate.get(d.date) ?? 0 }))}
+                  data={dispatchChartData}
                   barSize={20}
                   barGap={3}
                 >
@@ -871,11 +916,13 @@ export default function Dashboard() {
                     interval={0}
                     tick={(props: { x: number; y: number; payload: { value: string } }) => {
                       const day = props.payload.value;
-                      const row = weeklyOrders?.find(d => d.day === day);
-                      const made = row ? (madePacksByDate.get(row.date) ?? 0) : 0;
+                      const row = dispatchChartData?.find(d => d.day === day);
+                      const made = row?.madePacks ?? 0;
                       return (
                         <g transform={`translate(${props.x},${props.y})`}>
-                          <text x={0} y={0} dy={12} textAnchor="middle" fill="hsl(var(--muted-foreground))" fontSize={12}>{day}</text>
+                          <text x={0} y={0} dy={12} textAnchor="middle"
+                            fill={row?.isTotal ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))"}
+                            fontSize={12} fontWeight={row?.isTotal ? 700 : 400}>{day}</text>
                           <text x={0} y={0} dy={26} textAnchor="middle" fill="hsl(var(--foreground))" fontSize={11} fontWeight={600}>
                             {row?.packCount ?? 0}{made > 0 ? ` / ${made}` : ""}
                           </text>
@@ -896,14 +943,23 @@ export default function Dashboard() {
                       dispatch volume against production volume. Orders and
                       fulfilment progress live in the tooltip and summary. */}
                   <Bar dataKey="packCount" name="Dispatching (packs)" radius={[6, 6, 0, 0]}>
-                    {weeklyOrders?.map((entry, i) => (
+                    {dispatchChartData?.map((entry, i) => (
                       <Cell
                         key={entry.date}
-                        fill={i === todayIndex ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.35)"}
+                        // Total gets the full-strength colour so it reads as a
+                        // summary; today stays highlighted among the days.
+                        fill={entry.isTotal || i === todayIndex ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.35)"}
                       />
                     ))}
                   </Bar>
-                  <Bar dataKey="madePacks" name="Making (calzone packs)" fill="hsl(217 91% 60% / 0.75)" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="madePacks" name="Making (calzone packs)" radius={[6, 6, 0, 0]}>
+                    {dispatchChartData?.map(entry => (
+                      <Cell
+                        key={entry.date}
+                        fill={entry.isTotal ? "hsl(217 91% 60%)" : "hsl(217 91% 60% / 0.75)"}
+                      />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -930,6 +986,26 @@ export default function Dashboard() {
                   today
                 </span>
               )}
+              {/* The same week totals as the Total column, in numbers — the
+                  column shares the daily axis, so the figures are the honest
+                  read of "am I up or down" and the bars are the shape of it. */}
+              {(() => {
+                const total = dispatchChartData?.[dispatchChartData.length - 1];
+                if (!total?.isTotal) return null;
+                const diff = total.madePacks - total.packCount;
+                return (
+                  <span className="ml-auto">
+                    week:{" "}
+                    <span className="font-semibold text-foreground">{total.packCount}</span>
+                    {" dispatching · "}
+                    <span className="font-semibold text-blue-500">{total.madePacks}</span>
+                    {" making · "}
+                    <span className={`font-semibold ${diff < 0 ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"}`}>
+                      {diff === 0 ? "level" : diff > 0 ? `${diff} ahead` : `${Math.abs(diff)} behind`}
+                    </span>
+                  </span>
+                );
+              })()}
             </div>
           )}
         </div>

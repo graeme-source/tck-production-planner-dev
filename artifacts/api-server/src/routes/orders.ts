@@ -300,15 +300,24 @@ router.get("/calculate", async (req, res) => {
     arr.sort((a, b) => (a.date ?? "9999").localeCompare(b.date ?? "9999"));
   }
 
-  // ── Prep still outstanding TODAY, in raw units ─────────────────────────
+  // ── Prep still outstanding, in raw units ───────────────────────────────
   // A shelf counted at 0 kg with 3 kg still to prep today is effectively at
-  // −3 kg by tonight, so the suggestion must cover it. Skipped when the
-  // SELECTED plan is the one being prepped today — its requirement already
-  // includes those quantities, so deducting again would double-count.
+  // −3 kg by tonight, so the suggestion must cover it. Includes deferred
+  // tins carried over from earlier prep days (the Wednesday-no-beef →
+  // Thursday-prep-19kg case, 2026-08-13).
+  //
+  // The SELECTED plan's own share is excluded — its totalRequired already
+  // counts that consumption, so deducting it again would double-count.
+  // Only that plan's share: the old all-or-nothing skip threw away every
+  // other plan's outstanding prep whenever the selected plan happened to be
+  // today's prep plan.
   const outstandingPrep = await computeOutstandingPrepRaw(stockCheckTimestamps);
-  const prepOutstandingByIngredient = outstandingPrep.prepPlanIds.includes(planId)
-    ? {}
-    : outstandingPrep.byIngredient;
+  const selectedPlanShare = outstandingPrep.byPlan[planId] ?? {};
+  const prepOutstandingByIngredient: Record<number, number> = {};
+  for (const [iidStr, qty] of Object.entries(outstandingPrep.byIngredient)) {
+    const remaining = Math.round((qty - (selectedPlanShare[Number(iidStr)] ?? 0)) * 100) / 100;
+    if (remaining > 0) prepOutstandingByIngredient[Number(iidStr)] = remaining;
+  }
 
   // Scanned kanbans queue for the day they were scanned — but if no order was
   // generated that day (weekend, missed run), they must NOT vanish. Carry

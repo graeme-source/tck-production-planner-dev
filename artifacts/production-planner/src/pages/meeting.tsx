@@ -57,6 +57,13 @@ export interface DashboardData {
     id: number | null;
     items: Array<{ recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null; eightPackBagCount: number }>;
   };
+  /** Tomorrow's plan in the same shape — the pack report flips its
+   *  production columns to this after 3pm, when the dispatch flips too.
+   *  Optional so a cached older server payload doesn't crash the slide. */
+  tomorrowPlan?: {
+    id: number | null;
+    items: Array<{ recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null; eightPackBagCount: number }>;
+  };
   yesterdayKpis: {
     wonkyCount: number;
     shortCount: number;
@@ -1822,7 +1829,14 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
     new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", hour12: false }).format(new Date()),
   );
   const showTomorrowPack = !isPreviewing && londonHour >= 15;
-  const effectivePlanDate = isPreviewing || showTomorrowPack ? data.tomorrow : data.today;
+  // One switch for the WHOLE table. When the dispatch column looks at
+  // tomorrow, the production columns, start times and oversell warning must
+  // look at tomorrow's PLAN too — flipping only the dispatch compared
+  // tomorrow's orders against today's make, which made the warning wrong for
+  // the rest of the afternoon (Graeme, 2026-08-13).
+  const tomorrowMode = isPreviewing || showTomorrowPack;
+  const effectivePlanDate = tomorrowMode ? data.tomorrow : data.today;
+  const effectivePlan = tomorrowMode ? (data.tomorrowPlan ?? { id: null, items: [] }) : data.todayPlan;
 
   const { data: calc, isLoading } = useQuery<{ recipes: CalcRecipeRow[]; dispatchDates: string[]; deliveryDates: string[] }>({
     queryKey: ["production-plan-calc", effectivePlanDate],
@@ -1838,10 +1852,10 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
   // same numbers the mixing station shows). Mac cheese runs on its own station
   // so its rows just show "—".
   const { data: sched } = useQuery<{ timeline: Array<{ type: string; recipeId?: number; start?: string }> }>({
-    queryKey: ["plan-schedule", data.todayPlan.id],
-    enabled: data.todayPlan.id != null,
+    queryKey: ["plan-schedule", effectivePlan.id],
+    enabled: effectivePlan.id != null,
     queryFn: async () => {
-      const res = await fetch(`${BASE}/api/production-plans/${data.todayPlan.id}/schedule`, { credentials: "include" });
+      const res = await fetch(`${BASE}/api/production-plans/${effectivePlan.id}/schedule`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
@@ -1859,8 +1873,28 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
   // the day progresses. Surplus +ve = enough, -ve = short.
   const calcById = new Map<number, NonNullable<ProductionPlanRow["stock"]>>();
   const calcRowById = new Map<number, CalcRecipeRow>();
+  for (const r of calc?.recipes ?? []) calcRowById.set(r.recipeId, r);
+
+  // Packs the effective plan adds per recipe, net of 8-pack bags. Mac plans
+  // store packs in batchesTarget directly (packsPerBatch = 1); calzones
+  // convert via the recipe yield. Used by the production columns AND, in
+  // tomorrow mode, by the oversell cover below.
+  const packsFor = (it: (typeof effectivePlan.items)[number]): number | null => {
+    const cr = calcRowById.get(it.recipeId);
+    const isMac = it.recipeCategory === "Macaroni Cheese";
+    const ppb = cr?.packsPerBatch ?? (isMac ? 1 : null);
+    if (ppb == null) return null;
+    const bags = it.eightPackBagCount ?? 0;
+    const bagEquiv = cr?.packSize ? 8 / Number(cr.packSize) : 4;
+    return Math.max(0, Math.round((it.batchesTarget ?? 0) * ppb - bags * bagEquiv));
+  };
+  const plannedPacksById = new Map<number, number>();
+  for (const it of effectivePlan.items) {
+    const p = packsFor(it);
+    if (p != null) plannedPacksById.set(it.recipeId, p);
+  }
+
   for (const r of calc?.recipes ?? []) {
-    calcRowById.set(r.recipeId, r);
     // "actual" is deliberately the default: the team reads this table to answer
     // "can I pack the rest of the dispatch from what's in the fridge right
     // now". The predicted view answers a different question — where we'll
@@ -1880,34 +1914,35 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
     // Red when short (negative spare); amber when only 0–10 spare;
     // uncoloured once we have more than 10 to spare.
     const tone: "ok" | "warn" | "bad" = surplus < 0 ? "bad" : surplus <= 10 ? "warn" : "ok";
-    // Production coverage — "even after everything we make today, do we run
-    // out?". Always built from the LIVE fridge figure plus what wrapping
-    // still has to push in (already net of 8-pack bags server-side),
+    // Production coverage — "even after everything we make for this pack, do
+    // we run out?". Always built from the LIVE fridge figure plus what
+    // wrapping still has to push in (already net of 8-pack bags server-side),
     // whichever stock toggle is showing: the oversell warning has one honest
     // answer and shouldn't move with the view. Stays right all day because
     // wrapped packs migrate from "remaining wrapping" into fridge stock.
-    // (In predicted mode this equals the difference column by construction.)
-    const cover = r.fridgeStock + wrapRemain - need;
+    //
+    // Today mode: today's production IS the still-to-wrap figure, so adding
+    // planned packs would double-count. Tomorrow mode (after 3pm / preview):
+    // fridge + still-to-wrap is where stock lands TONIGHT, and tomorrow's
+    // planned packs are the production that meets tomorrow's dispatch — they
+    // must be added, or the warning compares tomorrow's orders against
+    // today's make and cries wolf.
+    const plannedAhead = tomorrowMode ? (plannedPacksById.get(r.recipeId) ?? 0) : 0;
+    const cover = r.fridgeStock + wrapRemain + plannedAhead - need;
     const prodTone: "ok" | "warn" | "bad" = cover < 0 ? "bad" : cover <= 10 ? "warn" : "ok";
     calcById.set(r.recipeId, { have, need, surplus, tone, cover, prodTone });
   }
 
-  const plannedIds = new Set(data.todayPlan.items.map(it => it.recipeId));
+  const plannedIds = new Set(effectivePlan.items.map(it => it.recipeId));
 
-  // 1) Everything being made today, in production order.
-  const plannedRows: ProductionPlanRow[] = data.todayPlan.items.map((it, i) => {
+  // 1) Everything being made on the effective day, in production order.
+  const plannedRows: ProductionPlanRow[] = effectivePlan.items.map((it, i) => {
     const c = calcById.get(it.recipeId);
-    const cr = calcRowById.get(it.recipeId);
     const isMac = it.recipeCategory === "Macaroni Cheese";
-    // Mac plans already store packs in batchesTarget (packsPerBatch = 1);
-    // calzones convert via the recipe yield. Packs headed into 8-pack bags
-    // never reach the 2-pack fridge, so they come off here too.
-    const ppb = cr?.packsPerBatch ?? (isMac ? 1 : null);
+    // Packs headed into 8-pack bags never reach the 2-pack fridge, so
+    // packsFor nets them off.
     const bags = it.eightPackBagCount ?? 0;
-    const bagEquiv = cr?.packSize ? 8 / Number(cr.packSize) : 4;
-    const packs = ppb != null
-      ? Math.max(0, Math.round((it.batchesTarget ?? 0) * ppb - bags * bagEquiv))
-      : null;
+    const packs = packsFor(it);
     return {
       recipeId: it.recipeId,
       recipeName: it.recipeName,
@@ -1969,7 +2004,8 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
   const dispatchLabel = fmtDay(calc?.dispatchDates?.[1]);
   const deliveryLabel = fmtDay(calc?.deliveryDates?.[1]);
 
-  const packDayLabel = showTomorrowPack || isPreviewing ? "tomorrow's" : "today's";
+  const packDayLabel = tomorrowMode ? "tomorrow's" : "today's";
+  const dayCap = tomorrowMode ? "Tomorrow's" : "Today's";
   // minmax on the recipe column: without it the 1fr track collapses to zero
   // on an iPad in portrait and the names vanish before anything truncates.
   const cols = "grid-cols-[1.75rem_4.5rem_minmax(8rem,1fr)_4.75rem_5.25rem_4.75rem_5.75rem_5rem]";
@@ -1977,7 +2013,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
   return (
     <div>
       <SectionTitle>{slide.title || "Order of Production"}</SectionTitle>
-      <SectionLead>Today's order — Mac &amp; Cheese first, then the calzones. Red = short · amber = within 10 spare. Production columns go red when even today's make won't cover the pack.</SectionLead>
+      <SectionLead>{dayCap} order — Mac &amp; Cheese first, then the calzones. Red = short · amber = within 10 spare. Production columns go red when even {packDayLabel} make won't cover the pack.</SectionLead>
 
       {/* Oversell pre-warning — shown in the morning meeting AND the pack
           report. Fires when fridge + today's whole production still leaves a
@@ -1990,7 +2026,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
             Not making enough for {packDayLabel} pack
           </p>
           <p className="mt-1.5 text-lg font-semibold leading-snug">
-            Even after today's full production:{" "}
+            Even after {packDayLabel} full production:{" "}
             {uncovered.map((r, i) => (
               <span key={r.recipeId} className="whitespace-nowrap">
                 {i > 0 && <span className="text-muted-foreground font-normal"> · </span>}
@@ -2003,12 +2039,12 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
         </div>
       )}
 
-      {isLoading && data.todayPlan.items.length === 0 ? (
+      {isLoading && effectivePlan.items.length === 0 ? (
         <div className="glass-panel rounded-2xl p-6 flex justify-center">
           <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
         </div>
       ) : rows.length === 0 ? (
-        <div className="glass-panel rounded-2xl p-6 text-muted-foreground">No plan published for today yet.</div>
+        <div className="glass-panel rounded-2xl p-6 text-muted-foreground">No plan published for {tomorrowMode ? "tomorrow" : "today"} yet.</div>
       ) : (
         <div className="glass-panel rounded-2xl overflow-hidden overflow-x-auto">
          <div className="min-w-[44rem]">
@@ -2036,10 +2072,10 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
               )}
             </span>
             <span className="text-center self-stretch border-l-[3px] border-border pl-3 bg-secondary/40 -my-3 py-3">
-              Today's packs
-              <HeaderInfo>Today's production in 2-packs — batches × packs per batch, minus any packs going into 8-pack bags. Compare it straight against The difference: red means even this production won't cover what's left to dispatch, amber means it only just does (10 or fewer spare).</HeaderInfo>
+              {dayCap} packs
+              <HeaderInfo>{dayCap} production in 2-packs — batches × packs per batch, minus any packs going into 8-pack bags. Compare it straight against The difference: red means even this production won't cover what's left to dispatch, amber means it only just does (10 or fewer spare).</HeaderInfo>
             </span>
-            <span className="text-center self-stretch bg-secondary/40 -my-3 py-3">Today's batches</span>
+            <span className="text-center self-stretch bg-secondary/40 -my-3 py-3">{dayCap} batches</span>
           </div>
           {rows.map((r, i) => {
             const tone = r.stock?.tone;
@@ -2056,7 +2092,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
               <div key={r.recipeId}>
                 {firstUnplanned && (
                   <div className="px-5 py-1.5 bg-secondary/40 text-[11px] uppercase tracking-wide text-muted-foreground font-semibold border-t border-border/50">
-                    In the fridge, but not on today's plan
+                    In the fridge, but not on {packDayLabel} plan
                   </div>
                 )}
                 <div
