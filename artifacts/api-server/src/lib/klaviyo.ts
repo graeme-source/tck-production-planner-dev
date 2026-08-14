@@ -55,10 +55,11 @@ export async function deleteSurveysKlaviyoKey(): Promise<void> {
   await db.execute(sql`DELETE FROM founder_settings WHERE key = ${SURVEYS_KLAVIYO_SETTING}`);
 }
 
-// ── Test-mode email plumbing ───────────────────────────────────────────────
-// Everything below targets the dedicated test list ONLY. There is no
-// live-audience path in this module on purpose: going live is a separate,
-// deliberate build after Graeme signs off the test flow.
+// ── Email audiences ────────────────────────────────────────────────────────
+// Two audiences exist: the dedicated test list (mailed over and over while a
+// survey is being polished) and, per survey, a live segment of real buyers
+// built by createBuyersSegment below. The live path was added 2026-08-14
+// after the test flow was signed off.
 
 export const TEST_LIST_NAME = "TCK Survey Test Recipients";
 
@@ -134,16 +135,23 @@ export async function createEmailTemplate(apiKey: string, name: string, html: st
 
 export interface CampaignInput {
   name: string;
-  listId: string;
+  /** Klaviyo list id OR segment id — the audiences API takes either. */
+  audienceId: string;
   subject: string;
   previewText: string;
   fromEmail: string;
   fromLabel: string;
   /** null = send immediately when the send job fires; ISO = scheduled. */
   sendAt: string | null;
+  /**
+   * Smart sending suppresses profiles emailed recently. OFF for the test
+   * list (the same inbox gets mailed repeatedly on purpose); ON for live
+   * sends so customers aren't stacked on top of other campaigns.
+   */
+  smartSending: boolean;
 }
 
-export async function createCampaignForList(apiKey: string, input: CampaignInput): Promise<{ campaignId: string; messageId: string }> {
+export async function createCampaignForAudience(apiKey: string, input: CampaignInput): Promise<{ campaignId: string; messageId: string }> {
   const sendStrategy = input.sendAt
     ? { method: "static", options_static: { datetime: input.sendAt } }
     : { method: "immediate" };
@@ -156,11 +164,9 @@ export async function createCampaignForList(apiKey: string, input: CampaignInput
         type: "campaign",
         attributes: {
           name: input.name,
-          audiences: { included: [input.listId], excluded: [] },
+          audiences: { included: [input.audienceId], excluded: [] },
           send_strategy: sendStrategy,
-          // Smart sending would suppress repeat sends to the same profile —
-          // exactly wrong for a test list that gets mailed over and over.
-          send_options: { use_smart_sending: false },
+          send_options: { use_smart_sending: input.smartSending },
           "campaign-messages": {
             data: [{
               type: "campaign-message",
@@ -203,6 +209,115 @@ export async function createCampaignSendJob(apiKey: string, campaignId: string):
     method: "POST",
     body: { data: { type: "campaign-send-job", id: campaignId } },
   });
+}
+
+// ── Live audience: buyers segment ──────────────────────────────────────────
+// A survey's live audience is a Klaviyo segment: "Placed Order at least once
+// in the last N days where Items contains <product>", one OR'd condition per
+// product in the survey's source collection. Klaviyo matches on the product
+// NAME as it appeared on the order (its Placed Order events carry names, not
+// Shopify ids) — the profile-count vs order-count cross-check in the email
+// dialog is what catches a renamed product drifting out of the match.
+// Requires the key to carry metrics:read + segments:read/write scopes.
+
+/**
+ * Find the Shopify "Placed Order" metric id. Pages through /api/metrics
+ * (the metrics endpoint has no name filter); prefers the Shopify
+ * integration's metric if several integrations define one.
+ */
+export async function getPlacedOrderMetricId(apiKey: string): Promise<string> {
+  type MetricPage = {
+    data: Array<{ id: string; attributes?: { name?: string; integration?: { name?: string } } }>;
+    links?: { next?: string | null };
+  };
+  const matches: Array<{ id: string; integration: string }> = [];
+  let path: string | null = "/api/metrics";
+  while (path) {
+    const page: MetricPage = await klaviyoFetch<MetricPage>(apiKey, path);
+    for (const m of page.data ?? []) {
+      if (m.attributes?.name === "Placed Order") {
+        matches.push({ id: m.id, integration: m.attributes?.integration?.name ?? "" });
+      }
+    }
+    const next = page.links?.next;
+    path = next ? next.replace(/^https:\/\/a\.klaviyo\.com/, "") : null;
+  }
+  const shopify = matches.find(m => m.integration.toLowerCase() === "shopify");
+  const chosen = shopify ?? matches[0];
+  if (!chosen) throw new Error("No 'Placed Order' metric found in Klaviyo — is the Shopify integration connected?");
+  return chosen.id;
+}
+
+export interface BuyersSegmentInput {
+  name: string;
+  productNames: string[];
+  lookbackDays: number;
+}
+
+/** Create the buyers segment and return its id. */
+export async function createBuyersSegment(apiKey: string, input: BuyersSegmentInput): Promise<string> {
+  const metricId = await getPlacedOrderMetricId(apiKey);
+  // Condition groups AND together; conditions within a group OR together —
+  // so "bought any of these products" is ONE group with a condition per
+  // product (Segments API, revision 2024-10-15).
+  const conditions = input.productNames.map(productName => ({
+    type: "profile-metric",
+    metric_id: metricId,
+    measurement: "count",
+    measurement_filter: { type: "numeric", operator: "greater-than-or-equal", value: 1 },
+    timeframe_filter: { type: "date", operator: "in-the-last", unit: "day", quantity: input.lookbackDays },
+    metric_filters: [
+      { property: "Items", filter: { type: "string", operator: "contains", value: productName } },
+    ],
+  }));
+  const created = await klaviyoFetch<{ data: { id: string } }>(apiKey, "/api/segments", {
+    method: "POST",
+    body: {
+      data: {
+        type: "segment",
+        attributes: {
+          name: input.name,
+          is_starred: false,
+          definition: { condition_groups: [{ conditions }] },
+        },
+      },
+    },
+  });
+  return created.data.id;
+}
+
+export interface SegmentStatus {
+  exists: boolean;
+  name: string | null;
+  /** Null while Klaviyo is still materialising a fresh segment. */
+  profileCount: number | null;
+}
+
+export async function getSegmentStatus(apiKey: string, segmentId: string): Promise<SegmentStatus> {
+  try {
+    const got = await klaviyoFetch<{ data: { attributes?: { name?: string; profile_count?: number | null } } }>(
+      apiKey, `/api/segments/${segmentId}?additional-fields[segment]=profile_count`,
+    );
+    return {
+      exists: true,
+      name: got.data.attributes?.name ?? null,
+      profileCount: got.data.attributes?.profile_count ?? null,
+    };
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("Klaviyo 404")) {
+      return { exists: false, name: null, profileCount: null };
+    }
+    throw err;
+  }
+}
+
+/** Best-effort delete (used when rebuilding a survey's audience). */
+export async function deleteSegment(apiKey: string, segmentId: string): Promise<void> {
+  try {
+    await klaviyoFetch(apiKey, `/api/segments/${segmentId}`, { method: "DELETE" });
+  } catch (err) {
+    console.warn("[klaviyo] segment delete failed (leaving it in place):", err instanceof Error ? err.message : String(err));
+  }
 }
 
 /**

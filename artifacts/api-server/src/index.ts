@@ -2634,6 +2634,11 @@ async function runStartupMigrations() {
     `);
     // Belt-and-braces for DBs that created the table before skips existed.
     await db.execute(sql`ALTER TABLE survey_responses ADD COLUMN IF NOT EXISTS skipped JSONB NOT NULL DEFAULT '[]'::jsonb`);
+    // Live email audiences (migration 0051): source collection + the Klaviyo
+    // segment built from it.
+    await db.execute(sql`ALTER TABLE surveys ADD COLUMN IF NOT EXISTS collection_id BIGINT`);
+    await db.execute(sql`ALTER TABLE surveys ADD COLUMN IF NOT EXISTS collection_title TEXT`);
+    await db.execute(sql`ALTER TABLE surveys ADD COLUMN IF NOT EXISTS klaviyo_segment_id TEXT`);
     await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS ux_survey_responses_survey_client ON survey_responses (survey_id, client_id)`);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS survey_answers (
