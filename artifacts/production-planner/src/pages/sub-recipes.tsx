@@ -42,7 +42,12 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
-type IngredientOption = Pick<Ingredient, "id" | "name" | "unit" | "processingRatio" | "novaClass" | "novaMarkers">;
+// labelDeclaration/allergens are returned by the API but missing from the
+// generated Ingredient type (same workaround as ingredients.tsx).
+type IngredientOption = Pick<Ingredient, "id" | "name" | "unit" | "processingRatio" | "novaClass" | "novaMarkers"> & {
+  labelDeclaration: string | null;
+  allergens: string[];
+};
 type SubRecipeOption = Pick<SubRecipe, "id" | "name" | "yieldUnit">;
 
 function toKg(value: number | string | null | undefined, unit: string): number | null {
@@ -79,6 +84,94 @@ function computeComponentKg(
     else if (sr.yieldUnit === "g") total += Number(row.quantity) / 1000;
   }
   return total;
+}
+
+// Mirrors ALLERGEN_DISPLAY + boldAllergens in the API's ingredient-deck
+// endpoint so the dialog preview matches what the recipe deck will render.
+const PREVIEW_ALLERGEN_DISPLAY: Record<string, string> = {
+  celery: "Celery",
+  cereals_containing_gluten: "Wheat",
+  crustaceans: "Crustaceans",
+  eggs: "Eggs",
+  fish: "Fish",
+  lupin: "Lupin",
+  milk: "Milk",
+  molluscs: "Molluscs",
+  mustard: "Mustard",
+  nuts: "Nuts",
+  peanuts: "Peanuts",
+  sesame: "Sesame",
+  soybeans: "Soybeans",
+  sulphur_dioxide: "Sulphur Dioxide",
+};
+
+function markAllergens(text: string, allergens: string[]): string {
+  let result = text;
+  for (const allergen of allergens) {
+    const displayName = PREVIEW_ALLERGEN_DISPLAY[allergen] || allergen;
+    const escaped = displayName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    result = result.replace(new RegExp(`\\b(${escaped})\\b`, "gi"), "**$1**");
+  }
+  return result;
+}
+
+function DeclarationPreview({
+  ingredientRows,
+  allIngredients,
+  componentRows,
+  allSubRecipes,
+  compoundName,
+}: {
+  ingredientRows: { ingredientId: number; quantity: number }[];
+  allIngredients: IngredientOption[];
+  componentRows: { componentSubRecipeId: number; quantity: number }[];
+  allSubRecipes: SubRecipeOption[];
+  compoundName?: string;
+}) {
+  const rows = (ingredientRows ?? [])
+    .map(r => {
+      const ing = allIngredients.find(i => i.id === Number(r.ingredientId));
+      if (!ing || !r.quantity) return null;
+      const grams = ing.unit === "kg" ? Number(r.quantity) * 1000 : Number(r.quantity);
+      return { ing, grams };
+    })
+    .filter((x): x is { ing: IngredientOption; grams: number } => x !== null)
+    .sort((a, b) => b.grams - a.grams);
+
+  if (rows.length === 0) return null;
+
+  const marked = rows.map(({ ing }) =>
+    markAllergens(ing.labelDeclaration || ing.name, ing.allergens ?? [])
+  );
+  const componentNames = (componentRows ?? [])
+    .map(r => allSubRecipes.find(s => s.id === Number(r.componentSubRecipeId))?.name)
+    .filter((n): n is string => Boolean(n));
+  const missing = rows.filter(({ ing }) => !ing.labelDeclaration).map(({ ing }) => ing.name);
+
+  const body = marked.join(", ");
+  const text = compoundName?.trim() ? `${compoundName.trim()} (${body})` : body;
+  const parts = text.split("**");
+
+  return (
+    <div className="mt-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
+      <p className="text-xs font-medium text-muted-foreground mb-1">
+        Generated declaration — composed live from ingredient label declarations, ordered by weight, allergens bold. Recipes using this sub-recipe pick this up automatically; nothing extra to save.
+      </p>
+      <p className="text-sm">
+        {parts.map((seg, i) => (i % 2 === 1 ? <strong key={i}>{seg}</strong> : <span key={i}>{seg}</span>))}
+      </p>
+      {componentNames.length > 0 && (
+        <p className="text-xs text-muted-foreground mt-1">
+          Components of {componentNames.join(", ")} are merged in automatically on the recipe deck (not shown here).
+        </p>
+      )}
+      {missing.length > 0 && (
+        <p className="text-xs text-amber-600 mt-1">
+          Falling back to ingredient name (no label declaration set yet): {missing.join(", ")}
+        </p>
+      )}
+    </div>
+  );
 }
 
 function YieldSanityCheck({
@@ -282,6 +375,7 @@ function SubRecipeForm({
 
   const watchedIngredients = watch("ingredients");
   const watchedSubRecipeComponents = watch("subRecipeComponents");
+  const watchedLabelDeclaration = watch("labelDeclaration");
   const watchedYield = watch("yield");
   const watchedYieldUnit = watch("yieldUnit");
 
@@ -329,7 +423,7 @@ function SubRecipeForm({
   };
 
   const handleIngredientCreated = (ingredient: { id: number; name: string; unit: string }) => {
-    const newOpt: IngredientOption = { id: ingredient.id, name: ingredient.name, unit: ingredient.unit, processingRatio: null };
+    const newOpt: IngredientOption = { id: ingredient.id, name: ingredient.name, unit: ingredient.unit, processingRatio: null, labelDeclaration: null, allergens: [] };
     setLocalIngredients(prev => [...prev, newOpt]);
     if (quickAddTargetIndex !== null) {
       setValue(`ingredients.${quickAddTargetIndex}.ingredientId`, ingredient.id);
@@ -464,6 +558,13 @@ function SubRecipeForm({
             className="w-full mt-1 px-3 py-2 bg-background border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
           <p className="text-xs text-muted-foreground mt-1">If set, this name appears in the ingredient deck when this sub-recipe is listed as a compound ingredient.</p>
+          <DeclarationPreview
+            ingredientRows={watchedIngredients ?? []}
+            allIngredients={localIngredients}
+            componentRows={watchedSubRecipeComponents ?? []}
+            allSubRecipes={allSubRecipes}
+            compoundName={watchedLabelDeclaration}
+          />
         </div>
 
         <div className="border-t border-border pt-4">
@@ -1164,6 +1265,8 @@ export default function SubRecipes() {
     processingRatio: i.processingRatio ?? null,
     novaClass: i.novaClass ?? null,
     novaMarkers: i.novaMarkers ?? [],
+    labelDeclaration: (i as { labelDeclaration?: string | null }).labelDeclaration ?? null,
+    allergens: (i as { allergens?: string[] }).allergens ?? [],
   }));
 
   const subRecipeList: SubRecipeOption[] = (subRecipes ?? []).map(sr => ({
