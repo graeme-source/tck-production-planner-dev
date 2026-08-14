@@ -596,6 +596,15 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
       return;
     }
 
+    // Batch-book-only guard (Graeme, 2026-08-13): consignments are raised in
+    // a checked batch at the start of the day, NOT one-by-one as orders are
+    // opened — a bad batch of five is reviewed before labels fly, instead of
+    // wrong consignments being created all day and cancelled after. When the
+    // switch is off, this endpoint only ever RETURNS an existing label
+    // (reuse path below); an unbooked order is a 409 telling the packer to
+    // batch-book it, never a fresh booking.
+    const bookOnOpen = (await getAppSetting("apc_book_on_open")) !== "false";
+
     // ── Never book the same order twice ──────────────────────────────────
     // Backing out and re-opening an order, a page refresh mid-pick, or two
     // packers on the same order would each fire this endpoint again, and
@@ -647,6 +656,14 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
         orderId,
         orderName: order.name,
         reused: true,
+      });
+      return;
+    }
+
+    if (!bookOnOpen) {
+      res.status(409).json({
+        error: `${order.name} has no consignment yet. Batch-book it from the queue first — opening an order doesn't create bookings while batch-only mode is on.`,
+        needsBooking: true,
       });
       return;
     }
@@ -2549,13 +2566,14 @@ router.get("/weekend-service-check", requireFulfilmentAccess, (req: Request, res
 
 router.get("/config-status", requireFulfilmentAccess, async (_req: Request, res: Response) => {
   try {
-    const [smallWeekday, largeWeekday, smallFriday, largeFriday, testModeSetting, apcMode] = await Promise.all([
+    const [smallWeekday, largeWeekday, smallFriday, largeFriday, testModeSetting, apcMode, bookOnOpenSetting] = await Promise.all([
       getAppSetting("apc_service_code_small_weekday"),
       getAppSetting("apc_service_code_large_weekday"),
       getAppSetting("apc_service_code_small_friday"),
       getAppSetting("apc_service_code_large_friday"),
       getAppSetting("apc_test_mode"),
       getApcMode(),
+      getAppSetting("apc_book_on_open"),
     ]);
 
     const isTestMode = testModeSetting === "true";
@@ -2569,6 +2587,9 @@ router.get("/config-status", requireFulfilmentAccess, async (_req: Request, res:
       apcMode,
       apcCredentialsConfigured: isApcConfigured(),
       serviceCodesConfigured: !!(smallWeekday && largeWeekday && smallFriday && largeFriday),
+      // False = batch-book only: opening an order fetches an existing label
+      // but never creates a consignment.
+      bookOnOpen: bookOnOpenSetting !== "false",
       testMode: isTestMode,
       trainingCredentialsMissing: isTestMode && !trainingCredentialsConfigured(),
       serviceCodes: {

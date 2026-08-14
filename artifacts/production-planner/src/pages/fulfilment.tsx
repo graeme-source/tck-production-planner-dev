@@ -187,6 +187,9 @@ interface ConfigStatus {
   apcMode?: ApcMode;
   apcCredentialsConfigured: boolean;
   serviceCodesConfigured: boolean;
+  /** False = batch-book only: opening an order fetches an existing label but
+   *  never creates a consignment. */
+  bookOnOpen?: boolean;
   testMode: boolean;
   serviceCodes: {
     smallWeekday: string;

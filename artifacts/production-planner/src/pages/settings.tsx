@@ -5270,6 +5270,11 @@ function ApcServiceCodesSection() {
   const [testMode, setTestMode] = useState(false);
   const [testModeToggling, setTestModeToggling] = useState(false);
   const [testModeError, setTestModeError] = useState(false);
+  // True = opening an order books a consignment (legacy full-mode behaviour).
+  // False = batch-book only: open fetches an existing label, never creates.
+  const [bookOnOpen, setBookOnOpen] = useState(true);
+  const [bookOnOpenToggling, setBookOnOpenToggling] = useState(false);
+  const [bookOnOpenError, setBookOnOpenError] = useState(false);
   const [apcMode, setApcMode] = useState<"off" | "reconcile" | "full">("off");
   const [apcModeSaving, setApcModeSaving] = useState(false);
   const [apcModeError, setApcModeError] = useState(false);
@@ -5284,7 +5289,8 @@ function ApcServiceCodesSection() {
       fetch(`${BASE}/api/app-settings/apc_test_mode`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
       fetch(`${BASE}/api/app-settings/apc_mode`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
       fetch(`${BASE}/api/app-settings/apc_enabled`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
-    ]).then(([sw, lw, sf, lf, wt, tm, mode, legacyEnabled]) => {
+      fetch(`${BASE}/api/app-settings/apc_book_on_open`, { credentials: "include" }).then(r => r.ok ? r.json() : null),
+    ]).then(([sw, lw, sf, lf, wt, tm, mode, legacyEnabled, boo]) => {
       setCodes({
         smallWeekday: sw?.value ?? "",
         largeWeekday: lw?.value ?? "",
@@ -5293,6 +5299,7 @@ function ApcServiceCodesSection() {
         weightThreshold: wt?.value ?? "1000",
       });
       setTestMode(tm?.value === "true");
+      setBookOnOpen(boo?.value !== "false");
       // Mirror the server's resolution order: apc_mode wins, else derive from
       // the legacy apc_enabled boolean.
       const raw = mode?.value;
@@ -5329,6 +5336,27 @@ function ApcServiceCodesSection() {
       setTimeout(() => setApcModeError(false), 3000);
     } finally {
       setApcModeSaving(false);
+    }
+  };
+
+  const handleBookOnOpenToggle = async () => {
+    const newValue = !bookOnOpen;
+    setBookOnOpenToggling(true);
+    setBookOnOpenError(false);
+    try {
+      const r = await fetch(`${BASE}/api/app-settings/apc_book_on_open`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: String(newValue) }),
+      });
+      if (!r.ok) throw new Error("Failed to save");
+      setBookOnOpen(newValue);
+    } catch {
+      setBookOnOpenError(true);
+      setTimeout(() => setBookOnOpenError(false), 3000);
+    } finally {
+      setBookOnOpenToggling(false);
     }
   };
 
@@ -5456,6 +5484,36 @@ function ApcServiceCodesSection() {
             </p>
           )}
         </div>
+
+        {/* Book-on-open toggle — only meaningful in Full API mode. OFF is the
+            batch-first workflow: consignments are raised in a reviewed batch
+            from the packing queue; opening an order fetches and prints the
+            EXISTING label and refuses to book anything new. */}
+        {apcMode === "full" && (
+          <div className={`flex items-center justify-between p-4 rounded-xl border-2 transition-colors ${!bookOnOpen ? "border-primary bg-primary/5" : "border-border bg-secondary/20"}`}>
+            <div>
+              <p className="font-semibold text-sm">Book consignment when an order is opened</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {bookOnOpen
+                  ? "ON — opening an order in packing books a consignment and prints its label immediately."
+                  : "OFF — batch-book only. Opening an order prints the label already booked for it; unbooked orders are refused until they're batch-booked from the queue."}
+              </p>
+              {bookOnOpenError && (
+                <p className="text-xs text-destructive mt-1 font-medium">Failed to save — please try again.</p>
+              )}
+            </div>
+            <button
+              onClick={handleBookOnOpenToggle}
+              disabled={bookOnOpenToggling}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none disabled:opacity-50 ${bookOnOpen ? "bg-primary" : "bg-secondary border border-border"}`}
+              role="switch"
+              aria-checked={bookOnOpen}
+              aria-label="Book consignment when an order is opened"
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${bookOnOpen ? "translate-x-6" : "translate-x-1"}`} />
+            </button>
+          </div>
+        )}
 
         {/* APC Test Mode toggle */}
         <div className={`flex items-center justify-between p-4 rounded-xl border-2 transition-colors ${testMode ? "border-amber-400 bg-amber-50 dark:bg-amber-950/30" : "border-border bg-secondary/20"}`}>
