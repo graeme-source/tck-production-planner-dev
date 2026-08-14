@@ -682,11 +682,29 @@ function printLabel(
   onPrintFailed: () => void,
   frameId = "label-print-frame",
 ) {
+  // Each early exit names its cause in the console — an instant "Print
+  // failed" is otherwise undiagnosable from the packing bench.
+  if (!base64Pdf) {
+    console.warn(`[Fulfilment] print: APC returned no label PDF (frame ${frameId})`);
+    onPrintFailed();
+    return;
+  }
   const iframe = document.getElementById(frameId) as HTMLIFrameElement | null;
-  if (!iframe) { onPrintFailed(); return; }
+  if (!iframe) {
+    console.warn(`[Fulfilment] print: frame #${frameId} not in the DOM`);
+    onPrintFailed();
+    return;
+  }
 
   let settled = false;
-  const blobUrl = base64PdfToBlobUrl(base64Pdf);
+  let blobUrl: string;
+  try {
+    blobUrl = base64PdfToBlobUrl(base64Pdf);
+  } catch (err) {
+    console.warn("[Fulfilment] print: label PDF failed to decode:", err);
+    onPrintFailed();
+    return;
+  }
 
   function settle(success: boolean) {
     if (settled) return;
@@ -708,24 +726,38 @@ function printLabel(
 
   function handleAfterPrint() { settle(true); }
 
-  // Kiosk mode fires afterprint immediately after sending job to printer.
-  // Non-kiosk: fires when the print dialog is dismissed (could be cancel).
-  // We treat dismiss as "done" — the user is responsible for printer setup.
-  // Fallback timeout in case afterprint never fires. Generous, because a
-  // real printer dialog can legitimately sit open while the packer works.
-  // Resolves as failure so the operator sees a deterministic state and can retry.
-  const fallbackTimer = setTimeout(() => settle(false), 60_000);
+  // Backstop: if the PDF never loads into the frame at all, fail loudly.
+  // (Once print() has been dispatched cleanly this timer is replaced by the
+  // optimistic one below, so this only covers the pre-print stages.)
+  let fallbackTimer = setTimeout(() => settle(false), 60_000);
 
   iframe.onerror = () => settle(false);
 
   iframe.onload = () => {
-    try {
-      window.addEventListener("afterprint", handleAfterPrint, { once: true });
-      iframe.contentWindow?.print();
-    } catch (err) {
-      console.warn("[Fulfilment] Print failed:", err);
-      settle(false);
-    }
+    // Chrome's PDF viewer swallows a print() that arrives the moment the
+    // frame loads — the viewer process isn't ready yet, the call no-ops and
+    // nothing ever prints. A short delay makes the print reliable
+    // (kitchen Citizen printer, Chrome 151, 2026-08-14).
+    setTimeout(() => {
+      try {
+        // afterprint is unreliable for iframe PDFs on newer Chrome: it may
+        // fire on the parent window, the frame's window, or neither. Listen
+        // to both, but do not DEPEND on either — in kiosk mode the job has
+        // spooled the moment print() returns, so a clean return settles as
+        // printed after a short grace. (Non-kiosk was already optimistic:
+        // dismissing the dialog counted as done.) The cost when the printer
+        // itself jams is a false "printed" — the Reprint Label button is
+        // the recovery, and the waybill is correct either way.
+        window.addEventListener("afterprint", handleAfterPrint, { once: true });
+        try { iframe.contentWindow?.addEventListener("afterprint", handleAfterPrint, { once: true }); } catch { /* cross-origin frame — parent listener still applies */ }
+        iframe.contentWindow?.print();
+        clearTimeout(fallbackTimer);
+        fallbackTimer = setTimeout(() => settle(true), 5_000);
+      } catch (err) {
+        console.warn("[Fulfilment] Print failed:", err);
+        settle(false);
+      }
+    }, 800);
   };
 
   // Point the frame straight at the PDF. Do NOT wrap it in HTML with an
@@ -2861,14 +2893,18 @@ export default function Fulfilment() {
         <iframe
           id="label-print-frame"
           title="Label Print"
-          className="hidden"
-          style={{ position: "fixed", top: "-9999px", left: "-9999px", width: "100mm", height: "150mm" }}
+          aria-hidden="true"
+          // NOT className="hidden": display:none stops Chrome instantiating
+          // its PDF viewer inside the frame, so print() had nothing to print
+          // and failed instantly (packing PC, 2026-08-14). Off-screen fixed
+          // positioning keeps it invisible while letting the PDF render.
+          style={{ position: "fixed", top: "-9999px", left: "-9999px", width: "100mm", height: "150mm", border: 0 }}
         />
         <iframe
           id="label-preprint-frame"
           title="Label Pre-Print"
-          className="hidden"
-          style={{ position: "fixed", top: "-9999px", left: "-9998px", width: "100mm", height: "150mm" }}
+          aria-hidden="true"
+          style={{ position: "fixed", top: "-9999px", left: "-9998px", width: "100mm", height: "150mm", border: 0 }}
         />
       </div>
     );
@@ -3691,8 +3727,8 @@ export default function Fulfilment() {
       <iframe
         id="label-print-frame"
         title="Label Print"
-        className="hidden"
-        style={{ position: "fixed", top: "-9999px", left: "-9999px", width: "100mm", height: "150mm" }}
+        aria-hidden="true"
+        style={{ position: "fixed", top: "-9999px", left: "-9999px", width: "100mm", height: "150mm", border: 0 }}
       />
     </div>
   );
