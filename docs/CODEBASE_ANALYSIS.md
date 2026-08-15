@@ -99,11 +99,20 @@ slots when surplus is low (`stock-gating.ts:292-327`).
 
 What doesn't:
 
-- **Ingredient stock has no consumption events.** Deliveries add snapshot rows;
-  counts overwrite; production consumes *nothing* (prep completion is a tick only,
-  `production-plans.ts:8066-8121`). "Latest snapshot row wins" is the read model
-  everywhere (`orders.ts:203-210`, `stock-control.ts:45-54`). Theoretical stock,
-  usage history, and count-vs-theory variance are all unobtainable.
+- **Ingredient stock has no recorded consumption events.** Deliveries add snapshot
+  rows; counts overwrite; production writes *nothing* to stock (prep completion is
+  a tick only, `production-plans.ts:8066-8121`). "Latest snapshot row wins" is the
+  read model everywhere (`orders.ts:203-210`, `stock-control.ts:45-54`).
+  *Nuance:* consumption **is** accounted for — but only transiently, at
+  calculation time, by `lib/outstanding-prep.ts`, which predicts today's
+  post-prep stock inside the order maths ("only the ordering maths applies the
+  deduction" — its own design note, `outstanding-prep.ts:10-12`). It covers
+  today only (plus a 5-day deferred-tin sweep), tin-tracked prep only (bases/
+  sauces/dough explicitly out, `outstanding-prep.ts:32-35`), and is recomputed
+  from inference on every load — the 2026-08-13 "19 kg reported as 1.36 kg,
+  order suppressed" bug (`outstanding-prep.ts:80-84`) shows the fragility.
+  Persistent theoretical stock, usage history, and count-vs-theory variance
+  remain unobtainable.
 - **`stock_transfers` corrupts stock**: it inserts +/− *delta* rows into the
   *snapshot* table (`stock-transfers.ts:65-83`), so after a transfer the source
   location reads as a negative number and the destination as just the moved amount.
