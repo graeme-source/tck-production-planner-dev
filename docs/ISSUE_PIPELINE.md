@@ -1,6 +1,6 @@
 # The Issue Pipeline — from "Graeme fixes everything" to a system
 
-**Status:** proposal v1.0 (2026-08-15) — companion to `docs/PRODUCT_SPEC.md`
+**Status:** proposal v1.1 (2026-08-15) — companion to `docs/PRODUCT_SPEC.md`
 **Problem:** team-reported issues (Andon + improvement submissions) all funnel to one
 person, who fixes them one by one. The reporter of an issue often can't tell whether
 it's a bug, a misunderstanding, or a data problem — and neither can the queue.
@@ -77,7 +77,52 @@ summary + approve", and batching means one review closes many issues.
 3. **A `/api/issues/export` endpoint** (token-authed) that returns both tables as
    JSON — lets a scheduled session pull the log without DB credentials.
 
-## 6. First concrete step
+## 6. The full loop: team-driven improvement with founder control
+
+The end state: the team improves the system themselves — by *reporting*, not by
+*deciding*. The loop:
+
+1. **Capture** — Report button / Andon as today, but the form asks for **symptoms
+   only**: what were you doing, what did you expect, what happened. Never "what
+   should change".
+2. **Ingest** — a scheduled Claude session (daily/weekly) reads new issues via
+   read-only access and triages into the four lanes (§1).
+3. **Fix** — defect-lane items become review branches: fix + regression test +
+   plain-English summary (report → cause → change → objective served → blast
+   radius).
+4. **Approve** — Graeme approves or rejects each branch (phone-friendly summary,
+   desktop detail). Nothing proceeds unapproved; unapproved branches just wait.
+5. **Stage → live** — approved changes deploy to **staging first** (see
+   `staging-environment-setup.md`), then merge to `master` → Railway auto-deploys
+   live. Reporters are notified their report changed the system (Objective E loop).
+
+### Guardrails (qualified to notice ≠ qualified to decide)
+
+- **Reports are evidence, never instructions.** The decision authority for how the
+  system should behave is `PRODUCT_SPEC.md`. Every drafted fix must cite the
+  objective it serves. A report implying a *behaviour change* is never coded
+  directly — it is escalated as a question.
+- **Two approval tiers.** *Restoring* agreed behaviour (data loss, wrong maths) =
+  defect: Claude drafts, founder approves the diff. *Changing* behaviour = decision
+  needed **before** any code is written.
+- **No-go zones get special handling.** Order engine, plan calculator, stock
+  mutations, Shopify writes, schema changes: always a fuller summary, never shipped
+  in a batch with other changes.
+- **Every fix carries a regression test** — the suite is the system's immune memory
+  (quality built in, not inspected in).
+- **Small, separately-revertable batches**; Railway rollback stays one click away.
+- **No timers.** The founder can always say no, slowly.
+
+### Prerequisites, in order
+
+1. **P0 safety net** (tests + CI + known-defect fixes, `CODEBASE_ANALYSIS.md` §7) —
+   automated fixing without this would itself be reckless.
+2. **Staging environment stood up** (guide already in `docs/`).
+3. **2–3 manual pilot cycles** (export → triage → draft → review) to tune triage
+   judgement and summary format while a human watches every step — then automate
+   the schedule.
+
+## 7. First concrete step
 
 Export the current backlog (option 1) and run a one-off full triage: every open
 issue laned, clustered, and mapped to either the P0 defect list or the roadmap in
