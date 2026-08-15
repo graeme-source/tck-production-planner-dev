@@ -168,6 +168,30 @@ Design direction (the delivery system):
    submissions and the week's lesson) stays a human act — the system just guarantees
    there is always something ready to celebrate.
 
+**Morning meeting redesign (the "this bit again" problem):** today's meeting is a
+fixed slide template cloned daily plus a 12-week lesson loop that repeats — identical
+structure, identical delivery, one host broadcasting. Design direction:
+
+1. **Yesterday is the spine.** The meeting is assembled from what actually happened —
+   improvements with names, a surprising number, an Andon story, a before/after
+   photo. The factory never repeats, so the meeting can't either. The lesson is the
+   garnish, not the spine.
+2. **Rotating hosts.** Everyone leads on rotation (the 2 Second Lean practice). The
+   existing three-page host prep mode (explanation / what to show / how to deliver)
+   is the enabler; the system picks tomorrow's host from Planday and hands them
+   their prep pages the afternoon before. Teaching is the deepest learning and the
+   cure for non-utilised talent.
+3. **Concepts repeat; formats don't.** Each pass at a concept uses a different
+   delivery: story, spot-the-waste photo, guess-the-number game, myth-vs-fact,
+   60-second challenge, quiz. The curriculum spirals upward (recognise → find it in
+   your station → teach it) instead of looping flat.
+4. **The Daily Two carries the teaching load** (see above), so the meeting shrinks to
+   what a group is for: celebrate (by name), connect (one round-robin question), aim
+   (today's one focus). Short and participatory beats long and thorough.
+5. **Auto-drafted lessons from live data:** the existing AI lesson generator is
+   pointed at yesterday's events (23 wonkies → today's 90 seconds is defects, with
+   our own number on the slide).
+
 ### Experience
 
 #### Objective F — Effortless and *trustworthy* daily use
