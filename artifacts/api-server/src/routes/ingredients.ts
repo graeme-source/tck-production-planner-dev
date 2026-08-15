@@ -200,6 +200,74 @@ router.post("/", validate(CreateIngredientBody), async (req, res) => {
   res.status(201).json(mapRow(row));
 });
 
+// Data-health worklist: every ingredient used by any recipe (directly or
+// through nested sub-recipes) that is missing a label declaration or any
+// per-100g nutritional value. Powers the Product Hub "Data Health" tab's
+// backdating review queue. Declared before "/:id" so the path isn't
+// swallowed by the id route.
+router.get("/data-health", async (_req, res) => {
+  const result = await db.execute<{
+    id: number; name: string; brand: string | null; category: string | null;
+    label_declaration: string | null; allergens: unknown;
+    nutritionals_ai_estimated: boolean; used_by: string[];
+    energy_kj: string | null; energy_kcal: string | null; fat: string | null;
+    saturates: string | null; carbohydrate: string | null; sugars: string | null;
+    protein: string | null; fibre: string | null; salt: string | null;
+  }>(sql`
+    WITH RECURSIVE subs AS (
+      SELECT rsr.recipe_id, rsr.sub_recipe_id FROM recipe_sub_recipes rsr
+      UNION
+      SELECT s.recipe_id, srs.component_sub_recipe_id
+      FROM subs s JOIN sub_recipe_sub_recipes srs ON srs.sub_recipe_id = s.sub_recipe_id
+    ),
+    used AS (
+      SELECT ri.recipe_id, ri.ingredient_id FROM recipe_ingredients ri
+      UNION
+      SELECT s.recipe_id, sri.ingredient_id
+      FROM subs s JOIN sub_recipe_ingredients sri ON sri.sub_recipe_id = s.sub_recipe_id
+    )
+    SELECT i.id, i.name, i.brand, i.category, i.label_declaration, i.allergens,
+      i.nutritionals_ai_estimated,
+      i.energy_kj, i.energy_kcal, i.fat, i.saturates, i.carbohydrate,
+      i.sugars, i.protein, i.fibre, i.salt,
+      array_agg(DISTINCT r.name ORDER BY r.name) AS used_by
+    FROM used u
+    JOIN ingredients i ON i.id = u.ingredient_id
+    JOIN recipes r ON r.id = u.recipe_id
+    GROUP BY i.id
+    ORDER BY i.name
+  `);
+  const rows = (result as unknown as { rows: typeof result extends { rows: infer R } ? R : never }).rows
+    ?? (result as unknown as Array<Record<string, unknown>>);
+
+  const NUTRIENTS = ["energy_kj", "energy_kcal", "fat", "saturates", "carbohydrate", "sugars", "protein", "fibre", "salt"] as const;
+  const NUTRIENT_KEYS: Record<string, string> = {
+    energy_kj: "energyKj", energy_kcal: "energyKcal", fat: "fat", saturates: "saturates",
+    carbohydrate: "carbohydrate", sugars: "sugars", protein: "protein", fibre: "fibre", salt: "salt",
+  };
+
+  const payload = (rows as Array<Record<string, unknown>>)
+    .map(r => {
+      const missingNutrition = NUTRIENTS.filter(c => r[c] == null).map(c => NUTRIENT_KEYS[c]);
+      const missingLabel = r["label_declaration"] == null || r["label_declaration"] === "";
+      const allergens = (r["allergens"] as string[] | null) ?? [];
+      return {
+        id: Number(r["id"]),
+        name: String(r["name"]),
+        brand: (r["brand"] as string | null) ?? null,
+        category: (r["category"] as string | null) ?? null,
+        missingLabel,
+        missingNutrition,
+        emptyAllergens: allergens.length === 0,
+        aiEstimated: Boolean(r["nutritionals_ai_estimated"]),
+        usedBy: (r["used_by"] as string[] | null) ?? [],
+      };
+    })
+    .filter(r => r.missingLabel || r.missingNutrition.length > 0);
+
+  res.json({ ingredients: payload });
+});
+
 router.post("/backfill-qr", async (_req, res) => {
   const rows = await db.select({ id: ingredientsTable.id })
     .from(ingredientsTable)

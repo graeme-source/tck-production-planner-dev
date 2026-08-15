@@ -16,7 +16,8 @@ import { getCollections, getCollectionProducts, getOrdersForPnl } from "../servi
 import {
   getSurveysKlaviyoKey, setSurveysKlaviyoKey, deleteSurveysKlaviyoKey, validateSurveysKlaviyoKey,
   getOrCreateTestList, addTestRecipient, getTestListMembers,
-  createEmailTemplate, createCampaignForList, assignTemplateToMessage, createCampaignSendJob,
+  createEmailTemplate, createCampaignForAudience, assignTemplateToMessage, createCampaignSendJob,
+  createBuyersSegment, getSegmentStatus, deleteSegment,
 } from "../lib/klaviyo";
 import { buildSurveyInviteHtml } from "../lib/survey-email";
 
@@ -50,6 +51,11 @@ const surveyBodySchema = z.object({
   title: z.string().trim().min(1, "Title is required").max(200),
   intro: z.string().trim().max(2000).nullable().optional(),
   questions: z.array(questionSchema).max(100).optional().default([]),
+  // Set when the survey was built from a Shopify collection — the ground
+  // truth for the live email audience. The builder omits these on ordinary
+  // edits, so PUT leaves them untouched.
+  collectionId: z.number().int().positive().nullable().optional(),
+  collectionTitle: z.string().trim().max(300).nullable().optional(),
 });
 
 const statusSchema = z.object({ status: z.enum(["draft", "open", "closed"]) });
@@ -162,10 +168,11 @@ router.delete("/klaviyo", async (_req, res) => {
   res.json({ connected: false });
 });
 
-// ── Test-mode email invites ────────────────────────────────────────────────
-// Campaigns built here target the "TCK Survey Test Recipients" list and
-// NOTHING else — there is deliberately no live-audience code path yet.
-// Live sending is a separate build after the test flow is signed off.
+// ── Email invites ──────────────────────────────────────────────────────────
+// Two paths: email-test targets the "TCK Survey Test Recipients" list (the
+// polishing loop), email-live targets the survey's buyers segment built by
+// the audience routes below. Live requires the audience to have been built
+// AND the survey to be open — the server refuses otherwise.
 
 const FROM_EMAIL_SETTING = "klaviyo_surveys_from_email";
 const FROM_LABEL_SETTING = "klaviyo_surveys_from_label";
@@ -253,14 +260,16 @@ router.post("/:id/email-test", async (req, res) => {
     const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
     const html = buildSurveyInviteHtml({ title: survey.title, intro: survey.intro, shareUrl: surveyShareUrl(survey.token) });
     const templateId = await createEmailTemplate(key, `[TEST] ${survey.title} invite ${stamp}`, html);
-    const { campaignId, messageId } = await createCampaignForList(key, {
+    const { campaignId, messageId } = await createCampaignForAudience(key, {
       name: `[TEST] ${survey.title} invite ${stamp}`,
-      listId,
+      audienceId: listId,
       subject,
       previewText: "A minute of feedback shapes what we launch next",
       fromEmail,
       fromLabel,
       sendAt: sendAt ?? null,
+      // The same inboxes get mailed repeatedly while polishing — never smart.
+      smartSending: false,
     });
     await assignTemplateToMessage(key, messageId, templateId);
     if (!draft) await createCampaignSendJob(key, campaignId);
@@ -300,6 +309,29 @@ function withArticle(name: string): string {
   return /^the\s/i.test(name.trim()) ? name.trim() : `the ${name.trim()}`;
 }
 
+/**
+ * Orders in the look-back window containing any of the given products —
+ * matched by Shopify product id, cancelled orders excluded — plus the
+ * delivery-date tags seen on them. Shared by the template builder and the
+ * live-audience cross-check so both quote the same ground-truth number.
+ */
+async function collectionOrderStats(productIds: Set<number>, days: number): Promise<{ matchingOrders: number; dispatchTags: Set<string> }> {
+  const now = new Date();
+  const from = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const orders = await getOrdersForPnl(iso(from), iso(now));
+  const dispatchTags = new Set<string>();
+  let matchingOrders = 0;
+  for (const order of orders) {
+    if (order.cancelled_at) continue;
+    if (!order.line_items?.some(li => li.product_id != null && productIds.has(li.product_id))) continue;
+    matchingOrders++;
+    const tag = order.tags.split(",").map(t => t.trim()).find(t => DATE_TAG_RE.test(t));
+    if (tag) dispatchTags.add(tag);
+  }
+  return { matchingOrders, dispatchTags };
+}
+
 function formatDeliveryDate(dateTag: string): string {
   const d = new Date(`${dateTag}T00:00:00Z`);
   return new Intl.DateTimeFormat("en-GB", {
@@ -336,20 +368,7 @@ router.get("/collection-template", async (req, res) => {
     const recipeByName = new Map(recipes.map(r => [r.name.trim().toLowerCase(), r.id]));
 
     // Delivery dates from date-tagged orders containing these products.
-    const now = new Date();
-    const from = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
-    const iso = (d: Date) => d.toISOString().slice(0, 10);
-    const orders = await getOrdersForPnl(iso(from), iso(now));
-    const productIds = new Set(products.map(p => p.id));
-    const dispatchTags = new Set<string>();
-    let matchingOrders = 0;
-    for (const order of orders) {
-      if (order.cancelled_at) continue;
-      if (!order.line_items?.some(li => li.product_id != null && productIds.has(li.product_id))) continue;
-      matchingOrders++;
-      const tag = order.tags.split(",").map(t => t.trim()).find(t => DATE_TAG_RE.test(t));
-      if (tag) dispatchTags.add(tag);
-    }
+    const { matchingOrders, dispatchTags } = await collectionOrderStats(new Set(products.map(p => p.id)), days);
     const deliveryDates = [...dispatchTags].sort().map(formatDeliveryDate);
 
     const questions: Array<{ type: string; prompt: string; recipeId: number | null; options: string[] | null; required: boolean; max: number }> = [];
@@ -400,6 +419,209 @@ router.get("/collection-template", async (req, res) => {
   }
 });
 
+// ── Live audience (Klaviyo buyers segment) ─────────────────────────────────
+// The audience is a Klaviyo segment of profiles who placed an order
+// containing any of the source collection's products in the look-back
+// window. Built once per survey and reused on re-sends; "rebuild" replaces
+// it (e.g. after the collection's products or the window changed). The
+// email dialog shows the segment's profile count next to matchingOrders —
+// the app's own Shopify count over the same window — as the sanity check
+// before anything sends.
+
+interface AudiencePayload {
+  collection: { id: number; title: string } | null;
+  lookbackDays: number;
+  products: string[];
+  matchingOrders: number;
+  segment: { id: string; name: string | null; profileCount: number | null } | null;
+}
+
+async function buildAudiencePayload(
+  survey: { collectionId: number | null; collectionTitle: string | null; klaviyoSegmentId: string | null },
+  key: string | null,
+  days: number,
+): Promise<AudiencePayload> {
+  if (survey.collectionId == null) {
+    return { collection: null, lookbackDays: days, products: [], matchingOrders: 0, segment: null };
+  }
+  const products = await getCollectionProducts(survey.collectionId);
+  const { matchingOrders } = await collectionOrderStats(new Set(products.map(p => p.id)), days);
+  let segment: AudiencePayload["segment"] = null;
+  if (survey.klaviyoSegmentId && key) {
+    const status = await getSegmentStatus(key, survey.klaviyoSegmentId);
+    segment = status.exists
+      ? { id: survey.klaviyoSegmentId, name: status.name, profileCount: status.profileCount }
+      : null;
+  }
+  return {
+    collection: { id: survey.collectionId, title: survey.collectionTitle ?? "" },
+    lookbackDays: days,
+    products: products.map(p => p.title),
+    matchingOrders,
+    segment,
+  };
+}
+
+// GET /api/surveys/:id/audience?days= — current audience state (no writes)
+router.get("/:id/audience", async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id == null) { res.status(400).json({ error: "Invalid survey id" }); return; }
+  const [survey] = await db.select().from(surveysTable).where(eq(surveysTable.id, id));
+  if (!survey) { res.status(404).json({ error: "Survey not found" }); return; }
+  const rawDays = Number(req.query.days);
+  const days = Number.isInteger(rawDays) ? Math.min(90, Math.max(1, rawDays)) : 30;
+  try {
+    res.json(await buildAudiencePayload(survey, await getSurveysKlaviyoKey(), days));
+  } catch (err) {
+    console.error("[surveys] audience status failed:", err instanceof Error ? err.message : String(err));
+    res.status(502).json({ error: "Couldn't load the audience — check the server log" });
+  }
+});
+
+const audienceBuildSchema = z.object({
+  // Optional for surveys built from a collection (it's stored); required the
+  // first time for hand-built surveys.
+  collectionId: z.number().int().positive().optional(),
+  days: z.number().int().min(1).max(90).optional().default(30),
+  rebuild: z.boolean().optional().default(false),
+});
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// POST /api/surveys/:id/audience — create (or reuse/rebuild) the segment
+router.post("/:id/audience", async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id == null) { res.status(400).json({ error: "Invalid survey id" }); return; }
+  const key = await getSurveysKlaviyoKey();
+  if (!key) { res.status(409).json({ error: "Connect Klaviyo first" }); return; }
+  const parsed = audienceBuildSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Validation failed", details: parsed.error.flatten() }); return; }
+  const [survey] = await db.select().from(surveysTable).where(eq(surveysTable.id, id));
+  if (!survey) { res.status(404).json({ error: "Survey not found" }); return; }
+
+  const { days, rebuild } = parsed.data;
+  const collectionId = parsed.data.collectionId ?? survey.collectionId;
+  if (collectionId == null) {
+    res.status(422).json({ error: "Pick the Shopify collection this survey is about first" });
+    return;
+  }
+
+  try {
+    const [collections, products] = await Promise.all([getCollections(), getCollectionProducts(collectionId)]);
+    const collection = collections.find(c => c.id === collectionId);
+    if (!collection) { res.status(404).json({ error: "Collection not found" }); return; }
+    if (products.length === 0) { res.status(422).json({ error: "That collection has no products" }); return; }
+
+    await db.update(surveysTable)
+      .set({ collectionId, collectionTitle: collection.title, updatedAt: sql`now()` })
+      .where(eq(surveysTable.id, id));
+
+    // Reuse the stored segment unless rebuilding (or it vanished in Klaviyo).
+    let segmentId = survey.klaviyoSegmentId;
+    if (segmentId && !rebuild) {
+      const status = await getSegmentStatus(key, segmentId);
+      if (!status.exists) segmentId = null;
+    } else if (segmentId && rebuild) {
+      await deleteSegment(key, segmentId);
+      segmentId = null;
+    }
+    if (!segmentId) {
+      const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
+      segmentId = await createBuyersSegment(key, {
+        name: `Survey: ${collection.title} buyers, last ${days}d (${stamp})`,
+        productNames: products.map(p => p.title),
+        lookbackDays: days,
+      });
+      await db.update(surveysTable).set({ klaviyoSegmentId: segmentId }).where(eq(surveysTable.id, id));
+    }
+
+    // A fresh segment materialises asynchronously — give the count a few
+    // seconds to appear so the dialog usually shows it first time. The UI
+    // refetches if it's still null.
+    let status = await getSegmentStatus(key, segmentId);
+    for (let attempt = 0; status.profileCount == null && attempt < 3; attempt++) {
+      await sleep(1500);
+      status = await getSegmentStatus(key, segmentId);
+    }
+
+    const { matchingOrders } = await collectionOrderStats(new Set(products.map(p => p.id)), days);
+    const payload: AudiencePayload = {
+      collection: { id: collectionId, title: collection.title },
+      lookbackDays: days,
+      products: products.map(p => p.title),
+      matchingOrders,
+      segment: { id: segmentId, name: status.name, profileCount: status.profileCount },
+    };
+    res.status(201).json(payload);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[surveys] audience build failed:", msg);
+    if (msg.includes("Klaviyo 403")) {
+      res.status(403).json({ error: "The Klaviyo key can't manage segments — add segments:read, segments:write and metrics:read scopes to the TCK Planner 2 key, then reconnect" });
+      return;
+    }
+    res.status(502).json({ error: "Couldn't build the audience — check the server log" });
+  }
+});
+
+// POST /api/surveys/:id/email-live — the real send, to the buyers segment.
+// Same body as email-test. Refuses until the audience exists and the survey
+// is open (the email links straight to it; draft surveys 404 publicly).
+router.post("/:id/email-live", async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id == null) { res.status(400).json({ error: "Invalid survey id" }); return; }
+  const key = await getSurveysKlaviyoKey();
+  if (!key) { res.status(409).json({ error: "Connect Klaviyo first" }); return; }
+  const parsed = emailTestSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Validation failed", details: parsed.error.flatten() }); return; }
+  const [survey] = await db.select().from(surveysTable).where(eq(surveysTable.id, id));
+  if (!survey) { res.status(404).json({ error: "Survey not found" }); return; }
+  if (!survey.klaviyoSegmentId) { res.status(409).json({ error: "Build the live audience first" }); return; }
+  if (survey.status !== "open") {
+    res.status(409).json({ error: "Open the survey first — the email links to it, and customers would hit a dead page" });
+    return;
+  }
+
+  const { subject, fromEmail, fromLabel, sendAt, draft } = parsed.data;
+  try {
+    const segment = await getSegmentStatus(key, survey.klaviyoSegmentId);
+    if (!segment.exists) {
+      res.status(409).json({ error: "The audience segment no longer exists in Klaviyo — rebuild it" });
+      return;
+    }
+
+    const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
+    const html = buildSurveyInviteHtml({ title: survey.title, intro: survey.intro, shareUrl: surveyShareUrl(survey.token) });
+    const templateId = await createEmailTemplate(key, `[LIVE] ${survey.title} invite ${stamp}`, html);
+    const { campaignId, messageId } = await createCampaignForAudience(key, {
+      name: `[LIVE] ${survey.title} invite ${stamp}`,
+      audienceId: survey.klaviyoSegmentId,
+      subject,
+      previewText: "A minute of feedback shapes what we launch next",
+      fromEmail,
+      fromLabel,
+      sendAt: sendAt ?? null,
+      // Real customers: let Klaviyo hold back anyone emailed very recently.
+      smartSending: true,
+    });
+    await assignTemplateToMessage(key, messageId, templateId);
+    if (!draft) await createCampaignSendJob(key, campaignId);
+
+    await setFounderSetting(FROM_EMAIL_SETTING, fromEmail);
+    await setFounderSetting(FROM_LABEL_SETTING, fromLabel);
+
+    res.status(201).json({
+      campaignId,
+      campaignUrl: `https://www.klaviyo.com/campaign/${campaignId}/wizard`,
+      recipients: segment.profileCount ?? 0,
+      mode: draft ? "draft" : (sendAt ? "scheduled" : "sending"),
+    });
+  } catch (err) {
+    console.error("[surveys] email-live failed:", err instanceof Error ? err.message : String(err));
+    res.status(502).json({ error: "Klaviyo request failed — check the server log" });
+  }
+});
+
 // GET /api/surveys/:id — full survey for the builder
 router.get("/:id", async (req, res) => {
   const id = parseId(req.params.id);
@@ -428,6 +650,8 @@ router.post("/", async (req, res) => {
       title,
       intro: intro ?? null,
       status: "draft",
+      collectionId: parsed.data.collectionId ?? null,
+      collectionTitle: parsed.data.collectionTitle ?? null,
     }).returning();
     if (questions.length > 0) {
       await tx.insert(surveyQuestionsTable).values(questions.map((q, i) => ({
@@ -535,6 +759,11 @@ router.post("/:id/duplicate", async (req, res) => {
       title: `${survey.title} (copy)`,
       intro: survey.intro,
       status: "draft",
+      // The copy is about the same products, so the collection travels — but
+      // NOT the segment: each survey owns its segment, and a shared one
+      // would be deleted out from under the other on rebuild.
+      collectionId: survey.collectionId,
+      collectionTitle: survey.collectionTitle,
     }).returning();
     if (questions.length > 0) {
       await tx.insert(surveyQuestionsTable).values(questions.map(q => ({

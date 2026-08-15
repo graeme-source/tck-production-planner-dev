@@ -10,7 +10,7 @@
  * determined ballot-stuffer — acceptable for "which calzone should we
  * launch?" stakes.
  */
-import { pgTable, serial, text, integer, boolean, timestamp, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, bigint, boolean, timestamp, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { recipesTable } from "./recipes";
 
@@ -24,6 +24,18 @@ export const surveysTable = pgTable("surveys", {
   // draft = invisible to the public API (404), open = accepting responses,
   // closed = readable (widget shows "closed") but rejects new responses.
   status: text("status").notNull().default("draft"),
+  // The Shopify collection this survey was generated from — the ground truth
+  // for "which products is this survey about". The questions only carry
+  // recipe links (and products without a recipe carry none), so the live
+  // Klaviyo audience is built from the collection, never reverse-engineered
+  // from the questions. Null on hand-built surveys until one is picked in
+  // the email dialog. Shopify ids exceed int4, hence bigint.
+  collectionId: bigint("collection_id", { mode: "number" }),
+  collectionTitle: text("collection_title"),
+  // Klaviyo segment created for the live audience (buyers of the collection's
+  // products in the look-back window). Stored so re-sends reuse one segment
+  // instead of littering Klaviyo; "rebuild" replaces it.
+  klaviyoSegmentId: text("klaviyo_segment_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

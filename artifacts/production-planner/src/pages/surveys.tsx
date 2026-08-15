@@ -49,6 +49,8 @@ interface SurveyListItem {
   responseCount: number;
   questionCount: number;
   shareUrl: string;
+  collectionId: number | null;
+  collectionTitle: string | null;
 }
 
 interface RecipeOption { id: number; name: string; category: string | null; imageUrl: string | null }
@@ -329,10 +331,13 @@ function KlaviyoCard() {
   );
 }
 
-// ── Test-mode email invites ────────────────────────────────────────────────
-// Sends ONLY to the Klaviyo "TCK Survey Test Recipients" list — there is no
-// live-audience path in this build. Campaigns are named [TEST] and smart
-// sending is off so the same inbox can be tested repeatedly.
+// ── Email invites (test + live) ────────────────────────────────────────────
+// Test mode mails ONLY the Klaviyo "TCK Survey Test Recipients" list —
+// campaigns named [TEST], smart sending off so the same inbox can be
+// re-tested. Live mode mails the survey's buyers segment (built server-side
+// from its Shopify collection): the dialog shows the Klaviyo people-count
+// next to the app's own order-count over the same window as the sanity
+// check, and the send button only arms after an explicit confirm tick.
 
 interface TestListData {
   listId: string;
@@ -340,10 +345,23 @@ interface TestListData {
   defaults: { fromEmail: string | null; fromLabel: string };
 }
 
-interface EmailTestResult { campaignId: string; campaignUrl: string; recipients: number; mode: string }
+interface EmailSendResult { campaignId: string; campaignUrl: string; recipients: number; mode: string }
 
-function EmailTestDialog({ survey, onClose }: { survey: SurveyListItem; onClose: () => void }) {
+interface AudienceData {
+  collection: { id: number; title: string } | null;
+  lookbackDays: number;
+  products: string[];
+  matchingOrders: number;
+  segment: { id: string; name: string | null; profileCount: number | null } | null;
+}
+
+function EmailDialog({ survey, onClose }: { survey: SurveyListItem; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const [mode, setMode] = useState<"test" | "live">("test");
+  const [days, setDays] = useState(30);
+  const [pickedCollectionId, setPickedCollectionId] = useState<number | null>(null);
+  const [collectionSearch, setCollectionSearch] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
   const [newEmail, setNewEmail] = useState("");
   const [subject, setSubject] = useState(`We'd love your feedback on the ${survey.title.replace(/ Feedback$/i, "")}`);
   const [fromEmail, setFromEmail] = useState("");
@@ -351,7 +369,7 @@ function EmailTestDialog({ survey, onClose }: { survey: SurveyListItem; onClose:
   const [defaultsLoaded, setDefaultsLoaded] = useState(false);
   const [when, setWhen] = useState<"now" | "schedule">("now");
   const [sendAtLocal, setSendAtLocal] = useState("");
-  const [lastResult, setLastResult] = useState<EmailTestResult | null>(null);
+  const [lastResult, setLastResult] = useState<EmailSendResult | null>(null);
 
   const { data: testList, isLoading } = useQuery<TestListData>({
     queryKey: ["surveys-klaviyo-test-list"],
@@ -363,6 +381,48 @@ function EmailTestDialog({ survey, onClose }: { survey: SurveyListItem; onClose:
     setFromLabel(testList.defaults.fromLabel);
     setDefaultsLoaded(true);
   }
+
+  const { data: audience, isLoading: audienceLoading, isFetching: audienceFetching, refetch: refetchAudience } = useQuery<AudienceData>({
+    queryKey: ["survey-audience", survey.id, days],
+    enabled: mode === "live",
+    queryFn: async () => jsonOrThrow(
+      await fetch(`${BASE}/api/surveys/${survey.id}/audience?days=${days}`, { credentials: "include" }),
+      "Couldn't load the audience",
+    ),
+  });
+
+  // Collection picker only for hand-built surveys — from-collection surveys
+  // already know their collection.
+  const { data: collections } = useQuery<CollectionOption[]>({
+    queryKey: ["survey-collections"],
+    enabled: mode === "live" && audience !== undefined && audience.collection == null,
+    queryFn: async () => jsonOrThrow(await fetch(`${BASE}/api/surveys/collections`, { credentials: "include" }), "Failed to load collections"),
+  });
+
+  const buildAudience = useMutation({
+    mutationFn: async (rebuild: boolean) =>
+      jsonOrThrow(await fetch(`${BASE}/api/surveys/${survey.id}/audience`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          ...(audience?.collection == null && pickedCollectionId != null ? { collectionId: pickedCollectionId } : {}),
+          days,
+          rebuild,
+        }),
+      }), "Couldn't build the audience") as Promise<AudienceData>,
+    onSuccess: (a) => {
+      queryClient.setQueryData(["survey-audience", survey.id, days], a);
+      setConfirmed(false);
+      toast({
+        title: "Audience ready",
+        description: a.segment?.profileCount != null
+          ? `${a.segment.profileCount} people in Klaviyo`
+          : "Klaviyo is still counting — refresh in a moment",
+      });
+    },
+    onError: (e) => toast({ title: e instanceof Error ? e.message : "Couldn't build the audience", variant: "destructive" }),
+  });
 
   const addMember = useMutation({
     mutationFn: async () =>
@@ -380,8 +440,8 @@ function EmailTestDialog({ survey, onClose }: { survey: SurveyListItem; onClose:
   });
 
   const send = useMutation({
-    mutationFn: async (draft: boolean) =>
-      jsonOrThrow(await fetch(`${BASE}/api/surveys/${survey.id}/email-test`, {
+    mutationFn: async (input: { draft: boolean; live: boolean }) =>
+      jsonOrThrow(await fetch(`${BASE}/api/surveys/${survey.id}/${input.live ? "email-live" : "email-test"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -390,22 +450,35 @@ function EmailTestDialog({ survey, onClose }: { survey: SurveyListItem; onClose:
           fromEmail: fromEmail.trim(),
           fromLabel: fromLabel.trim(),
           sendAt: when === "schedule" && sendAtLocal ? new Date(sendAtLocal).toISOString() : null,
-          draft,
+          draft: input.draft,
         }),
-      }), "Klaviyo request failed") as Promise<EmailTestResult>,
-    onSuccess: (r) => {
+      }), "Klaviyo request failed") as Promise<EmailSendResult>,
+    onSuccess: (r, input) => {
       setLastResult(r);
+      setConfirmed(false);
+      const noun = input.live
+        ? `${r.recipients} customer${r.recipients === 1 ? "" : "s"}`
+        : `${r.recipients} test recipient${r.recipients === 1 ? "" : "s"}`;
       toast({
-        title: r.mode === "draft" ? "Draft created in Klaviyo" : r.mode === "scheduled" ? "Test email scheduled" : "Test email sending",
-        description: `${r.recipients} test recipient${r.recipients === 1 ? "" : "s"}`,
+        title: r.mode === "draft" ? "Draft created in Klaviyo"
+          : r.mode === "scheduled" ? (input.live ? "Live email scheduled" : "Test email scheduled")
+          : (input.live ? "Live email sending" : "Test email sending"),
+        description: noun,
       });
     },
     onError: (e) => toast({ title: e instanceof Error ? e.message : "Klaviyo request failed", variant: "destructive" }),
   });
 
-  const canSend = subject.trim().length > 0 && /\S+@\S+\.\S+/.test(fromEmail.trim()) &&
-    fromLabel.trim().length > 0 && (when === "now" || sendAtLocal !== "") &&
-    (testList?.members.length ?? 0) > 0;
+  const emailFieldsOk = subject.trim().length > 0 && /\S+@\S+\.\S+/.test(fromEmail.trim()) &&
+    fromLabel.trim().length > 0 && (when === "now" || sendAtLocal !== "");
+  const canSendTest = emailFieldsOk && (testList?.members.length ?? 0) > 0;
+  // Live: audience built, survey open (the email links straight to it), and
+  // the confirm box ticked for anything beyond a Klaviyo draft.
+  const liveReady = emailFieldsOk && audience?.segment != null && survey.status === "open";
+  const canDraftLive = liveReady;
+  const canSendLive = liveReady && confirmed;
+  const canSend = mode === "live" ? canSendLive : canSendTest;
+  const canDraft = mode === "live" ? canDraftLive : canSendTest;
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -414,12 +487,140 @@ function EmailTestDialog({ survey, onClose }: { survey: SurveyListItem; onClose:
           <DialogTitle>Email invites — “{survey.title}”</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
-          <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
-            <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-            Test mode: emails go ONLY to the test list below — never to customers. Live sending is a
-            separate step once you've signed this off.
+          <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1">
+            {(["test", "live"] as const).map(m => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => { setMode(m); setConfirmed(false); setLastResult(null); }}
+                className={cn(
+                  "rounded-md py-1.5 text-sm font-medium transition-colors",
+                  mode === m
+                    ? m === "live" ? "bg-destructive text-destructive-foreground" : "bg-background shadow"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {m === "test" ? "Test send" : "Live send"}
+              </button>
+            ))}
           </div>
 
+          {mode === "test" ? (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+              <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              Test mode: emails go ONLY to the test list below — never to customers.
+            </div>
+          ) : (
+            <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              Live mode: this emails real customers who bought these products. Check the audience
+              numbers below before sending.
+            </div>
+          )}
+
+          {mode === "live" && (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                Audience — buyers of the survey's products
+                {/* The refresh counts a month of Shopify orders — slow enough
+                    that silent staleness reads as broken. */}
+                {audienceFetching && !audienceLoading && <Loader2 className="w-3 h-3 animate-spin" />}
+              </p>
+              {audienceLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+              ) : audience?.collection == null ? (
+                <div className="space-y-1.5">
+                  <p className="text-sm text-muted-foreground">
+                    This survey wasn't built from a collection — pick the Shopify collection it's
+                    about, so the audience matches the right buyers.
+                  </p>
+                  <Input
+                    value={collectionSearch}
+                    placeholder="Type to filter collections…"
+                    onChange={(e) => setCollectionSearch(e.target.value)}
+                  />
+                  <div className="max-h-40 overflow-y-auto rounded-lg border border-border divide-y divide-border/50">
+                    {(collections ?? [])
+                      .filter(c => c.title.toLowerCase().includes(collectionSearch.trim().toLowerCase()))
+                      .map(c => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => setPickedCollectionId(c.id)}
+                          className={cn(
+                            "w-full text-left text-sm px-3 py-1.5 transition-colors",
+                            pickedCollectionId === c.id ? "bg-primary/15 text-primary font-medium" : "hover:bg-muted/50",
+                          )}
+                        >
+                          {c.title}
+                        </button>
+                      ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm">
+                  <span className="font-medium">{audience.collection.title}</span>
+                  <span className="text-muted-foreground"> — {audience.products.length} product{audience.products.length === 1 ? "" : "s"}: {audience.products.join(", ")}</span>
+                </p>
+              )}
+
+              <div className="flex gap-2 items-center">
+                <Select value={String(days)} onValueChange={(v) => { setDays(Number(v)); setConfirmed(false); }}>
+                  <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="7">Last 7 days</SelectItem>
+                    <SelectItem value="14">Last 14 days</SelectItem>
+                    <SelectItem value="30">Last 30 days</SelectItem>
+                    <SelectItem value="60">Last 60 days</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="outline"
+                  disabled={buildAudience.isPending || (audience?.collection == null && pickedCollectionId == null)}
+                  onClick={() => buildAudience.mutate(audience?.segment != null)}
+                >
+                  {buildAudience.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  {audience?.segment != null ? "Rebuild audience" : "Build audience"}
+                </Button>
+              </div>
+
+              {audience?.segment != null && (
+                <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 space-y-1.5">
+                  <div className="grid grid-cols-2 gap-2 text-center">
+                    <div>
+                      <p className="text-xl font-semibold">
+                        {audience.segment.profileCount ?? "…"}
+                      </p>
+                      <p className="text-xs text-muted-foreground">people in the Klaviyo audience</p>
+                    </div>
+                    <div>
+                      <p className="text-xl font-semibold">{audience.matchingOrders}</p>
+                      <p className="text-xs text-muted-foreground">orders with these products, last {audience.lookbackDays} days</p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    These should be in the same ballpark — repeat buyers collapse into one person, so
+                    people ≤ orders. An audience near zero usually means a renamed product: rebuild.
+                  </p>
+                  {audience.segment.profileCount == null && (
+                    <Button variant="ghost" size="sm" onClick={() => refetchAudience()}>
+                      <Loader2 className="w-3.5 h-3.5 mr-1.5" /> Klaviyo is still counting — refresh
+                    </Button>
+                  )}
+                </div>
+              )}
+
+              {survey.status !== "open" && (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+                  <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  This survey is {survey.status} — open it before sending, or customers will hit a
+                  dead page.
+                </div>
+              )}
+            </div>
+          )}
+
+          {mode === "test" && (
           <div className="space-y-2">
             <p className="text-xs font-medium text-muted-foreground">Test recipients</p>
             {isLoading ? (
@@ -458,6 +659,7 @@ function EmailTestDialog({ survey, onClose }: { survey: SurveyListItem; onClose:
               </>
             )}
           </div>
+          )}
 
           <div className="space-y-2">
             <p className="text-xs font-medium text-muted-foreground">Email</p>
@@ -488,11 +690,28 @@ function EmailTestDialog({ survey, onClose }: { survey: SurveyListItem; onClose:
             </div>
           </div>
 
+          {mode === "live" && audience?.segment != null && (
+            <label className="flex items-start gap-2 rounded-lg border border-destructive/40 px-3 py-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={confirmed}
+                onChange={(e) => setConfirmed(e.target.checked)}
+                className="mt-0.5 h-4 w-4 accent-destructive"
+              />
+              <span>
+                I've checked the numbers — {when === "schedule" ? "schedule" : "send"} this to{" "}
+                <b>{audience.segment.profileCount ?? "?"}</b> customer{audience.segment.profileCount === 1 ? "" : "s"} who bought{" "}
+                {audience.collection ? `the ${audience.collection.title}` : "these products"} in the
+                last {audience.lookbackDays} days.
+              </span>
+            </label>
+          )}
+
           {lastResult && (
             <div className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-sm space-y-1">
               <p className="font-medium">
                 {lastResult.mode === "draft" ? "Draft created" : lastResult.mode === "scheduled" ? "Scheduled" : "Sending"} —{" "}
-                {lastResult.recipients} test recipient{lastResult.recipients === 1 ? "" : "s"}
+                {lastResult.recipients} recipient{lastResult.recipients === 1 ? "" : "s"}
               </p>
               <a
                 href={lastResult.campaignUrl} target="_blank" rel="noreferrer"
@@ -504,12 +723,22 @@ function EmailTestDialog({ survey, onClose }: { survey: SurveyListItem; onClose:
           )}
 
           <div className="flex gap-2 justify-end">
-            <Button variant="outline" disabled={!canSend || send.isPending} onClick={() => send.mutate(true)}>
+            <Button
+              variant="outline"
+              disabled={!canDraft || send.isPending}
+              onClick={() => send.mutate({ draft: true, live: mode === "live" })}
+            >
               Create draft in Klaviyo
             </Button>
-            <Button disabled={!canSend || send.isPending} onClick={() => send.mutate(false)}>
+            <Button
+              variant={mode === "live" ? "destructive" : "default"}
+              disabled={!canSend || send.isPending}
+              onClick={() => send.mutate({ draft: false, live: mode === "live" })}
+            >
               {send.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              {when === "schedule" ? "Schedule test email" : "Send test email"}
+              {mode === "live"
+                ? (when === "schedule" ? "Schedule LIVE email" : "Send LIVE email")
+                : (when === "schedule" ? "Schedule test email" : "Send test email")}
             </Button>
           </div>
         </div>
@@ -979,10 +1208,19 @@ function QuestionEditor({ question, recipes, onChange, onRemove, onMove, isFirst
   );
 }
 
+interface BuilderInitial {
+  title: string;
+  intro: string;
+  questions: CollectionTemplate["questions"];
+  // The Shopify collection the template came from — persisted on create so
+  // the live email audience knows which products the survey is about.
+  collection?: CollectionOption;
+}
+
 function BuilderView({ surveyId, initial, onBack, onSaved }: {
   surveyId: number | null; // null = creating new
   // Pre-filled draft (e.g. built from a Shopify collection). New surveys only.
-  initial?: { title: string; intro: string; questions: CollectionTemplate["questions"] };
+  initial?: BuilderInitial;
   onBack: () => void;
   onSaved: (id: number) => void;
 }) {
@@ -1030,6 +1268,10 @@ function BuilderView({ surveyId, initial, onBack, onSaved }: {
       const payload = {
         title: title.trim(),
         intro: intro.trim() || null,
+        // Only creates carry the collection; the server keeps it on edits.
+        ...(surveyId == null && initial?.collection
+          ? { collectionId: initial.collection.id, collectionTitle: initial.collection.title }
+          : {}),
         questions: questions.map(q => ({
           ...(q.id != null ? { id: q.id } : {}),
           type: q.type,
@@ -1470,7 +1712,7 @@ function SurveyCard({ survey, onEdit, onResults, onShare, onPreview, onEmail }: 
 
 type View =
   | { name: "list" }
-  | { name: "builder"; surveyId: number | null; initial?: { title: string; intro: string; questions: CollectionTemplate["questions"] } }
+  | { name: "builder"; surveyId: number | null; initial?: BuilderInitial }
   | { name: "results"; surveyId: number };
 
 export default function Surveys() {
@@ -1552,14 +1794,14 @@ export default function Surveys() {
         <SavedSurveyPreview surveyId={previewId} onClose={() => setPreviewId(null)} />
       )}
       {emailTarget != null && (
-        <EmailTestDialog survey={emailTarget} onClose={() => setEmailTarget(null)} />
+        <EmailDialog survey={emailTarget} onClose={() => setEmailTarget(null)} />
       )}
       {fromCollectionOpen && (
         <FromCollectionDialog
           onClose={() => setFromCollectionOpen(false)}
           onBuilt={(tpl) => {
             setFromCollectionOpen(false);
-            setView({ name: "builder", surveyId: null, initial: { title: tpl.title, intro: tpl.intro, questions: tpl.questions } });
+            setView({ name: "builder", surveyId: null, initial: { title: tpl.title, intro: tpl.intro, questions: tpl.questions, collection: tpl.collection } });
           }}
         />
       )}
