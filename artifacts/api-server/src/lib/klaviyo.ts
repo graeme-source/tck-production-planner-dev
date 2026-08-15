@@ -257,19 +257,21 @@ export interface BuyersSegmentInput {
 /** Create the buyers segment and return its id. */
 export async function createBuyersSegment(apiKey: string, input: BuyersSegmentInput): Promise<string> {
   const metricId = await getPlacedOrderMetricId(apiKey);
-  // Condition groups AND together; conditions within a group OR together —
-  // so "bought any of these products" is ONE group with a condition per
-  // product (Segments API, revision 2024-10-15).
-  const conditions = input.productNames.map(productName => ({
+  // "Items" on Placed Order is a LIST of product titles, so the filter must
+  // be type "list" — a string filter on a list property silently matches
+  // NOTHING (found the hard way: 0-person segment vs 204 real orders,
+  // 2026-08-15). contains-any takes the whole product array, so "bought any
+  // of these products" is a single condition.
+  const condition = {
     type: "profile-metric",
     metric_id: metricId,
     measurement: "count",
     measurement_filter: { type: "numeric", operator: "greater-than-or-equal", value: 1 },
     timeframe_filter: { type: "date", operator: "in-the-last", unit: "day", quantity: input.lookbackDays },
     metric_filters: [
-      { property: "Items", filter: { type: "string", operator: "contains", value: productName } },
+      { property: "Items", filter: { type: "list", operator: "contains-any", value: input.productNames } },
     ],
-  }));
+  };
   const created = await klaviyoFetch<{ data: { id: string } }>(apiKey, "/api/segments", {
     method: "POST",
     body: {
@@ -278,7 +280,7 @@ export async function createBuyersSegment(apiKey: string, input: BuyersSegmentIn
         attributes: {
           name: input.name,
           is_starred: false,
-          definition: { condition_groups: [{ conditions }] },
+          definition: { condition_groups: [{ conditions: [condition] }] },
         },
       },
     },
