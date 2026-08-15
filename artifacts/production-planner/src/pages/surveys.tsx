@@ -602,9 +602,14 @@ function EmailDialog({ survey, onClose }: { survey: SurveyListItem; onClose: () 
                     These should be in the same ballpark — repeat buyers collapse into one person, so
                     people ≤ orders. An audience near zero usually means a renamed product: rebuild.
                   </p>
-                  {audience.segment.profileCount == null && (
-                    <Button variant="ghost" size="sm" onClick={() => refetchAudience()}>
-                      <Loader2 className="w-3.5 h-3.5 mr-1.5" /> Klaviyo is still counting — refresh
+                  {/* A fresh segment can report 0 (not null) while Klaviyo is
+                      still evaluating it — seen live 2026-08-15: 0 → 202 a few
+                      seconds later. Offer the refresh whenever the count looks
+                      unfinished. */}
+                  {(audience.segment.profileCount == null || audience.segment.profileCount === 0) && (
+                    <Button variant="ghost" size="sm" disabled={audienceFetching} onClick={() => refetchAudience()}>
+                      <Loader2 className={cn("w-3.5 h-3.5 mr-1.5", audienceFetching && "animate-spin")} />
+                      {audience.segment.profileCount === 0 ? "Count says 0 — refresh" : "Klaviyo is still counting — refresh"}
                     </Button>
                   )}
                 </div>
