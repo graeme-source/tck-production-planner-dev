@@ -1,6 +1,6 @@
 # TCK Production Planner — Product Specification
 
-**Status:** Living document — v1.1 (2026-08-15)
+**Status:** Living document — v1.2 (2026-08-15)
 **Owner:** Graeme (The Calzone Kitchen)
 **Purpose of this document:** This is the north star for the production planning / ERP
 system. Every feature request, refactor, and daily-issue fix should be evaluated against
@@ -134,6 +134,40 @@ not just a record-keeper:
 **Success measure:** a steady flow of improvement submissions per person per month,
 visibly actioned; every team member has completed the lean training track.
 
+**The engagement challenge (named honestly):** the biggest obstacle is not content —
+a 12-week 2 Second Lean curriculum, a video→SOP pipeline, and a training matrix
+already exist in the system. The obstacle is that all of it is **pull-based**
+(a library, a lean-cave page, a meeting slide needing a confident host), and most of
+the team "want to do their job and go home" — they will never pull. That is a design
+constraint, not a character flaw. Design rule for everything under this objective:
+**push, in tiny doses, at the point of work, using our own factory's data, with a
+visible payoff.**
+
+Design direction (the delivery system):
+
+1. **The Daily Two** — two minutes at PIN-in, on the personal start page (Obj. H):
+   one micro-lesson card (a single concept, atomised from the existing curriculum),
+   one *noticing* question built from yesterday's real factory data ("4.2kg of
+   mozzarella was binned — which of the 8 wastes is that?"), ending in the 2-second
+   prompt: "spot one thing that bugs you today" → one tap into the Report form.
+   Learning and action in the same two minutes. Personal streaks, a team streak on
+   the dashboard — gentle, adult, never punitive.
+2. **SOPs live in the flow, not in a library.**
+   - *Point of use:* the station screen knows (Planday + training matrix) when it's
+     this person's first time on a task and offers the 90-second video first.
+   - *Point of change:* an improvement that changes a process isn't complete until
+     the SOP is touched, and everyone scheduled on that station gets a "this changed
+     since you last did it" card with the before/after.
+   - *Creation is filming, not writing:* the person who does the job films it; the
+     existing video→SOP pipeline builds the steps. An SOP you filmed is yours.
+   - *Staleness is visible:* SOPs untouched while their process changed get flagged.
+3. **New starters** get a start-page sequence: each day, the one SOP video for the
+   station they're scheduled on that day, auto-ticked into the training matrix.
+4. **The software makes the habit cheap; leadership makes it matter.** Morning-
+   meeting celebration of improvements (the meeting module auto-pulls yesterday's
+   submissions and the week's lesson) stays a human act — the system just guarantees
+   there is always something ready to celebrate.
+
 ### Experience
 
 #### Objective F — Effortless and *trustworthy* daily use
@@ -258,3 +292,5 @@ Graeme is compiling further objectives/daily issues. Known items awaiting detail
 - End-of-day batch numbers not saving automatically (Objective F defect — investigate
   and fix).
 - Dashboard readability rework with icons/status-first design (Objective G).
+- Atomise the existing 12-week lean curriculum into ~60 daily micro-lesson cards
+  with TCK-specific examples (Objective E — Claude to draft for Graeme's review).
