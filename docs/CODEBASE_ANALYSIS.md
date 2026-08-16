@@ -300,7 +300,8 @@ Ordered by data-damage potential:
 | `sales_entries` table + `routes/sales.ts` | nothing in planning reads it | delete, or make it the sales-history store for forecasting (§7 P3) |
 | `attached_assets/` (27 MB), `backups/` SQL dumps, 3 root PNGs | committed binaries; `.gitignore` guards similar dirs but not these | remove from repo, gitignore |
 | `lib/api-zod` frontend usage | zero frontend imports | fold into the API-spec decision (§7) |
-| Peripheral clusters: surveys (3.1k LOC), founder-* (6.8k), morning meetings (5.5k) | wired but outside objectives A–H core | freeze; extract only if they start creating drag |
+| Peripheral clusters: surveys (3.1k LOC), employee hub, visitor log, onboarding | wired but outside objectives A–I core | freeze; extract only if they start creating drag |
+| Founder-* cluster (6.8k LOC) and morning meetings (5.5k) | ~~previously listed as peripheral~~ — now core: founder command centre is Objective I, meetings carry Objective E | keep; founder P&L/forecasting is a build-out target (spec I), meetings get the Obj. E redesign |
 
 ---
 

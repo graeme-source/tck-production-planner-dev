@@ -1,6 +1,6 @@
 # TCK Production Planner — Product Specification
 
-**Status:** Living document — v1.2 (2026-08-15)
+**Status:** Living document — v1.3 (2026-08-16)
 **Owner:** Graeme (The Calzone Kitchen)
 **Purpose of this document:** This is the north star for the production planning / ERP
 system. Every feature request, refactor, and daily-issue fix should be evaluated against
@@ -27,6 +27,10 @@ beyond the physical loop: **food-safety compliance** (HACCP / SALSA) and the com
 
 Everything the system does ultimately serves one of these. Features that serve none of
 them are candidates for removal or extraction.
+
+**The letters are names, not rankings.** Objectives A–I are all equally important;
+no objective outranks another. Sequencing of *work* is decided by dependency and
+opportunity (see the roadmap in the analysis doc), never by the letter.
 
 ### The production loop
 
@@ -245,6 +249,37 @@ greets each person with *their* day:
 **Success measure:** every team member starts their shift from their personal page and
 learns about relevant changes there — not by word of mouth after something goes wrong.
 
+### The business
+
+#### Objective I — Founder command centre: focus, profit, and foresight
+
+A distinct-but-integrated part of the tool: the founder's daily operating system and
+the business's intelligence layer.
+
+1. **Daily focus:** the Founder Focus page is the founder's daily planner —
+   objectives, tasks, and schedule in one place, connected to the rest of the system
+   (issues awaiting decisions, approvals pending, compliance flags) rather than a
+   standalone to-do list.
+2. **A robust profit tracker:** the most important numbers in the business —
+   revenue, margin, costs, waste — assembled from live data the system already owns
+   (Shopify sales, recipe cost/margin engine, labour, purchase orders) rather than
+   re-keyed into spreadsheets.
+3. **An intelligent forecaster:** predictions about the future (sales, cash impact,
+   profit trajectory) built on recent live data — with the same explainability rule
+   as everything else: every prediction can show its inputs.
+4. **Recommendations, not just readouts:** the system suggests what would move the
+   needle ("margin on X dropped 4pts since the cheese price change — candidates:
+   re-price, re-spec, or push Y instead") — and those recommendations are traceable
+   to the numbers behind them.
+5. **Integrations in service of this:** Shopify (sales and sell-through — already
+   integrated), Klaviyo (marketing/email performance connected to sales outcomes),
+   and the internal P&L data. Marketing activity and its revenue effect should be
+   visible in one place.
+
+**Success measure:** the founder opens one page each morning and knows the state of
+the business, what's at risk, and the highest-leverage action available — without
+assembling it by hand from five sources.
+
 ## 3. Supporting capabilities (in service of the objectives)
 
 - **Production stations** (mixing, building, prep, dough, ovens, wrapping, packing)
@@ -260,21 +295,25 @@ learns about relevant changes there — not by word of mouth after something goe
 - **Checklists and temperature monitoring (incl. Govee)** — daily-check backbone
   (D, F).
 - **Planday integration** — scheduling data that powers personalisation (H).
+- **Founder Focus, P&L tooling, Shopify & Klaviyo integrations** — the founder
+  command centre and its data feeds (I).
+- **Morning meetings** — the lean cadence carrier, per the Objective E redesign (E).
 
 ## 4. Peripheral modules
 
-The codebase also carries: surveys/marketing campaigns, founder focus/P&L tools,
-morning meetings, employee hub, visitor log, onboarding.
+The codebase also carries: surveys/marketing campaigns, employee hub, visitor log,
+onboarding.
 
 Some of these earn their keep (e.g. visitor log is a SALSA site-security record;
-morning meetings can carry the lean cadence) — but they are **not** allowed to:
+surveys may fold into the Klaviyo/marketing loop under Objective I) — but they are
+**not** allowed to:
 
 - add coupling to the core loop's data model,
 - slow down or complicate changes to core-loop code,
 - compete for the same screens/navigation the production team uses daily.
 
 Default posture: freeze feature work on these unless they directly serve objectives
-A–H; extract or remove any that create drag (see the companion codebase analysis).
+A–I; extract or remove any that create drag (see the companion codebase analysis).
 
 ## 5. Product principles
 
@@ -301,7 +340,7 @@ A–H; extract or remove any that create drag (see the companion codebase analys
 
 ## 6. How we work against this spec
 
-- Daily operational issues get logged against an objective (A–H) and fixed at the
+- Daily operational issues get logged against an objective (A–I) and fixed at the
   *cause* layer (data model / engine / UI), not patched at the symptom.
 - Refactors are justified by objective impact ("this makes recipe-add one step
   shorter", "this makes order maths explainable"), not by aesthetics.
