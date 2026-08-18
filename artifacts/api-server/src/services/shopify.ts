@@ -1,5 +1,8 @@
 import { shouldSkipSideEffect, logSkippedSideEffect } from "../lib/app-env";
 import { apcTrackingUrl } from "./apc";
+// Circular at module level (orders-cache imports shopifyFetchRaw from here)
+// but both sides only touch the other at call time, so ESM resolves it fine.
+import { getCachedOrders } from "../lib/orders-cache";
 
 const STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN!;
 const CLIENT_ID = process.env.SHOPIFY_CLIENT_ID!;
@@ -78,7 +81,8 @@ async function shopifyPost(path: string, body: unknown) {
 
 // Parse the Shopify cursor from a `Link` response header.
 // Returns the `page_info` value for rel="next", or null if absent.
-function parseNextPageInfo(linkHeader: string | null): string | null {
+// Exported for lib/orders-cache.ts (the incremental orders mirror).
+export function parseNextPageInfo(linkHeader: string | null): string | null {
   if (!linkHeader) return null;
   // Link header format: <url>; rel="next", <url>; rel="previous"
   for (const part of linkHeader.split(",")) {
@@ -94,7 +98,7 @@ function parseNextPageInfo(linkHeader: string | null): string | null {
   return null;
 }
 
-async function shopifyFetchRaw(path: string, params?: Record<string, string>): Promise<Response> {
+export async function shopifyFetchRaw(path: string, params?: Record<string, string>): Promise<Response> {
   const token = await getAccessToken();
   const url = new URL(`${API_BASE}${path}`);
   if (params) {
@@ -843,71 +847,24 @@ export async function getVariantCosts(variantIds: string[]): Promise<Map<string,
   return result;
 }
 
-// Fetch all orders created within a date range (YYYY-MM-DD), paginating fully.
+// Fetch all orders created within a date range (YYYY-MM-DD).
+// Served from the incremental Postgres mirror (lib/orders-cache.ts) since
+// 2026-08-18 — same shape and range semantics as the old direct crawl, but
+// only "what changed since last sync" hits the Shopify API.
 export async function getOrdersByDateRange(
   fromDate: string,
   toDate: string,
 ): Promise<ShopifyOrder[]> {
-  const min = `${fromDate}T00:00:00Z`;
-  const max = `${toDate}T23:59:59Z`;
-
-  const allOrders: ShopifyOrder[] = [];
-  let pageInfo: string | null = null;
-
-  do {
-    // Shopify cursor pagination: page_info must be the ONLY filter param.
-    // All other filters (status, created_at_min/max, fields) are only sent on the first page.
-    const params: Record<string, string> = pageInfo
-      ? { limit: "250", page_info: pageInfo }
-      : {
-          limit: "250",
-          status: "any",
-          created_at_min: min,
-          created_at_max: max,
-          fields:
-            "id,name,tags,created_at,cancelled_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,customer,refunds",
-        };
-
-    const res = await shopifyFetchRaw("/orders.json", params);
-    const data = (await res.json()) as { orders: ShopifyOrder[] };
-    allOrders.push(...data.orders);
-    pageInfo = parseNextPageInfo(res.headers.get("Link"));
-  } while (pageInfo);
-
-  return allOrders;
+  return getCachedOrders(fromDate, toDate);
 }
 
-// Fetch orders with full line_items for P&L calculation.
-// Separate from getOrdersByDateRange to avoid bloating the sales-summary endpoint.
+// Orders with full line_items for P&L calculation. The mirror stores the
+// superset of fields, so this is the same query as getOrdersByDateRange.
 export async function getOrdersForPnl(
   fromDate: string,
   toDate: string,
 ): Promise<ShopifyOrder[]> {
-  const min = `${fromDate}T00:00:00Z`;
-  const max = `${toDate}T23:59:59Z`;
-
-  const allOrders: ShopifyOrder[] = [];
-  let pageInfo: string | null = null;
-
-  do {
-    const params: Record<string, string> = pageInfo
-      ? { limit: "250", page_info: pageInfo }
-      : {
-          limit: "250",
-          status: "any",
-          created_at_min: min,
-          created_at_max: max,
-          fields:
-            "id,name,tags,created_at,cancelled_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,total_weight,customer,line_items,refunds",
-        };
-
-    const res = await shopifyFetchRaw("/orders.json", params);
-    const data = (await res.json()) as { orders: ShopifyOrder[] };
-    allOrders.push(...data.orders);
-    pageInfo = parseNextPageInfo(res.headers.get("Link"));
-  } while (pageInfo);
-
-  return allOrders;
+  return getCachedOrders(fromDate, toDate);
 }
 
 // Fetch transaction fees for a batch of order IDs from Shopify Transactions API.

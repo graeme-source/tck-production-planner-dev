@@ -2639,6 +2639,24 @@ async function runStartupMigrations() {
     await db.execute(sql`ALTER TABLE surveys ADD COLUMN IF NOT EXISTS collection_id BIGINT`);
     await db.execute(sql`ALTER TABLE surveys ADD COLUMN IF NOT EXISTS collection_title TEXT`);
     await db.execute(sql`ALTER TABLE surveys ADD COLUMN IF NOT EXISTS klaviyo_segment_id TEXT`);
+    // Shopify orders mirror + incremental sync state (migration 0052).
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS shopify_orders_cache (
+        id BIGINT PRIMARY KEY,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
+        payload JSONB NOT NULL,
+        synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_shopify_orders_cache_created ON shopify_orders_cache (created_at)`);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS shopify_orders_sync (
+        id INTEGER PRIMARY KEY,
+        last_synced_at TIMESTAMPTZ,
+        coverage_start DATE
+      )
+    `);
     await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS ux_survey_responses_survey_client ON survey_responses (survey_id, client_id)`);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS survey_answers (
@@ -2894,6 +2912,12 @@ async function startup() {
     // calculate pass per cycle, same engine as the Create Plan screen.
     const { startStockGatePoller } = await import("./lib/stock-gating");
     startStockGatePoller();
+
+    // Shopify orders mirror — pre-warm coverage back to the 1st of last
+    // month so the first founder Numbers/P&L load after a deploy reads
+    // Postgres instead of paying the one-off backfill crawl.
+    const { warmOrdersCache } = await import("./lib/orders-cache");
+    warmOrdersCache();
 
     // System-updates feed for the morning-meeting slide. Computed once
     // per deploy (this boot) and refreshed on a slow timer, then written
