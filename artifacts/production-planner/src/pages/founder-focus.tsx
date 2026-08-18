@@ -152,6 +152,12 @@ interface Overview {
   tasks: Task[];
   overdueTasks: Task[];
   calendarConfigured: boolean;
+}
+
+// Apple Calendar payload — its own query since 2026-08-18: a cold iCloud
+// fetch takes seconds, and split out it can't hold up the rest of the page.
+interface DayEvents {
+  calendarConfigured: boolean;
   events: CalEvent[];
   calendarError: string | null;
 }
@@ -189,6 +195,26 @@ function nowMinutes(): number {
 
 const DEFAULT_PILLAR_COLOR = "#9ca3af";
 
+// Last-known copies on the device, so returning to the page paints
+// instantly (stale) while the fresh fetch runs — instead of a blank screen.
+// Only ever used as react-query placeholderData; real data replaces it.
+const FOCUS_CACHE_PREFIX = "founder-focus-cache:";
+function readCachedFocus<T>(key: string): T | undefined {
+  try {
+    const raw = localStorage.getItem(FOCUS_CACHE_PREFIX + key);
+    return raw ? (JSON.parse(raw) as T) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+function writeCachedFocus(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(FOCUS_CACHE_PREFIX + key, JSON.stringify(value));
+  } catch {
+    // Quota/private-mode failures just lose the instant paint, nothing else.
+  }
+}
+
 async function api(path: string, init?: RequestInit) {
   const res = await fetch(`${BASE}/api/founder-focus${path}`, {
     credentials: "include",
@@ -216,10 +242,30 @@ export default function FounderFocus() {
     return () => clearInterval(id);
   }, []);
 
+  const isFounder = state.status === "authenticated" && state.user.email === FOUNDER_EMAIL;
+
   const { data, isLoading } = useQuery<Overview>({
     queryKey: ["founder-focus", dateStr],
-    queryFn: () => api(`/overview?date=${dateStr}`),
-    enabled: state.status === "authenticated" && state.user.email === FOUNDER_EMAIL,
+    queryFn: async () => {
+      const fresh = (await api(`/overview?date=${dateStr}`)) as Overview;
+      writeCachedFocus(`overview:${dateStr}`, fresh);
+      return fresh;
+    },
+    placeholderData: () => readCachedFocus<Overview>(`overview:${dateStr}`),
+    enabled: isFounder,
+  });
+
+  // Meetings load separately — see DayEvents. Not touched by invalidate():
+  // app mutations never change the diary, so no iCloud churn on every tick.
+  const { data: dayEvents } = useQuery<DayEvents>({
+    queryKey: ["founder-focus-events", dateStr],
+    queryFn: async () => {
+      const fresh = (await api(`/events?date=${dateStr}`)) as DayEvents;
+      writeCachedFocus(`events:${dateStr}`, fresh);
+      return fresh;
+    },
+    placeholderData: () => readCachedFocus<DayEvents>(`events:${dateStr}`),
+    enabled: isFounder,
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["founder-focus"] });
@@ -326,7 +372,7 @@ export default function FounderFocus() {
   const isToday = dateStr === todayStr;
   const now = nowMinutes();
   const blocks = data?.blocks ?? [];
-  const events = data?.events ?? [];
+  const events = dayEvents?.events ?? [];
 
   // One merged timeline: blocks you planned plus meetings from the diary.
   // Meetings are immovable, so Now/Next treats them as first-class items —
@@ -577,9 +623,9 @@ export default function FounderFocus() {
           ))}
         </div>
       )}
-      {data?.calendarError && (
+      {dayEvents?.calendarError && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-700 dark:text-amber-400">
-          Apple Calendar unavailable: {data.calendarError}
+          Apple Calendar unavailable: {dayEvents.calendarError}
         </div>
       )}
 

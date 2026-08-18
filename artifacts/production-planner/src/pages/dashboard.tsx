@@ -585,7 +585,7 @@ export default function Dashboard() {
   });
   const packingOph = packingSpeed?.ordersPerHour ?? 0;
 
-  // The "Dispatching Today" card is pinned to the REAL current week, not the
+  // The "Packing" card is pinned to the REAL current week, not the
   // weekly panel's selection — getDefaultWeekOffset rolls the panel to next
   // week from Friday 3pm, which used to blank this card for the rest of the
   // day. Today's card must reflect today until midnight. Same query key
@@ -700,7 +700,7 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <StatCard
-          title="Total Batches Today"
+          title="Building"
           value={batchesLoading ? "…" : formatProgressValue(totalBatches?.calzoneBuilt ?? 0, totalBatches?.calzoneBatches ?? 0)}
           subtitle={batchesLoading ? undefined : [
             teamBph > 0 ? `${teamBph.toFixed(1)} batches/hr` : null,
@@ -742,7 +742,7 @@ export default function Dashboard() {
           } : undefined}
         />
         <StatCard
-          title="Dispatching Today"
+          title="Packing"
           value={currentWeekLoading ? "…" : (todayShopifyOrderCount ?? todayDispatches.length).toString()}
           subtitle={packingOph > 0 ? `${packingOph.toFixed(1)} orders/hr packed` : undefined}
           icon={Truck}
@@ -775,7 +775,7 @@ export default function Dashboard() {
           } : undefined}
         />
         <StatCard
-          title="Packs Wrapped"
+          title="Wrapping"
           value={batchesLoading ? "…" : formatProgressValue(totalBatches?.packsWrapped ?? 0, totalBatches?.packsTotal ?? 0)}
           subtitle={stockControlData == null
             ? "Tap for pack report"
@@ -793,7 +793,7 @@ export default function Dashboard() {
           } : undefined}
         />
         <StatCard
-          title="Start Morning Meeting"
+          title="Morning Meeting"
           value="▶"
           subtitle="10-min Two Second Lean"
           icon={Sparkles}
@@ -1135,11 +1135,19 @@ function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, progres
     : 0;
   return (
     <Link href={href} className="h-full">
-      <div className="glass-panel p-4 rounded-2xl hover-lift cursor-pointer group h-full flex flex-col items-center text-center gap-2 min-h-[140px]">
-        <div className={`p-3 rounded-2xl ${bg} ${color} transition-transform group-hover:scale-110`}>
-          <Icon className="w-6 h-6" />
+      <div className="glass-panel rounded-2xl hover-lift cursor-pointer group h-full flex flex-col min-h-[150px] overflow-hidden">
+        {/* The header IS the wayfinding: white-on-green (house rule for
+            on-green text), big and top-of-card so the row scans at a
+            glance (Graeme, 2026-08-18). */}
+        <div className="bg-primary px-2 py-2">
+          <p className="font-display font-bold text-white text-base lg:text-lg leading-tight text-center truncate">
+            {title}
+          </p>
         </div>
-        <p className="text-sm font-medium text-muted-foreground leading-snug">{title}</p>
+        <div className="p-4 pt-3 flex flex-col items-center text-center gap-2 flex-1 w-full">
+        <div className={`p-2.5 rounded-2xl ${bg} ${color} transition-transform group-hover:scale-110`}>
+          <Icon className="w-5 h-5" />
+        </div>
         <h3 className="text-3xl font-display font-bold leading-none tabular-nums whitespace-nowrap">{value}</h3>
         {subtitle && (
           <p className="text-xs text-muted-foreground leading-snug">{subtitle}</p>
@@ -1159,6 +1167,7 @@ function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, progres
             )}
           </div>
         )}
+        </div>
       </div>
     </Link>
   );

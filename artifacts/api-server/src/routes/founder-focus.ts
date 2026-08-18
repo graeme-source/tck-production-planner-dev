@@ -123,6 +123,8 @@ router.get("/overview", async (req: Request, res: Response) => {
     await autofillFromTemplate(dateStr, weekday);
 
     const [pillars, goals, blocks, templates, parkingLot, recurringItems, ticks, tasks, overdueTasks, appleId, appPassword] = await Promise.all([
+      // (appleId/appPassword only decide calendarConfigured — the actual
+      // iCloud fetch moved to GET /events so it can't block this response.)
       db.select().from(founderPillarsTable).where(isNull(founderPillarsTable.archivedAt)).orderBy(asc(founderPillarsTable.sort), asc(founderPillarsTable.id)),
       db.select().from(founderGoalsTable).orderBy(asc(founderGoalsTable.sort), asc(founderGoalsTable.id)),
       db.select().from(founderBlocksTable).where(eq(founderBlocksTable.date, dateStr)).orderBy(asc(founderBlocksTable.startMin)),
@@ -142,19 +144,7 @@ router.get("/overview", async (req: Request, res: Response) => {
     ]);
 
     const tickedItemIds = new Set(ticks.map(t => t.itemId));
-
-    // Apple Calendar is best-effort: an iCloud wobble must never take the
-    // whole Focus page down, so failures degrade to an inline warning.
-    let events: CalendarEvent[] = [];
-    let calendarError: string | null = null;
     const calendarConfigured = !!(appleId && appPassword);
-    if (calendarConfigured) {
-      try {
-        events = await getDayEvents(appleId, appPassword, dateStr, await getEnabledCalendarUrls());
-      } catch (err) {
-        calendarError = err instanceof Error ? err.message : String(err);
-      }
-    }
 
     res.json({
       date: dateStr,
@@ -178,12 +168,39 @@ router.get("/overview", async (req: Request, res: Response) => {
       overdueTasks,
       objectives: await listObjectives(),
       calendarConfigured,
-      events,
-      calendarError,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Day events (Apple Calendar) ────────────────────────────────────────────
+// Split from /overview (2026-08-18): a cold iCloud CalDAV round-trip took
+// seconds and used to hold the WHOLE page blank. Now the page paints from
+// the DB instantly and meetings drop in when Apple answers. Best-effort as
+// before: failures degrade to an inline warning, never a 500.
+router.get("/events", async (req: Request, res: Response) => {
+  const dateStr = typeof req.query.date === "string" && DATE_RE.test(req.query.date)
+    ? req.query.date
+    : null;
+  if (!dateStr) { res.status(400).json({ error: "date=YYYY-MM-DD required" }); return; }
+
+  const [appleId, appPassword] = await Promise.all([
+    getFounderSetting(CALDAV_ID_KEY),
+    getFounderSetting(CALDAV_PW_KEY),
+  ]);
+  if (!appleId || !appPassword) {
+    res.json({ calendarConfigured: false, events: [], calendarError: null });
+    return;
+  }
+  let events: CalendarEvent[] = [];
+  let calendarError: string | null = null;
+  try {
+    events = await getDayEvents(appleId, appPassword, dateStr, await getEnabledCalendarUrls());
+  } catch (err) {
+    calendarError = err instanceof Error ? err.message : String(err);
+  }
+  res.json({ calendarConfigured: true, events, calendarError });
 });
 
 // ── Apple Calendar (CalDAV, read-only) ─────────────────────────────────────
