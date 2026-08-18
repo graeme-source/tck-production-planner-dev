@@ -6303,8 +6303,16 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
               // orderPosition). This field isn't in the generated
               // ProductionPlan type yet, so read it through a local cast.
               const planItems = (plan as unknown as {
-                items?: Array<{ id: number; recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; orderPosition: number }>
+                items?: Array<{ id: number; recipeId: number; recipeName: string; recipeColor: string | null; recipeCategory?: string | null; batchesTarget: number; orderPosition: number }>
               }).items ?? [];
+              // Same split as the plan header: batches means CALZONE batches
+              // (mac cheese counts in packs, never mixed into the number).
+              const listCalzoneBatches = planItems
+                .filter(it => it.recipeCategory !== "Macaroni Cheese")
+                .reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
+              const listMacPacks = planItems
+                .filter(it => it.recipeCategory === "Macaroni Cheese")
+                .reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
 
               return (
                 <div
@@ -6330,7 +6338,8 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
                         {plan.itemCount > 0 && (
                           <span className="text-xs">
                             {plan.itemCount} recipe{plan.itemCount !== 1 ? "s" : ""}
-                            {plan.totalBatchesTarget > 0 && ` · ${plan.totalBatchesTarget} batches`}
+                            {listCalzoneBatches > 0 && ` · ${listCalzoneBatches} batches`}
+                            {listMacPacks > 0 && ` + ${listMacPacks} mac packs`}
                           </span>
                         )}
                         {plan.notes && (
