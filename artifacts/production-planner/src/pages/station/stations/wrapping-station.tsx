@@ -3,7 +3,7 @@ import {
   getGetProductionPlanQueryKey,
 } from "@workspace/api-client-react";
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import {
   Loader2, Plus, Minus, CheckCircle2, Snowflake, AlertCircle, Gift, Flame, ChevronDown, ThermometerSnowflake, ArrowDown,
 } from "lucide-react";
@@ -12,6 +12,7 @@ import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import { BreakTracker } from "../shared/break-tracker";
+import { PaceKpiStrip, type PaceBands } from "../shared/pace-kpi-strip";
 import { getStationCount, getAvailableFromPrev, compareItemsForDisplay } from "../shared/constants";
 import { netTwoPacks as computeNetTwoPacks, effectiveBatchesTarget } from "../shared/recipe-completion";
 
@@ -46,8 +47,33 @@ interface ShopifyWrapConfirmState {
 type PostOvenItem = { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number };
 type PostOvenMap = Record<number, PostOvenItem[]>;
 
+// Wrapping pace bands, from 2 weeks of live submission data (5–19 Aug 2026):
+// active-interval pace median 163 packs/hr, p75 212, p90 281. Standard 180
+// = a 24-stack every 8 minutes; stretch 240 = every 6 minutes (Graeme's own
+// fast-day bursts, deliberately above the bar). Idle gaps over 20 minutes
+// are excluded server-side, so this judges pace only while wrapping.
+const WRAPPING_PACE_BANDS: PaceBands = { green: 180, amber: 120, stretch: 240 };
+
+interface WrappingSpeed {
+  packs: number;
+  activeMinutes: number | null;
+  packsPerHour: number | null;
+}
+
 export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const queryClient = useQueryClient();
+
+  // Today's wrapping pace — refreshed every minute; each fridge/freezer add
+  // lands in fridge_stock_changes, so the number moves as the team works.
+  const { data: wrappingSpeed } = useQuery<WrappingSpeed>({
+    queryKey: ["wrapping-speed"],
+    queryFn: async () => {
+      const res = await fetch(`/api/reports/wrapping-speed`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load wrapping speed");
+      return res.json();
+    },
+    refetchInterval: 60_000,
+  });
   const [wrappingLoading, setWrappingLoading] = useState<number | null>(null);
   const [storageLoading, setStorageLoading] = useState<number | null>(null);
   const [wonlyLoading, setWonlyLoading] = useState<number | null>(null);
@@ -555,6 +581,16 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
             style={{ width: `${allWrapped ? 100 : wrappingPct}%` }}
           />
         </div>
+        <PaceKpiStrip
+          className="pt-3 border-t border-border"
+          rate={wrappingSpeed?.packsPerHour ?? null}
+          rateUnit="Packs / hour"
+          count={wrappingSpeed?.packs ?? 0}
+          countLabel="Wrapped today"
+          activeMinutes={wrappingSpeed?.activeMinutes ?? null}
+          bands={WRAPPING_PACE_BANDS}
+          unitNoun="pack"
+        />
       </div>
 
       {/* Unified accordion queue */}

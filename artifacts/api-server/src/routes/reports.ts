@@ -501,6 +501,80 @@ router.get("/packing-speed", async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
+// GET /wrapping-speed?date=YYYY-MM-DD — the wrapping station's pace KPI.
+//
+// Source of truth: fridge_stock_changes rows with source='wrapping' and a
+// positive delta — every "add to fridge/freezer" tap the wrappers make,
+// timestamped, in packs. Same active-time method as packing-speed, but with
+// a 20-MINUTE idle threshold (Graeme, 2026-08-19): wrapping is stop-start —
+// a 24-stack can legitimately take ten minutes, and the team gets pulled
+// onto deliveries — so only gaps longer than 20 minutes pause the clock,
+// and the whole gap is then excluded from active time.
+//
+// Standard bands derived from 2 weeks of live data (5–19 Aug 2026): active
+// -interval pace median 163 packs/hr, p75 212, p90 281; day-level median
+// ~192. Standard 180 (a 24-stack every 8 min), stretch 240 (every 6 min —
+// Graeme's own fast-day bursts). Bands live client-side so they're easy to
+// tune; this endpoint just reports honestly.
+// ──────────────────────────────────────────────────────────────────────────────
+const WRAPPING_IDLE_THRESHOLD_MS = 20 * 60 * 1000;
+
+router.get("/wrapping-speed", async (req, res) => {
+  const date = req.query.date ? String(req.query.date) : londonDateString(new Date());
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    res.status(400).json({ error: "date must be YYYY-MM-DD" });
+    return;
+  }
+  try {
+    const rows = await db.execute<{ created_at: string; delta: number }>(sql`
+      SELECT created_at, delta FROM fridge_stock_changes
+      WHERE source = 'wrapping' AND delta > 0
+        AND created_at >= ${date}::date AND created_at < (${date}::date + INTERVAL '1 day')
+      ORDER BY created_at
+    `);
+    const subs = (rows.rows ?? []).map(r => ({ ts: new Date(r.created_at + "Z").getTime(), packs: Number(r.delta) }));
+
+    const packs = subs.reduce((s, x) => s + x.packs, 0);
+    if (subs.length < 2) {
+      res.json({ date, packs, submissions: subs.length, windowMinutes: null, idleMinutes: null, idleBreaks: 0, activeMinutes: null, packsPerHour: null });
+      return;
+    }
+
+    const firstTs = subs[0].ts;
+    const lastTs = subs[subs.length - 1].ts;
+    const windowMs = lastTs - firstTs;
+    let idleMs = 0;
+    let idleBreaks = 0;
+    for (let i = 1; i < subs.length; i++) {
+      const gap = subs[i].ts - subs[i - 1].ts;
+      if (gap > WRAPPING_IDLE_THRESHOLD_MS) {
+        idleMs += gap;
+        idleBreaks++;
+      }
+    }
+    const activeMs = Math.max(0, windowMs - idleMs);
+    const activeHours = activeMs > 60_000 ? activeMs / 3_600_000 : null;
+
+    res.json({
+      date,
+      packs,
+      submissions: subs.length,
+      firstAt: new Date(firstTs).toISOString(),
+      lastAt: new Date(lastTs).toISOString(),
+      windowMinutes: Math.round(windowMs / 60_000),
+      idleMinutes: Math.round(idleMs / 60_000),
+      idleBreaks,
+      activeMinutes: Math.round(activeMs / 60_000),
+      packsPerHour: activeHours != null ? Math.round(packs / activeHours) : null,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("Wrapping speed error:", msg);
+    res.status(500).json({ error: "Unable to compute wrapping speed" });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
 // GET /leftover-filling — aggregate leftover filling data per recipe
 // ──────────────────────────────────────────────────────────────────────────────
 router.get("/leftover-filling", async (req, res) => {
