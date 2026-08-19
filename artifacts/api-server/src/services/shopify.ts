@@ -264,25 +264,35 @@ export interface ShopifyLineItem {
    *  quantity, so operational reads must use this. Optional because
    *  older cached payloads may predate the field. */
   current_quantity?: number | null;
+  /** False for digital products (gift cards etc.) — nothing to pack. */
+  requires_shipping?: boolean;
+  gift_card?: boolean;
   sku: string;
   price: string;
 }
 
 /**
- * Drop line items the customer no longer gets. When an item is refunded or
- * edited off an order, Shopify LEAVES it in line_items at its original
- * quantity and only current_quantity tells the truth — which had the
- * packing screen shipping items people had already been refunded for
- * (found live 2026-08-19, e.g. #132747's removed CarniZone). Partial
- * removals shrink quantity to what's still owed. Items without the field
- * (defensive: very old payload shapes) pass through untouched.
+ * Line items as the PACKING BENCH should see them:
+ *
+ * 1. Removed items are dropped. When an item is refunded or edited off an
+ *    order, Shopify LEAVES it in line_items at its original quantity and
+ *    only current_quantity tells the truth — which had the packing screen
+ *    shipping items people had already been refunded for (found live
+ *    2026-08-19, e.g. #132747's removed CarniZone). Partial removals
+ *    shrink quantity to what's still owed.
+ * 2. Digital items are dropped (gift cards etc., 2026-08-19) — anything
+ *    Shopify says doesn't ship has no business on a packing list. The old
+ *    Replit app had this filter; it never made the port.
+ *
+ * Fields are optional-defensive: an item missing them passes through.
  */
-function dropRemovedLineItems(order: ShopifyOrder): ShopifyOrder {
+function toPackableLineItems(order: ShopifyOrder): ShopifyOrder {
   if (!Array.isArray(order.line_items)) return order;
   return {
     ...order,
     line_items: order.line_items
       .filter(li => li.current_quantity == null || li.current_quantity > 0)
+      .filter(li => li.requires_shipping !== false && li.gift_card !== true)
       .map(li =>
         li.current_quantity != null && li.current_quantity < li.quantity
           ? { ...li, quantity: li.current_quantity }
@@ -384,7 +394,7 @@ export async function getOrdersByTag(tag: string): Promise<ShopifyOrder[]> {
     // Every consumer of tag reads is operational (packing queue, scan
     // queue, dispatch KPIs, stock decrement) — none should ever see an
     // item the customer was refunded for.
-    .map(dropRemovedLineItems);
+    .map(toPackableLineItems);
 }
 
 export async function getProducts(): Promise<ShopifyProduct[]> {
@@ -683,7 +693,7 @@ export async function getRecentUnfulfilledOrders(daysBack = 30): Promise<Shopify
     pageInfo = parseNextPageInfo(res.headers.get("Link"));
   } while (pageInfo);
 
-  return allOrders.filter(o => o.fulfillment_status !== "fulfilled").map(dropRemovedLineItems);
+  return allOrders.filter(o => o.fulfillment_status !== "fulfilled").map(toPackableLineItems);
 }
 
 /**
@@ -698,7 +708,7 @@ export async function getOrderById(orderId: number): Promise<ShopifyOrder | null
     const data = (await shopifyFetch(`/orders/${orderId}.json`, {
       fields: "id,name,tags,created_at,fulfillment_status,line_items",
     })) as { order: ShopifyOrder };
-    return data.order ? dropRemovedLineItems(data.order) : null;
+    return data.order ? toPackableLineItems(data.order) : null;
   } catch (err) {
     console.error(`[shopify] getOrderById(${orderId}) failed:`, err);
     return null;
@@ -713,7 +723,7 @@ export async function findOrderByName(name: string): Promise<ShopifyOrder | null
     status: "any",
     fields: "id,name,tags,created_at,financial_status,fulfillment_status,total_price,customer,shipping_address,line_items,note",
   })) as { orders: ShopifyOrder[] };
-  return data.orders[0] ? dropRemovedLineItems(data.orders[0]) : null;
+  return data.orders[0] ? toPackableLineItems(data.orders[0]) : null;
 }
 
 // Adjust inventory level for a Shopify variant by delta (positive = add, negative = remove).
