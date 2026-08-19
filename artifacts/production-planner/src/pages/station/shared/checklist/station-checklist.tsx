@@ -747,51 +747,56 @@ interface PackBatchRow {
   fridgeQty?: number;
   suggestedBatchNumber: number | null;
   suggestedUseByDate: string | null;
+  /** Tap-options: this recipe's fridge batches (FIFO first) + recent plans. */
+  candidateBatchNumbers?: number[];
   recordedFirstBatchNumber: number | null;
   recordedLastBatchNumber: number | null;
   firstRecordedAt: string | null;
   lastRecordedAt: string | null;
 }
 
+/**
+ * Tap-to-record (2026-08-19): typing was slow and — worse — nobody could
+ * tell whether a number was actually SAVED without pressing an unlabelled
+ * green button. Now each recipe offers the batch numbers we already know
+ * about as one-tap chips; tapping saves immediately and the row drops into
+ * the Recorded list below, so what's left to check is always the visible
+ * remainder. "Other…" keeps a manual entry for a number we didn't predict.
+ */
 function PackBatchNumbers({ data, planId, kind }: { data: unknown[]; planId: number; kind: "first" | "last" }) {
-  const items = data as PackBatchRow[];
-  const [values, setValues] = useState<Record<number, string>>({});
-  const [saving, setSaving] = useState<Record<number, boolean>>({});
-
+  const items = (data as PackBatchRow[]).filter(i => i.recipeId != null);
   const isLast = kind === "last";
 
-  // Initialize values: for first-pack, prefill from recorded-first or
-  // suggested-oldest. For last-pack, prefill only from recorded-last —
-  // we never suggest a value because the operator must read the actual
-  // batch number off the pack going out.
-  useEffect(() => {
-    const init: Record<number, string> = {};
-    for (const item of items) {
-      if (item.recipeId == null) continue;
-      const recorded = isLast ? item.recordedLastBatchNumber : item.recordedFirstBatchNumber;
-      const seed = isLast
-        ? recorded
-        : (recorded ?? item.suggestedBatchNumber);
-      init[item.recipeId] = seed != null ? String(seed) : "";
-    }
-    setValues(init);
-  }, [data, isLast]);
+  // Locally-confirmed saves layered over what the server sent — the row
+  // moves to Recorded the moment its POST succeeds, no refetch needed.
+  const [recordedLocal, setRecordedLocal] = useState<Record<number, number>>({});
+  const [saving, setSaving] = useState<Record<number, boolean>>({});
+  const [manualFor, setManualFor] = useState<number | null>(null);
+  const [manualValue, setManualValue] = useState("");
+  const [changing, setChanging] = useState<number | null>(null);
 
-  const saveBatch = async (recipeId: number) => {
-    const val = parseInt(values[recipeId]);
-    if (!val || isNaN(val)) return;
+  useEffect(() => { setRecordedLocal({}); setManualFor(null); setChanging(null); }, [planId, kind]);
+
+  const recordedNumber = (item: PackBatchRow): number | null =>
+    recordedLocal[item.recipeId] ?? (isLast ? item.recordedLastBatchNumber : item.recordedFirstBatchNumber);
+
+  const saveBatch = async (recipeId: number, batchNumber: number) => {
+    if (!batchNumber || isNaN(batchNumber)) return;
     setSaving(s => ({ ...s, [recipeId]: true }));
     try {
       const res = await fetch(`${BASE}/api/checklists/packing-batch-record`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planId, recipeId, batchNumber: val, kind }),
+        body: JSON.stringify({ planId, recipeId, batchNumber, kind }),
       });
       if (!res.ok) throw new Error("Failed to save");
-      toast({ title: "Saved", description: `${isLast ? "Last" : "First"} pack batch number recorded` });
+      setRecordedLocal(r => ({ ...r, [recipeId]: batchNumber }));
+      setManualFor(null);
+      setManualValue("");
+      setChanging(null);
     } catch {
-      toast({ title: "Error", description: "Failed to save batch number", variant: "destructive" });
+      toast({ title: "Not saved", description: "Couldn't save that batch number — try again", variant: "destructive" });
     } finally {
       setSaving(s => ({ ...s, [recipeId]: false }));
     }
@@ -805,62 +810,116 @@ function PackBatchNumbers({ data, planId, kind }: { data: unknown[]; planId: num
     );
   }
 
+  const pending = items.filter(i => recordedNumber(i) == null || changing === i.recipeId);
+  const done = items.filter(i => recordedNumber(i) != null && changing !== i.recipeId);
+
   return (
     <div className="mb-4 space-y-2">
-      <p className="text-sm font-semibold text-foreground mb-2">
-        {isLast
-          ? "Record last pack batch number for each recipe shipped today"
-          : "Record first pack batch number for each recipe in the fridge"}
-      </p>
-      {items.map(item => {
-        if (!item.recipeId) return null;
-        const val = values[item.recipeId] ?? "";
-        const recorded = isLast ? item.recordedLastBatchNumber : item.recordedFirstBatchNumber;
-        const isSaved = recorded != null && String(recorded) === val;
-        // For last-pack: surface today's first-pack as context if it's
-        // already been recorded. For first-pack: surface the FIFO
-        // suggestion as before.
-        const contextLine = isLast
-          ? (item.recordedFirstBatchNumber != null ? `First today: #${item.recordedFirstBatchNumber}` : null)
-          : (item.suggestedBatchNumber && !isSaved ? `Suggested: #${item.suggestedBatchNumber}` : null);
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <p className="text-sm font-semibold text-foreground">
+          {isLast
+            ? "Tap the batch number on the LAST pack of each recipe shipped today"
+            : "Tap the batch number on the FIRST pack of each recipe in the fridge"}
+        </p>
+        <span className={cn(
+          "text-xs font-bold tabular-nums px-2 py-0.5 rounded-full shrink-0",
+          pending.length === 0 ? "bg-emerald-500/15 text-emerald-600" : "bg-amber-500/15 text-amber-600",
+        )}>
+          {pending.length === 0 ? "All recorded ✓" : `${pending.length} to go`}
+        </span>
+      </div>
+
+      {pending.map(item => {
+        // FIFO suggestion leads for first-pack; for last-pack the order is
+        // still shown but nothing is highlighted — the operator must read
+        // the real pack.
+        const candidates = (item.candidateBatchNumbers ?? []).slice(0, 6);
+        const current = recordedNumber(item);
         return (
-          <div key={item.recipeId} className={cn(
-            "flex items-center gap-3 p-3 rounded-xl border transition-colors",
-            isSaved ? "bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800" : "bg-secondary/20 border-border"
-          )}>
-            <div className="flex-1 min-w-0">
+          <div key={item.recipeId} className="p-3 rounded-xl border bg-secondary/20 border-border space-y-2">
+            <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-semibold truncate">{item.recipeName}</p>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground shrink-0">
                 {item.fridgeQty != null ? `${Math.round(item.fridgeQty)} packs in fridge` : ""}
-                {contextLine ? ` · ${contextLine}` : ""}
+                {isLast && item.recordedFirstBatchNumber != null ? ` · first today #${item.recordedFirstBatchNumber}` : ""}
               </p>
-              {isSaved && (
-                <p className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3" /> Recorded
-                </p>
-              )}
             </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <span className="text-xs text-muted-foreground">#</span>
-              <input
-                type="number"
-                className="w-20 px-2 py-1.5 text-sm text-center font-mono font-bold border border-border rounded-lg bg-background tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30"
-                value={val}
-                onChange={e => setValues(v => ({ ...v, [item.recipeId!]: e.target.value }))}
-                onKeyDown={e => { if (e.key === "Enter") saveBatch(item.recipeId!); }}
-                placeholder="—"
-              />
+            <div className="flex flex-wrap gap-1.5">
+              {candidates.map(n => (
+                <button
+                  key={n}
+                  onClick={() => saveBatch(item.recipeId, n)}
+                  disabled={saving[item.recipeId]}
+                  className={cn(
+                    "px-3 py-2 rounded-lg border font-mono font-bold text-sm tabular-nums transition-colors disabled:opacity-50",
+                    current === n
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : !isLast && n === item.suggestedBatchNumber
+                        ? "border-primary/60 bg-primary/10 text-primary hover:bg-primary/20"
+                        : "border-border bg-background hover:border-primary hover:text-primary",
+                  )}
+                >
+                  #{n}
+                  {!isLast && n === item.suggestedBatchNumber && (
+                    <span className="ml-1 text-[10px] font-sans font-semibold uppercase">fifo</span>
+                  )}
+                </button>
+              ))}
               <button
-                onClick={() => saveBatch(item.recipeId!)}
-                disabled={!val || saving[item.recipeId!]}
-                className="p-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                onClick={() => { setManualFor(m => m === item.recipeId ? null : item.recipeId); setManualValue(""); }}
+                disabled={saving[item.recipeId]}
+                className="px-3 py-2 rounded-lg border border-dashed border-border bg-background text-sm text-muted-foreground hover:border-primary hover:text-primary transition-colors"
               >
-                {saving[item.recipeId!] ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                Other…
               </button>
+              {saving[item.recipeId] && <Loader2 className="w-4 h-4 animate-spin self-center text-muted-foreground" />}
             </div>
+            {manualFor === item.recipeId && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground">#</span>
+                <input
+                  type="number"
+                  autoFocus
+                  className="w-24 px-2 py-1.5 text-sm text-center font-mono font-bold border border-primary/40 rounded-lg bg-background tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  value={manualValue}
+                  onChange={e => setManualValue(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") saveBatch(item.recipeId, parseInt(manualValue)); }}
+                  placeholder="type it"
+                />
+                <button
+                  onClick={() => saveBatch(item.recipeId, parseInt(manualValue))}
+                  disabled={!manualValue || saving[item.recipeId]}
+                  className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 disabled:opacity-50"
+                >
+                  Save
+                </button>
+              </div>
+            )}
           </div>
         );
       })}
+
+      {done.length > 0 && (
+        <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 p-3 space-y-1">
+          <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+            <CheckCircle2 className="w-3.5 h-3.5" /> Recorded
+          </p>
+          {done.map(item => (
+            <div key={item.recipeId} className="flex items-center justify-between gap-2 text-sm">
+              <span className="truncate">{item.recipeName}</span>
+              <span className="flex items-center gap-2 shrink-0">
+                <span className="font-mono font-bold tabular-nums">#{recordedNumber(item)}</span>
+                <button
+                  onClick={() => setChanging(item.recipeId)}
+                  className="text-[11px] text-muted-foreground hover:text-primary underline-offset-2 hover:underline"
+                >
+                  change
+                </button>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

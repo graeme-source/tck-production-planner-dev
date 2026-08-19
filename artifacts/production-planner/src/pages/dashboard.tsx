@@ -747,10 +747,13 @@ export default function Dashboard() {
           icon={Truck}
           color="text-blue-500"
           bg="bg-blue-500/10"
-          // Straight into today's packing wave. Shopify date tags are the
-          // DELIVERY date and an overnight courier means today's packing
-          // delivers tomorrow, so the wave to open is today + 1.
-          href={`/fulfilment?tag=${format(addDays(new Date(), 1), "yyyy-MM-dd")}`}
+          // Straight into today's PACKING STATION — that's where the person
+          // tapping this card is headed (Graeme, 2026-08-19; it used to jump
+          // to the despatch page instead). Falls back to the despatch wave
+          // when no plan is open today.
+          href={todayPlans.length > 0
+            ? `/plans/${todayPlans[0].id}/station/packing`
+            : `/fulfilment?tag=${format(addDays(new Date(), 1), "yyyy-MM-dd")}`}
           progress={todayIndex >= 0 && (currentWeekOrders![todayIndex].orderCount ?? 0) > 0 ? {
             done: currentWeekOrders![todayIndex].fulfilledCount,
             total: currentWeekOrders![todayIndex].orderCount,
