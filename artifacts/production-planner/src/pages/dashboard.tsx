@@ -9,7 +9,7 @@ import { format, isToday, startOfWeek, addWeeks, addDays } from "date-fns";
 import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X, Sparkles, Salad, UserPlus } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/contexts/auth-context";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from "recharts";
 import { compareItemsForDisplay } from "@/pages/station/shared/constants";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -504,29 +504,28 @@ export default function Dashboard() {
   // (Graeme, 2026-08-12). The total is a synthetic row: it carries isTotal so
   // the tooltip, the axis label and the bar colour can treat it as a summary
   // rather than an eighth day.
+  // Days only — the week total lives in its own block BESIDE the chart, on
+  // its own scale. When it was an eighth bar it dictated the Y axis and
+  // squashed every daily bar to a sliver (Graeme, 2026-08-19).
   const dispatchChartData = useMemo(() => {
     if (!weeklyOrders) return undefined;
-    const days = weeklyOrders.map(d => ({
+    return weeklyOrders.map(d => ({
       ...d,
       madePacks: madePacksByDate.get(d.date) ?? 0,
-      isTotal: false,
     }));
-    const sum = (pick: (d: typeof days[number]) => number) => days.reduce((s, d) => s + pick(d), 0);
-    return [
-      ...days,
-      {
-        date: "__total__",
-        deliveryDate: "",
-        day: "Total",
-        orderCount: sum(d => d.orderCount),
-        fulfilledCount: sum(d => d.fulfilledCount),
-        unfulfilledCount: sum(d => d.unfulfilledCount),
-        packCount: sum(d => d.packCount),
-        madePacks: sum(d => d.madePacks),
-        isTotal: true,
-      },
-    ];
   }, [weeklyOrders, weekPacksMade]);
+
+  const dispatchWeekTotals = useMemo(() => {
+    if (!dispatchChartData) return undefined;
+    const sum = (pick: (d: NonNullable<typeof dispatchChartData>[number]) => number) =>
+      dispatchChartData.reduce((s, d) => s + pick(d), 0);
+    return {
+      orderCount: sum(d => d.orderCount),
+      fulfilledCount: sum(d => d.fulfilledCount),
+      packCount: sum(d => d.packCount),
+      madePacks: sum(d => d.madePacks),
+    };
+  }, [dispatchChartData]);
 
   const { data: todayDeliveriesCount } = useQuery({
     queryKey: ["today-deliveries-count"],
@@ -748,10 +747,13 @@ export default function Dashboard() {
           icon={Truck}
           color="text-blue-500"
           bg="bg-blue-500/10"
-          // Straight into today's packing wave. Shopify date tags are the
-          // DELIVERY date and an overnight courier means today's packing
-          // delivers tomorrow, so the wave to open is today + 1.
-          href={`/fulfilment?tag=${format(addDays(new Date(), 1), "yyyy-MM-dd")}`}
+          // Straight into today's PACKING STATION — that's where the person
+          // tapping this card is headed (Graeme, 2026-08-19; it used to jump
+          // to the despatch page instead). Falls back to the despatch wave
+          // when no plan is open today.
+          href={todayPlans.length > 0
+            ? `/plans/${todayPlans[0].id}/station/packing`
+            : `/fulfilment?tag=${format(addDays(new Date(), 1), "yyyy-MM-dd")}`}
           progress={todayIndex >= 0 && (currentWeekOrders![todayIndex].orderCount ?? 0) > 0 ? {
             done: currentWeekOrders![todayIndex].fulfilledCount,
             total: currentWeekOrders![todayIndex].orderCount,
@@ -888,21 +890,23 @@ export default function Dashboard() {
             </button>
           </div>
 
-          <div className="h-[300px] w-full">
+          <div className="h-[300px] w-full flex items-stretch">
             {weeklyLoading ? (
-              <div className="flex items-center justify-center h-full text-muted-foreground">
+              <div className="flex items-center justify-center h-full w-full text-muted-foreground">
                 <RefreshCw className="w-6 h-6 animate-spin mr-2" />
                 <span className="text-sm">Fetching Shopify orders…</span>
               </div>
             ) : weeklyError ? (
-              <div className="flex items-center justify-center h-full text-destructive text-sm">
+              <div className="flex items-center justify-center h-full w-full text-destructive text-sm">
                 Could not load order data. Check Shopify connection.
               </div>
             ) : (
+              <>
+              <div className="flex-1 min-w-0">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
                   data={dispatchChartData}
-                  barSize={20}
+                  barSize={30}
                   barGap={3}
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
@@ -912,23 +916,7 @@ export default function Dashboard() {
                     fontSize={12}
                     tickLine={false}
                     axisLine={false}
-                    height={36}
                     interval={0}
-                    tick={(props: { x: number; y: number; payload: { value: string } }) => {
-                      const day = props.payload.value;
-                      const row = dispatchChartData?.find(d => d.day === day);
-                      const made = row?.madePacks ?? 0;
-                      return (
-                        <g transform={`translate(${props.x},${props.y})`}>
-                          <text x={0} y={0} dy={12} textAnchor="middle"
-                            fill={row?.isTotal ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))"}
-                            fontSize={12} fontWeight={row?.isTotal ? 700 : 400}>{day}</text>
-                          <text x={0} y={0} dy={26} textAnchor="middle" fill="hsl(var(--foreground))" fontSize={11} fontWeight={600}>
-                            {row?.packCount ?? 0}{made > 0 ? ` / ${made}` : ""}
-                          </text>
-                        </g>
-                      );
-                    }}
                   />
                   <YAxis
                     stroke="hsl(var(--muted-foreground))"
@@ -941,27 +929,55 @@ export default function Dashboard() {
                   <Tooltip content={<CustomTooltip />} cursor={{ fill: "hsl(var(--secondary))" }} />
                   {/* Both bars are PACKS so the eye can honestly compare
                       dispatch volume against production volume. Orders and
-                      fulfilment progress live in the tooltip and summary. */}
+                      fulfilment progress live in the tooltip and summary.
+                      Each bar carries its own number + what it is: inside
+                      and rotated when there's room, perched on top when
+                      the bar is too short. */}
                   <Bar dataKey="packCount" name="Dispatching (packs)" radius={[6, 6, 0, 0]}>
                     {dispatchChartData?.map((entry, i) => (
                       <Cell
                         key={entry.date}
-                        // Total gets the full-strength colour so it reads as a
-                        // summary; today stays highlighted among the days.
-                        fill={entry.isTotal || i === todayIndex ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.35)"}
+                        fill={i === todayIndex ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.35)"}
                       />
                     ))}
+                    <LabelList dataKey="packCount" content={(props: any) =>
+                      renderBarLabel(props, "dispatching", props.index === todayIndex ? "#fff" : "hsl(var(--foreground))")} />
                   </Bar>
                   <Bar dataKey="madePacks" name="Making (calzone packs)" radius={[6, 6, 0, 0]}>
                     {dispatchChartData?.map(entry => (
                       <Cell
                         key={entry.date}
-                        fill={entry.isTotal ? "hsl(217 91% 60%)" : "hsl(217 91% 60% / 0.75)"}
+                        fill="hsl(217 91% 60% / 0.75)"
                       />
                     ))}
+                    <LabelList dataKey="madePacks" content={(props: any) => renderBarLabel(props, "making", "#fff")} />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
+              </div>
+              {/* Week total on its OWN scale, clearly fenced off from the
+                  daily bars — as a bar it dwarfed them into unreadability. */}
+              {dispatchWeekTotals && (
+                <div className="w-[150px] shrink-0 border-l-2 border-border pl-4 ml-3 flex flex-col justify-center gap-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Week total</p>
+                  <div>
+                    <p className="text-3xl font-display font-bold tabular-nums text-primary">
+                      {dispatchWeekTotals.packCount.toLocaleString()}
+                    </p>
+                    <p className="text-xs text-muted-foreground leading-snug">dispatching (packs)</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5 tabular-nums">
+                      {dispatchWeekTotals.fulfilledCount} / {dispatchWeekTotals.orderCount} orders fulfilled
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-3xl font-display font-bold tabular-nums" style={{ color: "hsl(217 91% 60%)" }}>
+                      {dispatchWeekTotals.madePacks.toLocaleString()}
+                    </p>
+                    <p className="text-xs text-muted-foreground leading-snug">making (calzone packs)</p>
+                  </div>
+                </div>
+              )}
+              </>
             )}
           </div>
 
@@ -986,20 +1002,14 @@ export default function Dashboard() {
                   today
                 </span>
               )}
-              {/* The same week totals as the Total column, in numbers — the
-                  column shares the daily axis, so the figures are the honest
-                  read of "am I up or down" and the bars are the shape of it. */}
+              {/* Totals now live big in the Week Total block beside the
+                  chart; this keeps just the up-or-down verdict. */}
               {(() => {
-                const total = dispatchChartData?.[dispatchChartData.length - 1];
-                if (!total?.isTotal) return null;
-                const diff = total.madePacks - total.packCount;
+                if (!dispatchWeekTotals) return null;
+                const diff = dispatchWeekTotals.madePacks - dispatchWeekTotals.packCount;
                 return (
                   <span className="ml-auto">
                     week:{" "}
-                    <span className="font-semibold text-foreground">{total.packCount}</span>
-                    {" dispatching · "}
-                    <span className="font-semibold text-blue-500">{total.madePacks}</span>
-                    {" making · "}
                     <span className={`font-semibold ${diff < 0 ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"}`}>
                       {diff === 0 ? "level" : diff > 0 ? `${diff} ahead` : `${Math.abs(diff)} behind`}
                     </span>
@@ -1127,6 +1137,29 @@ type StatProgress = { done: number; total: number; label: string; barClass: stri
 function formatProgressValue(done: number, total: number): string {
   if (total <= 0) return "0";
   return done > 0 ? `${done} / ${total}` : total.toString();
+}
+
+/** In-bar label for the dispatch chart: the number plus what the bar IS
+ *  ("400 dispatching"), rotated to fit inside the column. Short bars can't
+ *  hold text, so the number perches above them instead. */
+function renderBarLabel(props: any, word: string, insideFill: string) {
+  const { x, y, width, height, value } = props;
+  if (!value) return null;
+  const cx = x + width / 2;
+  if ((height ?? 0) < 52) {
+    return (
+      <text x={cx} y={y - 4} textAnchor="middle" fontSize={10} fontWeight={700} fill="hsl(var(--foreground))">
+        {value}
+      </text>
+    );
+  }
+  const cy = y + height / 2;
+  return (
+    <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle" fontSize={10} fontWeight={700}
+      fill={insideFill} transform={`rotate(-90 ${cx} ${cy})`}>
+      {value} {word}
+    </text>
+  );
 }
 
 function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, progress }: any & { progress?: StatProgress }) {

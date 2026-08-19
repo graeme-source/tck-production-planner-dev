@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { BreakTracker } from "../shared/break-tracker";
+import { PaceKpiStrip } from "../shared/pace-kpi-strip";
 import { IcePackBanner } from "@/components/ice-pack-callout";
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -282,31 +283,18 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
           />
         </div>
 
-        <div className="grid grid-cols-3 gap-3 pt-3 border-t border-border">
-          <div>
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground uppercase tracking-wider mb-1">
-              <Gauge className="w-3.5 h-3.5" />
-              Orders / hour
-            </div>
-            <div className="text-3xl font-bold tabular-nums font-display">
-              {kpiOrdersPerHour != null ? kpiOrdersPerHour.toFixed(1) : "—"}
-            </div>
-          </div>
-          <div>
-            <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Packed today</div>
-            <div className="text-3xl font-bold tabular-nums font-display">{kpiCount}</div>
-          </div>
-          <div>
-            <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Active time</div>
-            <div className="text-3xl font-bold tabular-nums font-display">
-              {kpiActiveMinutes != null
-                ? kpiActiveMinutes >= 60
-                  ? `${Math.floor(kpiActiveMinutes / 60)}h ${kpiActiveMinutes % 60}m`
-                  : `${kpiActiveMinutes}m`
-                : "—"}
-            </div>
-          </div>
-        </div>
+        {/* Shared pace strip (2026-08-19) — same indicator as wrapping, with
+            the lean nudge. No bands yet: the packing standard isn't agreed;
+            add a PaceBands here when it is. */}
+        <PaceKpiStrip
+          className="pt-3 border-t border-border"
+          rate={kpiOrdersPerHour}
+          rateUnit="Orders / hour"
+          count={kpiCount}
+          countLabel="Packed today"
+          activeMinutes={kpiActiveMinutes}
+          unitNoun="order"
+        />
       </div>
 
       {loading && !progress && (

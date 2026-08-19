@@ -490,6 +490,21 @@ router.delete("/tasks/:id", async (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+// POST /tasks/reschedule-overdue — move EVERY open task from earlier days to
+// one date in a single tap. The per-task buttons in the overdue strip stay
+// for cherry-picking; this is for the "yesterday went sideways, roll the lot
+// forward" morning. Block pins drop for the same reason PATCH drops them: a
+// block id belongs to a single date.
+router.post("/tasks/reschedule-overdue", async (req: Request, res: Response) => {
+  const parsed = z.object({ date: z.string().regex(DATE_RE) }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "date=YYYY-MM-DD required" }); return; }
+  const moved = await db.update(founderTasksTable)
+    .set({ date: parsed.data.date, blockId: null })
+    .where(and(eq(founderTasksTable.status, "open"), lt(founderTasksTable.date, todayLondonStr())))
+    .returning({ id: founderTasksTable.id });
+  res.json({ moved: moved.length });
+});
+
 // Where should a typed task go? Reads the pillars and the day's blocks and
 // proposes a home for it. This ONLY suggests — nothing is written until the
 // founder confirms in the quick-add bar, so a bad guess costs one dropdown.

@@ -993,11 +993,34 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
       : [];
 
     const oldestBatch = new Map<number, { batchNumber: number; useByDate: string }>();
+    // ALL fridge batches per recipe (FIFO order) — the checklist offers
+    // these as tap-to-record options so nobody has to type a number.
+    const candidatesByRecipe = new Map<number, Array<{ batchNumber: number; useByDate: string | null }>>();
     for (const b of batchRows) {
       if (!oldestBatch.has(b.recipeId)) {
         oldestBatch.set(b.recipeId, { batchNumber: b.batchNumber, useByDate: b.useByDate });
       }
+      // Guard against junk rows (batch 0 exists in old data) — a chip
+      // with a nonsense number invites a nonsense record.
+      if (b.batchNumber > 0) {
+        const list = candidatesByRecipe.get(b.recipeId) ?? [];
+        if (!list.some(c => c.batchNumber === b.batchNumber)) {
+          list.push({ batchNumber: b.batchNumber, useByDate: b.useByDate });
+        }
+        candidatesByRecipe.set(b.recipeId, list);
+      }
     }
+
+    // Fallback pool: the batch numbers of the last 14 days of plans. The
+    // fridge-batches table can drift or sit empty for pre-migration stock,
+    // and a pack on the bench is always from a recent production day — so
+    // these cover the gap without anyone reaching for the keyboard.
+    const recentPlanRows = await db
+      .select({ batchNumber: productionPlansTable.batchNumber, planDate: productionPlansTable.planDate })
+      .from(productionPlansTable)
+      .where(sql`${productionPlansTable.planDate} >= (CURRENT_DATE - INTERVAL '14 days')::date AND ${productionPlansTable.batchNumber} IS NOT NULL`)
+      .orderBy(sql`${productionPlansTable.planDate} DESC`);
+    const recentBatchNumbers = [...new Set(recentPlanRows.map(r => r.batchNumber as number))].filter(n => n > 0);
 
     // Get any already-recorded batch numbers for this plan (both first
     // and last — opening check will show what's recorded as first;
@@ -1035,6 +1058,13 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
         // recorded value as context instead.
         suggestedBatchNumber: suggested?.batchNumber ?? null,
         suggestedUseByDate: suggested?.useByDate ?? null,
+        // Tap-options: this recipe's fridge batches (FIFO first), then the
+        // recent-plan pool for anything the batches table doesn't know.
+        candidateBatchNumbers: [
+          ...(candidatesByRecipe.get(recipeId) ?? []).map(c => c.batchNumber),
+          ...recentBatchNumbers.filter(n =>
+            !(candidatesByRecipe.get(recipeId) ?? []).some(c => c.batchNumber === n)),
+        ],
         recordedFirstBatchNumber: recorded?.firstBatchNumber ?? null,
         recordedLastBatchNumber: recorded?.lastBatchNumber ?? null,
         firstRecordedAt: recorded?.firstRecordedAt ?? null,

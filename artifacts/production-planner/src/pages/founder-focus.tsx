@@ -11,7 +11,7 @@ import {
   CalendarDays, Inbox, Target, LayoutTemplate, CircleDashed,
   SkipForward, Pencil, Repeat, Copy, Video, ExternalLink, Eye, EyeOff,
   BellRing, BellOff, GripVertical, Sparkles, Loader2,
-  LineChart, Calculator, Megaphone,
+  LineChart, Calculator, Megaphone, Link2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -344,12 +344,17 @@ export default function FounderFocus() {
     onSuccess: invalidate,
   });
   const patchTask = useMutation({
-    mutationFn: ({ id, ...fields }: { id: number; status?: Task["status"]; title?: string; date?: string; pillarId?: number | null; blockId?: number | null }) =>
+    mutationFn: ({ id, ...fields }: { id: number; status?: Task["status"]; title?: string; date?: string; pillarId?: number | null; blockId?: number | null; url?: string | null }) =>
       api(`/tasks/${id}`, { method: "PATCH", body: JSON.stringify(fields) }),
     onSuccess: invalidate,
   });
   const deleteTask = useMutation({
     mutationFn: (id: number) => api(`/tasks/${id}`, { method: "DELETE" }),
+    onSuccess: invalidate,
+  });
+  const rescheduleAllOverdue = useMutation({
+    mutationFn: (date: string) =>
+      api("/tasks/reschedule-overdue", { method: "POST", body: JSON.stringify({ date }) }),
     onSuccess: invalidate,
   });
   const addTemplateRow = useMutation({
@@ -690,6 +695,8 @@ export default function FounderFocus() {
         {(data?.overdueTasks.length ?? 0) > 0 && (
           <OverdueStrip
             tasks={data!.overdueTasks}
+            onRescheduleAll={date => rescheduleAllOverdue.mutate(date)}
+            rescheduleAllPending={rescheduleAllOverdue.isPending}
             pillarById={pillarById}
             todayStr={todayStr}
             onReschedule={(id, date) => patchTask.mutate({ id, date })}
@@ -777,6 +784,7 @@ export default function FounderFocus() {
             onToggleGoal={(id, done) => patchGoal.mutate({ id, status: done ? "done" : "active" })}
             onToggleTask={(id, done) => patchTask.mutate({ id, status: done ? "done" : "open" })}
             onDeleteTask={id => deleteTask.mutate(id)}
+            onSetTaskUrl={(id, url) => patchTask.mutate({ id, url })}
             onAddTaskToBlock={(block, title) =>
               addTask.mutate({ title, date: dateStr, pillarId: block.pillarId, blockId: block.id })}
           />
@@ -794,6 +802,7 @@ export default function FounderFocus() {
                 pillar={t.pillarId != null ? pillarById.get(t.pillarId) : undefined}
                 onToggle={done => patchTask.mutate({ id: t.id, status: done ? "done" : "open" })}
                 onDelete={() => deleteTask.mutate(t.id)}
+                onSetUrl={url => patchTask.mutate({ id: t.id, url })}
               />
             ))}
           </div>
@@ -1778,7 +1787,7 @@ function layoutLanes(items: Array<{ startMin: number; endMin: number }>): Array<
   return result;
 }
 
-function DayTimeline({ items, pillarById, recurringByBlockId, tasksByBlockId, showTask, isToday, now, busy, statusControls = true, onMove, onResize, onToggleDone, onSkip, onDelete, onTickRecurring, onToggleGoal, onToggleTask, onDeleteTask, onAddTaskToBlock }: {
+function DayTimeline({ items, pillarById, recurringByBlockId, tasksByBlockId, showTask, isToday, now, busy, statusControls = true, onMove, onResize, onToggleDone, onSkip, onDelete, onTickRecurring, onToggleGoal, onToggleTask, onDeleteTask, onSetTaskUrl, onAddTaskToBlock }: {
   items: TimelineCardItem[];
   pillarById: Map<number, Pillar>;
   recurringByBlockId?: Map<number, RecurringItem[]>;
@@ -1800,6 +1809,7 @@ function DayTimeline({ items, pillarById, recurringByBlockId, tasksByBlockId, sh
   onToggleGoal?: (goalId: number, done: boolean) => void;
   onToggleTask?: (taskId: number, done: boolean) => void;
   onDeleteTask?: (taskId: number) => void;
+  onSetTaskUrl?: (taskId: number, url: string | null) => void;
   onAddTaskToBlock?: (block: Block, title: string) => void;
 }) {
   const [drag, setDrag] = useState<TimelineDrag | null>(null);
@@ -1811,6 +1821,8 @@ function DayTimeline({ items, pillarById, recurringByBlockId, tasksByBlockId, sh
   // Which block currently has its inline "add a task" box open. Opening one
   // also expands that card, so the new task is visible the moment it lands.
   const [addingToId, setAddingToId] = useState<number | null>(null);
+  // Which task's link is being edited (expanded cards only).
+  const [urlEditId, setUrlEditId] = useState<number | null>(null);
 
   // Displayed positions, with the in-flight drag applied.
   const displayed = items.map(t => {
@@ -2022,36 +2034,63 @@ function DayTimeline({ items, pillarById, recurringByBlockId, tasksByBlockId, sh
                   {onToggleTask && blockTasks.length > 0 && (h >= 68 || expanded) && (
                     <div className="mt-1 space-y-0.5">
                       {(expanded ? blockTasks : blockTasks.slice(0, 4)).map(t => (
-                        <div key={t.id} className="flex items-center gap-1 group/task">
-                          <button
-                            onClick={() => onToggleTask(t.id, t.status !== "done")}
-                            className={cn(
-                              "flex items-center gap-1.5 text-[11px] rounded-md px-1.5 py-0.5 border min-w-0",
-                              t.status === "done"
-                                ? "border-primary/40 bg-primary/10 text-muted-foreground line-through"
-                                : "border-border hover:border-primary",
-                            )}
-                          >
-                            <span className={cn(
-                              "w-3 h-3 rounded-sm border flex items-center justify-center flex-shrink-0",
-                              t.status === "done" ? "bg-primary border-primary text-primary-foreground" : "border-border",
-                            )}>
-                              {t.status === "done" && <Check className="w-2 h-2" />}
-                            </span>
-                            <span className="truncate">{t.title}</span>
-                          </button>
-                          {t.url && (
-                            <FocusLink url={t.url} label={`Open link for ${t.title}`}
-                              className="flex-shrink-0 p-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20">
-                              <ExternalLink className="w-3 h-3" />
-                            </FocusLink>
-                          )}
-                          {onDeleteTask && expanded && (
-                            <button onClick={() => onDeleteTask(t.id)}
-                              className="p-0.5 rounded text-muted-foreground opacity-0 group-hover/task:opacity-100 hover:text-destructive"
-                              aria-label={`Delete task ${t.title}`}>
-                              <Trash2 className="w-3 h-3" />
+                        <div key={t.id}>
+                          <div className="flex items-center gap-1 group/task">
+                            {/* With a link, the tick chip shrinks to just the
+                                box and the TITLE becomes the link — tapping
+                                the words goes where they point. */}
+                            <button
+                              onClick={() => onToggleTask(t.id, t.status !== "done")}
+                              className={cn(
+                                "flex items-center gap-1.5 text-[11px] rounded-md px-1.5 py-0.5 border min-w-0",
+                                t.status === "done"
+                                  ? "border-primary/40 bg-primary/10 text-muted-foreground line-through"
+                                  : "border-border hover:border-primary",
+                              )}
+                              aria-label={t.url ? `Mark ${t.title} ${t.status === "done" ? "open" : "done"}` : undefined}
+                            >
+                              <span className={cn(
+                                "w-3 h-3 rounded-sm border flex items-center justify-center flex-shrink-0",
+                                t.status === "done" ? "bg-primary border-primary text-primary-foreground" : "border-border",
+                              )}>
+                                {t.status === "done" && <Check className="w-2 h-2" />}
+                              </span>
+                              {!t.url && <span className="truncate">{t.title}</span>}
                             </button>
+                            {t.url && (
+                              <FocusLink url={t.url} label={`Open link for ${t.title}`}
+                                className={cn(
+                                  "flex items-center gap-1 text-[11px] min-w-0 text-primary hover:underline",
+                                  t.status === "done" && "line-through opacity-60",
+                                )}>
+                                <span className="truncate">{t.title}</span>
+                                <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                              </FocusLink>
+                            )}
+                            {onSetTaskUrl && expanded && (
+                              <button onClick={() => setUrlEditId(cur => cur === t.id ? null : t.id)}
+                                className={cn(
+                                  "p-0.5 rounded text-muted-foreground hover:text-primary",
+                                  !t.url && "opacity-0 group-hover/task:opacity-100",
+                                )}
+                                title={t.url ? "Edit link" : "Add link"} aria-label={`Edit link for ${t.title}`}>
+                                <Link2 className="w-3 h-3" />
+                              </button>
+                            )}
+                            {onDeleteTask && expanded && (
+                              <button onClick={() => onDeleteTask(t.id)}
+                                className="p-0.5 rounded text-muted-foreground opacity-0 group-hover/task:opacity-100 hover:text-destructive"
+                                aria-label={`Delete task ${t.title}`}>
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                          {onSetTaskUrl && urlEditId === t.id && (
+                            <InlineUrlInput
+                              initial={t.url}
+                              onSubmit={url => { onSetTaskUrl(t.id, url); setUrlEditId(null); }}
+                              onCancel={() => setUrlEditId(null)}
+                            />
                           )}
                         </div>
                       ))}
@@ -2234,42 +2273,128 @@ function InlineTaskInput({ onSubmit, onCancel }: {
   );
 }
 
+/** Inline URL editor for a task link. Empty + save clears the link. Accepts
+ *  app-relative paths ("/founder/numbers") as well as full URLs — FocusLink
+ *  routes each appropriately. */
+function InlineUrlInput({ initial, onSubmit, onCancel }: {
+  initial: string | null;
+  onSubmit: (url: string | null) => void;
+  onCancel: () => void;
+}) {
+  const [url, setUrl] = useState(initial ?? "");
+  const submit = () => {
+    const raw = url.trim();
+    // Bare domains get https:// so the link doesn't resolve relative to the
+    // app ("thecalzonekitchen.co.uk" would otherwise 404 inside the planner).
+    const normalised = raw === "" ? null
+      : raw.startsWith("/") || /^https?:\/\//i.test(raw) ? raw
+      : `https://${raw}`;
+    onSubmit(normalised);
+  };
+  return (
+    <div className="mt-1 flex items-center gap-1" onClick={e => e.stopPropagation()}>
+      <Link2 className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+      <input
+        value={url}
+        onChange={e => setUrl(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === "Enter") { e.preventDefault(); submit(); }
+          if (e.key === "Escape") onCancel();
+        }}
+        placeholder="https://… or /founder/numbers"
+        autoFocus
+        className="flex-1 min-w-0 px-1.5 py-0.5 rounded-md border border-primary/40 bg-background text-[11px]"
+      />
+      <button onClick={submit}
+        className="p-1 rounded-md text-primary hover:bg-primary/10" aria-label="Save link">
+        <Check className="w-3 h-3" />
+      </button>
+      <button onClick={onCancel} className="p-1 rounded-md text-muted-foreground hover:bg-secondary/50" aria-label="Close">
+        <X className="w-3 h-3" />
+      </button>
+    </div>
+  );
+}
+
 /** A task outside the timeline — the unassigned tray and the overdue strip. */
-function TaskRow({ task, pillar, onToggle, onDelete }: {
+function TaskRow({ task, pillar, onToggle, onDelete, onSetUrl }: {
   task: Task;
   pillar?: Pillar;
   onToggle: (done: boolean) => void;
   onDelete: () => void;
+  onSetUrl?: (url: string | null) => void;
 }) {
+  const [editingUrl, setEditingUrl] = useState(false);
   return (
-    <div className="flex items-center gap-2 group/row">
-      <button
-        onClick={() => onToggle(task.status !== "done")}
-        className={cn(
-          "flex items-center gap-2 text-sm rounded-lg px-2 py-1 border flex-1 min-w-0 text-left",
-          task.status === "done"
-            ? "border-primary/40 bg-primary/10 text-muted-foreground line-through"
-            : "border-border hover:border-primary",
-        )}
-      >
-        <span className={cn(
-          "w-3.5 h-3.5 rounded-sm border flex items-center justify-center flex-shrink-0",
-          task.status === "done" ? "bg-primary border-primary text-primary-foreground" : "border-border",
-        )}>
-          {task.status === "done" && <Check className="w-2.5 h-2.5" />}
-        </span>
-        <span className="truncate flex-1">{task.title}</span>
-        {pillar && (
-          <span className="text-[10px] flex-shrink-0" style={{ color: pillar.color ?? DEFAULT_PILLAR_COLOR }}>
-            {pillar.name}
+    <div>
+      <div className="flex items-center gap-2 group/row">
+        {/* Linked tasks: the chip keeps only the tick box; the TITLE renders
+            beside it as the link, so tapping the words follows the link and
+            tapping the box still ticks the task. */}
+        <button
+          onClick={() => onToggle(task.status !== "done")}
+          className={cn(
+            "flex items-center gap-2 text-sm rounded-lg px-2 py-1 border min-w-0 text-left",
+            !task.url && "flex-1",
+            task.status === "done"
+              ? "border-primary/40 bg-primary/10 text-muted-foreground line-through"
+              : "border-border hover:border-primary",
+          )}
+          aria-label={task.url ? `Mark ${task.title} ${task.status === "done" ? "open" : "done"}` : undefined}
+        >
+          <span className={cn(
+            "w-3.5 h-3.5 rounded-sm border flex items-center justify-center flex-shrink-0",
+            task.status === "done" ? "bg-primary border-primary text-primary-foreground" : "border-border",
+          )}>
+            {task.status === "done" && <Check className="w-2.5 h-2.5" />}
           </span>
+          {!task.url && <span className="truncate flex-1">{task.title}</span>}
+          {!task.url && pillar && (
+            <span className="text-[10px] flex-shrink-0" style={{ color: pillar.color ?? DEFAULT_PILLAR_COLOR }}>
+              {pillar.name}
+            </span>
+          )}
+        </button>
+        {task.url && (
+          <>
+            <FocusLink url={task.url} label={`Open link for ${task.title}`}
+              className={cn(
+                "flex items-center gap-1 text-sm min-w-0 flex-1 text-primary hover:underline",
+                task.status === "done" && "line-through opacity-60",
+              )}>
+              <span className="truncate">{task.title}</span>
+              <ExternalLink className="w-3.5 h-3.5 flex-shrink-0" />
+            </FocusLink>
+            {pillar && (
+              <span className="text-[10px] flex-shrink-0" style={{ color: pillar.color ?? DEFAULT_PILLAR_COLOR }}>
+                {pillar.name}
+              </span>
+            )}
+          </>
         )}
-      </button>
-      <button onClick={onDelete}
-        className="p-1 rounded-md text-muted-foreground opacity-0 group-hover/row:opacity-100 hover:text-destructive"
-        aria-label={`Delete task ${task.title}`}>
-        <Trash2 className="w-3.5 h-3.5" />
-      </button>
+        {onSetUrl && (
+          <button onClick={() => setEditingUrl(e => !e)}
+            className={cn(
+              "p-1 rounded-md text-muted-foreground hover:text-primary",
+              !task.url && "opacity-0 group-hover/row:opacity-100",
+            )}
+            title={task.url ? "Edit link" : "Add link"} aria-label={`Edit link for ${task.title}`}>
+            <Link2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+        <button onClick={onDelete}
+          className="p-1 rounded-md text-muted-foreground opacity-0 group-hover/row:opacity-100 hover:text-destructive"
+          aria-label={`Delete task ${task.title}`}>
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      {onSetUrl && editingUrl && (
+        <InlineUrlInput
+          initial={task.url}
+          onSubmit={url => { onSetUrl(url); setEditingUrl(false); }}
+          onCancel={() => setEditingUrl(false)}
+        />
+      )}
     </div>
   );
 }
@@ -2413,11 +2538,13 @@ function QuickAddTask({ pillars, blocks, dateStr, pending, onAdd, onAddRecurring
  * with here — Graeme's call (2026-08-12): overdue work should be rescheduled
  * on purpose, not silently carried forward.
  */
-function OverdueStrip({ tasks, pillarById, todayStr, onReschedule, onDone, onDrop }: {
+function OverdueStrip({ tasks, pillarById, todayStr, onReschedule, onRescheduleAll, rescheduleAllPending, onDone, onDrop }: {
   tasks: Task[];
   pillarById: Map<number, Pillar>;
   todayStr: string;
   onReschedule: (id: number, date: string) => void;
+  onRescheduleAll: (date: string) => void;
+  rescheduleAllPending?: boolean;
   onDone: (id: number) => void;
   onDrop: (id: number) => void;
 }) {
@@ -2433,6 +2560,30 @@ function OverdueStrip({ tasks, pillarById, todayStr, onReschedule, onDone, onDro
         </span>
         <ChevronDown className={cn("w-4 h-4 text-amber-700 dark:text-amber-400 transition-transform", open && "rotate-180")} />
       </button>
+      {/* One tap for the whole backlog; the per-task buttons below stay for
+          cherry-picking. Only shown when there's more than one to move. */}
+      {open && tasks.length > 1 && (
+        <div className="flex items-center gap-1.5 flex-wrap pl-6">
+          <span className="text-xs text-amber-700 dark:text-amber-400 font-medium">Move all to:</span>
+          <button onClick={() => onRescheduleAll(todayStr)} disabled={rescheduleAllPending}
+            className="text-[11px] px-2 py-1 rounded-md border border-amber-500/40 bg-background font-medium hover:bg-secondary/50 disabled:opacity-50">
+            Today
+          </button>
+          <button onClick={() => onRescheduleAll(tomorrow)} disabled={rescheduleAllPending}
+            className="text-[11px] px-2 py-1 rounded-md border border-amber-500/40 bg-background font-medium hover:bg-secondary/50 disabled:opacity-50">
+            Tomorrow
+          </button>
+          <input
+            type="date"
+            value=""
+            disabled={rescheduleAllPending}
+            onChange={e => e.target.value && onRescheduleAll(e.target.value)}
+            className="text-[11px] px-1.5 py-1 rounded-md border border-amber-500/40 bg-background"
+            aria-label="Pick a new date for all overdue tasks"
+          />
+          {rescheduleAllPending && <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />}
+        </div>
+      )}
       {open && (
         <ul className="space-y-1.5">
           {tasks.map(t => {
@@ -2442,7 +2593,14 @@ function OverdueStrip({ tasks, pillarById, todayStr, onReschedule, onDone, onDro
                 <span className="text-xs text-muted-foreground flex-shrink-0 tabular-nums">
                   {format(parseISO(t.date), "d MMM")}
                 </span>
-                <span className="text-sm flex-1 min-w-0 truncate">{t.title}</span>
+                {t.url ? (
+                  <FocusLink url={t.url} label={`Open link for ${t.title}`}
+                    className="text-sm flex-1 min-w-0 truncate text-primary hover:underline">
+                    {t.title}
+                  </FocusLink>
+                ) : (
+                  <span className="text-sm flex-1 min-w-0 truncate">{t.title}</span>
+                )}
                 {pillar && (
                   <span className="text-[10px] flex-shrink-0" style={{ color: pillar.color ?? DEFAULT_PILLAR_COLOR }}>
                     {pillar.name}

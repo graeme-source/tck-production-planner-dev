@@ -106,6 +106,9 @@ type SupplierOrder = {
     website: string | null;
     leadTimeDays?: number;
     cutoffTime?: string;
+    /** Present when a placed, undelivered PO exists but is past its edit
+     *  cutoff — this draft is a NEW order, not an amendment of that one. */
+    lockedOpenPo?: { id: number; expectedDeliveryDate: string };
   };
   lines: OrderLine[];
 };
@@ -506,6 +509,7 @@ export default function Orders() {
     id: number; name: string; contactName: string | null; email: string | null;
     phone: string | null; orderingPhone: string | null; website: string | null;
     leadTimeDays?: number; cutoffTime?: string;
+    lockedOpenPo?: { id: number; expectedDeliveryDate: string };
   }>>({
     queryKey: ["suppliers-directory"],
     queryFn: async () => {
@@ -1384,6 +1388,7 @@ export default function Orders() {
           website: dir?.website ?? null,
           leadTimeDays: dir?.leadTimeDays,
           cutoffTime: dir?.cutoffTime,
+          lockedOpenPo: undefined as SupplierOrder["supplier"]["lockedOpenPo"],
         },
         lines: [] as OrderLine[],
       };
@@ -1815,6 +1820,15 @@ export default function Orders() {
                     <Truck className="w-3 h-3 inline shrink-0" />
                     Est. delivery: {formatDeliveryDate(getDeliveryDateForSupplier(so.supplier.id, so.supplier.leadTimeDays, so.supplier.cutoffTime))}
                   </p>
+                  {/* An open PO past its edit cutoff can't take these items —
+                      say so plainly, or the team thinks the system forgot
+                      about the order that's already on its way. */}
+                  {so.supplier.lockedOpenPo && !isReopened && (
+                    <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                      Order #{so.supplier.lockedOpenPo.id} (due {so.supplier.lockedOpenPo.expectedDeliveryDate}) is past
+                      its {so.supplier.leadTimeDays ?? 1}-day cutoff — this is a new, separate order.
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2">

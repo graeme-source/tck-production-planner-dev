@@ -608,10 +608,50 @@ type HealthEstimate = {
 
 const ESTIMATE_NUTRIENT_KEYS = ["energyKj", "energyKcal", "fat", "saturates", "carbohydrate", "sugars", "protein", "fibre", "salt"] as const;
 
+type ScrapedIngredient = {
+  ingredients: string | null;
+  allergens: string[];
+  energyKj: number | null; energyKcal: number | null; fat: number | null;
+  saturates: number | null; carbohydrate: number | null; sugars: number | null;
+  protein: number | null; fibre: number | null; salt: number | null;
+  name: string | null; brand: string | null; notes: string | null;
+};
+
+// Free-form allergen names from a scraped page → UK14 codes (same map as
+// the ingredient form dialog). Unmatched names are dropped.
+const SCRAPE_ALLERGEN_MAP: Record<string, string> = {
+  celery: "celery",
+  gluten: "cereals_containing_gluten", wheat: "cereals_containing_gluten",
+  rye: "cereals_containing_gluten", barley: "cereals_containing_gluten", oats: "cereals_containing_gluten",
+  crustaceans: "crustaceans", prawns: "crustaceans",
+  eggs: "eggs", egg: "eggs",
+  fish: "fish",
+  lupin: "lupin",
+  milk: "milk", dairy: "milk",
+  molluscs: "molluscs",
+  mustard: "mustard",
+  "tree nuts": "nuts", nuts: "nuts",
+  peanuts: "peanuts",
+  sesame: "sesame",
+  soybeans: "soybeans", soya: "soybeans", soy: "soybeans",
+  "sulphur dioxide": "sulphur_dioxide", sulphites: "sulphur_dioxide", sulfites: "sulphur_dioxide",
+};
+
+function mapScrapedAllergens(names: string[]): string[] {
+  const out = new Set<string>();
+  for (const n of names) {
+    const code = SCRAPE_ALLERGEN_MAP[n.toLowerCase().trim()];
+    if (code) out.add(code);
+  }
+  return Array.from(out);
+}
+
 function DataHealthPanel() {
   const [rows, setRows] = useState<HealthRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [estimates, setEstimates] = useState<Record<number, HealthEstimate | "loading" | { error: string }>>({});
+  const [scrapeUrls, setScrapeUrls] = useState<Record<number, string>>({});
+  const [scrapes, setScrapes] = useState<Record<number, ScrapedIngredient | "loading" | { error: string }>>({});
   const [labelDrafts, setLabelDrafts] = useState<Record<number, string>>({});
   const [busyIds, setBusyIds] = useState<Set<number>>(new Set());
   const [batchRunning, setBatchRunning] = useState(false);
@@ -646,6 +686,49 @@ function DataHealthPanel() {
     } catch (e) {
       setEstimates(prev => ({ ...prev, [row.id]: { error: e instanceof Error ? e.message : String(e) } }));
     }
+  };
+
+  const fetchScrape = async (row: HealthRow): Promise<void> => {
+    const url = (scrapeUrls[row.id] ?? "").trim();
+    if (!url) return;
+    setScrapes(prev => ({ ...prev, [row.id]: "loading" }));
+    try {
+      const res = await fetch(`${BASE}/api/ingredients/scrape-url`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? `Scrape failed (${res.status})`);
+      setScrapes(prev => ({ ...prev, [row.id]: body.extracted as ScrapedIngredient }));
+    } catch (e) {
+      setScrapes(prev => ({ ...prev, [row.id]: { error: e instanceof Error ? e.message : String(e) } }));
+    }
+  };
+
+  // Scraped data comes from a labelled supplier page, so applied values
+  // clear the AI-estimated flag (unlike estimates, which set it).
+  const applyScrape = async (row: HealthRow, scraped: ScrapedIngredient) => {
+    const curRes = await fetch(`${BASE}/api/ingredients/${row.id}`, { credentials: "include" });
+    if (!curRes.ok) { setError("Could not load current ingredient"); return; }
+    const current = await curRes.json();
+    const changes: Record<string, unknown> = {};
+    for (const key of ESTIMATE_NUTRIENT_KEYS) {
+      if (current[key] == null && scraped[key] != null) changes[key] = scraped[key];
+    }
+    const currentAllergens: string[] = current.allergens ?? [];
+    const merged = [...new Set([...currentAllergens, ...mapScrapedAllergens(scraped.allergens ?? [])])];
+    if (merged.length !== currentAllergens.length) changes["allergens"] = merged;
+    if ((current.labelDeclaration == null || current.labelDeclaration === "") && scraped.ingredients) {
+      changes["labelDeclaration"] = scraped.ingredients;
+    }
+    if (Object.keys(changes).length === 0) return;
+    if (Object.keys(changes).some(k => (ESTIMATE_NUTRIENT_KEYS as readonly string[]).includes(k))) {
+      changes["nutritionalsAiEstimated"] = false;
+    }
+    await saveIngredient(row, changes);
+    setScrapes(prev => { const next = { ...prev }; delete next[row.id]; return next; });
   };
 
   const estimateAll = async () => {
@@ -821,6 +904,65 @@ function DataHealthPanel() {
                   )}
                 </div>
               )}
+
+              {(() => {
+                const scr = scrapes[row.id];
+                return (
+                  <div className="space-y-2">
+                    <div className="flex gap-2 items-center flex-wrap">
+                      <input
+                        value={scrapeUrls[row.id] ?? ""}
+                        onChange={e => setScrapeUrls(prev => ({ ...prev, [row.id]: e.target.value }))}
+                        placeholder="Or paste the supplier product page URL…"
+                        className="flex-1 min-w-[220px] px-3 py-1.5 bg-background border border-border rounded-lg text-sm"
+                      />
+                      <button
+                        onClick={() => void fetchScrape(row)}
+                        disabled={scr === "loading" || !(scrapeUrls[row.id] ?? "").trim()}
+                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-secondary font-medium disabled:opacity-50"
+                      >
+                        {scr === "loading" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UploadCloud className="w-3.5 h-3.5" />} Scrape page
+                      </button>
+                    </div>
+                    {typeof scr === "object" && "error" in scr && <p className="text-xs text-destructive">{scr.error}</p>}
+                    {typeof scr === "object" && !("error" in scr) && (
+                      <div className="bg-secondary/40 rounded-lg p-3 space-y-2">
+                        {(scr.name || scr.brand) && <p className="text-xs font-medium">{[scr.brand, scr.name].filter(Boolean).join(" — ")}</p>}
+                        {scr.ingredients && <p className="text-xs"><span className="font-medium">Label declaration:</span> {scr.ingredients}</p>}
+                        <p className="text-xs font-mono">
+                          {ESTIMATE_NUTRIENT_KEYS.map(k => `${k}: ${scr[k] ?? "—"}`).join("  ·  ")}
+                        </p>
+                        {scr.allergens && scr.allergens.length > 0 && (
+                          <p className="text-xs"><span className="font-medium">Allergens:</span> {mapScrapedAllergens(scr.allergens).join(", ") || "(none matched UK14 list)"}</p>
+                        )}
+                        <div className="flex gap-2 flex-wrap">
+                          <button
+                            onClick={() => void applyScrape(row, scr)}
+                            disabled={busy}
+                            className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground font-medium disabled:opacity-50"
+                          >
+                            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Approve &amp; save scraped data
+                          </button>
+                          {scr.ingredients && row.missingLabel && (
+                            <button
+                              onClick={() => setLabelDrafts(prev => ({ ...prev, [row.id]: scr.ingredients ?? "" }))}
+                              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-secondary"
+                            >
+                              Edit declaration first
+                            </button>
+                          )}
+                          <button
+                            onClick={() => setScrapes(prev => { const next = { ...prev }; delete next[row.id]; return next; })}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-secondary"
+                          >
+                            Discard
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           );
         })}
