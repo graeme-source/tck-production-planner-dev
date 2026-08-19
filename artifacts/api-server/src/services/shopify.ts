@@ -259,8 +259,36 @@ export interface ShopifyLineItem {
   title: string;
   variant_title: string | null;
   quantity: number;
+  /** Quantity AFTER refunds/order edits — 0 means the item was removed.
+   *  Shopify keeps removed items in line_items with their original
+   *  quantity, so operational reads must use this. Optional because
+   *  older cached payloads may predate the field. */
+  current_quantity?: number | null;
   sku: string;
   price: string;
+}
+
+/**
+ * Drop line items the customer no longer gets. When an item is refunded or
+ * edited off an order, Shopify LEAVES it in line_items at its original
+ * quantity and only current_quantity tells the truth — which had the
+ * packing screen shipping items people had already been refunded for
+ * (found live 2026-08-19, e.g. #132747's removed CarniZone). Partial
+ * removals shrink quantity to what's still owed. Items without the field
+ * (defensive: very old payload shapes) pass through untouched.
+ */
+function dropRemovedLineItems(order: ShopifyOrder): ShopifyOrder {
+  if (!Array.isArray(order.line_items)) return order;
+  return {
+    ...order,
+    line_items: order.line_items
+      .filter(li => li.current_quantity == null || li.current_quantity > 0)
+      .map(li =>
+        li.current_quantity != null && li.current_quantity < li.quantity
+          ? { ...li, quantity: li.current_quantity }
+          : li,
+      ),
+  };
 }
 
 export interface ShopifyFulfillment {
@@ -351,7 +379,12 @@ export async function getOrdersByTag(tag: string): Promise<ShopifyOrder[]> {
     pageInfo = parseNextPageInfo(res.headers.get("Link"));
   } while (pageInfo);
 
-  return allOrders.filter((o) => o.tags.split(",").map((t) => t.trim()).includes(tag));
+  return allOrders
+    .filter((o) => o.tags.split(",").map((t) => t.trim()).includes(tag))
+    // Every consumer of tag reads is operational (packing queue, scan
+    // queue, dispatch KPIs, stock decrement) — none should ever see an
+    // item the customer was refunded for.
+    .map(dropRemovedLineItems);
 }
 
 export async function getProducts(): Promise<ShopifyProduct[]> {
@@ -650,21 +683,22 @@ export async function getRecentUnfulfilledOrders(daysBack = 30): Promise<Shopify
     pageInfo = parseNextPageInfo(res.headers.get("Link"));
   } while (pageInfo);
 
-  return allOrders.filter(o => o.fulfillment_status !== "fulfilled");
+  return allOrders.filter(o => o.fulfillment_status !== "fulfilled").map(dropRemovedLineItems);
 }
 
 /**
  * Fetch a single order by its Shopify order ID, including line items.
  * Used by the factory-number fulfilment decrement path — we need
  * line_items to know which recipes/quantities to remove from the
- * production fridge when Confirm & Complete fires.
+ * production fridge when Confirm & Complete fires. Removed items are
+ * dropped so refunded packs neither ship nor decrement fridge stock.
  */
 export async function getOrderById(orderId: number): Promise<ShopifyOrder | null> {
   try {
     const data = (await shopifyFetch(`/orders/${orderId}.json`, {
       fields: "id,name,tags,created_at,fulfillment_status,line_items",
     })) as { order: ShopifyOrder };
-    return data.order ?? null;
+    return data.order ? dropRemovedLineItems(data.order) : null;
   } catch (err) {
     console.error(`[shopify] getOrderById(${orderId}) failed:`, err);
     return null;
@@ -679,7 +713,7 @@ export async function findOrderByName(name: string): Promise<ShopifyOrder | null
     status: "any",
     fields: "id,name,tags,created_at,financial_status,fulfillment_status,total_price,customer,shipping_address,line_items,note",
   })) as { orders: ShopifyOrder[] };
-  return data.orders[0] ?? null;
+  return data.orders[0] ? dropRemovedLineItems(data.orders[0]) : null;
 }
 
 // Adjust inventory level for a Shopify variant by delta (positive = add, negative = remove).
