@@ -340,7 +340,13 @@ router.get("/calculate", async (req, res) => {
   const kanbanIngredientIds = new Set(pulledKanbans.map(k => k.ingredientId));
 
   const supplierOrderMap: Record<number, {
-    supplier: { id: number; name: string; contactName: string | null; email: string | null; phone: string | null; orderingPhone: string | null; website: string | null };
+    supplier: {
+      id: number; name: string; contactName: string | null; email: string | null; phone: string | null; orderingPhone: string | null; website: string | null;
+      leadTimeDays?: number; cutoffTime?: string;
+      /** Set when this supplier has a placed, undelivered PO that's past its
+       *  edit cutoff — the draft shown is a NEW order, not an amendment. */
+      lockedOpenPo?: { id: number; expectedDeliveryDate: string };
+    };
     lines: Array<{
       ingredientId: number;
       ingredientName: string;
@@ -603,10 +609,25 @@ router.get("/calculate", async (req, res) => {
   // (or earlier today) keeps re-appearing in "To Order" until a brand-new
   // production plan is created. Match on (supplierId, ingredientId) — a
   // misc/no-ingredient line can't be deduped this way and is left alone.
+  //
+  // CUTOFF-AWARE (Graeme, 2026-08-19): a placed order only suppresses new
+  // suggestions while it can still be AMENDED — i.e. while an order placed
+  // right now would arrive by the same date (calcExpectedDeliveryDate
+  // handles the lead time, the daily cutoff hour and business days). Once
+  // the PO is inside the supplier's lead window (NFS: 2 days — yesterday's
+  // order delivering tomorrow can't be touched), its lines stop deduping,
+  // so a pulled kanban surfaces as a brand-NEW draft that will get its own
+  // delivery date of today + lead time on placing. The undelivered packs on
+  // the locked PO still count via the inbound deduction above, so
+  // non-kanban maths never double-orders. Received orders dedup regardless
+  // (they're history, not an editing question).
   const placedRows = await db
     .select({
       supplierId: purchaseOrdersTable.supplierId,
       ingredientId: purchaseOrderLinesTable.ingredientId,
+      status: purchaseOrdersTable.status,
+      expectedDeliveryDate: purchaseOrdersTable.expectedDeliveryDate,
+      purchaseOrderId: purchaseOrdersTable.id,
     })
     .from(purchaseOrdersTable)
     .innerJoin(purchaseOrderLinesTable, eq(purchaseOrderLinesTable.purchaseOrderId, purchaseOrdersTable.id))
@@ -615,10 +636,44 @@ router.get("/calculate", async (req, res) => {
       sql`${purchaseOrdersTable.status} IN ('placed', 'received')`,
       sql`${purchaseOrderLinesTable.ingredientId} IS NOT NULL`,
     ));
-  const placedKeys = new Set(placedRows.map(r => `${r.supplierId}:${r.ingredientId}`));
+
+  // The lookup only holds suppliers touched by the plan's ingredient list —
+  // a PO-only supplier (e.g. kanban-only NFS) may be missing, and a missing
+  // row must NOT quietly become "1-day lead": that's exactly the case where
+  // the cutoff maths matters. Fetch any absent ones explicitly.
+  const missingSupplierIds = [...new Set(placedRows.map(r => r.supplierId))]
+    .filter((id): id is number => id != null && !supplierLookup[id]);
+  if (missingSupplierIds.length > 0) {
+    const extraSuppliers = await db.select().from(suppliersTable)
+      .where(inArray(suppliersTable.id, missingSupplierIds));
+    for (const s of extraSuppliers) supplierLookup[s.id] = s;
+  }
+
+  const isPastEditCutoff = (supplierId: number, expectedDeliveryDate: string | null): boolean => {
+    if (!expectedDeliveryDate) return false;
+    const supplier = supplierLookup[supplierId];
+    const earliestNewDelivery = toISODate(
+      calcExpectedDeliveryDate(supplier?.leadTimeDays ?? 1, supplier?.cutoffTime ?? "17:00"),
+    );
+    return earliestNewDelivery > expectedDeliveryDate;
+  };
+
+  const placedKeys = new Set<string>();
+  // Suppliers with a still-open PO that's past amending — surfaced on the
+  // draft card so the operator knows why a fresh order appeared.
+  const lockedPoBySupplier = new Map<number, { id: number; expectedDeliveryDate: string }>();
+  for (const r of placedRows) {
+    if (r.status === "placed" && isPastEditCutoff(r.supplierId, r.expectedDeliveryDate)) {
+      lockedPoBySupplier.set(r.supplierId, { id: r.purchaseOrderId, expectedDeliveryDate: r.expectedDeliveryDate! });
+      continue;
+    }
+    placedKeys.add(`${r.supplierId}:${r.ingredientId}`);
+  }
 
   for (const so of Object.values(supplierOrderMap)) {
     so.lines = so.lines.filter(l => !placedKeys.has(`${so.supplier.id}:${l.ingredientId}`));
+    const locked = lockedPoBySupplier.get(so.supplier.id);
+    if (locked) so.supplier.lockedOpenPo = locked;
   }
   // Drop suppliers whose entire requirement is already covered.
   for (const sid of Object.keys(supplierOrderMap)) {
