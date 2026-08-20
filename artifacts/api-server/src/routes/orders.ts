@@ -15,7 +15,7 @@ import {
   dptIngredientRequirementsTable,
   usersTable,
 } from "@workspace/db";
-import { eq, and, desc, sql, inArray, notInArray, lte, gte } from "drizzle-orm";
+import { eq, and, or, isNull, desc, sql, inArray, notInArray, lte, gte } from "drizzle-orm";
 import { resolveRecipeIngredients, aggregateIngredients } from "../lib/ingredient-resolver";
 import { computeOutstandingPrepRaw } from "../lib/outstanding-prep";
 import { londonDateString, londonEndOfDay, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
@@ -1036,6 +1036,10 @@ router.patch("/purchase-orders/:id/place", async (req, res) => {
       .where(and(
         eq(kanbanItemsTable.status, "pulled"),
         inArray(kanbanItemsTable.ingredientId, placedIngredientIds),
+        // Only kanbans for THIS order's supplier (or with no supplier set) —
+        // a pulled kanban routed to a different supplier is a separate
+        // request and must survive this order being placed.
+        or(eq(kanbanItemsTable.supplierId, updated.supplierId), isNull(kanbanItemsTable.supplierId)),
       ));
   }
 
@@ -1120,6 +1124,8 @@ router.patch("/purchase-orders/:id/resubmit", async (req, res) => {
         .where(and(
           eq(kanbanItemsTable.status, "pulled"),
           inArray(kanbanItemsTable.ingredientId, resubmitIngredientIds),
+          // Same supplier scoping as /place — see comment there.
+          or(eq(kanbanItemsTable.supplierId, updated.supplierId), isNull(kanbanItemsTable.supplierId)),
         ));
     }
 
