@@ -1566,6 +1566,51 @@ function DuckDefrost({ data }: { data: unknown[] }) {
 }
 
 function DynamicDataDisplay({ type, data, loading, planId }: { type: string; data: unknown[]; loading: boolean; planId: number }) {
+  if (type === "ice_packs") {
+    if (loading) {
+      return (
+        <div className="mb-4 p-3 bg-cyan-50/60 dark:bg-cyan-950/20 rounded-lg flex items-center gap-2 text-sm text-cyan-600">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Checking the forecast…
+        </div>
+      );
+    }
+    const ice = (data as any[])[0] as {
+      enabled?: boolean; highTemp?: number | null; smallBoxPacks?: number; largeBoxPacks?: number;
+      location?: { name?: string }; message?: string;
+    } | undefined;
+    if (!ice || ice.enabled === false || typeof ice.smallBoxPacks !== "number") {
+      return (
+        <div className="mb-4 p-3 bg-secondary/30 rounded-lg text-sm text-muted-foreground">
+          Ice-pack rule unavailable — check the packing screen banner.
+        </div>
+      );
+    }
+    return (
+      <div className="mb-4 p-4 bg-cyan-50/70 dark:bg-cyan-950/20 border border-cyan-200 dark:border-cyan-800 rounded-xl">
+        <div className="flex items-center gap-6">
+          <div>
+            <p className="text-3xl font-bold font-display tabular-nums text-cyan-700 dark:text-cyan-300">
+              {ice.smallBoxPacks}
+            </p>
+            <p className="text-xs font-medium text-cyan-700/80 dark:text-cyan-300/80">per small box</p>
+          </div>
+          <div>
+            <p className="text-3xl font-bold font-display tabular-nums text-cyan-700 dark:text-cyan-300">
+              {ice.largeBoxPacks}
+            </p>
+            <p className="text-xs font-medium text-cyan-700/80 dark:text-cyan-300/80">per large box</p>
+          </div>
+          <div className="ml-auto text-right text-xs text-muted-foreground">
+            {ice.highTemp != null
+              ? <>Forecast high <span className="font-semibold text-foreground">{ice.highTemp}°C</span><br />({ice.location?.name ?? "despatch window"}, today/tomorrow)</>
+              : <span className="text-amber-600 dark:text-amber-400">{ice.message ?? "Weather unavailable"}</span>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (type === "desserts_report") {
     if (loading) {
       return (
