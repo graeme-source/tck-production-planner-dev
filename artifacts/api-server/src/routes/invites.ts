@@ -1,4 +1,4 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request } from "express";
 import { db, usersTable, userInvitesTable, passwordResetsTable } from "@workspace/db";
 import { eq, and, gt, isNull } from "drizzle-orm";
 import bcrypt from "bcryptjs";
@@ -116,7 +116,7 @@ const AcceptInviteBody = z.object({
   password: passwordSchema,
 });
 
-router.post("/invites/:token/accept", validate(AcceptInviteBody), async (req, res) => {
+router.post("/invites/:token/accept", validate(AcceptInviteBody), async (req: Request<{ token: string }>, res) => {
   const { token } = req.params;
   const { name, password } = req.body as z.infer<typeof AcceptInviteBody>;
 
@@ -264,7 +264,7 @@ const ResetPasswordBody = z.object({
   password: passwordSchema,
 });
 
-router.post("/reset-password/:token", validate(ResetPasswordBody), async (req, res) => {
+router.post("/reset-password/:token", validate(ResetPasswordBody), async (req: Request<{ token: string }>, res) => {
   const { token } = req.params;
   const { password } = req.body as z.infer<typeof ResetPasswordBody>;
 

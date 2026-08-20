@@ -11,9 +11,10 @@ import {
   getListRecipesQueryKey,
   getListProductionPlansQueryKey,
   getListDptSettingsQueryKey,
+  getGetProductionPlanQueryKey,
   upsertDptSettingByRecipe,
 } from "@workspace/api-client-react";
-import type { DptSuggestion, ProductionPlanDetail, Recipe } from "@workspace/api-client-react";
+import type { DptSuggestion, ProductionPlanDetail, ProductionPlanItem, CreateProductionPlan, UpdateProductionPlan, UpdateDptSetting, Recipe } from "@workspace/api-client-react";
 type PlanStatus = "draft" | "active" | "prep" | "building" | "complete";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { useAuth } from "@/contexts/auth-context";
@@ -123,6 +124,14 @@ function julianBatchNumber(dateStr: string): string {
   const dayOfYear = Math.floor(diff / oneDay);
   return `${year}${String(dayOfYear).padStart(3, "0")}`;
 }
+
+// The generated ProductionPlanItem type predates these columns, though the
+// API does return them (the detail route spreads the full DB row).
+type PlanItemApi = ProductionPlanItem & {
+  packSize?: number;
+  eightPackBagCount?: number;
+  shortCount?: number;
+};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Sortable row for DPT items
@@ -816,7 +825,9 @@ function DptSettingsDialog({
       //    rather than in parallel so a partial failure surfaces predictably.
       for (const recipe of allRecipes) {
         const sold = localPacksSold[recipe.id] ?? 0;
-        await upsertDptSettingByRecipe(recipe.id, { packsSold: sold, isActive: true });
+        // packsSold is accepted by the API but missing from the generated
+        // UpdateDptSetting type (spec lags the server).
+        await upsertDptSettingByRecipe(recipe.id, { packsSold: sold, isActive: true } as UpdateDptSetting & { packsSold: number });
       }
       // 3. Refresh both the DPT settings cache (Settings page + any other
       //    DPT consumers) and the production-plan-calculate cache so the
@@ -2164,6 +2175,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
         tinSize: r.tinSize,
         salesPercent: r.salesPercent,
         dptPercent: r.dptPercent ?? 0,
+        packsSold: r.packsSold,
         portionsPerBatch: r.portionsPerBatch,
         packsPerBatch: r.packsPerBatch,
         packSize: r.packSize,
@@ -3304,6 +3316,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       maxBatchesPerTin: it.maxBatchesPerTin ?? null,
       tinSize: it.tinSize ?? null,
       salesPercent: 0,
+      packsSold: 0,
       portionsPerBatch: it.portionsPerBatch ?? 10,
       packsPerBatch: (it.portionsPerBatch ?? 10),
       packSize: 2,
@@ -3781,6 +3794,8 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
     updatePlan.mutate(
       {
         id: plan.id,
+        // prepDate/doughDate are accepted by the API but missing from the
+        // generated UpdateProductionPlan type (spec lags the server).
         data: {
           planDate,
           prepDate: prepDate || null,
@@ -3796,7 +3811,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
             maxBatchesPerTin: it.maxBatchesPerTin ?? undefined,
             sopUrl: it.sopUrl ?? undefined,
           })),
-        },
+        } as UpdateProductionPlan & { prepDate?: string | null; doughDate?: string | null },
       },
       {
         onSuccess: () => {
@@ -5107,7 +5122,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
 
   // Fetch next plan's detail for dough_prep and dough_sheeting station completions
   const { data: nextPlan } = useGetProductionPlan(nextPlanId, {
-    query: { enabled: nextPlanId !== planId, refetchInterval: 15000 },
+    query: { enabled: nextPlanId !== planId, refetchInterval: 15000, queryKey: getGetProductionPlanQueryKey(nextPlanId) },
   }) as { data: ProductionPlanDetail | undefined };
 
   const { data: prepProgress } = useQuery<{ totalTins: number; completedTins: number; pct: number }>({
@@ -5171,7 +5186,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
     .reduce((s, it) => s + (it.batchesTarget ?? 0), 0) ?? 0;
   const macPacksComplete = plan.items?.filter(it => (it as any).recipeCategory === "Macaroni Cheese")
     .reduce((s, it) => s + (it.batchesComplete ?? 0), 0) ?? 0;
-  const totalPacks = plan.items?.reduce((s, it) => s + (it.batchesTarget ?? 0) * (it.portionsPerBatch ?? 10) / (it.packSize ?? 2), 0) ?? 0;
+  const totalPacks = plan.items?.reduce((s, it) => s + (it.batchesTarget ?? 0) * (it.portionsPerBatch ?? 10) / ((it as PlanItemApi).packSize ?? 2), 0) ?? 0;
   const progress = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
 
   // Per-station completion counts aggregated from all plan items.
@@ -5196,7 +5211,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
 
   const stationProgress: Record<string, { done: number; target: number }> = {};
   {
-    const items = plan.items ?? [];
+    const items: PlanItemApi[] = plan.items ?? [];
     const target = totalPacksTarget;
     for (const s of STATION_BUTTONS) {
       if (s.key === "building_1" || s.key === "building_2") {
@@ -5623,7 +5638,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
             </tr>
           </thead>
           <tbody>
-            {(plan.items ?? []).map(item => {
+            {(plan.items ?? []).map((item: PlanItemApi) => {
               const itemProgress = (item.batchesTarget ?? 0) > 0
                 ? Math.round(((item.batchesComplete ?? 0) / (item.batchesTarget ?? 0)) * 100)
                 : 0;
@@ -6029,6 +6044,8 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
     setCreatingDayPlan(kind);
     createPlan.mutate(
       {
+        // prepDate/doughDate are accepted by the API but missing from the
+        // generated CreateProductionPlan type (spec lags the server).
         data: {
           planDate: selectedDateKey,
           // Pin prep/dough to the same day so this plan doesn't spawn
@@ -6038,7 +6055,7 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
           name: kind === "mac" ? "Mac & Cheese Production" : "Prep & Pack Day",
           status: "active",
           items: [],
-        },
+        } as CreateProductionPlan & { prepDate?: string | null; doughDate?: string | null },
       },
       {
         onSuccess: (plan) => {
@@ -6112,7 +6129,7 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
             const dayDoughWork = doughWorkByDate[dateKey] ?? [];
             const today = isToday(day);
             const selected = isSameDay(day, selectedDate);
-            const isComplete = dayPlans.length > 0 && dayPlans.every(p => p.status === "complete" || p.status === "completed");
+            const isComplete = dayPlans.length > 0 && dayPlans.every(p => p.status === "complete");
             const hasPlan = dayPlans.length > 0;
             const isInProgress = hasPlan && !isComplete;
             // Show a small secondary indicator on days with prep or dough

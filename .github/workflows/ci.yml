@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, master, staging]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Blocking since 2026-08-20 — the workspace typechecks clean (the
+      # pre-existing 204-error backlog was burned down). Keep it that way.
+      - run: pnpm run typecheck
+      - run: pnpm run test

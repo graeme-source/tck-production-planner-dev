@@ -1075,10 +1075,11 @@ export default function ProductHub() {
   const [selectedRecipe, setSelectedRecipe] = useState<RecipeItem | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
 
+  // /api/recipes only returns full recipes (sub-recipes live on their own
+  // endpoint), so no type filtering is needed here.
   const recipeList: RecipeItem[] = (recipes ?? [])
-    .filter((r: Record<string, unknown>) => r.type !== "sub_recipe")
-    .map((r: Record<string, unknown>) => ({ id: r.id as number, name: r.name as string }))
-    .sort((a: RecipeItem, b: RecipeItem) => a.name.localeCompare(b.name));
+    .map((r) => ({ id: r.id, name: r.name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   const openDetail = (recipe: RecipeItem) => {
     setSelectedRecipe(recipe);
@@ -1095,7 +1096,7 @@ export default function ProductHub() {
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <PageHeader title="Product Hub" subtitle="Nutritional data, ingredient decks, and labelling" />
+      <PageHeader title="Product Hub" description="Nutritional data, ingredient decks, and labelling" />
 
       <div className="px-6 pb-6 space-y-6">
         <div className="flex gap-1 p-1 bg-secondary/40 rounded-xl max-w-3xl">

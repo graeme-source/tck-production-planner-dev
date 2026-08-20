@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { useAuth } from "@/contexts/auth-context";
-import { isMacCheese, MAC_CHEESE_CATEGORY } from "../shared/constants";
+import { isMacCheese, MAC_CHEESE_CATEGORY, type StationPlanItem } from "../shared/constants";
 import { NumberInput } from "@/components/ui/number-input";
 import { DeferredPrepBanner } from "../shared/deferred-prep-banner";
 
@@ -369,7 +369,7 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
   const authUser = authState.status === "authenticated" ? authState.user : null;
 
   // Filter to mac cheese items only
-  const macItems = (plan.items ?? []).filter(it => isMacCheese(it as any));
+  const macItems: StationPlanItem[] = (plan.items ?? []).filter(it => isMacCheese(it as any));
 
   const [editing, setEditing] = useState(false);
   const [removing, setRemoving] = useState(false);

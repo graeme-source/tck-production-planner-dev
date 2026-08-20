@@ -13,7 +13,7 @@ import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import { BreakTracker } from "../shared/break-tracker";
 import { PaceKpiStrip, type PaceBands } from "../shared/pace-kpi-strip";
-import { getStationCount, getAvailableFromPrev, compareItemsForDisplay } from "../shared/constants";
+import { getStationCount, getAvailableFromPrev, compareItemsForDisplay, type StationPlanItem } from "../shared/constants";
 import { netTwoPacks as computeNetTwoPacks, effectiveBatchesTarget } from "../shared/recipe-completion";
 
 // Case-order freezer split — new columns not yet in the generated API client
@@ -207,13 +207,13 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
 
   const STACK_SIZE = 24;
 
-  const items = [...(plan.items ?? [])].sort(compareItemsForDisplay);
+  const items: StationPlanItem[] = [...(plan.items ?? [])].sort(compareItemsForDisplay);
 
   const plannedPacks = (item: ProductionPlanItem) =>
     Math.floor(((item.batchesTarget ?? 0) * (item.portionsPerBatch ?? 10)) / 2);
   const grossPacks = (item: ProductionPlanItem) =>
     Math.floor((getStationCount(item, "ovens") * (item.portionsPerBatch ?? 10)) / 2);
-  const eightPackDeduction = (item: ProductionPlanItem) => (item.eightPackBagCount ?? 0) * 4;
+  const eightPackDeduction = (item: StationPlanItem) => (item.eightPackBagCount ?? 0) * 4;
   const combinedBuildingCount = (item: ProductionPlanItem) =>
     getStationCount(item, "building_1") + getStationCount(item, "building_2");
   const effBatches = (item: ProductionPlanItem) =>
@@ -221,7 +221,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   const netTwoPacks = (item: ProductionPlanItem) =>
     computeNetTwoPacks(item, getStationCount(item, "ovens"), effBatches(item), combinedBuildingCount(item));
   // netPacks for backward compat (total items including 8-pack bags for storage calcs)
-  const netPacks = (item: ProductionPlanItem) =>
+  const netPacks = (item: StationPlanItem) =>
     netTwoPacks(item) + (item.eightPackBagCount ?? 0);
 
   const totalWonly = items.reduce((s, it) => s + (it.wonlyCount ?? 0), 0);
@@ -425,7 +425,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
     }
   };
 
-  const addToStorage = async (item: ProductionPlanItem, qty: number, storageKey: string, packSize: number = 2) => {
+  const addToStorage = async (item: StationPlanItem, qty: number, storageKey: string, packSize: number = 2) => {
     if (isOnBreak || qty < 1 || addingRef.current) return;
     const loc = STORAGE_LOCATIONS.find(l => l.key === storageKey);
     if (!loc) return;

@@ -1,5 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { getOrdersByTag, getProducts, countProductsByTag, getOrdersByDateRange, countOrdersByTag, getOnlineStoreConversion, type ShopifyOrder } from "../services/shopify";
+import { getOrdersByTag, getProducts, countProductsByTag, getOrdersByDateRange, countOrdersByTag, getOnlineStoreConversion, type ShopifyOrder, type ProductCount } from "../services/shopify";
 import { db, recipesTable, usersTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { londonDateString, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
@@ -109,7 +109,9 @@ router.get("/order-summary", async (req, res) => {
     const specialRecipe = specialRows[0] ?? null;
     const SPECIAL_KEY = "calzone club special";
 
-    let products = counts;
+    // Entries absorbed from the "Calzone Club Special" listing carry the
+    // special's quantity along so the UI can badge it.
+    let products: Array<ProductCount & { specialCount?: number }> = counts;
     if (specialRecipe) {
       const specialEntry = counts.find(p => p.productTitle.toLowerCase().trim() === SPECIAL_KEY);
       if (specialEntry) {

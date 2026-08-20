@@ -41,7 +41,7 @@ router.post("/", requireFounder, async (req, res) => {
 });
 
 // DELETE /api/founder-panels/:id
-router.delete("/:id", requireFounder, async (req, res) => {
+router.delete("/:id", requireFounder, async (req: Request<{ id: string }>, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   await db.execute(sql`DELETE FROM founder_custom_panels WHERE id = ${id}`);

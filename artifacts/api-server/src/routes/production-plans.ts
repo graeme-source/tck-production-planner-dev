@@ -3,6 +3,9 @@ import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batch
 import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as drizzleSum, ne, isNotNull, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
+// Aliased: this file has its own in-handler requireManagerOrAdmin() helper
+// (returns boolean, used mid-handler) — the middleware form guards routes.
+import { requireManagerOrAdmin as requireManagerOrAdminMw } from "../middleware/roles";
 import * as z from "zod";
 import { resolveRecipeIngredients, resolveSubRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
 import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag, type ProductCount } from "../services/shopify";
@@ -335,7 +338,7 @@ export async function resolveDefaultDoughDate(planDate: string): Promise<string>
   return applyOffset(planDate, offset);
 }
 
-function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?: string | null; portionsPerBatch?: number | null; packSize?: number | null; fillWeightGrams?: string | null; baseType?: string | null; baseWeightGrams?: string | null; wrappingComplete?: boolean | null; recipeColor?: string | null; targetBuildSeconds?: number | null; recipeCategory?: string | null; dietaryCategory?: string | null }, stationCompletions?: Record<string, number>, buildingProgress?: Record<string, { extraPacks: number; movedOnAt: string | null }>) {
+function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?: string | null; portionsPerBatch?: number | null; packSize?: number | string | null; fillWeightGrams?: string | null; baseType?: string | null; baseWeightGrams?: string | null; wrappingComplete?: boolean | null; recipeColor?: string | null; targetBuildSeconds?: number | null; recipeCategory?: string | null; dietaryCategory?: string | null }, stationCompletions?: Record<string, number>, buildingProgress?: Record<string, { extraPacks: number; movedOnAt: string | null }>) {
   return {
     ...i,
     recipeName: i.recipeName ?? "",
@@ -2259,7 +2262,7 @@ const AddMacCheeseBody = z.object({
 
 router.post("/:id/add-mac-cheese", validate(AddMacCheeseBody), async (req, res) => {
   const planId = Number(req.params.id);
-  const { items } = req.body;
+  const { items } = req.body as z.infer<typeof AddMacCheeseBody>;
 
   // 1. Verify plan exists and is in a modifiable locked status
   const [plan] = await db.select().from(productionPlansTable).where(eq(productionPlansTable.id, planId));
@@ -2408,6 +2411,7 @@ router.post("/:id/add-mac-cheese", validate(AddMacCheeseBody), async (req, res) 
       shortCount: productionPlanItemsTable.shortCount,
       builderMarkedCompleteAt: productionPlanItemsTable.builderMarkedCompleteAt,
       leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
+      leftoverFillingComment: productionPlanItemsTable.leftoverFillingComment,
       eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
       fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
       // Case-order freezer split: of eightPackBagCount, how many bags go to
@@ -2919,6 +2923,7 @@ router.get("/:id", async (req, res) => {
       shortCount: productionPlanItemsTable.shortCount,
       builderMarkedCompleteAt: productionPlanItemsTable.builderMarkedCompleteAt,
       leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
+      leftoverFillingComment: productionPlanItemsTable.leftoverFillingComment,
       eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
       fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
       // Case-order freezer split: of eightPackBagCount, how many bags go to
@@ -3257,7 +3262,7 @@ router.patch("/:id/items/:itemId", validate(PatchItemBody), async (req, res) => 
   res.json(mapItem(updated));
 });
 
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", requireManagerOrAdminMw, async (req, res) => {
   const id = Number(req.params.id);
   // Queued test production that landed on this plan goes back to 'queued'
   // so it can land again on the replacement plan (plan_id would be nulled
@@ -7901,6 +7906,8 @@ router.get("/:id/main-prep", async (req, res) => {
       maxBatchesPerTin: null,
       tinCount: 2,
       qtyPerTin,
+      isOverridden: false,
+      isFillingMix: false,
     }];
   }
 

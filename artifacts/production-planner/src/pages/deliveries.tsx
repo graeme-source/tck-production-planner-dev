@@ -178,6 +178,9 @@ interface ReceivingLine {
   quantityOrdered: number;
   quantityReceived: number;
   unit: string;
+  // The ingredient's native unit (kg / g / ml / l / pieces). May differ from
+  // `unit` when the line was stored as a pack count ("packs" / "bottles").
+  nativeUnit?: string | null;
   useByDate: string;
   shelfLifeDays: number | null;
   requiresUseByDate: boolean;
@@ -318,6 +321,7 @@ function ReceivingDialog({
             quantityOrdered: l.quantityOrdered,
             quantityReceived: l.quantityReceived > 0 ? l.quantityReceived : l.quantityOrdered,
             unit: l.unit,
+            nativeUnit: l.nativeUnit,
             useByDate: existingUseBy || autoUseByDate,
             shelfLifeDays: l.shelfLifeDays,
             requiresUseByDate: l.requiresUseByDate ?? false,

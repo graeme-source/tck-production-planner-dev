@@ -416,7 +416,7 @@ export default function Stock() {
         else if (item.itemType === "stock_item") payload.stockItemId = item.stockItemId;
         else payload.ingredientId = item.ingredientId;
         return new Promise<void>(resolve => {
-          createStock.mutate({ data: payload }, { onSuccess: resolve, onError: resolve });
+          createStock.mutate({ data: payload }, { onSuccess: () => resolve(), onError: () => resolve() });
         });
       })
     );

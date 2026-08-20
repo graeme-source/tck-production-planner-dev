@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { db, dptSettingsTable, dptIngredientRequirementsTable, recipesTable, appSettingsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { resolveRecipeIngredients, aggregateIngredients } from "../lib/ingredient-resolver";
+import { cookedToRaw } from "../lib/units";
 
 const router: IRouter = Router();
 
@@ -49,9 +50,13 @@ export async function recalculateDptRequirements() {
     const aggregated = aggregateIngredients(resolved);
 
     for (const [ingredientId, ing] of aggregated) {
-      const rawQty = ing.quantityPerBatch * batchesPerDay;
-      const processingRatio = ing.processingRatio ?? 1;
-      const cookedQty = rawQty * processingRatio;
+      // Recipe quantities are cooked-basis; raw = cooked ÷ ratio (same
+      // direction as orders.ts and outstanding-prep.ts). The old code had
+      // this backwards (cooked = raw × ratio), which made daily_qty_raw a
+      // cooked figure — and the ordering surplus buffer built on it was off
+      // by ratio² for any processed ingredient.
+      const cookedQty = ing.quantityPerBatch * batchesPerDay;
+      const rawQty = cookedToRaw(cookedQty, ing.processingRatio);
 
       const existing = globalAgg.get(ingredientId);
       if (existing) {

@@ -11,7 +11,10 @@ const MANAGER_KEY_PREFIXES = ["mac_cheese_extra_packs_"];
 
 async function requireAuthForWrite(req: Request, res: Response, next: NextFunction) {
   if (req.method === "GET") { next(); return; }
-  const key = req.params.key ?? "";
+  // This runs as router.use() middleware, where Express never populates
+  // req.params (params only exist on the matched route layer) — so the key
+  // must come from the path. All write routes here are shaped "/:key".
+  const key = decodeURIComponent(req.path.split("/")[1] ?? "");
   const isStationKey = STATION_KEY_PREFIXES.some(p => key.startsWith(p));
   if (isStationKey && req.session.userId) { next(); return; }
   if (req.session.userRole === "admin") { next(); return; }
