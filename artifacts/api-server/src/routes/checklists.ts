@@ -216,7 +216,7 @@ const ReorderBody = z.object({
 router.patch("/templates/reorder", async (req: Request, res: Response) => {
   const parsed = ReorderBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
-  await db.transaction(async (tx: typeof db) => {
+  await db.transaction(async (tx) => {
     for (const item of parsed.data.order) {
       await tx.update(checklistTemplatesTable)
         .set({ orderPosition: item.orderPosition })
@@ -228,7 +228,7 @@ router.patch("/templates/reorder", async (req: Request, res: Response) => {
 
 // ─── Station Checklist (merged templates + completions) ──────────────
 
-router.get("/station/:stationType/plan/:planId", async (req: Request, res: Response) => {
+router.get("/station/:stationType/plan/:planId", async (req: Request<{ stationType: string; planId: string }>, res: Response) => {
   const { stationType, planId: planIdStr } = req.params;
   const planId = Number(planIdStr);
   const canonicalStation = resolveChecklistStation(stationType);

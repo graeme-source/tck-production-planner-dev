@@ -50,7 +50,7 @@ router.post("/", validate(CreateTransferBody), async (req, res) => {
     return;
   }
 
-  const userId = (req.session as Record<string, unknown>).userId as number | undefined;
+  const userId = req.session.userId;
 
   // Every reader of stock_entries treats the NEWEST row per (ingredient,
   // location) as the absolute current level — so a transfer must write new

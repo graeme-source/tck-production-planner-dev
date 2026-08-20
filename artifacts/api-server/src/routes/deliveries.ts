@@ -680,7 +680,10 @@ router.post("/:id/receive", async (req, res) => {
       })
       .where(eq(purchaseOrderLinesTable.id, line.lineId));
 
-    if (delta !== 0) {
+    // Misc lines (description-only, no ingredient) have nothing to track in
+    // stock — without the null check they inserted a phantom stock_entries
+    // row with ingredient_id NULL that no stock reader could ever surface.
+    if (delta !== 0 && existing.ingredientId !== null) {
       const location = resolveStorageLocation(existing.ingredientCategory, existing.ingredientName, existing.perishable);
       const isCountUnit = existing.unit === "packs" || existing.unit === "bottles" || existing.unit === "pallets";
       const pw = Number(existing.packWeight) || 1;

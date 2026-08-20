@@ -1,18 +1,18 @@
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import type { QueryResult } from "pg";
 
 type CostRow = { sub_recipe_id: number; total_batch_cost: string; yield_amount: string };
 type AncestorRow = { id: number };
 
 /**
  * Drizzle `db.execute()` with node-postgres returns a pg `QueryResult`
- * (with `.rows` property), not a plain array.
+ * (with `.rows` property), not a plain array. Structural type only — `pg`
+ * is not a direct dependency of this package.
  */
 function extractRows<T>(result: unknown): T[] {
   if (Array.isArray(result)) return result as T[];
-  const qr = result as QueryResult<T>;
-  if (qr && Array.isArray(qr.rows)) return qr.rows;
+  const qr = result as { rows?: unknown };
+  if (qr && Array.isArray(qr.rows)) return qr.rows as T[];
   return [];
 }
 

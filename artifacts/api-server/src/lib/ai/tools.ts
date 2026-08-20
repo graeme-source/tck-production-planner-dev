@@ -136,16 +136,16 @@ async function getTodaysProductionPlan(): Promise<string> {
   const calzoneBatches = calzones.reduce((sum, i) => sum + i.batchesTarget, 0);
   const calzoneComplete = calzones.reduce((sum, i) => sum + i.batchesComplete, 0);
   // Mac cheese is tracked in packs rather than batches: packSize × batchesTarget.
-  const macCheesePacks = macCheese.reduce((sum, i) => sum + i.batchesTarget * (i.packSize ?? 1), 0);
-  const macCheesePacksComplete = macCheese.reduce((sum, i) => sum + i.batchesComplete * (i.packSize ?? 1), 0);
+  const macCheesePacks = macCheese.reduce((sum, i) => sum + i.batchesTarget * Number(i.packSize ?? 1), 0);
+  const macCheesePacksComplete = macCheese.reduce((sum, i) => sum + i.batchesComplete * Number(i.packSize ?? 1), 0);
 
   const topProducts = [...items]
     .sort((a, b) => b.batchesTarget - a.batchesTarget)
     .slice(0, 8)
     .map(i => {
       const unit = i.recipeCategory === MAC_CHEESE_CATEGORY ? "packs" : "batches";
-      const qty = i.recipeCategory === MAC_CHEESE_CATEGORY ? i.batchesTarget * (i.packSize ?? 1) : i.batchesTarget;
-      const done = i.recipeCategory === MAC_CHEESE_CATEGORY ? i.batchesComplete * (i.packSize ?? 1) : i.batchesComplete;
+      const qty = i.recipeCategory === MAC_CHEESE_CATEGORY ? i.batchesTarget * Number(i.packSize ?? 1) : i.batchesTarget;
+      const done = i.recipeCategory === MAC_CHEESE_CATEGORY ? i.batchesComplete * Number(i.packSize ?? 1) : i.batchesComplete;
       return `  - ${i.recipeName ?? "Unknown"}: ${qty} ${unit}${done > 0 ? ` (${done} complete)` : ""}`;
     })
     .join("\n");

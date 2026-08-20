@@ -390,7 +390,7 @@ router.get("/calculate", async (req, res) => {
 
   const kanbanSupplierOverrides: Record<number, number> = {};
   for (const k of pulledKanbans) {
-    if (k.supplierId) {
+    if (k.supplierId && k.ingredientId !== null) {
       kanbanSupplierOverrides[k.ingredientId] = k.supplierId;
     }
   }
@@ -531,6 +531,8 @@ router.get("/calculate", async (req, res) => {
   }
 
   for (const kanban of pulledKanbans) {
+    // Recipe/sub-recipe sourced kanban cards have no ingredient to order here.
+    if (kanban.ingredientId === null) continue;
     if (ingredientMap[kanban.ingredientId]) continue;
 
     const detail = ingredientLookup[kanban.ingredientId];
@@ -548,6 +550,7 @@ router.get("/calculate", async (req, res) => {
           kanbanOrderAmount: ingredientsTable.kanbanOrderAmount,
           kanbanUnit: ingredientsTable.kanbanUnit,
           orderingUrl: ingredientsTable.orderingUrl,
+          stockInPacks: ingredientsTable.stockInPacks,
         })
         .from(ingredientsTable)
         .where(eq(ingredientsTable.id, kanban.ingredientId))

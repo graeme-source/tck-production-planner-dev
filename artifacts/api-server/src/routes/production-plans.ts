@@ -338,7 +338,7 @@ export async function resolveDefaultDoughDate(planDate: string): Promise<string>
   return applyOffset(planDate, offset);
 }
 
-function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?: string | null; portionsPerBatch?: number | null; packSize?: number | null; fillWeightGrams?: string | null; baseType?: string | null; baseWeightGrams?: string | null; wrappingComplete?: boolean | null; recipeColor?: string | null; targetBuildSeconds?: number | null; recipeCategory?: string | null; dietaryCategory?: string | null }, stationCompletions?: Record<string, number>, buildingProgress?: Record<string, { extraPacks: number; movedOnAt: string | null }>) {
+function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?: string | null; portionsPerBatch?: number | null; packSize?: number | string | null; fillWeightGrams?: string | null; baseType?: string | null; baseWeightGrams?: string | null; wrappingComplete?: boolean | null; recipeColor?: string | null; targetBuildSeconds?: number | null; recipeCategory?: string | null; dietaryCategory?: string | null }, stationCompletions?: Record<string, number>, buildingProgress?: Record<string, { extraPacks: number; movedOnAt: string | null }>) {
   return {
     ...i,
     recipeName: i.recipeName ?? "",
@@ -2262,7 +2262,7 @@ const AddMacCheeseBody = z.object({
 
 router.post("/:id/add-mac-cheese", validate(AddMacCheeseBody), async (req, res) => {
   const planId = Number(req.params.id);
-  const { items } = req.body;
+  const { items } = req.body as z.infer<typeof AddMacCheeseBody>;
 
   // 1. Verify plan exists and is in a modifiable locked status
   const [plan] = await db.select().from(productionPlansTable).where(eq(productionPlansTable.id, planId));
@@ -2411,6 +2411,7 @@ router.post("/:id/add-mac-cheese", validate(AddMacCheeseBody), async (req, res) 
       shortCount: productionPlanItemsTable.shortCount,
       builderMarkedCompleteAt: productionPlanItemsTable.builderMarkedCompleteAt,
       leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
+      leftoverFillingComment: productionPlanItemsTable.leftoverFillingComment,
       eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
       fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
       // Case-order freezer split: of eightPackBagCount, how many bags go to
@@ -2922,6 +2923,7 @@ router.get("/:id", async (req, res) => {
       shortCount: productionPlanItemsTable.shortCount,
       builderMarkedCompleteAt: productionPlanItemsTable.builderMarkedCompleteAt,
       leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
+      leftoverFillingComment: productionPlanItemsTable.leftoverFillingComment,
       eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
       fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
       // Case-order freezer split: of eightPackBagCount, how many bags go to
@@ -7904,6 +7906,8 @@ router.get("/:id/main-prep", async (req, res) => {
       maxBatchesPerTin: null,
       tinCount: 2,
       qtyPerTin,
+      isOverridden: false,
+      isFillingMix: false,
     }];
   }
 

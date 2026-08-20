@@ -299,7 +299,7 @@ router.get("/dispatch-tags", requireFulfilmentAccess, async (_req: Request, res:
     let postcodeIssuesByTag = new Map<string, number>();
     if (dateTags.length > 0) {
       try {
-        const issueRows = await db.execute(sql`
+        const issueRows = await db.execute<{ dispatch_tag: string; issue_count: number }>(sql`
           SELECT dispatch_tag, COUNT(*)::int as issue_count FROM (
             SELECT DISTINCT ON (shopify_order_id, dispatch_tag) shopify_order_id, dispatch_tag, available
             FROM postcode_validations
@@ -308,9 +308,7 @@ router.get("/dispatch-tags", requireFulfilmentAccess, async (_req: Request, res:
           ) latest WHERE available = false
           GROUP BY dispatch_tag
         `);
-        interface TagIssueRow { dispatch_tag: string; issue_count: number }
-        for (const row of issueRows.rows) {
-          const r: TagIssueRow = row as TagIssueRow;
+        for (const r of issueRows.rows) {
           postcodeIssuesByTag.set(r.dispatch_tag, r.issue_count);
         }
       } catch {
@@ -696,15 +694,14 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
     // advisory (amber chip), never a postcode verdict, so they don't block
     // booking either: a genuinely bad postcode still fails loudly at
     // createShipment, which books against APC production.
-    const existingValidation = await db.execute(sql`
+    const existingValidation = await db.execute<{ available: boolean; reason: string | null; service_code: string }>(sql`
       SELECT available, reason, service_code FROM postcode_validations
       WHERE shopify_order_id = ${orderId} AND dispatch_tag = ${tag} AND service_code = ${serviceCode} AND available = false
         AND (reason IS NULL OR reason NOT LIKE 'Check failed:%')
       ORDER BY checked_at DESC LIMIT 1
     `);
-    interface ValidationRow { available: boolean; reason: string | null; service_code: string }
     if (existingValidation.rows.length > 0) {
-      const v: ValidationRow = existingValidation.rows[0] as ValidationRow;
+      const v = existingValidation.rows[0];
       res.status(422).json({
         error: `Postcode issue: ${v.reason || "Service not available for this postcode"} (Service: ${v.service_code}). Re-check the postcode before packing.`,
         postcodeBlocked: true,
@@ -1150,7 +1147,7 @@ async function getTestModeApiBase(): Promise<string | undefined> {
   return testModeSetting === "true" ? APC_TRAINING_BASE : undefined;
 }
 
-router.post("/shipments/:waybill/add-parcel", requireFulfilmentAccess, async (req: Request, res: Response) => {
+router.post("/shipments/:waybill/add-parcel", requireFulfilmentAccess, async (req: Request<{ waybill: string }>, res: Response) => {
   const { waybill } = req.params;
   const { weight, length, width, height } = (req.body ?? {}) as {
     weight?: number; length?: number; width?: number; height?: number;
@@ -1188,7 +1185,7 @@ router.post("/shipments/:waybill/add-parcel", requireFulfilmentAccess, async (re
   }
 });
 
-router.post("/shipments/:waybill/reprint-label", requireFulfilmentAccess, async (req: Request, res: Response) => {
+router.post("/shipments/:waybill/reprint-label", requireFulfilmentAccess, async (req: Request<{ waybill: string }>, res: Response) => {
   const { waybill } = req.params;
 
   if (!isApcConfigured()) {
@@ -1287,7 +1284,7 @@ router.get("/shipments/:waybill/label.pdf", requireFulfilmentAccess, async (req:
 // state to reset is the APC consignment itself. The frontend removes the local
 // shipment reference and returns the operator to the order list, where the order
 // remains in the unfulfilled queue ready to be re-packed.
-router.post("/shipments/:waybill/cancel", requireFulfilmentAccess, async (req: Request, res: Response) => {
+router.post("/shipments/:waybill/cancel", requireFulfilmentAccess, async (req: Request<{ waybill: string }>, res: Response) => {
   const { waybill } = req.params;
 
   if (!isApcConfigured()) {
@@ -2198,6 +2195,7 @@ router.post("/process-fulfilled-today", async (_req: Request, res: Response) => 
         const lineItems: ShopifyLineItem[] = node.lineItems.edges.map(li => ({
           id: 0, // unused downstream
           variant_id: li.node.variant?.id ? (Number(li.node.variant.id.split("/").pop()) || null) : null,
+          product_id: null, // not fetched via GraphQL; unused downstream
           title: li.node.title,
           variant_title: null,
           quantity: li.node.quantity,
@@ -2325,7 +2323,7 @@ const UpsertLocationBody = z.object({
   locationLabel: z.string().min(1, "Location label is required"),
 });
 
-router.put("/sku-locations/:sku", requireAdmin, async (req: Request, res: Response) => {
+router.put("/sku-locations/:sku", requireAdmin, async (req: Request<{ sku: string }>, res: Response) => {
   const sku = decodeURIComponent(req.params.sku);
   const parsed = UpsertLocationBody.safeParse(req.body);
   if (!parsed.success) {
@@ -2348,7 +2346,7 @@ router.put("/sku-locations/:sku", requireAdmin, async (req: Request, res: Respon
   }
 });
 
-router.delete("/sku-locations/:sku", requireAdmin, async (req: Request, res: Response) => {
+router.delete("/sku-locations/:sku", requireAdmin, async (req: Request<{ sku: string }>, res: Response) => {
   const sku = decodeURIComponent(req.params.sku);
   try {
     await db.delete(skuLocationsTable).where(eq(skuLocationsTable.sku, sku));

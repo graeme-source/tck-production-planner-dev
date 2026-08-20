@@ -174,6 +174,17 @@ interface MarinadeInput {
   gramsPerKg: number;
 }
 
+// Fields these routes accept that the generated CreateRecipeBody /
+// UpdateRecipeBody schemas haven't caught up with yet — the validate()
+// middleware passes unknown fields through, so they reach the handler at
+// runtime. marinades is overridden because the generated schema still has
+// the old ingredient-only shape (no marinadeSubRecipeId).
+type RecipeBodyExtras = {
+  dietaryCategory?: string | null;
+  tags?: unknown;
+  marinades?: MarinadeInput[];
+};
+
 function validateMarinades(marinades: MarinadeInput[], recipeIngredientIds: number[]): string | null {
   for (const m of marinades) {
     const hasIng = m.marinadeIngredientId != null;
@@ -191,7 +202,7 @@ function validateMarinades(marinades: MarinadeInput[], recipeIngredientIds: numb
 // never stripped, and the OpenAPI spec has been updated with all fields.
 
 router.post("/", validate(CreateRecipeBody), async (req, res) => {
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, builderFillingDeductionGrams, dietaryCategory, tags, ingredients, subRecipes, marinades } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, builderFillingDeductionGrams, dietaryCategory, tags, ingredients, subRecipes, marinades } = req.body as Omit<z.infer<typeof CreateRecipeBody>, "marinades"> & RecipeBodyExtras;
 
   if (marinades?.length) {
     const recipeIngIds = (ingredients ?? []).map(i => i.ingredientId);
@@ -380,6 +391,7 @@ router.get("/:id", async (req, res) => {
   });
 
   const subIngredientsBySubId: Record<number, Array<{
+    ingredientId: number;
     ingredientName: string | null;
     unit: string | null;
     quantity: number;
@@ -509,7 +521,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, builderFillingDeductionGrams, dietaryCategory, tags, ingredients, subRecipes, marinades } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, builderFillingDeductionGrams, dietaryCategory, tags, ingredients, subRecipes, marinades } = req.body as Omit<z.infer<typeof UpdateRecipeBody>, "marinades"> & RecipeBodyExtras;
 
   if (marinades?.length) {
     const recipeIngIds = (ingredients ?? []).map(i => i.ingredientId);

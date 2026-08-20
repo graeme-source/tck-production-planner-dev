@@ -29,7 +29,10 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-interface SopRow {
+// Type alias (not interface) so it satisfies db.execute's
+// `Record<string, unknown>` constraint — interfaces have no implicit
+// index signature.
+type SopRow = {
   id: number;
   title: string;
   stations: string[] | null;
@@ -41,7 +44,7 @@ interface SopRow {
   step_count: number;
   first_image_step_id: number | null;
   steps_per_page: number | null;
-}
+};
 
 function shapeSop(row: SopRow) {
   return {
@@ -91,7 +94,7 @@ router.get("/", requireAuth, async (req, res) => {
   }
 });
 
-interface StepRow {
+type StepRow = {
   id: number;
   sop_id: number;
   position: number;
@@ -99,7 +102,7 @@ interface StepRow {
   has_image: boolean;
   has_video: boolean;
   video_mime: string | null;
-}
+};
 
 // Get one SOP with its steps.
 router.get("/:id", requireAuth, async (req, res) => {
