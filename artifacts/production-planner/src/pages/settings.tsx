@@ -26,6 +26,7 @@ import { Switch } from "@/components/ui/switch";
 import { NumberInput } from "@/components/ui/number-input";
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { upsertDptSettingByRecipe, updateTimingStandard, getListDptSettingsQueryKey, getListTimingStandardsQueryKey } from "@workspace/api-client-react";
+import type { UpdateUser, UpdateDptSetting, CreateCategoryDefault, CategoryDefault } from "@workspace/api-client-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -856,7 +857,8 @@ function TeamAccessContent({
               isPending={createUser.isPending}
               onCancel={() => setIsAddOpen(false)}
               onSubmit={(data) =>
-                createUser.mutate({ data }, { onSuccess: () => setIsAddOpen(false) })
+                // mode="create" guarantees the create schema (password required)
+                createUser.mutate({ data: data as CreateValues }, { onSuccess: () => setIsAddOpen(false) })
               }
             />
           </DialogContent>
@@ -883,7 +885,7 @@ function TeamAccessContent({
                 onCancel={() => setEditingUser(null)}
                 onSubmit={(data) => {
                   const editData = data as EditValues;
-                  const payload: { name: string; email: string; role: string; isActive: boolean; password?: string } = {
+                  const payload: UpdateUser = {
                     name: editData.name,
                     email: editData.email,
                     role: editData.role,
@@ -1752,12 +1754,14 @@ function CategoryDefaultsSection() {
 
   const handleAdd = () => {
     createCategoryDefault.mutate({
+      // defaultPackSize is accepted and stored by the API but missing from
+      // the generated CreateCategoryDefault type (spec lags the server).
       data: {
         category: form.category,
         defaultPackagingCost: Number(form.defaultPackagingCost) || 0,
         defaultLabourCost: Number(form.defaultLabourCost) || 0,
         defaultPackSize: Number(form.defaultPackSize) || 1,
-      }
+      } as CreateCategoryDefault & { defaultPackSize: number }
     }, { onSuccess: () => { setAdding(false); resetForm(); } });
   };
 
@@ -1769,7 +1773,7 @@ function CategoryDefaultsSection() {
         defaultPackagingCost: Number(form.defaultPackagingCost) || 0,
         defaultLabourCost: Number(form.defaultLabourCost) || 0,
         defaultPackSize: Number(form.defaultPackSize) || 1,
-      }
+      } as CreateCategoryDefault & { defaultPackSize: number }
     }, { onSuccess: () => { setEditingId(null); resetForm(); } });
   };
 
@@ -1902,7 +1906,7 @@ function CategoryDefaultsSection() {
                   ) : (
                     <>
                       <td className="px-5 py-3.5 font-medium">{d.category}</td>
-                      <td className="px-5 py-3.5 text-right">{(d as Record<string, unknown>).defaultPackSize as number ?? 1}</td>
+                      <td className="px-5 py-3.5 text-right">{(d as CategoryDefault & { defaultPackSize?: number }).defaultPackSize ?? 1}</td>
                       <td className="px-5 py-3.5 text-right">£{d.defaultPackagingCost.toFixed(2)}</td>
                       <td className="px-5 py-3.5 text-right">£{d.defaultLabourCost.toFixed(2)}</td>
                       <td className="px-5 py-3.5 text-right">
@@ -2012,7 +2016,9 @@ function DptSettingsSection() {
 
       for (const recipe of allRecipes) {
         const sold = localPacksSold[recipe.id] ?? 0;
-        await upsertDptSettingByRecipe(recipe.id, { packsSold: sold, isActive: true });
+        // packsSold is accepted by the API but missing from the generated
+        // UpdateDptSetting type (spec lags the server).
+        await upsertDptSettingByRecipe(recipe.id, { packsSold: sold, isActive: true } as UpdateDptSetting & { packsSold: number });
       }
 
       await queryClient.invalidateQueries({ queryKey: getListDptSettingsQueryKey() });

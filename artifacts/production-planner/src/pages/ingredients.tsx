@@ -410,6 +410,16 @@ type FormValues = IngredientFormValues;
 const schema = ingredientFormSchema;
 const emptyDefaults = emptyIngredientFormDefaults("ingredient");
 
+// Fields the list endpoint returns beyond the generated Ingredient type
+// (api-server routes/ingredients.ts GET / spreads the full DB row and joins
+// usage counts) — the OpenAPI spec lags behind the actual response.
+type IngredientRow = Ingredient & {
+  stockCheckEnabled?: boolean;
+  usedInRecipes?: number;
+  usedInSubRecipes?: number;
+  labelDeclaration?: string | null;
+};
+
 export default function Ingredients() {
   const { data: ingredients, isLoading } = useListIngredients();
   const { data: suppliers } = useListSuppliers();
@@ -427,7 +437,7 @@ export default function Ingredients() {
   const [nutritionalsOpen, setNutritionalsOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const filtered = ingredients?.filter(i => {
+  const filtered = (ingredients as IngredientRow[] | undefined)?.filter(i => {
     const matchesSearch =
       i.name.toLowerCase().includes(search.toLowerCase()) ||
       (i.brand ?? "").toLowerCase().includes(search.toLowerCase());
@@ -437,18 +447,17 @@ export default function Ingredients() {
     const matchesStockCheck =
       filterStockCheck === "all" ||
       (filterStockCheck === "enabled" ? i.stockCheckEnabled : !i.stockCheckEnabled);
-    const kanbanEnabled = (i as Record<string, unknown>).kanbanEnabled as boolean ?? false;
+    const kanbanEnabled = i.kanbanEnabled ?? false;
     const matchesKanban =
       filterKanban === "all" ||
       (filterKanban === "enabled" ? kanbanEnabled : !kanbanEnabled);
     const matchesSupplier =
       filterSupplier === "all" ||
       (filterSupplier === "none" ? !i.supplierId : String(i.supplierId) === filterSupplier);
-    const rec = i as Record<string, unknown>;
-    const usedInRecipes = (rec.usedInRecipes as number) ?? 0;
-    const usedInSubRecipes = (rec.usedInSubRecipes as number) ?? 0;
+    const usedInRecipes = i.usedInRecipes ?? 0;
+    const usedInSubRecipes = i.usedInSubRecipes ?? 0;
     const inUse = usedInRecipes > 0 || usedInSubRecipes > 0;
-    const declaration = rec.labelDeclaration as string | null | undefined;
+    const declaration = i.labelDeclaration;
     const hasDeclaration = !!(declaration && declaration.trim());
     const matchesDeclaration =
       filterDeclaration === "all" ||
@@ -1504,7 +1513,7 @@ export default function Ingredients() {
                         )}
                       </td>
                       <td className="px-5 py-3">
-                        {((item as Record<string, unknown>).kanbanEnabled as boolean) ? (
+                        {item.kanbanEnabled ? (
                           <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
                             <CheckCircle2 className="w-3 h-3" /> On
                           </span>

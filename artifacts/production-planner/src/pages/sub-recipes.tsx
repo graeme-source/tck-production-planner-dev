@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { useListSubRecipes, useListIngredients, useGetSubRecipe, useGetUpfSummary } from "@workspace/api-client-react";
+import { useListSubRecipes, useListIngredients, useGetSubRecipe, useGetUpfSummary, getGetSubRecipeQueryKey, getGetUpfSummaryQueryKey } from "@workspace/api-client-react";
 import { UpfChip, UpfPercentPill } from "@/components/upf-badge";
 import type { Ingredient, SubRecipeDetail, SubRecipe } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
@@ -814,6 +814,13 @@ function SubRecipeForm({
   );
 }
 
+// Returned by the API (the detail route spreads the full DB row) but not yet
+// in the generated SubRecipeDetail type — the OpenAPI spec lags the server.
+type SubRecipeDetailApi = SubRecipeDetail & {
+  madeOnProductionDay?: boolean;
+  labelDeclaration?: string | null;
+};
+
 function EditSubRecipeDialog({
   id,
   open,
@@ -827,7 +834,7 @@ function EditSubRecipeDialog({
   ingredients: IngredientOption[];
   subRecipes: SubRecipeOption[];
 }) {
-  const { data: detail, isLoading } = useGetSubRecipe(id, { query: { enabled: open } });
+  const { data: detail, isLoading } = useGetSubRecipe(id, { query: { enabled: open, queryKey: getGetSubRecipeQueryKey(id) } });
   const { updateSubRecipe } = useAppMutations();
 
   const [formIsDirty, setFormIsDirty] = useState(false);
@@ -864,13 +871,13 @@ function EditSubRecipeDialog({
         notes: detail.notes ?? "",
         shelfLifeDays: detail.shelfLifeDays != null ? Number(detail.shelfLifeDays) : undefined,
         isBase: detail.isBase ?? false,
-        expandInPrep: (detail as Record<string, unknown>).expandInPrep as boolean ?? false,
-        madeOnProductionDay: (detail as Record<string, unknown>).madeOnProductionDay as boolean ?? false,
-        labelDeclaration: (detail as Record<string, unknown>).labelDeclaration as string ?? "",
+        expandInPrep: detail.expandInPrep ?? false,
+        madeOnProductionDay: (detail as SubRecipeDetailApi).madeOnProductionDay ?? false,
+        labelDeclaration: (detail as SubRecipeDetailApi).labelDeclaration ?? "",
         ingredients: (detail.ingredients ?? []).map(i => ({
           ingredientId: i.ingredientId,
           quantity: Number(i.quantity),
-          hideFromPrep: (i as Record<string, unknown>).hideFromPrep === true,
+          hideFromPrep: i.hideFromPrep === true,
         })),
         subRecipeComponents: (detail.subRecipeComponents ?? []).map(c => ({
           componentSubRecipeId: c.componentSubRecipeId,
@@ -1126,8 +1133,8 @@ function ViewSubRecipeDialog({
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
-  const { data: detail, isLoading } = useGetSubRecipe(id, { query: { enabled: open } });
-  const { data: viewUpfSummary } = useGetUpfSummary({ query: { enabled: open } });
+  const { data: detail, isLoading } = useGetSubRecipe(id, { query: { enabled: open, queryKey: getGetSubRecipeQueryKey(id) } });
+  const { data: viewUpfSummary } = useGetUpfSummary({ query: { enabled: open, queryKey: getGetUpfSummaryQueryKey() } });
   const viewUpf = viewUpfSummary?.subRecipes.find(s => s.subRecipeId === id);
   const [multiplier, setMultiplier] = useState<BatchMultiplier>(1);
   const [customBatches, setCustomBatches] = useState(1);
