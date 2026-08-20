@@ -654,6 +654,11 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
       res.json({
         consignmentNumber: reusedWaybill,
         labelPdfBase64: labels[0],
+        // How many labels this consignment actually has. The client prints via
+        // the live label route, one request per piece — without this it would
+        // print piece 1 and quietly leave the rest of a multi-box consignment
+        // unlabelled, which is what taking labels[0] here used to do.
+        pieceCount: labels.length,
         trackingUrl: reusedTrackingUrl ?? apcTrackingUrl(reusedWaybill, postcode),
         serviceCode,
         orderId,
@@ -761,6 +766,9 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
       ...(recordError ? { recordError } : {}),
       consignmentNumber: result.consignmentNumber,
       labelPdfBase64: result.labelPdfBase64,
+      // A freshly booked consignment is always single-parcel here — extra
+      // boxes are added afterwards via add-parcel, which returns its own count.
+      pieceCount: 1,
       trackingUrl: result.trackingUrl,
       serviceCode,
       orderId,
@@ -1194,10 +1202,82 @@ router.post("/shipments/:waybill/reprint-label", requireFulfilmentAccess, async 
 
     const labelPdfs = await fetchLabel(waybill, base);
 
-    res.json({ labelPdfs });
+    // Only the COUNT goes back. The client prints each piece through the live
+    // label route, so shipping ~180KB of base64 per label here would be paid
+    // for and thrown away. This call still hits APC, which is deliberate: it
+    // re-reads the consignment as it stands NOW, so a reprint that follows an
+    // amendment (extra parcel, service upgrade) prints the right number of
+    // labels rather than the count from when the order was opened.
+    res.json({ waybill, pieceCount: labelPdfs.length });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[Fulfilment] reprint-label error for ${waybill}:`, msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
+// ── Live label pass-through ────────────────────────────────────────────────
+// Streams a consignment's label PDF straight from APC on every request.
+//
+// NOTHING IS STORED. That is the point, and it is a deliberate design decision
+// (Graeme, 2026-08-20): a consignment gets amended at the bench — an extra
+// parcel, a service upgrade when the products won't fit the box — and the
+// reprint that follows must show the CURRENT state of the consignment. A
+// cached PDF is a wrong label on a real box, so there is no cache, no bytea
+// column, and no-store on the way out.
+//
+// It exists because the print path needs a SAME-ORIGIN url. The page builds a
+// `blob:` URL and points a hidden iframe at it, and the app's own CSP
+// (frame-src 'self' + youtube/vimeo, see app.ts) does not allow blob: — Chrome
+// blocks the frame, print() then throws SecurityError on the opaque document,
+// and the bench sees a bare "Print failed" for a label that is perfectly fine
+// at APC. Serving the same bytes from this route satisfies frame-src 'self'
+// with no CSP change at all.
+//
+// Doubles as the no-printer test: open the URL in a tab and the label renders.
+//
+// GET /api/fulfilment/shipments/:waybill/label.pdf?piece=1
+router.get("/shipments/:waybill/label.pdf", requireFulfilmentAccess, async (req: Request, res: Response) => {
+  // req.params is typed string | string[] under this router's generics.
+  const waybill = String(req.params.waybill ?? "");
+  const pieceParam = typeof req.query.piece === "string" ? parseInt(req.query.piece, 10) : 1;
+  const piece = Number.isFinite(pieceParam) && pieceParam > 0 ? pieceParam : 1;
+
+  if (!isApcConfigured()) {
+    res.status(503).json({ error: "APC credentials not configured." });
+    return;
+  }
+
+  try {
+    const apiBase = await getTestModeApiBase();
+
+    // Tighter than the default 4×3s. A label that genuinely is not there must
+    // fail fast enough for the packer to act on it — 12s of silent retrying
+    // reads as a hang at the bench. 3 attempts ≈ 2.5s worst case still covers
+    // the brief lag after a consignment is amended in Hypaship.
+    const labels = await fetchLabel(waybill, apiBase, 2, 750, /* markPrinted */ false);
+
+    if (piece > labels.length) {
+      res.status(404).json({
+        error: `Consignment ${waybill} has ${labels.length} label(s); piece ${piece} does not exist.`,
+      });
+      return;
+    }
+
+    const pdf = Buffer.from(labels[piece - 1], "base64");
+
+    // A label is only ever correct at the instant it is fetched. Any cache —
+    // browser, proxy, CDN — could hand back a pre-amendment label, which is
+    // the exact failure this route is designed to make impossible.
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Length", String(pdf.length));
+    res.setHeader("Content-Disposition", `inline; filename="${waybill}-${piece}.pdf"`);
+    res.send(pdf);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Fulfilment] label.pdf error for ${waybill} piece ${piece}:`, msg);
     res.status(502).json({ error: msg });
   }
 });
