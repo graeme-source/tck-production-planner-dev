@@ -257,34 +257,52 @@ router.patch("/:id/move", async (req, res) => {
 
 router.get("/expiry-warnings", async (_req, res) => {
   try {
-    const entries = await db
-      .select({
-        id: stockEntriesTable.id,
-        ingredientId: stockEntriesTable.ingredientId,
-        ingredientName: ingredientsTable.name,
-        quantity: stockEntriesTable.quantity,
-        unit: stockEntriesTable.unit,
-        location: stockEntriesTable.location,
-        useByDate: stockEntriesTable.useByDate,
-        checkedAt: stockEntriesTable.checkedAt,
-      })
-      .from(stockEntriesTable)
-      .innerJoin(ingredientsTable, eq(stockEntriesTable.ingredientId, ingredientsTable.id))
-      .where(
-        and(
-          sql`${stockEntriesTable.useByDate} IS NOT NULL`,
-          lte(stockEntriesTable.useByDate, sql`CURRENT_DATE + INTERVAL '3 days'`),
-          sql`CAST(${stockEntriesTable.quantity} AS NUMERIC) > 0`
-        )
-      )
-      .orderBy(asc(stockEntriesTable.useByDate));
+    // Only the LATEST entry per (ingredient, location) is the current stock —
+    // that's the read model every consumer of stock_entries uses. Scanning
+    // every historical row here made long-gone deliveries resurface as
+    // "expiring", and a fresh count (which has no use-by) could never clear
+    // a warning because the old delivery row still matched.
+    const result = await db.execute<{
+      id: number;
+      ingredient_id: number;
+      ingredient_name: string;
+      quantity: string;
+      unit: string;
+      location: string;
+      use_by_date: string;
+      checked_at: string | Date;
+    }>(sql`
+      SELECT latest.id, latest.ingredient_id, i.name AS ingredient_name,
+             latest.quantity, latest.unit, latest.location,
+             latest.use_by_date, latest.checked_at
+      FROM (
+        SELECT DISTINCT ON (ingredient_id, location)
+               id, ingredient_id, quantity, unit, location, use_by_date, checked_at
+        FROM stock_entries
+        WHERE ingredient_id IS NOT NULL
+        ORDER BY ingredient_id, location, checked_at DESC
+      ) latest
+      JOIN ingredients i ON i.id = latest.ingredient_id
+      WHERE latest.use_by_date IS NOT NULL
+        AND latest.use_by_date <= CURRENT_DATE + INTERVAL '3 days'
+        AND CAST(latest.quantity AS NUMERIC) > 0
+      ORDER BY latest.use_by_date ASC
+    `);
 
     res.json(
-      entries.map((e) => ({
-        ...e,
+      (result.rows as Array<{
+        id: number; ingredient_id: number; ingredient_name: string; quantity: string;
+        unit: string; location: string; use_by_date: string; checked_at: string | Date;
+      }>).map((e) => ({
+        id: e.id,
+        ingredientId: e.ingredient_id,
+        ingredientName: e.ingredient_name,
         quantity: Number(e.quantity),
-        checkedAt: e.checkedAt.toISOString(),
-        isExpired: e.useByDate ? new Date(e.useByDate) < new Date(londonDateString()) : false,
+        unit: e.unit,
+        location: e.location,
+        useByDate: e.use_by_date,
+        checkedAt: new Date(e.checked_at).toISOString(),
+        isExpired: new Date(e.use_by_date) < new Date(londonDateString()),
       }))
     );
   } catch (err) {
