@@ -360,6 +360,9 @@ router.get("/calculate", async (req, res) => {
       orderQty: number;
       packsToOrder: number;
       isKanban: boolean;
+      // The kanban floor applied to packsToOrder (null when not a kanban
+      // line). The frontend's stock-edit recompute re-applies it.
+      kanbanFloorPacks: number | null;
       orderingUrl: string | null;
       lastStockCheckAt: string | null;
       // True when the item is daily-stock-checked for this supplier but has
@@ -447,11 +450,15 @@ router.get("/calculate", async (req, res) => {
     // amount even when the stock maths says 0 (stale stock check, opened
     // packs, etc.). Kanban units pack/bottle/pallet mean supplier packs;
     // "weight" means the ingredient's native unit.
+    let kanbanFloorPacks: number | null = null;
     if (isKanban) {
       const kanbanAmt = Number(detail.kanbanOrderAmount ?? detail.kanbanQuantity) || 1;
       const kanbanPacks = detail.kanbanUnit === "weight" && packWeight > 0
         ? Math.ceil(kanbanAmt / packWeight)
         : Math.ceil(kanbanAmt);
+      // Emitted on the line so the frontend's stock-edit recompute applies
+      // the same floor instead of re-deriving (or forgetting) it.
+      kanbanFloorPacks = kanbanPacks;
       packsToOrder = Math.max(packsToOrder, kanbanPacks);
     }
     // Case rounding: when this ingredient is ordered by the case, round the
@@ -511,6 +518,7 @@ router.get("/calculate", async (req, res) => {
       orderQty: Math.round(orderQty * 100) / 100,
       packsToOrder,
       isKanban,
+      kanbanFloorPacks,
       orderingUrl: detail.orderingUrl ?? null,
       lastStockCheckAt: stockCheckTimestamps[iid] ?? null,
       stockInPacks: (detail.stockInPacks ?? false) && packWeight > 0,
@@ -590,6 +598,7 @@ router.get("/calculate", async (req, res) => {
         orderQty,
         packsToOrder,
         isKanban: true,
+        kanbanFloorPacks: packsToOrder,
         orderingUrl: d.orderingUrl ?? null,
         lastStockCheckAt: stockCheckTimestamps[d.id] ?? null,
         belowRequirement: false,
