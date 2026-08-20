@@ -3,7 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
-import { IcePackBadge } from "@/components/ice-pack-callout";
+import { IcePackBadge, IcePackBanner } from "@/components/ice-pack-callout";
+import { useIcePacks } from "@/hooks/use-ice-packs";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import { ApcBatchBookingDialog } from "@/components/apc-batch-booking";
@@ -13,7 +14,7 @@ import {
   Package, Scan, CheckCircle2, AlertCircle, ChevronRight, Printer,
   RefreshCw, MapPin, SkipForward, RotateCcw, XCircle, Loader2,
   ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter, ArrowUpDown,
-  Volume2, VolumeX, AlertTriangle, PackageCheck,
+  Volume2, VolumeX, AlertTriangle, PackageCheck, Snowflake,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -1179,6 +1180,45 @@ export default function Fulfilment() {
     });
   }
 
+  // ── Ice packs ────────────────────────────────────────────────────────────
+  // The weather-driven counts live on the banner, but a banner is scenery by
+  // the tenth order. To build the habit, the FIRST few orders of the day (per
+  // device) open behind a one-tap interstitial naming the count for that box
+  // size — the packer confirms the packs went in before picking starts.
+  const { data: icePacks } = useIcePacks();
+  const [icePackGate, setIcePackGate] = useState<{ packs: number; boxLabel: string } | null>(null);
+
+  const ICE_PACK_CONFIRMS_TARGET = 3;
+  function icePackConfirmsKey() {
+    return `fulfilment_icepack_confirms_${format(new Date(), "yyyy-MM-dd")}`;
+  }
+  function icePackConfirmsSoFar() {
+    const n = Number(localStorage.getItem(icePackConfirmsKey()) ?? "0");
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function maybeOpenIcePackGate(order: ShopifyOrder) {
+    if (!icePacks || icePacks.enabled === false) return;
+    // Only small/large boxes have an ice-pack count. Wholesale bags leave as
+    // they're made and local deliveries go straight on the van.
+    const category = getOrderCategory(order);
+    const packs = category === "small box" ? icePacks.smallBoxPacks
+      : category === "large box" ? icePacks.largeBoxPacks
+        : null;
+    if (packs == null || packs <= 0) return;
+    if (icePackConfirmsSoFar() >= ICE_PACK_CONFIRMS_TARGET) return;
+    setIcePackGate({ packs, boxLabel: category });
+  }
+
+  // Counts CONFIRMS, not showings — backing out of an order without tapping
+  // doesn't use up one of the day's three.
+  function confirmIcePackGate() {
+    localStorage.setItem(icePackConfirmsKey(), String(icePackConfirmsSoFar() + 1));
+    setIcePackGate(null);
+    // Hand focus back to the scan field so the next scanner burst lands right.
+    requestAnimationFrame(() => barcodeRef.current?.focus());
+  }
+
   const { data: dispatchTags, isLoading: tagsLoading, error: tagsError, refetch: refetchTags } = useQuery({
     queryKey: ["fulfilment-dispatch-tags"],
     queryFn: fetchDispatchTags,
@@ -1531,6 +1571,8 @@ export default function Fulfilment() {
     setExpectedConsignment(null);
     setExpectedConsignmentError(null);
     setView("picking");
+    // First orders of the day: make the packer confirm the ice packs went in.
+    maybeOpenIcePackGate(order);
 
     // Local delivery: the van does the last mile, APC is never involved.
     // No consignment to look up (reconcile) or book (full) — straight to
@@ -2456,6 +2498,35 @@ export default function Fulfilment() {
         )}
         {showTestModeBanner && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
         {reconcileMode && <ReconcileModeBanner />}
+        {/* Today's counts stay in sight for every order, not just the gated
+            first few. */}
+        <IcePackBanner />
+        {/* One-tap ice-pack confirm on the first orders of the day. Rendered
+            over everything, and the confirm button takes focus so a stray
+            scanner burst can't land in the pick list underneath. */}
+        {icePackGate && (
+          <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6">
+            <div className="bg-card rounded-2xl border border-border shadow-2xl max-w-md w-full p-6 space-y-4 text-center">
+              <div className="mx-auto w-16 h-16 rounded-2xl bg-cyan-100 dark:bg-cyan-900/40 flex items-center justify-center">
+                <Snowflake className="w-9 h-9 text-cyan-600 dark:text-cyan-400" />
+              </div>
+              <h2 className="text-3xl font-display font-bold leading-tight">
+                {icePackGate.packs} ice pack{icePackGate.packs === 1 ? "" : "s"} in this {icePackGate.boxLabel}
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Today's rule for {activeOrder.name}. Put {icePackGate.packs === 1 ? "it" : "them"} in
+                now, then confirm to start picking.
+              </p>
+              <button
+                autoFocus
+                onClick={confirmIcePackGate}
+                className="w-full py-4 rounded-xl bg-primary text-primary-foreground text-lg font-semibold hover:opacity-90 transition-opacity"
+              >
+                Ice packs are in — start picking
+              </button>
+            </div>
+          </div>
+        )}
         <div className="flex items-center gap-3">
           <button onClick={goBack} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
             <ArrowLeft className="w-5 h-5" />
@@ -3259,6 +3330,9 @@ export default function Fulfilment() {
           <span className="sr-only">Back</span>
         </button>
       </div>
+
+      {/* Today's ice-pack rule, in sight before the first box is opened. */}
+      <IcePackBanner />
 
       {error && (
         <div className="flex items-center gap-3 p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive">
