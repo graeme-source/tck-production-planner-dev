@@ -5114,7 +5114,12 @@ router.get("/:id/assembly-items", async (req, res) => {
       const assemblyItems: AssemblyEntry[] = [];
       const postOvenItems: AssemblyEntry[] = [];
 
-      const isPostOven = (name: string) => /garlic[\s\-]*butter/i.test(name);
+      // Post-oven items never reach the builders: they're applied by the
+      // wrapping team after the bake (garlic butter brushed on calzones) or
+      // after the chill (cream cheese icing on cinnamon buns). Name-based on
+      // purpose — same convention as the dough station matching "dough" —
+      // so a new post-bake finish routes itself by being named honestly.
+      const isPostOven = (name: string) => /garlic[\s\-]*butter|icing/i.test(name);
 
       for (const row of nfiRows.filter(r => r.recipeId === item.recipeId)) {
         const wt = toGrams(Number(row.quantity), row.unit) * ppb;
