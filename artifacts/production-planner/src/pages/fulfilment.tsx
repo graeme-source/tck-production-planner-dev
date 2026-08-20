@@ -1086,6 +1086,8 @@ export default function Fulfilment() {
   // labelVerified is set, scans route to the label matcher, not the item one.
   const [expectedConsignment, setExpectedConsignment] = useState<ExpectedConsignment | null>(null);
   const [expectedConsignmentError, setExpectedConsignmentError] = useState<string | null>(null);
+  // Reconcile-mode per-order label print (the manual-upload control test).
+  const [reconcilePrinting, setReconcilePrinting] = useState(false);
   const [loadingConsignment, setLoadingConsignment] = useState(false);
   const [labelVerified, setLabelVerified] = useState<LabelVerifyResult | null>(null);
   const [labelScanError, setLabelScanError] = useState<string | null>(null);
@@ -1932,6 +1934,30 @@ export default function Fulfilment() {
   const isConsignmentBusy = consignmentAction !== "idle";
   const [cancelSuccess, setCancelSuccess] = useState(false);
 
+  /** Reconcile mode: fetch the hand-raised consignment's label from APC by
+   *  the order reference and print it — proves the print pipeline against
+   *  Graeme's trusted Excel-upload consignments without booking anything. */
+  async function printReconcileLabel() {
+    if (!activeOrder) return;
+    setReconcilePrinting(true);
+    try {
+      const res = await fetch(`${BASE}/api/fulfilment/reconcile-label?orderName=${encodeURIComponent(activeOrder.name)}`, { credentials: "include" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Label fetch failed");
+      printAllLabels(data.labelPdfs as string[]);
+      toast({
+        title: `Printing label for ${activeOrder.name}`,
+        description: data.duplicateCount > 1
+          ? `⚠ ${data.duplicateCount} consignments share this reference — spare labels must be binned.`
+          : `Waybill ${data.waybill}`,
+      });
+    } catch (err) {
+      toast({ title: "Label print failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
+    } finally {
+      setReconcilePrinting(false);
+    }
+  }
+
   function printAllLabels(pdfs: string[]) {
     if (pdfs.length === 0) return;
     setPrintStatus("printing");
@@ -2709,6 +2735,16 @@ export default function Fulfilment() {
                 </p>
               </div>
               {verifyingLabel && <Loader2 className="w-5 h-5 animate-spin text-primary flex-shrink-0" />}
+              <button
+                type="button"
+                onClick={printReconcileLabel}
+                disabled={reconcilePrinting}
+                className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg border border-primary/40 bg-background text-sm font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
+                title="Fetch this order's label from APC and print it (lost/unprinted label)"
+              >
+                {reconcilePrinting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}
+                Print label
+              </button>
             </div>
             {/* Shown so the packer's eyes are a second layer of checking — the
                 match itself is decided server-side on the reference. */}
@@ -3550,7 +3586,11 @@ export default function Fulfilment() {
             // block them — the van doesn't care what APC thinks of the postcode.
             const localOrder = isLocalDelivery(order);
             const postcodeIssue = apcMode === "full" && !localOrder ? postcodeIssueMap.get(order.id) : undefined;
-            const isBlocked = !!postcodeIssue;
+            // "Check failed:" = the VALIDATOR broke (e.g. APC auth outage,
+            // 2026-08-20 — every order went red at once), not the postcode.
+            // Render that amber-advisory instead of red-blocked.
+            const checkUnavailable = !!postcodeIssue && (postcodeIssue.reason ?? "").startsWith("Check failed:");
+            const isBlocked = !!postcodeIssue && !checkUnavailable;
             // Advisory: the address needs a human decision before a label is
             // printed. Never blocks — local deliveries don't get a label at all.
             const addressFlags = localOrder ? undefined : addressReviewMap.get(order.id);
@@ -3637,6 +3677,14 @@ export default function Fulfilment() {
                     {isBlocked && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 font-medium">
                         Postcode Issue
+                      </span>
+                    )}
+                    {checkUnavailable && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-medium"
+                        title={postcodeIssue?.reason ?? undefined}
+                      >
+                        APC check unavailable
                       </span>
                     )}
                     {addressFlags && (

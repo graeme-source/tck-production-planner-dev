@@ -798,6 +798,47 @@ router.get("/consignment-for-order", requireFulfilmentAccess, async (req: Reques
   }
 });
 
+// ── Reconcile mode: fetch the label PDF for a HAND-RAISED consignment ──────
+// Graeme's control test (2026-08-20): consignments stay manually uploaded
+// via the Excel flow, but the label can be (re)printed per order from the
+// bench — proving the print pipeline in isolation before the app ever
+// books consignments itself. Pure read against live APC: looks up the
+// consignment by the order reference, pulls its label PDF(s). Books
+// nothing.
+router.get("/reconcile-label", requireFulfilmentAccess, async (req: Request, res: Response) => {
+  const orderName = typeof req.query.orderName === "string" ? req.query.orderName.trim() : "";
+  if (!orderName) {
+    res.status(400).json({ error: "orderName query param required" });
+    return;
+  }
+  if (!isApcConfigured()) {
+    res.status(503).json({ error: "APC credentials not configured." });
+    return;
+  }
+  try {
+    const matches = await lookupOrdersByReference(orderName);
+    const lookup = matches[0];
+    if (!lookup?.waybill) {
+      res.status(404).json({
+        error: `APC has no consignment with reference "${orderName}". Check the reference in Hypaship.`,
+        notFound: true,
+      });
+      return;
+    }
+    const labelPdfs = await fetchLabel(lookup.waybill);
+    res.json({
+      waybill: lookup.waybill,
+      labelPdfs,
+      duplicateCount: matches.length,
+      duplicateWaybills: matches.map(m => m.waybill),
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Fulfilment] reconcile-label error:", msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
 // ── Reconcile mode: verify a scanned label against the order being packed ──
 // The verdict is decided HERE, not in the browser, and the ledger insert is
 // what enforces one-label-one-order. Three distinct outcomes, because they
