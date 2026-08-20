@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { db, stockTransfersTable, stockEntriesTable, ingredientsTable } from "@workspace/db";
-import { eq, desc } from "drizzle-orm";
+import { and, eq, desc } from "drizzle-orm";
 import { z } from "zod/v4";
 import { validate } from "../middleware/validate";
 
@@ -52,34 +52,65 @@ router.post("/", validate(CreateTransferBody), async (req, res) => {
 
   const userId = (req.session as Record<string, unknown>).userId as number | undefined;
 
-  const [row] = await db.insert(stockTransfersTable).values({
-    ingredientId: ingredientId || null,
-    fromLocation,
-    toLocation,
-    quantity: String(quantity),
-    unit,
-    userId: userId || null,
-    notes: notes || null,
-  }).returning();
+  // Every reader of stock_entries treats the NEWEST row per (ingredient,
+  // location) as the absolute current level — so a transfer must write new
+  // absolute levels, not +/- delta rows. (Delta rows made the source location
+  // read as a negative number and the destination as just the moved amount.)
+  const latestLevel = async (
+    tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+    ingId: number,
+    location: string,
+  ): Promise<number> => {
+    const [entry] = await tx
+      .select({ quantity: stockEntriesTable.quantity })
+      .from(stockEntriesTable)
+      .where(and(eq(stockEntriesTable.ingredientId, ingId), eq(stockEntriesTable.location, location)))
+      .orderBy(desc(stockEntriesTable.checkedAt))
+      .limit(1);
+    return entry ? Number(entry.quantity) : 0;
+  };
 
-  await db.insert(stockEntriesTable).values({
-    ingredientId: ingredientId || null,
-    recipeId: null,
-    itemType: "ingredient",
-    quantity: String(-quantity),
-    unit,
-    location: fromLocation,
-    notes: `Transfer out to ${toLocation}`,
-  });
+  const row = await db.transaction(async (tx) => {
+    const [transfer] = await tx.insert(stockTransfersTable).values({
+      ingredientId: ingredientId || null,
+      fromLocation,
+      toLocation,
+      quantity: String(quantity),
+      unit,
+      userId: userId || null,
+      notes: notes || null,
+    }).returning();
 
-  await db.insert(stockEntriesTable).values({
-    ingredientId: ingredientId || null,
-    recipeId: null,
-    itemType: "ingredient",
-    quantity: String(quantity),
-    unit,
-    location: toLocation,
-    notes: `Transfer in from ${fromLocation}`,
+    // Misc transfers with no ingredient id have nothing to key a stock level
+    // on — record the audit row only.
+    if (ingredientId) {
+      const fromLevel = await latestLevel(tx, ingredientId, fromLocation);
+      const toLevel = await latestLevel(tx, ingredientId, toLocation);
+
+      await tx.insert(stockEntriesTable).values({
+        ingredientId,
+        recipeId: null,
+        itemType: "ingredient",
+        // Clamp at 0: moving more than the recorded level means the recorded
+        // level was stale, not that the shelf goes negative.
+        quantity: String(Math.max(0, fromLevel - quantity)),
+        unit,
+        location: fromLocation,
+        notes: `Transfer out to ${toLocation} (−${quantity})`,
+      });
+
+      await tx.insert(stockEntriesTable).values({
+        ingredientId,
+        recipeId: null,
+        itemType: "ingredient",
+        quantity: String(toLevel + quantity),
+        unit,
+        location: toLocation,
+        notes: `Transfer in from ${fromLocation} (+${quantity})`,
+      });
+    }
+
+    return transfer;
   });
 
   res.status(201).json({
