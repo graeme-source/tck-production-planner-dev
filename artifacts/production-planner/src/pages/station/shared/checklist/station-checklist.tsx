@@ -1576,7 +1576,10 @@ function DynamicDataDisplay({ type, data, loading, planId }: { type: string; dat
       );
     }
     const report = (data as any[])[0] as { tag: string; deliveryLabel: string; products: Array<{ title: string; quantity: number; orderCount: number }>; totalQuantity: number; dessertProductCount: number } | undefined;
-    if (!report || report.products.length === 0) {
+    // Belt-and-braces shape guard: this renderer crashed the whole checklist
+    // when handed another check's rows (see useDynamicData) — never trust
+    // the payload shape blindly again.
+    if (!report || !Array.isArray(report.products) || report.products.length === 0) {
       return (
         <div className="mb-4 p-3 bg-secondary/30 rounded-lg text-sm text-muted-foreground">
           No dessert orders found for delivery.
