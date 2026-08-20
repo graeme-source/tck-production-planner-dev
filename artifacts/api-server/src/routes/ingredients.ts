@@ -1,7 +1,8 @@
 import { Router, type IRouter } from "express";
 import { db, ingredientsTable, suppliersTable, recipeIngredientsTable, subRecipeIngredientsTable, ingredientStorageLocationsTable, storageLocationsTable } from "@workspace/db";
-import { eq, sql, inArray, isNull } from "drizzle-orm";
+import { eq, sql, inArray, isNull, isNotNull } from "drizzle-orm";
 import { CreateIngredientBody, UpdateIngredientBody } from "@workspace/api-zod";
+import { detectAllergens, ALLERGEN_DISPLAY } from "@workspace/allergens";
 import { validate } from "../middleware/validate";
 import { generateQrCode } from "../lib/qr-code";
 
@@ -187,7 +188,9 @@ router.post("/", validate(CreateIngredientBody), async (req, res) => {
     fibre: fibre != null ? String(fibre) : null,
     salt: salt != null ? String(salt) : null,
     labelDeclaration: labelDeclaration || null,
-    allergens: allergens ?? [],
+    // The declaration is the source of truth for allergens: anything the
+    // declaration text implies is auto-added to the ticked list.
+    allergens: [...new Set([...(allergens ?? []), ...detectAllergens(labelDeclaration || null)])],
     nutritionalsAiEstimated: !!nutritionalsAiEstimated,
   }).returning();
 
@@ -266,6 +269,29 @@ router.get("/data-health", async (_req, res) => {
     .filter(r => r.missingLabel || r.missingNutrition.length > 0);
 
   res.json({ ingredients: payload });
+});
+
+// One-off mirror pass over the whole ingredient list: for every ingredient
+// with a label declaration, tick any allergen the declaration text implies
+// that isn't ticked yet. Add-only — never removes an existing tick. Returns
+// exactly what changed so the operator can review.
+router.post("/backfill-allergens", async (_req, res) => {
+  const rows = await db
+    .select({ id: ingredientsTable.id, name: ingredientsTable.name, labelDeclaration: ingredientsTable.labelDeclaration, allergens: ingredientsTable.allergens })
+    .from(ingredientsTable)
+    .where(isNotNull(ingredientsTable.labelDeclaration));
+
+  const updated: Array<{ id: number; name: string; added: string[] }> = [];
+  for (const row of rows) {
+    const ticked = (row.allergens as string[] | null) ?? [];
+    const missing = detectAllergens(row.labelDeclaration).filter(c => !ticked.includes(c));
+    if (missing.length === 0) continue;
+    await db.update(ingredientsTable)
+      .set({ allergens: [...ticked, ...missing] })
+      .where(eq(ingredientsTable.id, row.id));
+    updated.push({ id: row.id, name: row.name, added: missing.map(c => ALLERGEN_DISPLAY[c] || c) });
+  }
+  res.json({ scanned: rows.length, updatedCount: updated.length, updated });
 });
 
 router.post("/backfill-qr", async (_req, res) => {
@@ -406,6 +432,23 @@ router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
   }
   const packsError = validateStockInPacks(stockInPacks, effectivePackWeight);
   if (packsError) { res.status(400).json({ error: packsError }); return; }
+
+  // Declaration → ticks mirroring. When the declaration text is set or
+  // changed, allergens implied by the new text are auto-added to the ticks
+  // (the deck text is the source of truth). When the declaration is
+  // unchanged, the submitted ticks are respected as-is — so a manually
+  // removed false positive stays removed until the text itself changes.
+  let effectiveAllergens: string[] | undefined = allergens;
+  if (labelDeclaration !== undefined && (labelDeclaration || null) !== null) {
+    const [cur] = await db
+      .select({ labelDeclaration: ingredientsTable.labelDeclaration, allergens: ingredientsTable.allergens })
+      .from(ingredientsTable).where(eq(ingredientsTable.id, id));
+    if ((cur?.labelDeclaration ?? null) !== labelDeclaration) {
+      const base = allergens ?? (cur?.allergens as string[] | null) ?? [];
+      effectiveAllergens = [...new Set([...base, ...detectAllergens(labelDeclaration)])];
+    }
+  }
+
   const [row] = await db.update(ingredientsTable).set({
     name,
     unit,
@@ -460,7 +503,7 @@ router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
     ...(fibre !== undefined ? { fibre: fibre != null ? String(fibre) : null } : {}),
     ...(salt !== undefined ? { salt: salt != null ? String(salt) : null } : {}),
     ...(labelDeclaration !== undefined ? { labelDeclaration: labelDeclaration || null } : {}),
-    ...(allergens !== undefined ? { allergens: allergens ?? [] } : {}),
+    ...(effectiveAllergens !== undefined ? { allergens: effectiveAllergens ?? [] } : {}),
     ...(nutritionalsAiEstimated !== undefined ? { nutritionalsAiEstimated: !!nutritionalsAiEstimated } : {}),
     // Manual NOVA override from the form. Marked 'manual' so the batch
     // analyzer never overwrites it. Clearing (null) re-opens it to AI.

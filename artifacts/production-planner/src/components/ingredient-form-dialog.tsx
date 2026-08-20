@@ -9,8 +9,9 @@
  * Schema, value-shaping and payload-building helpers all live in
  * lib/ingredient-form.ts so this file is purely UI + wiring.
  */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useForm, type UseFormRegister, type UseFormWatch, type UseFormSetValue } from "react-hook-form";
+import { detectAllergens, ALLERGEN_DISPLAY } from "@workspace/allergens";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -130,6 +131,20 @@ export function IngredientFormDialog({
     const cur = watchedAllergens;
     setValue("allergens", cur.includes(val) ? cur.filter((a: string) => a !== val) : [...cur, val]);
   };
+
+  // The label declaration is the source of truth for allergens: any allergen
+  // its text implies is auto-ticked. Add-only, and keyed to the declaration
+  // text — unticking a false positive sticks until the text itself changes.
+  const watchedDeclaration = watch("labelDeclaration") ?? "";
+  const detectedCodes = useMemo(() => detectAllergens(watchedDeclaration), [watchedDeclaration]);
+  const detectedKey = detectedCodes.join(",");
+  useEffect(() => {
+    if (!open || detectedCodes.length === 0) return;
+    const cur: string[] = watch("allergens") ?? [];
+    const missing = detectedCodes.filter(c => !cur.includes(c));
+    if (missing.length > 0) setValue("allergens", [...cur, ...missing]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detectedKey, open]);
 
   // ── UPF / NOVA classification ────────────────────────────────────────
   // The class itself is a form field (manual override saves through the
@@ -1058,6 +1073,12 @@ export function IngredientFormDialog({
                         </button>
                       ))}
                     </div>
+                    {detectedCodes.length > 0 && (
+                      <p className="text-xs text-muted-foreground mt-1.5">
+                        Found in the declaration and ticked automatically:{" "}
+                        {detectedCodes.map(c => ALLERGEN_DISPLAY[c] ?? c).join(", ")}.
+                      </p>
+                    )}
                   </div>
 
                   {/* UPF / NOVA classification */}
