@@ -158,16 +158,70 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // device — iPad, PC, etc.) we check: if idle for 1+ hour, force a PIN
   // lock. We also always re-check the session so server-side resets (10pm
   // evening lock, 4am morning lock) are picked up immediately.
+  //
+  // The timestamp is PERSISTED in localStorage, not just kept in memory.
+  // In memory alone it starts at Date.now() on every page load — so a PC
+  // that was powered off overnight came back the next morning "0 minutes
+  // idle" and never PIN-locked, while iPads (whose frozen tab kept the old
+  // in-memory value) locked correctly. Persisting lets a fresh browser
+  // launch inherit last night's timestamp and lock on boot (2026-08-20).
   const IDLE_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour
-  const lastActivityRef = useRef<number>(Date.now());
+  const LAST_ACTIVITY_KEY = "tck_last_activity";
+  const lastActivityRef = useRef<number>((() => {
+    try {
+      const v = Number(localStorage.getItem(LAST_ACTIVITY_KEY));
+      if (Number.isFinite(v) && v > 0 && v <= Date.now()) return v;
+    } catch { /* private mode */ }
+    return Date.now();
+  })());
+  // Throttle localStorage writes — pointer/scroll events fire constantly and
+  // a write every 30s keeps the stored value plenty fresh against a 1-hour
+  // timeout, even after a hard power-off with no unload events.
+  const lastPersistRef = useRef<number>(0);
 
   // Update activity timestamp on any user interaction
   useEffect(() => {
-    const touch = () => { lastActivityRef.current = Date.now(); };
+    const touch = () => {
+      const now = Date.now();
+      lastActivityRef.current = now;
+      if (now - lastPersistRef.current > 30_000) {
+        lastPersistRef.current = now;
+        try { localStorage.setItem(LAST_ACTIVITY_KEY, String(now)); } catch { /* private mode */ }
+      }
+    };
+    // Persist immediately when the tab goes to the background — the cleanest
+    // "last seen" we can record before a shutdown we won't get to observe.
+    const persistOnHide = () => {
+      if (document.visibilityState === "hidden") {
+        try { localStorage.setItem(LAST_ACTIVITY_KEY, String(lastActivityRef.current)); } catch { /* private mode */ }
+      }
+    };
     const events = ["pointerdown", "keydown", "scroll", "touchstart"] as const;
     for (const evt of events) document.addEventListener(evt, touch, { passive: true });
-    return () => { for (const evt of events) document.removeEventListener(evt, touch); };
+    document.addEventListener("visibilitychange", persistOnHide);
+    return () => {
+      for (const evt of events) document.removeEventListener(evt, touch);
+      document.removeEventListener("visibilitychange", persistOnHide);
+    };
   }, []);
+
+  // Boot check: a freshly launched browser (PC turned on in the morning)
+  // fires neither the 5-minute poll nor a visibilitychange, so without this
+  // the stored idle time would only be acted on an hour into the day. Runs
+  // once, as soon as the restored session reports authenticated.
+  const bootIdleCheckedRef = useRef(false);
+  useEffect(() => {
+    if (bootIdleCheckedRef.current) return;
+    if (state.status !== "authenticated") return;
+    bootIdleCheckedRef.current = true;
+    if (pinLocked) return;
+    const idleMs = Date.now() - lastActivityRef.current;
+    if (idleMs >= IDLE_TIMEOUT_MS) {
+      setPinLocked(true);
+      fetch("/api/auth/pin/lock", { method: "POST", credentials: "include" })
+        .catch((err) => { console.warn("[Auth] Boot idle lock failed:", err); });
+    }
+  }, [state, pinLocked]);
 
   useEffect(() => {
     const handleVisibility = () => {
