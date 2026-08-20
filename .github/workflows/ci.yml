@@ -18,9 +18,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # 56 pre-existing typecheck errors exist across the workspace (recorded
-      # in docs/CODEBASE_ANALYSIS.md). Non-blocking until that backlog is
-      # burned down — flip this to blocking as soon as it reaches zero.
+      # Blocking since 2026-08-20 — the workspace typechecks clean (the
+      # pre-existing 204-error backlog was burned down). Keep it that way.
       - run: pnpm run typecheck
-        continue-on-error: true
       - run: pnpm run test

@@ -43,7 +43,7 @@ personalised start pages) on that foundation.
 | Backend routes | 68 files, **634 endpoints** | no service layer; 6 external-integration adapters only |
 | Largest backend file | `routes/production-plans.ts` — 9,411 LOC, 87 endpoints | single handlers of 1,285 lines (`:644`) and 921 lines (`:7086`) |
 | Largest frontend files | `settings.tsx` 6,094 LOC (48 components, 176 `useState`); `production-plans.tsx` 6,491; `reports.tsx` 5,417 | |
-| Tests / CI / lint | **none** | no test files, no `.github/`, no eslint config; gate is `tsc` only |
+| Tests / CI / lint | vitest + GitHub Actions since 2026-08-20 | typecheck (blocking, workspace clean after a 204-error burn-down) + tests on PRs and dev/master/staging pushes; no eslint yet |
 | API spec coverage | ~46 of 634 endpoints (~7%) | orval-generated clients cover a legacy core; everything since is hand-rolled |
 | Frontend data fetching | 3 competing patterns; **656 raw `fetch(`** | orval hooks (36 files), hand-written `useQuery` (39), bare `useEffect`+`fetch` (24) |
 | Migration systems | **two** | `runStartupMigrations()` in `api-server/src/index.ts:96-2808` (332 DDL statements at every boot) *and* 53 Drizzle migrations in `lib/db/migrations/` (with a duplicated `0017_` pair) |
