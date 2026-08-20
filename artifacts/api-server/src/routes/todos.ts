@@ -226,8 +226,12 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const CreateBody = z.object({
   assigneeId: z.number().int(),
   title: z.string().trim().min(1).max(300),
-  notes: z.string().trim().max(5000).optional(),
-  url: z.string().trim().max(2000).optional(),
+  // nullish, not optional: the create form sends `notes: null` / `url: null`
+  // for empty fields (same shape as the edit form), and .optional() rejects
+  // null — which surfaced as "A title (and a valid assignee) is required" on
+  // a perfectly valid task (2026-08-20).
+  notes: z.string().trim().max(5000).nullish(),
+  url: z.string().trim().max(2000).nullish(),
   priority: z.enum(PRIORITIES).default("normal"),
   scheduledFor: z.string().regex(DATE_RE).nullish(),
   dueDate: z.string().regex(DATE_RE).nullish(),
