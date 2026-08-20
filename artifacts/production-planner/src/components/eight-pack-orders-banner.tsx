@@ -99,14 +99,19 @@ function productionCandidates(deliveryDate: string, today: string): string[] {
 }
 
 // Default production day: the EARLIEST candidate whose plan already has every
-// product on it — make it as soon as possible. Falls back to the despatch day
-// (so the warning explains what's missing there) when none qualifies.
+// product on it — make it as soon as possible. When none qualifies, default
+// to delivery − 2 (produce and chill one day, wrap/pack/despatch the next)
+// rather than the despatch day itself: producing, wrapping and despatching
+// all on the same day is a squeeze reserved for when time has run out
+// (Graeme, 2026-08-20). Falls back to the despatch day only when delivery − 2
+// is already in the past.
 function defaultProductionDate(order: QueueOrder, deliveryDate: string, today: string, plans: Record<string, PlanInfo>): string {
   const candidates = productionCandidates(deliveryDate, today);
   for (const d of candidates) {
     if (evaluateProduction(order, d, plans).ok) return d;
   }
-  return addDaysStr(deliveryDate, -1);
+  const dayBeforeDespatch = addDaysStr(deliveryDate, -2);
+  return dayBeforeDespatch >= today ? dayBeforeDespatch : addDaysStr(deliveryDate, -1);
 }
 
 export function EightPackOrdersBanner({ userRole }: { userRole?: string }) {

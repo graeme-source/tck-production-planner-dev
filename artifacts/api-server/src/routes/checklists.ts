@@ -18,9 +18,9 @@ import {
   storageLocationsTable,
   locationTemperatureRecordsTable,
 } from "@workspace/db";
-import { eq, and, gt, asc, desc, gte, lte, sql, isNull, inArray } from "drizzle-orm";
+import { eq, and, or, gt, asc, desc, gte, lte, sql, isNull, inArray } from "drizzle-orm";
 import * as z from "zod";
-import { londonDateString } from "../lib/london-time";
+import { londonDateString, londonStartOfDay, londonEndOfDay } from "../lib/london-time";
 import { LOCATION_DEFS } from "../lib/storage-location-defs";
 import { computeClosingFridgeActions } from "../lib/fridge-expiry";
 import { adjustFridgeStock, addRecipeFreezerStock } from "../lib/fridge-stock";
@@ -246,8 +246,14 @@ router.get("/station/:stationType/plan/:planId", async (req: Request, res: Respo
     ))
     .orderBy(asc(checklistTemplatesTable.category), asc(checklistTemplatesTable.orderPosition));
 
-  // Filter by schedule/day
-  const filtered = templates.filter((t: { schedule: string; scheduleDays: string | null }) => templateMatchesDay(t, plan.planDate));
+  // Filter by schedule/day — against TODAY's calendar day in London, not the
+  // plan's production date. The dough room's screen sits on the NEXT day's
+  // plan (dough is made the day before production), so plan-date matching
+  // hid day-scheduled checks from the person actually in the room: a
+  // Thursday check never showed on Thursday, and Sunday checks could never
+  // show at all because no plan is ever dated Sunday. A check scheduled for
+  // a day is due on that real day, whichever plan the station is anchored to.
+  const filtered = templates.filter((t: { schedule: string; scheduleDays: string | null }) => templateMatchesDay(t, londonDateString()));
 
   // Get completions for this plan (use canonical station so both views see same completions)
   const completions = await db.select().from(checklistCompletionsTable)
@@ -484,10 +490,18 @@ router.get("/completions", async (req: Request, res: Response) => {
 });
 
 // HACCP reporting: list OUTSTANDING checklist items across a date range —
-// templates that were scheduled for a given (plan date × station) but have
-// no matching completion row, plus any one-off items that were created but
-// never ticked off. Used by the Analytics → HACCP tab to surface "what did
-// we miss yesterday?" for EHO compliance.
+// templates that were scheduled on a calendar day the kitchen was working
+// but have no matching completion, plus any one-off items that were created
+// but never ticked off. Used by the Analytics → HACCP tab to surface "what
+// did we miss yesterday?" for EHO compliance.
+//
+// Scheduling is per CALENDAR DAY, not per plan date: the dough room works
+// the day before its plan's production date (Sunday's checks are done while
+// prepping Monday's plan), so enumerating by plan date made weekend checks
+// invisible to this report. A day counts as a working day when a plan is
+// dated that day (production ran) or the day after (a prep/dough crew was
+// in getting tomorrow ready). Days with no adjacent plan — kitchen shut —
+// produce no missing rows.
 //
 // Query params:
 //   from (required): YYYY-MM-DD, inclusive
@@ -496,7 +510,7 @@ router.get("/completions", async (req: Request, res: Response) => {
 //
 // Returns an array of missing items in the same shape as /completions so
 // the frontend can render them in the same table, but with completedAt
-// replaced by the plan date and a `missing: true` flag.
+// replaced by the calendar day (`planDate`) and a `missing: true` flag.
 router.get("/missing", async (req: Request, res: Response) => {
   const from = typeof req.query.from === "string" ? req.query.from : null;
   const to = typeof req.query.to === "string" ? req.query.to : null;
@@ -504,22 +518,50 @@ router.get("/missing", async (req: Request, res: Response) => {
     res.status(400).json({ error: "from and to are required (YYYY-MM-DD)" });
     return;
   }
+  const rangeStart = new Date(`${from}T12:00:00Z`);
+  const rangeEnd = new Date(`${to}T12:00:00Z`);
+  if (Number.isNaN(rangeStart.getTime()) || Number.isNaN(rangeEnd.getTime())) {
+    res.status(400).json({ error: "Invalid date format" });
+    return;
+  }
   const stationFilter = typeof req.query.stationType === "string" ? req.query.stationType : null;
 
-  // Plans that live in the requested date range. We enumerate "what should
-  // have happened" against these plans — each plan represents a day that
-  // the station was scheduled to run.
+  // Plans in the range plus one day past it — the extra day is needed to
+  // recognise the last requested day as a prep day (e.g. range ending on a
+  // Sunday needs Monday's plan to know the dough room was in).
+  const dayAfterEnd = new Date(rangeEnd);
+  dayAfterEnd.setUTCDate(dayAfterEnd.getUTCDate() + 1);
   const plans = await db
     .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate })
     .from(productionPlansTable)
     .where(and(
       gte(productionPlansTable.planDate, from),
-      lte(productionPlansTable.planDate, to),
+      lte(productionPlansTable.planDate, dayAfterEnd.toISOString().slice(0, 10)),
     ));
 
   if (plans.length === 0) {
     res.json([]);
     return;
+  }
+
+  const plansByDate = new Map<string, number[]>();
+  for (const p of plans) {
+    const list = plansByDate.get(p.planDate);
+    if (list) list.push(p.id);
+    else plansByDate.set(p.planDate, [p.id]);
+  }
+
+  // Enumerate the working days in [from, to]. Each carries an anchor planId
+  // (same-day plan preferred, else the next day's) purely so rows keep the
+  // response shape the frontend already knows.
+  const workingDays: Array<{ day: string; anchorPlanId: number }> = [];
+  const cursor = new Date(rangeStart);
+  for (let guard = 0; guard < 1000 && cursor <= rangeEnd; guard++) {
+    const day = cursor.toISOString().slice(0, 10);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    const next = cursor.toISOString().slice(0, 10);
+    const anchor = plansByDate.get(day)?.[0] ?? plansByDate.get(next)?.[0];
+    if (anchor != null) workingDays.push({ day, anchorPlanId: anchor });
   }
 
   // All active templates (optionally filtered to the requested station).
@@ -535,25 +577,40 @@ router.get("/missing", async (req: Request, res: Response) => {
     .where(and(...templateConds))
     .orderBy(asc(checklistTemplatesTable.category), asc(checklistTemplatesTable.orderPosition));
 
-  // Completions for the plans in range — existence means "not missing".
+  // Completions that could satisfy a day in range: ticked during the range
+  // (by London calendar day of the timestamp — the primary match), or tied
+  // to one of the range's plans (the legacy plan-scoped match; also covers
+  // a closing check ticked just past midnight, which stays with its plan's
+  // day rather than flagging as missed).
   const planIds = plans.map(p => p.id);
-  const completions = planIds.length > 0
-    ? await db
-        .select({
-          templateId: checklistCompletionsTable.templateId,
-          planId: checklistCompletionsTable.planId,
-          stationType: checklistCompletionsTable.stationType,
-        })
-        .from(checklistCompletionsTable)
-        .where(inArray(checklistCompletionsTable.planId, planIds))
-    : [];
+  const completions = await db
+    .select({
+      templateId: checklistCompletionsTable.templateId,
+      planId: checklistCompletionsTable.planId,
+      completedAt: checklistCompletionsTable.completedAt,
+    })
+    .from(checklistCompletionsTable)
+    .where(or(
+      and(
+        gte(checklistCompletionsTable.completedAt, londonStartOfDay(rangeStart)),
+        lte(checklistCompletionsTable.completedAt, londonEndOfDay(rangeEnd)),
+      ),
+      inArray(checklistCompletionsTable.planId, planIds),
+    ));
 
-  // (templateId → Set<planId>) so we can check "did template X have a
-  // completion for plan Y?" in constant time.
-  const completedMap = new Map<number, Set<number>>();
+  // (templateId → Set<London day>) and (templateId → Set<planId>) so the
+  // day loop can answer "was template X done on day D / for plan Y?" in
+  // constant time.
+  const completedDays = new Map<number, Set<string>>();
+  const completedPlans = new Map<number, Set<number>>();
   for (const c of completions) {
-    let set = completedMap.get(c.templateId);
-    if (!set) { set = new Set(); completedMap.set(c.templateId, set); }
+    if (c.completedAt) {
+      let days = completedDays.get(c.templateId);
+      if (!days) { days = new Set(); completedDays.set(c.templateId, days); }
+      days.add(londonDateString(c.completedAt));
+    }
+    let set = completedPlans.get(c.templateId);
+    if (!set) { set = new Set(); completedPlans.set(c.templateId, set); }
     set.add(c.planId);
   }
 
@@ -571,38 +628,44 @@ router.get("/missing", async (req: Request, res: Response) => {
   };
   const missing: MissingRow[] = [];
 
-  // Iterate every (plan × template) combination and emit a row for each
-  // template that SHOULD apply on that plan's date but has no completion.
-  for (const plan of plans) {
+  // Iterate every (working day × template) combination and emit a row for
+  // each template that SHOULD apply on that calendar day but has no
+  // completion — none ticked that day, and none tied to that day's plan.
+  for (const { day, anchorPlanId } of workingDays) {
+    const sameDayPlanIds = plansByDate.get(day) ?? [];
     for (const t of templates) {
-      if (!templateMatchesDay(t, plan.planDate)) continue;
-      const done = completedMap.get(t.id);
-      if (done?.has(plan.id)) continue;
+      if (!templateMatchesDay(t, day)) continue;
+      if (completedDays.get(t.id)?.has(day)) continue;
+      const donePlans = completedPlans.get(t.id);
+      if (donePlans && sameDayPlanIds.some(id => donePlans.has(id))) continue;
       missing.push({
-        id: `tpl-${t.id}-plan-${plan.id}`,
+        id: `tpl-${t.id}-day-${day}`,
         kind: "template-missing",
         templateId: t.id,
-        planId: plan.id,
+        planId: anchorPlanId,
         stationType: t.stationType,
         category: t.category as "opening" | "cleaning" | "closing",
         title: t.title,
         description: t.description,
-        planDate: plan.planDate,
+        planDate: day,
         missing: true,
       });
     }
   }
 
   // Uncompleted one-off items in the same date range (rows exist but
-  // completedAt IS NULL).
+  // completedAt IS NULL). One-offs are genuinely plan-scoped, so this stays
+  // keyed by plan — but only plans dated inside [from, to], not the extra
+  // lookahead day fetched above.
+  const oneoffPlanIds = plans.filter(p => p.planDate <= to).map(p => p.id);
   const oneoffConds = [
-    inArray(checklistOneoffItemsTable.planId, planIds),
+    inArray(checklistOneoffItemsTable.planId, oneoffPlanIds),
     isNull(checklistOneoffItemsTable.completedAt),
   ];
   if (stationFilter) {
     oneoffConds.push(eq(checklistOneoffItemsTable.stationType, resolveChecklistStation(stationFilter)));
   }
-  const oneoffs = planIds.length > 0
+  const oneoffs = oneoffPlanIds.length > 0
     ? await db.select().from(checklistOneoffItemsTable).where(and(...oneoffConds))
     : [];
 
