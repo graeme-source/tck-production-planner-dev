@@ -51,7 +51,7 @@ interface DoughPrepData {
     ballWeightG: number;
     doughSubRecipeName: string;
   }>;
-  nextPlan: { id: number; planDate: string; name: string; status?: string } | null;
+  nextPlan: { id: number; planDate: string; doughDate?: string | null; name: string; status?: string } | null;
   nextPlanItems?: Array<{
     id: number;
     recipeId: number | null;
@@ -134,63 +134,169 @@ type DoughView = "mixing" | "balling" | "overview";
 
 /** Same-day dough (cinnamon bun dough): its own amber card per dough type,
  *  mixed TODAY for today's bake — kept fully separate from the day-before
- *  dough maths above it. Display-only: the bun team uses it as the mix sheet. */
-function SameDayDoughSection({ groups }: { groups: NonNullable<DoughPrepData["sameDayDough"]> }) {
+ *  dough maths. The mix flow mirrors the calzone one — same tick-off rows,
+ *  same complete button, same mix chips — so the bench works one way. */
+function SameDayDoughSection({ groups, isOnBreak = false }: { groups: NonNullable<DoughPrepData["sameDayDough"]>; isOnBreak?: boolean }) {
+  // Per group+mix tick state, in memory — exactly like the calzone mixing
+  // view's checkedIngredients/completedMixes.
+  const [activeMixBySub, setActiveMixBySub] = useState<Record<number, number>>({});
+  const [ticked, setTicked] = useState<Record<string, Set<string>>>({});
+  const [doneMixes, setDoneMixes] = useState<Set<string>>(new Set());
+
   if (!groups || groups.length === 0) return null;
-  const fmtQty = (qty: number, unit: string) =>
-    unit === "g" ? `${Math.round(qty)} g` : `${(Math.round(qty * 100) / 100).toFixed(2)} ${unit}`;
+
+  const mixKey = (subRecipeId: number, mixNo: number) => `${subRecipeId}:${mixNo}`;
+  const toggle = (subRecipeId: number, mixNo: number, ingKey: string) => {
+    const key = mixKey(subRecipeId, mixNo);
+    setTicked(prev => {
+      const next = { ...prev };
+      const set = new Set(next[key] ?? []);
+      if (set.has(ingKey)) set.delete(ingKey); else set.add(ingKey);
+      next[key] = set;
+      return next;
+    });
+  };
+
   return (
     <>
-      {groups.map(g => (
-        <div key={g.subRecipeId} className="bg-amber-50 dark:bg-amber-950/30 border-2 border-amber-400 rounded-xl p-4">
-          <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-            <div>
-              <h2 className="font-semibold text-lg">
-                {g.subRecipeName} — <span className="text-amber-700 dark:text-amber-400">made TODAY</span>
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                For today's bake ({g.planName}). Mix on the production day — not the day before.
-              </p>
-            </div>
-            <div className="text-right">
-              <div className="text-2xl font-bold font-display">{g.totalDoughKg.toFixed(2)} kg</div>
-              <div className="text-xs text-muted-foreground">
-                {g.mixCount > 1 ? `${g.mixCount} mixes` : "1 mix"}
+      {groups.map(g => {
+        const mixCount = Math.max(1, g.mixCount);
+        const activeMix = Math.min(activeMixBySub[g.subRecipeId] ?? 1, mixCount);
+        const key = mixKey(g.subRecipeId, activeMix);
+        const checkedForMix = ticked[key] ?? new Set<string>();
+        const isMixComplete = doneMixes.has(key);
+        const allChecked = g.ingredients.length > 0 && g.ingredients.every((ing, i) => checkedForMix.has(String(ing.ingredientId ?? `x-${i}`)));
+        const doneCount = Array.from({ length: mixCount }, (_, i) => mixKey(g.subRecipeId, i + 1)).filter(k => doneMixes.has(k)).length;
+
+        return (
+          <div key={g.subRecipeId} className="bg-amber-50 dark:bg-amber-950/30 border-2 border-amber-400 rounded-xl p-4 space-y-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <h2 className="font-semibold text-lg">
+                  {g.subRecipeName} — <span className="text-amber-700 dark:text-amber-400">made TODAY</span>
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  For today's bake ({g.planName}). Mix on the production day — not the day before.
+                </p>
               </div>
+              <div className="text-right">
+                <div className="text-2xl font-bold font-display">{g.totalDoughKg.toFixed(2)} kg</div>
+                <div className="text-xs text-muted-foreground">
+                  {mixCount > 1 ? `${doneCount} of ${mixCount} mixes done` : isMixComplete ? "Mix complete ✓" : "1 mix"}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              {g.recipes.map(r => (
+                <div key={r.recipeId} className="flex items-center justify-between bg-background/60 rounded-lg px-3 py-2">
+                  <span className="font-medium">{r.recipeName}</span>
+                  <span className="text-sm text-muted-foreground">
+                    {r.batchesTarget} {r.batchesTarget === 1 ? "batch" : "batches"} × {r.doughKgPerBatch.toFixed(2)} kg
+                    {" "}({r.gramsPerPortion} g each) = <span className="font-semibold text-foreground">{r.doughKgTotal.toFixed(2)} kg</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {mixCount > 1 && (
+              <div className="flex items-center gap-2">
+                {Array.from({ length: mixCount }, (_, i) => i + 1).map(n => {
+                  const nDone = doneMixes.has(mixKey(g.subRecipeId, n));
+                  return (
+                    <button
+                      key={n}
+                      onClick={() => setActiveMixBySub(prev => ({ ...prev, [g.subRecipeId]: n }))}
+                      className={cn(
+                        "w-11 h-11 rounded-full font-bold text-lg transition-all",
+                        nDone
+                          ? "bg-emerald-500 text-white"
+                          : n === activeMix
+                            ? "bg-amber-500 text-white"
+                            : "bg-secondary text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {n}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Tick-off rows — same shape as the calzone Mix view so the
+                bench works identically on either dough. */}
+            <div className={cn(
+              "rounded-xl border-2 overflow-hidden bg-card",
+              isMixComplete ? "border-emerald-300 dark:border-emerald-700" : "border-amber-400/60",
+            )}>
+              <div className={cn(
+                "px-5 py-3 flex items-center justify-between",
+                isMixComplete ? "bg-emerald-100/50 dark:bg-emerald-900/20" : "bg-amber-100/50 dark:bg-amber-900/20",
+              )}>
+                <div>
+                  <h3 className="font-display text-xl font-bold">{mixCount > 1 ? `Mix ${activeMix}` : "Mix"}</h3>
+                  <p className="text-sm text-muted-foreground">
+                    {isMixComplete ? "All ingredients added" : `${checkedForMix.size} of ${g.ingredients.length} ingredients added`}
+                  </p>
+                </div>
+                {isMixComplete && <CheckCircle2 className="w-7 h-7 text-emerald-500" />}
+              </div>
+
+              <div className="divide-y divide-border/40">
+                {g.ingredients.map((ing, i) => {
+                  const ingKey = String(ing.ingredientId ?? `x-${i}`);
+                  const isChecked = checkedForMix.has(ingKey) || isMixComplete;
+                  return (
+                    <button
+                      key={ingKey}
+                      onClick={() => !isMixComplete && toggle(g.subRecipeId, activeMix, ingKey)}
+                      disabled={isOnBreak || isMixComplete}
+                      className={cn(
+                        "w-full flex items-center gap-4 px-5 py-3.5 text-left transition-all",
+                        isChecked ? "bg-emerald-50/50 dark:bg-emerald-900/10" : "hover:bg-secondary/30",
+                        isOnBreak && "opacity-50",
+                      )}
+                    >
+                      <div className={cn(
+                        "w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 transition-all border-2",
+                        isChecked ? "bg-emerald-500 border-emerald-500 text-white" : "border-border bg-background",
+                      )}>
+                        {isChecked && <Check className="w-5 h-5" />}
+                      </div>
+                      <p className={cn("flex-1 min-w-0 font-semibold text-2xl", isChecked && "line-through text-muted-foreground")}>
+                        {ing.ingredientName}
+                      </p>
+                      <p className={cn(
+                        "text-2xl font-semibold tabular-nums flex-shrink-0",
+                        isChecked ? "text-emerald-700 dark:text-emerald-300" : "text-foreground",
+                      )}>
+                        {fmtDoughQty(mixCount > 1 ? ing.qtyPerMix : ing.totalQty, ing.unit, ing.ingredientName)}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {!isMixComplete && (
+                <div className="px-5 py-3 border-t border-border/40">
+                  <button
+                    onClick={() => setDoneMixes(prev => new Set(prev).add(key))}
+                    disabled={!allChecked || isOnBreak}
+                    className={cn(
+                      "w-full py-3.5 rounded-xl text-lg font-bold transition-all",
+                      allChecked && !isOnBreak
+                        ? "bg-emerald-500 text-white hover:bg-emerald-600 shadow-lg shadow-emerald-500/20"
+                        : "bg-secondary text-muted-foreground cursor-not-allowed",
+                    )}
+                  >
+                    {allChecked ? `✓ ${mixCount > 1 ? `Mix ${activeMix} ` : "Mix "}Complete` : "Add all ingredients to continue"}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
-
-          <div className="space-y-1.5 mb-3">
-            {g.recipes.map(r => (
-              <div key={r.recipeId} className="flex items-center justify-between bg-background/60 rounded-lg px-3 py-2">
-                <span className="font-medium">{r.recipeName}</span>
-                <span className="text-sm text-muted-foreground">
-                  {r.batchesTarget} {r.batchesTarget === 1 ? "batch" : "batches"} × {r.doughKgPerBatch.toFixed(2)} kg
-                  {" "}({r.gramsPerPortion} g each) = <span className="font-semibold text-foreground">{r.doughKgTotal.toFixed(2)} kg</span>
-                </span>
-              </div>
-            ))}
-          </div>
-
-          {g.ingredients.length > 0 && (
-            <div>
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">
-                Ingredients{g.mixCount > 1 ? " (per mix)" : ""}
-              </h3>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-                {g.ingredients.map((ing, i) => (
-                  <div key={ing.ingredientId ?? `x-${i}`} className="flex items-center justify-between bg-background/60 rounded-lg px-3 py-1.5 text-sm">
-                    <span>{ing.ingredientName}</span>
-                    <span className="font-semibold tabular-nums">
-                      {fmtQty(g.mixCount > 1 ? ing.qtyPerMix : ing.totalQty, ing.unit)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      ))}
+        );
+      })}
     </>
   );
 }
@@ -207,6 +313,13 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
   const [activeView, setActiveView] = useState<DoughView>("mixing");
   const [checkedIngredients, setCheckedIngredients] = useState<Record<number, Set<string>>>({});
   const [completedMixes, setCompletedMixes] = useState<Set<number>>(new Set());
+  // The D-1 walk always finds the NEXT plan with dough, however far out it
+  // is — but its mixes are only today's job when its dough day has actually
+  // arrived. Opening Friday's plan used to present Monday's calzone mixes
+  // (due Sunday) as if they were Friday's work (2026-08-20). When the dough
+  // isn't due yet the mix flow is replaced by a "mixed on <day>" note;
+  // showEarly is the escape hatch for deliberately working ahead.
+  const [showEarly, setShowEarly] = useState(false);
 
   // Extra ball tick state — lifted here so compact panel + full balling view share the same data
   const extraTicksKey = `extra_balls_balled_${plan.id}`;
@@ -460,7 +573,7 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
     const sameDay = doughData?.sameDayDough ?? [];
     return (
       <div className="space-y-4">
-        <SameDayDoughSection groups={sameDay} />
+        <SameDayDoughSection groups={sameDay} isOnBreak={isOnBreak} />
         <div className="bg-card border border-border rounded-xl p-8 text-center">
           <Layers className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-50" />
           <h2 className="font-semibold text-lg mb-1">
@@ -471,6 +584,37 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
               ? "Tomorrow's plan needs no dough mixed today — only the same-day dough above."
               : "No dough recipes found for this plan."}
           </p>
+        </div>
+      </div>
+    );
+  }
+
+  // "Due" is judged against the real calendar day, not the viewed plan's
+  // date: the station is often opened from an older plan (there's no Sunday
+  // plan to open when mixing Monday's Sunday dough).
+  const todayLondon = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date());
+  const doughDueDate = doughData.nextPlan ? (doughData.nextPlan.doughDate ?? doughData.nextPlan.planDate) : null;
+  const doughDueLater = !isDirect && doughDueDate != null && doughDueDate > todayLondon;
+
+  if (doughDueLater && !showEarly) {
+    return (
+      <div className="space-y-4">
+        <SameDayDoughSection groups={doughData.sameDayDough ?? []} isOnBreak={isOnBreak} />
+        <div className="bg-card border border-border rounded-xl p-8 text-center">
+          <Layers className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-50" />
+          <h2 className="font-semibold text-lg mb-1">No dough to mix today</h2>
+          <p className="text-muted-foreground text-sm max-w-md mx-auto">
+            Dough for <span className="font-semibold text-foreground">{doughData.nextPlan?.name ?? "the next plan"}</span>
+            {" "}(production {format(parseISO(doughData.nextPlan!.planDate), "EEEE d MMMM")}) is mixed on{" "}
+            <span className="font-semibold text-foreground">{format(parseISO(doughDueDate!), "EEEE d MMMM")}</span>.
+            {(doughData.sameDayDough?.length ?? 0) > 0 ? " Only the same-day dough above is made today." : ""}
+          </p>
+          <button
+            onClick={() => setShowEarly(true)}
+            className="mt-4 px-4 py-2 rounded-lg text-sm font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/40 transition-all"
+          >
+            Show it early anyway
+          </button>
         </div>
       </div>
     );
@@ -496,7 +640,10 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
       )}
       {doughData.nextPlan && (
         <PrepDateBanner
-          currentPlanDate={plan.planDate}
+          // The banner names the day the dough is MIXED — the plan's actual
+          // dough date, not whichever plan the station happened to be opened
+          // from ("Dough prep on Friday" for dough due Sunday, 2026-08-20).
+          currentPlanDate={doughDueDate ?? plan.planDate}
           targetPlanDate={doughData.nextPlan.planDate ?? null}
           targetPlanName={doughData.nextPlan.name ?? null}
           isLoading={doughLoading}
@@ -504,7 +651,7 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
         />
       )}
 
-      <SameDayDoughSection groups={doughData.sameDayDough ?? []} />
+      <SameDayDoughSection groups={doughData.sameDayDough ?? []} isOnBreak={isOnBreak} />
 
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
