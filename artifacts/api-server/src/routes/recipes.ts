@@ -10,6 +10,7 @@ import { computeSubRecipeCosts } from "../lib/sub-recipe-costs";
 import { generateQrCode } from "../lib/qr-code";
 import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
 import { londonDateString } from "../lib/london-time";
+import { toGrams } from "../lib/units";
 import * as z from "zod";
 
 function requireAdmin(req: Request, res: Response, next: NextFunction) {
@@ -907,6 +908,7 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
       ingredientId: recipeIngredientsTable.ingredientId,
       quantity: recipeIngredientsTable.quantity,
       name: ingredientsTable.name,
+      unit: ingredientsTable.unit,
       labelDeclaration: ingredientsTable.labelDeclaration,
       allergens: ingredientsTable.allergens,
       energyKj: ingredientsTable.energyKj,
@@ -926,7 +928,9 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
   const items: IngredientNutrientRow[] = directIngs.map(i => ({
     ingredientId: i.ingredientId,
     name: i.name,
-    quantityG: Number(i.quantity),
+    // Recipe quantities are stored in the ingredient's native unit — a kg
+    // ingredient entered as 1.2 must contribute 1200 g here, not 1.2 g.
+    quantityG: toGrams(Number(i.quantity), i.unit),
     labelDeclaration: i.labelDeclaration,
     allergens: (i.allergens as string[] | null) ?? [],
     nutrients: {
@@ -1001,6 +1005,7 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
         ingredientId: subRecipeIngredientsTable.ingredientId,
         quantity: subRecipeIngredientsTable.quantity,
         name: ingredientsTable.name,
+        unit: ingredientsTable.unit,
         labelDeclaration: ingredientsTable.labelDeclaration,
         allergens: ingredientsTable.allergens,
         energyKj: ingredientsTable.energyKj,
@@ -1017,7 +1022,9 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
       .innerJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
       .where(eq(subRecipeIngredientsTable.subRecipeId, subRecipeId));
 
-    for (const si of srIngs) addItem(si, Number(si.quantity) * scaleFactor);
+    // Sub-recipe ingredient quantities are in each ingredient's native unit;
+    // the scale factor is dimensionless (used ÷ yield in the same unit).
+    for (const si of srIngs) addItem(si, toGrams(Number(si.quantity), si.unit) * scaleFactor);
 
     // Descend into nested sub-recipes, scaling their used weight the same way.
     const nested = await db
@@ -1237,13 +1244,8 @@ router.get("/:id/ingredient-deck", async (req, res) => {
       .from(recipeSubRecipesTable)
       .where(eq(recipeSubRecipesTable.recipeId, recipeId));
 
-    function toGrams(qty: number, unit: string): number {
-      const u = unit.toLowerCase().trim();
-      if (u === "kg") return qty * 1000;
-      if (u === "l" || u === "litre" || u === "litres" || u === "liter" || u === "liters") return qty * 1000;
-      if (u === "ml") return qty;
-      return qty;
-    }
+    // Unit conversion lives in ../lib/units (shared with the nutritionals
+    // gatherer) so the deck and the nutrition panel can never disagree.
 
     type FlatSubIng = {
       ingredientId: number;
