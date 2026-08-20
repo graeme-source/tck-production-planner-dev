@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { toGrams } from "./units";
+import { cookedToRaw, toGrams } from "./units";
+
+// Regression guard for the ordering-buffer bug: dpt-ingredient-requirements
+// computed cooked = raw × ratio while orders.ts computed raw = cooked ÷ ratio,
+// leaving the surplus buffer off by ratio² for processed ingredients.
+describe("cookedToRaw", () => {
+  it("divides cooked quantity by the processing ratio", () => {
+    // 7 kg cooked at 0.7 yield needs 10 kg raw.
+    expect(cookedToRaw(7, 0.7)).toBeCloseTo(10);
+  });
+
+  it("passes through when the ratio is missing, zero, or invalid", () => {
+    expect(cookedToRaw(5, null)).toBe(5);
+    expect(cookedToRaw(5, undefined)).toBe(5);
+    expect(cookedToRaw(5, 0)).toBe(5);
+    expect(cookedToRaw(5, Number.NaN)).toBe(5);
+  });
+});
 
 // Regression guard for the nutritionals bug where every recipe quantity was
 // treated as grams: a 1.2 kg ingredient contributed 1.2 g to the label maths,
