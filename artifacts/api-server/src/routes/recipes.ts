@@ -1795,12 +1795,24 @@ router.get("/:id/spec-sheet.pdf", requireAdmin, async (req, res) => {
     const [specRow] = await db.select().from(productSpecificationsTable).where(eq(productSpecificationsTable.recipeId, recipeId));
     const [company] = await db.select().from(companyProfileTable).where(eq(companyProfileTable.id, 1));
 
-    // Best-effort barcode: match a Shopify SKU row by product title.
-    const [barcodeRow] = await db
-      .select({ barcode: skuBarcodesTable.barcode })
-      .from(skuBarcodesTable)
-      .where(sql`lower(${skuBarcodesTable.productTitle}) = lower(${recipe.name.trim()})`)
-      .limit(1);
+    // Barcode: prefer the recipe's mapped Shopify variants — that link is by
+    // id, so renaming the recipe in the app can't lose the barcode. Fall back
+    // to the old best-effort product-title match for unmapped recipes.
+    const mappedBarcodeRes = await db.execute<{ barcode: string }>(sql`
+      SELECT sb.barcode
+      FROM recipe_shopify_mappings m
+      JOIN sku_barcodes sb ON sb.variant_id = m.shopify_variant_id
+      WHERE m.recipe_id = ${recipeId} AND COALESCE(sb.barcode, '') <> ''
+      LIMIT 1
+    `);
+    let [barcodeRow] = mappedBarcodeRes.rows as Array<{ barcode: string }>;
+    if (!barcodeRow) {
+      [barcodeRow] = await db
+        .select({ barcode: skuBarcodesTable.barcode })
+        .from(skuBarcodesTable)
+        .where(sql`lower(${skuBarcodesTable.productTitle}) = lower(${recipe.name.trim()})`)
+        .limit(1);
+    }
 
     // Cook CCPs: any ingredient used by this recipe (directly, via a
     // sub-recipe, or as a marinaded raw meat) that carries a minimum cooking
