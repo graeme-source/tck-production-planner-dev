@@ -537,4 +537,114 @@ router.post("/:id/steps/:stepId/build-from-video", requireAuth, async (req, res)
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// SOP links — attach SOPs to the places work happens (2026-08-19).
+// Target shapes: checklist_template(a) · ingredient(a) ·
+// recipe_ingredient(a=recipe, b=ingredient) · recipe(a) ·
+// station(target_text). The per-surface GET endpoints return everything a
+// surface needs in ONE call so list rows never fan out into N requests.
+// Attach/detach is requireAuth like SOP editing itself — the whole point
+// is that anyone who spots a wrong or missing SOP can fix it on the spot.
+// ─────────────────────────────────────────────────────────────────────────
+
+const parseIdsParam = (raw: unknown): number[] =>
+  String(raw ?? "")
+    .split(",")
+    .map(s => parseInt(s.trim()))
+    .filter(n => Number.isInteger(n) && n > 0);
+
+// GET /links/for-checklist?ids=1,2,3 → { [templateId]: [{linkId,sopId,title}] }
+router.get("/links/for-checklist", requireAuth, async (req, res) => {
+  const ids = parseIdsParam(req.query.ids);
+  if (ids.length === 0) { res.json({}); return; }
+  const rows = await db.execute<{ link_id: number; target_a: number; sop_id: number; title: string }>(sql`
+    SELECT l.id AS link_id, l.target_a, l.sop_id, s.title
+    FROM sop_links l JOIN standards_sops s ON s.id = l.sop_id
+    WHERE l.target_type = 'checklist_template' AND l.target_a = ANY(${`{${ids.join(",")}}`}::int[])
+    ORDER BY s.title
+  `);
+  const out: Record<number, Array<{ linkId: number; sopId: number; title: string }>> = {};
+  for (const r of rows.rows ?? []) {
+    (out[r.target_a] ??= []).push({ linkId: r.link_id, sopId: r.sop_id, title: r.title });
+  }
+  res.json(out);
+});
+
+// GET /links/for-ingredients?ids=1,2 → per-ingredient links, both scopes:
+// ingredient-level plus every recipe-scoped link (labelled with the recipe
+// name so "burger beef in The Don" and "burger beef in the Special" can
+// carry different SOPs side by side).
+router.get("/links/for-ingredients", requireAuth, async (req, res) => {
+  const ids = parseIdsParam(req.query.ids);
+  if (ids.length === 0) { res.json({}); return; }
+  const rows = await db.execute<{
+    link_id: number; target_type: string; target_a: number; target_b: number | null;
+    sop_id: number; title: string; recipe_name: string | null;
+  }>(sql`
+    SELECT l.id AS link_id, l.target_type, l.target_a, l.target_b, l.sop_id, s.title,
+           r.name AS recipe_name
+    FROM sop_links l
+    JOIN standards_sops s ON s.id = l.sop_id
+    LEFT JOIN recipes r ON l.target_type = 'recipe_ingredient' AND r.id = l.target_a
+    WHERE (l.target_type = 'ingredient' AND l.target_a = ANY(${`{${ids.join(",")}}`}::int[]))
+       OR (l.target_type = 'recipe_ingredient' AND l.target_b = ANY(${`{${ids.join(",")}}`}::int[]))
+    ORDER BY s.title
+  `);
+  const out: Record<number, Array<{
+    linkId: number; sopId: number; title: string;
+    scope: "ingredient" | "recipe"; recipeId: number | null; recipeName: string | null;
+  }>> = {};
+  for (const r of rows.rows ?? []) {
+    const ingredientId = r.target_type === "ingredient" ? r.target_a : (r.target_b as number);
+    (out[ingredientId] ??= []).push({
+      linkId: r.link_id,
+      sopId: r.sop_id,
+      title: r.title,
+      scope: r.target_type === "ingredient" ? "ingredient" : "recipe",
+      recipeId: r.target_type === "recipe_ingredient" ? r.target_a : null,
+      recipeName: r.recipe_name,
+    });
+  }
+  res.json(out);
+});
+
+const LINK_TYPES = new Set(["checklist_template", "ingredient", "recipe_ingredient", "recipe", "station"]);
+
+// POST /links {sopId, targetType, a?, b?, text?} — attach (idempotent).
+router.post("/links", requireAuth, async (req, res) => {
+  const sopId = Number(req.body?.sopId);
+  const targetType = String(req.body?.targetType ?? "");
+  const a = req.body?.a != null ? Number(req.body.a) : null;
+  const b = req.body?.b != null ? Number(req.body.b) : null;
+  const text = req.body?.text != null ? String(req.body.text) : null;
+  if (!Number.isInteger(sopId) || !LINK_TYPES.has(targetType)) {
+    res.status(400).json({ error: "sopId and a valid targetType are required" });
+    return;
+  }
+  if (targetType === "station" ? !text : !Number.isInteger(a)) {
+    res.status(400).json({ error: "Target reference missing" });
+    return;
+  }
+  if (targetType === "recipe_ingredient" && !Number.isInteger(b)) {
+    res.status(400).json({ error: "recipe_ingredient links need a=recipeId and b=ingredientId" });
+    return;
+  }
+  const inserted = await db.execute<{ id: number }>(sql`
+    INSERT INTO sop_links (sop_id, target_type, target_a, target_b, target_text, created_by)
+    VALUES (${sopId}, ${targetType}, ${a}, ${b}, ${text}, ${req.session.userId ?? null})
+    ON CONFLICT (sop_id, target_type, COALESCE(target_a, 0), COALESCE(target_b, 0), COALESCE(target_text, ''))
+    DO UPDATE SET sop_id = EXCLUDED.sop_id
+    RETURNING id
+  `);
+  res.status(201).json({ linkId: (inserted.rows ?? [])[0]?.id ?? null });
+});
+
+// DELETE /links/:id — detach.
+router.delete("/links/:id", requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  await db.execute(sql`DELETE FROM sop_links WHERE id = ${id}`);
+  res.json({ ok: true });
+});
+
 export default router;
