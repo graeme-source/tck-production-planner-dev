@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { Link } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
-import { useListRecipes, useListIngredients, useListSubRecipes, useGetRecipe, useListCategoryDefaults, useGetUpfSummary } from "@workspace/api-client-react";
+import { useListRecipes, useListIngredients, useListSubRecipes, useGetRecipe, useListCategoryDefaults, useGetUpfSummary, getGetRecipeQueryKey, getListRecipesQueryKey, getListIngredientsQueryKey, getGetUpfSummaryQueryKey } from "@workspace/api-client-react";
+import type { Recipe, RecipeDetail, RecipeIngredient, RecipeSubRecipe } from "@workspace/api-client-react";
 import { UpfChip, UpfPercentPill } from "@/components/upf-badge";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { useAuth } from "@/contexts/auth-context";
@@ -201,6 +202,37 @@ type SubRecipeOption = {
   name: string;
   yieldUnit: string;
   costPerYieldUnit: number;
+};
+
+// Fields the recipes endpoints actually return (see mapRecipe and GET /:id in
+// artifacts/api-server/src/routes/recipes.ts) that the generated OpenAPI
+// types don't describe yet.
+type RecipeExtras = {
+  labelLiveDesignName?: string | null;
+  isFridgeProduct?: boolean;
+  dietaryCategory?: "meat" | "vegetarian" | null;
+  cookingLossPercent?: number;
+  tags?: string[];
+};
+
+type RecipeWithExtras = Recipe & RecipeExtras;
+
+// Per-line flags GET /api/recipes/:id returns on every ingredient and
+// sub-recipe row but which are missing from the generated RecipeIngredient /
+// RecipeSubRecipe types.
+type RecipeLineExtras = {
+  marinadeForIngredientId?: number | null;
+  marinadeAddAtCooking?: boolean;
+  includeInFillingMix?: boolean;
+  quid?: boolean;
+  isTopping?: boolean;
+  showInPrep?: boolean;
+  mixingOverage?: number;
+};
+
+type RecipeDetailWithExtras = Omit<RecipeDetail, "ingredients" | "subRecipes"> & RecipeExtras & {
+  ingredients: (RecipeIngredient & RecipeLineExtras)[];
+  subRecipes: (RecipeSubRecipe & RecipeLineExtras & { breakdown?: BreakdownIngredient[] | null })[];
 };
 
 function RecipeForm({
@@ -680,7 +712,10 @@ function RecipeForm({
                     const thisIng = localIngredients.find(i => i.id === Number(watchedIngredients?.[index]?.ingredientId));
                     const isRawMeat = thisIng?.category === "raw_meat";
                     const ingMarinadeVal = watchedIngredients?.[index]?.marinadeForIngredientId;
-                    const ingMarinadeSet = ingMarinadeVal != null && ingMarinadeVal !== "" && ingMarinadeVal !== 0 && ingMarinadeVal !== "0";
+                    // The <select> registers string values at runtime even though the
+                    // schema type says number, so normalise before testing ("" and "0"
+                    // both coerce to 0 = not linked).
+                    const ingMarinadeSet = ingMarinadeVal != null && Number(ingMarinadeVal) !== 0;
                     return (
                       <div key={field.id} className="space-y-0.5">
                         <div className="grid grid-cols-[1fr_8rem_6rem_3.5rem_2rem_2rem_2rem_4rem_1.25rem] gap-x-2 gap-y-0 items-center">
@@ -820,7 +855,8 @@ function RecipeForm({
                   {subFields.map((field, index) => {
                     const cost = subLineCost(index);
                     const subMarinadeVal = watchedSubRecipes?.[index]?.marinadeForIngredientId;
-                    const subMarinadeSet = subMarinadeVal != null && subMarinadeVal !== "" && subMarinadeVal !== 0 && subMarinadeVal !== "0";
+                    // See ingMarinadeSet above: the <select> yields strings at runtime.
+                    const subMarinadeSet = subMarinadeVal != null && Number(subMarinadeVal) !== 0;
                     return (
                       <div key={field.id} className="space-y-0.5">
                         <div className="grid grid-cols-[1fr_8rem_6rem_3.5rem_2rem_2rem_2rem_4rem_1.25rem] gap-x-2 gap-y-0 items-center">
@@ -989,8 +1025,11 @@ function EditRecipeDialog({
     (authState.user.role === "admin" || authState.user.role === "manager");
 
   const queryClient = useQueryClient();
-  const { data: detail, isLoading, isFetching } = useGetRecipe(id, { query: { enabled: open } });
-  const { data: allRecipes } = useListRecipes({ query: { enabled: open } });
+  const { data: detailData, isLoading, isFetching } = useGetRecipe(id, { query: { queryKey: getGetRecipeQueryKey(id), enabled: open } });
+  // The detail endpoint returns more fields than the generated OpenAPI type
+  // describes — widen once here (see RecipeDetailWithExtras).
+  const detail = detailData as RecipeDetailWithExtras | undefined;
+  const { data: allRecipes } = useListRecipes({ query: { queryKey: getListRecipesQueryKey(), enabled: open } });
   const { updateRecipe } = useAppMutations();
 
   const [formIsDirty, setFormIsDirty] = useState(false);
@@ -1016,7 +1055,7 @@ function EditRecipeDialog({
   const [labelDesignSaved, setLabelDesignSaved] = useState("");
   const [labelDesignSaving, setLabelDesignSaving] = useState(false);
   useEffect(() => {
-    const v = (detail as Record<string, unknown> | undefined)?.labelLiveDesignName;
+    const v = detail?.labelLiveDesignName;
     const s = typeof v === "string" ? v : "";
     setLabelDesign(s);
     setLabelDesignSaved(s);
@@ -1161,8 +1200,8 @@ function EditRecipeDialog({
         packagingCost: Number(detail.packagingCost) || 0,
         labourCost: Number(detail.labourCost) || 0,
         portionsPerBatch: Number(detail.portionsPerBatch) || 10,
-        targetBuildMinutes: (detail as Record<string, unknown>).targetBuildSeconds != null
-          ? Number((detail as Record<string, unknown>).targetBuildSeconds) / 60
+        targetBuildMinutes: detail.targetBuildSeconds != null
+          ? Number(detail.targetBuildSeconds) / 60
           : null,
         shelfLifeDays: detail.shelfLifeDays != null ? Number(detail.shelfLifeDays) : undefined,
         tinSize: detail.tinSize ?? "",
@@ -1170,14 +1209,14 @@ function EditRecipeDialog({
         sopUrl: detail.sopUrl ?? "",
         isCoreMenu: detail.isCoreMenu ?? false,
         isCurrentSpecial: detail.isCurrentSpecial ?? false,
-        isFridgeProduct: (detail as Record<string, unknown>).isFridgeProduct === true,
+        isFridgeProduct: detail.isFridgeProduct === true,
         color: detail.color ?? "",
-        cookingLossPercent: (detail as Record<string, unknown>).cookingLossPercent != null ? Number((detail as Record<string, unknown>).cookingLossPercent) : 3,
+        cookingLossPercent: detail.cookingLossPercent != null ? Number(detail.cookingLossPercent) : 3,
         builderFillingDeductionGrams: Number(detail.builderFillingDeductionGrams ?? 0),
-        dietaryCategory: ((detail as Record<string, unknown>).dietaryCategory as "meat" | "vegetarian" | null | undefined) ?? null,
-        tags: Array.isArray((detail as Record<string, unknown>).tags) ? ((detail as Record<string, unknown>).tags as string[]) : [],
-        ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, marinadeAddAtCooking: (i as { marinadeAddAtCooking?: boolean | null }).marinadeAddAtCooking === true, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, quid: (i as Record<string, unknown>).quid === true, showInPrep: (i as Record<string, unknown>).showInPrep === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
-        subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, marinadeAddAtCooking: (s as { marinadeAddAtCooking?: boolean | null }).marinadeAddAtCooking === true, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, quid: (s as Record<string, unknown>).quid === true, showInPrep: (s as Record<string, unknown>).showInPrep === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
+        dietaryCategory: detail.dietaryCategory ?? null,
+        tags: Array.isArray(detail.tags) ? detail.tags : [],
+        ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, marinadeAddAtCooking: i.marinadeAddAtCooking === true, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: i.isTopping === true, quid: i.quid === true, showInPrep: i.showInPrep === true, mixingOverage: Number(i.mixingOverage ?? 0) })),
+        subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, marinadeAddAtCooking: s.marinadeAddAtCooking === true, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: s.isTopping === true, quid: s.quid === true, showInPrep: s.showInPrep === true, mixingOverage: Number(s.mixingOverage ?? 0) })),
       }
     : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", cookingLossPercent: 3, builderFillingDeductionGrams: 0, dietaryCategory: null, tags: [], ingredients: [], subRecipes: [] };
 
@@ -1513,9 +1552,11 @@ function SubRecipeBreakdownRow({ sub, servingUnit, novaById, subUpf }: {
 }
 
 function RecipeCostBreakdownDialog({ id, open, onOpenChange }: { id: number; open: boolean; onOpenChange: (v: boolean) => void }) {
-  const { data: detail, isLoading } = useGetRecipe(id, { query: { enabled: open } });
-  const { data: allIngredients } = useListIngredients({ query: { enabled: open } });
-  const { data: upfSummary } = useGetUpfSummary({ query: { enabled: open } });
+  const { data: detailData, isLoading } = useGetRecipe(id, { query: { queryKey: getGetRecipeQueryKey(id), enabled: open } });
+  // Widen to the shape the endpoint actually returns (typed breakdown rows).
+  const detail = detailData as RecipeDetailWithExtras | undefined;
+  const { data: allIngredients } = useListIngredients({ query: { queryKey: getListIngredientsQueryKey(), enabled: open } });
+  const { data: upfSummary } = useGetUpfSummary({ query: { queryKey: getGetUpfSummaryQueryKey(), enabled: open } });
 
   const novaById: NovaLookup = useMemo(
     () => new Map((allIngredients ?? []).map(i => [i.id, { novaClass: i.novaClass ?? null, novaMarkers: i.novaMarkers ?? [] }])),
@@ -1694,6 +1735,7 @@ type RecipeItem = {
   id: number; name: string; description?: string | null; category?: string | null;
   servings: number; servingUnit: string;
   packSize: number; rrp: number; packagingCost: number; labourCost: number;
+  portionsPerBatch: number;
   rawMaterialCostPerBatch: number; costPerPortion: number; packIngredientCost: number;
   totalPackCost: number; grossMargin: number | null;
   isCoreMenu?: boolean;
@@ -2114,7 +2156,9 @@ export default function Recipes() {
   type SortKey = "name" | "category" | "rrp" | "packCost" | "grossProfit" | "gpm" | "upf";
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-  const { data: duplicateDetail } = useGetRecipe(duplicatingId!, { query: { enabled: duplicatingId !== null } });
+  const { data: duplicateDetailData } = useGetRecipe(duplicatingId!, { query: { queryKey: getGetRecipeQueryKey(duplicatingId!), enabled: duplicatingId !== null } });
+  // Widen to the shape the endpoint actually returns (see RecipeDetailWithExtras).
+  const duplicateDetail = duplicateDetailData as RecipeDetailWithExtras | undefined;
 
   // Union of every tag currently in use across recipes — drives both
   // the filter pill row and the autocomplete suggestions inside the
@@ -2122,7 +2166,7 @@ export default function Recipes() {
   const allTags = (() => {
     const seen = new Map<string, string>();
     for (const r of recipes ?? []) {
-      const tags = ((r as Record<string, unknown>).tags as string[] | undefined) ?? [];
+      const tags = (r as RecipeWithExtras).tags ?? [];
       for (const t of tags) {
         const key = t.toLowerCase();
         if (!seen.has(key)) seen.set(key, t);
@@ -2145,8 +2189,8 @@ export default function Recipes() {
         packagingCost: Number(duplicateDetail.packagingCost) || 0,
         labourCost: Number(duplicateDetail.labourCost) || 0,
         portionsPerBatch: Number(duplicateDetail.portionsPerBatch) || 10,
-        targetBuildMinutes: (duplicateDetail as Record<string, unknown>).targetBuildSeconds != null
-          ? Number((duplicateDetail as Record<string, unknown>).targetBuildSeconds) / 60
+        targetBuildMinutes: duplicateDetail.targetBuildSeconds != null
+          ? Number(duplicateDetail.targetBuildSeconds) / 60
           : null,
         shelfLifeDays: duplicateDetail.shelfLifeDays != null ? Number(duplicateDetail.shelfLifeDays) : undefined,
         tinSize: duplicateDetail.tinSize ?? "",
@@ -2154,14 +2198,14 @@ export default function Recipes() {
         sopUrl: duplicateDetail.sopUrl ?? "",
         isCoreMenu: duplicateDetail.isCoreMenu ?? false,
         isCurrentSpecial: false,
-        isFridgeProduct: (duplicateDetail as Record<string, unknown>).isFridgeProduct === true,
+        isFridgeProduct: duplicateDetail.isFridgeProduct === true,
         color: duplicateDetail.color ?? "",
-        cookingLossPercent: (duplicateDetail as Record<string, unknown>).cookingLossPercent != null ? Number((duplicateDetail as Record<string, unknown>).cookingLossPercent) : 3,
+        cookingLossPercent: duplicateDetail.cookingLossPercent != null ? Number(duplicateDetail.cookingLossPercent) : 3,
         builderFillingDeductionGrams: Number(duplicateDetail.builderFillingDeductionGrams ?? 0),
-        dietaryCategory: ((duplicateDetail as Record<string, unknown>).dietaryCategory as "meat" | "vegetarian" | null | undefined) ?? null,
-        tags: Array.isArray((duplicateDetail as Record<string, unknown>).tags) ? ((duplicateDetail as Record<string, unknown>).tags as string[]) : [],
-        ingredients: (duplicateDetail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, marinadeAddAtCooking: (i as { marinadeAddAtCooking?: boolean | null }).marinadeAddAtCooking === true, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: (i as Record<string, unknown>).isTopping === true, quid: (i as Record<string, unknown>).quid === true, showInPrep: (i as Record<string, unknown>).showInPrep === true, mixingOverage: Number((i as Record<string, unknown>).mixingOverage ?? 0) })),
-        subRecipes: (duplicateDetail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, marinadeAddAtCooking: (s as { marinadeAddAtCooking?: boolean | null }).marinadeAddAtCooking === true, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: (s as Record<string, unknown>).isTopping === true, quid: (s as Record<string, unknown>).quid === true, showInPrep: (s as Record<string, unknown>).showInPrep === true, mixingOverage: Number((s as Record<string, unknown>).mixingOverage ?? 0) })),
+        dietaryCategory: duplicateDetail.dietaryCategory ?? null,
+        tags: Array.isArray(duplicateDetail.tags) ? duplicateDetail.tags : [],
+        ingredients: (duplicateDetail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, marinadeAddAtCooking: i.marinadeAddAtCooking === true, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: i.isTopping === true, quid: i.quid === true, showInPrep: i.showInPrep === true, mixingOverage: Number(i.mixingOverage ?? 0) })),
+        subRecipes: (duplicateDetail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, marinadeAddAtCooking: s.marinadeAddAtCooking === true, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: s.isTopping === true, quid: s.quid === true, showInPrep: s.showInPrep === true, mixingOverage: Number(s.mixingOverage ?? 0) })),
       };
       setDuplicateDefaults(vals);
       setIsAddOpen(true);
@@ -2208,7 +2252,7 @@ export default function Recipes() {
       if (!r.name.toLowerCase().includes(q)) return false;
     }
     if (selectedTags.length > 0) {
-      const rTags = ((r as Record<string, unknown>).tags as string[] | undefined) ?? [];
+      const rTags = (r as RecipeWithExtras).tags ?? [];
       const rLower = new Set(rTags.map(t => t.toLowerCase()));
       for (const sel of selectedTags) if (!rLower.has(sel.toLowerCase())) return false;
     }
