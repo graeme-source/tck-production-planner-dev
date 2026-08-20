@@ -2774,6 +2774,20 @@ export default function Fulfilment() {
               <span className="font-mono font-semibold">{labelVerified.consignmentNumber}</span>
               {labelVerified.parcel ? <span className="text-green-700/80 dark:text-green-300/80"> · parcel {labelVerified.parcel}</span> : null}
             </span>
+            {/* Same fetch-by-reference as the gate's button. After a scan
+                this reprints the SAME label, so a fresh print can be held
+                against the one on the box — the bench check that the
+                reference→consignment mapping is right. */}
+            <button
+              type="button"
+              onClick={printReconcileLabel}
+              disabled={reconcilePrinting}
+              className="ml-auto flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-green-400 dark:border-green-700 bg-background text-xs font-medium text-green-700 dark:text-green-300 hover:bg-green-100 dark:hover:bg-green-900/40 disabled:opacity-50"
+              title="Fetch this order's label from APC again and print it — should come out identical to the label on the box"
+            >
+              {reconcilePrinting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />}
+              Print label
+            </button>
           </div>
         )}
 
