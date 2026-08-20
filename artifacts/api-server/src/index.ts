@@ -1534,6 +1534,16 @@ async function runStartupMigrations() {
       )
     `);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_founder_tasks_date ON founder_tasks (date, status)`);
+    // Daily ad spend, hand-entered by the founder on the Numbers page —
+    // there's no ads-platform integration, and one number a day doesn't
+    // need one. Feeds the new-customer ROAS panel.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS founder_ad_spend (
+        spend_date DATE PRIMARY KEY,
+        amount NUMERIC(10,2) NOT NULL,
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
 
     // Per-user to-do lists (2026-08-20). Distinct from founder_tasks (the
     // founder's personal day plan): these belong to an ASSIGNEE, can be

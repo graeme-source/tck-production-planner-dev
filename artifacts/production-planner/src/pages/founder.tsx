@@ -26,6 +26,8 @@ import {
   X,
   Check,
   Megaphone,
+  Pencil,
+  Percent,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
@@ -93,6 +95,33 @@ async function fetchConversion(from: string, to: string) {
     orderCount: number | null;
     conversionRate: number | null;
   }>;
+}
+
+/** Yesterday's ad spend — hand-entered on this page, one figure per day. */
+async function fetchAdSpend(date: string) {
+  const res = await fetch(
+    `${BASE}/api/founder-focus/ad-spend?date=${encodeURIComponent(date)}`,
+    { credentials: "include" },
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ date: string; amount: number | null }>;
+}
+
+async function saveAdSpend(date: string, amount: number | null) {
+  const res = await fetch(`${BASE}/api/founder-focus/ad-spend`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ date, amount }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ date: string; amount: number | null }>;
 }
 
 async function fetchOrdersByType(from: string, to: string) {
@@ -624,6 +653,29 @@ function FounderDashboard() {
     staleTime: 5 * 60 * 1000,
   });
 
+  // Yesterday's ad spend — entered right on the panel, saved per date.
+  const {
+    data: adSpendData,
+    isLoading: adSpendLoading,
+    refetch: refetchAdSpend,
+  } = useQuery({
+    queryKey: ["founder-ad-spend", yesterdayStr],
+    queryFn: () => fetchAdSpend(yesterdayStr),
+    staleTime: 5 * 60 * 1000,
+  });
+  const [editingSpend, setEditingSpend] = useState(false);
+  const [spendInput, setSpendInput] = useState("");
+  const adSpendMutation = useMutation({
+    mutationFn: (amount: number | null) => saveAdSpend(yesterdayStr, amount),
+    onSuccess: () => { setEditingSpend(false); refetchAdSpend(); },
+  });
+  function submitAdSpend() {
+    const trimmed = spendInput.trim();
+    if (trimmed === "") { adSpendMutation.mutate(null); return; }
+    const n = Number(trimmed.replace(/[£,\s]/g, ""));
+    if (Number.isFinite(n) && n >= 0) adSpendMutation.mutate(Math.round(n * 100) / 100);
+  }
+
   // ── Order breakdown expand ────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [expandedPanel, setExpandedPanel] = useState(false);
@@ -677,10 +729,11 @@ function FounderDashboard() {
       refetchOrderTypes(),
       refetchYesterday(),
       refetchConversion(),
+      refetchAdSpend(),
       queryClient.invalidateQueries({ queryKey: ["tag-summary"] }),
       queryClient.invalidateQueries({ queryKey: ["founder-custom-panels"] }),
     ]);
-  }, [refetchMonth, refetchPeriod, refetchOrderTypes, refetchYesterday, refetchConversion, queryClient]);
+  }, [refetchMonth, refetchPeriod, refetchOrderTypes, refetchYesterday, refetchConversion, refetchAdSpend, queryClient]);
 
   function getGroupCount(tag: string) {
     return orderTypes?.groups.find((g) => g.tag === tag)?.count ?? 0;
@@ -825,6 +878,79 @@ function FounderDashboard() {
                 <Skeleton className="h-7 w-20 mt-1" />
               ) : (
                 <p className="text-2xl font-display font-bold">{formatGBP(getYesterdayRevenue("new-customer"))}</p>
+              )}
+            </div>
+          </div>
+
+          {/* Ad Spend — typed in by Graeme each morning, one figure a day.
+              No ads-platform integration behind it; the pencil IS the API. */}
+          <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
+            <div className="p-3 rounded-xl bg-orange-500/10 text-orange-500 shrink-0">
+              <Megaphone className="w-5 h-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-muted-foreground truncate">Ad Spend</p>
+              {adSpendLoading ? (
+                <Skeleton className="h-7 w-16 mt-1" />
+              ) : editingSpend ? (
+                <div className="flex items-center gap-1.5 mt-1">
+                  <input
+                    autoFocus
+                    inputMode="decimal"
+                    value={spendInput}
+                    onChange={(e) => setSpendInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") submitAdSpend(); if (e.key === "Escape") setEditingSpend(false); }}
+                    placeholder="£0.00"
+                    className="w-24 px-2 py-1 rounded-lg border border-border bg-background text-lg font-display font-bold focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  />
+                  <button
+                    onClick={submitAdSpend}
+                    disabled={adSpendMutation.isPending}
+                    className="p-1.5 rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                    aria-label="Save ad spend"
+                  >
+                    <Check className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => { setSpendInput(adSpendData?.amount != null ? String(adSpendData.amount) : ""); setEditingSpend(true); }}
+                  className="group flex items-center gap-2 text-left"
+                  title="Enter yesterday's ad spend"
+                >
+                  <span className={`text-2xl font-display font-bold ${adSpendData?.amount == null ? "text-muted-foreground" : ""}`}>
+                    {adSpendData?.amount != null ? formatGBP(adSpendData.amount) : "Set…"}
+                  </span>
+                  <Pencil className="w-3.5 h-3.5 text-muted-foreground opacity-60 group-hover:opacity-100" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* New Customer ROAS — new-customer revenue ÷ ad spend, as a
+              percentage: £600 spend returning £2,000 reads 333%. */}
+          <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
+            <div className="p-3 rounded-xl bg-pink-500/10 text-pink-500 shrink-0">
+              <Percent className="w-5 h-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-muted-foreground truncate">New Customer ROAS</p>
+              {yesterdayLoading || adSpendLoading ? (
+                <Skeleton className="h-7 w-16 mt-1" />
+              ) : adSpendData?.amount != null && adSpendData.amount > 0 ? (
+                <>
+                  <p className="text-2xl font-display font-bold">
+                    {Math.round((getYesterdayRevenue("new-customer") / adSpendData.amount) * 100)}%
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                    {formatGBP(getYesterdayRevenue("new-customer"))} ÷ {formatGBP(adSpendData.amount)} spend
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-2xl font-display font-bold text-muted-foreground">—</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Enter ad spend to see it</p>
+                </>
               )}
             </div>
           </div>
