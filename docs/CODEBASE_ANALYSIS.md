@@ -1,8 +1,9 @@
 # TCK Production Planner — Codebase Analysis
 
-**Status:** v1.0 (2026-08-15) — companion to `docs/PRODUCT_SPEC.md`
+**Status:** v1.1 (2026-08-20) — companion to `docs/PRODUCT_SPEC.md`; §9 adds the
+2026-08-20 delta re-check
 **Method:** full-code sweep of the monorepo (data model, backend routes, frontend pages,
-build/test infrastructure), assessed against spec objectives A–H. All claims carry
+build/test infrastructure), assessed against spec objectives A–I. All claims carry
 `file:line` references verified against the current tree.
 
 ---
@@ -390,3 +391,49 @@ buffers need waste records). P2 before P3 because building features on the curre
   new work goes in extracted modules, and touched code migrates out.
 - One data-fetching pattern for all new frontend work; autosave-with-visible-state
   for every daily-entry field.
+
+
+## 9. Delta re-check — 2026-08-20 (dev moved 36 commits, +6.1k lines)
+
+**Features landed (spec progress):**
+- **Per-user to-dos** (`routes/todos.ts` 558 lines, `components/todo-lists.tsx`
+  1,095 lines): assign/acknowledge/comment, photo+video attachments, one-tap
+  "tag as improvement", personal strip above daily checks, unacknowledged-task
+  interstitial. Partial delivery of Objectives H and E.
+- **SOP linking** (`sop_links` table, chips on checklists + main prep): SOPs at
+  the point of use — Objective E's design direction, landed.
+- **Dashboard glanceability** (station-named cards, colour-block legend, in-bar
+  labels): first steps on Objective G.
+- **Shopify orders cache** (`lib/orders-cache.ts`): Numbers page 10s → ~0.1s.
+- **Ad-spend + new-customer ROAS panel**: first brick of Objective I.
+- **Positive structure notes:** all new frontend fetching uses React Query
+  (charter rule 6 fully followed); most new backend code went into new focused
+  files; the allergen display/bolding duplication flagged in the recipe-flow
+  findings was actually fixed (extracted to `lib/allergens`).
+
+**All 12 §4 defects remain open.** Verified individually — none of the 36 commits
+touched the defective code (two commits touched the same *files* without touching
+the bugs). The `845c5a9` ordering change (past-cutoff POs stop swallowing new
+needs, surfaced as `lockedOpenPo`) is a genuine improvement adjacent to, but not
+fixing, §4.6/§4.9.
+
+**Charter drift observed in the delta** (the charter didn't exist while most of
+this was written — recorded as evidence, not blame):
+- `todo_*` tables and `founder_ad_spend` exist **only** in `runStartupMigrations`
+  (`index.ts:1537-1607`) — no migration file, no Drizzle schema (rule 9);
+  `index.ts` grew +119 lines, all DDL. `sop_links` and `shopify_orders_cache`
+  did get migration files (0052/0053) but are duplicated in startup DDL.
+- Zero new endpoints use the `validate()` middleware (rule 7) — all hand-rolled
+  checks (`todos.ts` inline zod, `standards.ts` manual number checks).
+- `routes/production-plans.ts` grew +152 (9,411 → 9,563): the same-day-dough
+  logic went *into* the monolith (rule 4).
+- Two new name-matched behaviours (rule 8): `isPostOven` regex now matches
+  "icing" by name (`production-plans.ts:5119`); "Macaroni Cheese" category
+  string checks added in `pages/production-plans.tsx`. Counterexample done
+  right: same-day dough uses a proper `made_on_production_day` flag.
+- One true silent swallow added: `lib/orders-cache.ts` discards a failed
+  background sync at the join point.
+
+**Consequence:** §7's P0 (tests + CI + the 12 fixes) is unstarted and remains the
+highest-leverage next step; the charter needs to be active in every build session
+so the migration/validation drift stops accruing.

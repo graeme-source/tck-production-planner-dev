@@ -351,6 +351,11 @@ A–I; extract or remove any that create drag (see the companion codebase analys
 
 Graeme is compiling further objectives/daily issues. Known items awaiting detail:
 
+*Landed since first draft (2026-08-20 re-check):* per-user to-do lists with
+photo/video and "tag as improvement" (H/E partial), SOP links on checklists and
+main prep (E point-of-use partial), station-named glanceable dashboard cards
+(G partial), ad-spend + new-customer ROAS panel (I partial).
+
 - Specific daily issues encountered by the team (to be logged against objectives).
 - End-of-day batch numbers not saving automatically (Objective F defect — investigate
   and fix).
