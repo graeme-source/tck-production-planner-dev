@@ -229,52 +229,59 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
     tags: normaliseTags(tags),
   };
 
+  // Everything in ONE transaction — a failed ingredient/sub-recipe/marinade
+  // insert must roll the recipe row back too, never leave an orphan recipe
+  // with no ingredients. (The PUT handler was fixed for this long ago; the
+  // POST path had kept the old split writes.)
   const [recipe] = await db.transaction(async (tx) => {
     if (isCurrentSpecial === true) {
       await tx.update(recipesTable).set({ isCurrentSpecial: false });
     }
-    return tx.insert(recipesTable).values(insertValues).returning();
-  });
+    const inserted = await tx.insert(recipesTable).values(insertValues).returning();
+    const created = inserted[0];
 
-  if (ingredients?.length) {
-    await db.insert(recipeIngredientsTable).values(
-      ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
-        recipeId: recipe.id, ingredientId: i.ingredientId, quantity: String(i.quantity),
-        marinadeForIngredientId: i.marinadeForIngredientId ?? null,
-        marinadeAddAtCooking: i.marinadeAddAtCooking ?? false,
-        includeInFillingMix: i.includeInFillingMix ?? false,
-        quid: i.quid ?? false,
-        isTopping: i.isTopping ?? false,
-        showInPrep: i.showInPrep ?? false,
-        mixingOverage: String(i.mixingOverage ?? 0),
-      }))
-    );
-  }
-  if (subRecipes?.length) {
-    await db.insert(recipeSubRecipesTable).values(
-      subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
-        recipeId: recipe.id, subRecipeId: s.subRecipeId, quantity: String(s.quantity),
-        marinadeForIngredientId: s.marinadeForIngredientId ?? null,
-        marinadeAddAtCooking: s.marinadeAddAtCooking ?? false,
-        includeInFillingMix: s.includeInFillingMix ?? false,
-        quid: s.quid ?? false,
-        isTopping: s.isTopping ?? false,
-        showInPrep: s.showInPrep ?? false,
-        mixingOverage: String(s.mixingOverage ?? 0),
-      }))
-    );
-  }
-  if (marinades?.length) {
-    await db.insert(recipeMeatMarinadesTable).values(
-      marinades.map((m) => ({
-        recipeId: recipe.id,
-        rawMeatIngredientId: m.rawMeatIngredientId,
-        marinadeIngredientId: m.marinadeIngredientId ?? null,
-        marinadeSubRecipeId: m.marinadeSubRecipeId ?? null,
-        gramsPerKg: String(m.gramsPerKg),
-      }))
-    );
-  }
+    if (ingredients?.length) {
+      await tx.insert(recipeIngredientsTable).values(
+        ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
+          recipeId: created.id, ingredientId: i.ingredientId, quantity: String(i.quantity),
+          marinadeForIngredientId: i.marinadeForIngredientId ?? null,
+          marinadeAddAtCooking: i.marinadeAddAtCooking ?? false,
+          includeInFillingMix: i.includeInFillingMix ?? false,
+          quid: i.quid ?? false,
+          isTopping: i.isTopping ?? false,
+          showInPrep: i.showInPrep ?? false,
+          mixingOverage: String(i.mixingOverage ?? 0),
+        }))
+      );
+    }
+    if (subRecipes?.length) {
+      await tx.insert(recipeSubRecipesTable).values(
+        subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
+          recipeId: created.id, subRecipeId: s.subRecipeId, quantity: String(s.quantity),
+          marinadeForIngredientId: s.marinadeForIngredientId ?? null,
+          marinadeAddAtCooking: s.marinadeAddAtCooking ?? false,
+          includeInFillingMix: s.includeInFillingMix ?? false,
+          quid: s.quid ?? false,
+          isTopping: s.isTopping ?? false,
+          showInPrep: s.showInPrep ?? false,
+          mixingOverage: String(s.mixingOverage ?? 0),
+        }))
+      );
+    }
+    if (marinades?.length) {
+      await tx.insert(recipeMeatMarinadesTable).values(
+        marinades.map((m) => ({
+          recipeId: created.id,
+          rawMeatIngredientId: m.rawMeatIngredientId,
+          marinadeIngredientId: m.marinadeIngredientId ?? null,
+          marinadeSubRecipeId: m.marinadeSubRecipeId ?? null,
+          gramsPerKg: String(m.gramsPerKg),
+        }))
+      );
+    }
+
+    return inserted;
+  });
 
   const mapped = mapRecipe(recipe);
   const rawCosts = await computeCosts([recipe.id]);
