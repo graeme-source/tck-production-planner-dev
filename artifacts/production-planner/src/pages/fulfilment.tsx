@@ -140,11 +140,10 @@ interface ShopifyOrder {
 
 interface ShipmentResult {
   consignmentNumber: string;
-  /** Kept for compatibility with the existing server response. The print path
-   *  no longer reads it — labels are fetched live from the label route so an
-   *  amended consignment can never print from a stale payload. */
-  labelPdfBase64: string;
-  /** Number of parcels on the consignment, so every piece gets printed. */
+  /** Number of parcels on the consignment, so every piece gets printed. The
+   *  label bytes are NOT carried here — they are fetched live from the label
+   *  route at the moment each piece prints, so an amended consignment can
+   *  never print from a payload captured when the order was opened. */
   pieceCount?: number;
   trackingUrl?: string;
   serviceCode: string;
@@ -516,7 +515,6 @@ interface BookedConsignment {
   orderId: number;
   waybill: string;
   trackingUrl: string | null;
-  labelPrintedAt: string | null;
 }
 
 /** Mark our record of a consignment dead after it was cancelled inside

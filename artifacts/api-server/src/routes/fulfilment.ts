@@ -235,6 +235,30 @@ async function validateOrderPostcode(
     dispatchDate,
   );
 
+  // OFF by default (Graeme, 2026-08-20). Two reasons:
+  //
+  // 1. It cannot work here. checkPostcodeService ignores the apiBase above and
+  //    is hardwired to the TRAINING server, and this account has no training
+  //    credentials — so it sends production credentials to training and gets
+  //    "Authentication Failed … (100019)" every single time. Every order on
+  //    the despatch screen produced a "Check failed:" row and a log line.
+  //
+  // 2. It is redundant for how the kitchen actually works. Consignments are
+  //    bulk-uploaded to APC each morning from a Shopify CSV, and APC validates
+  //    postcode and service AT UPLOAD — a bad combination is rejected there,
+  //    hours before anyone reaches the packing bench.
+  //
+  // Not repointed at production on purpose: this check validates by POSTing a
+  // real booking and cancelling it, so on production it would raise and cancel
+  // a live consignment per postcode per morning (~80/day).
+  //
+  // Set app_settings key `apc_postcode_check` to 'true' to turn it back on
+  // without a deploy.
+  const postcodeCheckEnabled = (await getAppSetting("apc_postcode_check")) === "true";
+  if (!postcodeCheckEnabled) {
+    return { available: true, serviceCode };
+  }
+
   try {
     const result = await checkPostcodeService(order.shipping_address.zip, serviceCode, apiBase);
 
@@ -650,15 +674,28 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
     }
 
     if (reusedWaybill) {
-      const labels = await fetchLabel(reusedWaybill, apiBase);
+      // Opening an order no longer pulls the label bytes. The client prints
+      // through the live label route, so all that is needed here is HOW MANY
+      // pieces to print — a metadata read instead of ~180KB of base64 per
+      // order, and it no longer touches APC's printed flag.
+      //
+      // A failure here must never block packing: the label route re-reads the
+      // consignment anyway, so falling back to a single piece is safe. It only
+      // risks under-printing a multi-box consignment, which Reprint recovers.
+      let pieceCount = 1;
+      try {
+        const lookup = await lookupOrderByWaybill(reusedWaybill, apiBase);
+        pieceCount = Math.max(1, lookup?.itemNumbers.length ?? 1);
+      } catch (pieceErr) {
+        console.warn(
+          `[Fulfilment] piece-count lookup failed for ${reusedWaybill}, assuming 1:`,
+          pieceErr instanceof Error ? pieceErr.message : pieceErr,
+        );
+      }
+
       res.json({
         consignmentNumber: reusedWaybill,
-        labelPdfBase64: labels[0],
-        // How many labels this consignment actually has. The client prints via
-        // the live label route, one request per piece — without this it would
-        // print piece 1 and quietly leave the rest of a multi-box consignment
-        // unlabelled, which is what taking labels[0] here used to do.
-        pieceCount: labels.length,
+        pieceCount,
         trackingUrl: reusedTrackingUrl ?? apcTrackingUrl(reusedWaybill, postcode),
         serviceCode,
         orderId,
@@ -765,7 +802,10 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
     res.json({
       ...(recordError ? { recordError } : {}),
       consignmentNumber: result.consignmentNumber,
-      labelPdfBase64: result.labelPdfBase64,
+      // No label bytes: the client prints through the live label route. (This
+      // fresh-booking path doesn't run for the CSV-upload workflow, which
+      // always takes the reuse path above — createShipment still fetches a
+      // label internally, which is now redundant here but harmless.)
       // A freshly booked consignment is always single-parcel here — extra
       // boxes are added afterwards via add-parcel, which returns its own count.
       pieceCount: 1,
@@ -1701,8 +1741,8 @@ router.get("/booked-not-dispatched", requireFulfilmentAccess, async (req: Reques
   const { tag } = req.query as { tag?: string };
   if (!tag) { res.status(400).json({ error: "tag query param required" }); return; }
   try {
-    const rows = await db.execute<{ waybill: string; shopify_order_id: string; shopify_order_name: string; service_code: string | null; booked_by: string | null; created_at: Date; label_printed_at: Date | null }>(sql`
-      SELECT waybill, shopify_order_id, shopify_order_name, service_code, booked_by, created_at, label_printed_at
+    const rows = await db.execute<{ waybill: string; shopify_order_id: string; shopify_order_name: string; service_code: string | null; booked_by: string | null; created_at: Date }>(sql`
+      SELECT waybill, shopify_order_id, shopify_order_name, service_code, booked_by, created_at
       FROM apc_consignments
       WHERE dispatch_tag = ${tag} AND cancelled_at IS NULL
       ORDER BY created_at
@@ -1720,7 +1760,6 @@ router.get("/booked-not-dispatched", requireFulfilmentAccess, async (req: Reques
         serviceCode: r.service_code,
         bookedBy: r.booked_by,
         bookedAt: r.created_at,
-        labelPrinted: !!r.label_printed_at,
       }));
     res.json({ tag, checked: rows.rows.length, outstanding });
   } catch (err: unknown) {
@@ -1776,8 +1815,8 @@ router.get("/consignments", requireFulfilmentAccess, async (req: Request, res: R
     const orders = await getOrdersByTag(tag);
     const ids = orders.map(o => o.id);
     if (ids.length === 0) { res.json({ tag, consignments: [] }); return; }
-    const rows = await db.execute<{ shopify_order_id: string; waybill: string; tracking_url: string | null; label_printed_at: Date | null }>(sql`
-      SELECT DISTINCT ON (shopify_order_id) shopify_order_id, waybill, tracking_url, label_printed_at
+    const rows = await db.execute<{ shopify_order_id: string; waybill: string; tracking_url: string | null }>(sql`
+      SELECT DISTINCT ON (shopify_order_id) shopify_order_id, waybill, tracking_url
       FROM apc_consignments
       WHERE shopify_order_id IN (${sql.join(ids.map(id => sql`${id}`), sql`, `)})
         AND cancelled_at IS NULL
@@ -1789,7 +1828,6 @@ router.get("/consignments", requireFulfilmentAccess, async (req: Request, res: R
         orderId: Number(r.shopify_order_id),
         waybill: r.waybill,
         trackingUrl: r.tracking_url,
-        labelPrintedAt: r.label_printed_at,
       })),
     });
   } catch (err: unknown) {
