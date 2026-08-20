@@ -506,6 +506,22 @@ export default function Inventory() {
   const openAdd = () => { setEditingItem(null); setIsDialogOpen(true); };
   const openEdit = (item: Ingredient) => { setEditingItem(item); setIsDialogOpen(true); };
 
+  // Deep link: /inventory?tab=ingredients&edit=<id> opens that ingredient's
+  // edit dialog the moment the list loads — recipe pages link here from
+  // their "missing label declaration" warnings. Consumed once so closing
+  // the dialog doesn't bounce it straight back open.
+  const editParamConsumedRef = useRef(false);
+  useEffect(() => {
+    if (editParamConsumedRef.current || !allIngredients) return;
+    const editId = Number(params.get("edit"));
+    if (!Number.isInteger(editId) || editId <= 0) return;
+    editParamConsumedRef.current = true;
+    const item = allIngredients.find(i => i.id === editId);
+    if (item) openEdit(item as Ingredient);
+    else toast({ title: "Ingredient not found", description: "It may have been deleted.", variant: "destructive" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allIngredients, searchStr]);
+
   const handleSave = (data: FormValues, id: number | null) => {
     const payload = buildPayload(data);
     setIsPending(true);

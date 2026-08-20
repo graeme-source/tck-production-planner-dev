@@ -892,6 +892,7 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
   missingNutritionals: string[];
   missingNutritionalDetail: Array<{ ingredientId: number; name: string; missing: string[] }>;
   missingDeclarations: string[];
+  missingDeclarationDetail: Array<{ ingredientId: number; name: string }>;
 }> {
   const [recipe] = await db.select().from(recipesTable).where(eq(recipesTable.id, recipeId));
   if (!recipe) throw new Error("Recipe not found");
@@ -1060,9 +1061,15 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
     .filter(i => !i.labelDeclaration)
     .map(i => i.name);
 
+  // With ids, so the client can link each name straight to the ingredient's
+  // edit dialog instead of leaving Graeme to hunt it down in Inventory.
+  const missingDeclarationDetail = items
+    .filter(i => !i.labelDeclaration && i.ingredientId != null)
+    .map(i => ({ ingredientId: i.ingredientId, name: i.name }));
+
   return {
     items, totalWeightG, cookingLossPercent, portionsPerBatch, servings, packSize,
-    missingNutritionals, missingNutritionalDetail, missingDeclarations,
+    missingNutritionals, missingNutritionalDetail, missingDeclarations, missingDeclarationDetail,
   };
 }
 
@@ -1071,7 +1078,7 @@ router.get("/:id/nutritionals", async (req, res) => {
   if (!parsed.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
 
   try {
-    const { items, totalWeightG, cookingLossPercent, portionsPerBatch, servings, packSize, missingNutritionals, missingNutritionalDetail, missingDeclarations } =
+    const { items, totalWeightG, cookingLossPercent, portionsPerBatch, servings, packSize, missingNutritionals, missingNutritionalDetail, missingDeclarations, missingDeclarationDetail } =
       await gatherRecipeIngredients(parsed.data.id);
 
     const cookedWeightG = totalWeightG * (1 - cookingLossPercent / 100);
@@ -1128,6 +1135,7 @@ router.get("/:id/nutritionals", async (req, res) => {
         missingNutritionals,
         missingNutritionalDetail,
         missingDeclarations,
+        missingDeclarationDetail,
         isComplete: missingNutritionals.length === 0 && missingDeclarations.length === 0,
       },
     });
@@ -1541,6 +1549,14 @@ router.get("/:id/ingredient-deck", async (req, res) => {
       ...directItems.filter(i => !i.labelDeclaration).map(i => i.name),
       ...subRecipeGroups.flatMap(g => g.ingredients.filter(i => !i.labelDeclaration).map(i => i.name)),
     ];
+    // Ids alongside the names so the client can link each one straight to
+    // the ingredient's edit dialog.
+    const missingDeclarationDetail = [
+      ...directItems.filter(i => !i.labelDeclaration),
+      ...subRecipeGroups.flatMap(g => g.ingredients.filter(i => !i.labelDeclaration)),
+    ]
+      .filter(i => i.ingredientId != null)
+      .map(i => ({ ingredientId: i.ingredientId, name: i.name }));
 
     // A compound ingredient's declaration must name the ingredient and bracket
     // its components — "Chorizo (Pork, Salt, ...)". Several were stored as a
@@ -1568,6 +1584,7 @@ router.get("/:id/ingredient-deck", async (req, res) => {
       allergenMismatches,
       mayContainStatement,
       missingDeclarations: [...new Set(missingDeclarations)],
+      missingDeclarationDetail: [...new Map(missingDeclarationDetail.map(d => [d.ingredientId, d])).values()],
       unwrappedDeclarations: [...new Set(unwrappedDeclarations)],
       isComplete: missingDeclarations.length === 0 && unwrappedDeclarations.length === 0,
     });
