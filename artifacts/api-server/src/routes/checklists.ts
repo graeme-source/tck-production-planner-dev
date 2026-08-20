@@ -797,6 +797,20 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
     return;
   }
 
+  // Today's ice-pack counts ON the check itself — "See how many ice packs
+  // are needed" used to mean going to a different screen to look (Graeme,
+  // 2026-08-20). Same weather-driven calc as the packing banner.
+  if (type === "ice_packs") {
+    try {
+      const { computeIcePacksToday } = await import("./ice-packs");
+      res.json([await computeIcePacksToday()]);
+    } catch (err: any) {
+      console.error("[checklist] ice_packs error:", err.message);
+      res.json([]);
+    }
+    return;
+  }
+
   if (type === "desserts_report") {
     // Always use tomorrow's date for delivery tag (dispatch is always for next day).
     // "Tomorrow" is measured in London — Railway runs UTC so a plain

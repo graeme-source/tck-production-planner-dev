@@ -12,15 +12,17 @@
  * Security: this is a server-side fetcher, so it's an SSRF vector if
  * left unchecked. We require http(s), block private/loopback/link-local
  * hostnames (the obvious SSRF targets on a typical container), cap the
- * download at 1 MB, and time out after 10 s.
+ * download at 3 MB, and time out after 45 s.
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 
 const router: IRouter = Router();
 
-const MAX_BYTES = 1_000_000;
-const FETCH_TIMEOUT_MS = 10_000;
+// Wholesale sites can be slow and heavy; a scrape that takes 30s but lands
+// the full ingredients/allergens/nutrition data beats a fast failure.
+const MAX_BYTES = 3_000_000;
+const FETCH_TIMEOUT_MS = 45_000;
 
 const BLOCKED_HOST_PATTERNS = [
   /^localhost$/i,
@@ -107,6 +109,23 @@ function distillHtml(html: string): string {
   let ld: RegExpExecArray | null;
   while ((ld = ldRe.exec(html))) ldBlocks.push(ld[1].trim());
 
+  // Embedded JSON app-state (__NEXT_DATA__ and friends). Sites like Brakes
+  // render the Ingredients / Nutrition / Allergens tabs client-side from a
+  // JSON blob in a script tag, so stripping all scripts would lose exactly
+  // the data the scrape is for. Keep script bodies that look like data (a
+  // quoted ingredients/allergen/nutrition key) rather than code.
+  const dataBlocks: string[] = [];
+  const scriptRe = /<script[^>]*>([\s\S]*?)<\/script>/gi;
+  let sm: RegExpExecArray | null;
+  while ((sm = scriptRe.exec(html)) && dataBlocks.length < 4) {
+    const body = sm[1]?.trim();
+    if (!body || body.length < 80) continue;
+    if (ldBlocks.includes(body)) continue;
+    if (/"(ingredients?|allergens?|nutrients?|nutritio\w*)"\s*:/i.test(body)) {
+      dataBlocks.push(body.slice(0, 30_000));
+    }
+  }
+
   // Title tag (cheap signal).
   const titleMatch = /<title[^>]*>([^<]*)<\/title>/i.exec(html);
   const titleTag = titleMatch?.[1]?.trim();
@@ -126,8 +145,10 @@ function distillHtml(html: string): string {
   if (titleTag) parts.push(`<title>${titleTag}</title>`);
   if (meta.length) parts.push(`<meta>\n${meta.join("\n")}\n</meta>`);
   if (ldBlocks.length) parts.push(`<json-ld>\n${ldBlocks.join("\n---\n")}\n</json-ld>`);
-  // Cap the bulk text — Claude doesn't need 200KB of nav and footer.
-  parts.push(`<body>\n${stripped.slice(0, 15_000)}\n</body>`);
+  if (dataBlocks.length) parts.push(`<embedded-data>\n${dataBlocks.join("\n---\n")}\n</embedded-data>`);
+  // Generous body cap — the Ingredients / Nutrition tab text sits deep in
+  // the page on wholesale sites, well past the old 15K cut-off.
+  parts.push(`<body>\n${stripped.slice(0, 60_000)}\n</body>`);
   return parts.join("\n\n");
 }
 
@@ -227,7 +248,7 @@ router.post("/scrape-url", async (req: Request, res: Response) => {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("aborted")) {
-      res.status(504).json({ error: "Page took too long to load (>10s)" });
+      res.status(504).json({ error: "Page took too long to load (>45s)" });
       return;
     }
     res.status(502).json({ error: `Failed to fetch page: ${msg}` });
@@ -282,7 +303,7 @@ router.post("/scrape-url", async (req: Request, res: Response) => {
         role: "user",
         content: `Extract the ingredient fields for the form. Source URL: ${check.url.toString()}
 
-Nutritional values: use the per-100g column on supplier pages (Brakes, Bidfood, supermarkets typically show a Nutrition tab with a table). Leave a nutritional field null if only per-portion values are stated — do NOT back-calculate.
+Nutritional values: use the per-100g column on supplier pages (Brakes, Bidfood, supermarkets typically show a Nutrition tab with a table). Leave a nutritional field null if only per-portion values are stated — do NOT back-calculate. The <embedded-data> section (when present) is the page's JSON app state — tabbed content like Ingredients, Allergens and Nutrition often lives there rather than in the body text, so check it carefully.
 
 ${distilled}`,
       }],
@@ -298,6 +319,21 @@ ${distilled}`,
     const msg = err instanceof Error ? err.message : String(err);
     res.status(502).json({ error: `Extraction failed: ${msg}` });
     return;
+  }
+
+  // A UK nutrition declaration only has to list what's present — fibre (and
+  // occasionally others) are simply omitted when there's none to declare. So
+  // when the page clearly has a per-100g nutrition listing (energy plus at
+  // least a few more values), any nutrient it doesn't mention is 0, not
+  // unknown — otherwise the ingredient sits in Data Health flagged as
+  // incomplete forever. No listing at all → everything stays null.
+  {
+    const NUTRIENTS = ["energyKj", "energyKcal", "fat", "saturates", "carbohydrate", "sugars", "protein", "fibre", "salt"] as const;
+    const present = NUTRIENTS.filter(k => extracted[k] != null).length;
+    const hasEnergy = extracted.energyKj != null || extracted.energyKcal != null;
+    if (hasEnergy && present >= 4) {
+      for (const k of NUTRIENTS) if (extracted[k] == null) extracted[k] = 0;
+    }
   }
 
   res.json({

@@ -16,6 +16,7 @@
     "@react-pdf/renderer": "^4.5.1",
     "@replit/connectors-sdk": "^0.3.0",
     "@types/multer": "^2.1.0",
+    "@workspace/allergens": "workspace:*",
     "@workspace/api-zod": "workspace:*",
     "@workspace/business-days": "workspace:*",
     "@workspace/db": "workspace:*",

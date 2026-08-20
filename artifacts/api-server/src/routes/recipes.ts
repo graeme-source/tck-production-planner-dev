@@ -4,6 +4,7 @@ import { eq, inArray, ne, and, gte } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { CreateRecipeBody, UpdateRecipeBody } from "@workspace/api-zod";
+import { ALLERGEN_DISPLAY, boldAllergens, allergenMismatch } from "@workspace/allergens";
 import { validate } from "../middleware/validate";
 import { computeSubRecipeCosts } from "../lib/sub-recipe-costs";
 import { generateQrCode } from "../lib/qr-code";
@@ -891,6 +892,7 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
   missingNutritionals: string[];
   missingNutritionalDetail: Array<{ ingredientId: number; name: string; missing: string[] }>;
   missingDeclarations: string[];
+  missingDeclarationDetail: Array<{ ingredientId: number; name: string }>;
 }> {
   const [recipe] = await db.select().from(recipesTable).where(eq(recipesTable.id, recipeId));
   if (!recipe) throw new Error("Recipe not found");
@@ -1059,9 +1061,15 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
     .filter(i => !i.labelDeclaration)
     .map(i => i.name);
 
+  // With ids, so the client can link each name straight to the ingredient's
+  // edit dialog instead of leaving Graeme to hunt it down in Inventory.
+  const missingDeclarationDetail = items
+    .filter(i => !i.labelDeclaration && i.ingredientId != null)
+    .map(i => ({ ingredientId: i.ingredientId, name: i.name }));
+
   return {
     items, totalWeightG, cookingLossPercent, portionsPerBatch, servings, packSize,
-    missingNutritionals, missingNutritionalDetail, missingDeclarations,
+    missingNutritionals, missingNutritionalDetail, missingDeclarations, missingDeclarationDetail,
   };
 }
 
@@ -1070,7 +1078,7 @@ router.get("/:id/nutritionals", async (req, res) => {
   if (!parsed.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
 
   try {
-    const { items, totalWeightG, cookingLossPercent, portionsPerBatch, servings, packSize, missingNutritionals, missingNutritionalDetail, missingDeclarations } =
+    const { items, totalWeightG, cookingLossPercent, portionsPerBatch, servings, packSize, missingNutritionals, missingNutritionalDetail, missingDeclarations, missingDeclarationDetail } =
       await gatherRecipeIngredients(parsed.data.id);
 
     const cookedWeightG = totalWeightG * (1 - cookingLossPercent / 100);
@@ -1127,6 +1135,7 @@ router.get("/:id/nutritionals", async (req, res) => {
         missingNutritionals,
         missingNutritionalDetail,
         missingDeclarations,
+        missingDeclarationDetail,
         isComplete: missingNutritionals.length === 0 && missingDeclarations.length === 0,
       },
     });
@@ -1173,33 +1182,10 @@ export function declarationNeedsWrapper(declaration: string): boolean {
   return false;
 }
 
-const ALLERGEN_DISPLAY: Record<string, string> = {
-  celery: "Celery",
-  cereals_containing_gluten: "Wheat",
-  crustaceans: "Crustaceans",
-  eggs: "Eggs",
-  fish: "Fish",
-  lupin: "Lupin",
-  milk: "Milk",
-  molluscs: "Molluscs",
-  mustard: "Mustard",
-  nuts: "Nuts",
-  peanuts: "Peanuts",
-  sesame: "Sesame",
-  soybeans: "Soybeans",
-  sulphur_dioxide: "Sulphur Dioxide",
-};
-
-function boldAllergens(text: string, allergens: string[]): string {
-  let result = text;
-  for (const allergen of allergens) {
-    const displayName = ALLERGEN_DISPLAY[allergen] || allergen;
-    const escaped = displayName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const regex = new RegExp(`\\b(${escaped})\\b`, "gi");
-    result = result.replace(regex, "**$1**");
-  }
-  return result;
-}
+// Bolding is TEXT-driven (every allergen word printed in a declaration gets
+// emphasised, as UK FIC requires) while the recipe-level allergen list stays
+// TICK-driven — with any declaration-vs-ticks mismatch reported so the
+// ingredient data gets fixed rather than silently diverging.
 
 interface DeckEntry {
   type: "ingredient" | "compound";
@@ -1442,7 +1428,7 @@ router.get("/:id/ingredient-deck", async (req, res) => {
     for (const item of directItems) {
       const pct = totalWeightG > 0 ? Math.round((item.quantityG / totalWeightG) * 1000) / 10 : 0;
       const declaration = item.labelDeclaration || item.name;
-      const bolded = boldAllergens(declaration, item.allergens);
+      const bolded = boldAllergens(declaration);
 
       deckEntries.push({
         type: "ingredient",
@@ -1468,7 +1454,7 @@ router.get("/:id/ingredient-deck", async (req, res) => {
           return {
             ingredientId: si.ingredientId,
             name: si.name,
-            declaration: boldAllergens(dec, si.allergens),
+            declaration: boldAllergens(dec),
             percentage: siPct,
             allergens: si.allergens.map(a => ALLERGEN_DISPLAY[a] || a),
           };
@@ -1476,7 +1462,7 @@ router.get("/:id/ingredient-deck", async (req, res) => {
 
         const compoundName = group.labelDeclaration || group.name;
         const allGroupAllergens = group.ingredients.flatMap(i => i.allergens);
-        const boldedName = boldAllergens(compoundName, allGroupAllergens);
+        const boldedName = boldAllergens(compoundName);
         const subDeclarations = subIngEntries.map(s => s.declaration).join(", ");
         const compoundDeclaration = group.isQuid
           ? `${boldedName} (${pct}%) (${subDeclarations})`
@@ -1496,7 +1482,7 @@ router.get("/:id/ingredient-deck", async (req, res) => {
         for (const si of group.ingredients) {
           const siGlobalPct = totalWeightG > 0 ? Math.round((si.quantityG / totalWeightG) * 1000) / 10 : 0;
           const dec = si.labelDeclaration || si.name;
-          const bolded = boldAllergens(dec, si.allergens);
+          const bolded = boldAllergens(dec);
 
           const existingIdx = deckEntries.findIndex(
             e => e.type === "ingredient" && e.ingredientId === si.ingredientId
@@ -1508,14 +1494,9 @@ router.get("/:id/ingredient-deck", async (req, res) => {
             existing.percentage = combinedPct;
             const mergedAllergens = [...new Set([...existing.allergens, ...si.allergens.map(a => ALLERGEN_DISPLAY[a] || a)])];
             existing.allergens = mergedAllergens;
-            const rawAllergens = [...new Set([
-              ...(directItems.find(d => d.ingredientId === si.ingredientId)?.allergens ?? []),
-              ...si.allergens,
-            ])];
-            const baseDeclaration = dec;
             existing.declaration = existing.isQuid
-              ? `${boldAllergens(baseDeclaration, rawAllergens)} (${combinedPct}%)`
-              : boldAllergens(baseDeclaration, rawAllergens);
+              ? `${bolded} (${combinedPct}%)`
+              : bolded;
           } else {
             deckEntries.push({
               type: "ingredient",
@@ -1545,12 +1526,37 @@ router.get("/:id/ingredient-deck", async (req, res) => {
     ])].sort();
     const allergenDisplayList = allAllergens.map(a => ALLERGEN_DISPLAY[a] || a);
 
+    // Declaration-vs-ticks mismatches: allergen words found in an ingredient's
+    // declaration text that aren't ticked on the ingredient record. The
+    // bolding above already emphasises them on the deck (text-driven), but the
+    // recipe allergen list is tick-driven — so an unticked allergen would be
+    // missing from "Allergens Present" until the record is fixed.
+    const mismatchById = new Map<number, { ingredientId: number; name: string; missing: string[] }>();
+    const checkMismatch = (ingredientId: number, name: string, declaration: string | null, ticked: string[]) => {
+      if (mismatchById.has(ingredientId)) return;
+      const missing = allergenMismatch(declaration || name, ticked);
+      if (missing.length > 0) {
+        mismatchById.set(ingredientId, { ingredientId, name, missing: missing.map(c => ALLERGEN_DISPLAY[c] || c) });
+      }
+    };
+    for (const i of directItems) checkMismatch(i.ingredientId, i.name, i.labelDeclaration, i.allergens);
+    for (const g of subRecipeGroups) for (const si of g.ingredients) checkMismatch(si.ingredientId, si.name, si.labelDeclaration, si.allergens);
+    const allergenMismatches = [...mismatchById.values()];
+
     const deckText = sortedEntries.map(d => d.declaration).join(", ") + ".";
 
     const missingDeclarations = [
       ...directItems.filter(i => !i.labelDeclaration).map(i => i.name),
       ...subRecipeGroups.flatMap(g => g.ingredients.filter(i => !i.labelDeclaration).map(i => i.name)),
     ];
+    // Ids alongside the names so the client can link each one straight to
+    // the ingredient's edit dialog.
+    const missingDeclarationDetail = [
+      ...directItems.filter(i => !i.labelDeclaration),
+      ...subRecipeGroups.flatMap(g => g.ingredients.filter(i => !i.labelDeclaration)),
+    ]
+      .filter(i => i.ingredientId != null)
+      .map(i => ({ ingredientId: i.ingredientId, name: i.name }));
 
     // A compound ingredient's declaration must name the ingredient and bracket
     // its components — "Chorizo (Pork, Salt, ...)". Several were stored as a
@@ -1575,8 +1581,10 @@ router.get("/:id/ingredient-deck", async (req, res) => {
       ingredients: sortedEntries,
       deckText,
       allergens: allergenDisplayList,
+      allergenMismatches,
       mayContainStatement,
       missingDeclarations: [...new Set(missingDeclarations)],
+      missingDeclarationDetail: [...new Map(missingDeclarationDetail.map(d => [d.ingredientId, d])).values()],
       unwrappedDeclarations: [...new Set(unwrappedDeclarations)],
       isComplete: missingDeclarations.length === 0 && unwrappedDeclarations.length === 0,
     });

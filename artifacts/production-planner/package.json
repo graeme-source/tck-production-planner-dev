@@ -49,6 +49,7 @@
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
+    "@workspace/allergens": "workspace:*",
     "@workspace/api-client-react": "workspace:*",
     "@workspace/business-days": "workspace:*",
     "@workspace/production-schedule": "workspace:*",

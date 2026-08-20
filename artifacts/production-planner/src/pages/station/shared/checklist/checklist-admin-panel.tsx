@@ -390,6 +390,7 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
                   <option value="oven_events">Oven Events</option>
                   <option value="mozzarella_load">Mozzarella Load</option>
                   <option value="desserts_report">Desserts Report</option>
+                  <option value="ice_packs">Ice Packs (today's counts)</option>
                   <option value="first_pack_batch_numbers">First Pack Batch Numbers</option>
                   <option value="last_pack_batch_numbers">Last Pack Batch Numbers</option>
                   <option value="fridge_freezer_temps_opening">Fridge/Freezer Temps (Opening)</option>

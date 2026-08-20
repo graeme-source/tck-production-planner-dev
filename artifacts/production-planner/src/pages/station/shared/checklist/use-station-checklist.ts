@@ -68,19 +68,31 @@ export function useStationChecklist(stationType: string, planId: number) {
 }
 
 export function useDynamicData(planId: number, type: string | null) {
-  const [data, setData] = useState<unknown[]>([]);
-  const [loading, setLoading] = useState(false);
+  // The rows are stored WITH the key they were fetched for. Effects run
+  // after render, so on a type switch the first paint used to hand the
+  // PREVIOUS type's rows to the NEW type's renderer with loading=false —
+  // which crashed any renderer that trusts its data shape (found live
+  // 2026-08-20: desserts_report reading .products.length off batch-number
+  // rows when flicking between packing checks). Deriving by key means a
+  // renderer can never see another type's data; the gap reads as loading.
+  const [state, setState] = useState<{ key: string | null; rows: unknown[] }>({ key: null, rows: [] });
+  const [fetching, setFetching] = useState(false);
+  const key = type ? `${planId}:${type}` : null;
 
   useEffect(() => {
-    if (!type) { setData([]); return; }
+    if (!key || !type) return;
     let cancelled = false;
-    setLoading(true);
+    setFetching(true);
     fetch(`${BASE}/api/checklists/dynamic-data/${planId}/${encodeURIComponent(type)}`, { credentials: "include" })
       .then(r => r.ok ? r.json() : [])
-      .then(d => { if (!cancelled) { setData(d); setLoading(false); } })
-      .catch(() => { if (!cancelled) setLoading(false); });
+      .then(d => { if (!cancelled) { setState({ key, rows: Array.isArray(d) ? d : [] }); setFetching(false); } })
+      .catch(() => { if (!cancelled) setFetching(false); });
     return () => { cancelled = true; };
   }, [planId, type]);
 
-  return { data, loading };
+  const fresh = key != null && state.key === key;
+  return {
+    data: fresh ? state.rows : [],
+    loading: key != null && (fetching || !fresh),
+  };
 }

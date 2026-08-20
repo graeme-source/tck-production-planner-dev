@@ -16,7 +16,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
-import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt, Camera, Upload, X, FileText, ScrollText, ChevronRight } from "lucide-react";
+import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt, Camera, Upload, X, FileText, ScrollText, ChevronRight, ListTodo } from "lucide-react";
+import { TodoSheet, useMyOpenTodoCount } from "@/components/todo-lists";
 import { jsPDF } from "jspdf";
 import { toast } from "@/hooks/use-toast";
 
@@ -1164,14 +1165,17 @@ function PoliciesList() {
   );
 }
 
-type HubSection = "mileage" | "expenses" | "policies" | "improvements" | "issues" | "sops";
+type HubSection = "todos" | "mileage" | "expenses" | "policies" | "improvements" | "issues" | "sops";
 
 export default function EmployeeHub() {
-  const [active, setActive] = useState<HubSection>("mileage");
+  const [active, setActive] = useState<HubSection>("todos");
   const { state } = useAuth();
   const userId = state.status === "authenticated" ? state.user.id : null;
+  const [todosOpen, setTodosOpen] = useState(false);
+  const openTodoCount = useMyOpenTodoCount();
 
   const sections: { key: HubSection; label: string; icon: typeof Car }[] = [
+    { key: "todos", label: "My To-dos", icon: ListTodo },
     { key: "mileage", label: "Mileage Claim", icon: Car },
     { key: "expenses", label: "Expense Claim", icon: Receipt },
     { key: "policies", label: "Policies", icon: ScrollText },
@@ -1207,6 +1211,29 @@ export default function EmployeeHub() {
         </nav>
 
         <div className="bg-card border border-border rounded-2xl p-5">
+          {active === "todos" && (
+            <>
+              <div className="mb-4 pb-4 border-b border-border">
+                <h2 className="text-lg font-semibold">My To-dos</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Tasks on your list — yours and ones added by a manager. Also reachable from the green tab on the right edge of every page.
+                </p>
+              </div>
+              <div className="text-center py-8 space-y-4">
+                <p className="text-3xl font-display font-bold">
+                  {openTodoCount === 0 ? "All clear!" : `${openTodoCount} thing${openTodoCount === 1 ? "" : "s"} on your list`}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setTodosOpen(true)}
+                  className="inline-flex items-center gap-3 px-8 h-16 rounded-2xl bg-primary text-primary-foreground text-xl font-bold hover:opacity-90 active:scale-[0.99] transition-all shadow-lg shadow-primary/20"
+                >
+                  <ListTodo className="w-7 h-7" /> Open my to-dos
+                </button>
+              </div>
+              <TodoSheet open={todosOpen} onClose={() => setTodosOpen(false)} />
+            </>
+          )}
           {active === "mileage" && (
             <>
               <div className="mb-4 pb-4 border-b border-border">

@@ -684,6 +684,18 @@ export async function checkPostcodeService(
     throw new Error(`APC training returned non-JSON (HTTP ${res.status}) — check training credentials`);
   }
 
+  // SYSTEM failures must THROW, never masquerade as a postcode rejection.
+  // On 2026-08-20 the training login expired (HTTP 419, code 100019) and
+  // every order on the despatch screen went red with "Service LW16
+  // rejected for <postcode>" — a fleet of phantom postcode issues that
+  // were really one auth problem. Auth errors come back with a TOP-LEVEL
+  // Messages node and no Orders node at all.
+  const systemMsg = json?.Messages;
+  if (res.status === 401 || res.status === 419 || systemMsg?.Code === "Authentication Error" || !json?.Orders) {
+    const desc = systemMsg?.Description ?? `HTTP ${res.status}`;
+    throw new Error(`APC training auth/system error (not a postcode problem): ${desc}`);
+  }
+
   const topCode = json?.Orders?.Messages?.Code;
   const orderCode = json?.Orders?.Order?.Messages?.Code;
   const orderDesc = json?.Orders?.Order?.Messages?.Description
@@ -694,7 +706,10 @@ export async function checkPostcodeService(
     // Cancel immediately so training doesn't accumulate junk orders.
     const waybill = json?.Orders?.Order?.WayBill;
     if (waybill) {
-      cancelShipment({ waybill, apiBase: APC_TRAINING_BASE }).catch(err =>
+      // Fixed 2026-08-20: this passed an OBJECT into a string parameter, so
+      // the DELETE hit /Orders/[object Object].json and every validation
+      // booking stayed in the training account forever.
+      cancelShipment(waybill, APC_TRAINING_BASE).catch(err =>
         console.warn(`[APC Validate] cancel ${waybill} failed:`, err),
       );
     }

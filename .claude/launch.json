@@ -91,6 +91,21 @@
       "port": 5284
     },
     {
+      "name": "api-allergens",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5285 PORT=59700 pnpm run dev"],
+      "cwd": "artifacts/api-server",
+      "port": 59700,
+      "autoPort": true
+    },
+    {
+      "name": "frontend-allergens",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59700 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5285 --strictPort"],
+      "cwd": "artifacts/production-planner",
+      "port": 5285
+    },
+    {
       "name": "frontend-preview-3",
       "runtimeExecutable": "/bin/bash",
       "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5281 --strictPort"],

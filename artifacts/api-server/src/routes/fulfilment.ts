@@ -253,7 +253,23 @@ async function validateOrderPostcode(
     // returned available:true which hid credential/network failures
     // behind a green banner. Now surfaces the error so the user knows
     // something went wrong.
-    return { available: false, reason: `Check failed: ${msg}`, serviceCode };
+    const reason = `Check failed: ${msg}`.slice(0, 500);
+    // Persisted so the queue's amber "APC check unavailable" chip survives
+    // a reload — without a row the outage is invisible after the tagging
+    // toast is gone. The "Check failed:" prefix is what keeps this row
+    // advisory: the queue renders it amber, and the /shipments postcode
+    // block explicitly skips these rows.
+    try {
+      await db.execute(sql`
+        INSERT INTO postcode_validations (shopify_order_id, postcode, service_code, available, reason, checked_at, dispatch_tag)
+        VALUES (${order.id}, ${order.shipping_address.zip}, ${serviceCode}, ${false}, ${reason}, NOW(), ${dispatchTag})
+        ON CONFLICT (shopify_order_id, service_code)
+        DO UPDATE SET available = ${false}, reason = ${reason}, checked_at = NOW(), dispatch_tag = ${dispatchTag}
+      `);
+    } catch (dbErr) {
+      console.warn(`[Fulfilment] could not record check-failed row for ${order.name}:`, dbErr instanceof Error ? dbErr.message : dbErr);
+    }
+    return { available: false, reason, serviceCode };
   }
 }
 
@@ -581,21 +597,6 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
       dispatchDate,
     );
 
-    const existingValidation = await db.execute(sql`
-      SELECT available, reason, service_code FROM postcode_validations
-      WHERE shopify_order_id = ${orderId} AND dispatch_tag = ${tag} AND service_code = ${serviceCode} AND available = false
-      ORDER BY checked_at DESC LIMIT 1
-    `);
-    interface ValidationRow { available: boolean; reason: string | null; service_code: string }
-    if (existingValidation.rows.length > 0) {
-      const v: ValidationRow = existingValidation.rows[0] as ValidationRow;
-      res.status(422).json({
-        error: `Postcode issue: ${v.reason || "Service not available for this postcode"} (Service: ${v.service_code}). Re-check the postcode before packing.`,
-        postcodeBlocked: true,
-      });
-      return;
-    }
-
     // Batch-book-only guard (Graeme, 2026-08-13): consignments are raised in
     // a checked batch at the start of the day, NOT one-by-one as orders are
     // opened — a bad batch of five is reviewed before labels fly, instead of
@@ -616,6 +617,7 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
     const postcode = order.shipping_address.zip;
     let reusedWaybill: string | null = null;
     let reusedTrackingUrl: string | null = null;
+    let lookupFailure: string | null = null;
 
     const prior = await liveConsignmentFor(orderId);
     if (prior) {
@@ -642,7 +644,8 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
       } catch (lookupErr) {
         // A lookup outage must not stop packing — but say so loudly, because
         // the duplicate check was weaker for this order.
-        console.warn(`[Fulfilment] duplicate-check lookup failed for ${order.name}:`, lookupErr instanceof Error ? lookupErr.message : lookupErr);
+        lookupFailure = lookupErr instanceof Error ? lookupErr.message : String(lookupErr);
+        console.warn(`[Fulfilment] duplicate-check lookup failed for ${order.name}:`, lookupFailure);
       }
     }
 
@@ -661,9 +664,45 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
     }
 
     if (!bookOnOpen) {
+      if (lookupFailure) {
+        // Without a working APC lookup we cannot tell "not uploaded yet"
+        // from "uploaded but unreachable" — and in batch-only mode the
+        // lookup is the ONLY way to a label. Telling the packer to
+        // batch-book would be wrong on both counts.
+        res.status(502).json({
+          error: `Could not check APC for ${order.name}'s consignment: ${lookupFailure}`,
+        });
+        return;
+      }
       res.status(409).json({
-        error: `${order.name} has no consignment yet. Batch-book it from the queue first — opening an order doesn't create bookings while batch-only mode is on.`,
+        error: `${order.name} has no consignment yet — checked our ledger and APC by reference "${order.name}". Batch-book it from the queue, or upload it in Hypaship (reference must be exactly ${order.name}), then retry.`,
         needsBooking: true,
+      });
+      return;
+    }
+
+    // Postcode block — checked only on the FRESH-booking path, after the
+    // reuse checks above. A consignment that already exists (batch-booked,
+    // or hand-uploaded to Hypaship) has already passed APC's own validation
+    // at upload time, so a stored rejection must never stop its label being
+    // fetched and printed (2026-08-20: bogus rows from a validator auth
+    // outage blocked every order before the reuse path could run).
+    // "Check failed:" rows are the validator reporting its OWN outage —
+    // advisory (amber chip), never a postcode verdict, so they don't block
+    // booking either: a genuinely bad postcode still fails loudly at
+    // createShipment, which books against APC production.
+    const existingValidation = await db.execute(sql`
+      SELECT available, reason, service_code FROM postcode_validations
+      WHERE shopify_order_id = ${orderId} AND dispatch_tag = ${tag} AND service_code = ${serviceCode} AND available = false
+        AND (reason IS NULL OR reason NOT LIKE 'Check failed:%')
+      ORDER BY checked_at DESC LIMIT 1
+    `);
+    interface ValidationRow { available: boolean; reason: string | null; service_code: string }
+    if (existingValidation.rows.length > 0) {
+      const v: ValidationRow = existingValidation.rows[0] as ValidationRow;
+      res.status(422).json({
+        error: `Postcode issue: ${v.reason || "Service not available for this postcode"} (Service: ${v.service_code}). Re-check the postcode before packing.`,
+        postcodeBlocked: true,
       });
       return;
     }
@@ -794,6 +833,47 @@ router.get("/consignment-for-order", requireFulfilmentAccess, async (req: Reques
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[Fulfilment] consignment-for-order error:", msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
+// ── Reconcile mode: fetch the label PDF for a HAND-RAISED consignment ──────
+// Graeme's control test (2026-08-20): consignments stay manually uploaded
+// via the Excel flow, but the label can be (re)printed per order from the
+// bench — proving the print pipeline in isolation before the app ever
+// books consignments itself. Pure read against live APC: looks up the
+// consignment by the order reference, pulls its label PDF(s). Books
+// nothing.
+router.get("/reconcile-label", requireFulfilmentAccess, async (req: Request, res: Response) => {
+  const orderName = typeof req.query.orderName === "string" ? req.query.orderName.trim() : "";
+  if (!orderName) {
+    res.status(400).json({ error: "orderName query param required" });
+    return;
+  }
+  if (!isApcConfigured()) {
+    res.status(503).json({ error: "APC credentials not configured." });
+    return;
+  }
+  try {
+    const matches = await lookupOrdersByReference(orderName);
+    const lookup = matches[0];
+    if (!lookup?.waybill) {
+      res.status(404).json({
+        error: `APC has no consignment with reference "${orderName}". Check the reference in Hypaship.`,
+        notFound: true,
+      });
+      return;
+    }
+    const labelPdfs = await fetchLabel(lookup.waybill);
+    res.json({
+      waybill: lookup.waybill,
+      labelPdfs,
+      duplicateCount: matches.length,
+      duplicateWaybills: matches.map(m => m.waybill),
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Fulfilment] reconcile-label error:", msg);
     res.status(502).json({ error: msg });
   }
 });

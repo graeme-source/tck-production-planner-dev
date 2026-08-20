@@ -1097,4 +1097,38 @@ router.delete("/parking-lot/:id", async (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+// ── Daily ad spend (Numbers page) ──────────────────────────────────────────
+// Hand-entered, one figure per day. Feeds the new-customer ROAS panel:
+// yesterday's new-customer revenue ÷ this number.
+router.get("/ad-spend", async (req: Request, res: Response) => {
+  const date = typeof req.query.date === "string" ? req.query.date : "";
+  if (!DATE_RE.test(date)) { res.status(400).json({ error: "date=YYYY-MM-DD required" }); return; }
+  const rows = await db.execute<{ amount: string }>(sql`
+    SELECT amount FROM founder_ad_spend WHERE spend_date = ${date} LIMIT 1
+  `);
+  const raw = rows.rows[0]?.amount;
+  res.json({ date, amount: raw != null ? Number(raw) : null });
+});
+
+router.put("/ad-spend", async (req: Request, res: Response) => {
+  const parsed = z.object({
+    date: z.string().regex(DATE_RE),
+    // null clears the day's entry (typo recovery).
+    amount: z.number().min(0).max(1_000_000).nullable(),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "date and a non-negative amount are required" }); return; }
+  const { date, amount } = parsed.data;
+  if (amount === null) {
+    await db.execute(sql`DELETE FROM founder_ad_spend WHERE spend_date = ${date}`);
+    res.json({ date, amount: null });
+    return;
+  }
+  await db.execute(sql`
+    INSERT INTO founder_ad_spend (spend_date, amount, updated_at)
+    VALUES (${date}, ${amount}, NOW())
+    ON CONFLICT (spend_date) DO UPDATE SET amount = ${amount}, updated_at = NOW()
+  `);
+  res.json({ date, amount });
+});
+
 export default router;

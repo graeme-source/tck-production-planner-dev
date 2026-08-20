@@ -39,11 +39,57 @@ type AuthContextValue = {
 // How long a PIN entry grants access to sensitive pages before re-prompting.
 const SENSITIVE_UNLOCK_TTL_MS = 5 * 60 * 1000;
 
+// How long a person must be genuinely INACTIVE before anything is allowed to
+// PIN-lock or reload their session (Graeme's rule, 2026-08-20 — was 1 hour):
+// an active user must never be interrupted. This one threshold gates the idle
+// lock, the 10pm/4am PIN cutover, and the 10pm bundle refresh. Activity is
+// persisted to localStorage so it (a) survives a browser restart — the
+// overnight-PC fix — and (b) is shared ACROSS TABS, so typing in one tab
+// keeps a second tab from deciding the session is idle (that cross-tab gap
+// locked Graeme out mid-recipe and cost him unsaved work).
+const IDLE_TIMEOUT_MS = 15 * 60 * 1000;
+const LAST_ACTIVITY_KEY = "tck_last_activity";
+function readStoredActivity(): number {
+  try {
+    const v = Number(localStorage.getItem(LAST_ACTIVITY_KEY));
+    if (Number.isFinite(v) && v > 0 && v <= Date.now()) return v;
+  } catch { /* private mode */ }
+  return 0;
+}
+
+// Once a PIN lock has actually been APPLIED on this device, it must survive
+// a page reload — tapping the PIN pad counts as "activity", so without this
+// flag a locked station could be re-entered by simply refreshing the page
+// (the active-user deferral would kick in). The flag is set whenever the
+// overlay is applied for a server-backed lock and cleared only by a
+// successful PIN entry or full login.
+const PIN_LOCK_APPLIED_KEY = "tck_pin_lock_applied";
+function markPinLockApplied() {
+  try { localStorage.setItem(PIN_LOCK_APPLIED_KEY, "1"); } catch { /* private mode */ }
+}
+function clearPinLockApplied() {
+  try { localStorage.removeItem(PIN_LOCK_APPLIED_KEY); } catch { /* private mode */ }
+}
+function isPinLockApplied(): boolean {
+  try { return localStorage.getItem(PIN_LOCK_APPLIED_KEY) === "1"; } catch { return false; }
+}
+
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: "loading" });
   const [pinLocked, setPinLocked] = useState(false);
+  // Mirror of pinLocked for the stable checkSession callback (empty deps —
+  // it must not re-create on every lock change).
+  const pinLockedRef = useRef(false);
+  useEffect(() => { pinLockedRef.current = pinLocked; }, [pinLocked]);
+  // Freshest known activity: this tab's in-memory timestamp OR whatever any
+  // other tab persisted. Every idle decision goes through here.
+  const lastActivityRef = useRef<number>(readStoredActivity() || Date.now());
+  const lastPersistRef = useRef<number>(0);
+  const getLastActivity = useCallback(() => {
+    return Math.max(lastActivityRef.current, readStoredActivity());
+  }, []);
   // Timestamp of the last successful PIN entry. Used to gate sensitive pages
   // (Analytics, Settings) so that leaving a device unattended doesn't expose
   // HR / config data even within an authenticated session.
@@ -86,26 +132,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { pinRequired, ...user } = data;
         addDeviceUserId(user.id);
         setState({ status: "authenticated", user });
-        setPinLocked(!!pinRequired);
 
-        // Detect the server-side PIN cutover (10pm UK / 4am UTC). On the
-        // transition from not-locked → locked, bounce to the dashboard
-        // with a cache-buster. location.assign triggers a full navigation
-        // which refetches index.html, and since Vite hashes asset filenames
-        // the browser is guaranteed to load the latest bundle. This also
-        // kicks any tab sitting on an old /plans/:planId/station/... URL
-        // off yesterday's plan so nobody resumes stale production. The
-        // dashboard route is "/" — earlier versions redirected to
-        // "/dashboard", which doesn't exist in the router and rendered
-        // the 404 page until the operator clicked the sidebar link.
-        const wasLocked = prevPinRequiredRef.current;
-        prevPinRequiredRef.current = !!pinRequired;
-        if (pinRequired && wasLocked !== true) {
-          const path = window.location.pathname;
-          if (path !== "/" && !path.startsWith("/login")) {
-            const url = new URL("/", window.location.origin);
-            url.searchParams.set("v", Date.now().toString());
-            window.location.assign(url.toString());
+        // Server-side PIN cutover (10pm UK / 4am UTC). Applying it means
+        // locking AND bouncing to the dashboard with a cache-buster —
+        // location.assign is a full navigation, which refetches index.html
+        // (Vite's hashed filenames guarantee the latest bundle) and kicks
+        // any tab off yesterday's /plans/... URL. The dashboard route is
+        // "/" — "/dashboard" doesn't exist and rendered the 404 page.
+        //
+        // BUT a full navigation destroys unsaved client state, so the
+        // cutover is DEFERRED while the user is actively working (Graeme
+        // lost a half-built recipe to the 10pm cutover, 2026-08-20). While
+        // they're active we neither lock nor navigate; each 5-minute poll
+        // re-checks, and the cutover lands once they've been idle for
+        // IDLE_TIMEOUT_MS. Nobody is genuinely typing at 4am, so in
+        // practice this only softens the 10pm edge. An already-applied
+        // lock always stays applied — typing PIN digits is "activity" but
+        // must never dismiss the overlay.
+        if (!pinRequired) {
+          prevPinRequiredRef.current = false;
+          setPinLocked(false);
+          clearPinLockApplied();
+        } else if (pinLockedRef.current) {
+          prevPinRequiredRef.current = true;
+        } else if (!isPinLockApplied() && Date.now() - getLastActivity() < IDLE_TIMEOUT_MS) {
+          // Active AND no lock has been applied on this device yet — defer.
+          // (An applied lock re-locks on reload regardless of activity;
+          // otherwise tapping the PIN pad then refreshing would walk
+          // straight past it.) prevPinRequiredRef deliberately unchanged
+          // so the apply branch below still sees the transition later.
+        } else {
+          const wasLocked = prevPinRequiredRef.current;
+          prevPinRequiredRef.current = true;
+          setPinLocked(true);
+          markPinLockApplied();
+          if (wasLocked !== true) {
+            const path = window.location.pathname;
+            if (path !== "/" && !path.startsWith("/login")) {
+              const url = new URL("/", window.location.origin);
+              url.searchParams.set("v", Date.now().toString());
+              window.location.assign(url.toString());
+            }
           }
         }
       } else if (res.status === 401) {
@@ -142,32 +209,70 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (document.visibilityState === "visible") {
         checkSession(true);
         // Also check idle timeout on each poll (catches tabs left open all night)
-        const idleMs = Date.now() - lastActivityRef.current;
+        const idleMs = Date.now() - getLastActivity();
         if (idleMs >= IDLE_TIMEOUT_MS && state.status === "authenticated" && !pinLocked) {
           setPinLocked(true);
+          markPinLockApplied();
           fetch("/api/auth/pin/lock", { method: "POST", credentials: "include" })
             .catch((err) => { console.warn("[Auth] Idle lock failed:", err); });
         }
       }
     }, 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [checkSession, state, pinLocked]);
+  }, [checkSession, state, pinLocked, getLastActivity]);
 
   // ── Inactivity timeout & visibility-change lock ───────────────────────
-  // Tracks last user interaction. When the tab becomes visible again (any
-  // device — iPad, PC, etc.) we check: if idle for 1+ hour, force a PIN
-  // lock. We also always re-check the session so server-side resets (10pm
-  // evening lock, 4am morning lock) are picked up immediately.
-  const IDLE_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour
-  const lastActivityRef = useRef<number>(Date.now());
+  // The refs live near the top of the component (checkSession needs them);
+  // here are the listeners that feed them and the checks that act on them.
+  // Persisting to localStorage (throttled — pointer/scroll events fire
+  // constantly, and 30s of staleness is nothing against a 15-minute
+  // timeout) is what makes the timestamp survive a browser restart (the
+  // overnight-PC fix) and count across tabs.
 
   // Update activity timestamp on any user interaction
   useEffect(() => {
-    const touch = () => { lastActivityRef.current = Date.now(); };
+    const touch = () => {
+      const now = Date.now();
+      lastActivityRef.current = now;
+      if (now - lastPersistRef.current > 30_000) {
+        lastPersistRef.current = now;
+        try { localStorage.setItem(LAST_ACTIVITY_KEY, String(now)); } catch { /* private mode */ }
+      }
+    };
+    // Persist immediately when the tab goes to the background — the cleanest
+    // "last seen" we can record before a shutdown we won't get to observe.
+    const persistOnHide = () => {
+      if (document.visibilityState === "hidden") {
+        try { localStorage.setItem(LAST_ACTIVITY_KEY, String(lastActivityRef.current)); } catch { /* private mode */ }
+      }
+    };
     const events = ["pointerdown", "keydown", "scroll", "touchstart"] as const;
     for (const evt of events) document.addEventListener(evt, touch, { passive: true });
-    return () => { for (const evt of events) document.removeEventListener(evt, touch); };
+    document.addEventListener("visibilitychange", persistOnHide);
+    return () => {
+      for (const evt of events) document.removeEventListener(evt, touch);
+      document.removeEventListener("visibilitychange", persistOnHide);
+    };
   }, []);
+
+  // Boot check: a freshly launched browser (PC turned on in the morning)
+  // fires neither the 5-minute poll nor a visibilitychange, so without this
+  // the stored idle time would only be acted on minutes into the day. Runs
+  // once, as soon as the restored session reports authenticated.
+  const bootIdleCheckedRef = useRef(false);
+  useEffect(() => {
+    if (bootIdleCheckedRef.current) return;
+    if (state.status !== "authenticated") return;
+    bootIdleCheckedRef.current = true;
+    if (pinLocked) return;
+    const idleMs = Date.now() - getLastActivity();
+    if (idleMs >= IDLE_TIMEOUT_MS) {
+      setPinLocked(true);
+      markPinLockApplied();
+      fetch("/api/auth/pin/lock", { method: "POST", credentials: "include" })
+        .catch((err) => { console.warn("[Auth] Boot idle lock failed:", err); });
+    }
+  }, [state, pinLocked, getLastActivity]);
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -176,17 +281,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Always re-check session so server-side time-based locks are picked up
       checkSession(true);
 
-      // If idle for 1+ hour, force PIN lock (works on all devices)
-      const idleMs = Date.now() - lastActivityRef.current;
+      // Idle for 15+ minutes ACROSS ALL TABS → PIN lock. getLastActivity
+      // reads the shared timestamp, so switching to a tab that hasn't been
+      // touched in an hour no longer locks a session that was active in
+      // another tab seconds ago.
+      const idleMs = Date.now() - getLastActivity();
       if (idleMs >= IDLE_TIMEOUT_MS && state.status === "authenticated" && !pinLocked) {
         setPinLocked(true);
+        markPinLockApplied();
         fetch("/api/auth/pin/lock", { method: "POST", credentials: "include" })
           .catch((err) => { console.warn("[Auth] Pin lock failed:", err); });
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, [state, pinLocked, checkSession]);
+  }, [state, pinLocked, checkSession, getLastActivity]);
 
   // ── Scheduled hard refresh at 10pm UK wall-clock ──────────────────────
   // The auth-triggered redirect in checkSession already handles every
@@ -216,13 +325,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let delayMs = (targetSec - currentSec) * 1000;
     if (delayMs <= 0) delayMs += 24 * 60 * 60 * 1000;
 
-    const id = window.setTimeout(() => {
+    // A reload destroys unsaved client state, so it must NEVER hit someone
+    // mid-work: at 10pm, if this tab's user has been active inside the idle
+    // window, retry every 5 minutes and reload only once they've stepped
+    // away (Graeme lost a half-built recipe to interruptions like this,
+    // 2026-08-20).
+    let id = 0;
+    const fireWhenIdle = () => {
+      if (Date.now() - getLastActivity() < IDLE_TIMEOUT_MS) {
+        id = window.setTimeout(fireWhenIdle, 5 * 60 * 1000);
+        return;
+      }
       const url = new URL(window.location.href);
       url.searchParams.set("v", Date.now().toString());
       window.location.replace(url.toString());
-    }, delayMs);
+    };
+    id = window.setTimeout(fireWhenIdle, delayMs);
     return () => window.clearTimeout(id);
-  }, []);
+  }, [getLastActivity]);
 
   const refreshUser = useCallback(async () => {
     await checkSession();
@@ -241,6 +361,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         addDeviceUserId(user.id);
         setState({ status: "authenticated", user });
         setPinLocked(false);
+        clearPinLockApplied();
         sensitiveUnlockedAtRef.current = Date.now();
         return { user };
       }
@@ -265,6 +386,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         addDeviceUserId(user.id);
         setState({ status: "authenticated", user });
         setPinLocked(false);
+        clearPinLockApplied();
         sensitiveUnlockedAtRef.current = Date.now();
         return {};
       }
@@ -295,6 +417,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       if (res.ok) {
         setPinLocked(false);
+        clearPinLockApplied();
         sensitiveUnlockedAtRef.current = Date.now();
         return {};
       }
@@ -343,6 +466,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.warn("[Auth] Lock station: network error, locking UI anyway:", err);
     }
     setPinLocked(true);
+    markPinLockApplied();
     // Manual lock also invalidates the sensitive unlock window.
     sensitiveUnlockedAtRef.current = 0;
   }, []);

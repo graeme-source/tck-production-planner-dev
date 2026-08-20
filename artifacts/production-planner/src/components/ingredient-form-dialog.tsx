@@ -9,8 +9,9 @@
  * Schema, value-shaping and payload-building helpers all live in
  * lib/ingredient-form.ts so this file is purely UI + wiring.
  */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useForm, type UseFormRegister, type UseFormWatch, type UseFormSetValue } from "react-hook-form";
+import { detectAllergens, ALLERGEN_DISPLAY } from "@workspace/allergens";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -130,6 +131,20 @@ export function IngredientFormDialog({
     const cur = watchedAllergens;
     setValue("allergens", cur.includes(val) ? cur.filter((a: string) => a !== val) : [...cur, val]);
   };
+
+  // The label declaration is the source of truth for allergens: any allergen
+  // its text implies is auto-ticked. Add-only, and keyed to the declaration
+  // text — unticking a false positive sticks until the text itself changes.
+  const watchedDeclaration = watch("labelDeclaration") ?? "";
+  const detectedCodes = useMemo(() => detectAllergens(watchedDeclaration), [watchedDeclaration]);
+  const detectedKey = detectedCodes.join(",");
+  useEffect(() => {
+    if (!open || detectedCodes.length === 0) return;
+    const cur: string[] = watch("allergens") ?? [];
+    const missing = detectedCodes.filter(c => !cur.includes(c));
+    if (missing.length > 0) setValue("allergens", [...cur, ...missing]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detectedKey, open]);
 
   // ── UPF / NOVA classification ────────────────────────────────────────
   // The class itself is a form field (manual override saves through the
@@ -545,13 +560,33 @@ export function IngredientFormDialog({
             <div className="mt-3 rounded-lg border border-border bg-background p-3 space-y-2">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Review &amp; apply</p>
-                <button
-                  type="button"
-                  onClick={() => setScraped(null)}
-                  className="text-xs text-muted-foreground hover:text-foreground"
-                >
-                  Discard
-                </button>
+                <div className="flex items-center gap-3">
+                  {fieldRowsToPreview.length > 0 && (
+                    <label className="flex items-center gap-1.5 text-xs font-medium cursor-pointer text-muted-foreground hover:text-foreground">
+                      <input
+                        type="checkbox"
+                        checked={fieldRowsToPreview.every(r => applyFlags[r.key])}
+                        onChange={e => {
+                          const on = e.target.checked;
+                          setApplyFlags(prev => {
+                            const next = { ...prev };
+                            for (const r of fieldRowsToPreview) next[r.key] = on;
+                            return next;
+                          });
+                        }}
+                        className="w-3.5 h-3.5 rounded border-border"
+                      />
+                      {fieldRowsToPreview.every(r => applyFlags[r.key]) ? "Untick all" : "Tick all"}
+                    </label>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setScraped(null)}
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    Discard
+                  </button>
+                </div>
               </div>
               {fieldRowsToPreview.length === 0 ? (
                 <p className="text-xs text-muted-foreground italic">No fields found on that page. Try a different URL or fill in manually.</p>
@@ -1058,6 +1093,12 @@ export function IngredientFormDialog({
                         </button>
                       ))}
                     </div>
+                    {detectedCodes.length > 0 && (
+                      <p className="text-xs text-muted-foreground mt-1.5">
+                        Found in the declaration and ticked automatically:{" "}
+                        {detectedCodes.map(c => ALLERGEN_DISPLAY[c] ?? c).join(", ")}.
+                      </p>
+                    )}
                   </div>
 
                   {/* UPF / NOVA classification */}

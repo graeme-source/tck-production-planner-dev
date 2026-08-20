@@ -88,13 +88,13 @@ function smallBoxPacksFor(highTemp: number, tiers: IcePackTier[]): number {
   return Math.max(...tiers.map(x => x.packs));
 }
 
-router.get("/today", async (_req, res) => {
+/** The whole /today computation, shared with the checklist's ice_packs
+ *  dynamic-data block (2026-08-20) so the opening check can SHOW the counts
+ *  instead of sending the packer to another screen to find them. */
+export async function computeIcePacksToday(): Promise<Record<string, unknown>> {
   const rules = await loadRules();
 
-  if (!rules.enabled) {
-    res.json({ enabled: false });
-    return;
-  }
+  if (!rules.enabled) return { enabled: false };
 
   const { reading, source } = await getDespatchHighTemp(
     rules.location.latitude,
@@ -106,7 +106,7 @@ router.get("/today", async (_req, res) => {
   if (!reading) {
     // No forecast and no cached fallback — err on the side of more ice so the
     // team never under-packs on a hot day. Flag it clearly.
-    res.json({
+    return {
       enabled: true,
       forecastSource: "fallback",
       highTemp: null,
@@ -116,12 +116,11 @@ router.get("/today", async (_req, res) => {
       days: [],
       asOf: null,
       message: "Weather unavailable — defaulting to the hot-day pack count. Check manually.",
-    });
-    return;
+    };
   }
 
   const smallBoxPacks = smallBoxPacksFor(reading.highTemp, rules.tiers);
-  res.json({
+  return {
     enabled: true,
     forecastSource: source, // "live" | "cached"
     highTemp: Math.round(reading.highTemp),
@@ -131,7 +130,11 @@ router.get("/today", async (_req, res) => {
     location: rules.location,
     days: reading.days,
     asOf: reading.fetchedAt,
-  });
+  };
+}
+
+router.get("/today", async (_req, res) => {
+  res.json(await computeIcePacksToday());
 });
 
 export default router;

@@ -875,9 +875,15 @@ export default function Dashboard() {
                   </button>
                 )}
               </div>
-              <div className="flex items-center gap-4 mt-1.5 text-xs text-muted-foreground">
-                <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm" style={{ background: "hsl(var(--primary) / 0.35)" }} /> Dispatching (packs)</span>
-                <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm" style={{ background: "hsl(217 91% 60% / 0.75)" }} /> Making (calzone packs)</span>
+              {/* Legend as big solid blocks in each series' colour — the tiny
+                  dot legend was unreadable at a glance (Graeme, 2026-08-20). */}
+              <div className="flex items-center gap-2 mt-2">
+                <span className="px-4 py-1.5 rounded-lg text-base font-bold text-white" style={{ background: "hsl(var(--primary))" }}>
+                  Dispatching <span className="font-normal text-sm opacity-80">(packs)</span>
+                </span>
+                <span className="px-4 py-1.5 rounded-lg text-base font-bold text-white" style={{ background: "hsl(217 91% 60%)" }}>
+                  Making <span className="font-normal text-sm opacity-80">(calzone packs)</span>
+                </span>
               </div>
             </div>
             <button
@@ -906,7 +912,7 @@ export default function Dashboard() {
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
                   data={dispatchChartData}
-                  barSize={30}
+                  barSize={34}
                   barGap={3}
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
@@ -937,20 +943,21 @@ export default function Dashboard() {
                     {dispatchChartData?.map((entry, i) => (
                       <Cell
                         key={entry.date}
-                        fill={i === todayIndex ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.35)"}
+                        // Solid enough that the white in-bar number reads;
+                        // today still pops at full strength.
+                        fill={i === todayIndex ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.7)"}
                       />
                     ))}
-                    <LabelList dataKey="packCount" content={(props: any) =>
-                      renderBarLabel(props, "dispatching", props.index === todayIndex ? "#fff" : "hsl(var(--foreground))")} />
+                    <LabelList dataKey="packCount" content={renderBarLabel} />
                   </Bar>
                   <Bar dataKey="madePacks" name="Making (calzone packs)" radius={[6, 6, 0, 0]}>
                     {dispatchChartData?.map(entry => (
                       <Cell
                         key={entry.date}
-                        fill="hsl(217 91% 60% / 0.75)"
+                        fill="hsl(217 91% 60% / 0.85)"
                       />
                     ))}
-                    <LabelList dataKey="madePacks" content={(props: any) => renderBarLabel(props, "making", "#fff")} />
+                    <LabelList dataKey="madePacks" content={renderBarLabel} />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
@@ -1139,25 +1146,24 @@ function formatProgressValue(done: number, total: number): string {
   return done > 0 ? `${done} / ${total}` : total.toString();
 }
 
-/** In-bar label for the dispatch chart: the number plus what the bar IS
- *  ("400 dispatching"), rotated to fit inside the column. Short bars can't
- *  hold text, so the number perches above them instead. */
-function renderBarLabel(props: any, word: string, insideFill: string) {
+/** In-bar label for the dispatch chart: just the number, big white and
+ *  bold, sitting inside the top of the column (the legend blocks say which
+ *  series is which — words in the bars were unreadable). Short bars can't
+ *  hold it, so the number perches above them in the page colour instead. */
+function renderBarLabel(props: any) {
   const { x, y, width, height, value } = props;
   if (!value) return null;
   const cx = x + width / 2;
-  if ((height ?? 0) < 52) {
+  if ((height ?? 0) < 26) {
     return (
-      <text x={cx} y={y - 4} textAnchor="middle" fontSize={10} fontWeight={700} fill="hsl(var(--foreground))">
+      <text x={cx} y={y - 5} textAnchor="middle" fontSize={14} fontWeight={800} fill="hsl(var(--foreground))">
         {value}
       </text>
     );
   }
-  const cy = y + height / 2;
   return (
-    <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle" fontSize={10} fontWeight={700}
-      fill={insideFill} transform={`rotate(-90 ${cx} ${cy})`}>
-      {value} {word}
+    <text x={cx} y={y + 19} textAnchor="middle" fontSize={15} fontWeight={800} fill="#fff">
+      {value}
     </text>
   );
 }

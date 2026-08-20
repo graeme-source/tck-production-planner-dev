@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from "react";
+import { Link } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { useListRecipes, useListIngredients, useListSubRecipes, useGetRecipe, useListCategoryDefaults, useGetUpfSummary } from "@workspace/api-client-react";
 import { UpfChip, UpfPercentPill } from "@/components/upf-badge";
@@ -1709,7 +1710,13 @@ interface NutritionalsData {
   declaredPackWeightG: number;
   per100g: Record<string, number | null>;
   perPortion: Record<string, number | null>;
-  completeness: { totalIngredients: number; missingNutritionals: string[]; missingDeclarations: string[]; isComplete: boolean };
+  completeness: {
+    totalIngredients: number;
+    missingNutritionals: string[];
+    missingDeclarations: string[];
+    missingDeclarationDetail?: { ingredientId: number; name: string }[];
+    isComplete: boolean;
+  };
 }
 
 interface DeckData {
@@ -1718,10 +1725,38 @@ interface DeckData {
   allergens: string[];
   mayContainStatement: string | null;
   missingDeclarations: string[];
+  missingDeclarationDetail?: { ingredientId: number; name: string }[];
   isComplete: boolean;
 }
 
 const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+/** The names from a missing-declarations warning, each linked straight to
+ *  that ingredient's edit dialog (via /inventory?edit=) so fixing them is a
+ *  tap, not a search. Names the server couldn't id (shouldn't happen) fall
+ *  back to plain text. */
+function MissingDeclarationLinks({ names, detail }: { names: string[]; detail?: { ingredientId: number; name: string }[] }) {
+  const byName = new Map((detail ?? []).map(d => [d.name, d.ingredientId]));
+  return (
+    <span className="inline-flex flex-wrap gap-1 align-middle">
+      {names.map(name => {
+        const id = byName.get(name);
+        return id != null ? (
+          <Link
+            key={name}
+            href={`/inventory?tab=ingredients&edit=${id}`}
+            className="underline decoration-dotted underline-offset-2 font-semibold hover:text-amber-900 dark:hover:text-amber-100"
+            title={`Open ${name} to add its label declaration`}
+          >
+            {name}
+          </Link>
+        ) : (
+          <span key={name}>{name}</span>
+        );
+      })}
+    </span>
+  );
+}
 
 function RecipeNutritionalsDialog({ id, open, onOpenChange }: { id: number; open: boolean; onOpenChange: (v: boolean) => void }) {
   const [data, setData] = useState<NutritionalsData | null>(null);
@@ -1802,7 +1837,10 @@ function RecipeNutritionalsDialog({ id, open, onOpenChange }: { id: number; open
                   <p className="text-xs text-amber-700 dark:text-amber-300">Missing nutritionals: {data.completeness.missingNutritionals.join(", ")}</p>
                 )}
                 {data.completeness.missingDeclarations.length > 0 && (
-                  <p className="text-xs text-amber-700 dark:text-amber-300">Missing label declarations: {data.completeness.missingDeclarations.join(", ")}</p>
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
+                    Missing label declarations:{" "}
+                    <MissingDeclarationLinks names={data.completeness.missingDeclarations} detail={data.completeness.missingDeclarationDetail} />
+                  </p>
                 )}
               </div>
             )}
@@ -1917,7 +1955,9 @@ function RecipeIngredientDeckPanel({ id, active = true, refreshKey }: { id: numb
       {!data.isComplete && (
         <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
           <p className="text-sm font-medium text-amber-800 dark:text-amber-200 flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> Missing Declarations</p>
-          <p className="text-xs text-amber-700 dark:text-amber-300">{data.missingDeclarations.join(", ")}</p>
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            <MissingDeclarationLinks names={data.missingDeclarations} detail={data.missingDeclarationDetail} />
+          </p>
         </div>
       )}
     </div>

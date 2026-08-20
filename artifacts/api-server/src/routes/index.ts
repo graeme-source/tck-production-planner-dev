@@ -65,6 +65,7 @@ import recipeCollectionsRouter from "./recipe-collections";
 import queuedProductionRouter from "./queued-production";
 import caseOrdersRouter from "./case-orders";
 import founderFocusRouter from "./founder-focus";
+import todosRouter from "./todos";
 import founderSalesRouter from "./founder-sales";
 import surveysRouter from "./surveys";
 import { runBackup } from "../lib/backup";
@@ -119,6 +120,7 @@ async function requireAdminOrManager(req: Request, res: Response, next: NextFunc
 
 // Protected routes
 router.use("/users", usersRouter);
+router.use("/todos", todosRouter);
 router.use("/onboarding", onboardingRouter);
 router.use("/category-defaults", categoryDefaultsRouter);
 router.use("/suppliers", suppliersRouter);

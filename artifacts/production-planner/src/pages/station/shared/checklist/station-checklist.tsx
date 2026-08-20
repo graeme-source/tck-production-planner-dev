@@ -6,6 +6,7 @@ import {
   BookOpen,
 } from "lucide-react";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
+import { PersonalTodosStrip } from "@/components/todo-lists";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
@@ -312,6 +313,11 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
 
   return (
     <div className="space-y-4">
+      {/* The logged-in user's own tasks, surfaced where they already look
+          every day. Per-user, not per-station — a different login on the
+          same iPad sees their own list here. */}
+      <PersonalTodosStrip />
+
       {/* Progress header */}
       <div className="bg-card border border-border rounded-xl px-5 py-4">
         <div className="flex items-center justify-between mb-2">
@@ -1566,6 +1572,51 @@ function DuckDefrost({ data }: { data: unknown[] }) {
 }
 
 function DynamicDataDisplay({ type, data, loading, planId }: { type: string; data: unknown[]; loading: boolean; planId: number }) {
+  if (type === "ice_packs") {
+    if (loading) {
+      return (
+        <div className="mb-4 p-3 bg-cyan-50/60 dark:bg-cyan-950/20 rounded-lg flex items-center gap-2 text-sm text-cyan-600">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Checking the forecast…
+        </div>
+      );
+    }
+    const ice = (data as any[])[0] as {
+      enabled?: boolean; highTemp?: number | null; smallBoxPacks?: number; largeBoxPacks?: number;
+      location?: { name?: string }; message?: string;
+    } | undefined;
+    if (!ice || ice.enabled === false || typeof ice.smallBoxPacks !== "number") {
+      return (
+        <div className="mb-4 p-3 bg-secondary/30 rounded-lg text-sm text-muted-foreground">
+          Ice-pack rule unavailable — check the packing screen banner.
+        </div>
+      );
+    }
+    return (
+      <div className="mb-4 p-4 bg-cyan-50/70 dark:bg-cyan-950/20 border border-cyan-200 dark:border-cyan-800 rounded-xl">
+        <div className="flex items-center gap-6">
+          <div>
+            <p className="text-3xl font-bold font-display tabular-nums text-cyan-700 dark:text-cyan-300">
+              {ice.smallBoxPacks}
+            </p>
+            <p className="text-xs font-medium text-cyan-700/80 dark:text-cyan-300/80">per small box</p>
+          </div>
+          <div>
+            <p className="text-3xl font-bold font-display tabular-nums text-cyan-700 dark:text-cyan-300">
+              {ice.largeBoxPacks}
+            </p>
+            <p className="text-xs font-medium text-cyan-700/80 dark:text-cyan-300/80">per large box</p>
+          </div>
+          <div className="ml-auto text-right text-xs text-muted-foreground">
+            {ice.highTemp != null
+              ? <>Forecast high <span className="font-semibold text-foreground">{ice.highTemp}°C</span><br />({ice.location?.name ?? "despatch window"}, today/tomorrow)</>
+              : <span className="text-amber-600 dark:text-amber-400">{ice.message ?? "Weather unavailable"}</span>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (type === "desserts_report") {
     if (loading) {
       return (
@@ -1576,7 +1627,10 @@ function DynamicDataDisplay({ type, data, loading, planId }: { type: string; dat
       );
     }
     const report = (data as any[])[0] as { tag: string; deliveryLabel: string; products: Array<{ title: string; quantity: number; orderCount: number }>; totalQuantity: number; dessertProductCount: number } | undefined;
-    if (!report || report.products.length === 0) {
+    // Belt-and-braces shape guard: this renderer crashed the whole checklist
+    // when handed another check's rows (see useDynamicData) — never trust
+    // the payload shape blindly again.
+    if (!report || !Array.isArray(report.products) || report.products.length === 0) {
       return (
         <div className="mb-4 p-3 bg-secondary/30 rounded-lg text-sm text-muted-foreground">
           No dessert orders found for delivery.

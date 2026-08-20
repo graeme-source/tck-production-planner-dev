@@ -4,6 +4,7 @@ import { useListSubRecipes, useListIngredients, useGetSubRecipe, useGetUpfSummar
 import { UpfChip, UpfPercentPill } from "@/components/upf-badge";
 import type { Ingredient, SubRecipeDetail, SubRecipe } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
+import { boldAllergens } from "@workspace/allergens";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
 import { IngredientCombobox } from "@/components/ingredient-combobox";
@@ -86,34 +87,8 @@ function computeComponentKg(
   return total;
 }
 
-// Mirrors ALLERGEN_DISPLAY + boldAllergens in the API's ingredient-deck
-// endpoint so the dialog preview matches what the recipe deck will render.
-const PREVIEW_ALLERGEN_DISPLAY: Record<string, string> = {
-  celery: "Celery",
-  cereals_containing_gluten: "Wheat",
-  crustaceans: "Crustaceans",
-  eggs: "Eggs",
-  fish: "Fish",
-  lupin: "Lupin",
-  milk: "Milk",
-  molluscs: "Molluscs",
-  mustard: "Mustard",
-  nuts: "Nuts",
-  peanuts: "Peanuts",
-  sesame: "Sesame",
-  soybeans: "Soybeans",
-  sulphur_dioxide: "Sulphur Dioxide",
-};
-
-function markAllergens(text: string, allergens: string[]): string {
-  let result = text;
-  for (const allergen of allergens) {
-    const displayName = PREVIEW_ALLERGEN_DISPLAY[allergen] || allergen;
-    const escaped = displayName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    result = result.replace(new RegExp(`\\b(${escaped})\\b`, "gi"), "**$1**");
-  }
-  return result;
-}
+// Same keyword-driven allergen bolding as the API's ingredient-deck
+// endpoint, so the dialog preview matches what the recipe deck will render.
 
 function DeclarationPreview({
   ingredientRows,
@@ -141,7 +116,7 @@ function DeclarationPreview({
   if (rows.length === 0) return null;
 
   const marked = rows.map(({ ing }) =>
-    markAllergens(ing.labelDeclaration || ing.name, ing.allergens ?? [])
+    boldAllergens(ing.labelDeclaration || ing.name)
   );
   const componentNames = (componentRows ?? [])
     .map(r => allSubRecipes.find(s => s.id === Number(r.componentSubRecipeId))?.name)

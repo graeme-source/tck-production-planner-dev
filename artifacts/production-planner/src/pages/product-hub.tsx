@@ -1,13 +1,17 @@
 import { useState, useEffect, useRef } from "react";
-import { useListRecipes } from "@workspace/api-client-react";
+import { useListRecipes, useListSuppliers } from "@workspace/api-client-react";
+import type { Ingredient } from "@workspace/api-client-react";
+import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import {
   Loader2, ClipboardList, Beaker, AlertTriangle, Copy, Check, Tag, Settings2, Printer, Calculator,
-  CheckCircle2, UploadCloud, Sparkles, HeartPulse,
+  CheckCircle2, UploadCloud, Sparkles, HeartPulse, Edit2,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { BundleCalculator } from "@/components/bundle-calculator";
+import { IngredientFormDialog } from "@/components/ingredient-form-dialog";
+import { buildIngredientPayload, type IngredientFormValues } from "@/lib/ingredient-form";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -37,6 +41,10 @@ type DeckData = {
   recipeName: string;
   deckText: string;
   allergens: string[];
+  // Allergen words found in an ingredient's declaration text that aren't
+  // ticked on the ingredient record — the deck bolds them anyway, but the
+  // recipe-level allergen list won't include them until the record is fixed.
+  allergenMismatches?: { ingredientId: number; name: string; missing: string[] }[];
   mayContainStatement: string | null;
   isComplete: boolean;
   missingDeclarations: string[];
@@ -305,6 +313,22 @@ function DeckPanel({ recipe }: { recipe: RecipeItem }) {
           </div>
         )}
       </div>
+
+      {data.allergenMismatches && data.allergenMismatches.length > 0 && (
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
+          <p className="text-sm font-medium text-red-800 dark:text-red-200 flex items-center gap-1">
+            <AlertTriangle className="w-4 h-4" /> Allergens in declarations but not tagged
+          </p>
+          <p className="text-xs text-red-700 dark:text-red-300 mt-1">
+            {data.allergenMismatches.map(m => `${m.name} (${m.missing.join(", ")})`).join(" · ")}
+          </p>
+          <p className="text-xs text-red-700 dark:text-red-300 mt-1">
+            The deck above already bolds these words, but they're missing from this recipe's
+            allergen list until the ingredient records are fixed. Re-saving each ingredient's
+            declaration ticks them automatically.
+          </p>
+        </div>
+      )}
 
       {data.missingDeclarations && data.missingDeclarations.length > 0 && (
         <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
@@ -646,6 +670,13 @@ function mapScrapedAllergens(names: string[]): string[] {
   return Array.from(out);
 }
 
+// Short names for the health badge, so "1 nutrient value missing" can say
+// WHICH one instead of leaving the operator to hunt through the form.
+const HEALTH_NUTRIENT_SHORT: Record<string, string> = {
+  energyKj: "energy kJ", energyKcal: "energy kcal", fat: "fat", saturates: "saturates",
+  carbohydrate: "carbs", sugars: "sugars", protein: "protein", fibre: "fibre", salt: "salt",
+};
+
 function DataHealthPanel() {
   const [rows, setRows] = useState<HealthRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -656,6 +687,34 @@ function DataHealthPanel() {
   const [busyIds, setBusyIds] = useState<Set<number>>(new Set());
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null);
+
+  // Full ingredient edit dialog, opened straight from a health row — same
+  // dialog as the Inventory page, so every field is fixable without leaving
+  // the review queue.
+  const { data: suppliers } = useListSuppliers();
+  const { updateIngredient } = useAppMutations();
+  const [editTarget, setEditTarget] = useState<Ingredient | null>(null);
+  const [editLoadingId, setEditLoadingId] = useState<number | null>(null);
+
+  const openEditor = async (row: HealthRow) => {
+    setEditLoadingId(row.id);
+    try {
+      const res = await fetch(`${BASE}/api/ingredients/${row.id}`, { credentials: "include" });
+      if (!res.ok) throw new Error(`Could not load ingredient (${res.status})`);
+      setEditTarget(await res.json() as Ingredient);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEditLoadingId(null);
+    }
+  };
+
+  const handleDialogSave = (data: IngredientFormValues, id: number | null) => {
+    if (id == null) return;
+    updateIngredient.mutate({ id, data: buildIngredientPayload(data) }, {
+      onSuccess: () => { setEditTarget(null); void load(); },
+    });
+  };
 
   const load = async () => {
     setError(null);
@@ -829,10 +888,18 @@ function DataHealthPanel() {
                   <p className="text-sm font-semibold">{row.name}{row.brand ? <span className="text-muted-foreground font-normal"> — {row.brand}</span> : null}</p>
                   <p className="text-xs text-muted-foreground truncate">Used by: {row.usedBy.join(", ")}</p>
                 </div>
-                <div className="flex gap-1.5 flex-wrap">
+                <div className="flex gap-1.5 flex-wrap items-center">
                   {row.missingLabel && <span className="text-[11px] px-2 py-0.5 rounded-full bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200 font-medium">No label declaration</span>}
-                  {row.missingNutrition.length > 0 && <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 font-medium">{row.missingNutrition.length === 9 ? "No nutritionals" : `${row.missingNutrition.length} nutrient value${row.missingNutrition.length === 1 ? "" : "s"} missing`}</span>}
+                  {row.missingNutrition.length > 0 && <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 font-medium">{row.missingNutrition.length === 9 ? "No nutritionals" : `Missing: ${row.missingNutrition.map(k => HEALTH_NUTRIENT_SHORT[k] ?? k).join(", ")}`}</span>}
                   {row.emptyAllergens && <span className="text-[11px] px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium">No allergens tagged</span>}
+                  <button
+                    onClick={() => void openEditor(row)}
+                    disabled={editLoadingId === row.id}
+                    className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg border border-border hover:bg-secondary font-medium disabled:opacity-50"
+                    title="Open the full ingredient edit dialog"
+                  >
+                    {editLoadingId === row.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Edit2 className="w-3 h-3" />} Edit ingredient
+                  </button>
                 </div>
               </div>
 
@@ -967,6 +1034,15 @@ function DataHealthPanel() {
           );
         })}
       </div>
+
+      <IngredientFormDialog
+        open={editTarget !== null}
+        onClose={() => setEditTarget(null)}
+        editingItem={editTarget}
+        defaultMode="ingredient"
+        suppliers={(suppliers ?? []).map(s => ({ id: s.id, name: s.name }))}
+        onSave={handleDialogSave}
+      />
     </div>
   );
 }
