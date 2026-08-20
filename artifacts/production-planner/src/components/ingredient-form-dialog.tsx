@@ -560,13 +560,33 @@ export function IngredientFormDialog({
             <div className="mt-3 rounded-lg border border-border bg-background p-3 space-y-2">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Review &amp; apply</p>
-                <button
-                  type="button"
-                  onClick={() => setScraped(null)}
-                  className="text-xs text-muted-foreground hover:text-foreground"
-                >
-                  Discard
-                </button>
+                <div className="flex items-center gap-3">
+                  {fieldRowsToPreview.length > 0 && (
+                    <label className="flex items-center gap-1.5 text-xs font-medium cursor-pointer text-muted-foreground hover:text-foreground">
+                      <input
+                        type="checkbox"
+                        checked={fieldRowsToPreview.every(r => applyFlags[r.key])}
+                        onChange={e => {
+                          const on = e.target.checked;
+                          setApplyFlags(prev => {
+                            const next = { ...prev };
+                            for (const r of fieldRowsToPreview) next[r.key] = on;
+                            return next;
+                          });
+                        }}
+                        className="w-3.5 h-3.5 rounded border-border"
+                      />
+                      {fieldRowsToPreview.every(r => applyFlags[r.key]) ? "Untick all" : "Tick all"}
+                    </label>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setScraped(null)}
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    Discard
+                  </button>
+                </div>
               </div>
               {fieldRowsToPreview.length === 0 ? (
                 <p className="text-xs text-muted-foreground italic">No fields found on that page. Try a different URL or fill in manually.</p>
