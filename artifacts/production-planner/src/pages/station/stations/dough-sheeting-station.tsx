@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { BreakTracker } from "../shared/break-tracker";
-import { getStationCount, compareItemsForDisplay } from "../shared/constants";
+import { getStationCount, compareItemsForDisplay, isMacCheese } from "../shared/constants";
 import { useDoughPrepData } from "./dough-prep-station";
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -78,7 +78,13 @@ export function DoughSheetingStation({ plan, isOnBreak = false }: { plan: Produc
     },
   });
 
-  const items = [...(plan.items ?? [])].sort(compareItemsForDisplay);
+  // Mac cheese never touches the sheeter — those items live only in the
+  // display-only "No sheeting required" note at the bottom, never in the
+  // work list or its totals (they were inflating the target count and
+  // showing sheeting buttons for products with no dough, 2026-08-20).
+  const items = [...(plan.items ?? [])]
+    .filter(it => !isMacCheese(it as { recipeCategory?: string | null }))
+    .sort(compareItemsForDisplay);
 
   const nextItem = items.find(it => {
     const sheeted = getStationCount(it, "dough_sheeting");
