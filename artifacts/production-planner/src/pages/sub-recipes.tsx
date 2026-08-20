@@ -26,6 +26,7 @@ const schema = z.object({
   shelfLifeDays: z.coerce.number().int().nonnegative().optional(),
   isBase: z.boolean().optional(),
   expandInPrep: z.boolean().optional(),
+  madeOnProductionDay: z.boolean().optional(),
   labelDeclaration: z.string().optional(),
   ingredients: z.array(z.object({
     ingredientId: z.coerce.number().min(1, "Select an ingredient"),
@@ -525,6 +526,19 @@ function SubRecipeForm({
           </div>
         </div>
 
+        <div className="flex items-center gap-3 py-1">
+          <input
+            type="checkbox"
+            id="madeOnProductionDay"
+            {...register("madeOnProductionDay")}
+            className="w-4 h-4 rounded border-border accent-primary"
+          />
+          <div>
+            <label htmlFor="madeOnProductionDay" className="text-sm font-medium cursor-pointer">Made on production day (dough only)</label>
+            <p className="text-xs text-muted-foreground">For doughs mixed on the day of production (e.g. cinnamon bun dough) instead of the day before. The dough station shows it on the plan's own day, not the day-before view.</p>
+          </div>
+        </div>
+
         <div>
           <label className="text-sm font-medium">Label Declaration Name</label>
           <input
@@ -851,6 +865,7 @@ function EditSubRecipeDialog({
         shelfLifeDays: detail.shelfLifeDays != null ? Number(detail.shelfLifeDays) : undefined,
         isBase: detail.isBase ?? false,
         expandInPrep: (detail as Record<string, unknown>).expandInPrep as boolean ?? false,
+        madeOnProductionDay: (detail as Record<string, unknown>).madeOnProductionDay as boolean ?? false,
         labelDeclaration: (detail as Record<string, unknown>).labelDeclaration as string ?? "",
         ingredients: (detail.ingredients ?? []).map(i => ({
           ingredientId: i.ingredientId,
@@ -862,7 +877,7 @@ function EditSubRecipeDialog({
           quantity: Number(c.quantity),
         })),
       }
-    : { name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, expandInPrep: false, labelDeclaration: "", ingredients: [], subRecipeComponents: [] };
+    : { name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, expandInPrep: false, madeOnProductionDay: false, labelDeclaration: "", ingredients: [], subRecipeComponents: [] };
 
   return (
     <>
@@ -1251,7 +1266,7 @@ export default function SubRecipes() {
   }));
 
   const addDefaults: FormValues = {
-    name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, expandInPrep: false, labelDeclaration: "",
+    name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, expandInPrep: false, madeOnProductionDay: false, labelDeclaration: "",
     ingredients: [],
     subRecipeComponents: [],
   };

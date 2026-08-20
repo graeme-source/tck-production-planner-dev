@@ -13,6 +13,10 @@ export const subRecipesTable = pgTable("sub_recipes", {
   shelfLifeDays: integer("shelf_life_days"),
   isBase: boolean("is_base").notNull().default(false),
   expandInPrep: boolean("expand_in_prep").notNull().default(false),
+  // Dough that is mixed on the production day itself (cinnamon bun dough)
+  // rather than the day before like calzone dough. The dough station shows
+  // these on the plan's own day and keeps them out of the day-before view.
+  madeOnProductionDay: boolean("made_on_production_day").notNull().default(false),
   labelDeclaration: text("label_declaration"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
