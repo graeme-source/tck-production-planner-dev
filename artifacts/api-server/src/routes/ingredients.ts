@@ -4,6 +4,7 @@ import { eq, sql, inArray, isNull, isNotNull } from "drizzle-orm";
 import { CreateIngredientBody, UpdateIngredientBody } from "@workspace/api-zod";
 import { detectAllergens, ALLERGEN_DISPLAY } from "@workspace/allergens";
 import { validate } from "../middleware/validate";
+import { requireManagerOrAdmin } from "../middleware/roles";
 import { generateQrCode } from "../lib/qr-code";
 
 const router: IRouter = Router();
@@ -525,7 +526,7 @@ router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
 // (purchase orders, stock entries, prep completions). A referenced
 // ingredient therefore can't be hard-deleted; explain what's holding it
 // instead of surfacing a raw FK error (2026-07-31: duplicate Oregano).
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", requireManagerOrAdmin, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid ingredient id" }); return; }
 

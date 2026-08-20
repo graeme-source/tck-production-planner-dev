@@ -11,6 +11,7 @@ import { generateQrCode } from "../lib/qr-code";
 import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
 import { londonDateString } from "../lib/london-time";
 import { toGrams } from "../lib/units";
+import { requireManagerOrAdmin } from "../middleware/roles";
 import * as z from "zod";
 
 function requireAdmin(req: Request, res: Response, next: NextFunction) {
@@ -690,7 +691,9 @@ router.patch("/:id/special", async (req, res) => {
   res.json({ id: updatedRow.id, isCurrentSpecial: updatedRow.isCurrentSpecial });
 });
 
-router.delete("/:id", async (req, res) => {
+// Destructive: cascades through recipe_ingredients into plan history.
+// Managers and admins only (Graeme, 2026-08-20).
+router.delete("/:id", requireManagerOrAdmin, async (req, res) => {
   const id = Number(req.params.id);
   await db.delete(recipesTable).where(eq(recipesTable.id, id));
   res.status(204).send();
