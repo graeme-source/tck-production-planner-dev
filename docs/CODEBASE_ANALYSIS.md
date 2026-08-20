@@ -225,6 +225,14 @@ rather than adding a fourth fetch pattern.
 
 ## 4. Concrete defects found (fix these regardless of any refactor)
 
+**Status (2026-08-20, per Graeme's triage):** items 1–6, 9, 11 (minimal form), and
+12 are **FIXED** on this branch, each in its own commit; item 8 fixed with
+manager+admin scope across recipes/ingredients/production-plans deletes.
+Item 7 **deferred** (Graeme unsure — needs a decision on mac-cheese pack sizes).
+Item 10 **deferred** (needs the API-spec decision, see §7 P2). Item 11's full fix
+(extracting /calculate into a callable service) is P2; the shipped fix removes the
+proxy-fragile external round-trip.
+
 Ordered by data-damage potential:
 
 1. **1000× nutritionals error for kg-unit ingredients.** `recipes.ts:927` treats
