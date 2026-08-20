@@ -22,8 +22,8 @@ import { useAuth } from "@/contexts/auth-context";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
-  ArrowLeft, CalendarDays, Check, CheckCircle2, ChevronRight, Circle, ClipboardList,
-  ExternalLink, Flag, Loader2, MessageSquare, Pencil, Plus, RotateCcw,
+  ArrowLeft, CalendarDays, Camera, Check, CheckCircle2, ChevronRight, Circle, ClipboardList,
+  ExternalLink, Flag, Lightbulb, Loader2, MessageSquare, Pencil, Plus, RotateCcw,
   Send, Trash2, X,
 } from "lucide-react";
 
@@ -50,6 +50,18 @@ export interface TodoTask {
   completed_at: string | null;
   created_at: string;
   comment_count: number;
+  attachment_count: number;
+  improvement_id: number | null;
+}
+
+interface TodoAttachment {
+  id: number;
+  kind: "image" | "video";
+  mime: string;
+  file_name: string | null;
+  uploaded_by: number | null;
+  uploaded_by_name: string | null;
+  created_at: string;
 }
 
 interface TodoComment {
@@ -103,7 +115,7 @@ async function fetchList(userId: number | "mine"): Promise<{ open: TodoTask[]; d
   return jsonOrThrow(await fetch(`${BASE}${path}`, { credentials: "include" }));
 }
 
-async function fetchTask(id: number): Promise<TodoTask & { comments: TodoComment[] }> {
+async function fetchTask(id: number): Promise<TodoTask & { comments: TodoComment[]; attachments: TodoAttachment[] }> {
   return jsonOrThrow(await fetch(`${BASE}/api/todos/${id}`, { credentials: "include" }));
 }
 
@@ -209,7 +221,7 @@ type SheetView =
   | { kind: "edit"; task: TodoTask }
   | { kind: "create" };
 
-export function TodoSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function TodoSheet({ open, onClose, initialTaskId }: { open: boolean; onClose: () => void; initialTaskId?: number | null }) {
   const { state } = useAuth();
   const me = state.status === "authenticated" ? state.user : null;
   const canManage = me?.role === "admin" || me?.role === "manager";
@@ -217,10 +229,14 @@ export function TodoSheet({ open, onClose }: { open: boolean; onClose: () => voi
   const [view, setView] = useState<SheetView>({ kind: "list" });
   const [viewUserId, setViewUserId] = useState<number | null>(null); // null = me
 
-  // Reset to my list every time the sheet opens.
+  // Every open starts fresh: straight into the named task's detail when the
+  // caller gave one (checklist strip rows), otherwise the list.
   useEffect(() => {
-    if (open) { setView({ kind: "list" }); setViewUserId(null); }
-  }, [open]);
+    if (open) {
+      setView(initialTaskId ? { kind: "detail", taskId: initialTaskId } : { kind: "list" });
+      setViewUserId(null);
+    }
+  }, [open, initialTaskId]);
 
   if (!open || !me) return null;
 
@@ -441,6 +457,7 @@ function TodoDetail({ taskId, meId, canManage, onEdit, onGone }: {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [comment, setComment] = useState("");
   const commentsEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   function invalidate() {
     qc.invalidateQueries({ queryKey: ["todo", taskId] });
@@ -465,6 +482,33 @@ function TodoDetail({ taskId, meId, canManage, onEdit, onGone }: {
       setTimeout(() => commentsEndRef.current?.scrollIntoView({ behavior: "smooth" }), 150);
     },
     onError: (e: Error) => toast({ title: "Comment didn't send", description: e.message, variant: "destructive" }),
+  });
+  const uploadMut = useMutation({
+    mutationFn: async (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`${BASE}/api/todos/${taskId}/attachments`, {
+        method: "POST",
+        credentials: "include",
+        body: form,
+      });
+      return jsonOrThrow(res);
+    },
+    onSuccess: invalidate,
+    onError: (e: Error) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
+  });
+  const deleteAttMut = useMutation({
+    mutationFn: (attId: number) => fetch(`${BASE}/api/todos/attachments/${attId}`, { method: "DELETE", credentials: "include" }).then(jsonOrThrow),
+    onSuccess: invalidate,
+    onError: (e: Error) => toast({ title: "Couldn't delete it", description: e.message, variant: "destructive" }),
+  });
+  const tagImprovementMut = useMutation({
+    mutationFn: () => post(`/api/todos/${taskId}/tag-improvement`),
+    onSuccess: () => {
+      invalidate();
+      toast({ title: "Tagged as an improvement", description: "It's in the improvement library, photos and all." });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't tag it", description: e.message, variant: "destructive" }),
   });
 
   if (isLoading) {
@@ -508,6 +552,90 @@ function TodoDetail({ taskId, meId, canManage, onEdit, onGone }: {
       )}
 
       {task.url && <LinkButton url={task.url} big />}
+
+      {/* Photos & videos — evidence of the job or the problem. */}
+      <div className="space-y-3">
+        {task.attachments.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            {task.attachments.map(att => (
+              <div key={att.id} className="relative rounded-2xl overflow-hidden border-2 border-border bg-black/5 group">
+                {att.kind === "image" ? (
+                  <a href={`${BASE}/api/todos/attachments/${att.id}`} target="_blank" rel="noopener noreferrer">
+                    <img
+                      src={`${BASE}/api/todos/attachments/${att.id}`}
+                      alt={att.file_name ?? "Task photo"}
+                      className="w-full h-40 object-cover"
+                      loading="lazy"
+                    />
+                  </a>
+                ) : (
+                  <video
+                    src={`${BASE}/api/todos/attachments/${att.id}`}
+                    controls
+                    preload="metadata"
+                    className="w-full h-40 object-cover bg-black"
+                  />
+                )}
+                {(canManage || att.uploaded_by === meId) && (
+                  <button
+                    type="button"
+                    onClick={() => deleteAttMut.mutate(att.id)}
+                    disabled={deleteAttMut.isPending}
+                    className="absolute top-2 right-2 w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-destructive transition-colors"
+                    aria-label="Delete this photo or video"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+                {att.uploaded_by_name && (
+                  <span className="absolute bottom-0 inset-x-0 px-2 py-1 text-[11px] font-semibold text-white bg-gradient-to-t from-black/70 to-transparent truncate">
+                    {att.uploaded_by_name}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*,video/*"
+          className="hidden"
+          onChange={e => {
+            const file = e.target.files?.[0];
+            if (file) uploadMut.mutate(file);
+            e.target.value = "";
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploadMut.isPending}
+          className="w-full h-14 rounded-2xl border-2 border-dashed border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 transition-colors disabled:opacity-50"
+        >
+          {uploadMut.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Camera className="w-5 h-5" />}
+          {uploadMut.isPending ? "Uploading…" : "Add a photo or video"}
+        </button>
+      </div>
+
+      {/* Improvement library link — a done job with before/after photos IS
+          an improvement; one tap files it, media and all. */}
+      {task.improvement_id ? (
+        <div className="flex items-center gap-2 text-base font-bold text-primary bg-primary/10 rounded-2xl px-5 py-3.5">
+          <Lightbulb className="w-5 h-5 flex-shrink-0" />
+          In the improvement library ✓
+        </div>
+      ) : (canManage || task.assignee_id === meId) && (
+        <button
+          type="button"
+          onClick={() => tagImprovementMut.mutate()}
+          disabled={tagImprovementMut.isPending}
+          className="w-full h-14 rounded-2xl border-2 border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 text-lg font-bold flex items-center justify-center gap-2 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors disabled:opacity-50"
+        >
+          {tagImprovementMut.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Lightbulb className="w-5 h-5" />}
+          Tag as an improvement
+        </button>
+      )}
 
       {/* Actions */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -775,7 +903,8 @@ export function PersonalTodosStrip() {
   const { state } = useAuth();
   const me = state.status === "authenticated" ? state.user : null;
   const qc = useQueryClient();
-  const [sheetOpen, setSheetOpen] = useState(false);
+  // taskId set = the sheet opens straight onto that task's notes/comments.
+  const [sheet, setSheet] = useState<{ open: boolean; taskId: number | null }>({ open: false, taskId: null });
 
   const { data } = useQuery({
     queryKey: ["todos", "mine"],
@@ -804,7 +933,7 @@ export function PersonalTodosStrip() {
     <div className="rounded-xl border-2 border-primary/30 bg-primary/5 overflow-hidden">
       <button
         type="button"
-        onClick={() => setSheetOpen(true)}
+        onClick={() => setSheet({ open: true, taskId: null })}
         className="w-full px-5 py-3 flex items-center gap-2 text-left hover:bg-primary/10 transition-colors"
       >
         <ClipboardList className="w-6 h-6 text-primary flex-shrink-0" />
@@ -834,7 +963,7 @@ export function PersonalTodosStrip() {
               </button>
               <button
                 type="button"
-                onClick={() => setSheetOpen(true)}
+                onClick={() => setSheet({ open: true, taskId: task.id })}
                 className="flex-1 min-w-0 text-left py-3 pr-4 hover:bg-secondary/30 transition-colors"
               >
                 <p className="text-lg md:text-xl font-bold leading-snug break-words">{task.title}</p>
@@ -853,7 +982,7 @@ export function PersonalTodosStrip() {
           );
         })}
       </div>
-      <TodoSheet open={sheetOpen} onClose={() => setSheetOpen(false)} />
+      <TodoSheet open={sheet.open} initialTaskId={sheet.taskId} onClose={() => setSheet({ open: false, taskId: null })} />
     </div>
   );
 }

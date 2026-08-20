@@ -1575,6 +1575,26 @@ async function runStartupMigrations() {
       )
     `);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_todo_task_comments_task ON todo_task_comments (task_id, created_at)`);
+    // Photos & videos on a task — evidence of the job or of the problem.
+    // Same bytea-in-Postgres approach as improvement_attachments, so a task
+    // tagged as an improvement can copy its media straight across.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS todo_task_attachments (
+        id SERIAL PRIMARY KEY,
+        task_id INTEGER NOT NULL REFERENCES todo_tasks(id) ON DELETE CASCADE,
+        uploaded_by INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        uploaded_by_name TEXT,
+        kind TEXT NOT NULL,
+        mime TEXT NOT NULL,
+        data BYTEA NOT NULL,
+        file_name TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_todo_task_attachments_task ON todo_task_attachments (task_id)`);
+    // Set once a task is tagged into the improvement library — the link both
+    // prevents double-tagging and lets the UI say "already an improvement".
+    await db.execute(sql`ALTER TABLE todo_tasks ADD COLUMN IF NOT EXISTS improvement_id INTEGER REFERENCES improvement_submissions(id) ON DELETE SET NULL`);
 
     // Sales & Marketing assistant — see lib/db/migrations/0043_marketing_events.sql.
     await db.execute(sql`

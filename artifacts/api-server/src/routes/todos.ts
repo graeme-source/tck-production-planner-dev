@@ -1,4 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
+import multer from "multer";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
@@ -23,6 +24,13 @@ import { z } from "zod";
 
 const router: IRouter = Router();
 
+// Same media rules as improvement attachments (routes/improvements.ts):
+// one file per upload, 100MB cap for short clips, images tighter at 10MB,
+// bytea in Postgres so no object storage is needed.
+const mediaUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+const IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+const VIDEO_MIMES = ["video/mp4", "video/webm", "video/quicktime", "video/ogg"];
+
 const PRIORITIES = ["urgent", "high", "normal", "low"] as const;
 type Priority = (typeof PRIORITIES)[number];
 
@@ -45,6 +53,8 @@ interface TaskRow {
   created_at: string;
   updated_at: string;
   comment_count: number;
+  attachment_count: number;
+  improvement_id: number | null;
 }
 
 async function sessionUser(req: Request): Promise<{ id: number; role: string } | null> {
@@ -73,7 +83,8 @@ async function userName(id: number): Promise<string> {
 const TASK_SELECT = sql`
   SELECT t.*,
          au.name AS assignee_name,
-         (SELECT COUNT(*)::int FROM todo_task_comments c WHERE c.task_id = t.id AND c.kind = 'comment') AS comment_count
+         (SELECT COUNT(*)::int FROM todo_task_comments c WHERE c.task_id = t.id AND c.kind = 'comment') AS comment_count,
+         (SELECT COUNT(*)::int FROM todo_task_attachments a WHERE a.task_id = t.id) AS attachment_count
   FROM todo_tasks t
   LEFT JOIN app_users au ON au.id = t.assignee_id
 `;
@@ -196,7 +207,13 @@ router.get("/:id", async (req: Request, res: Response) => {
       WHERE task_id = ${task.id}
       ORDER BY created_at ASC, id ASC
     `);
-    res.json({ ...task, comments: comments.rows });
+    const attachments = await db.execute(sql`
+      SELECT id, kind, mime, file_name, uploaded_by, uploaded_by_name, created_at
+      FROM todo_task_attachments
+      WHERE task_id = ${task.id}
+      ORDER BY created_at ASC, id ASC
+    `);
+    res.json({ ...task, comments: comments.rows, attachments: attachments.rows });
   } catch (err) {
     console.error("[Todos] get error:", err);
     res.status(500).json({ error: "Failed to load task" });
@@ -399,6 +416,142 @@ router.post("/:id/comments", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("[Todos] comment error:", err);
     res.status(500).json({ error: "Failed to add comment" });
+  }
+});
+
+// ── Photos & videos ────────────────────────────────────────────────────────
+
+// Upload one photo or video to a task. Anyone who can see the task can add
+// evidence to it — that's the point of the media: show the job, or show the
+// problem.
+router.post("/:id/attachments", mediaUpload.single("file"), async (req: Request, res: Response) => {
+  const user = await sessionUser(req);
+  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  if (!req.file) { res.status(400).json({ error: "No file uploaded" }); return; }
+  const mime = req.file.mimetype;
+  const isImage = IMAGE_MIMES.includes(mime);
+  const isVideo = VIDEO_MIMES.includes(mime);
+  if (!isImage && !isVideo) {
+    res.status(400).json({ error: "Unsupported file type. Use JPEG/PNG/WebP/GIF or MP4/WebM/MOV/OGG." });
+    return;
+  }
+  if (isImage && req.file.size > 10 * 1024 * 1024) {
+    res.status(400).json({ error: "Image too large (max 10MB)." });
+    return;
+  }
+  try {
+    const task = await taskById(Number(req.params.id));
+    if (!task || !canSee(user, task)) { res.status(404).json({ error: "Task not found" }); return; }
+    const name = await userName(user.id);
+    const rows = await db.execute<{ id: number }>(sql`
+      INSERT INTO todo_task_attachments (task_id, uploaded_by, uploaded_by_name, kind, mime, data, file_name)
+      VALUES (${task.id}, ${user.id}, ${name}, ${isImage ? "image" : "video"}, ${mime}, ${req.file.buffer}, ${req.file.originalname ?? null})
+      RETURNING id
+    `);
+    await addTimeline(task.id, user.id, name, "event", `${name} added a ${isImage ? "photo" : "video"}`);
+    res.status(201).json({ id: rows.rows[0]?.id, kind: isImage ? "image" : "video", mime });
+  } catch (err) {
+    console.error("[Todos] attachment upload error:", err);
+    res.status(500).json({ error: "Failed to upload" });
+  }
+});
+
+// Stream one attachment's bytes. Permission goes through the task it
+// belongs to — same visibility as the task itself.
+router.get("/attachments/:attId", async (req: Request, res: Response) => {
+  const user = await sessionUser(req);
+  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const attId = Number(req.params.attId);
+  if (!Number.isInteger(attId)) { res.status(400).json({ error: "Invalid id" }); return; }
+  try {
+    const rows = await db.execute<{ mime: string; data: Buffer; kind: string; task_id: number }>(sql`
+      SELECT mime, data, kind, task_id FROM todo_task_attachments WHERE id = ${attId}
+    `);
+    const row = rows.rows[0];
+    if (!row?.data || !row.mime) { res.status(404).json({ error: "Not found" }); return; }
+    const task = await taskById(row.task_id);
+    if (!task || !canSee(user, task)) { res.status(404).json({ error: "Not found" }); return; }
+    res.setHeader("Content-Type", row.mime);
+    res.setHeader("Cache-Control", "private, max-age=300");
+    if (row.kind === "video") res.setHeader("Accept-Ranges", "bytes");
+    res.send(row.data);
+  } catch (err) {
+    console.error("[Todos] attachment stream error:", err);
+    res.status(500).json({ error: "Failed to load attachment" });
+  }
+});
+
+// Delete an attachment — manager, or whoever uploaded it.
+router.delete("/attachments/:attId", async (req: Request, res: Response) => {
+  const user = await sessionUser(req);
+  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const attId = Number(req.params.attId);
+  if (!Number.isInteger(attId)) { res.status(400).json({ error: "Invalid id" }); return; }
+  try {
+    const rows = await db.execute<{ uploaded_by: number | null; task_id: number }>(sql`
+      SELECT uploaded_by, task_id FROM todo_task_attachments WHERE id = ${attId}
+    `);
+    const row = rows.rows[0];
+    if (!row) { res.status(404).json({ error: "Not found" }); return; }
+    if (!isManager(user.role) && row.uploaded_by !== user.id) {
+      res.status(403).json({ error: "Only managers or whoever uploaded it can delete this" });
+      return;
+    }
+    await db.execute(sql`DELETE FROM todo_task_attachments WHERE id = ${attId}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[Todos] attachment delete error:", err);
+    res.status(500).json({ error: "Failed to delete attachment" });
+  }
+});
+
+// ── Tag a task as an improvement ───────────────────────────────────────────
+// A finished job often IS an improvement — the before/after photos are
+// already on the task. Tagging copies the task (and its media) into the
+// improvement library as a submission, credited to whoever tags it, and
+// links the task so it can't be tagged twice. Manager or assignee.
+router.post("/:id/tag-improvement", async (req: Request, res: Response) => {
+  const user = await sessionUser(req);
+  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  try {
+    const task = await taskById(Number(req.params.id));
+    if (!task || !canSee(user, task)) { res.status(404).json({ error: "Task not found" }); return; }
+    if (!isManager(user.role) && task.assignee_id !== user.id) {
+      res.status(403).json({ error: "Only managers or the person it's assigned to can tag this as an improvement" });
+      return;
+    }
+    if (task.improvement_id) {
+      res.json({ ok: true, improvementId: task.improvement_id, alreadyTagged: true });
+      return;
+    }
+    const name = await userName(user.id);
+    const description = [
+      task.notes?.trim() || task.title,
+      task.url ? `Link: ${task.url}` : null,
+      `From ${task.assignee_name ?? "a team member"}'s to-do list${task.created_by_name ? ` (task set by ${task.created_by_name})` : ""}.`,
+    ].filter(Boolean).join("\n\n");
+    const created = await db.execute<{ id: number }>(sql`
+      INSERT INTO improvement_submissions
+        (title, description, station, type, submitted_by, submitted_by_name, assigned_to, assigned_to_name)
+      VALUES
+        (${task.title}, ${description}, ${"To-do list"}, ${"improvement"},
+         ${user.id}, ${name}, ${task.assignee_id}, ${task.assignee_name})
+      RETURNING id
+    `);
+    const improvementId = created.rows[0].id;
+    // Copy the media across so the library entry stands on its own even if
+    // the task is later deleted.
+    await db.execute(sql`
+      INSERT INTO improvement_attachments (improvement_id, kind, mime, data, file_name)
+      SELECT ${improvementId}, kind, mime, data, file_name
+      FROM todo_task_attachments WHERE task_id = ${task.id}
+    `);
+    await db.execute(sql`UPDATE todo_tasks SET improvement_id = ${improvementId}, updated_at = NOW() WHERE id = ${task.id}`);
+    await addTimeline(task.id, user.id, name, "event", `${name} tagged this as an improvement — it's in the improvement library`);
+    res.json({ ok: true, improvementId });
+  } catch (err) {
+    console.error("[Todos] tag-improvement error:", err);
+    res.status(500).json({ error: "Failed to tag as improvement" });
   }
 });
 
