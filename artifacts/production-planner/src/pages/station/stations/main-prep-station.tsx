@@ -1,9 +1,12 @@
 import React from "react";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import {
   ClipboardList, Loader2, CheckCircle2, Package, Plus, Minus, Check, Salad, Pencil, RotateCcw, MoreVertical, Clock3, X as XIcon,
+  BookOpen,
 } from "lucide-react";
+import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
 import { format, parseISO } from "date-fns";
 import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
@@ -469,6 +472,30 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
 
   const selectedIngredient = ingredients.find(i => itemKey(i) === selectedItemKey) ?? null;
 
+  // SOPs attached to these ingredients — ingredient-level plus recipe-scoped
+  // (burger beef can carry a different SOP per recipe). Sub-recipe rows are
+  // skipped: their ids live in a different table, so an ingredient-keyed
+  // lookup would collide (follow-up: a 'sub_recipe' target type).
+  const sopIngredientIds = [...new Set(ingredients.filter(i => !i.isSubRecipe).map(i => i.ingredientId))].sort((a, b) => a - b);
+  const sopLinksKey = ["sop-links-ingredients", sopIngredientIds.join(",")];
+  const { data: sopLinksByIngredient } = useQuery<Record<number, Array<SopLink & { scope: "ingredient" | "recipe"; recipeId: number | null }>>>({
+    queryKey: sopLinksKey,
+    enabled: sopIngredientIds.length > 0,
+    queryFn: async () => {
+      const res = await fetch(`/api/standards/links/for-ingredients?ids=${sopIngredientIds.join(",")}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load SOP links");
+      return res.json();
+    },
+  });
+  const sopViewer = useSopViewer();
+  // Links relevant to a row within one recipe's group: ingredient-level ones
+  // plus those scoped to THAT recipe.
+  const sopLinksFor = (ingredientId: number, recipeId: number | null, isSubRecipe?: boolean): SopLink[] => {
+    if (isSubRecipe) return [];
+    const all = sopLinksByIngredient?.[ingredientId] ?? [];
+    return all.filter(l => l.scope === "ingredient" || recipeId == null || l.recipeId === recipeId);
+  };
+
   const selectedStatus = selectedIngredient ? ingredientDoneStatus(selectedIngredient) : null;
   useEffect(() => {
     prevNeedsStockCheckRef.current = false;
@@ -871,6 +898,9 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                             )}>
                               {ing.ingredientName}
                               {presence.length > 0 && <span className="ml-1 text-sm text-blue-500">👁</span>}
+                              {sopLinksFor(ing.ingredientId, group.recipeId, ing.isSubRecipe).length > 0 && (
+                                <BookOpen className="w-4 h-4 inline ml-1.5 mb-0.5 text-sky-500" aria-label="Has SOP" />
+                              )}
                             </p>
                             {ingStatus.needsStockCheck && (
                               <p className="text-sm text-blue-600 font-medium">Stock check needed</p>
@@ -988,6 +1018,27 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                             <p className="text-sm text-blue-600 dark:text-blue-400 mt-1">
                               👁 <span className="font-medium">{presence.map(p => p.userName).join(", ")}</span> also viewing this
                             </p>
+                          )}
+                          {/* Linked SOPs — the how-to travels with the prep
+                              item. Recipe-scoped chips carry the recipe name;
+                              attach offers Everywhere or a single recipe. */}
+                          {!ing.isSubRecipe && (
+                            <div className="mt-2">
+                              <SopChips
+                                links={sopLinksByIngredient?.[ing.ingredientId] ?? []}
+                                onOpen={sopViewer.open}
+                                attach={[
+                                  { targetType: "ingredient", a: ing.ingredientId, label: "Everywhere" },
+                                  ...[...new Map(ing.recipes.map(r => [r.recipeId, r.recipeName])).entries()].map(([recipeId, recipeName]) => ({
+                                    targetType: "recipe_ingredient" as const,
+                                    a: recipeId,
+                                    b: ing.ingredientId,
+                                    label: `Only ${recipeName}`,
+                                  })),
+                                ]}
+                                queryKeysToInvalidate={[sopLinksKey]}
+                              />
+                            </div>
                           )}
                         </div>
                         {ing.isBottle && ing.bottlesNeeded ? (
@@ -1422,7 +1473,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
           </div>
         </div>
       )}
-
+      {sopViewer.dialog}
     </div>
   );
 }

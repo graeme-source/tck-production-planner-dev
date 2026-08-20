@@ -1,8 +1,11 @@
 import { useState, useEffect, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   CheckCircle2, Circle, ClipboardCheck, Plus, Minus, Undo2, Loader2, XCircle,
   Sun, Sparkles, Moon, ChevronDown, ChevronUp, GripVertical, Trash2, Pencil, Eye, EyeOff, AlertTriangle,
+  BookOpen,
 } from "lucide-react";
+import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
@@ -100,6 +103,20 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
     planId,
     selectedItem?.dynamicDataType ?? null,
   );
+
+  // SOPs attached to this checklist's items — one fetch for the whole list.
+  const templateIds = allItems.filter(i => i.type === "template").map(i => i.id).sort((a, b) => a - b);
+  const sopLinksKey = ["sop-links-checklist", stationType, templateIds.join(",")];
+  const { data: sopLinksByItem } = useQuery<Record<number, SopLink[]>>({
+    queryKey: sopLinksKey,
+    enabled: templateIds.length > 0,
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/standards/links/for-checklist?ids=${templateIds.join(",")}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load SOP links");
+      return res.json();
+    },
+  });
+  const sopViewer = useSopViewer(stationType);
 
   if (loading && !data) {
     return (
@@ -475,6 +492,9 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                                 item.completed && item.skippedReason && "text-amber-600 dark:text-amber-400",
                               )}>
                                 {item.title}
+                                {item.type === "template" && (sopLinksByItem?.[item.id]?.length ?? 0) > 0 && (
+                                  <BookOpen className="w-3.5 h-3.5 inline ml-1.5 mb-0.5 text-sky-500" aria-label="Has SOP" />
+                                )}
                               </p>
                               {item.completed && item.skippedReason ? (
                                 <p className="text-xs text-amber-600/70 dark:text-amber-400/70 truncate">
@@ -563,6 +583,19 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                 {selectedItem.description && (
                   <div className="mb-4 p-3 bg-secondary/30 rounded-lg">
                     <p className="text-sm text-foreground/80 whitespace-pre-wrap">{selectedItem.description}</p>
+                  </div>
+                )}
+
+                {/* Linked SOPs — the how-to lives ON the check. Tap to read
+                    (and edit if it's wrong); + SOP to attach another. */}
+                {selectedItem.type === "template" && (
+                  <div className="mb-4">
+                    <SopChips
+                      links={sopLinksByItem?.[selectedItem.id] ?? []}
+                      onOpen={sopViewer.open}
+                      attach={{ targetType: "checklist_template", a: selectedItem.id, label: selectedItem.title }}
+                      queryKeysToInvalidate={[sopLinksKey]}
+                    />
                   </div>
                 )}
 
@@ -717,6 +750,7 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
           </div>
         </div>
       )}
+      {sopViewer.dialog}
     </div>
   );
 }

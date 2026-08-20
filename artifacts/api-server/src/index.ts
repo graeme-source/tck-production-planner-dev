@@ -2639,6 +2639,26 @@ async function runStartupMigrations() {
     await db.execute(sql`ALTER TABLE surveys ADD COLUMN IF NOT EXISTS collection_id BIGINT`);
     await db.execute(sql`ALTER TABLE surveys ADD COLUMN IF NOT EXISTS collection_title TEXT`);
     await db.execute(sql`ALTER TABLE surveys ADD COLUMN IF NOT EXISTS klaviyo_segment_id TEXT`);
+    // SOP links — attach SOPs to checklist items / ingredients / recipes /
+    // stations (migration 0053).
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS sop_links (
+        id SERIAL PRIMARY KEY,
+        sop_id INTEGER NOT NULL REFERENCES standards_sops(id) ON DELETE CASCADE,
+        target_type TEXT NOT NULL,
+        target_a INTEGER,
+        target_b INTEGER,
+        target_text TEXT,
+        created_by INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_sop_links_dedupe
+        ON sop_links (sop_id, target_type, COALESCE(target_a, 0), COALESCE(target_b, 0), COALESCE(target_text, ''))
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_sop_links_target ON sop_links (target_type, target_a)`);
+
     // Shopify orders mirror + incremental sync state (migration 0052).
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS shopify_orders_cache (
