@@ -2795,6 +2795,40 @@ async function runStartupMigrations() {
     // Same-day dough (cinnamon buns): mixed on the production day itself,
     // not the day before like calzone dough. See dough-prep endpoint.
     await db.execute(sql`ALTER TABLE sub_recipes ADD COLUMN IF NOT EXISTS made_on_production_day BOOLEAN NOT NULL DEFAULT FALSE`);
+
+    // Sub-recipe yields become DERIVED (Graeme, 2026-08-20, after the stale
+    // Bun Dough yield inflated every scaled quantity by 1.5×): NULL
+    // yield_percent = yield auto-tracks 100% of the component weight on
+    // every save; a set percentage means a deliberate process loss (reduced
+    // sauce) and yield tracks total × pct/100. The one-time backfill turns
+    // every EXISTING deviation from 100% into an explicit stored percentage,
+    // so no current yield changes value on its next save — stale ones now
+    // show their percentage in the editor where they can be seen and fixed.
+    await db.execute(sql`ALTER TABLE sub_recipes ADD COLUMN IF NOT EXISTS yield_percent NUMERIC(6,2)`);
+    await db.execute(sql`
+      INSERT INTO _migrations_done (key)
+      SELECT 'sub_recipe_yield_percent_backfill'
+      WHERE NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'sub_recipe_yield_percent_backfill')
+    `);
+    {
+      const result = await db.execute<{ cnt: number }>(sql`SELECT count(*)::int as cnt FROM _migrations_done WHERE key = 'sub_recipe_yield_percent_backfill' AND done_at > NOW() - INTERVAL '5 seconds'`);
+      if (Number(result.rows[0]?.cnt) > 0) {
+        await db.execute(sql`
+          UPDATE sub_recipes sr SET yield_percent = ROUND(sr.yield / t.total_kg * 100, 2)
+          FROM (
+            SELECT s.id,
+              COALESCE((SELECT SUM(CASE WHEN i.unit IN ('g','ml') THEN sri.quantity / 1000.0 ELSE sri.quantity END)
+                FROM sub_recipe_ingredients sri JOIN ingredients i ON i.id = sri.ingredient_id
+                WHERE sri.sub_recipe_id = s.id), 0)
+              + COALESCE((SELECT SUM(srs.quantity) FROM sub_recipe_sub_recipes srs WHERE srs.sub_recipe_id = s.id), 0)
+              AS total_kg
+            FROM sub_recipes s
+          ) t
+          WHERE t.id = sr.id AND t.total_kg > 0 AND sr.yield_percent IS NULL
+            AND (sr.yield / t.total_kg < 0.995 OR sr.yield / t.total_kg > 1.005)
+        `);
+      }
+    }
     await db.execute(sql`
       INSERT INTO _migrations_done (key)
       SELECT 'fridge_product_backfill'

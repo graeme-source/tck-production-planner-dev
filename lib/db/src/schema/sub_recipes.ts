@@ -17,6 +17,13 @@ export const subRecipesTable = pgTable("sub_recipes", {
   // rather than the day before like calzone dough. The dough station shows
   // these on the plan's own day and keeps them out of the day-before view.
   madeOnProductionDay: boolean("made_on_production_day").notNull().default(false),
+  // Manual yield percentage. NULL = automatic: `yield` is recomputed on every
+  // save as 100% of the total component weight, so it can never drift from
+  // the recipe (the Bun Dough yield went stale after milk was added and
+  // silently inflated every scaled quantity by 1.5× — 2026-08-20). Set a
+  // percentage only when the process genuinely loses weight (a reduced
+  // sauce); `yield` then tracks total × yieldPercent / 100 instead.
+  yieldPercent: numeric("yield_percent", { precision: 6, scale: 2 }),
   labelDeclaration: text("label_declaration"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

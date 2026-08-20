@@ -21,6 +21,9 @@ const schema = z.object({
   name: z.string().min(1, "Name is required"),
   description: z.string().optional(),
   yield: z.coerce.number().min(0.01, "Must be > 0"),
+  // Blank = automatic: the yield tracks 100% of the component weight on
+  // every save (server-enforced). Only set for genuine process loss.
+  yieldPercent: z.union([z.coerce.number().min(0.01, "1–100").max(100, "Max 100"), z.literal("")]).optional(),
   yieldUnit: z.string().min(1, "Unit required"),
   notes: z.string().optional(),
   shelfLifeDays: z.coerce.number().int().nonnegative().optional(),
@@ -69,7 +72,8 @@ function computeProcessedKg(
     const ing = allIngredients.find(i => i.id === Number(row.ingredientId));
     if (!ing || !row.quantity) continue;
     if (ing.unit === "kg") total += Number(row.quantity);
-    else if (ing.unit === "g") total += Number(row.quantity) / 1000;
+    // ml treated as g — matches the server's recalcSubRecipeYield.
+    else if (ing.unit === "g" || ing.unit === "ml") total += Number(row.quantity) / 1000;
   }
   return total;
 }
@@ -344,8 +348,6 @@ function SubRecipeForm({
   const [localIngredients, setLocalIngredients] = useState<IngredientOption[]>(initialIngredients);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAddTargetIndex, setQuickAddTargetIndex] = useState<number | null>(null);
-  const [isYieldAuto, setIsYieldAuto] = useState(!isEdit);
-  const yieldInputRef = useRef<HTMLInputElement | null>(null);
   const [ingDisplayUnits, setIngDisplayUnits] = useState<Record<number, "g" | "kg">>({});
   const [srDisplayUnits, setSrDisplayUnits] = useState<Record<number, "g" | "kg">>({});
 
@@ -354,6 +356,7 @@ function SubRecipeForm({
   const watchedLabelDeclaration = watch("labelDeclaration");
   const watchedYield = watch("yield");
   const watchedYieldUnit = watch("yieldUnit");
+  const watchedYieldPercent = watch("yieldPercent");
 
   useEffect(() => {
     onDirtyChange?.(isDirty);
@@ -369,29 +372,25 @@ function SubRecipeForm({
     ? allSubRecipes.filter(sr => !cyclicIds.includes(sr.id))
     : allSubRecipes;
 
-  useEffect(() => {
-    if (!isYieldAuto) return;
-    if (watchedYieldUnit !== "kg" && watchedYieldUnit !== "g") return;
-    const totalKg = computeProcessedKg(watchedIngredients ?? [], localIngredients)
-      + computeComponentKg(watchedSubRecipeComponents ?? [], allSubRecipes);
-    if (totalKg <= 0) return;
-    const autoValue = watchedYieldUnit === "g"
-      ? parseFloat((totalKg * 1000).toFixed(1))
-      : parseFloat(totalKg.toFixed(3));
-    setValue("yield", autoValue, { shouldValidate: false });
-  }, [watchedIngredients, watchedSubRecipeComponents, isYieldAuto, watchedYieldUnit, localIngredients, allSubRecipes, setValue]);
+  // The yield is DERIVED, always: total component weight × (yield % ?? 100).
+  // The server re-derives it on every save too (Graeme's rule, 2026-08-20 —
+  // the Bun Dough yield went stale after milk was added and inflated every
+  // scaled quantity by 1.5×). This preview just keeps the form honest.
+  const totalComponentKg = computeProcessedKg(watchedIngredients ?? [], localIngredients)
+    + computeComponentKg(watchedSubRecipeComponents ?? [], allSubRecipes);
+  const effectivePercent = watchedYieldPercent !== "" && watchedYieldPercent != null && Number(watchedYieldPercent) > 0
+    ? Math.min(100, Number(watchedYieldPercent))
+    : 100;
 
-  const resetToAuto = () => {
-    setIsYieldAuto(true);
-    const totalKg = computeProcessedKg(watchedIngredients ?? [], localIngredients)
-      + computeComponentKg(watchedSubRecipeComponents ?? [], allSubRecipes);
-    if (totalKg > 0) {
-      const autoValue = watchedYieldUnit === "g"
-        ? parseFloat((totalKg * 1000).toFixed(1))
-        : parseFloat(totalKg.toFixed(3));
-      setValue("yield", autoValue, { shouldValidate: false });
-    }
-  };
+  useEffect(() => {
+    if (watchedYieldUnit !== "kg" && watchedYieldUnit !== "g") return;
+    if (totalComponentKg <= 0) return;
+    const derivedKg = totalComponentKg * (effectivePercent / 100);
+    const autoValue = watchedYieldUnit === "g"
+      ? parseFloat((derivedKg * 1000).toFixed(1))
+      : parseFloat(derivedKg.toFixed(3));
+    setValue("yield", autoValue, { shouldValidate: false });
+  }, [totalComponentKg, effectivePercent, watchedYieldUnit, setValue]);
 
   const openQuickAdd = (index: number) => {
     setQuickAddTargetIndex(index);
@@ -440,44 +439,39 @@ function SubRecipeForm({
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-sm font-medium">Batch Yield *</label>
-              {isYieldAuto ? (
-                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary flex items-center gap-1">
-                  {hasAnyRatio && <FlaskConical className="w-3 h-3" />}
-                  {hasAnyRatio ? "Auto (ratio-adjusted)" : "Auto"}
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={resetToAuto}
-                  className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors"
-                >
-                  <RotateCcw className="w-3 h-3" /> Reset to auto
-                </button>
-              )}
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+                {effectivePercent < 100 ? `Auto · ${effectivePercent}% of weight` : "Auto · 100% of weight"}
+              </span>
             </div>
             <input
               type="number"
               step="0.001"
               {...register("yield")}
-              ref={(el) => {
-                register("yield").ref(el);
-                yieldInputRef.current = el;
-              }}
-              onChange={(e) => {
-                register("yield").onChange(e);
-                setIsYieldAuto(false);
-              }}
-              className={`w-full px-3 py-2 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 ${isYieldAuto ? "border-primary/40 bg-primary/5" : "border-border"}`}
-              placeholder="e.g. 32.76"
+              readOnly
+              tabIndex={-1}
+              className="w-full px-3 py-2 bg-primary/5 border border-primary/40 rounded-lg text-sm focus:outline-none cursor-default"
+              placeholder="Add ingredients…"
             />
             <p className="text-xs text-muted-foreground mt-1">
-              {isYieldAuto
-                ? hasAnyRatio
-                  ? "Auto-calculated from ingredient quantities × processing ratios"
-                  : "Tracking total ingredient weight — edit to override"
-                : "Manual override — type a lower value for processing reduction"}
+              Always tracks the recipe's total weight ({totalComponentKg > 0 ? `${totalComponentKg.toFixed(3)} kg of components` : "add ingredients"}) so it can never go stale. Use Yield % for process loss.
             </p>
             {errors.yield && <span className="text-destructive text-xs">{errors.yield.message}</span>}
+          </div>
+          <div>
+            <label className="text-sm font-medium mb-1 block">Yield % <span className="font-normal text-muted-foreground">(blank = 100%)</span></label>
+            <input
+              type="number"
+              step="0.1"
+              min="1"
+              max="100"
+              {...register("yieldPercent")}
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              placeholder="100"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Only set when the process genuinely loses weight — e.g. 85 for a sauce reduced to 85% of its inputs.
+            </p>
+            {errors.yieldPercent && <span className="text-destructive text-xs">{errors.yieldPercent.message}</span>}
           </div>
           <div>
             <label className="text-sm font-medium mb-1 block">Yield Unit *</label>
@@ -860,6 +854,7 @@ function EditSubRecipeDialog({
         name: detail.name,
         description: detail.description ?? "",
         yield: Number(detail.yield),
+        yieldPercent: ((detail as Record<string, unknown>).yieldPercent as number | null) ?? "",
         yieldUnit: detail.yieldUnit,
         notes: detail.notes ?? "",
         shelfLifeDays: detail.shelfLifeDays != null ? Number(detail.shelfLifeDays) : undefined,
@@ -877,7 +872,7 @@ function EditSubRecipeDialog({
           quantity: Number(c.quantity),
         })),
       }
-    : { name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, expandInPrep: false, madeOnProductionDay: false, labelDeclaration: "", ingredients: [], subRecipeComponents: [] };
+    : { name: "", description: "", yield: 1, yieldPercent: "", yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, expandInPrep: false, madeOnProductionDay: false, labelDeclaration: "", ingredients: [], subRecipeComponents: [] };
 
   return (
     <>
