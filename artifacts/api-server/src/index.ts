@@ -2791,6 +2791,10 @@ async function runStartupMigrations() {
     // One-time backfill: everything currently core-menu or mac cheese is a
     // fridge product; later unticks by an admin must stick, hence the marker.
     await db.execute(sql`ALTER TABLE recipes ADD COLUMN IF NOT EXISTS is_fridge_product BOOLEAN NOT NULL DEFAULT FALSE`);
+
+    // Same-day dough (cinnamon buns): mixed on the production day itself,
+    // not the day before like calzone dough. See dough-prep endpoint.
+    await db.execute(sql`ALTER TABLE sub_recipes ADD COLUMN IF NOT EXISTS made_on_production_day BOOLEAN NOT NULL DEFAULT FALSE`);
     await db.execute(sql`
       INSERT INTO _migrations_done (key)
       SELECT 'fridge_product_backfill'

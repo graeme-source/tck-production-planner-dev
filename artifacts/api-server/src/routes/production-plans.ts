@@ -6658,13 +6658,166 @@ router.get("/:id/dough-prep", async (req, res) => {
   let nextPlan: { id: number; planDate: string; doughDate?: string | null; name: string; status: string } | null = null;
   let targetPlanId = planId;
 
+  // ── 2. Get mixer capacity + daily extra ball settings ──
+  // (Hoisted above the plan walk: the same-day dough section needs the mixer
+  // capacity on every return path, including "no future plan".)
+  const allSettings = await db.select().from(appSettingsTable);
+  const getSetting = (key: string, def: number) => {
+    const row = allSettings.find(r => r.key === key);
+    return row ? Number(row.value) : def;
+  };
+  const mixerCapacityKg = getSetting("mixer_capacity_kg", 25);
+  const extraPackBallCount  = getSetting("daily_extra_pack_ball_count", 2);
+  const extraPackBallWeightG = getSetting("daily_extra_pack_ball_weight_g", 230);
+  const snackBallCount      = getSetting("daily_snack_ball_count", 1);
+  const snackBallWeightG    = getSetting("daily_snack_ball_weight_g", 200);
+
+  const [currentPlanRow] = await db
+    .select({ planDate: productionPlansTable.planDate })
+    .from(productionPlansTable)
+    .where(eq(productionPlansTable.id, planId))
+    .limit(1);
+
+  // ── Same-day dough (D-1 mode only) ──
+  // Some doughs (cinnamon bun dough) are mixed on the PRODUCTION day, not
+  // the day before. Those are excluded from the next-plan walk below and
+  // instead surfaced here: dough for plans dated the same day as the plan
+  // being viewed, restricted to sub-recipes flagged made_on_production_day.
+  // Each dough type gets its own group with its own mix maths — same-day
+  // bun dough must never blend into the calzone dough mixing quantities.
+  type SameDayGroup = {
+    subRecipeId: number;
+    subRecipeName: string;
+    planId: number;
+    planName: string;
+    planDate: string;
+    totalDoughKg: number;
+    totalFlourKg: number;
+    mixCount: number;
+    recipes: Array<{ recipeId: number; recipeName: string; batchesTarget: number; portionsPerBatch: number; doughKgPerBatch: number; doughKgTotal: number; gramsPerPortion: number }>;
+    ingredients: Array<{ ingredientId: number | null; ingredientName: string; unit: string; totalQty: number; qtyPerMix: number }>;
+  };
+  const sameDayDough: SameDayGroup[] = [];
+
+  if (!useCurrentPlan && currentPlanRow) {
+    const sameDayItems = await db
+      .select({
+        planId: productionPlansTable.id,
+        planName: productionPlansTable.name,
+        planDate: productionPlansTable.planDate,
+        recipeId: productionPlanItemsTable.recipeId,
+        batchesTarget: productionPlanItemsTable.batchesTarget,
+        recipeName: recipesTable.name,
+        portionsPerBatch: recipesTable.portionsPerBatch,
+      })
+      .from(productionPlanItemsTable)
+      .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
+      .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+      .where(and(
+        eq(productionPlansTable.planDate, currentPlanRow.planDate),
+        inArray(productionPlansTable.status, ["draft", "active"]),
+      ));
+
+    const sameDayRecipeIds = [...new Set(sameDayItems.map(i => i.recipeId).filter(Boolean))] as number[];
+    if (sameDayRecipeIds.length > 0) {
+      const sameDayLinks = await db
+        .select({
+          recipeId: recipeSubRecipesTable.recipeId,
+          subRecipeId: recipeSubRecipesTable.subRecipeId,
+          quantityPerPortion: recipeSubRecipesTable.quantity,
+          subRecipeName: subRecipesTable.name,
+          subRecipeYield: subRecipesTable.yield,
+        })
+        .from(recipeSubRecipesTable)
+        .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
+        .where(and(
+          inArray(recipeSubRecipesTable.recipeId, sameDayRecipeIds),
+          eq(subRecipesTable.madeOnProductionDay, true),
+          sql`LOWER(${subRecipesTable.name}) LIKE '%dough%'`,
+        ));
+
+      const groupSubIds = [...new Set(sameDayLinks.map(l => l.subRecipeId))];
+      const groupIngredients = groupSubIds.length > 0
+        ? await db
+            .select({
+              subRecipeId: subRecipeIngredientsTable.subRecipeId,
+              ingredientId: subRecipeIngredientsTable.ingredientId,
+              quantity: subRecipeIngredientsTable.quantity,
+              ingredientName: ingredientsTable.name,
+              unit: ingredientsTable.unit,
+            })
+            .from(subRecipeIngredientsTable)
+            .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
+            .where(inArray(subRecipeIngredientsTable.subRecipeId, groupSubIds))
+        : [];
+
+      for (const srId of groupSubIds) {
+        const links = sameDayLinks.filter(l => l.subRecipeId === srId);
+        const srName = links[0]?.subRecipeName ?? "Dough";
+        const srYield = Number(links[0]?.subRecipeYield) || 0;
+
+        const groupRecipes: SameDayGroup["recipes"] = [];
+        let groupPlanId = 0; let groupPlanName = ""; let groupPlanDate = currentPlanRow.planDate;
+        for (const item of sameDayItems) {
+          const link = links.find(l => l.recipeId === item.recipeId);
+          if (!link) continue;
+          const batchesTarget = Number(item.batchesTarget) || 0;
+          const ppb = Number(item.portionsPerBatch) || 1;
+          const perPortion = Number(link.quantityPerPortion) || 0;
+          const doughKgPerBatch = perPortion * ppb;
+          groupPlanId = item.planId; groupPlanName = item.planName; groupPlanDate = item.planDate;
+          groupRecipes.push({
+            recipeId: item.recipeId!,
+            recipeName: item.recipeName ?? `Recipe #${item.recipeId}`,
+            batchesTarget,
+            portionsPerBatch: ppb,
+            doughKgPerBatch: Math.round(doughKgPerBatch * 1000) / 1000,
+            doughKgTotal: Math.round(doughKgPerBatch * batchesTarget * 1000) / 1000,
+            gramsPerPortion: Math.round(perPortion * 1000),
+          });
+        }
+        if (groupRecipes.length === 0) continue;
+
+        const totalDoughKg = groupRecipes.reduce((s, r) => s + r.doughKgTotal, 0);
+        const srIngs = groupIngredients.filter(r => r.subRecipeId === srId);
+        const scale = srYield > 0 ? totalDoughKg / srYield : 0;
+
+        const flourRow = srIngs.find(r => r.ingredientName?.toLowerCase().includes("flour"));
+        const flourPerYieldKg = flourRow ? (flourRow.unit === "g" ? (Number(flourRow.quantity) || 0) / 1000 : Number(flourRow.quantity) || 0) : 0;
+        const totalFlourKg = flourPerYieldKg * scale;
+        const mixCount = totalDoughKg > 0 ? Math.max(1, mixerCapacityKg > 0 ? Math.ceil(totalFlourKg / mixerCapacityKg) : 1) : 0;
+
+        sameDayDough.push({
+          subRecipeId: srId,
+          subRecipeName: srName,
+          planId: groupPlanId,
+          planName: groupPlanName,
+          planDate: groupPlanDate,
+          totalDoughKg: Math.round(totalDoughKg * 100) / 100,
+          totalFlourKg: Math.round(totalFlourKg * 100) / 100,
+          mixCount,
+          recipes: groupRecipes,
+          ingredients: srIngs.map(ing => {
+            const totalQty = (Number(ing.quantity) || 0) * scale;
+            return {
+              ingredientId: ing.ingredientId,
+              ingredientName: ing.ingredientName ?? `Ingredient #${ing.ingredientId}`,
+              unit: ing.unit ?? "kg",
+              totalQty: Math.round(totalQty * 1000) / 1000,
+              qtyPerMix: mixCount > 0 ? Math.round((totalQty / mixCount) * 1000) / 1000 : 0,
+            };
+          }),
+        });
+      }
+    }
+  }
+
   if (!useCurrentPlan) {
     let afterDate: string;
     if (req.query.afterDate && typeof req.query.afterDate === "string") {
       afterDate = req.query.afterDate;
     } else {
-      const currentPlan = await db.select({ planDate: productionPlansTable.planDate }).from(productionPlansTable).where(eq(productionPlansTable.id, planId)).limit(1);
-      afterDate = currentPlan.length > 0 ? currentPlan[0].planDate : londonDateString();
+      afterDate = currentPlanRow ? currentPlanRow.planDate : londonDateString();
     }
 
     // Walk by COALESCE(dough_date, plan_date) so a plan whose dough is
@@ -6683,23 +6836,11 @@ router.get("/:id/dough-prep", async (req, res) => {
     if (nextPlans.length > 0) nextPlan = nextPlans[0];
 
     if (!nextPlan) {
-      res.json({ ingredients: [], recipes: [], totalDoughKg: 0, mixerCapacityKg: 25, mixCount: 0, nextPlan: null, noFuturePlan: true });
+      res.json({ ingredients: [], recipes: [], totalDoughKg: 0, mixerCapacityKg, mixCount: 0, nextPlan: null, sameDayDough, noFuturePlan: sameDayDough.length === 0 });
       return;
     }
     targetPlanId = nextPlan.id;
   }
-
-  // ── 2. Get mixer capacity + daily extra ball settings ──
-  const allSettings = await db.select().from(appSettingsTable);
-  const getSetting = (key: string, def: number) => {
-    const row = allSettings.find(r => r.key === key);
-    return row ? Number(row.value) : def;
-  };
-  const mixerCapacityKg = getSetting("mixer_capacity_kg", 25);
-  const extraPackBallCount  = getSetting("daily_extra_pack_ball_count", 2);
-  const extraPackBallWeightG = getSetting("daily_extra_pack_ball_weight_g", 230);
-  const snackBallCount      = getSetting("daily_snack_ball_count", 1);
-  const snackBallWeightG    = getSetting("daily_snack_ball_weight_g", 200);
 
   // Per-plan extra/test dough (added from the plan detail page) — folded into
   // the balling list and the mixing totals exactly like the global extras.
@@ -6728,7 +6869,7 @@ router.get("/:id/dough-prep", async (req, res) => {
     .orderBy(sql`CASE WHEN ${recipesTable.category} = 'Macaroni Cheese' THEN 0 ELSE 1 END`, productionPlanItemsTable.orderPosition);
 
   if (planItems.length === 0) {
-    res.json({ ingredients: [], recipes: [], totalDoughKg: 0, mixerCapacityKg, mixCount: 0, nextPlan });
+    res.json({ ingredients: [], recipes: [], totalDoughKg: 0, mixerCapacityKg, mixCount: 0, nextPlan, sameDayDough });
     return;
   }
 
@@ -6742,19 +6883,24 @@ router.get("/:id/dough-prep", async (req, res) => {
       subRecipeName: subRecipesTable.name,
       subRecipeYield: subRecipesTable.yield,
       subRecipeYieldUnit: subRecipesTable.yieldUnit,
+      madeOnProductionDay: subRecipesTable.madeOnProductionDay,
     })
     .from(recipeSubRecipesTable)
     .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
     .where(inArray(recipeSubRecipesTable.recipeId, recipeIds));
 
+  // In D-1 mode, same-day doughs are not mixed the day before — they're
+  // served by the sameDayDough section on the production day instead.
+  // mode=current (dough sheeting, runs on the production day) keeps them.
   const doughSubRecipeIds = [...new Set(
     subRecipeLinks
       .filter(l => l.subRecipeName?.toLowerCase().includes("dough"))
+      .filter(l => useCurrentPlan || !l.madeOnProductionDay)
       .map(l => l.subRecipeId)
   )];
 
   if (doughSubRecipeIds.length === 0) {
-    res.json({ ingredients: [], recipes: [], totalDoughKg: 0, mixerCapacityKg, mixCount: 0, nextPlan });
+    res.json({ ingredients: [], recipes: [], totalDoughKg: 0, mixerCapacityKg, mixCount: 0, nextPlan, sameDayDough });
     return;
   }
 
@@ -6970,6 +7116,7 @@ router.get("/:id/dough-prep", async (req, res) => {
     recipes: recipeResults,
     nextPlan,
     nextPlanItems,
+    sameDayDough,
     extraBalls: {
       extraPack: { count: extraPackBallCount, weightG: extraPackBallWeightG },
       snack: { count: snackBallCount, weightG: snackBallWeightG },

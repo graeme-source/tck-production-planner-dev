@@ -61,6 +61,35 @@ interface DoughPrepData {
     stationCompletions: Record<string, number>;
   }>;
   noFuturePlan?: boolean;
+  // Doughs flagged made_on_production_day (cinnamon bun dough): mixed on the
+  // viewing plan's own day, one self-contained group per dough type so the
+  // maths never blend into the day-before (calzone) dough above.
+  sameDayDough?: Array<{
+    subRecipeId: number;
+    subRecipeName: string;
+    planId: number;
+    planName: string;
+    planDate: string;
+    totalDoughKg: number;
+    totalFlourKg: number;
+    mixCount: number;
+    recipes: Array<{
+      recipeId: number;
+      recipeName: string;
+      batchesTarget: number;
+      portionsPerBatch: number;
+      doughKgPerBatch: number;
+      doughKgTotal: number;
+      gramsPerPortion: number;
+    }>;
+    ingredients: Array<{
+      ingredientId: number | null;
+      ingredientName: string;
+      unit: string;
+      totalQty: number;
+      qtyPerMix: number;
+    }>;
+  }>;
   extraBalls?: {
     extraPack: { count: number; weightG: number };
     snack: { count: number; weightG: number };
@@ -102,6 +131,69 @@ export function useDoughPrepData(planId: number, mode?: "current") {
 }
 
 type DoughView = "mixing" | "balling" | "overview";
+
+/** Same-day dough (cinnamon bun dough): its own amber card per dough type,
+ *  mixed TODAY for today's bake — kept fully separate from the day-before
+ *  dough maths above it. Display-only: the bun team uses it as the mix sheet. */
+function SameDayDoughSection({ groups }: { groups: NonNullable<DoughPrepData["sameDayDough"]> }) {
+  if (!groups || groups.length === 0) return null;
+  const fmtQty = (qty: number, unit: string) =>
+    unit === "g" ? `${Math.round(qty)} g` : `${(Math.round(qty * 100) / 100).toFixed(2)} ${unit}`;
+  return (
+    <>
+      {groups.map(g => (
+        <div key={g.subRecipeId} className="bg-amber-50 dark:bg-amber-950/30 border-2 border-amber-400 rounded-xl p-4">
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+            <div>
+              <h2 className="font-semibold text-lg">
+                {g.subRecipeName} — <span className="text-amber-700 dark:text-amber-400">made TODAY</span>
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                For today's bake ({g.planName}). Mix on the production day — not the day before.
+              </p>
+            </div>
+            <div className="text-right">
+              <div className="text-2xl font-bold font-display">{g.totalDoughKg.toFixed(2)} kg</div>
+              <div className="text-xs text-muted-foreground">
+                {g.mixCount > 1 ? `${g.mixCount} mixes` : "1 mix"}
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-1.5 mb-3">
+            {g.recipes.map(r => (
+              <div key={r.recipeId} className="flex items-center justify-between bg-background/60 rounded-lg px-3 py-2">
+                <span className="font-medium">{r.recipeName}</span>
+                <span className="text-sm text-muted-foreground">
+                  {r.batchesTarget} {r.batchesTarget === 1 ? "batch" : "batches"} × {r.doughKgPerBatch.toFixed(2)} kg
+                  {" "}({r.gramsPerPortion} g each) = <span className="font-semibold text-foreground">{r.doughKgTotal.toFixed(2)} kg</span>
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {g.ingredients.length > 0 && (
+            <div>
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">
+                Ingredients{g.mixCount > 1 ? " (per mix)" : ""}
+              </h3>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                {g.ingredients.map((ing, i) => (
+                  <div key={ing.ingredientId ?? `x-${i}`} className="flex items-center justify-between bg-background/60 rounded-lg px-3 py-1.5 text-sm">
+                    <span>{ing.ingredientName}</span>
+                    <span className="font-semibold tabular-nums">
+                      {fmtQty(g.mixCount > 1 ? ing.qtyPerMix : ing.totalQty, ing.unit)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
 
 export function DoughPrepStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const queryClient = useQueryClient();
@@ -365,11 +457,21 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
   }
 
   if (!doughData || doughData.totalDoughKg <= 0) {
+    const sameDay = doughData?.sameDayDough ?? [];
     return (
-      <div className="bg-card border border-border rounded-xl p-8 text-center">
-        <Layers className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-50" />
-        <h2 className="font-semibold text-lg mb-1">No dough requirements</h2>
-        <p className="text-muted-foreground text-sm">No dough recipes found for this plan.</p>
+      <div className="space-y-4">
+        <SameDayDoughSection groups={sameDay} />
+        <div className="bg-card border border-border rounded-xl p-8 text-center">
+          <Layers className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-50" />
+          <h2 className="font-semibold text-lg mb-1">
+            {sameDay.length > 0 ? "No day-before dough to mix" : "No dough requirements"}
+          </h2>
+          <p className="text-muted-foreground text-sm">
+            {sameDay.length > 0
+              ? "Tomorrow's plan needs no dough mixed today — only the same-day dough above."
+              : "No dough recipes found for this plan."}
+          </p>
+        </div>
       </div>
     );
   }
@@ -401,6 +503,8 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
           activityLabel="Dough prep"
         />
       )}
+
+      <SameDayDoughSection groups={doughData.sameDayDough ?? []} />
 
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
