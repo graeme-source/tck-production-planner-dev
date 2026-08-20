@@ -57,6 +57,23 @@ function readStoredActivity(): number {
   return 0;
 }
 
+// Once a PIN lock has actually been APPLIED on this device, it must survive
+// a page reload — tapping the PIN pad counts as "activity", so without this
+// flag a locked station could be re-entered by simply refreshing the page
+// (the active-user deferral would kick in). The flag is set whenever the
+// overlay is applied for a server-backed lock and cleared only by a
+// successful PIN entry or full login.
+const PIN_LOCK_APPLIED_KEY = "tck_pin_lock_applied";
+function markPinLockApplied() {
+  try { localStorage.setItem(PIN_LOCK_APPLIED_KEY, "1"); } catch { /* private mode */ }
+}
+function clearPinLockApplied() {
+  try { localStorage.removeItem(PIN_LOCK_APPLIED_KEY); } catch { /* private mode */ }
+}
+function isPinLockApplied(): boolean {
+  try { return localStorage.getItem(PIN_LOCK_APPLIED_KEY) === "1"; } catch { return false; }
+}
+
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -135,15 +152,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!pinRequired) {
           prevPinRequiredRef.current = false;
           setPinLocked(false);
+          clearPinLockApplied();
         } else if (pinLockedRef.current) {
           prevPinRequiredRef.current = true;
-        } else if (Date.now() - getLastActivity() < IDLE_TIMEOUT_MS) {
-          // Active — defer. prevPinRequiredRef deliberately unchanged so
-          // the apply branch below still sees the transition later.
+        } else if (!isPinLockApplied() && Date.now() - getLastActivity() < IDLE_TIMEOUT_MS) {
+          // Active AND no lock has been applied on this device yet — defer.
+          // (An applied lock re-locks on reload regardless of activity;
+          // otherwise tapping the PIN pad then refreshing would walk
+          // straight past it.) prevPinRequiredRef deliberately unchanged
+          // so the apply branch below still sees the transition later.
         } else {
           const wasLocked = prevPinRequiredRef.current;
           prevPinRequiredRef.current = true;
           setPinLocked(true);
+          markPinLockApplied();
           if (wasLocked !== true) {
             const path = window.location.pathname;
             if (path !== "/" && !path.startsWith("/login")) {
@@ -190,6 +212,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const idleMs = Date.now() - getLastActivity();
         if (idleMs >= IDLE_TIMEOUT_MS && state.status === "authenticated" && !pinLocked) {
           setPinLocked(true);
+          markPinLockApplied();
           fetch("/api/auth/pin/lock", { method: "POST", credentials: "include" })
             .catch((err) => { console.warn("[Auth] Idle lock failed:", err); });
         }
@@ -245,6 +268,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const idleMs = Date.now() - getLastActivity();
     if (idleMs >= IDLE_TIMEOUT_MS) {
       setPinLocked(true);
+      markPinLockApplied();
       fetch("/api/auth/pin/lock", { method: "POST", credentials: "include" })
         .catch((err) => { console.warn("[Auth] Boot idle lock failed:", err); });
     }
@@ -264,6 +288,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const idleMs = Date.now() - getLastActivity();
       if (idleMs >= IDLE_TIMEOUT_MS && state.status === "authenticated" && !pinLocked) {
         setPinLocked(true);
+        markPinLockApplied();
         fetch("/api/auth/pin/lock", { method: "POST", credentials: "include" })
           .catch((err) => { console.warn("[Auth] Pin lock failed:", err); });
       }
@@ -336,6 +361,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         addDeviceUserId(user.id);
         setState({ status: "authenticated", user });
         setPinLocked(false);
+        clearPinLockApplied();
         sensitiveUnlockedAtRef.current = Date.now();
         return { user };
       }
@@ -360,6 +386,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         addDeviceUserId(user.id);
         setState({ status: "authenticated", user });
         setPinLocked(false);
+        clearPinLockApplied();
         sensitiveUnlockedAtRef.current = Date.now();
         return {};
       }
@@ -390,6 +417,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       if (res.ok) {
         setPinLocked(false);
+        clearPinLockApplied();
         sensitiveUnlockedAtRef.current = Date.now();
         return {};
       }
@@ -438,6 +466,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.warn("[Auth] Lock station: network error, locking UI anyway:", err);
     }
     setPinLocked(true);
+    markPinLockApplied();
     // Manual lock also invalidates the sensitive unlock window.
     sensitiveUnlockedAtRef.current = 0;
   }, []);
