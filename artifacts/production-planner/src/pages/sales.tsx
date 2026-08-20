@@ -16,18 +16,20 @@ const schema = z.object({
   channel: z.string().optional(),
 });
 
+type FormValues = z.infer<typeof schema>;
+
 export default function Sales() {
   const { data: sales, isLoading } = useListSalesEntries();
   const { data: recipes } = useListRecipes();
   const { createSale, deleteSale } = useAppMutations();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
-  const { register, handleSubmit, reset } = useForm({
+  const { register, handleSubmit, reset } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: { saleDate: format(new Date(), 'yyyy-MM-dd'), quantitySold: 1, channel: "Retail" }
   });
 
-  const onSubmit = (data: z.infer<typeof schema>) => {
+  const onSubmit = (data: FormValues) => {
     createSale.mutate({ data: { ...data, saleDate: new Date(data.saleDate).toISOString() } }, {
       onSuccess: () => { setIsDialogOpen(false); reset(); }
     });

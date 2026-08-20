@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { BreakTracker } from "../shared/break-tracker";
-import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay } from "../shared/constants";
+import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay, type StationPlanItem } from "../shared/constants";
 import { effectiveBatchesTarget, netTwoPacks as computeNetTwoPacks, packsTargetForItem, packsDoneForItem, packsPerBatch } from "../shared/recipe-completion";
 import { RECIPE_RACK_COLOURS, WonkyColour, ChillerRackItem, ChillerRackVisual } from "./dough-sheeting-station";
 
@@ -139,7 +139,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
     return null;
   };
 
-  const items = [...(plan.items ?? [])].sort(compareItemsForDisplay);
+  const items: StationPlanItem[] = [...(plan.items ?? [])].sort(compareItemsForDisplay);
   const combinedBuildingCount = (it: ProductionPlanItem) =>
     getStationCount(it, "building_1") + getStationCount(it, "building_2");
   const effTarget = (it: ProductionPlanItem) =>
@@ -423,7 +423,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
     });
   };
 
-  const removeEightPackBag = async (item: ProductionPlanItem) => {
+  const removeEightPackBag = async (item: StationPlanItem) => {
     if ((item.eightPackBagCount ?? 0) <= 0) return;
     await runEightPackAction(async (signal) => {
       await guardedFetch(`/api/production-plans/${plan.id}/items/${item.id}/eight-pack-bag-count`, {
@@ -449,11 +449,11 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
 
   const grossPacks = (item: ProductionPlanItem) =>
     Math.floor((getStationCount(item, "ovens") * (item.portionsPerBatch ?? 10)) / 2);
-  const eightPackDeduction = (item: ProductionPlanItem) => (item.eightPackBagCount ?? 0) * 4;
+  const eightPackDeduction = (item: StationPlanItem) => (item.eightPackBagCount ?? 0) * 4;
   const netTwoPacks = (item: ProductionPlanItem) =>
     computeNetTwoPacks(item, getStationCount(item, "ovens"), effTarget(item), combinedBuildingCount(item));
   // netPacks includes both two-packs and eight-pack bags for tray calc
-  const netPacks = (item: ProductionPlanItem) =>
+  const netPacks = (item: StationPlanItem) =>
     netTwoPacks(item) + (item.eightPackBagCount ?? 0);
   const chillerTrays = (item: ProductionPlanItem) =>
     netPacks(item) > 0 ? Math.ceil(netPacks(item) / 10) : 0;

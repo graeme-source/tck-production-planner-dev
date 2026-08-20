@@ -1,4 +1,5 @@
 import type { ProductionPlanItem } from "@workspace/api-client-react";
+import type { StationPlanItem } from "./constants";
 
 /**
  * Helpers for the builder-controlled recipe completion model.
@@ -84,7 +85,7 @@ export function packsDoneForItem(
  *   finishes or marks complete.
  */
 export function netTwoPacks(
-  item: ProductionPlanItem,
+  item: StationPlanItem,
   ovensBatchCount: number,
   effectiveBatches?: number,
   builtBatches?: number,

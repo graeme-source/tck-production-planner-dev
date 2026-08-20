@@ -210,6 +210,8 @@ interface ConfigStatus {
    *  never creates a consignment. */
   bookOnOpen?: boolean;
   testMode: boolean;
+  /** True when test mode is on but the APC training credentials are not configured. */
+  trainingCredentialsMissing: boolean;
   serviceCodes: {
     smallWeekday: string;
     largeWeekday: string;

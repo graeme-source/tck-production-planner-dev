@@ -1,6 +1,25 @@
 import { Construction, Waves, Flame, Gift, Box, Salad, Layers, UtensilsCrossed } from "lucide-react";
 import type { ProductionPlanItem } from "@workspace/api-client-react";
 
+/**
+ * A production plan item as the API actually serialises it. The server's
+ * mapItem spreads the full DB row, so these columns (NOT NULL DEFAULT 0 in
+ * lib/db/src/schema/production_plans.ts, and packSize joined from recipes
+ * with a default of 2) always come back — the generated ProductionPlanItem
+ * type just doesn't declare them. Kept optional so plain ProductionPlanItem
+ * values remain assignable and callers keep their `?? 0` fallbacks.
+ */
+export type StationPlanItem = ProductionPlanItem & {
+  /** Portions per retail pack (joined from recipes; server defaults to 2). */
+  packSize?: number;
+  /** Legacy short-build count subtracted from wrapping output. */
+  shortCount?: number;
+  /** 8-pack bags planned/assembled for this item. */
+  eightPackBagCount?: number;
+  /** 8-pack bags actually wrapped into the fridge so far. */
+  fridgeEightPackQty?: number;
+};
+
 export const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
 
 export function isMacCheese(item: { recipeCategory?: string | null }): boolean {
