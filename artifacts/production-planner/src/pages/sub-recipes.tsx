@@ -813,6 +813,9 @@ function SubRecipeForm({
 type SubRecipeDetailApi = SubRecipeDetail & {
   madeOnProductionDay?: boolean;
   labelDeclaration?: string | null;
+  // Returned by GET /api/sub-recipes/:id (routes/sub-recipes.ts serialises
+  // yield_percent as number | null); generated type lags the API.
+  yieldPercent?: number | null;
 };
 
 function EditSubRecipeDialog({
@@ -861,7 +864,7 @@ function EditSubRecipeDialog({
         name: detail.name,
         description: detail.description ?? "",
         yield: Number(detail.yield),
-        yieldPercent: ((detail as Record<string, unknown>).yieldPercent as number | null) ?? "",
+        yieldPercent: (detail as SubRecipeDetailApi).yieldPercent ?? "",
         yieldUnit: detail.yieldUnit,
         notes: detail.notes ?? "",
         shelfLifeDays: detail.shelfLifeDays != null ? Number(detail.shelfLifeDays) : undefined,
