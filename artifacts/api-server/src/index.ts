@@ -1535,6 +1535,47 @@ async function runStartupMigrations() {
     `);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_founder_tasks_date ON founder_tasks (date, status)`);
 
+    // Per-user to-do lists (2026-08-20). Distinct from founder_tasks (the
+    // founder's personal day plan): these belong to an ASSIGNEE, can be
+    // raised by managers onto anyone's list, and carry an acknowledgement —
+    // the assignee must confirm they've seen and understood a task somebody
+    // else put on their plate.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS todo_tasks (
+        id SERIAL PRIMARY KEY,
+        assignee_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+        created_by INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        created_by_name TEXT,
+        title TEXT NOT NULL,
+        notes TEXT,
+        url TEXT,
+        priority TEXT NOT NULL DEFAULT 'normal',
+        scheduled_for DATE,
+        due_date DATE,
+        status TEXT NOT NULL DEFAULT 'open',
+        acknowledged_at TIMESTAMP,
+        completed_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_todo_tasks_assignee ON todo_tasks (assignee_id, status)`);
+    // Comments double as the task's timeline: kind='comment' is a person
+    // talking, kind='event' is the system recording what happened (created,
+    // acknowledged, completed, edited) so the history reads as one thread.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS todo_task_comments (
+        id SERIAL PRIMARY KEY,
+        task_id INTEGER NOT NULL REFERENCES todo_tasks(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        user_name TEXT,
+        kind TEXT NOT NULL DEFAULT 'comment',
+        body TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_todo_task_comments_task ON todo_task_comments (task_id, created_at)`);
+
     // Sales & Marketing assistant — see lib/db/migrations/0043_marketing_events.sql.
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS marketing_events (

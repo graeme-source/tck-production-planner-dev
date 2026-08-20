@@ -46,7 +46,8 @@ import { CurrentUserBadge } from "@/components/current-user-badge";
 import { NotificationFlash } from "@/components/notification-flash";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assistant";
-import { BookOpen, Bot, GraduationCap, ChevronLeft, ChevronRight } from "lucide-react";
+import { TodoSheet, TodoInterstitial, useMyOpenTodoCount } from "@/components/todo-lists";
+import { BookOpen, Bot, GraduationCap, ChevronLeft, ChevronRight, ListTodo } from "lucide-react";
 
 export type NavItem = { name: string; href: string; icon: React.ComponentType<{ className?: string }> };
 
@@ -530,6 +531,7 @@ export function Layout({ children }: { children: ReactNode }) {
   // dialog as a sibling of <main> keeps it above everything.
   const [sopsOpen, setSopsOpen] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [todosOpen, setTodosOpen] = useState(false);
   const isFounder = user?.email === "graeme@thecalzonekitchen.co.uk";
 
   const userRole = user?.role ?? "viewer";
@@ -678,8 +680,14 @@ export function Layout({ children }: { children: ReactNode }) {
           assistant (enforced server-side, not just here). */}
       <>
         <FoundersAssistant open={assistantOpen} onClose={() => setAssistantOpen(false)} isFounder={isFounder} />
-        <FloatingActionsTab assistantOpen={assistantOpen} onOpenAssistant={() => setAssistantOpen(true)} />
+        <FloatingActionsTab assistantOpen={assistantOpen} onOpenAssistant={() => setAssistantOpen(true)} onOpenTodos={() => setTodosOpen(true)} />
       </>
+
+      {/* Per-user to-do lists: the sheet opens from the edge tab (and the
+          Employee Hub); the interstitial takes the whole screen whenever
+          somebody has put an unacknowledged task on this user's list. */}
+      <TodoSheet open={todosOpen} onClose={() => setTodosOpen(false)} />
+      <TodoInterstitial />
     </div>
   );
 }
@@ -688,7 +696,7 @@ export function Layout({ children }: { children: ReactNode }) {
 // content (they used to float over table footers and totals). Collapsed by
 // default: a slim orange/blue tab on the right edge, higher up the screen —
 // tap the arrow to slide the two buttons out. Remembered per device.
-function FloatingActionsTab({ assistantOpen, onOpenAssistant }: { assistantOpen: boolean; onOpenAssistant: () => void }) {
+function FloatingActionsTab({ assistantOpen, onOpenAssistant, onOpenTodos }: { assistantOpen: boolean; onOpenAssistant: () => void; onOpenTodos: () => void }) {
   const [expanded, setExpanded] = useState<boolean>(() => {
     try { return localStorage.getItem("floating_actions_expanded") === "1"; } catch { return false; }
   });
@@ -697,6 +705,7 @@ function FloatingActionsTab({ assistantOpen, onOpenAssistant }: { assistantOpen:
     try { localStorage.setItem("floating_actions_expanded", next ? "1" : "0"); } catch { /* private mode */ }
     return next;
   });
+  const openTodoCount = useMyOpenTodoCount();
 
   return (
     <div className="fixed right-0 top-[38%] z-40 flex items-start">
@@ -710,6 +719,21 @@ function FloatingActionsTab({ assistantOpen, onOpenAssistant }: { assistantOpen:
             className="w-8 h-8 rounded-full border border-border bg-card/95 shadow flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
           >
             <ChevronRight className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={onOpenTodos}
+            className="flex items-center gap-2 px-4 h-12 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 hover:opacity-90 active:scale-95 transition-all"
+            aria-label="My to-dos"
+            title="My to-dos"
+          >
+            <ListTodo className="w-5 h-5" />
+            <span className="text-sm font-semibold">My to-dos</span>
+            {openTodoCount > 0 && (
+              <span className="min-w-[22px] h-[22px] px-1.5 rounded-full bg-white/25 text-xs font-bold flex items-center justify-center tabular-nums">
+                {openTodoCount}
+              </span>
+            )}
           </button>
           <ReportButton className="relative bottom-auto right-auto z-auto" />
           {!assistantOpen && (
@@ -729,13 +753,19 @@ function FloatingActionsTab({ assistantOpen, onOpenAssistant }: { assistantOpen:
         <button
           type="button"
           onClick={toggle}
-          aria-label={`Show quick actions — Quick Idea and Ask ${ASSISTANT_NAME}`}
-          title={`Quick Idea · Ask ${ASSISTANT_NAME}`}
-          className="h-16 w-8 rounded-l-xl border border-r-0 border-border bg-card shadow-lg flex flex-col items-center justify-center gap-1 hover:w-9 transition-all"
+          aria-label={`Show quick actions — My to-dos, Quick Idea and Ask ${ASSISTANT_NAME}`}
+          title={`My to-dos · Quick Idea · Ask ${ASSISTANT_NAME}`}
+          className="h-16 w-8 rounded-l-xl border border-r-0 border-border bg-card shadow-lg flex flex-col items-center justify-center gap-1 hover:w-9 transition-all relative"
         >
           <ChevronLeft className="w-4 h-4 text-muted-foreground" />
+          <span className="w-2.5 h-2.5 rounded-full bg-primary" />
           <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
           <span className="w-2.5 h-2.5 rounded-full bg-orange-500" />
+          {openTodoCount > 0 && (
+            <span className="absolute -top-1.5 -left-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center tabular-nums shadow">
+              {openTodoCount}
+            </span>
+          )}
         </button>
       )}
     </div>
