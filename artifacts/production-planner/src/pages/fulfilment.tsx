@@ -1504,7 +1504,10 @@ export default function Fulfilment() {
     // Live-mode confirmation only matters when a real APC consignment
     // is about to be created. With APC off, or in reconcile mode where the
     // consignment already exists, there's nothing to confirm — go straight in.
-    if (configStatus?.testMode || !apcEnabled || reconcileMode) {
+    // Same when book-on-open is off: the server refuses to book from this
+    // path (409), so opening can only ever look up an existing consignment
+    // (batch-booked or hand-uploaded) and print its label.
+    if (configStatus?.testMode || !apcEnabled || reconcileMode || configStatus?.bookOnOpen === false) {
       startPicking(order);
     } else {
       setPendingPickOrder(order);
