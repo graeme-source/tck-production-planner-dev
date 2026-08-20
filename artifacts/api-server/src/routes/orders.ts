@@ -1266,9 +1266,14 @@ router.post("/regenerate", requireManagerOrAdmin, async (req, res) => {
       await db.delete(purchaseOrdersTable).where(inArray(purchaseOrdersTable.id, draftIds));
     }
 
-    // 3. Re-run the calculate logic by calling the same endpoint internally
-    //    We simulate a request to /calculate to get the supplier/line data.
-    const calcUrl = `${req.protocol}://${req.get("host")}/api/orders/calculate?planId=${planId}`;
+    // 3. Re-run the calculate logic by calling the same endpoint internally.
+    //    Loopback (same pattern as recipes.ts deck/spec-sheet) — the old
+    //    req.protocol + Host round-trip broke behind proxies/TLS termination.
+    //    Proper fix is extracting /calculate into a callable service (P2).
+    const port = process.env["PORT"];
+    const calcUrl = port
+      ? `http://127.0.0.1:${port}/api/orders/calculate?planId=${planId}`
+      : `${req.protocol}://${req.get("host")}/api/orders/calculate?planId=${planId}`;
     const calcRes = await fetch(calcUrl, {
       headers: { cookie: req.headers.cookie ?? "" },
     });
