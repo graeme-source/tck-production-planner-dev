@@ -470,14 +470,29 @@ async function placeOrder(req: ApcShipmentRequest): Promise<PlaceOrderResult> {
   return { waybill, warnings };
 }
 
-async function fetchLabel(waybill: string, apiBaseIn?: string, retries = 4, delayMs = 3000): Promise<string[]> {
+/**
+ * Pull the label PDF(s) for a waybill, as base64.
+ *
+ * `markPrinted` defaults to true purely to preserve the behaviour every
+ * existing caller was written against. It is NOT a good default: APC's printed
+ * flag then means "the app asked for this label at least once", which is set by
+ * failed prints and background pre-prints alike. The live label proxy passes
+ * false deliberately — see the route in routes/fulfilment.ts.
+ */
+async function fetchLabel(
+  waybill: string,
+  apiBaseIn?: string,
+  retries = 4,
+  delayMs = 3000,
+  markPrinted = true,
+): Promise<string[]> {
   const apiBase = apiBaseIn ?? APC_API_BASE;
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) {
       await new Promise(resolve => setTimeout(resolve, delayMs));
     }
 
-    const url = `${apiBase}/Orders/${waybill}.json?searchtype=CarrierWaybill&labelformat=PDF&labels=True&markprinted=True`;
+    const url = `${apiBase}/Orders/${waybill}.json?searchtype=CarrierWaybill&labelformat=PDF&labels=True&markprinted=${markPrinted ? "True" : "False"}`;
 
     const res = await fetch(url, {
       method: "GET",

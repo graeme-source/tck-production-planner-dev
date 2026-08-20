@@ -514,10 +514,21 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                 <Flame className="w-5 h-5 text-amber-600" />
               </div>
               <div className="flex-1 min-w-0">
-                <h2 className="font-display font-bold text-xl">Don't forget the garlic butter</h2>
-                <p className="text-sm text-muted-foreground mt-0.5">
-                  Brush garlic butter onto every <span className="font-semibold text-foreground">{garlicReminderItem.recipeName ?? "recipe"}</span> before wrapping. Tap Complete once you've done this batch.
-                </p>
+                {(() => {
+                  // Name the actual post-oven item(s) — garlic butter on
+                  // calzones, cream cheese icing on cinnamon buns, whatever
+                  // the recipe carries.
+                  const names = (postOvenMap[garlicReminderItem.id] ?? []).map(i => i.name);
+                  const label = names.length > 0 ? names.join(" and ") : "post-oven topping";
+                  return (
+                    <>
+                      <h2 className="font-display font-bold text-xl">Don't forget the {label.toLowerCase()}</h2>
+                      <p className="text-sm text-muted-foreground mt-0.5">
+                        Add <span className="font-semibold text-foreground">{label}</span> to every <span className="font-semibold text-foreground">{garlicReminderItem.recipeName ?? "recipe"}</span> before wrapping. Tap Complete once you've done this batch.
+                      </p>
+                    </>
+                  );
+                })()}
               </div>
             </div>
             <button

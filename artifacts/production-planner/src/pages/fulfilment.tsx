@@ -140,7 +140,12 @@ interface ShopifyOrder {
 
 interface ShipmentResult {
   consignmentNumber: string;
+  /** Kept for compatibility with the existing server response. The print path
+   *  no longer reads it — labels are fetched live from the label route so an
+   *  amended consignment can never print from a stale payload. */
   labelPdfBase64: string;
+  /** Number of parcels on the consignment, so every piece gets printed. */
+  pieceCount?: number;
   trackingUrl?: string;
   serviceCode: string;
   orderId: number;
@@ -149,6 +154,19 @@ interface ShipmentResult {
   /** True when the server returned a consignment that already existed for
    *  this order rather than booking a second one. */
   reused?: boolean;
+}
+
+/** Same-origin URL for one piece's label, fetched live from APC on every hit.
+ *
+ *  Same-origin is the whole point: the old path built a `blob:` URL, and the
+ *  app's CSP (frame-src 'self' + youtube/vimeo) blocks blob: frames outright,
+ *  so the label never reached the print frame. `'self'` covers this URL.
+ *
+ *  The cache-buster is belt-and-braces on top of the route's no-store: after a
+ *  consignment is amended at the bench the reprint must show the NEW label,
+ *  and a stale one would go on a real box. */
+function labelUrl(waybill: string, piece: number): string {
+  return `${BASE}/api/fulfilment/shipments/${encodeURIComponent(waybill)}/label.pdf?piece=${piece}&t=${Date.now()}`;
 }
 
 /** Result of scanning the printed APC label at the bench. The verdict is
@@ -552,7 +570,7 @@ async function recheckPostcode(orderId: number, tag: string): Promise<{ availabl
   return data;
 }
 
-async function addExtraBox(waybill: string): Promise<{ labelPdfs: string[]; warnings?: string[] }> {
+async function addExtraBox(waybill: string): Promise<{ labelPdfs: string[]; pieceCount: number; warnings?: string[] }> {
   const res = await fetch(`${BASE}/api/fulfilment/shipments/${encodeURIComponent(waybill)}/add-parcel`, {
     method: "POST",
     credentials: "include",
@@ -563,7 +581,7 @@ async function addExtraBox(waybill: string): Promise<{ labelPdfs: string[]; warn
   return data;
 }
 
-async function reprintLabel(waybill: string): Promise<{ labelPdfs: string[] }> {
+async function reprintLabel(waybill: string): Promise<{ waybill: string; pieceCount: number }> {
   const res = await fetch(`${BASE}/api/fulfilment/shipments/${encodeURIComponent(waybill)}/reprint-label`, {
     method: "POST",
     credentials: "include",
@@ -664,57 +682,77 @@ const ZONE_STYLES: Record<string, { bg: string; border: string; text: string; ba
   },
 };
 
-// Wraps the PDF in an HTML page with explicit @page sizing for 100mm×150mm thermal labels.
-// This ensures Chrome respects the label dimensions regardless of default printer paper settings.
-/** Decode the label into a Blob. Chrome refuses to instantiate its PDF
- *  viewer for a `data:` URL inside an embedded frame — the <embed> stays
- *  inert markup and the print preview comes out BLANK (2026-08-12, first
- *  live label). A blob: URL loads into the viewer normally. */
-function base64PdfToBlobUrl(base64Pdf: string): string {
-  const binary = atob(base64Pdf);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
-}
-
+/**
+ * Print one label by pointing a hidden iframe at a SAME-ORIGIN url that streams
+ * the PDF live from APC.
+ *
+ * This used to take base64 and build a `blob:` URL. That is what broke: the
+ * app's CSP lists `frame-src 'self'` plus YouTube/Vimeo and nothing else, and
+ * `'self'` does not cover blob:, so Chrome refused to navigate the frame. The
+ * block is invisible to onload (which fires anyway on the blocked frame), and
+ * the first real symptom was print() throwing SecurityError against an opaque
+ * document — surfacing at the bench as a bare "Print failed" on a label that
+ * was perfectly healthy at APC (#133003 / #133050, 2026-08-20).
+ *
+ * Taking a same-origin URL satisfies frame-src 'self' with no CSP change, and
+ * keeps every label live: the route holds no cache, so a consignment amended
+ * at the bench reprints as amended.
+ */
 function printLabel(
-  base64Pdf: string,
+  pdfUrl: string,
   onPrinted: () => void,
-  onPrintFailed: () => void,
+  onPrintFailed: (reason: string) => void,
   frameId = "label-print-frame",
 ) {
-  // Each early exit names its cause in the console — an instant "Print
-  // failed" is otherwise undiagnosable from the packing bench.
-  if (!base64Pdf) {
-    console.warn(`[Fulfilment] print: APC returned no label PDF (frame ${frameId})`);
-    onPrintFailed();
+  // Each failure path names its own cause and hands it back to the caller, so
+  // the packing bench sees WHY the label didn't print instead of a bare "Print
+  // failed" that could be anything from a dead printer to a blocked frame.
+  // Nobody is opening DevTools mid-wave (2026-08-20, #133003).
+  if (!pdfUrl) {
+    console.warn(`[Fulfilment] print: no label URL to print (frame ${frameId})`);
+    onPrintFailed("No label URL was built for this consignment.");
     return;
   }
   const iframe = document.getElementById(frameId) as HTMLIFrameElement | null;
   if (!iframe) {
     console.warn(`[Fulfilment] print: frame #${frameId} not in the DOM`);
-    onPrintFailed();
+    onPrintFailed(`The print frame (#${frameId}) is missing from the page.`);
     return;
   }
 
   let settled = false;
-  let blobUrl: string;
-  try {
-    blobUrl = base64PdfToBlobUrl(base64Pdf);
-  } catch (err) {
-    console.warn("[Fulfilment] print: label PDF failed to decode:", err);
-    onPrintFailed();
-    return;
-  }
 
-  function settle(success: boolean) {
+  // The same-origin label route satisfies `frame-src 'self'`, so this should
+  // never fire now. It stays as a regression guard: if the CSP is ever
+  // tightened again, or the print path is pointed back at a blob:/data: URL,
+  // the frame is blocked SILENTLY — onload still fires, and the first real
+  // symptom is print() throwing SecurityError against an opaque document,
+  // which reads like a printer fault. Naming the violation is the difference
+  // between a five-minute fix and another day of chasing the printer.
+  //
+  // Chrome reports blockedURI as the bare scheme ("blob"), not the full URL,
+  // so this matches on scheme/URL AND directive — verified in Chromium
+  // 2026-08-20. Requiring both keeps an unrelated frame-src block (a video
+  // embed elsewhere on the page) from being misreported as a print fault.
+  function handleCspViolation(e: SecurityPolicyViolationEvent) {
+    const isOurFrame = e.blockedURI === "blob" || e.blockedURI === "data" || pdfUrl.startsWith(e.blockedURI);
+    if (!isOurFrame || !e.violatedDirective.startsWith("frame-src")) return;
+    console.warn("[Fulfilment] print: label frame blocked by CSP:", e.violatedDirective, e.blockedURI);
+    settle(
+      false,
+      `Blocked by this site's security policy (CSP ${e.violatedDirective}). ` +
+      `The label PDF can't be loaded into the print frame, so nothing reaches the printer. ` +
+      `This is a server config fault, not a printer fault — the same failure hits every order.`,
+    );
+  }
+  document.addEventListener("securitypolicyviolation", handleCspViolation);
+
+  function settle(success: boolean, reason = "The print job did not complete.") {
     if (settled) return;
     settled = true;
+    document.removeEventListener("securitypolicyviolation", handleCspViolation);
     window.removeEventListener("afterprint", handleAfterPrint);
     clearTimeout(fallbackTimer);
-    // Hand the label back to the caller so it can be reopened without
-    // re-booking, then release it once the browser has finished with it.
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
     // The print dialog steals focus from the scan input — and a barcode
     // scanner's keystrokes would land in the dialog, not the pick list.
     // Put focus back the moment printing ends, however it ended.
@@ -722,7 +760,7 @@ function printLabel(
       const input = document.querySelector<HTMLInputElement>('input[data-scan-input="true"]');
       input?.focus();
     });
-    if (success) onPrinted(); else onPrintFailed();
+    if (success) onPrinted(); else onPrintFailed(reason);
   }
 
   function handleAfterPrint() { settle(true); }
@@ -730,9 +768,12 @@ function printLabel(
   // Backstop: if the PDF never loads into the frame at all, fail loudly.
   // (Once print() has been dispatched cleanly this timer is replaced by the
   // optimistic one below, so this only covers the pre-print stages.)
-  let fallbackTimer = setTimeout(() => settle(false), 60_000);
+  let fallbackTimer = setTimeout(
+    () => settle(false, "The label PDF never finished loading into the print frame (60s). The label reached the browser, so this is the frame or the PDF viewer, not APC."),
+    60_000,
+  );
 
-  iframe.onerror = () => settle(false);
+  iframe.onerror = () => settle(false, "The print frame could not load the label PDF.");
 
   iframe.onload = () => {
     // Chrome's PDF viewer swallows a print() that arrives the moment the
@@ -749,23 +790,54 @@ function printLabel(
         // dismissing the dialog counted as done.) The cost when the printer
         // itself jams is a false "printed" — the Reprint Label button is
         // the recovery, and the waybill is correct either way.
+        // The label route answers failures with a JSON body and a 5xx. The
+        // frame renders that quite happily, so without this check a dead APC
+        // would print its error message onto a thermal label and report
+        // success. Same-origin means we can actually look — which the old
+        // blob: path could not do.
+        try {
+          const doc = iframe.contentDocument;
+          if (doc && doc.contentType && doc.contentType !== "application/pdf") {
+            const body = (doc.body?.innerText ?? "").trim().slice(0, 300);
+            let detail = body;
+            try { detail = JSON.parse(body).error ?? body; } catch { /* not JSON — use the raw text */ }
+            settle(false, `APC did not return a label: ${detail || `the server replied with ${doc.contentType}`}`);
+            return;
+          }
+        } catch {
+          // contentDocument is opaque for Chrome's PDF viewer on some
+          // versions. That is the SUCCESS shape, not a failure — fall through
+          // and print.
+        }
+
         window.addEventListener("afterprint", handleAfterPrint, { once: true });
-        try { iframe.contentWindow?.addEventListener("afterprint", handleAfterPrint, { once: true }); } catch { /* cross-origin frame — parent listener still applies */ }
-        iframe.contentWindow?.print();
+        try { iframe.contentWindow?.addEventListener("afterprint", handleAfterPrint, { once: true }); } catch { /* opaque PDF frame — parent listener still applies */ }
+        if (iframe.contentWindow == null) {
+          // Not a throw, so it would otherwise settle as an optimistic
+          // success — a "Label printed" with an empty tray.
+          settle(false, "The print frame had no document to print. Nothing was sent to the printer.");
+          return;
+        }
+        iframe.contentWindow.print();
         clearTimeout(fallbackTimer);
         fallbackTimer = setTimeout(() => settle(true), 5_000);
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
         console.warn("[Fulfilment] Print failed:", err);
-        settle(false);
+        settle(
+          false,
+          err instanceof DOMException && err.name === "SecurityError"
+            ? `The browser refused access to the print frame (${msg}). This normally means the label PDF was blocked before it loaded — check the console for a Content-Security-Policy violation.`
+            : `The browser rejected the print call: ${msg}`,
+        );
       }
     }, 800);
   };
 
   // Point the frame straight at the PDF. Do NOT wrap it in HTML with an
-  // <embed src="data:…"> — Chrome blocks the PDF plugin for data: URLs and
-  // the print preview comes out blank.
-  iframe.src = blobUrl;
-  return blobUrl;
+  // <embed src="…"> — Chrome blocks the PDF plugin for data: URLs and the
+  // print preview comes out blank.
+  iframe.src = pdfUrl;
 }
 
 type PrintStatus = "idle" | "printing" | "done" | "failed";
@@ -1056,6 +1128,27 @@ export default function Fulfilment() {
   const [skippedIds, setSkippedIds] = useState<Set<number>>(new Set());
   const [shipment, setShipment] = useState<ShipmentResult | null>(null);
   const [printStatus, setPrintStatus] = useState<PrintStatus>("idle");
+  // Why the last print failed, in words the bench can act on. Cleared whenever
+  // a print starts or succeeds, so a stale reason can never sit under a
+  // later, different failure.
+  const [printError, setPrintError] = useState<string | null>(null);
+
+  function startPrinting() {
+    setPrintStatus("printing");
+    setPrintError(null);
+  }
+  function printSucceeded() {
+    setPrintStatus("done");
+    setPrintError(null);
+  }
+  function printFailed(reason: string) {
+    setPrintStatus("failed");
+    setPrintError(reason);
+  }
+  function resetPrint() {
+    resetPrint();
+    setPrintError(null);
+  }
   const [shipmentError, setShipmentError] = useState<string | null>(null);
   const [creatingShipment, setCreatingShipment] = useState(false);
   const [completing, setCompleting] = useState(false);
@@ -1511,7 +1604,7 @@ export default function Fulfilment() {
         // Background print the next order's label so it's done before the operator advances
         prePrintRef.current.set(nextOrderId, "printing");
         printLabel(
-          result.labelPdfBase64,
+          labelUrl(result.consignmentNumber, 1),
           () => prePrintRef.current.set(nextOrderId, "done"),
           () => prePrintRef.current.set(nextOrderId, "failed"),
           "label-preprint-frame",
@@ -1560,7 +1653,7 @@ export default function Fulfilment() {
     if (barcodeRef.current) barcodeRef.current.value = ""; // clear the scan field for the new order
     setShipment(null);
     setShipmentError(null);
-    setPrintStatus("idle");
+    resetPrint();
     setCompletionError(null);
     setConsignmentAction("idle");
     setConsignmentActionError(null);
@@ -1643,15 +1736,11 @@ export default function Fulfilment() {
 
       if (prePrinted === "done") {
         // Label already printed in background — no need to print again
-        setPrintStatus("done");
+        printSucceeded();
       } else {
-        // Print now (either first time or pre-print failed)
-        setPrintStatus("printing");
-        printLabel(
-          result.labelPdfBase64,
-          () => setPrintStatus("done"),
-          () => setPrintStatus("failed"),
-        );
+        // Print now (either first time or pre-print failed). Every piece, each
+        // fetched live at the moment it prints.
+        printAllLabels(result.consignmentNumber, result.pieceCount ?? 1);
       }
 
       // Pre-queue AND background-print the next unfulfilled order's label.
@@ -1666,7 +1755,9 @@ export default function Fulfilment() {
       }
     } catch (err: any) {
       setShipmentError(err.message ?? "Failed to create APC shipment");
-      setPrintStatus("failed");
+      // No label ever reached the browser — the APC error above is the cause,
+      // so don't let the print strip invent a second, vaguer one.
+      printFailed(err.message ?? "No label was produced, because the consignment step failed.");
     } finally {
       setCreatingShipment(false);
     }
@@ -1971,7 +2062,7 @@ export default function Fulfilment() {
     setView("list");
     setActiveOrder(null);
     setShipment(null);
-    setPrintStatus("idle");
+    resetPrint();
     setShipmentError(null);
     setCompletionError(null);
   }
@@ -1989,7 +2080,7 @@ export default function Fulfilment() {
       const res = await fetch(`${BASE}/api/fulfilment/reconcile-label?orderName=${encodeURIComponent(activeOrder.name)}`, { credentials: "include" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Label fetch failed");
-      printAllLabels(data.labelPdfs as string[]);
+      printAllLabels(data.waybill as string, (data.labelPdfs as string[]).length);
       toast({
         title: `Printing label for ${activeOrder.name}`,
         description: data.duplicateCount > 1
@@ -2003,23 +2094,27 @@ export default function Fulfilment() {
     }
   }
 
-  function printAllLabels(pdfs: string[]) {
-    if (pdfs.length === 0) return;
-    setPrintStatus("printing");
+  /** Print every piece of a consignment, each fetched live from APC at the
+   *  moment it prints — so a consignment amended mid-wave prints as amended. */
+  function printAllLabels(waybill: string, pieces: number) {
+    const count = Math.max(1, pieces);
+    startPrinting();
 
     function printNext(index: number) {
-      if (index >= pdfs.length) {
-        setPrintStatus("done");
+      if (index > count) {
+        printSucceeded();
         return;
       }
       printLabel(
-        pdfs[index],
+        labelUrl(waybill, index),
         () => printNext(index + 1),
-        () => setPrintStatus("failed"),
+        // Say which parcel of a multi-box consignment stalled — "label 2 of 3"
+        // is the difference between rebinning one label and redoing the box.
+        reason => printFailed(count > 1 ? `Label ${index} of ${count}: ${reason}` : reason),
       );
     }
 
-    printNext(0);
+    printNext(1);
   }
 
   async function handleAddExtraBox() {
@@ -2029,7 +2124,10 @@ export default function Fulfilment() {
     setConsignmentActionError(null);
     try {
       const result = await addExtraBox(shipment.consignmentNumber);
-      printAllLabels(result.labelPdfs);
+      // The consignment now has more pieces than when it was opened — carry
+      // that forward so a later Reprint doesn't fall back to the old count.
+      setShipment(prev => prev ? { ...prev, pieceCount: result.pieceCount } : prev);
+      printAllLabels(shipment.consignmentNumber, result.pieceCount);
       if (result.warnings && result.warnings.length > 0) {
         setShipment(prev => prev ? { ...prev, warnings: [...(prev.warnings ?? []), ...result.warnings!] } : prev);
       }
@@ -2046,8 +2144,12 @@ export default function Fulfilment() {
     setConsignmentAction("reprinting");
     setConsignmentActionError(null);
     try {
+      // Re-reads the consignment from APC first, so a reprint after an
+      // amendment prints the CURRENT number of labels, not the count from
+      // when the order was opened.
       const result = await reprintLabel(shipment.consignmentNumber);
-      printAllLabels(result.labelPdfs);
+      setShipment(prev => prev ? { ...prev, pieceCount: result.pieceCount } : prev);
+      printAllLabels(shipment.consignmentNumber, result.pieceCount);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setConsignmentActionError(`Reprint failed: ${msg}`);
@@ -2067,7 +2169,7 @@ export default function Fulfilment() {
       setTimeout(() => {
         setCancelSuccess(false);
         setShipment(null);
-        setPrintStatus("idle");
+        resetPrint();
         setActiveOrder(null);
         setView("list");
         refetch();
@@ -2565,33 +2667,37 @@ export default function Fulfilment() {
                     <XCircle className="w-4 h-4" /> Print failed
                   </span>
                   <button
-                    onClick={() => {
-                      setPrintStatus("printing");
-                      printLabel(
-                        shipment.labelPdfBase64,
-                        () => setPrintStatus("done"),
-                        () => setPrintStatus("failed"),
-                      );
-                    }}
+                    onClick={() => printAllLabels(shipment.consignmentNumber, shipment.pieceCount ?? 1)}
                     className="text-xs px-2 py-1 bg-destructive/10 hover:bg-destructive/20 text-destructive rounded-lg flex items-center gap-1 transition-colors"
                   >
                     <RotateCcw className="w-3 h-3" /> Retry print
                   </button>
                   <button
-                    onClick={() => setPrintStatus("done")}
+                    onClick={printSucceeded}
                     className="text-xs px-2 py-1 bg-secondary hover:bg-secondary/80 rounded-lg flex items-center gap-1 transition-colors"
                     title="Manually mark as printed if the label came out correctly"
                   >
                     Mark printed
                   </button>
                 </div>
+                {/* The reason, verbatim. A packer who can read "blocked by the
+                    site's security policy" stops re-pressing Retry and calls
+                    it in; "Print failed" alone taught them to keep trying. */}
+                {printError && (
+                  <p className="text-xs text-destructive/90 max-w-md text-right leading-snug">{printError}</p>
+                )}
                 <a href="/settings" className="text-xs text-muted-foreground underline hover:text-foreground transition-colors">Check printer setup</a>
               </div>
             )}
             {printStatus === "failed" && !shipment && (
-              <span className="flex items-center gap-1.5 text-xs text-destructive">
-                <XCircle className="w-4 h-4" /> Print failed
-              </span>
+              <div className="flex flex-col items-end gap-1">
+                <span className="flex items-center gap-1.5 text-xs text-destructive">
+                  <XCircle className="w-4 h-4" /> Print failed
+                </span>
+                {printError && (
+                  <p className="text-xs text-destructive/90 max-w-md text-right leading-snug">{printError}</p>
+                )}
+              </div>
             )}
           </div>
         </div>
