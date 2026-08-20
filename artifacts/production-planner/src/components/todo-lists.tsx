@@ -22,7 +22,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
-  ArrowLeft, CalendarDays, Check, CheckCircle2, ChevronRight, ClipboardList,
+  ArrowLeft, CalendarDays, Check, CheckCircle2, ChevronRight, Circle, ClipboardList,
   ExternalLink, Flag, Loader2, MessageSquare, Pencil, Plus, RotateCcw,
   Send, Trash2, X,
 } from "lucide-react";
@@ -761,6 +761,100 @@ function TodoEditor({ meId, canManage, defaultAssigneeId, task, onDone }: {
         {task ? "Save changes" : "Add it"}
       </button>
     </form>
+  );
+}
+
+// ── Personal to-dos strip for the daily checklists ─────────────────────────
+// Sits at the TOP of a station's opening/cleaning/closing checklist: the
+// logged-in user's own tasks, right where they already look every day —
+// no hunting for them. Shows tasks actionable TODAY: anything open except
+// tasks scheduled ("do it on") for a future day. Each row ticks off in
+// place, checklist-style; the header opens the full sheet.
+
+export function PersonalTodosStrip() {
+  const { state } = useAuth();
+  const me = state.status === "authenticated" ? state.user : null;
+  const qc = useQueryClient();
+  const [sheetOpen, setSheetOpen] = useState(false);
+
+  const { data } = useQuery({
+    queryKey: ["todos", "mine"],
+    queryFn: () => fetchList("mine"),
+    enabled: !!me,
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
+  });
+
+  const todayIso = format(new Date(), "yyyy-MM-dd");
+  const todays = (data?.open ?? []).filter(t => !t.scheduled_for || t.scheduled_for <= todayIso);
+
+  const completeMut = useMutation({
+    mutationFn: (id: number) => post(`/api/todos/${id}/complete`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["todos"] }),
+    onError: (e: Error) => toast({ title: "Couldn't mark it done", description: e.message, variant: "destructive" }),
+  });
+
+  if (!me || todays.length === 0) {
+    // Even with nothing due, managers/users may want the sheet from here —
+    // but an empty band would be noise on a busy checklist. Render nothing.
+    return null;
+  }
+
+  return (
+    <div className="rounded-xl border-2 border-primary/30 bg-primary/5 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setSheetOpen(true)}
+        className="w-full px-5 py-3 flex items-center gap-2 text-left hover:bg-primary/10 transition-colors"
+      >
+        <ClipboardList className="w-6 h-6 text-primary flex-shrink-0" />
+        <span className="font-display font-bold text-lg md:text-xl">Your to-dos today</span>
+        <span className="text-base font-semibold text-muted-foreground">· {me.name.split(" ")[0]} only</span>
+        <span className="ml-auto text-base font-bold text-primary flex items-center gap-1">
+          View all <ChevronRight className="w-5 h-5" />
+        </span>
+      </button>
+      <div className="px-3 pb-3 space-y-2">
+        {todays.map(task => {
+          const meta = PRIORITY_META[task.priority];
+          return (
+            <div key={task.id} className="rounded-xl bg-card border border-border flex items-stretch overflow-hidden">
+              <div className={cn("w-2 flex-shrink-0", meta.bar)} />
+              <button
+                type="button"
+                onClick={() => completeMut.mutate(task.id)}
+                disabled={completeMut.isPending}
+                className="flex-shrink-0 w-14 flex items-center justify-center text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
+                title="Mark it done"
+                aria-label={`Mark "${task.title}" done`}
+              >
+                {completeMut.isPending && completeMut.variables === task.id
+                  ? <Loader2 className="w-7 h-7 animate-spin" />
+                  : <Circle className="w-8 h-8" strokeWidth={2.5} />}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSheetOpen(true)}
+                className="flex-1 min-w-0 text-left py-3 pr-4 hover:bg-secondary/30 transition-colors"
+              >
+                <p className="text-lg md:text-xl font-bold leading-snug break-words">{task.title}</p>
+                <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                  {task.priority !== "normal" && <PriorityChip p={task.priority} />}
+                  {task.due_date && <DateChip label="Due" iso={task.due_date} overdue={isOverdue(task)} />}
+                  {task.created_by_name && task.created_by !== task.assignee_id && (
+                    <span className="text-sm text-muted-foreground font-medium">from {task.created_by_name}</span>
+                  )}
+                  {!task.acknowledged_at && task.created_by !== task.assignee_id && (
+                    <span className="text-sm font-bold text-amber-600 dark:text-amber-400">new</span>
+                  )}
+                </div>
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <TodoSheet open={sheetOpen} onClose={() => setSheetOpen(false)} />
+    </div>
   );
 }
 

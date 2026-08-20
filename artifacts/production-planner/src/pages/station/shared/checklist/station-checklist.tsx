@@ -6,6 +6,7 @@ import {
   BookOpen,
 } from "lucide-react";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
+import { PersonalTodosStrip } from "@/components/todo-lists";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
@@ -312,6 +313,11 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
 
   return (
     <div className="space-y-4">
+      {/* The logged-in user's own tasks, surfaced where they already look
+          every day. Per-user, not per-station — a different login on the
+          same iPad sees their own list here. */}
+      <PersonalTodosStrip />
+
       {/* Progress header */}
       <div className="bg-card border border-border rounded-xl px-5 py-4">
         <div className="flex items-center justify-between mb-2">
