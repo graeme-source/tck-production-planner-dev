@@ -3,7 +3,9 @@ import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batch
 import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as drizzleSum, ne, isNotNull, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
-import { requireManagerOrAdmin } from "../middleware/roles";
+// Aliased: this file has its own in-handler requireManagerOrAdmin() helper
+// (returns boolean, used mid-handler) — the middleware form guards routes.
+import { requireManagerOrAdmin as requireManagerOrAdminMw } from "../middleware/roles";
 import * as z from "zod";
 import { resolveRecipeIngredients, resolveSubRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
 import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag, type ProductCount } from "../services/shopify";
@@ -3258,7 +3260,7 @@ router.patch("/:id/items/:itemId", validate(PatchItemBody), async (req, res) => 
   res.json(mapItem(updated));
 });
 
-router.delete("/:id", requireManagerOrAdmin, async (req, res) => {
+router.delete("/:id", requireManagerOrAdminMw, async (req, res) => {
   const id = Number(req.params.id);
   // Queued test production that landed on this plan goes back to 'queued'
   // so it can land again on the replacement plan (plan_id would be nulled
