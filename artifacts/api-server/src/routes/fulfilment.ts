@@ -1889,6 +1889,11 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
           parcels: [{ weight: declaredWeightFor(order, serviceCode, { smallWeekday, largeWeekday, smallFriday, largeFriday }) }],
           reference,
           specialInstructions,
+          // Nothing is printed here — the packing screen fetches each label
+          // live when it prints it. Without this, every booking pays
+          // fetchLabel's retry loop (up to ~12s) for a PDF that is discarded,
+          // which is what made a 24-order batch take five minutes.
+          skipLabel: true,
           ...(apiBase ? { apiBase } : {}),
         });
 
