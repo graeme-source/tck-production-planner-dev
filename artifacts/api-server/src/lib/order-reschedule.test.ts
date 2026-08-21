@@ -66,6 +66,24 @@ describe("rescheduleTags", () => {
     expect(after).toContain("Small Box");
   });
 
+  it("ADDS the delayed tag so the order is findable later", () => {
+    const r = rescheduleTags(TAGS, "2026-08-22", "2026-08-25");
+    expect(r.added).toContain("delayed");
+    expect(r.after.split(", ")).toContain("delayed");
+  });
+
+  it("does not add delayed twice if it is already there", () => {
+    const once = rescheduleTags(TAGS, "2026-08-22", "2026-08-25").after;
+    const twice = rescheduleTags(once, "2026-08-25", "2026-08-26");
+    expect(twice.after.split(", ").filter(t => t === "delayed")).toHaveLength(1);
+  });
+
+  it("REMOVES the apc-no-service mark — it moves to a day APC does serve", () => {
+    const r = rescheduleTags("2026-08-22, dispatch, Saturday, apc-no-service", "2026-08-22", "2026-08-25");
+    expect(r.after.split(", ")).not.toContain("apc-no-service");
+    expect(r.removed).toContain("apc-no-service");
+  });
+
   it("REMOVES the dispatch tag — the order goes back to the backlog", () => {
     // Re-tagged on the Monday by the normal morning process; leaving it on
     // would drop the order into a dispatch wave it is no longer part of.
@@ -82,7 +100,8 @@ describe("rescheduleTags", () => {
   it("does not invent a weekday tag when the order never had one", () => {
     const r = rescheduleTags("2026-08-22, dispatch, Small Box", "2026-08-22", "2026-08-25");
     expect(r.after.split(", ")).not.toContain("Tuesday");
-    expect(r.added).toEqual(["2026-08-25"]);
+    // The new date and the delayed mark — but no weekday tag conjured up.
+    expect(r.added).toEqual(["2026-08-25", "delayed"]);
   });
 
   it("is idempotent — running it twice does not duplicate tags", () => {

@@ -65,10 +65,16 @@ export interface ApcShipmentRequest {
   specialInstructions?: string;
   collectionDate?: Date;
   apiBase?: string;
+  /** Skip fetching the label PDF after booking. The fetch retries for up to
+   *  ~12s when APC hasn't rendered the label yet, which dominates the cost of
+   *  booking. Set this wherever the label isn't about to be printed — batch
+   *  booking pulls each label live at print time instead. */
+  skipLabel?: boolean;
 }
 
 export interface ApcShipmentResult {
   consignmentNumber: string;
+  /** Empty when the caller asked to skip the label fetch — see `skipLabel`. */
   labelPdfBase64: string;
   trackingUrl?: string;
   warnings?: string[];
@@ -546,13 +552,21 @@ export async function createShipment(req: ApcShipmentRequest): Promise<ApcShipme
 
   const { waybill, warnings } = await placeOrder(req);
 
-  const labels = await fetchLabel(waybill, apiBase);
+  // Fetching the label is the SLOW half of booking: APC often isn't ready to
+  // render one the instant the order is placed, so fetchLabel retries — up to
+  // five attempts three seconds apart. That is fine when the label is about to
+  // be printed, and pure waste when it isn't.
+  //
+  // Batch booking doesn't print anything; the packing screen pulls each label
+  // live at print time. It was still paying that retry loop per order, which
+  // is why booking 17 consignments took over five minutes (2026-08-21).
+  const labels = req.skipLabel ? [] : await fetchLabel(waybill, apiBase);
 
   const trackingUrl = `https://apc.hypaship.com/tracking?waybill=${waybill}`;
 
   return {
     consignmentNumber: waybill,
-    labelPdfBase64: labels[0],
+    labelPdfBase64: labels[0] ?? "",
     trackingUrl,
     ...(warnings.length > 0 ? { warnings } : {}),
   };

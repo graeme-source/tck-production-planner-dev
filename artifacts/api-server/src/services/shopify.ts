@@ -985,6 +985,23 @@ export async function addTagsToOrder(orderId: number, currentTags: string, newTa
   return updated;
 }
 
+/** Remove one tag from an order, leaving the rest. Returns the updated tag
+ *  string, or null when the tag wasn't there (no write is made). Matching is
+ *  case-insensitive, because tags arrive from Shopify however they were
+ *  typed. */
+export async function removeTagFromOrder(orderId: number, currentTags: string, tag: string): Promise<string | null> {
+  const existing = currentTags.split(",").map(t => t.trim()).filter(Boolean);
+  const filtered = existing.filter(t => t.toLowerCase() !== tag.toLowerCase());
+  if (filtered.length === existing.length) return null;
+  const updated = filtered.join(", ");
+  if (shouldSkipSideEffect()) {
+    logSkippedSideEffect("shopify.removeTagFromOrder", { orderId, tag });
+    return updated;
+  }
+  await shopifyPut(`/orders/${orderId}.json`, { order: { id: orderId, tags: updated } });
+  return updated;
+}
+
 /** Replace a specific tag on an order. Removes oldTag and adds newTag. */
 export async function replaceTagOnOrder(orderId: number, currentTags: string, oldTag: string, newTag: string): Promise<string> {
   const existing = currentTags.split(",").map(t => t.trim()).filter(Boolean);
@@ -1009,7 +1026,13 @@ export async function replaceTagOnOrder(orderId: number, currentTags: string, ol
  *  myshopify domain redirects to whichever admin host is current, so it keeps
  *  working when Shopify moves the console again. */
 export function shopifyAdminOrderUrl(orderId: number): string {
-  return `https://${STORE_DOMAIN}/admin/orders/${orderId}`;
+  return `${shopifyAdminOrderBase()}${orderId}`;
+}
+
+/** The prefix an order id is appended to. Handed to the browser once, so a
+ *  page rendering hundreds of order rows doesn't need a URL per row. */
+export function shopifyAdminOrderBase(): string {
+  return `https://${STORE_DOMAIN}/admin/orders/`;
 }
 
 export interface ShopifyNoteAttribute { name: string; value: string }

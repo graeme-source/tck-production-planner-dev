@@ -2,13 +2,14 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db, skuLocationsTable, skuBarcodesTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable, apcConsignmentsTable, pagePermissionsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
-import { shopifyAdminOrderUrl, getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
+import { removeTagFromOrder, shopifyAdminOrderUrl, shopifyAdminOrderBase, getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
 import { nextAvailableDeliveryDate, rescheduleTags, withDeliveryDate, rescheduleEmailText, rescheduleEmailHtml, friendlyDate, firstNameOf, toZapietDate } from "../lib/order-reschedule";
 import { validate } from "../middleware/validate";
 import { sendEmail } from "../lib/email";
 import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService, lookupOrderByReference, lookupOrdersByReference, lookupOrderByWaybill, parseApcBarcode, waybillCore, apcTrackingUrl, type ApcOrderLookup } from "../services/apc";
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
 import { declaredParcelWeightKg, isLargeBox } from "../lib/parcel-weight";
+import { APC_NO_SERVICE_TAG, isNoServiceFailure } from "../lib/apc-failure-tags";
 import { sql } from "drizzle-orm";
 
 const router = Router();
@@ -1376,6 +1377,9 @@ router.get("/shipments/:waybill/label.pdf", requireFulfilmentAccess, async (req:
 // Two steps, always: preview computes and shows, apply writes. Nothing is
 // written or emailed by the preview.
 
+/** Copied on every reschedule email, so a send that fails is noticed. */
+const RESCHEDULE_BCC = "graeme@thecalzonekitchen.co.uk";
+
 const RescheduleBody = z.object({
   /** Target delivery date, YYYY-MM-DD. Defaults to the next available. */
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD"),
@@ -1481,7 +1485,16 @@ router.post("/orders/:orderId/reschedule", requireManagerForCourierActions, vali
     let emailError: string | null = null;
     if (sendCustomerEmail && plan.email.to) {
       try {
-        await sendEmail({ to: plan.email.to, subject: plan.email.subject, text: plan.email.body, html: plan.email.html });
+        // BCC the founder: a customer-facing send that silently fails looks
+        // exactly like one that worked, and this promises someone a date.
+        // A copy landing in a real inbox is the only proof it went.
+        await sendEmail({
+          to: plan.email.to,
+          bcc: [RESCHEDULE_BCC],
+          subject: plan.email.subject,
+          text: plan.email.body,
+          html: plan.email.html,
+        });
         emailed = true;
       } catch (mailErr) {
         emailError = mailErr instanceof Error ? mailErr.message : String(mailErr);
@@ -1891,6 +1904,14 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
           bookedBy,
         });
 
+        // Booked, so any earlier coverage refusal is history — clear the mark
+        // rather than leave it to poison later searches. No-ops when absent.
+        try {
+          await removeTagFromOrder(order.id, order.tags, APC_NO_SERVICE_TAG);
+        } catch (tagErr) {
+          console.warn(`[Fulfilment] could not clear ${APC_NO_SERVICE_TAG} from ${order.name}:`, tagErr instanceof Error ? tagErr.message : tagErr);
+        }
+
         results.push({
           orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "booked",
           waybill: result.consignmentNumber, serviceCode, reference,
@@ -1899,7 +1920,29 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
       } catch (bookErr) {
         const msg = bookErr instanceof Error ? bookErr.message : String(bookErr);
         console.error(`[Fulfilment] batch-book FAILED for ${order.name}:`, msg);
-        results.push({ orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "failed", reason: msg });
+
+        // Mark the order in Shopify when the courier is refusing on COVERAGE
+        // grounds, so it can be searched for and segmented there rather than
+        // only living in a batch report that disappears with the dialog.
+        // Narrow on purpose: an auth outage or a missing postcode must never
+        // leave a permanent "we can't deliver here" mark on the order.
+        let taggedNoService = false;
+        if (isNoServiceFailure(msg)) {
+          try {
+            await addTagToOrder(order.id, order.tags, APC_NO_SERVICE_TAG);
+            taggedNoService = true;
+          } catch (tagErr) {
+            // Tagging is a convenience; never let it turn a reported failure
+            // into an unreported one.
+            console.warn(`[Fulfilment] could not tag ${order.name} ${APC_NO_SERVICE_TAG}:`, tagErr instanceof Error ? tagErr.message : tagErr);
+          }
+        }
+
+        results.push({
+          orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id),
+          status: "failed", reason: msg,
+          ...(taggedNoService ? { taggedNoService } : {}),
+        });
       }
     }
 
@@ -2983,6 +3026,11 @@ router.get("/config-status", requireFulfilmentAccess, async (_req: Request, res:
       bookOnOpen: bookOnOpenSetting !== "false",
       testMode: isTestMode,
       trainingCredentialsMissing: isTestMode && !trainingCredentialsConfigured(),
+      // Base for Shopify admin deep links, so every order number on the page
+      // can open the order without each list having to carry its own URL.
+      // Sent once here rather than per order: the packing screen renders
+      // several hundred order rows in a wave.
+      shopifyAdminOrderBase: shopifyAdminOrderBase(),
       serviceCodes: {
         smallWeekday: smallWeekday ?? "",
         largeWeekday: largeWeekday ?? "",

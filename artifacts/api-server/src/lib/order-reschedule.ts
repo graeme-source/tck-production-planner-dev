@@ -19,6 +19,8 @@
  * touching Shopify. The writes themselves live in the route.
  */
 
+import { APC_NO_SERVICE_TAG } from "./apc-failure-tags";
+
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
 
 /** `YYYY-MM-DD` — the tag format, and how dates are passed around internally. */
@@ -79,6 +81,18 @@ export interface TagChange {
  *  order back in a dispatch wave it isn't part of any more. */
 const DISPATCH_TAG = "dispatch";
 
+/** Also cleared on reschedule: the order is moving to a day the courier does
+ *  serve, so a "no service" mark would be stale the moment this runs. Kept in
+ *  sync with lib/apc-failure-tags.ts. */
+const NO_SERVICE_TAG = APC_NO_SERVICE_TAG;
+
+/** Added on reschedule, so a delayed order is findable in Shopify long after
+ *  the batch report has gone — for spotting repeat offenders, and for anyone
+ *  answering "why is this arriving Tuesday?" (Graeme, 2026-08-21). Unlike the
+ *  no-service mark this is a HISTORICAL fact and is deliberately never
+ *  removed: the order really was delayed, whatever happens next. */
+export const DELAYED_TAG = "delayed";
+
 /**
  * Swap the date tag and the weekday-name tag, drop the dispatch tag, and leave
  * every other tag alone.
@@ -101,7 +115,7 @@ export function rescheduleTags(currentTags: string, fromTagDate: string, toTagDa
       removed.push(tag);
       continue;
     }
-    if (tag.toLowerCase() === DISPATCH_TAG) {
+    if (tag.toLowerCase() === DISPATCH_TAG || tag.toLowerCase() === NO_SERVICE_TAG) {
       removed.push(tag);
       continue;
     }
@@ -113,6 +127,7 @@ export function rescheduleTags(currentTags: string, fromTagDate: string, toTagDa
   }
 
   if (!out.includes(toTagDate)) { out.push(toTagDate); added.push(toTagDate); }
+  if (!out.some(t => t.toLowerCase() === DELAYED_TAG)) { out.push(DELAYED_TAG); added.push(DELAYED_TAG); }
   // Only restore a weekday tag if the order carried one to begin with.
   if (removed.some(t => t.toLowerCase() === oldDay.toLowerCase()) && !out.some(t => t.toLowerCase() === newDay.toLowerCase())) {
     out.push(newDay);

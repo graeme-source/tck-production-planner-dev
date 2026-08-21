@@ -62,6 +62,9 @@ interface BookResult {
   reference?: string;
   reason?: string;
   recordError?: string;
+  /** Set when APC refused on coverage grounds and the order was marked in
+   *  Shopify so it can be found there later. */
+  taggedNoService?: boolean;
 }
 
 interface BookResponse {
@@ -204,6 +207,18 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
     setSelected(new Set(preflight!.ready.slice(0, n).map(o => o.orderId)));
   }
 
+  /** Tick every ready order of a box size — so large boxes can be booked
+   *  first as a trial run, then the smalls (Graeme, 2026-08-21). Wholesale
+   *  counts as large: it books on the large service code. */
+  function selectBySize(size: "small" | "large") {
+    const match = (o: PreflightOrder) => size === "small"
+      ? o.boxCategory === "small box"
+      : o.boxCategory === "large box" || o.boxCategory === "wholesale";
+    setSelected(new Set(preflight!.ready.filter(match).map(o => o.orderId)));
+  }
+  const readySmallCount = preflight ? preflight.ready.filter(o => o.boxCategory === "small box").length : 0;
+  const readyLargeCount = preflight ? preflight.ready.filter(o => o.boxCategory === "large box" || o.boxCategory === "wholesale").length : 0;
+
   async function book() {
     if (toBook.length === 0) return;
     setStage("booking");
@@ -247,8 +262,18 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
   );
 
   return (
-    <Dialog open onOpenChange={(v) => { if (!v && stage !== "booking") onClose(); }}>
-      <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
+    <Dialog open onOpenChange={(v) => { if (!v && stage !== "booking" && !rescheduling) onClose(); }}>
+      <DialogContent
+        className="max-w-2xl max-h-[88vh] overflow-y-auto"
+        // The reschedule dialog renders over this one. Radix decides
+        // "clicked outside" on POINTERDOWN, which fires before click — so
+        // pressing a button in the child dialog tore this one down, unmounting
+        // the child before its click handler ran. The button looked like it
+        // did nothing because it genuinely never fired (2026-08-21, #133063).
+        onPointerDownOutside={e => { if (rescheduling) e.preventDefault(); }}
+        onInteractOutside={e => { if (rescheduling) e.preventDefault(); }}
+        onEscapeKeyDown={e => { if (rescheduling) e.preventDefault(); }}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <PackageCheck className="w-5 h-5 text-primary" /> Book APC consignments — {tag}
@@ -281,12 +306,27 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
             {preflight.ready.length > 0 && (
               <div className="flex items-center gap-2 flex-wrap text-sm">
                 <span className="text-muted-foreground">Quick pick:</span>
-                {[5, 10, 15, 25].map(quickPick)}
+                {[5].map(quickPick)}
                 <button
                   onClick={() => setSelected(new Set(preflight.ready.map(o => o.orderId)))}
                   className="px-2.5 py-1 rounded-lg text-xs font-medium border border-border hover:bg-secondary/60"
                 >
                   All ready ({preflight.ready.length})
+                </button>
+                <button
+                  onClick={() => selectBySize("small")}
+                  disabled={readySmallCount === 0}
+                  className="px-2.5 py-1 rounded-lg text-xs font-medium border border-border hover:bg-secondary/60 disabled:opacity-40"
+                >
+                  Small boxes ({readySmallCount})
+                </button>
+                <button
+                  onClick={() => selectBySize("large")}
+                  disabled={readyLargeCount === 0}
+                  className="px-2.5 py-1 rounded-lg text-xs font-medium border border-border hover:bg-secondary/60 disabled:opacity-40"
+                  title="Includes wholesale — they book on the large-box service code"
+                >
+                  Large boxes ({readyLargeCount})
                 </button>
                 <button
                   onClick={() => setSelected(new Set())}
@@ -425,6 +465,9 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
                     )}
                     {r.reason && <span className={cn("block text-xs", r.status === "failed" ? "text-destructive" : "text-muted-foreground")}>{r.reason}</span>}
                     {r.recordError && <span className="block text-xs text-red-600 font-semibold">NOT SAVED LOCALLY — write this number down</span>}
+                    {r.taggedNoService && (
+                      <span className="block text-xs text-muted-foreground">Tagged <code className="font-mono">apc-no-service</code> in Shopify</span>
+                    )}
                   </span>
                   {r.serviceCode && <span className="text-xs font-mono text-muted-foreground shrink-0">{r.serviceCode}</span>}
                   {/* A failure here is usually a postcode that genuinely can't
