@@ -779,8 +779,31 @@ router.get("/purchase-orders", async (req, res) => {
   const filter = req.query.filter as string | undefined;
   const planIdParam = req.query.planId as string | undefined;
   const planIdFilter = planIdParam ? Number(planIdParam) : null;
+  const idParam = req.query.id as string | undefined;
+  const idFilter = idParam ? Number(idParam) : null;
 
   let rows;
+  // Single-PO fetch by id — used by the deliveries page's "Edit order" deep
+  // link for POs with NO plan (queued test production creates those), which
+  // the plan-scoped fetch below can never return. Any status, any plan.
+  if (idFilter && Number.isFinite(idFilter)) {
+    rows = await db
+      .select({
+        id: purchaseOrdersTable.id,
+        supplierId: purchaseOrdersTable.supplierId,
+        supplierName: suppliersTable.name,
+        planId: purchaseOrdersTable.planId,
+        status: purchaseOrdersTable.status,
+        createdAt: purchaseOrdersTable.createdAt,
+        placedAt: purchaseOrdersTable.placedAt,
+        expectedDeliveryDate: purchaseOrdersTable.expectedDeliveryDate,
+        notes: purchaseOrdersTable.notes,
+        placedByUserId: purchaseOrdersTable.placedByUserId,
+      })
+      .from(purchaseOrdersTable)
+      .leftJoin(suppliersTable, eq(purchaseOrdersTable.supplierId, suppliersTable.id))
+      .where(eq(purchaseOrdersTable.id, idFilter));
+  } else
   // Plan-scoped fetch — used by the "Placed for this Plan" tab on the
   // orders page. Returns every PO linked to the plan regardless of when
   // it was placed, so yesterday's order doesn't disappear from the view.

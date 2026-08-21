@@ -1280,9 +1280,13 @@ export default function Deliveries() {
                           </button>
                         )
                       )}
-                      {canEdit && !isReceived && order.planId && (
+                      {/* No planId gate: POs from queued test production have
+                          no plan, and those were exactly the ones that needed
+                          editing and couldn't be (2026-08-21). The orders page
+                          fetches a plan-less PO by id. */}
+                      {canEdit && !isReceived && (
                         <button
-                          onClick={(e) => { e.stopPropagation(); navigate(`/orders?planId=${order.planId}&editPo=${order.id}`); }}
+                          onClick={(e) => { e.stopPropagation(); navigate(order.planId ? `/orders?planId=${order.planId}&editPo=${order.id}` : `/orders?editPo=${order.id}`); }}
                           className="px-3 py-2 rounded-xl border border-border text-sm font-medium hover:bg-secondary/50 transition-colors flex items-center gap-1.5"
                           title="Edit ordered quantities on the orders page (manager / admin)"
                         >
