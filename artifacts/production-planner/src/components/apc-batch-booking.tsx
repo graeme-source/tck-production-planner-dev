@@ -197,6 +197,18 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
     setSelected(new Set(preflight!.ready.slice(0, n).map(o => o.orderId)));
   }
 
+  /** Tick every ready order of a box size — so large boxes can be booked
+   *  first as a trial run, then the smalls (Graeme, 2026-08-21). Wholesale
+   *  counts as large: it books on the large service code. */
+  function selectBySize(size: "small" | "large") {
+    const match = (o: PreflightOrder) => size === "small"
+      ? o.boxCategory === "small box"
+      : o.boxCategory === "large box" || o.boxCategory === "wholesale";
+    setSelected(new Set(preflight!.ready.filter(match).map(o => o.orderId)));
+  }
+  const readySmallCount = preflight ? preflight.ready.filter(o => o.boxCategory === "small box").length : 0;
+  const readyLargeCount = preflight ? preflight.ready.filter(o => o.boxCategory === "large box" || o.boxCategory === "wholesale").length : 0;
+
   async function book() {
     if (toBook.length === 0) return;
     setStage("booking");
@@ -274,12 +286,27 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
             {preflight.ready.length > 0 && (
               <div className="flex items-center gap-2 flex-wrap text-sm">
                 <span className="text-muted-foreground">Quick pick:</span>
-                {[5, 10, 15, 25].map(quickPick)}
+                {[5].map(quickPick)}
                 <button
                   onClick={() => setSelected(new Set(preflight.ready.map(o => o.orderId)))}
                   className="px-2.5 py-1 rounded-lg text-xs font-medium border border-border hover:bg-secondary/60"
                 >
                   All ready ({preflight.ready.length})
+                </button>
+                <button
+                  onClick={() => selectBySize("small")}
+                  disabled={readySmallCount === 0}
+                  className="px-2.5 py-1 rounded-lg text-xs font-medium border border-border hover:bg-secondary/60 disabled:opacity-40"
+                >
+                  Small boxes ({readySmallCount})
+                </button>
+                <button
+                  onClick={() => selectBySize("large")}
+                  disabled={readyLargeCount === 0}
+                  className="px-2.5 py-1 rounded-lg text-xs font-medium border border-border hover:bg-secondary/60 disabled:opacity-40"
+                  title="Includes wholesale — they book on the large-box service code"
+                >
+                  Large boxes ({readyLargeCount})
                 </button>
                 <button
                   onClick={() => setSelected(new Set())}

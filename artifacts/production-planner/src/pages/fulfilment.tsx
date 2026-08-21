@@ -1553,6 +1553,16 @@ export default function Fulfilment() {
 
   const [showBatchBooking, setShowBatchBooking] = useState(false);
   const [rebookingWaybill, setRebookingWaybill] = useState<string | null>(null);
+  // Two-step confirm for the "mark cancelled in APC" escape hatch. The old
+  // single-click pill-styled button read as a STATUS chip ("Cancelled in
+  // APC") sitting next to "Label booked" — the team believed orders had been
+  // cancelled. Holds the waybill awaiting its confirming second tap.
+  const [confirmCancelWaybill, setConfirmCancelWaybill] = useState<string | null>(null);
+  useEffect(() => {
+    if (!confirmCancelWaybill) return undefined;
+    const t = setTimeout(() => setConfirmCancelWaybill(null), 5000);
+    return () => clearTimeout(t);
+  }, [confirmCancelWaybill]);
   const [bulkTagging, setBulkTagging] = useState(false);
   const [showBulkTagConfirm, setShowBulkTagConfirm] = useState(false);
   const [consignmentAction, setConsignmentAction] = useState<"idle" | "adding-box" | "reprinting" | "cancelling">("idle");
@@ -3507,53 +3517,83 @@ export default function Fulfilment() {
             {unfulfilledOrders.length} ready to pack &middot; {untaggedOrders.length} awaiting approval &middot; {progress ? progress.totalFulfilled : fulfilledOrders.length} fulfilled
           </p>
 
-          {/* Box categories — multi-select, so a wave can be Small + Large. */}
+          {/* ONE filter bar, two labelled segments that combine (AND):
+              Box × Label. "Small + Booked" = small boxes with labels booked.
+              Actions (Book APC labels, Tags & Products) live at the right so
+              they can't be mistaken for a third filter group. */}
           <div className="flex gap-2 flex-wrap items-center">
-            {([
-              { key: "small box" as const, label: "Small Box" },
-              { key: "large box" as const, label: "Large Box" },
-              { key: "wholesale" as const, label: "Wholesale" },
-              { key: "local delivery" as const, label: "Local Delivery" },
-              { key: "other" as const, label: "Other" },
-            ] as const).map(tab => {
-              const count = boxCounts[tab.key];
-              if (count === 0) return null;
-              const active = boxFilter.has(tab.key);
-              const tagged = taggedCounts[tab.key];
-              return (
-                <button
-                  key={tab.key}
-                  onClick={() => {
-                    const next = new Set(boxFilter);
-                    if (next.has(tab.key)) next.delete(tab.key); else next.add(tab.key);
-                    setBoxFilter(next);
-                  }}
-                  className={cn(
-                    "px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2",
-                    active
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground"
-                  )}
-                >
-                  {tab.label}
-                  <span className={cn(
-                    "text-xs px-1.5 py-0.5 rounded-full tabular-nums",
-                    active ? "bg-primary-foreground/20" : "bg-secondary"
-                  )}>{tagged}/{count}</span>
-                </button>
-              );
-            })}
-            <button
-              onClick={() => setBoxFilter(new Set())}
-              className={cn(
-                "px-4 py-2 rounded-xl text-sm font-medium transition-all",
-                boxFilter.size === 0
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground"
-              )}
-            >
-              All Boxes
-            </button>
+            <div className="flex items-center gap-1 rounded-xl bg-secondary/60 p-0.5 pl-2.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mr-1">Box</span>
+              <button
+                onClick={() => setBoxFilter(new Set())}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                  boxFilter.size === 0
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                All
+              </button>
+              {([
+                { key: "small box" as const, label: "Small" },
+                { key: "large box" as const, label: "Large" },
+                { key: "wholesale" as const, label: "Wholesale" },
+                { key: "local delivery" as const, label: "Local" },
+                { key: "other" as const, label: "Other" },
+              ] as const).map(tab => {
+                const count = boxCounts[tab.key];
+                if (count === 0) return null;
+                const active = boxFilter.has(tab.key);
+                const tagged = taggedCounts[tab.key];
+                return (
+                  <button
+                    key={tab.key}
+                    onClick={() => {
+                      const next = new Set(boxFilter);
+                      if (next.has(tab.key)) next.delete(tab.key); else next.add(tab.key);
+                      setBoxFilter(next);
+                    }}
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5",
+                      active
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    {tab.label}
+                    <span className={cn(
+                      "text-[10px] px-1 py-0.5 rounded-full tabular-nums",
+                      active ? "bg-primary-foreground/20" : "bg-secondary"
+                    )}>{tagged}/{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {apcMode === "full" && (
+              <div className="flex items-center gap-1 rounded-xl bg-secondary/60 p-0.5 pl-2.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mr-1">Label</span>
+                {([
+                  { key: "all" as const, label: "All" },
+                  { key: "unbooked" as const, label: `No label (${allUnfulfilledOrders.filter(o => !bookedMap.has(o.id)).length})` },
+                  { key: "booked" as const, label: `Booked (${bookedMap.size})` },
+                ]).map(opt => (
+                  <button
+                    key={opt.key}
+                    onClick={() => setLabelFilter(opt.key)}
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                      labelFilter === opt.key
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {showBatchBooking && (
               <ApcBatchBookingDialog
@@ -3563,59 +3603,34 @@ export default function Fulfilment() {
               />
             )}
 
-            {apcMode === "full" && (
-              <>
-                {/* Work the wave in slices: book a few, hide them, carry on. */}
-                {bookedMap.size > 0 && (
-                  <div className="flex items-center gap-1 rounded-xl bg-secondary/60 p-0.5">
-                    {([
-                      { key: "all" as const, label: "All" },
-                      { key: "unbooked" as const, label: `No label (${allUnfulfilledOrders.filter(o => !bookedMap.has(o.id)).length})` },
-                      { key: "booked" as const, label: `Label booked (${bookedMap.size})` },
-                    ]).map(opt => (
-                      <button
-                        key={opt.key}
-                        onClick={() => setLabelFilter(opt.key)}
-                        className={cn(
-                          "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
-                          labelFilter === opt.key
-                            ? "bg-primary text-primary-foreground shadow-sm"
-                            : "text-muted-foreground hover:text-foreground",
-                        )}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
+            <div className="ml-auto flex items-center gap-2">
+              {apcMode === "full" && (
                 <button
                   onClick={() => setShowBatchBooking(true)}
                   className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-2"
-                  title="Raise APC consignments — pick how many to do at a time"
+                  title="Raise APC consignments — pick first 5, all, small boxes, or large boxes"
                 >
                   <PackageCheck className="w-4 h-4" /> Book APC labels
                 </button>
-              </>
-            )}
-
-            <button
-              onClick={() => setFiltersOpen(v => !v)}
-              className={cn(
-                "ml-auto px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2",
-                filtersActive
-                  ? "bg-indigo-600 text-white shadow-sm"
-                  : "bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground"
               )}
-            >
-              <Filter className="w-4 h-4" />
-              Tags & Products
-              {filtersActive && (
-                <span className="text-xs px-1.5 py-0.5 rounded-full bg-white/20 tabular-nums">
-                  {includeTags.size + excludeTags.size + includeProducts.size + excludeProducts.size}
-                </span>
-              )}
-            </button>
+              <button
+                onClick={() => setFiltersOpen(v => !v)}
+                className={cn(
+                  "px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2",
+                  filtersActive
+                    ? "bg-indigo-600 text-white shadow-sm"
+                    : "bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                )}
+              >
+                <Filter className="w-4 h-4" />
+                Tags & Products
+                {filtersActive && (
+                  <span className="text-xs px-1.5 py-0.5 rounded-full bg-white/20 tabular-nums">
+                    {includeTags.size + excludeTags.size + includeProducts.size + excludeProducts.size}
+                  </span>
+                )}
+              </button>
+            </div>
           </div>
 
           {/* How many orders this wave will actually cycle through. */}
@@ -3839,11 +3854,18 @@ export default function Fulfilment() {
                         </span>
                         {/* APC's API reports a cancelled consignment exactly
                             like a live one, so a cancellation made inside
-                            Hypaship can only be told to us by hand. */}
+                            Hypaship can only be told to us by hand. Two-step:
+                            first tap arms, second tap (within 5s) executes —
+                            and it must never read as a status chip. */}
                         <button
                           onClick={async (e) => {
                             e.stopPropagation();
                             const wb = bookedMap.get(order.id)!.waybill;
+                            if (confirmCancelWaybill !== wb) {
+                              setConfirmCancelWaybill(wb);
+                              return;
+                            }
+                            setConfirmCancelWaybill(null);
                             setRebookingWaybill(wb);
                             try {
                               await markConsignmentCancelled(wb);
@@ -3856,15 +3878,31 @@ export default function Fulfilment() {
                             }
                           }}
                           disabled={rebookingWaybill === bookedMap.get(order.id)!.waybill}
-                          className="text-[10px] px-1.5 py-0.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors flex items-center gap-1 disabled:opacity-40"
-                          title="Use this if you cancelled the consignment in APC — the app can't detect that on its own"
+                          className={confirmCancelWaybill === bookedMap.get(order.id)!.waybill
+                            ? "text-[10px] px-1.5 py-0.5 rounded border border-red-400 bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 font-medium transition-colors flex items-center gap-1"
+                            : "text-[10px] px-1.5 py-0.5 rounded border border-dashed border-border text-muted-foreground/70 hover:text-foreground hover:bg-secondary transition-colors flex items-center gap-1 disabled:opacity-40"}
+                          title="Only for when YOU have cancelled this consignment inside APC/Hypaship — the app can't detect that on its own. Clears our record so a fresh label can be booked."
                         >
                           {rebookingWaybill === bookedMap.get(order.id)!.waybill
                             ? <Loader2 className="w-2.5 h-2.5 animate-spin" />
                             : <Ban className="w-2.5 h-2.5" />}
-                          Cancelled in APC
+                          {confirmCancelWaybill === bookedMap.get(order.id)!.waybill
+                            ? "Tap again to confirm"
+                            : "I cancelled this in APC…"}
                         </button>
                       </>
+                    )}
+                    {/* Booking failures used to be visible only inside the
+                        batch-booking dialog's report — once closed, an order
+                        with no (or a failed/cleared) label looked identical
+                        to the rest of the list. Surface the gap on the card. */}
+                    {apcMode === "full" && bookedConsignments && !localOrder && !bookedMap.has(order.id) && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-medium flex items-center gap-1"
+                        title="No live APC consignment for this order — book it via Book APC labels (or it will be raised when picking starts)"
+                      >
+                        <AlertTriangle className="w-2.5 h-2.5" /> No label
+                      </span>
                     )}
                     {skippedIds.has(order.id) && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground font-medium flex items-center gap-1">
