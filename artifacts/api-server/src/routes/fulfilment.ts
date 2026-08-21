@@ -1331,6 +1331,15 @@ router.get("/shipments/:waybill/label.pdf", requireFulfilmentAccess, async (req:
   const waybill = String(req.params.waybill ?? "");
   const pieceParam = typeof req.query.piece === "string" ? parseInt(req.query.piece, 10) : 1;
   const piece = Number.isFinite(pieceParam) && pieceParam > 0 ? pieceParam : 1;
+  // APC only learns a parcel is real when its label is MARKED PRINTED — that
+  // is what feeds the end-of-day manifest and the depot's live view. On
+  // 2026-08-21 the app printed 74 labels with markprinted=False and the
+  // manifest read "nothing to manifest"; the whole day sat as an unprinted
+  // batch in Hypaship until it was pushed through by hand. So the print path
+  // sends print=1 and we mark as we print — per order, immediately, which is
+  // how Graeme wants APC informed. A fetch WITHOUT print=1 (checking a label
+  // in a browser tab) still marks nothing, so looking never manifests.
+  const forPrint = req.query.print === "1";
 
   if (!isApcConfigured()) {
     res.status(503).json({ error: "APC credentials not configured." });
@@ -1344,7 +1353,18 @@ router.get("/shipments/:waybill/label.pdf", requireFulfilmentAccess, async (req:
     // fail fast enough for the packer to act on it — 12s of silent retrying
     // reads as a hang at the bench. 3 attempts ≈ 2.5s worst case still covers
     // the brief lag after a consignment is amended in Hypaship.
-    const labels = await fetchLabel(waybill, apiBase, 2, 750, /* markPrinted */ false);
+    const labels = await fetchLabel(waybill, apiBase, 2, 750, /* markPrinted */ forPrint);
+
+    if (forPrint) {
+      // Stamp our own ledger too — first print wins, reprints keep the
+      // original time. This is what makes the batch screen's label-state
+      // filter and any end-of-day "printed vs manifested" check possible.
+      db.execute(sql`
+        UPDATE apc_consignments
+        SET label_printed_at = COALESCE(label_printed_at, NOW())
+        WHERE waybill = ${waybill}
+      `).catch(err => console.warn(`[Fulfilment] label_printed_at stamp failed for ${waybill}:`, err instanceof Error ? err.message : err));
+    }
 
     if (piece > labels.length) {
       res.status(404).json({

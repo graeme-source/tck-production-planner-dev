@@ -167,7 +167,11 @@ interface ShipmentResult {
  *  consignment is amended at the bench the reprint must show the NEW label,
  *  and a stale one would go on a real box. */
 function labelUrl(waybill: string, piece: number): string {
-  return `${BASE}/api/fulfilment/shipments/${encodeURIComponent(waybill)}/label.pdf?piece=${piece}&t=${Date.now()}`;
+  // print=1 tells the server this fetch feeds a PHYSICAL print, so APC gets
+  // the consignment marked printed — which is what puts it on the manifest
+  // and the depot's radar. A label fetched without it (opening the URL in a
+  // tab to check it) marks nothing. See the label route for the full story.
+  return `${BASE}/api/fulfilment/shipments/${encodeURIComponent(waybill)}/label.pdf?piece=${piece}&print=1&t=${Date.now()}`;
 }
 
 /** Result of scanning the printed APC label at the bench. The verdict is
