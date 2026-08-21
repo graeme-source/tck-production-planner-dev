@@ -999,6 +999,83 @@ export async function replaceTagOnOrder(orderId: number, currentTags: string, ol
   return updated;
 }
 
+// ── Rescheduling a delivery ────────────────────────────────────────────────
+
+export interface ShopifyNoteAttribute { name: string; value: string }
+
+export interface ShopifyOrderForReschedule {
+  id: number;
+  name: string;
+  tags: string;
+  email: string | null;
+  customerFirstName: string | null;
+  shippingName: string | null;
+  noteAttributes: ShopifyNoteAttribute[];
+}
+
+/**
+ * The fields rescheduling needs, which the ordinary order fetches don't carry.
+ *
+ * `note_attributes` in particular is absent from both `getOrderById` and the
+ * local orders cache, and it holds Zapiet's `Delivery-Date` — the
+ * customer-facing copy of the date. Anything that moves a delivery has to read
+ * it from here, not from the cache.
+ */
+export async function getOrderForReschedule(orderId: number): Promise<ShopifyOrderForReschedule | null> {
+  try {
+    const data = (await shopifyFetch(`/orders/${orderId}.json`, {
+      fields: "id,name,tags,email,contact_email,customer,shipping_address,note_attributes",
+    })) as {
+      order?: {
+        id: number; name: string; tags: string;
+        email?: string | null; contact_email?: string | null;
+        customer?: { first_name?: string | null } | null;
+        shipping_address?: { name?: string | null } | null;
+        note_attributes?: ShopifyNoteAttribute[] | null;
+      };
+    };
+    const o = data.order;
+    if (!o) return null;
+    return {
+      id: o.id,
+      name: o.name,
+      tags: o.tags ?? "",
+      email: o.email ?? o.contact_email ?? null,
+      customerFirstName: o.customer?.first_name ?? null,
+      shippingName: o.shipping_address?.name ?? null,
+      noteAttributes: o.note_attributes ?? [],
+    };
+  } catch (err) {
+    console.error(`[shopify] getOrderForReschedule(${orderId}) failed:`, err);
+    return null;
+  }
+}
+
+/**
+ * Write tags and note_attributes in ONE request.
+ *
+ * Deliberately a single PUT: the date lives in both fields, and two separate
+ * writes could half-apply — leaving the planner and the customer looking at
+ * different dates, which is the exact failure this feature exists to prevent.
+ *
+ * The caller must pass the COMPLETE note_attributes array. Shopify replaces it
+ * wholesale rather than merging, so a partial array silently deletes whatever
+ * it omits (Zapiet's location id, the checkout method, another app's keys).
+ */
+export async function updateOrderTagsAndAttributes(
+  orderId: number,
+  tags: string,
+  noteAttributes: ShopifyNoteAttribute[],
+): Promise<void> {
+  if (shouldSkipSideEffect()) {
+    logSkippedSideEffect("shopify.updateOrderTagsAndAttributes", { orderId, tags, noteAttributes });
+    return;
+  }
+  await shopifyPut(`/orders/${orderId}.json`, {
+    order: { id: orderId, tags, note_attributes: noteAttributes },
+  });
+}
+
 // ── Collections (survey builder) ───────────────────────────────────────────
 
 export interface ShopifyCollectionSummary {
