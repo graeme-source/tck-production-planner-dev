@@ -1144,7 +1144,7 @@ export default function Fulfilment() {
     setPrintError(reason);
   }
   function resetPrint() {
-    resetPrint();
+    setPrintStatus("idle");
     setPrintError(null);
   }
   const [shipmentError, setShipmentError] = useState<string | null>(null);
