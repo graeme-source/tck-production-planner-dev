@@ -542,6 +542,20 @@ async function fetchBookedConsignments(tag: string): Promise<BookedConsignment[]
   return (data.consignments ?? []) as BookedConsignment[];
 }
 
+/** Current 2-pack fridge stock per recipe + the variant→recipe map, so the
+ *  pick list can be gated to orders the fridge can actually satisfy. */
+interface FridgeAvailability {
+  stock: Array<{ recipeId: number; recipeName: string; packs: number }>;
+  variants: Record<string, { recipeId: number; packsPerUnit: number }>;
+  specialRecipeId: number | null;
+}
+
+async function fetchFridgeAvailability(): Promise<FridgeAvailability | null> {
+  const res = await fetch(`${BASE}/api/fulfilment/fridge-availability`, { credentials: "include" });
+  if (!res.ok) return null;
+  return (await res.json()) as FridgeAvailability;
+}
+
 /** What the "Ship order?" dialog should actually say. An order that already
  *  has a consignment will REUSE it — telling the packer it's about to raise
  *  a new one is both wrong and alarming (2026-08-12). */
@@ -1443,6 +1457,18 @@ export default function Fulfilment() {
   const bookedMap = new Map<number, BookedConsignment>();
   for (const row of bookedConsignments ?? []) bookedMap.set(Number(row.orderId), row);
 
+  // Fridge gate: only offer orders the production fridge can currently
+  // satisfy, and turn the remainder into a wrap-deficit signal. Refetched
+  // every minute — wrapping is adding stock all morning.
+  const [fridgeGate, setFridgeGate] = useState(true);
+  const { data: fridgeAvailability } = useQuery({
+    queryKey: ["fulfilment-fridge-availability"],
+    queryFn: fetchFridgeAvailability,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    enabled: !!queryTag,
+  });
+
   const [recheckingId, setRecheckingId] = useState<number | null>(null);
 
   const allUnfulfilledOrders = orders?.filter(o => o.fulfillment_status !== "fulfilled") ?? [];
@@ -1517,9 +1543,80 @@ export default function Fulfilment() {
   // (same affordance as the old EasyScan app).
   const [pickListReversed, setPickListReversed] = useState(false);
   const filteredUnfulfilledBase = unfulfilledOrders.filter(passesFilters);
-  const filteredUnfulfilled = pickListReversed
+  const filteredUnfulfilledOrdered = pickListReversed
     ? [...filteredUnfulfilledBase].reverse()
     : filteredUnfulfilledBase;
+
+  // ── Fridge gate ─────────────────────────────────────────────────────────
+  // Walk the pick list in DISPLAY order, allocating wrapped 2-pack fridge
+  // stock to each order. An order stays pickable only when every mapped line
+  // fits in what's left; a held order consumes nothing (a smaller later
+  // order can still fit). Lines we can't map to a recipe never gate their
+  // order — better to over-offer than wrongly hide. The unmet demand of the
+  // held orders becomes the wrap-deficit readout for the wrapping station.
+  const fridgeAllocation = (() => {
+    const empty = {
+      held: [] as ShopifyOrder[],
+      deficits: [] as Array<{ recipeName: string; packs: number }>,
+      active: false,
+      shortFor: new Map<number, string[]>(),
+    };
+    if (!fridgeGate || !fridgeAvailability) return { ...empty, pickable: filteredUnfulfilledOrdered };
+    const remaining = new Map<number, number>();
+    const names = new Map<number, string>();
+    for (const s of fridgeAvailability.stock) {
+      remaining.set(s.recipeId, s.packs);
+      names.set(s.recipeId, s.recipeName);
+    }
+    const needsFor = (o: ShopifyOrder) => {
+      const needs = new Map<number, number>();
+      for (const li of o.line_items ?? []) {
+        const mapped = li.variant_id != null ? fridgeAvailability.variants[String(li.variant_id)] : undefined;
+        let recipeId = mapped?.recipeId;
+        let packsPer = mapped?.packsPerUnit ?? 1;
+        if (recipeId == null && fridgeAvailability.specialRecipeId != null
+            && li.title.toLowerCase().includes("calzone club special")) {
+          recipeId = fridgeAvailability.specialRecipeId;
+          packsPer = 1;
+        }
+        if (recipeId == null) continue; // unmappable line — never gates
+        needs.set(recipeId, (needs.get(recipeId) ?? 0) + li.quantity * packsPer);
+      }
+      return needs;
+    };
+    const pickable: ShopifyOrder[] = [];
+    const held: ShopifyOrder[] = [];
+    const heldDemand = new Map<number, number>();
+    const shortFor = new Map<number, string[]>();
+    for (const o of filteredUnfulfilledOrdered) {
+      const needs = needsFor(o);
+      const fits = [...needs].every(([rid, qty]) => (remaining.get(rid) ?? 0) >= qty);
+      if (fits) {
+        for (const [rid, qty] of needs) remaining.set(rid, (remaining.get(rid) ?? 0) - qty);
+        pickable.push(o);
+      } else {
+        held.push(o);
+        const shorts: string[] = [];
+        for (const [rid, qty] of needs) {
+          heldDemand.set(rid, (heldDemand.get(rid) ?? 0) + qty);
+          const have = remaining.get(rid) ?? 0;
+          if (have < qty) shorts.push(`${names.get(rid) ?? `Recipe ${rid}`} (need ${qty}, fridge has ${have})`);
+        }
+        shortFor.set(o.id, shorts);
+      }
+    }
+    const deficits = [...heldDemand]
+      .map(([rid, demand]) => ({
+        recipeName: names.get(rid) ?? `Recipe ${rid}`,
+        packs: Math.max(0, demand - (remaining.get(rid) ?? 0)),
+      }))
+      .filter(d => d.packs > 0)
+      .sort((a, b) => b.packs - a.packs);
+    return { pickable, held, deficits, active: true, shortFor };
+  })();
+  // Held orders drop out of the pickable list entirely, so the picking
+  // cycle, counts, and advance-to-next all respect the gate automatically.
+  const filteredUnfulfilled = fridgeAllocation.pickable;
   const filteredUntagged = untaggedOrders.filter(passesFilters);
   // Skipped orders still showing in this wave — counted against the filtered
   // list so ids left over from completed or filtered-out orders don't inflate
@@ -1605,6 +1702,16 @@ export default function Fulfilment() {
   const canBookCourier = authState.status === "authenticated"
     && (authState.user.role === "admin" || authState.user.role === "manager");
   const [rebookingWaybill, setRebookingWaybill] = useState<string | null>(null);
+  // Two-step confirm for the "mark cancelled in APC" escape hatch. The old
+  // single-click pill-styled button read as a STATUS chip ("Cancelled in
+  // APC") sitting next to "Label booked" — the team believed orders had been
+  // cancelled. Holds the waybill awaiting its confirming second tap.
+  const [confirmCancelWaybill, setConfirmCancelWaybill] = useState<string | null>(null);
+  useEffect(() => {
+    if (!confirmCancelWaybill) return undefined;
+    const t = setTimeout(() => setConfirmCancelWaybill(null), 5000);
+    return () => clearTimeout(t);
+  }, [confirmCancelWaybill]);
   const [bulkTagging, setBulkTagging] = useState(false);
   const [showBulkTagConfirm, setShowBulkTagConfirm] = useState(false);
   const [consignmentAction, setConsignmentAction] = useState<"idle" | "adding-box" | "reprinting" | "cancelling">("idle");
@@ -3560,53 +3667,103 @@ export default function Fulfilment() {
             {unfulfilledOrders.length} ready to pack &middot; {untaggedOrders.length} awaiting approval &middot; {progress ? progress.totalFulfilled : fulfilledOrders.length} fulfilled
           </p>
 
-          {/* Box categories — multi-select, so a wave can be Small + Large. */}
+          {/* ONE filter bar, two labelled segments that combine (AND):
+              Box × Label. "Small + Booked" = small boxes with labels booked.
+              Actions (Book APC labels, Tags & Products) live at the right so
+              they can't be mistaken for a third filter group. */}
           <div className="flex gap-2 flex-wrap items-center">
-            {([
-              { key: "small box" as const, label: "Small Box" },
-              { key: "large box" as const, label: "Large Box" },
-              { key: "wholesale" as const, label: "Wholesale" },
-              { key: "local delivery" as const, label: "Local Delivery" },
-              { key: "other" as const, label: "Other" },
-            ] as const).map(tab => {
-              const count = boxCounts[tab.key];
-              if (count === 0) return null;
-              const active = boxFilter.has(tab.key);
-              const tagged = taggedCounts[tab.key];
-              return (
-                <button
-                  key={tab.key}
-                  onClick={() => {
-                    const next = new Set(boxFilter);
-                    if (next.has(tab.key)) next.delete(tab.key); else next.add(tab.key);
-                    setBoxFilter(next);
-                  }}
-                  className={cn(
-                    "px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2",
-                    active
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground"
-                  )}
-                >
-                  {tab.label}
-                  <span className={cn(
-                    "text-xs px-1.5 py-0.5 rounded-full tabular-nums",
-                    active ? "bg-primary-foreground/20" : "bg-secondary"
-                  )}>{tagged}/{count}</span>
-                </button>
-              );
-            })}
-            <button
-              onClick={() => setBoxFilter(new Set())}
-              className={cn(
-                "px-4 py-2 rounded-xl text-sm font-medium transition-all",
-                boxFilter.size === 0
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground"
-              )}
-            >
-              All Boxes
-            </button>
+            <div className="flex items-center gap-1 rounded-xl bg-secondary/60 p-0.5 pl-2.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mr-1">Box</span>
+              <button
+                onClick={() => setBoxFilter(new Set())}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                  boxFilter.size === 0
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                All
+              </button>
+              {([
+                { key: "small box" as const, label: "Small" },
+                { key: "large box" as const, label: "Large" },
+                { key: "wholesale" as const, label: "Wholesale" },
+                { key: "local delivery" as const, label: "Local" },
+                { key: "other" as const, label: "Other" },
+              ] as const).map(tab => {
+                const count = boxCounts[tab.key];
+                if (count === 0) return null;
+                const active = boxFilter.has(tab.key);
+                const tagged = taggedCounts[tab.key];
+                return (
+                  <button
+                    key={tab.key}
+                    onClick={() => {
+                      const next = new Set(boxFilter);
+                      if (next.has(tab.key)) next.delete(tab.key); else next.add(tab.key);
+                      setBoxFilter(next);
+                    }}
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5",
+                      active
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    {tab.label}
+                    <span className={cn(
+                      "text-[10px] px-1 py-0.5 rounded-full tabular-nums",
+                      active ? "bg-primary-foreground/20" : "bg-secondary"
+                    )}>{tagged}/{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {apcMode === "full" && (
+              <div className="flex items-center gap-1 rounded-xl bg-secondary/60 p-0.5 pl-2.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mr-1">Label</span>
+                {([
+                  { key: "all" as const, label: "All" },
+                  { key: "unbooked" as const, label: `No label (${allUnfulfilledOrders.filter(o => !bookedMap.has(o.id)).length})` },
+                  { key: "booked" as const, label: `Booked (${bookedMap.size})` },
+                ]).map(opt => (
+                  <button
+                    key={opt.key}
+                    onClick={() => setLabelFilter(opt.key)}
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                      labelFilter === opt.key
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {fridgeAvailability && (
+              <button
+                onClick={() => setFridgeGate(v => !v)}
+                className={cn(
+                  "px-3 py-1.5 rounded-xl text-xs font-medium transition-colors border",
+                  fridgeGate
+                    ? "border-blue-300 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-200"
+                    : "border-border bg-secondary/60 text-muted-foreground hover:text-foreground",
+                )}
+                title="When on, only orders the production fridge can currently satisfy are offered for picking; the rest wait under 'Awaiting Wrapping' with a wrap-deficit readout"
+              >
+                Fridge gate: {fridgeGate ? "On" : "Off"}
+                {fridgeGate && fridgeAllocation.held.length > 0 && (
+                  <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/40 tabular-nums">
+                    {fridgeAllocation.held.length} held
+                  </span>
+                )}
+              </button>
+            )}
 
             {showBatchBooking && (
               <ApcBatchBookingDialog
@@ -3616,61 +3773,36 @@ export default function Fulfilment() {
               />
             )}
 
-            {apcMode === "full" && (
-              <>
-                {/* Work the wave in slices: book a few, hide them, carry on. */}
-                {bookedMap.size > 0 && (
-                  <div className="flex items-center gap-1 rounded-xl bg-secondary/60 p-0.5">
-                    {([
-                      { key: "all" as const, label: "All" },
-                      { key: "unbooked" as const, label: `No label (${allUnfulfilledOrders.filter(o => !bookedMap.has(o.id)).length})` },
-                      { key: "booked" as const, label: `Label booked (${bookedMap.size})` },
-                    ]).map(opt => (
-                      <button
-                        key={opt.key}
-                        onClick={() => setLabelFilter(opt.key)}
-                        className={cn(
-                          "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
-                          labelFilter === opt.key
-                            ? "bg-primary text-primary-foreground shadow-sm"
-                            : "text-muted-foreground hover:text-foreground",
-                        )}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {canBookCourier && (
-                  <button
-                    onClick={() => setShowBatchBooking(true)}
-                    className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-2"
-                    title="Raise APC consignments — pick how many to do at a time"
-                  >
-                    <PackageCheck className="w-4 h-4" /> Book APC labels
-                  </button>
-                )}
-              </>
-            )}
-
-            <button
-              onClick={() => setFiltersOpen(v => !v)}
-              className={cn(
-                "ml-auto px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2",
-                filtersActive
-                  ? "bg-indigo-600 text-white shadow-sm"
-                  : "bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground"
+            <div className="ml-auto flex items-center gap-2">
+              {/* canBookCourier: booking is manager-only (other session,
+                  2026-08-21) — merged with the unified-bar layout. */}
+              {apcMode === "full" && canBookCourier && (
+                <button
+                  onClick={() => setShowBatchBooking(true)}
+                  className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-2"
+                  title="Raise APC consignments — pick first 5, all, small boxes, or large boxes"
+                >
+                  <PackageCheck className="w-4 h-4" /> Book APC labels
+                </button>
               )}
-            >
-              <Filter className="w-4 h-4" />
-              Tags & Products
-              {filtersActive && (
-                <span className="text-xs px-1.5 py-0.5 rounded-full bg-white/20 tabular-nums">
-                  {includeTags.size + excludeTags.size + includeProducts.size + excludeProducts.size}
-                </span>
-              )}
-            </button>
+              <button
+                onClick={() => setFiltersOpen(v => !v)}
+                className={cn(
+                  "px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2",
+                  filtersActive
+                    ? "bg-indigo-600 text-white shadow-sm"
+                    : "bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                )}
+              >
+                <Filter className="w-4 h-4" />
+                Tags & Products
+                {filtersActive && (
+                  <span className="text-xs px-1.5 py-0.5 rounded-full bg-white/20 tabular-nums">
+                    {includeTags.size + excludeTags.size + includeProducts.size + excludeProducts.size}
+                  </span>
+                )}
+              </button>
+            </div>
           </div>
 
           {/* How many orders this wave will actually cycle through. */}
@@ -3783,7 +3915,7 @@ export default function Fulfilment() {
             </div>
           )}
 
-          {filteredUnfulfilled.length === 0 && filteredUntagged.length === 0 && allUnfulfilledOrders.length === 0 && (
+          {filteredUnfulfilled.length === 0 && fridgeAllocation.held.length === 0 && filteredUntagged.length === 0 && allUnfulfilledOrders.length === 0 && (
             <div className="glass-panel p-10 rounded-2xl border border-border text-center text-muted-foreground">
               <CheckCircle2 className="w-12 h-12 mx-auto mb-3 text-green-500 opacity-60" />
               <p className="font-medium">All orders fulfilled!</p>
@@ -3791,7 +3923,7 @@ export default function Fulfilment() {
             </div>
           )}
 
-          {filteredUnfulfilled.length === 0 && filteredUntagged.length === 0 && allUnfulfilledOrders.length > 0 && (
+          {filteredUnfulfilled.length === 0 && fridgeAllocation.held.length === 0 && filteredUntagged.length === 0 && allUnfulfilledOrders.length > 0 && (
             <div className="glass-panel p-8 rounded-2xl border border-border text-center text-muted-foreground">
               <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-green-500 opacity-60" />
               <p className="font-medium">All {boxFilter} orders done!</p>
@@ -3904,11 +4036,18 @@ export default function Fulfilment() {
                         </span>
                         {/* APC's API reports a cancelled consignment exactly
                             like a live one, so a cancellation made inside
-                            Hypaship can only be told to us by hand. */}
+                            Hypaship can only be told to us by hand. Two-step:
+                            first tap arms, second tap (within 5s) executes —
+                            and it must never read as a status chip. */}
                         <button
                           onClick={async (e) => {
                             e.stopPropagation();
                             const wb = bookedMap.get(order.id)!.waybill;
+                            if (confirmCancelWaybill !== wb) {
+                              setConfirmCancelWaybill(wb);
+                              return;
+                            }
+                            setConfirmCancelWaybill(null);
                             setRebookingWaybill(wb);
                             try {
                               await markConsignmentCancelled(wb);
@@ -3921,15 +4060,31 @@ export default function Fulfilment() {
                             }
                           }}
                           disabled={rebookingWaybill === bookedMap.get(order.id)!.waybill}
-                          className="text-[10px] px-1.5 py-0.5 rounded-full border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors flex items-center gap-1 disabled:opacity-40"
-                          title="Use this if you cancelled the consignment in APC — the app can't detect that on its own"
+                          className={confirmCancelWaybill === bookedMap.get(order.id)!.waybill
+                            ? "text-[10px] px-1.5 py-0.5 rounded border border-red-400 bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 font-medium transition-colors flex items-center gap-1"
+                            : "text-[10px] px-1.5 py-0.5 rounded border border-dashed border-border text-muted-foreground/70 hover:text-foreground hover:bg-secondary transition-colors flex items-center gap-1 disabled:opacity-40"}
+                          title="Only for when YOU have cancelled this consignment inside APC/Hypaship — the app can't detect that on its own. Clears our record so a fresh label can be booked."
                         >
                           {rebookingWaybill === bookedMap.get(order.id)!.waybill
                             ? <Loader2 className="w-2.5 h-2.5 animate-spin" />
                             : <Ban className="w-2.5 h-2.5" />}
-                          Cancelled in APC
+                          {confirmCancelWaybill === bookedMap.get(order.id)!.waybill
+                            ? "Tap again to confirm"
+                            : "I cancelled this in APC…"}
                         </button>
                       </>
+                    )}
+                    {/* Booking failures used to be visible only inside the
+                        batch-booking dialog's report — once closed, an order
+                        with no (or a failed/cleared) label looked identical
+                        to the rest of the list. Surface the gap on the card. */}
+                    {apcMode === "full" && bookedConsignments && !localOrder && !bookedMap.has(order.id) && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-medium flex items-center gap-1"
+                        title="No live APC consignment for this order — book it via Book APC labels (or it will be raised when picking starts)"
+                      >
+                        <AlertTriangle className="w-2.5 h-2.5" /> No label
+                      </span>
                     )}
                     {skippedIds.has(order.id) && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground font-medium flex items-center gap-1">
@@ -4013,6 +4168,46 @@ export default function Fulfilment() {
               </div>
             );
           })}
+
+          {/* ── Awaiting wrapping: orders the fridge can't satisfy yet ────
+              The deficit readout is the wrapping station's live to-do: wrap
+              this many packs and these orders release themselves. */}
+          {fridgeAllocation.active && fridgeAllocation.held.length > 0 && (
+            <div className="space-y-2 mt-4">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-1">
+                Awaiting Wrapping ({fridgeAllocation.held.length})
+              </p>
+              {fridgeAllocation.deficits.length > 0 && (
+                <div className="glass-panel px-4 py-3 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20">
+                  <p className="text-sm font-semibold text-blue-900 dark:text-blue-200 mb-1">
+                    To release these orders, wrap:
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {fridgeAllocation.deficits.map(d => (
+                      <span key={d.recipeName} className="text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200 font-medium tabular-nums">
+                        {d.recipeName} × {d.packs}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {fridgeAllocation.held.map(order => (
+                <div key={order.id} className="glass-panel px-4 py-3 rounded-xl border border-border opacity-60 flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">
+                      {order.name} {order.shipping_address?.name ?? order.customer?.first_name ?? ""}
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate" title={(fridgeAllocation.shortFor.get(order.id) ?? []).join("\n")}>
+                      Short: {(fridgeAllocation.shortFor.get(order.id) ?? []).join(" · ") || "fridge stock"}
+                    </p>
+                  </div>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground font-medium flex-shrink-0">
+                    Awaiting wrapping
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
 
           {fulfilledOrders.length > 0 && includeAll && (
             <div className="space-y-2 opacity-50">
