@@ -10,6 +10,7 @@ import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as 
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
 import { declaredParcelWeightKg, isLargeBox } from "../lib/parcel-weight";
 import { APC_NO_SERVICE_TAG, isNoServiceFailure } from "../lib/apc-failure-tags";
+import { settledOrders } from "../lib/order-age";
 import { sql } from "drizzle-orm";
 
 const router = Router();
@@ -407,9 +408,15 @@ router.get("/orders", requireFulfilmentAccess, async (req: Request, res: Respons
   }
 
   try {
-    const orders = includeAll === "1"
-      ? await getOrdersByTag(tag)
-      : await getUnfulfilledOrdersByTag(tag);
+    // Orders under 15 minutes old are hidden: AfterSell may still be holding
+    // them, and its upsell can still ADD ITEMS — packing one early risks
+    // boxing the pre-upsell contents. After 15 minutes they are settled by
+    // definition. See lib/order-age.ts.
+    const orders = settledOrders(
+      includeAll === "1"
+        ? await getOrdersByTag(tag)
+        : await getUnfulfilledOrdersByTag(tag),
+    );
 
     const [allLocations, allBarcodes, recipeMappings] = await Promise.all([
       db.select().from(skuLocationsTable),
@@ -480,7 +487,8 @@ router.get("/scan-queue", requireFulfilmentAccess, async (req: Request, res: Res
   }
 
   try {
-    const all = await getUnfulfilledOrdersByTag(tag);
+    // Same 15-minute AfterSell settling rule as the picking list.
+    const all = settledOrders(await getUnfulfilledOrdersByTag(tag));
 
     // Only orders explicitly tagged for dispatch enter the packing queue.
     let queue = all.filter(o =>
@@ -1711,7 +1719,9 @@ async function buildPreflight(tag: string, dispatchDate: Date) {
   const weightThresholdG = Number(weightThreshStr) || 1000;
 
   const { normaliseAddress } = await import("../services/apc");
-  const orders = (await getOrdersByTag(tag)).filter(o =>
+  // settledOrders: an order still inside AfterSell's 15-minute window can
+  // gain items — a consignment booked now would carry the pre-upsell weight.
+  const orders = settledOrders(await getOrdersByTag(tag)).filter(o =>
     o.fulfillment_status !== "fulfilled" &&
     o.tags.split(",").map(t => t.trim().toLowerCase()).includes("dispatch"),
   );
