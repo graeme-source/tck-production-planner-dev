@@ -8,6 +8,7 @@ import { useIcePacks } from "@/hooks/use-ice-packs";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import { ApcBatchBookingDialog } from "@/components/apc-batch-booking";
+import { RescheduleOrderDialog } from "@/components/reschedule-order-dialog";
 import { useAuth } from "@/contexts/auth-context";
 import { format, addDays, parseISO } from "date-fns";
 import { useLocation } from "wouter";
@@ -15,7 +16,7 @@ import {
   Package, Scan, CheckCircle2, AlertCircle, ChevronRight, Printer,
   RefreshCw, MapPin, SkipForward, RotateCcw, XCircle, Loader2,
   ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter, ArrowUpDown,
-  Volume2, VolumeX, AlertTriangle, PackageCheck, Snowflake,
+  Volume2, VolumeX, AlertTriangle, PackageCheck, Snowflake, CalendarClock,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -1530,10 +1531,29 @@ export default function Fulfilment() {
   // reverse, so the packer needs to flip the list to work from the other end
   // (same affordance as the old EasyScan app).
   const [pickListReversed, setPickListReversed] = useState(false);
+  // A no-label order being rescheduled straight from the list — the failure
+  // used to be reachable only by re-attempting the booking.
+  const [rescheduleTarget, setRescheduleTarget] = useState<ShopifyOrder | null>(null);
   const filteredUnfulfilledBase = unfulfilledOrders.filter(passesFilters);
   const filteredUnfulfilledOrdered = pickListReversed
     ? [...filteredUnfulfilledBase].reverse()
     : filteredUnfulfilledBase;
+
+  // ── Label gate ──────────────────────────────────────────────────────────
+  // "Ready to pack" MEANS dispatch-tagged AND label booked (Graeme,
+  // 2026-08-21): an order APC refused (apc-no-service) cannot be picked — the
+  // pick would only fail at the consignment step — so offering Start Picking
+  // on it is a lie. Those orders keep a visible row of their own below, with
+  // Reschedule in place of Start Picking; they are NOT hidden, which is how
+  // failures used to get lost. Local deliveries need no label (the van does
+  // the last mile), and the gate waits for the consignment ledger to load so
+  // a slow query can't briefly hold every order. Full mode only — reconcile
+  // mode proves labels by scanning at the bench instead.
+  const labelGateActive = apcMode === "full" && bookedConsignments != null;
+  const lacksLabel = (o: ShopifyOrder) =>
+    labelGateActive && !isLocalDelivery(o) && !bookedMap.has(o.id);
+  const noLabelOrders = filteredUnfulfilledOrdered.filter(lacksLabel);
+  const labelledOrdered = filteredUnfulfilledOrdered.filter(o => !lacksLabel(o));
 
   // ── Fridge gate ─────────────────────────────────────────────────────────
   // Walk the pick list in DISPLAY order, allocating wrapped 2-pack fridge
@@ -1549,7 +1569,7 @@ export default function Fulfilment() {
       active: false,
       shortFor: new Map<number, string[]>(),
     };
-    if (!fridgeGate || !fridgeAvailability) return { ...empty, pickable: filteredUnfulfilledOrdered };
+    if (!fridgeGate || !fridgeAvailability) return { ...empty, pickable: labelledOrdered };
     const remaining = new Map<number, number>();
     const names = new Map<number, string>();
     for (const s of fridgeAvailability.stock) {
@@ -1576,7 +1596,7 @@ export default function Fulfilment() {
     const held: ShopifyOrder[] = [];
     const heldDemand = new Map<number, number>();
     const shortFor = new Map<number, string[]>();
-    for (const o of filteredUnfulfilledOrdered) {
+    for (const o of labelledOrdered) {
       const needs = needsFor(o);
       const fits = [...needs].every(([rid, qty]) => (remaining.get(rid) ?? 0) >= qty);
       if (fits) {
@@ -3641,7 +3661,11 @@ export default function Fulfilment() {
       {orders && (
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            {unfulfilledOrders.length} ready to pack &middot; {untaggedOrders.length} awaiting approval &middot; {progress ? progress.totalFulfilled : fulfilledOrders.length} fulfilled
+            {unfulfilledOrders.filter(o => !lacksLabel(o)).length} ready to pack &middot;{" "}
+            {unfulfilledOrders.filter(lacksLabel).length > 0 && (
+              <span className="text-amber-700 dark:text-amber-400 font-medium">{unfulfilledOrders.filter(lacksLabel).length} no label &middot;{" "}</span>
+            )}
+            {untaggedOrders.length} awaiting approval &middot; {progress ? progress.totalFulfilled : fulfilledOrders.length} fulfilled
           </p>
 
           {/* ONE filter bar, two labelled segments that combine (AND):
@@ -3742,6 +3766,16 @@ export default function Fulfilment() {
               </button>
             )}
 
+            {rescheduleTarget && (
+              <RescheduleOrderDialog
+                orderId={rescheduleTarget.id}
+                orderName={rescheduleTarget.name}
+                fromDate={queryTag}
+                adminUrl={configStatus?.shopifyAdminOrderBase ? `${configStatus.shopifyAdminOrderBase}${rescheduleTarget.id}` : undefined}
+                onClose={() => setRescheduleTarget(null)}
+                onDone={() => { refetch(); refetchBooked(); refetchProgress(); }}
+              />
+            )}
             {showBatchBooking && (
               <ApcBatchBookingDialog
                 tag={queryTag}
@@ -3921,6 +3955,49 @@ export default function Fulfilment() {
               >
                 <RotateCcw className="w-3.5 h-3.5" /> Bring back
               </button>
+            </div>
+          )}
+
+          {/* Orders with no label are NOT ready to pack — picking one would
+              only fail at the consignment step. They stay visible here with
+              the actions that can actually resolve them: Reschedule, or a
+              retry through Book APC labels. */}
+          {noLabelOrders.length > 0 && (
+            <div className="rounded-xl border-2 border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 p-3 space-y-2">
+              <div className="flex items-center justify-between px-1">
+                <p className="text-xs font-medium text-amber-800 dark:text-amber-300 uppercase tracking-wide flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5" /> No label — not ready to pack ({noLabelOrders.length})
+                </p>
+                <p className="text-[11px] text-amber-700/80 dark:text-amber-400/80">Retry via Book APC labels, or reschedule</p>
+              </div>
+              {noLabelOrders.map(order => (
+                <div key={order.id} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-card border border-amber-200 dark:border-amber-900 text-sm">
+                  <OrderNumber
+                    orderId={order.id}
+                    name={order.name}
+                    adminBase={configStatus?.shopifyAdminOrderBase}
+                    className="font-bold"
+                  />
+                  <span className="text-muted-foreground truncate flex-1">
+                    {order.shipping_address?.name ?? `${order.customer?.first_name} ${order.customer?.last_name}`}
+                    {order.shipping_address && ` — ${order.shipping_address.city}, ${order.shipping_address.zip}`}
+                  </span>
+                  {order.tags.toLowerCase().includes("apc-no-service") && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 font-medium flex-shrink-0"
+                          title="APC refused this postcode for this delivery day">
+                      APC: no service
+                    </span>
+                  )}
+                  {canBookCourier && (
+                    <button
+                      onClick={() => setRescheduleTarget(order)}
+                      className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-semibold hover:bg-amber-700 transition-colors"
+                    >
+                      <CalendarClock className="w-3.5 h-3.5" /> Reschedule
+                    </button>
+                  )}
+                </div>
+              ))}
             </div>
           )}
 
