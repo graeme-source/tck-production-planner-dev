@@ -538,6 +538,20 @@ async function fetchBookedConsignments(tag: string): Promise<BookedConsignment[]
   return (data.consignments ?? []) as BookedConsignment[];
 }
 
+/** Current 2-pack fridge stock per recipe + the variant→recipe map, so the
+ *  pick list can be gated to orders the fridge can actually satisfy. */
+interface FridgeAvailability {
+  stock: Array<{ recipeId: number; recipeName: string; packs: number }>;
+  variants: Record<string, { recipeId: number; packsPerUnit: number }>;
+  specialRecipeId: number | null;
+}
+
+async function fetchFridgeAvailability(): Promise<FridgeAvailability | null> {
+  const res = await fetch(`${BASE}/api/fulfilment/fridge-availability`, { credentials: "include" });
+  if (!res.ok) return null;
+  return (await res.json()) as FridgeAvailability;
+}
+
 /** What the "Ship order?" dialog should actually say. An order that already
  *  has a consignment will REUSE it — telling the packer it's about to raise
  *  a new one is both wrong and alarming (2026-08-12). */
@@ -1397,6 +1411,18 @@ export default function Fulfilment() {
   const bookedMap = new Map<number, BookedConsignment>();
   for (const row of bookedConsignments ?? []) bookedMap.set(Number(row.orderId), row);
 
+  // Fridge gate: only offer orders the production fridge can currently
+  // satisfy, and turn the remainder into a wrap-deficit signal. Refetched
+  // every minute — wrapping is adding stock all morning.
+  const [fridgeGate, setFridgeGate] = useState(true);
+  const { data: fridgeAvailability } = useQuery({
+    queryKey: ["fulfilment-fridge-availability"],
+    queryFn: fetchFridgeAvailability,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    enabled: !!queryTag,
+  });
+
   const [recheckingId, setRecheckingId] = useState<number | null>(null);
 
   const allUnfulfilledOrders = orders?.filter(o => o.fulfillment_status !== "fulfilled") ?? [];
@@ -1471,9 +1497,80 @@ export default function Fulfilment() {
   // (same affordance as the old EasyScan app).
   const [pickListReversed, setPickListReversed] = useState(false);
   const filteredUnfulfilledBase = unfulfilledOrders.filter(passesFilters);
-  const filteredUnfulfilled = pickListReversed
+  const filteredUnfulfilledOrdered = pickListReversed
     ? [...filteredUnfulfilledBase].reverse()
     : filteredUnfulfilledBase;
+
+  // ── Fridge gate ─────────────────────────────────────────────────────────
+  // Walk the pick list in DISPLAY order, allocating wrapped 2-pack fridge
+  // stock to each order. An order stays pickable only when every mapped line
+  // fits in what's left; a held order consumes nothing (a smaller later
+  // order can still fit). Lines we can't map to a recipe never gate their
+  // order — better to over-offer than wrongly hide. The unmet demand of the
+  // held orders becomes the wrap-deficit readout for the wrapping station.
+  const fridgeAllocation = (() => {
+    const empty = {
+      held: [] as ShopifyOrder[],
+      deficits: [] as Array<{ recipeName: string; packs: number }>,
+      active: false,
+      shortFor: new Map<number, string[]>(),
+    };
+    if (!fridgeGate || !fridgeAvailability) return { ...empty, pickable: filteredUnfulfilledOrdered };
+    const remaining = new Map<number, number>();
+    const names = new Map<number, string>();
+    for (const s of fridgeAvailability.stock) {
+      remaining.set(s.recipeId, s.packs);
+      names.set(s.recipeId, s.recipeName);
+    }
+    const needsFor = (o: ShopifyOrder) => {
+      const needs = new Map<number, number>();
+      for (const li of o.line_items ?? []) {
+        const mapped = li.variant_id != null ? fridgeAvailability.variants[String(li.variant_id)] : undefined;
+        let recipeId = mapped?.recipeId;
+        let packsPer = mapped?.packsPerUnit ?? 1;
+        if (recipeId == null && fridgeAvailability.specialRecipeId != null
+            && li.title.toLowerCase().includes("calzone club special")) {
+          recipeId = fridgeAvailability.specialRecipeId;
+          packsPer = 1;
+        }
+        if (recipeId == null) continue; // unmappable line — never gates
+        needs.set(recipeId, (needs.get(recipeId) ?? 0) + li.quantity * packsPer);
+      }
+      return needs;
+    };
+    const pickable: ShopifyOrder[] = [];
+    const held: ShopifyOrder[] = [];
+    const heldDemand = new Map<number, number>();
+    const shortFor = new Map<number, string[]>();
+    for (const o of filteredUnfulfilledOrdered) {
+      const needs = needsFor(o);
+      const fits = [...needs].every(([rid, qty]) => (remaining.get(rid) ?? 0) >= qty);
+      if (fits) {
+        for (const [rid, qty] of needs) remaining.set(rid, (remaining.get(rid) ?? 0) - qty);
+        pickable.push(o);
+      } else {
+        held.push(o);
+        const shorts: string[] = [];
+        for (const [rid, qty] of needs) {
+          heldDemand.set(rid, (heldDemand.get(rid) ?? 0) + qty);
+          const have = remaining.get(rid) ?? 0;
+          if (have < qty) shorts.push(`${names.get(rid) ?? `Recipe ${rid}`} (need ${qty}, fridge has ${have})`);
+        }
+        shortFor.set(o.id, shorts);
+      }
+    }
+    const deficits = [...heldDemand]
+      .map(([rid, demand]) => ({
+        recipeName: names.get(rid) ?? `Recipe ${rid}`,
+        packs: Math.max(0, demand - (remaining.get(rid) ?? 0)),
+      }))
+      .filter(d => d.packs > 0)
+      .sort((a, b) => b.packs - a.packs);
+    return { pickable, held, deficits, active: true, shortFor };
+  })();
+  // Held orders drop out of the pickable list entirely, so the picking
+  // cycle, counts, and advance-to-next all respect the gate automatically.
+  const filteredUnfulfilled = fridgeAllocation.pickable;
   const filteredUntagged = untaggedOrders.filter(passesFilters);
   // Skipped orders still showing in this wave — counted against the filtered
   // list so ids left over from completed or filtered-out orders don't inflate
@@ -3595,6 +3692,26 @@ export default function Fulfilment() {
               </div>
             )}
 
+            {fridgeAvailability && (
+              <button
+                onClick={() => setFridgeGate(v => !v)}
+                className={cn(
+                  "px-3 py-1.5 rounded-xl text-xs font-medium transition-colors border",
+                  fridgeGate
+                    ? "border-blue-300 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-200"
+                    : "border-border bg-secondary/60 text-muted-foreground hover:text-foreground",
+                )}
+                title="When on, only orders the production fridge can currently satisfy are offered for picking; the rest wait under 'Awaiting Wrapping' with a wrap-deficit readout"
+              >
+                Fridge gate: {fridgeGate ? "On" : "Off"}
+                {fridgeGate && fridgeAllocation.held.length > 0 && (
+                  <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/40 tabular-nums">
+                    {fridgeAllocation.held.length} held
+                  </span>
+                )}
+              </button>
+            )}
+
             {showBatchBooking && (
               <ApcBatchBookingDialog
                 tag={queryTag}
@@ -3738,7 +3855,7 @@ export default function Fulfilment() {
             </div>
           )}
 
-          {filteredUnfulfilled.length === 0 && filteredUntagged.length === 0 && allUnfulfilledOrders.length === 0 && (
+          {filteredUnfulfilled.length === 0 && fridgeAllocation.held.length === 0 && filteredUntagged.length === 0 && allUnfulfilledOrders.length === 0 && (
             <div className="glass-panel p-10 rounded-2xl border border-border text-center text-muted-foreground">
               <CheckCircle2 className="w-12 h-12 mx-auto mb-3 text-green-500 opacity-60" />
               <p className="font-medium">All orders fulfilled!</p>
@@ -3746,7 +3863,7 @@ export default function Fulfilment() {
             </div>
           )}
 
-          {filteredUnfulfilled.length === 0 && filteredUntagged.length === 0 && allUnfulfilledOrders.length > 0 && (
+          {filteredUnfulfilled.length === 0 && fridgeAllocation.held.length === 0 && filteredUntagged.length === 0 && allUnfulfilledOrders.length > 0 && (
             <div className="glass-panel p-8 rounded-2xl border border-border text-center text-muted-foreground">
               <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-green-500 opacity-60" />
               <p className="font-medium">All {boxFilter} orders done!</p>
@@ -3986,6 +4103,46 @@ export default function Fulfilment() {
               </div>
             );
           })}
+
+          {/* ── Awaiting wrapping: orders the fridge can't satisfy yet ────
+              The deficit readout is the wrapping station's live to-do: wrap
+              this many packs and these orders release themselves. */}
+          {fridgeAllocation.active && fridgeAllocation.held.length > 0 && (
+            <div className="space-y-2 mt-4">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-1">
+                Awaiting Wrapping ({fridgeAllocation.held.length})
+              </p>
+              {fridgeAllocation.deficits.length > 0 && (
+                <div className="glass-panel px-4 py-3 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20">
+                  <p className="text-sm font-semibold text-blue-900 dark:text-blue-200 mb-1">
+                    To release these orders, wrap:
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {fridgeAllocation.deficits.map(d => (
+                      <span key={d.recipeName} className="text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200 font-medium tabular-nums">
+                        {d.recipeName} × {d.packs}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {fridgeAllocation.held.map(order => (
+                <div key={order.id} className="glass-panel px-4 py-3 rounded-xl border border-border opacity-60 flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">
+                      {order.name} {order.shipping_address?.name ?? order.customer?.first_name ?? ""}
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate" title={(fridgeAllocation.shortFor.get(order.id) ?? []).join("\n")}>
+                      Short: {(fridgeAllocation.shortFor.get(order.id) ?? []).join(" · ") || "fridge stock"}
+                    </p>
+                  </div>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground font-medium flex-shrink-0">
+                    Awaiting wrapping
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
 
           {fulfilledOrders.length > 0 && includeAll && (
             <div className="space-y-2 opacity-50">
