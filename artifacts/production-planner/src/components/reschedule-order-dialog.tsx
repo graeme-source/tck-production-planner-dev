@@ -91,7 +91,14 @@ export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, 
   });
 
   return (
-    <div className="fixed inset-0 z-[120] bg-black/60 flex items-center justify-center p-4">
+    // pointer-events-auto is load-bearing: this renders over a MODAL Radix
+    // dialog, and Radix puts pointer-events:none on the whole body while one
+    // is open (its own content wins them back inside its portal). Without
+    // this, every click here fell through to Radix's overlay — first closing
+    // the parent (fixed 2026-08-21 morning), then, with that close guarded,
+    // doing nothing at all: a perfectly rendered dialog nobody could press
+    // (#133128, same afternoon). It also made the email preview unscrollable.
+    <div className="fixed inset-0 z-[120] bg-black/60 flex items-center justify-center p-4 pointer-events-auto">
       <div className="bg-card rounded-2xl border border-border shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
           <CalendarClock className="w-5 h-5 text-amber-600" />
