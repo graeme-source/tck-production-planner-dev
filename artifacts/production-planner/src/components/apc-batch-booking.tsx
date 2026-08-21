@@ -62,6 +62,9 @@ interface BookResult {
   reference?: string;
   reason?: string;
   recordError?: string;
+  /** Set when APC refused on coverage grounds and the order was marked in
+   *  Shopify so it can be found there later. */
+  taggedNoService?: boolean;
 }
 
 interface BookResponse {
@@ -247,8 +250,18 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
   );
 
   return (
-    <Dialog open onOpenChange={(v) => { if (!v && stage !== "booking") onClose(); }}>
-      <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
+    <Dialog open onOpenChange={(v) => { if (!v && stage !== "booking" && !rescheduling) onClose(); }}>
+      <DialogContent
+        className="max-w-2xl max-h-[88vh] overflow-y-auto"
+        // The reschedule dialog renders over this one. Radix decides
+        // "clicked outside" on POINTERDOWN, which fires before click — so
+        // pressing a button in the child dialog tore this one down, unmounting
+        // the child before its click handler ran. The button looked like it
+        // did nothing because it genuinely never fired (2026-08-21, #133063).
+        onPointerDownOutside={e => { if (rescheduling) e.preventDefault(); }}
+        onInteractOutside={e => { if (rescheduling) e.preventDefault(); }}
+        onEscapeKeyDown={e => { if (rescheduling) e.preventDefault(); }}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <PackageCheck className="w-5 h-5 text-primary" /> Book APC consignments — {tag}
@@ -425,6 +438,9 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
                     )}
                     {r.reason && <span className={cn("block text-xs", r.status === "failed" ? "text-destructive" : "text-muted-foreground")}>{r.reason}</span>}
                     {r.recordError && <span className="block text-xs text-red-600 font-semibold">NOT SAVED LOCALLY — write this number down</span>}
+                    {r.taggedNoService && (
+                      <span className="block text-xs text-muted-foreground">Tagged <code className="font-mono">apc-no-service</code> in Shopify</span>
+                    )}
                   </span>
                   {r.serviceCode && <span className="text-xs font-mono text-muted-foreground shrink-0">{r.serviceCode}</span>}
                   {/* A failure here is usually a postcode that genuinely can't

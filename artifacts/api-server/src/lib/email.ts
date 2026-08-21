@@ -17,6 +17,10 @@ export interface EmailPayload {
    *  Klaviyo is configured the call falls through to Resend instead.
    *  If neither provider is configured, the email is logged. */
   attachments?: EmailAttachment[];
+  /** Blind copy. Used where someone needs proof a customer-facing mail
+   *  actually went out — a send that silently fails is indistinguishable
+   *  from one that worked, unless a copy lands in a real inbox. Resend only. */
+  bcc?: string[];
 }
 
 const APP_NAME = "TCK Production Planner";
@@ -79,6 +83,7 @@ export async function sendEmail(payload: EmailPayload): Promise<void> {
       body: JSON.stringify({
         from: `${APP_NAME} <${FROM_EMAIL}>`,
         to: [payload.to],
+        ...(payload.bcc?.length ? { bcc: payload.bcc } : {}),
         subject: payload.subject,
         html: payload.html,
         text: payload.text,

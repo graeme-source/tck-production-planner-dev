@@ -217,7 +217,13 @@ export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, 
                   </label>
                 </div>
                 <p className="text-xs text-muted-foreground">{preview.email.subject}</p>
-                <pre className="text-xs whitespace-pre-wrap font-sans bg-secondary/30 rounded-lg p-3 max-h-56 overflow-y-auto">
+                {/* No height cap and no scroller of its own. It had both, and
+                    a scroll region nested inside the dialog's own scroll
+                    region is unreliable to drive — on the iPad the packing
+                    screen runs on, the inner box swallowed the gesture and the
+                    end of the email was unreachable. One scroller for the
+                    whole dialog; the email just renders at its full height. */}
+                <pre className="text-xs whitespace-pre-wrap font-sans bg-secondary/30 rounded-lg p-3">
                   {preview.email.body}
                 </pre>
               </div>
