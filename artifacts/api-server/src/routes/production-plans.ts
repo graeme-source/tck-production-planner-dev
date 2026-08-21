@@ -502,9 +502,16 @@ router.get("/", async (req, res) => {
 });
 
 // GET /production-plans/packs-by-date?start=YYYY-MM-DD&end=YYYY-MM-DD
-// Calzone pack output planned per date (2-pack equivalents: batches ×
-// portions ÷ 2, mac cheese excluded). Feeds the dashboard's dispatch chart
-// so making-vs-dispatching can be compared in the same unit — packs.
+// Pack output planned per date (mac cheese excluded — it's shown separately).
+// Feeds the dashboard's making-vs-dispatching chart, so both bars have to be
+// in the same unit: packs as the customer receives them.
+//
+// Divides by the recipe's OWN pack_size, not a hardcoded 2. The 2 was the
+// calzone convention and it silently tripled anything that packs differently:
+// Cinnamon Buns pack in SIXES, so 24 batches × 48 portions read as 576 packs
+// when the kitchen was making 192 (Graeme spotted it, 2026-08-21). Falls back
+// to 2 only when pack_size is missing or zero, which keeps calzones exactly
+// as they were.
 router.get("/packs-by-date", async (req, res) => {
   const start = String(req.query.start ?? "");
   const end = String(req.query.end ?? "");
@@ -515,7 +522,10 @@ router.get("/packs-by-date", async (req, res) => {
   try {
     const rows = await db.execute<{ date: string; calzone_packs: number }>(sql`
       SELECT p.plan_date::text AS date,
-             COALESCE(SUM(FLOOR(pi.batches_target * COALESCE(r.portions_per_batch, 10) / 2.0)), 0)::int AS calzone_packs
+             COALESCE(SUM(FLOOR(
+               pi.batches_target * COALESCE(r.portions_per_batch, 10)
+               / COALESCE(NULLIF(r.pack_size, 0), 2)
+             )), 0)::int AS calzone_packs
       FROM production_plans p
       JOIN production_plan_items pi ON pi.plan_id = p.id
       JOIN recipes r ON r.id = pi.recipe_id
