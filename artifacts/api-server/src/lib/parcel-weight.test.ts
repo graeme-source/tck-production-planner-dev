@@ -1,5 +1,43 @@
 import { describe, it, expect } from "vitest";
-import { declaredParcelWeightKg, LIGHT_SERVICE_MAX_KG, HEAVY_SERVICE_MAX_KG } from "./parcel-weight";
+import { declaredParcelWeightKg, isLargeBox, LIGHT_SERVICE_MAX_KG, HEAVY_SERVICE_MAX_KG } from "./parcel-weight";
+
+const THRESHOLD = 7001;
+
+describe("isLargeBox", () => {
+  it("routes by weight even when tagged Small Box", () => {
+    // #133094: 8 packs, tagged "Small Box". The tag used to win, which sent a
+    // large parcel on a light service — refusable at the depot, order binned.
+    expect(isLargeBox("2026-08-22, dispatch, Saturday, Small Box", 8000, THRESHOLD)).toBe(true);
+  });
+
+  it("never demotes: a Small Box tag cannot force a big parcel small", () => {
+    expect(isLargeBox("Small Box", 7001, THRESHOLD)).toBe(true);
+    expect(isLargeBox("Small Box", 10000, THRESHOLD)).toBe(true);
+  });
+
+  it("still promotes on the tag, whatever the weight", () => {
+    expect(isLargeBox("large box", 2000, THRESHOLD)).toBe(true);
+    expect(isLargeBox("wholesale", 500, THRESHOLD)).toBe(true);
+  });
+
+  it("matches the tag whatever its case", () => {
+    // Live data carries both "Large Box" and "large box".
+    expect(isLargeBox("Large Box", 2000, THRESHOLD)).toBe(true);
+    expect(isLargeBox("large box", 2000, THRESHOLD)).toBe(true);
+  });
+
+  it("leaves genuinely small boxes small", () => {
+    // 6 packs: over the 5kg service ceiling but under the box threshold, so
+    // it is a small box that simply declares 5kg.
+    expect(isLargeBox("Small Box", 6000, THRESHOLD)).toBe(false);
+    expect(isLargeBox("2026-08-22, dispatch, Small Box", 5000, THRESHOLD)).toBe(false);
+  });
+
+  it("handles a missing weight", () => {
+    expect(isLargeBox("Small Box", null, THRESHOLD)).toBe(false);
+    expect(isLargeBox("large box", null, THRESHOLD)).toBe(true);
+  });
+});
 
 // Codes as configured on live (app_settings), 2026-08-21.
 const LIGHT = ["LW16", "WL16"] as const;   // small: weekday, weekend
