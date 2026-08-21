@@ -212,6 +212,9 @@ interface ConfigStatus {
   testMode: boolean;
   /** True when test mode is on but the APC training credentials are not configured. */
   trainingCredentialsMissing: boolean;
+  /** Prefix for Shopify admin order links — append the order id. Sent once
+   *  rather than per order, because a wave is several hundred rows. */
+  shopifyAdminOrderBase?: string;
   serviceCodes: {
     smallWeekday: string;
     largeWeekday: string;
@@ -841,6 +844,40 @@ function printLabel(
   iframe.src = pdfUrl;
 }
 
+/** Order number as a link into the Shopify admin.
+ *
+ *  Wanted everywhere an order number appears on this page — a packer or
+ *  manager assessing anything (an untagged order, a booking failure, a
+ *  fulfilment error) ends up in Shopify, and hunting for the order by hand is
+ *  the slow part. Opens in a new tab so the packing list stays put.
+ *
+ *  The base URL arrives once from /config-status rather than per order: a
+ *  wave is several hundred rows. Falls back to plain text when the base
+ *  hasn't loaded, so the number is never missing. */
+function OrderNumber({ orderId, name, adminBase, className }: {
+  orderId: number | string;
+  name: string;
+  adminBase?: string;
+  className?: string;
+}) {
+  if (!adminBase) return <span className={className}>{name}</span>;
+  return (
+    <a
+      href={`${adminBase}${orderId}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={e => e.stopPropagation()}
+      // Underlined ALWAYS, not just on hover: the packing screen is used on
+      // an iPad, where there is no hover state, so a hover-only affordance is
+      // invisible to the people actually using it.
+      className={cn(className, "underline decoration-dotted underline-offset-2 decoration-current/40 hover:decoration-current")}
+      title={`Open ${name} in Shopify`}
+    >
+      {name}
+    </a>
+  );
+}
+
 type PrintStatus = "idle" | "printing" | "done" | "failed";
 
 type View = "dates" | "list" | "picking" | "pre-confirm" | "confirm";
@@ -949,10 +986,12 @@ function FailuresModal({
   failures,
   onDismiss,
   onClose,
+  adminBase,
 }: {
   failures: Array<{ orderId: number; orderName: string; customerName: string; error: string; kind: "fulfilment" | "decrement"; at: Date }>;
   onDismiss: (orderId: number) => void;
   onClose: () => void;
+  adminBase?: string;
 }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
@@ -976,7 +1015,10 @@ function FailuresModal({
             <div key={f.orderId} className={`p-3 rounded-xl border ${f.kind === "fulfilment" ? "bg-destructive/5 border-destructive/30" : "bg-amber-50 dark:bg-amber-950/20 border-amber-300 dark:border-amber-800"}`}>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                  <p className="font-semibold">{f.orderName} <span className="font-normal text-muted-foreground">— {f.customerName}</span></p>
+                  <p className="font-semibold">
+                    <OrderNumber orderId={f.orderId} name={f.orderName} adminBase={adminBase} />
+                    <span className="font-normal text-muted-foreground"> — {f.customerName}</span>
+                  </p>
                   <p className={`text-xs font-medium mt-0.5 ${f.kind === "fulfilment" ? "text-destructive" : "text-amber-700 dark:text-amber-300"}`}>
                     {f.kind === "fulfilment"
                       ? "Shopify fulfilment failed — customer was NOT emailed; stock was NOT deducted."
@@ -1017,7 +1059,7 @@ interface DispatchAuditResponse {
 // cross-checks each order in the current dispatch tag against Shopify's
 // fulfillment_status and the two completion tags. Lets the operator close
 // out a packing session knowing exactly what (if anything) needs follow-up.
-function AuditModal({ tag, onClose }: { tag: string; onClose: () => void }) {
+function AuditModal({ tag, onClose, adminBase }: { tag: string; onClose: () => void; adminBase?: string }) {
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["dispatch-audit", tag],
     queryFn: async (): Promise<DispatchAuditResponse> => {
@@ -1082,7 +1124,10 @@ function AuditModal({ tag, onClose }: { tag: string; onClose: () => void }) {
                   {problemRows.map(o => (
                     <div key={o.orderId} className="p-3 bg-secondary/20 border border-border rounded-xl flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
-                        <p className="font-semibold">{o.orderName} <span className="font-normal text-muted-foreground">— {o.customerName ?? "(no name)"}</span></p>
+                        <p className="font-semibold">
+                          <OrderNumber orderId={o.orderId} name={o.orderName} adminBase={adminBase} />
+                          <span className="font-normal text-muted-foreground"> — {o.customerName ?? "(no name)"}</span>
+                        </p>
                         <div className="flex items-center gap-2 mt-1 flex-wrap text-xs">
                           <span className={`px-2 py-0.5 rounded ${STATUS_LABEL[o.status].color} font-medium`}>{STATUS_LABEL[o.status].label}</span>
                           <span className="text-muted-foreground">Shopify: {o.shopifyFulfillmentStatus ?? "unfulfilled"}</span>
@@ -3495,13 +3540,14 @@ export default function Fulfilment() {
 
       {showFailuresModal && (
         <FailuresModal
+          adminBase={configStatus?.shopifyAdminOrderBase}
           failures={completionFailures}
           onDismiss={(orderId) => setCompletionFailures(prev => prev.filter(f => f.orderId !== orderId))}
           onClose={() => setShowFailuresModal(false)}
         />
       )}
       {showAuditModal && (
-        <AuditModal tag={queryTag} onClose={() => setShowAuditModal(false)} />
+        <AuditModal tag={queryTag} onClose={() => setShowAuditModal(false)} adminBase={configStatus?.shopifyAdminOrderBase} />
       )}
 
       {progress && (
@@ -3721,7 +3767,12 @@ export default function Fulfilment() {
               <div className="space-y-1.5 max-h-48 overflow-y-auto">
                 {filteredUntagged.map(order => (
                   <div key={order.id} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-amber-100/50 dark:bg-amber-900/20 text-sm">
-                    <span className="font-mono font-bold text-amber-900 dark:text-amber-200">{order.name}</span>
+                    <OrderNumber
+                      orderId={order.id}
+                      name={order.name}
+                      adminBase={configStatus?.shopifyAdminOrderBase}
+                      className="font-mono font-bold text-amber-900 dark:text-amber-200"
+                    />
                     <span className="text-amber-700 dark:text-amber-400 truncate flex-1">
                       {order.shipping_address?.name ?? `${order.customer?.first_name} ${order.customer?.last_name}`}
                     </span>
@@ -3823,7 +3874,12 @@ export default function Fulfilment() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-bold text-base leading-tight">{order.name}</span>
+                    <OrderNumber
+                      orderId={order.id}
+                      name={order.name}
+                      adminBase={configStatus?.shopifyAdminOrderBase}
+                      className="font-bold text-base leading-tight"
+                    />
                     <span className="text-sm text-muted-foreground truncate">
                       {order.shipping_address?.name ?? `${order.customer?.first_name} ${order.customer?.last_name}`}
                       {order.shipping_address && ` — ${order.shipping_address.city}, ${order.shipping_address.zip}`}
@@ -3965,7 +4021,12 @@ export default function Fulfilment() {
                 <div key={order.id} className="glass-panel p-4 rounded-xl border border-border flex items-center gap-4">
                   <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <span className="font-semibold">{order.name}</span>
+                    <OrderNumber
+                      orderId={order.id}
+                      name={order.name}
+                      adminBase={configStatus?.shopifyAdminOrderBase}
+                      className="font-semibold"
+                    />
                     <span className="text-sm text-muted-foreground ml-3">
                       {order.shipping_address?.name ?? `${order.customer?.first_name} ${order.customer?.last_name}`}
                     </span>

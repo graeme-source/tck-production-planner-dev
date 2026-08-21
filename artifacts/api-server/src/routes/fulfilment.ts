@@ -2,7 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db, skuLocationsTable, skuBarcodesTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable, apcConsignmentsTable, pagePermissionsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
-import { shopifyAdminOrderUrl, getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
+import { shopifyAdminOrderUrl, shopifyAdminOrderBase, getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
 import { nextAvailableDeliveryDate, rescheduleTags, withDeliveryDate, rescheduleEmailText, rescheduleEmailHtml, friendlyDate, firstNameOf, toZapietDate } from "../lib/order-reschedule";
 import { validate } from "../middleware/validate";
 import { sendEmail } from "../lib/email";
@@ -2983,6 +2983,11 @@ router.get("/config-status", requireFulfilmentAccess, async (_req: Request, res:
       bookOnOpen: bookOnOpenSetting !== "false",
       testMode: isTestMode,
       trainingCredentialsMissing: isTestMode && !trainingCredentialsConfigured(),
+      // Base for Shopify admin deep links, so every order number on the page
+      // can open the order without each list having to carry its own URL.
+      // Sent once here rather than per order: the packing screen renders
+      // several hundred order rows in a wave.
+      shopifyAdminOrderBase: shopifyAdminOrderBase(),
       serviceCodes: {
         smallWeekday: smallWeekday ?? "",
         largeWeekday: largeWeekday ?? "",

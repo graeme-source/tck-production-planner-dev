@@ -1009,7 +1009,13 @@ export async function replaceTagOnOrder(orderId: number, currentTags: string, ol
  *  myshopify domain redirects to whichever admin host is current, so it keeps
  *  working when Shopify moves the console again. */
 export function shopifyAdminOrderUrl(orderId: number): string {
-  return `https://${STORE_DOMAIN}/admin/orders/${orderId}`;
+  return `${shopifyAdminOrderBase()}${orderId}`;
+}
+
+/** The prefix an order id is appended to. Handed to the browser once, so a
+ *  page rendering hundreds of order rows doesn't need a URL per row. */
+export function shopifyAdminOrderBase(): string {
+  return `https://${STORE_DOMAIN}/admin/orders/`;
 }
 
 export interface ShopifyNoteAttribute { name: string; value: string }
