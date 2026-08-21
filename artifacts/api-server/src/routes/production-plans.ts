@@ -9,6 +9,7 @@ import { requireManagerOrAdmin as requireManagerOrAdminMw } from "../middleware/
 import * as z from "zod";
 import { resolveRecipeIngredients, resolveSubRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
 import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag, type ProductCount } from "../services/shopify";
+import { remainingFulfilmentPacks } from "../lib/remaining-fulfilment";
 import { getFactoryNumberCoreMenuOnly, getShopifyFreezerSyncEnabled } from "../lib/inventory-sync";
 import { logFridgeStockChange, type FridgeChangeSource } from "../lib/fridge-stock-log";
 import { londonDateString, londonStartOfDay } from "../lib/london-time";
@@ -990,79 +991,11 @@ export async function calculatePlanData(planDate: string) {
     remainingWrappingPacksToday[row.recipeId] = (remainingWrappingPacksToday[row.recipeId] ?? 0) + remaining;
   }
 
-  const remainingFulfilmentPacksToday: Record<number, number> = {};
-  // Diagnostics surfaced in the /calculate response so operators can see
-  // whether a discrepancy ("the audit panel says 0 fulfil-left but the
-  // dispatches page shows 2 packs to ship") is a Shopify tag-index lag, a
-  // missing variant mapping, or the core-menu-only flag filtering it out.
-  let fulfilmentDiagnostics: {
-    tagQueried: string;
-    unfulfilledOrderCount: number;
-    totalLineItems: number;
-    mappedLineItems: number;
-    skippedNonCoreLineItems: number;
-    unmappedVariantIds: string[];
-    error: string | null;
-  } = {
-    tagQueried: deliveryTodayStr,
-    unfulfilledOrderCount: 0,
-    totalLineItems: 0,
-    mappedLineItems: 0,
-    skippedNonCoreLineItems: 0,
-    unmappedVariantIds: [],
-    error: null,
-  };
-  try {
-    const unfulfilled = await getUnfulfilledOrdersByTag(deliveryTodayStr);
-    fulfilmentDiagnostics.unfulfilledOrderCount = unfulfilled.length;
-    if (unfulfilled.length > 0) {
-      const mappingRows = await db.execute<{
-        recipe_id: number;
-        shopify_variant_id: string;
-        wonky_variant_id: string | null;
-        is_core_menu: boolean;
-      }>(sql`
-        SELECT m.recipe_id, m.shopify_variant_id, m.wonky_variant_id, r.is_core_menu
-        FROM recipe_shopify_mappings m
-        INNER JOIN recipes r ON r.id = m.recipe_id
-      `);
-      const variantToRecipe = new Map<string, { recipeId: number; isCoreMenu: boolean }>();
-      // node-postgres returns { rows, rowCount } from db.execute() — iterating
-      // the wrapper directly throws "rows is not iterable" and silently falls
-      // through to the catch below, leaving remainingFulfilmentPacksToday
-      // empty. That overstates the Factory Number by exactly today's
-      // unfulfilled-order count. Match the .rows defensive pattern used at
-      // lines 818 and 1170.
-      for (const m of mappingRows.rows ?? mappingRows) {
-        if (m.shopify_variant_id) variantToRecipe.set(String(m.shopify_variant_id), { recipeId: m.recipe_id, isCoreMenu: m.is_core_menu });
-        if (m.wonky_variant_id) variantToRecipe.set(String(m.wonky_variant_id), { recipeId: m.recipe_id, isCoreMenu: m.is_core_menu });
-      }
-      const unmappedSet = new Set<string>();
-      for (const order of unfulfilled) {
-        for (const line of order.line_items ?? []) {
-          if (!line.variant_id) continue;
-          fulfilmentDiagnostics.totalLineItems += 1;
-          const mapping = variantToRecipe.get(String(line.variant_id));
-          if (!mapping) {
-            unmappedSet.add(String(line.variant_id));
-            continue;
-          }
-          if (coreMenuOnly && !mapping.isCoreMenu) {
-            fulfilmentDiagnostics.skippedNonCoreLineItems += 1;
-            continue;
-          }
-          fulfilmentDiagnostics.mappedLineItems += 1;
-          remainingFulfilmentPacksToday[mapping.recipeId] =
-            (remainingFulfilmentPacksToday[mapping.recipeId] ?? 0) + (line.quantity || 0);
-        }
-      }
-      fulfilmentDiagnostics.unmappedVariantIds = [...unmappedSet];
-    }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    fulfilmentDiagnostics.error = msg;
-    console.warn("[/calculate] prediction: failed to fetch unfulfilled orders for today, falling back to live stock", err);
-  }
+  // Packs still to leave the fridge today, netted off live stock below to
+  // give the PREDICTED end-of-day Factory Number. Shared with the macaroni
+  // cheese calculation so the two can't drift — see lib/remaining-fulfilment.
+  const { byRecipe: remainingFulfilmentPacksToday, diagnostics: fulfilmentDiagnostics } =
+    await remainingFulfilmentPacks(deliveryTodayStr, { coreMenuOnly });
 
   const shopifySalesPerDate: Record<string, Record<string, number>> = {};
   const shopifySalesCombined: Record<string, number> = {};
@@ -2216,11 +2149,29 @@ router.get("/calculate-mac-cheese", async (req, res) => {
     if (match) extraMap[Number(match[1])] = Number(s.value) || 0;
   }
 
+  // Stock is a PREDICTION of where the fridge lands, not a live count.
+  //
+  // Orders tagged for today's dispatch are already spoken for — those packs
+  // will leave before anything made from this plan is needed — so counting
+  // them as available made the plan short. Shopify tags orders with the
+  // DELIVERY date and TCK ships the day before, so today's dispatch carries
+  // tomorrow's tag. Same helper and same date rule as the calzone Factory
+  // Number, so the two categories can't disagree (Graeme, 2026-08-21).
+  const macTodayStr = londonDateString();
+  const macDeliveryTodayStr = getNextCalendarDay(macTodayStr);
+  const { byRecipe: macRemainingToday, diagnostics: macFulfilmentDiagnostics } =
+    await remainingFulfilmentPacks(macDeliveryTodayStr, { limitToRecipeIds: macRecipeIds });
+
   const recipes = macRecipes.map(r => {
     const portionsPerBatch = Number(r.portionsPerBatch) || 10;
     const packSize = Number(r.packSize) || 1;
     const packsPerBatch = portionsPerBatch / packSize;
-    const leftOverStock = latestStock[r.recipeId] ?? 0;
+    const liveStock = latestStock[r.recipeId] ?? 0;
+    const stillToDispatchToday = macRemainingToday[r.recipeId] ?? 0;
+    // Never below zero: more outstanding than stock means the fridge is
+    // already committed, and the plan should treat it as empty rather than
+    // credit a negative.
+    const leftOverStock = Math.max(0, liveStock - stillToDispatchToday);
 
     const salesNextDay = matchSalesForDate(r.recipeId, r.recipeName ?? "", deliveryDates[0]);
     const salesNextDayPlus1 = matchSalesForDate(r.recipeId, r.recipeName ?? "", deliveryDates[1]);
@@ -2246,6 +2197,10 @@ router.get("/calculate-mac-cheese", async (req, res) => {
       maxBatchesPerTin: r.maxBatchesPerTin ? Number(r.maxBatchesPerTin) : null,
       sopUrl: r.sopUrl ?? null,
       leftOverStock: Math.round(leftOverStock),
+      // What the prediction was built from, so the screen can show its working
+      // rather than an unexplained drop.
+      liveStock: Math.round(liveStock),
+      stillToDispatchToday: Math.round(stillToDispatchToday),
       salesNextDay,
       salesNextDayPlus1,
       salesNextDayPlus2,
@@ -2256,7 +2211,12 @@ router.get("/calculate-mac-cheese", async (req, res) => {
     };
   });
 
-  res.json({ planDate, dispatchDates, deliveryDates, shopifyError, recipes });
+  res.json({
+    planDate, dispatchDates, deliveryDates, shopifyError, recipes,
+    // Why the stock figure differs from a live fridge count — a Shopify tag
+    // lag or an unmapped variant would silently under-deduct otherwise.
+    fulfilmentDiagnostics: macFulfilmentDiagnostics,
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
