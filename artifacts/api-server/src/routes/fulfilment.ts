@@ -2,7 +2,10 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db, skuLocationsTable, skuBarcodesTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable, apcConsignmentsTable, pagePermissionsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
-import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
+import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
+import { nextAvailableDeliveryDate, rescheduleTags, withDeliveryDate, rescheduleEmailText, rescheduleEmailHtml, friendlyDate, firstNameOf, toZapietDate } from "../lib/order-reschedule";
+import { validate } from "../middleware/validate";
+import { sendEmail } from "../lib/email";
 import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService, lookupOrderByReference, lookupOrdersByReference, lookupOrderByWaybill, parseApcBarcode, waybillCore, apcTrackingUrl, type ApcOrderLookup } from "../services/apc";
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
 import { declaredParcelWeightKg } from "../lib/parcel-weight";
@@ -1336,6 +1339,152 @@ router.get("/shipments/:waybill/label.pdf", requireFulfilmentAccess, async (req:
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[Fulfilment] label.pdf error for ${waybill} piece ${piece}:`, msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
+// ── Rescheduling an order whose consignment genuinely can't be booked ──────
+//
+// A postcode with no Saturday service, or weather closing a route mid-week.
+// The order isn't cancelled — it slides to the next date we can deliver, the
+// customer is told, and it drops back into the backlog to be re-tagged on the
+// next working morning.
+//
+// Deliberately one order at a time (Graeme, 2026-08-21): each customer gets a
+// personally addressed email, and the operator checks the result before moving
+// on. A "move all failures" button can come later once this is trusted.
+//
+// Two steps, always: preview computes and shows, apply writes. Nothing is
+// written or emailed by the preview.
+
+const RescheduleBody = z.object({
+  /** Target delivery date, YYYY-MM-DD. Defaults to the next available. */
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD"),
+  /** The date being moved FROM — guards against a stale screen rescheduling
+   *  an order whose date somebody else already changed. */
+  fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "fromDate must be YYYY-MM-DD"),
+  /** False lets the tags move without mailing the customer (e.g. they've
+   *  already been told by phone). */
+  sendCustomerEmail: z.boolean().default(true),
+});
+
+/** Everything both the preview and the apply need to agree on. */
+async function buildReschedulePlan(orderId: number, fromDate: string, toDate: string, senderFullName: string) {
+  const order = await getOrderForReschedule(orderId);
+  if (!order) return null;
+
+  const tagChange = rescheduleTags(order.tags, fromDate, toDate);
+  const attrChange = withDeliveryDate(order.noteAttributes, toDate);
+  const customerFirstName = firstNameOf(order.customerFirstName ?? order.shippingName, "there");
+  const senderFirstName = firstNameOf(senderFullName, "The Calzone Kitchen");
+
+  return {
+    order,
+    tagChange,
+    attrChange,
+    email: {
+      to: order.email,
+      subject: `Your Calzone Kitchen order ${order.name} — new delivery date`,
+      body: rescheduleEmailText({ customerFirstName, senderFirstName, newTagDate: toDate }),
+      html: rescheduleEmailHtml({ customerFirstName, senderFirstName, newTagDate: toDate }),
+    },
+  };
+}
+
+// GET /orders/:orderId/reschedule-preview?from=YYYY-MM-DD&date=YYYY-MM-DD
+// Read-only. Shows the exact tag and attribute changes plus the rendered email.
+router.get("/orders/:orderId/reschedule-preview", requireFulfilmentAccess, async (req: Request, res: Response) => {
+  const orderId = Number(req.params.orderId);
+  const fromDate = String(req.query.from ?? "");
+  if (!Number.isFinite(orderId) || !/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) {
+    res.status(400).json({ error: "orderId and a from=YYYY-MM-DD query param are required" });
+    return;
+  }
+  const requested = typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+    ? req.query.date
+    : null;
+  const toDate = requested ?? nextAvailableDeliveryDate(fromDate);
+
+  try {
+    const plan = await buildReschedulePlan(orderId, fromDate, toDate, await resolveUserName(req));
+    if (!plan) { res.status(404).json({ error: `Order ${orderId} not found on Shopify.` }); return; }
+
+    const warnings: string[] = [];
+    if (!plan.email.to) warnings.push("This order has no email address — the tags can still move, but no customer email will be sent.");
+    if (!plan.tagChange.removed.includes(fromDate)) warnings.push(`The order is not tagged ${fromDate} — its delivery date may already have been changed.`);
+    if (!plan.attrChange.changed) warnings.push("Zapiet's Delivery-Date already matches the new date.");
+
+    res.json({
+      orderId,
+      orderName: plan.order.name,
+      customerName: plan.order.shippingName ?? plan.order.customerFirstName,
+      fromDate,
+      toDate,
+      toDateFriendly: friendlyDate(toDate),
+      defaultDate: nextAvailableDeliveryDate(fromDate),
+      tags: plan.tagChange,
+      deliveryAttribute: {
+        before: plan.attrChange.previous,
+        after: toZapietDate(toDate),
+        // Named so the operator can see nothing else is being touched.
+        preserved: plan.attrChange.attributes.filter(a => a.name !== "Delivery-Date").map(a => a.name),
+      },
+      email: plan.email,
+      warnings,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Fulfilment] reschedule-preview failed for ${orderId}:`, msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
+// POST /orders/:orderId/reschedule — writes the tags + attribute, then emails.
+router.post("/orders/:orderId/reschedule", requireFulfilmentAccess, validate(RescheduleBody), async (req: Request, res: Response) => {
+  const orderId = Number(req.params.orderId);
+  const { date: toDate, fromDate, sendCustomerEmail } = req.body as z.infer<typeof RescheduleBody>;
+  if (!Number.isFinite(orderId)) { res.status(400).json({ error: "Invalid orderId" }); return; }
+
+  try {
+    const senderName = await resolveUserName(req);
+    // Re-read from Shopify rather than trusting anything the browser sent —
+    // the preview may be minutes old and someone else may have touched it.
+    const plan = await buildReschedulePlan(orderId, fromDate, toDate, senderName);
+    if (!plan) { res.status(404).json({ error: `Order ${orderId} not found on Shopify.` }); return; }
+
+    // The write goes first. If the email later fails the order is still
+    // correctly scheduled and can be re-sent; the reverse — telling a customer
+    // about a date we then failed to set — is far worse.
+    await updateOrderTagsAndAttributes(orderId, plan.tagChange.after, plan.attrChange.attributes);
+    console.log(`[Fulfilment] ${plan.order.name} rescheduled ${fromDate} → ${toDate} by ${senderName}`);
+
+    let emailed = false;
+    let emailError: string | null = null;
+    if (sendCustomerEmail && plan.email.to) {
+      try {
+        await sendEmail({ to: plan.email.to, subject: plan.email.subject, text: plan.email.body, html: plan.email.html });
+        emailed = true;
+      } catch (mailErr) {
+        emailError = mailErr instanceof Error ? mailErr.message : String(mailErr);
+        console.error(`[Fulfilment] reschedule email failed for ${plan.order.name}:`, emailError);
+      }
+    }
+
+    res.json({
+      orderId,
+      orderName: plan.order.name,
+      fromDate,
+      toDate,
+      tags: plan.tagChange.after,
+      deliveryAttribute: toZapietDate(toDate),
+      emailed,
+      emailTo: plan.email.to,
+      ...(emailError ? { emailError } : {}),
+      ...(!plan.email.to ? { emailSkipped: "Order has no email address" } : {}),
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Fulfilment] reschedule failed for ${orderId}:`, msg);
     res.status(502).json({ error: msg });
   }
 });
