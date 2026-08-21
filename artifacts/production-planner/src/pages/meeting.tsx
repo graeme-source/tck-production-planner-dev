@@ -31,6 +31,7 @@ import type { DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/utils";
+import { packDayName, packDayNameCap } from "@/lib/pack-day";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
@@ -50,6 +51,9 @@ export interface MeetingSlide {
 export interface DashboardData {
   today: string;
   yesterday: string;
+  /** The next PACK day, not the next calendar day: calendar tomorrow Mon–Thu,
+   *  Monday on a Friday, bank holidays skipped (mirrors `yesterday`, which is
+   *  the previous production day). */
   tomorrow: string;
   special: { id: number; name: string } | null;
   tomorrowNonCoreItems: Array<{ recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null }>;
@@ -542,7 +546,7 @@ function MeetingShell({
       {isPreviewing && (
         <div className="bg-purple-500/10 border-b border-purple-500/30 text-purple-700 dark:text-purple-300 px-6 py-2 text-base flex items-center justify-between">
           <span className="font-medium">
-            Preview — Tomorrow's meeting ({data.tomorrow ? format(new Date(data.tomorrow + "T00:00:00"), "EEEE d MMMM") : ""})
+            Preview — {packDayNameCap(data.today, data.tomorrow)}'s meeting ({data.tomorrow ? format(new Date(data.tomorrow + "T00:00:00"), "EEEE d MMMM") : ""})
           </span>
           <button onClick={onExit} className="text-sm underline-offset-2 hover:underline">Exit preview</button>
         </div>
@@ -2060,8 +2064,13 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
   const dispatchLabel = fmtDay(calc?.dispatchDates?.[1]);
   const deliveryLabel = fmtDay(calc?.deliveryDates?.[1]);
 
-  const packDayLabel = tomorrowMode ? "tomorrow's" : "today's";
-  const dayCap = tomorrowMode ? "Tomorrow's" : "Today's";
+  // The next pack is only literally "tomorrow" Mon–Thu — on a Friday it's
+  // Monday's — so the labels name the day instead of assuming (Graeme,
+  // 2026-08-21: "left to dispatch tomorrow · 0" on a Friday afternoon read
+  // like a real, empty Saturday dispatch).
+  const nextPackDay = packDayName(data.today, data.tomorrow);
+  const packDayLabel = tomorrowMode ? `${nextPackDay}'s` : "today's";
+  const dayCap = tomorrowMode ? `${packDayNameCap(data.today, data.tomorrow)}'s` : "Today's";
   // minmax on the recipe column: without it the 1fr track collapses to zero
   // on an iPad in portrait and the names vanish before anything truncates.
   const cols = "grid-cols-[1.75rem_4.5rem_minmax(8rem,1fr)_4.75rem_5.25rem_4.75rem_5.75rem_5rem]";
@@ -2100,7 +2109,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
           <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
         </div>
       ) : rows.length === 0 ? (
-        <div className="glass-panel rounded-2xl p-6 text-muted-foreground">No plan published for {tomorrowMode ? "tomorrow" : "today"} yet.</div>
+        <div className="glass-panel rounded-2xl p-6 text-muted-foreground">No plan published for {tomorrowMode ? nextPackDay : "today"} yet.</div>
       ) : (
         <div className="glass-panel rounded-2xl overflow-hidden overflow-x-auto">
          <div className="min-w-[44rem]">
@@ -2118,7 +2127,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
               </HeaderInfo>
             </span>
             <span className="text-center">
-              Left to dispatch {showTomorrowPack ? "tomorrow" : "today"}
+              Left to dispatch {showTomorrowPack ? nextPackDay : "today"}
               <HeaderInfo>Orders still to be fulfilled for this pack: dispatch {dispatchLabel} · delivery {deliveryLabel}. Orders already packed drop off this count — they've also left the stock column — so the numbers stay honest all day. Before packing starts this is the full dispatch.</HeaderInfo>
             </span>
             <span className="text-center">
