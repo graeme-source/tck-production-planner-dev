@@ -40,6 +40,29 @@ async function requireAdmin(req: Request, res: Response, next: NextFunction) {
 
 const ROLE_RANK: Record<string, number> = { viewer: 0, manager: 1, admin: 2 };
 
+/**
+ * Manager or admin, regardless of the /fulfilment page permission.
+ *
+ * PACKING is open to viewers — that is the whole point of the page permission,
+ * and the kitchen team are viewers. But two things on this page are not
+ * packing:
+ *
+ *   * booking consignments — every one is a real, billable courier booking
+ *   * rescheduling an order — rewrites a live customer order's tags and
+ *     delivery date, and sends that customer an email
+ *
+ * Neither should be reachable by the eleven viewers who need the page to pack
+ * (Graeme, 2026-08-21). The page permission stays where it is; these specific
+ * endpoints sit above it.
+ */
+async function requireManagerForCourierActions(req: Request, res: Response, next: NextFunction) {
+  const role = await resolveRole(req);
+  if (role === "admin" || role === "manager") { next(); return; }
+  res.status(403).json({
+    error: "Booking consignments and rescheduling orders are manager-only. Ask a manager or admin to do this one.",
+  });
+}
+
 // Operational fulfilment endpoints (list orders, verify labels, complete)
 // honour the "/fulfilment" page permission set in Settings → Page Access
 // Control, so opening Order Packing Live to viewers there also opens the
@@ -1389,7 +1412,7 @@ async function buildReschedulePlan(orderId: number, fromDate: string, toDate: st
 
 // GET /orders/:orderId/reschedule-preview?from=YYYY-MM-DD&date=YYYY-MM-DD
 // Read-only. Shows the exact tag and attribute changes plus the rendered email.
-router.get("/orders/:orderId/reschedule-preview", requireFulfilmentAccess, async (req: Request, res: Response) => {
+router.get("/orders/:orderId/reschedule-preview", requireManagerForCourierActions, async (req: Request, res: Response) => {
   const orderId = Number(req.params.orderId);
   const fromDate = String(req.query.from ?? "");
   if (!Number.isFinite(orderId) || !/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) {
@@ -1436,7 +1459,7 @@ router.get("/orders/:orderId/reschedule-preview", requireFulfilmentAccess, async
 });
 
 // POST /orders/:orderId/reschedule — writes the tags + attribute, then emails.
-router.post("/orders/:orderId/reschedule", requireFulfilmentAccess, validate(RescheduleBody), async (req: Request, res: Response) => {
+router.post("/orders/:orderId/reschedule", requireManagerForCourierActions, validate(RescheduleBody), async (req: Request, res: Response) => {
   const orderId = Number(req.params.orderId);
   const { date: toDate, fromDate, sendCustomerEmail } = req.body as z.infer<typeof RescheduleBody>;
   if (!Number.isFinite(orderId)) { res.status(400).json({ error: "Invalid orderId" }); return; }
@@ -1755,7 +1778,7 @@ async function buildPreflight(tag: string, dispatchDate: Date) {
 }
 
 // GET /batch-preflight?tag=YYYY-MM-DD — what WOULD happen. Books nothing.
-router.get("/batch-preflight", requireFulfilmentAccess, async (req: Request, res: Response) => {
+router.get("/batch-preflight", requireManagerForCourierActions, async (req: Request, res: Response) => {
   const { tag, dispatchDate } = req.query as { tag?: string; dispatchDate?: string };
   if (!tag) { res.status(400).json({ error: "tag query param required" }); return; }
   try {
@@ -1771,7 +1794,7 @@ router.get("/batch-preflight", requireFulfilmentAccess, async (req: Request, res
 // Books each order in turn. One order failing never stops the rest, and every
 // order comes back with its own outcome so a partial run is fully accounted
 // for. Orders that already hold a live consignment are skipped, not re-booked.
-router.post("/batch-book", requireFulfilmentAccess, async (req: Request, res: Response) => {
+router.post("/batch-book", requireManagerForCourierActions, async (req: Request, res: Response) => {
   const parsed = z.object({
     tag: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     orderIds: z.array(z.number()).min(1).max(500),

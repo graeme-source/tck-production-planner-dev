@@ -8,6 +8,7 @@ import { useIcePacks } from "@/hooks/use-ice-packs";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import { ApcBatchBookingDialog } from "@/components/apc-batch-booking";
+import { useAuth } from "@/contexts/auth-context";
 import { format, addDays, parseISO } from "date-fns";
 import { useLocation } from "wouter";
 import {
@@ -1552,6 +1553,12 @@ export default function Fulfilment() {
   };
 
   const [showBatchBooking, setShowBatchBooking] = useState(false);
+  // Packing is open to viewers; booking real consignments and rescheduling
+  // customer orders is not. The API enforces this — hiding the button just
+  // saves a packer finding a 403 mid-shift.
+  const { state: authState } = useAuth();
+  const canBookCourier = authState.status === "authenticated"
+    && (authState.user.role === "admin" || authState.user.role === "manager");
   const [rebookingWaybill, setRebookingWaybill] = useState<string | null>(null);
   const [bulkTagging, setBulkTagging] = useState(false);
   const [showBulkTagConfirm, setShowBulkTagConfirm] = useState(false);
@@ -3589,13 +3596,15 @@ export default function Fulfilment() {
                   </div>
                 )}
 
-                <button
-                  onClick={() => setShowBatchBooking(true)}
-                  className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-2"
-                  title="Raise APC consignments — pick how many to do at a time"
-                >
-                  <PackageCheck className="w-4 h-4" /> Book APC labels
-                </button>
+                {canBookCourier && (
+                  <button
+                    onClick={() => setShowBatchBooking(true)}
+                    className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-2"
+                    title="Raise APC consignments — pick how many to do at a time"
+                  >
+                    <PackageCheck className="w-4 h-4" /> Book APC labels
+                  </button>
+                )}
               </>
             )}
 
