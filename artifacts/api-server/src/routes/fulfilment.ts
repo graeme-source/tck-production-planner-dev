@@ -5,6 +5,7 @@ import * as z from "zod";
 import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
 import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService, lookupOrderByReference, lookupOrdersByReference, lookupOrderByWaybill, parseApcBarcode, waybillCore, apcTrackingUrl, type ApcOrderLookup } from "../services/apc";
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
+import { declaredParcelWeightKg } from "../lib/parcel-weight";
 import { sql } from "drizzle-orm";
 
 const router = Router();
@@ -98,6 +99,32 @@ async function getApcMode(): Promise<ApcMode> {
   return legacy === "false" ? "off" : "full";
 }
 
+/** Is this a large box? Tags first, nominal weight as the fallback. */
+function isLargeBoxOrder(order: ShopifyOrder, weightThresholdG: number): boolean {
+  const tags = order.tags.split(",").map(t => t.trim().toLowerCase());
+  const weightG = order.total_weight ?? 0;
+  // Use explicit box-size tags when present. Weight is a fallback only when
+  // neither tag is found (e.g. no Shopify tagging rule has run yet).
+  const hasLargeTag = tags.includes("large box") || tags.includes("wholesale");
+  const hasSmallTag = tags.includes("small box");
+  return hasLargeTag || (!hasSmallTag && weightG >= weightThresholdG);
+}
+
+/** The weight we declare to APC. Capped on the light services — see
+ *  lib/parcel-weight.ts for why the Shopify figure can't be sent as-is. */
+function declaredWeightFor(
+  order: ShopifyOrder,
+  serviceCode: string,
+  codes: { smallWeekday: string; largeWeekday: string; smallFriday: string; largeFriday: string },
+): number {
+  return declaredParcelWeightKg(
+    order.total_weight,
+    serviceCode,
+    [codes.smallWeekday, codes.smallFriday],
+    [codes.largeWeekday, codes.largeFriday],
+  );
+}
+
 function pickServiceCode(
   order: ShopifyOrder,
   codes: { smallWeekday: string; largeWeekday: string; smallFriday: string; largeFriday: string },
@@ -105,13 +132,7 @@ function pickServiceCode(
   deliveryDate?: Date,
 ): string {
   const tags = order.tags.split(",").map(t => t.trim().toLowerCase());
-  const weightG = order.total_weight ?? 0;
-
-  // Use explicit box-size tags when present. Weight is a fallback only when
-  // neither tag is found (e.g. no Shopify tagging rule has run yet).
-  const hasLargeTag = tags.includes("large box") || tags.includes("wholesale");
-  const hasSmallTag = tags.includes("small box");
-  const isLargeBox = hasLargeTag || (!hasSmallTag && weightG >= weightThresholdG);
+  const isLargeBox = isLargeBoxOrder(order, weightThresholdG);
 
   // Service code is chosen by DISPATCH day, not delivery day. The date tag
   // we receive is the delivery date; with overnight courier the parcel
@@ -746,7 +767,7 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
       return;
     }
 
-    const weightKg = (order.total_weight ?? 500) / 1000;
+    const weightKg = declaredWeightFor(order, serviceCode, { smallWeekday, largeWeekday, smallFriday, largeFriday });
     const customerName = order.shipping_address.name ||
       `${order.customer?.first_name ?? ""} ${order.customer?.last_name ?? ""}`.trim();
 
@@ -1681,7 +1702,7 @@ router.post("/batch-book", requireFulfilmentAccess, async (req: Request, res: Re
             phone: sa.phone ?? order.customer?.phone,
             email: order.customer?.email,
           },
-          parcels: [{ weight: Math.max(0.1, (order.total_weight ?? 500) / 1000) }],
+          parcels: [{ weight: declaredWeightFor(order, serviceCode, { smallWeekday, largeWeekday, smallFriday, largeFriday }) }],
           reference,
           specialInstructions,
           ...(apiBase ? { apiBase } : {}),
