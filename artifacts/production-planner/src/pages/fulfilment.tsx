@@ -523,18 +523,6 @@ interface BookedConsignment {
   trackingUrl: string | null;
 }
 
-/** Mark our record of a consignment dead after it was cancelled inside
- *  Hypaship. APC's API can't tell us that happened, so it has to be said
- *  explicitly. The order can then be re-booked under the same reference. */
-async function markConsignmentCancelled(waybill: string): Promise<void> {
-  const res = await fetch(`${BASE}/api/fulfilment/consignments/${encodeURIComponent(waybill)}/mark-cancelled`, {
-    method: "POST",
-    credentials: "include",
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error ?? "Could not mark it cancelled");
-}
-
 async function fetchBookedConsignments(tag: string): Promise<BookedConsignment[]> {
   const res = await fetch(`${BASE}/api/fulfilment/consignments?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
   if (!res.ok) return [];
@@ -1701,17 +1689,6 @@ export default function Fulfilment() {
   const { state: authState } = useAuth();
   const canBookCourier = authState.status === "authenticated"
     && (authState.user.role === "admin" || authState.user.role === "manager");
-  const [rebookingWaybill, setRebookingWaybill] = useState<string | null>(null);
-  // Two-step confirm for the "mark cancelled in APC" escape hatch. The old
-  // single-click pill-styled button read as a STATUS chip ("Cancelled in
-  // APC") sitting next to "Label booked" — the team believed orders had been
-  // cancelled. Holds the waybill awaiting its confirming second tap.
-  const [confirmCancelWaybill, setConfirmCancelWaybill] = useState<string | null>(null);
-  useEffect(() => {
-    if (!confirmCancelWaybill) return undefined;
-    const t = setTimeout(() => setConfirmCancelWaybill(null), 5000);
-    return () => clearTimeout(t);
-  }, [confirmCancelWaybill]);
   const [bulkTagging, setBulkTagging] = useState(false);
   const [showBulkTagConfirm, setShowBulkTagConfirm] = useState(false);
   const [consignmentAction, setConsignmentAction] = useState<"idle" | "adding-box" | "reprinting" | "cancelling">("idle");
@@ -4027,52 +4004,12 @@ export default function Fulfilment() {
                       </span>
                     )}
                     {bookedMap.has(order.id) && (
-                      <>
-                        <span
-                          className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 font-medium flex items-center gap-1"
-                          title={`Consignment ${bookedMap.get(order.id)!.waybill} already booked — opening this order reuses it`}
-                        >
-                          <CheckCircle2 className="w-2.5 h-2.5" /> Label booked
-                        </span>
-                        {/* APC's API reports a cancelled consignment exactly
-                            like a live one, so a cancellation made inside
-                            Hypaship can only be told to us by hand. Two-step:
-                            first tap arms, second tap (within 5s) executes —
-                            and it must never read as a status chip. */}
-                        <button
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            const wb = bookedMap.get(order.id)!.waybill;
-                            if (confirmCancelWaybill !== wb) {
-                              setConfirmCancelWaybill(wb);
-                              return;
-                            }
-                            setConfirmCancelWaybill(null);
-                            setRebookingWaybill(wb);
-                            try {
-                              await markConsignmentCancelled(wb);
-                              await refetchBooked();
-                              toast({ title: `${order.name}: consignment cleared`, description: "Start Picking will now raise a fresh one under the same reference." });
-                            } catch (err) {
-                              toast({ title: "Couldn't clear it", description: err instanceof Error ? err.message : "Request failed", variant: "destructive" });
-                            } finally {
-                              setRebookingWaybill(null);
-                            }
-                          }}
-                          disabled={rebookingWaybill === bookedMap.get(order.id)!.waybill}
-                          className={confirmCancelWaybill === bookedMap.get(order.id)!.waybill
-                            ? "text-[10px] px-1.5 py-0.5 rounded border border-red-400 bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 font-medium transition-colors flex items-center gap-1"
-                            : "text-[10px] px-1.5 py-0.5 rounded border border-dashed border-border text-muted-foreground/70 hover:text-foreground hover:bg-secondary transition-colors flex items-center gap-1 disabled:opacity-40"}
-                          title="Only for when YOU have cancelled this consignment inside APC/Hypaship — the app can't detect that on its own. Clears our record so a fresh label can be booked."
-                        >
-                          {rebookingWaybill === bookedMap.get(order.id)!.waybill
-                            ? <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                            : <Ban className="w-2.5 h-2.5" />}
-                          {confirmCancelWaybill === bookedMap.get(order.id)!.waybill
-                            ? "Tap again to confirm"
-                            : "I cancelled this in APC…"}
-                        </button>
-                      </>
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 font-medium flex items-center gap-1"
+                        title={`Consignment ${bookedMap.get(order.id)!.waybill} already booked — opening this order reuses it`}
+                      >
+                        <CheckCircle2 className="w-2.5 h-2.5" /> Label booked
+                      </span>
                     )}
                     {/* Booking failures used to be visible only inside the
                         batch-booking dialog's report — once closed, an order

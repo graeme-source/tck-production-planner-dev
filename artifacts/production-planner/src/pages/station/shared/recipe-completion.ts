@@ -9,9 +9,24 @@ import type { StationPlanItem } from "./constants";
  * override flows through without each station re-implementing the logic.
  */
 
-/** Two-packs produced per full batch. */
+/**
+ * Packs produced per full batch, in the recipe's OWN pack size.
+ *
+ * This divided by a hardcoded 2 until 2026-08-21. That is the calzone
+ * convention — a calzone pack is two portions — and it silently tripled the
+ * count for anything that packs differently. Cinnamon Buns pack in SIXES, so
+ * a 24-batch day read as 576 packs when the kitchen was making 192, and every
+ * station target derived from this was wrong by the same factor.
+ *
+ * `packSize` arrives as a numeric string ("2.0000") from the plan API and is
+ * absent from the generated type (see project_api_spec_drift), hence the
+ * cast. Falls back to 2 only when it's missing or zero, so calzones are
+ * untouched.
+ */
 export function packsPerBatch(item: ProductionPlanItem): number {
-  return Math.max(1, Math.floor((item.portionsPerBatch ?? 10) / 2));
+  const packSize = Number((item as { packSize?: number | string }).packSize) || 2;
+  const portions = Number(item.portionsPerBatch) || 10;
+  return Math.max(1, Math.floor(portions / packSize));
 }
 
 /**
