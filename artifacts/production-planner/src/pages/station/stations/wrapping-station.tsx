@@ -13,8 +13,9 @@ import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import { BreakTracker } from "../shared/break-tracker";
 import { PaceKpiStrip, type PaceBands } from "../shared/pace-kpi-strip";
-import { getStationCount, getAvailableFromPrev, compareItemsForDisplay } from "../shared/constants";
+import { getStationCount, getAvailableFromPrev, compareItemsForDisplay, type StationPlanItem } from "../shared/constants";
 import { netTwoPacks as computeNetTwoPacks, effectiveBatchesTarget } from "../shared/recipe-completion";
+import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
 
 // Case-order freezer split — new columns not yet in the generated API client
 // (openapi.yaml codegen deliberately deferred; see project_api_spec_drift).
@@ -46,6 +47,29 @@ interface ShopifyWrapConfirmState {
 
 type PostOvenItem = { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number };
 type PostOvenMap = Record<number, PostOvenItem[]>;
+
+/**
+ * How much topping goes on ONE pack — the only number that's actionable with
+ * a pack in your hand.
+ *
+ * The server sends weights per BATCH: the recipe's per-PORTION quantity times
+ * portionsPerBatch. To get back to a pack we divide by packs-per-batch, and
+ * that must use the recipe's OWN pack size — `portionsPerBatch / packSize`,
+ * the same formula the server uses everywhere it counts packs.
+ *
+ * Do NOT use the shared packsPerBatch() helper here: it hardcodes a two-pack
+ * (`portionsPerBatch / 2`), which is the calzone convention and silently
+ * wrong for anything else. On Cinnamon Buns that put a third of the real dose
+ * on screen (Graeme caught it, 2026-08-20). Wrong here means wrong icing on
+ * real product, so the pack size is read, never assumed.
+ */
+function postOvenGramsPerPack(poi: PostOvenItem, item: ProductionPlanItem): number {
+  // packSize arrives as a numeric string ("1.0000") from the plan API.
+  const packSize = Number((item as { packSize?: number | string }).packSize) || 1;
+  const portions = Number(item.portionsPerBatch) || 1;
+  const packs = Math.max(1, portions / packSize);
+  return poi.weightPerBatch / packs;
+}
 
 // Wrapping pace bands, from 2 weeks of live submission data (5–19 Aug 2026):
 // active-interval pace median 163 packs/hr, p75 212, p90 281. Standard 180
@@ -94,6 +118,26 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   const addingRef = useRef(false);
   const [expandedItemId, setExpandedItemId] = useState<number | null>(null);
   const userOverrideRef = useRef(false);
+
+  // Recipe-level SOPs, shown as chips on the open recipe so the wrapper can
+  // read the method at the bench — and attach one on the spot when a step
+  // turns out to be undocumented. Recipe-scoped, not station-scoped, so the
+  // same SOP follows the recipe onto any other screen that hangs chips off it.
+  const recipeIds = useMemo(
+    () => Array.from(new Set((plan.items ?? []).map(i => i.recipeId).filter((v): v is number => v != null))),
+    [plan.items],
+  );
+  const sopLinksKey = useMemo(() => ["sop-links-recipes", recipeIds.join(",")], [recipeIds]);
+  const { data: sopLinksByRecipe } = useQuery<Record<number, SopLink[]>>({
+    queryKey: sopLinksKey,
+    enabled: recipeIds.length > 0,
+    queryFn: async () => {
+      const res = await fetch(`/api/standards/links/for-recipes?ids=${recipeIds.join(",")}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load SOP links");
+      return res.json();
+    },
+  });
+  const sopViewer = useSopViewer("wrapping");
 
   const [runWonlyAction, wonlyBusy] = useGuardedAction({
     onSuccess: () => queryClient.invalidateQueries({ queryKey: [`/api/production-plans/${plan.id}`] }),
@@ -207,13 +251,13 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
 
   const STACK_SIZE = 24;
 
-  const items = [...(plan.items ?? [])].sort(compareItemsForDisplay);
+  const items: StationPlanItem[] = [...(plan.items ?? [])].sort(compareItemsForDisplay);
 
   const plannedPacks = (item: ProductionPlanItem) =>
     Math.floor(((item.batchesTarget ?? 0) * (item.portionsPerBatch ?? 10)) / 2);
   const grossPacks = (item: ProductionPlanItem) =>
     Math.floor((getStationCount(item, "ovens") * (item.portionsPerBatch ?? 10)) / 2);
-  const eightPackDeduction = (item: ProductionPlanItem) => (item.eightPackBagCount ?? 0) * 4;
+  const eightPackDeduction = (item: StationPlanItem) => (item.eightPackBagCount ?? 0) * 4;
   const combinedBuildingCount = (item: ProductionPlanItem) =>
     getStationCount(item, "building_1") + getStationCount(item, "building_2");
   const effBatches = (item: ProductionPlanItem) =>
@@ -221,7 +265,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   const netTwoPacks = (item: ProductionPlanItem) =>
     computeNetTwoPacks(item, getStationCount(item, "ovens"), effBatches(item), combinedBuildingCount(item));
   // netPacks for backward compat (total items including 8-pack bags for storage calcs)
-  const netPacks = (item: ProductionPlanItem) =>
+  const netPacks = (item: StationPlanItem) =>
     netTwoPacks(item) + (item.eightPackBagCount ?? 0);
 
   const totalWonly = items.reduce((s, it) => s + (it.wonlyCount ?? 0), 0);
@@ -425,7 +469,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
     }
   };
 
-  const addToStorage = async (item: ProductionPlanItem, qty: number, storageKey: string, packSize: number = 2) => {
+  const addToStorage = async (item: StationPlanItem, qty: number, storageKey: string, packSize: number = 2) => {
     if (isOnBreak || qty < 1 || addingRef.current) return;
     const loc = STORAGE_LOCATIONS.find(l => l.key === storageKey);
     if (!loc) return;
@@ -518,7 +562,8 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                   // Name the actual post-oven item(s) — garlic butter on
                   // calzones, cream cheese icing on cinnamon buns, whatever
                   // the recipe carries.
-                  const names = (postOvenMap[garlicReminderItem.id] ?? []).map(i => i.name);
+                  const pois = postOvenMap[garlicReminderItem.id] ?? [];
+                  const names = pois.map(i => i.name);
                   const label = names.length > 0 ? names.join(" and ") : "post-oven topping";
                   return (
                     <>
@@ -526,6 +571,35 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                       <p className="text-sm text-muted-foreground mt-0.5">
                         Add <span className="font-semibold text-foreground">{label}</span> to every <span className="font-semibold text-foreground">{garlicReminderItem.recipeName ?? "recipe"}</span> before wrapping. Tap Complete once you've done this batch.
                       </p>
+                      {/* The dose, at the moment the instruction is read —
+                          "add the icing" is not actionable without it. The
+                          same figures stay on the recipe card afterwards. */}
+                      {pois.length > 0 && (
+                        <div className="mt-3 space-y-1">
+                          {pois.map((poi, idx) => {
+                            const perPack = postOvenGramsPerPack(poi, garlicReminderItem);
+                            return (
+                              <div key={idx} className="flex items-baseline justify-between gap-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 px-3 py-1.5">
+                                <span className="text-sm font-medium text-amber-800 dark:text-amber-200">{poi.name}</span>
+                                <span className="text-lg font-bold tabular-nums text-amber-700 dark:text-amber-300 flex-shrink-0">
+                                  {perPack >= 10 ? Math.round(perPack) : Math.round(perPack * 10) / 10}g
+                                  <span className="text-xs font-medium ml-1">per pack</span>
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {/* Read the method before starting, not after. */}
+                      {garlicReminderItem.recipeId != null && (sopLinksByRecipe?.[garlicReminderItem.recipeId]?.length ?? 0) > 0 && (
+                        <div className="mt-3">
+                          <SopChips
+                            links={sopLinksByRecipe?.[garlicReminderItem.recipeId] ?? []}
+                            onOpen={sopViewer.open}
+                            queryKeysToInvalidate={[sopLinksKey]}
+                          />
+                        </div>
+                      )}
                     </>
                   );
                 })()}
@@ -864,26 +938,58 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                       );
                     })()}
 
-                    {/* Post-oven items (garlic butter) */}
+                    {/* Post-oven items (garlic butter, cream cheese icing).
+                        This panel is the STANDING copy of the reminder: the
+                        modal fires once and is gone, but the wrapper needs the
+                        per-pack dose in front of them for the whole run. */}
                     {postOvenItems.length > 0 && (
                       <div className="pt-3 border-t border-amber-200 dark:border-amber-800">
                         <div className="flex items-center gap-2 mb-2">
                           <Flame className="w-4 h-4 text-amber-500" />
-                          <span className="text-sm font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">After Oven</span>
+                          <span className="text-sm font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">After Oven — before wrapping</span>
                         </div>
                         <div className="space-y-1.5">
                           {postOvenItems.map((poi, idx) => {
                             const totalWeight = poi.weightPerBatch * (item.batchesTarget ?? 0);
+                            const perPack = postOvenGramsPerPack(poi, item);
                             return (
-                              <div key={idx} className="flex items-center justify-between bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
-                                <span className="text-base font-medium text-amber-800 dark:text-amber-200">{poi.name}</span>
-                                <div className="text-right">
-                                  <span className="text-lg font-bold tabular-nums text-amber-700 dark:text-amber-300">{Math.round(totalWeight)}g</span>
-                                  <span className="text-sm text-muted-foreground ml-1">total</span>
+                              <div key={idx} className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="text-base font-medium text-amber-800 dark:text-amber-200">{poi.name}</span>
+                                  {/* Per-pack leads: it's the number you act on
+                                      with a pack in your hand. The batch total
+                                      is context for how much to bring out. */}
+                                  <div className="text-right flex-shrink-0">
+                                    <span className="text-2xl font-bold tabular-nums text-amber-700 dark:text-amber-300">
+                                      {perPack >= 10 ? Math.round(perPack) : Math.round(perPack * 10) / 10}g
+                                    </span>
+                                    <span className="text-sm text-amber-700/80 dark:text-amber-300/80 ml-1">per pack</span>
+                                  </div>
                                 </div>
+                                <p className="text-xs text-muted-foreground mt-0.5">
+                                  {Math.round(totalWeight)}g across all {item.batchesTarget ?? 0} batches
+                                </p>
                               </div>
                             );
                           })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* SOPs for this recipe. Chips read at the bench; the
+                        dashed "+ SOP" attaches one on the spot when a step
+                        turns out to be undocumented — which is how the library
+                        gets filled in, by the people who hit the gap. */}
+                    {item.recipeId != null && (
+                      <div className="pt-3 border-t border-border/40">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Method</span>
+                          <SopChips
+                            links={sopLinksByRecipe?.[item.recipeId] ?? []}
+                            onOpen={sopViewer.open}
+                            attach={{ targetType: "recipe", a: item.recipeId, label: item.recipeName ?? "this recipe" }}
+                            queryKeysToInvalidate={[sopLinksKey]}
+                          />
                         </div>
                       </div>
                     )}
@@ -1125,6 +1231,10 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
           )}
         </div>
       </div>
+
+      {/* One viewer for every chip on this screen, including the one inside
+          the post-oven reminder modal. */}
+      {sopViewer.dialog}
     </div>
   );
 }

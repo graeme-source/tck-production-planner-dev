@@ -289,7 +289,7 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
     });
   };
 
-  const handleDeleteOneoff = (item: ChecklistItem) => {
+  const handleDeleteOneoff = (item: ChecklistItem & { category: Category }) => {
     if (item.type !== "oneoff") return;
     runOneoff(async (signal) => {
       await guardedFetch(`${BASE}/api/checklists/oneoff/${item.id}`, { method: "DELETE", signal });
@@ -298,7 +298,7 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
     });
   };
 
-  const handleDeleteTemplate = (item: ChecklistItem) => {
+  const handleDeleteTemplate = (item: ChecklistItem & { category: Category }) => {
     if (item.type !== "template") return;
     // Soft delete — the server deactivates the template (history is kept and
     // it can be restored from Edit Templates). The confirm guards against the
@@ -521,8 +521,8 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                                 role="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  if (item.type === "oneoff") handleDeleteOneoff(item);
-                                  else handleDeleteTemplate(item);
+                                  if (item.type === "oneoff") handleDeleteOneoff({ ...item, category: cat });
+                                  else handleDeleteTemplate({ ...item, category: cat });
                                 }}
                               >
                                 <Trash2 className="w-3.5 h-3.5" />

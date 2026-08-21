@@ -15,7 +15,7 @@ import {
   dptIngredientRequirementsTable,
   usersTable,
 } from "@workspace/db";
-import { eq, and, desc, sql, inArray, notInArray, lte, gte } from "drizzle-orm";
+import { eq, and, or, isNull, desc, sql, inArray, notInArray, lte, gte } from "drizzle-orm";
 import { resolveRecipeIngredients, aggregateIngredients } from "../lib/ingredient-resolver";
 import { computeOutstandingPrepRaw } from "../lib/outstanding-prep";
 import { londonDateString, londonEndOfDay, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
@@ -360,6 +360,9 @@ router.get("/calculate", async (req, res) => {
       orderQty: number;
       packsToOrder: number;
       isKanban: boolean;
+      // The kanban floor applied to packsToOrder (null when not a kanban
+      // line). The frontend's stock-edit recompute re-applies it.
+      kanbanFloorPacks: number | null;
       orderingUrl: string | null;
       lastStockCheckAt: string | null;
       // True when the item is daily-stock-checked for this supplier but has
@@ -387,7 +390,7 @@ router.get("/calculate", async (req, res) => {
 
   const kanbanSupplierOverrides: Record<number, number> = {};
   for (const k of pulledKanbans) {
-    if (k.supplierId) {
+    if (k.supplierId && k.ingredientId !== null) {
       kanbanSupplierOverrides[k.ingredientId] = k.supplierId;
     }
   }
@@ -447,11 +450,15 @@ router.get("/calculate", async (req, res) => {
     // amount even when the stock maths says 0 (stale stock check, opened
     // packs, etc.). Kanban units pack/bottle/pallet mean supplier packs;
     // "weight" means the ingredient's native unit.
+    let kanbanFloorPacks: number | null = null;
     if (isKanban) {
       const kanbanAmt = Number(detail.kanbanOrderAmount ?? detail.kanbanQuantity) || 1;
       const kanbanPacks = detail.kanbanUnit === "weight" && packWeight > 0
         ? Math.ceil(kanbanAmt / packWeight)
         : Math.ceil(kanbanAmt);
+      // Emitted on the line so the frontend's stock-edit recompute applies
+      // the same floor instead of re-deriving (or forgetting) it.
+      kanbanFloorPacks = kanbanPacks;
       packsToOrder = Math.max(packsToOrder, kanbanPacks);
     }
     // Case rounding: when this ingredient is ordered by the case, round the
@@ -511,6 +518,7 @@ router.get("/calculate", async (req, res) => {
       orderQty: Math.round(orderQty * 100) / 100,
       packsToOrder,
       isKanban,
+      kanbanFloorPacks,
       orderingUrl: detail.orderingUrl ?? null,
       lastStockCheckAt: stockCheckTimestamps[iid] ?? null,
       stockInPacks: (detail.stockInPacks ?? false) && packWeight > 0,
@@ -523,6 +531,8 @@ router.get("/calculate", async (req, res) => {
   }
 
   for (const kanban of pulledKanbans) {
+    // Recipe/sub-recipe sourced kanban cards have no ingredient to order here.
+    if (kanban.ingredientId === null) continue;
     if (ingredientMap[kanban.ingredientId]) continue;
 
     const detail = ingredientLookup[kanban.ingredientId];
@@ -540,6 +550,7 @@ router.get("/calculate", async (req, res) => {
           kanbanOrderAmount: ingredientsTable.kanbanOrderAmount,
           kanbanUnit: ingredientsTable.kanbanUnit,
           orderingUrl: ingredientsTable.orderingUrl,
+          stockInPacks: ingredientsTable.stockInPacks,
         })
         .from(ingredientsTable)
         .where(eq(ingredientsTable.id, kanban.ingredientId))
@@ -590,6 +601,7 @@ router.get("/calculate", async (req, res) => {
         orderQty,
         packsToOrder,
         isKanban: true,
+        kanbanFloorPacks: packsToOrder,
         orderingUrl: d.orderingUrl ?? null,
         lastStockCheckAt: stockCheckTimestamps[d.id] ?? null,
         belowRequirement: false,
@@ -1027,6 +1039,10 @@ router.patch("/purchase-orders/:id/place", async (req, res) => {
       .where(and(
         eq(kanbanItemsTable.status, "pulled"),
         inArray(kanbanItemsTable.ingredientId, placedIngredientIds),
+        // Only kanbans for THIS order's supplier (or with no supplier set) —
+        // a pulled kanban routed to a different supplier is a separate
+        // request and must survive this order being placed.
+        or(eq(kanbanItemsTable.supplierId, updated.supplierId), isNull(kanbanItemsTable.supplierId)),
       ));
   }
 
@@ -1111,6 +1127,8 @@ router.patch("/purchase-orders/:id/resubmit", async (req, res) => {
         .where(and(
           eq(kanbanItemsTable.status, "pulled"),
           inArray(kanbanItemsTable.ingredientId, resubmitIngredientIds),
+          // Same supplier scoping as /place — see comment there.
+          or(eq(kanbanItemsTable.supplierId, updated.supplierId), isNull(kanbanItemsTable.supplierId)),
         ));
     }
 
@@ -1251,9 +1269,14 @@ router.post("/regenerate", requireManagerOrAdmin, async (req, res) => {
       await db.delete(purchaseOrdersTable).where(inArray(purchaseOrdersTable.id, draftIds));
     }
 
-    // 3. Re-run the calculate logic by calling the same endpoint internally
-    //    We simulate a request to /calculate to get the supplier/line data.
-    const calcUrl = `${req.protocol}://${req.get("host")}/api/orders/calculate?planId=${planId}`;
+    // 3. Re-run the calculate logic by calling the same endpoint internally.
+    //    Loopback (same pattern as recipes.ts deck/spec-sheet) — the old
+    //    req.protocol + Host round-trip broke behind proxies/TLS termination.
+    //    Proper fix is extracting /calculate into a callable service (P2).
+    const port = process.env["PORT"];
+    const calcUrl = port
+      ? `http://127.0.0.1:${port}/api/orders/calculate?planId=${planId}`
+      : `${req.protocol}://${req.get("host")}/api/orders/calculate?planId=${planId}`;
     const calcRes = await fetch(calcUrl, {
       headers: { cookie: req.headers.cookie ?? "" },
     });

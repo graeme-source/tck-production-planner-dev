@@ -40,6 +40,7 @@ export function PinNumpad({
       return () => clearInterval(id);
     } else {
       setCountdown(null);
+      return undefined;
     }
   }, [lockedUntil]);
 

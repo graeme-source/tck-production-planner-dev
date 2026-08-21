@@ -239,18 +239,48 @@ router.get("/station-assignments", async (req: Request, res: Response) => {
       for (const p of st.positions ?? []) positionToStation.set(p.trim().toLowerCase(), st.title);
     }
 
-    type Person = { name: string; start: string | null; end: string | null; position: string };
+    // Punch state comes free with the rota. Planday's Scheduling API stamps
+    // each shift with a status — "Assigned" until the person clocks in, then
+    // "PunchclockStarted", then "PunchclockFinished" once they clock out.
+    // (Verified against the live portal, 2026-08-21.) No Punchclock API and
+    // no extra token scopes are involved: we were already fetching this field
+    // and throwing it away.
+    const punchStateOf = (status: string | null | undefined): "in" | "finished" | "not-in" => {
+      const s = (status ?? "").toLowerCase();
+      if (s.includes("started")) return "in";
+      if (s.includes("finished")) return "finished";
+      return "not-in";
+    };
+
+    // "Late" is only meaningful once the shift has actually begun, so it is
+    // decided here against London time rather than in the browser, where a
+    // tablet with a wrong clock could accuse someone of being late.
+    const nowHhmm = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hour12: false,
+    }).format(new Date());
+    const isToday = dateStr === new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date());
+
+    type Person = {
+      name: string; start: string | null; end: string | null; position: string;
+      punch: "in" | "finished" | "not-in"; late: boolean;
+    };
     const byStation = new Map<string, Person[]>();
     const extras: Person[] = [];
 
     for (const s of shifts) {
       const emp = s.employeeId != null ? empById.get(s.employeeId) : undefined;
       const posName = s.positionId != null ? (posById.get(s.positionId)?.name ?? null) : null;
+      const start = s.startDateTime?.slice(11, 16) ?? null;
+      const punch = punchStateOf(s.status);
       const person: Person = {
         name: emp ? `${emp.firstName ?? ""} ${emp.lastName ?? ""}`.trim() || "Unassigned" : "Unassigned",
-        start: s.startDateTime?.slice(11, 16) ?? null,
+        start,
         end: s.endDateTime?.slice(11, 16) ?? null,
         position: posName ?? "No position",
+        punch,
+        // Rostered, start time gone, still not clocked in. Only ever flagged
+        // on today — yesterday's no-shows aren't news at the morning meeting.
+        late: isToday && punch === "not-in" && start != null && start < nowHhmm,
       };
       const station = posName ? positionToStation.get(posName.trim().toLowerCase()) : undefined;
       if (station) {

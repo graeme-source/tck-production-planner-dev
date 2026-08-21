@@ -67,6 +67,9 @@ type OrderLine = {
   orderQty: number;
   packsToOrder: number;
   isKanban: boolean;
+  // The kanban floor the backend applied to packsToOrder (null when not a
+  // kanban line). The stock-edit recompute must respect it — see updateStock.
+  kanbanFloorPacks?: number | null;
   orderingUrl: string | null;
   lastStockCheckAt: string | null;
   // True when this item is daily-stock-checked but has enough stock to not
@@ -1302,6 +1305,11 @@ export default function Orders() {
       // the nearest whole case when ordered by the case.
       const rawOrderQty = Math.max(0, line.totalRequired + line.surplusTarget + (line.prepOutstandingQty ?? 0) - Math.max(0, newStock) - (line.inboundQty ?? 0));
       let packsToOrder = line.packWeight > 0 ? Math.ceil(rawOrderQty / line.packWeight) : 0;
+      // A scanned kanban floors the suggestion regardless of the stock maths
+      // — same rule as the backend, using the floor it computed.
+      if (line.isKanban && (line.kanbanFloorPacks ?? 0) > 0) {
+        packsToOrder = Math.max(packsToOrder, line.kanbanFloorPacks ?? 0);
+      }
       const caseSizePacks = line.caseSizePacks ?? 0;
       if (caseSizePacks > 0 && packsToOrder > 0) {
         packsToOrder = Math.ceil(packsToOrder / caseSizePacks) * caseSizePacks;

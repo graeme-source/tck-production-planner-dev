@@ -829,7 +829,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                       const ik = itemKey(ing);
                       const isSelected = ik === selectedItemKey;
                       const presence = presenceData[ing.ingredientId] ?? [];
-                      const ingLinkedItems = linkedItems[String(ing.ingredientId)] ?? [];
+                      const ingLinkedItems = linkedItems[ing.ingredientId] ?? [];
                       return (
                         <React.Fragment key={`${group.recipeId}-${ik}`}>
                         <button

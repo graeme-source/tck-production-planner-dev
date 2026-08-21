@@ -1733,7 +1733,7 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
         ];
         const checkByKey = new Map(lineChecks.map(c => [c.key, c.check]));
         const mismatchCount = lineChecks.filter(c => c.check && !c.check.ok).length;
-        const renderWarning = (check: ReturnType<typeof checkFillingLineMath>, unit: string | null) => {
+        const renderWarning = (check: ReturnType<typeof checkFillingLineMath> | undefined, unit: string | null) => {
           if (!check || check.ok) return null;
           const overByPct = ((check.shown - check.expected) / check.expected) * 100;
           const sign = overByPct >= 0 ? "+" : "";

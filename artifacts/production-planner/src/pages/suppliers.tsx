@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { useListSuppliers } from "@workspace/api-client-react";
+import { useListSuppliers, type CreateSupplier } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
@@ -31,6 +31,17 @@ const schema = z.object({
 });
 
 type FormValues = z.infer<typeof schema>;
+
+/** Ordering-schedule fields the suppliers routes read and persist (the API's
+ * validate middleware passes unknown fields through) but the generated
+ * CreateSupplier body doesn't declare. */
+type SupplierBody = CreateSupplier & {
+  orderingPhone?: string | null;
+  orderFrequency?: string;
+  orderDays?: string | null;
+  leadTimeDays?: number;
+  cutoffTime?: string;
+};
 
 type SupplierItem = {
   id: number;
@@ -434,12 +445,13 @@ export default function Suppliers() {
             values={defaultValues}
             isEdit={false}
             isPending={createSupplier.isPending}
-            onSubmit={(data) =>
+            onSubmit={(data) => {
+              const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00" };
               createSupplier.mutate(
-                { data: { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00" } },
+                { data: body },
                 { onSuccess: () => setIsAddOpen(false) }
-              )
-            }
+              );
+            }}
           />
         </DialogContent>
       </Dialog>
@@ -468,12 +480,13 @@ export default function Suppliers() {
               }}
               isEdit
               isPending={updateSupplier.isPending}
-              onSubmit={(data) =>
+              onSubmit={(data) => {
+                const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00" };
                 updateSupplier.mutate(
-                  { id: editingItem.id, data: { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00" } },
+                  { id: editingItem.id, data: body },
                   { onSuccess: () => setEditingItem(null) }
-                )
-              }
+                );
+              }}
             />
             <DeliveryChecksEditor supplierId={editingItem.id} />
           </DialogContent>

@@ -145,19 +145,9 @@ function StretchesPanel() {
 
   return (
     <div className="flex flex-col items-center gap-10 w-full">
-      {/* Greeting header — TCK logo + "Good morning" — sets the tone
-          for the meeting and gives the room something warm to start on
-          before the stretches. Logo is dark on the light meeting bg. */}
-      <div className="flex flex-col items-center gap-4 pt-4">
-        <img
-          src={`${import.meta.env.BASE_URL}tck-logo-dark.png`}
-          alt="TCK"
-          className="h-32 sm:h-40 w-auto object-contain dark:invert dark:brightness-200"
-        />
-        <p className="text-5xl sm:text-6xl font-display font-semibold tracking-tight">
-          Good morning, team
-        </p>
-      </div>
+      {/* The greeting moved to Who's On Today (2026-08-21) so the room gets
+          one opening slide: good morning + who's actually in. Repeating it
+          here would just push the stretch tiles down the screen. */}
 
       {/* Five stretch tiles — all visible, equal weight. The team
           self-paces; this is just the menu of what we're doing today. */}
@@ -1345,7 +1335,50 @@ function PrepMode({
 // Read-across-the-room design: names big, times small, one card per
 // station in production-flow order; rota roles that don't map to a
 // station appear in the footer so nobody is missing.
-interface StationAssignmentPerson { name: string; start: string | null; end: string | null; position: string }
+interface StationAssignmentPerson {
+  name: string; start: string | null; end: string | null; position: string;
+  /** Planday shift status, reduced: clocked in, clocked out, or not yet in. */
+  punch?: "in" | "finished" | "not-in";
+  /** Rostered, start time passed, still not clocked in. Decided server-side
+   *  against London time so a tablet's wrong clock can't accuse anyone. */
+  late?: boolean;
+}
+
+/** A name on the greeting slide, marked with where they are: clocked in,
+ *  not in yet, or late. Colour AND shape both carry the meaning — this is
+ *  read from across the kitchen, and a red dot alone is no use to anyone
+ *  who doesn't see red well. */
+function PersonName({ p, size = "big" }: { p: StationAssignmentPerson; size?: "big" | "small" }) {
+  const late = !!p.late;
+  const inNow = p.punch === "in";
+  const done = p.punch === "finished";
+  return (
+    <span className="flex items-baseline gap-2 min-w-0">
+      <span
+        className={cn(
+          "font-display font-bold leading-tight whitespace-nowrap",
+          size === "big" ? "text-2xl" : "text-base",
+          late && "text-red-600 dark:text-red-400",
+          !late && !inNow && !done && "text-muted-foreground",
+        )}
+        title={late ? "Rostered but not clocked in" : inNow ? "Clocked in" : done ? "Shift finished" : "Not clocked in yet"}
+      >
+        {p.name}
+      </span>
+      {(inNow || done) && (
+        <CheckCircle2 className={cn("flex-shrink-0", size === "big" ? "w-5 h-5" : "w-4 h-4", done ? "text-muted-foreground" : "text-green-600 dark:text-green-400")} />
+      )}
+      {late && (
+        <span className="flex-shrink-0 inline-flex items-center gap-1 rounded-md bg-red-100 dark:bg-red-950/50 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-red-700 dark:text-red-300">
+          <AlertCircle className="w-3 h-3" /> not in
+        </span>
+      )}
+      {p.start && (
+        <span className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">{p.start}–{p.end ?? ""}</span>
+      )}
+    </span>
+  );
+}
 interface StationAssignmentsData {
   available: boolean;
   reason?: string;
@@ -1383,8 +1416,39 @@ function StationAssignmentsSlide() {
     );
   }
 
+  const everyone = [...data.stations.flatMap(s => s.people), ...data.extras];
+  const lateCount = everyone.filter(p => p.late).length;
+  const inCount = everyone.filter(p => p.punch === "in" || p.punch === "finished").length;
+
   return (
     <div className="space-y-4">
+      {/* The greeting lives here now, not on the stretches slide: one opening
+          slide that says good morning AND shows who's in. Merged at Graeme's
+          request 2026-08-21 — the room looks at this first, so it's where a
+          missing name should be noticed. */}
+      <div className="flex items-center justify-center gap-6 pb-1">
+        <img
+          src={`${import.meta.env.BASE_URL}tck-logo-dark.png`}
+          alt="TCK"
+          className="h-16 sm:h-20 w-auto object-contain dark:invert dark:brightness-200"
+        />
+        <p className="text-4xl sm:text-5xl font-display font-semibold tracking-tight">
+          Good morning, team
+        </p>
+      </div>
+
+      {/* Clocked-in tally, so lateness registers before anyone reads a name. */}
+      <div className="flex items-center justify-center gap-3 text-sm">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 dark:bg-green-950/50 px-3 py-1 font-semibold text-green-800 dark:text-green-300">
+          <CheckCircle2 className="w-4 h-4" /> {inCount} clocked in
+        </span>
+        {lateCount > 0 && (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-red-100 dark:bg-red-950/50 px-3 py-1 font-semibold text-red-800 dark:text-red-300">
+            <AlertCircle className="w-4 h-4" /> {lateCount} not in yet
+          </span>
+        )}
+      </div>
+
       {/* One row per station, top to bottom in production-flow order (the
           mapping's order in Settings mirrors the plan-day station list) —
           the room reads it like the day's flow, not a wall of tiles. */}
@@ -1400,14 +1464,7 @@ function StationAssignmentsSlide() {
               <p className="text-xl font-display font-bold text-muted-foreground/40">—</p>
             ) : (
               <div className="flex flex-wrap items-baseline gap-x-6 gap-y-0.5 min-w-0">
-                {st.people.map((p, i) => (
-                  <span key={i} className="flex items-baseline gap-2 min-w-0">
-                    <span className="text-2xl font-display font-bold leading-tight whitespace-nowrap">{p.name}</span>
-                    {p.start && (
-                      <span className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">{p.start}–{p.end ?? ""}</span>
-                    )}
-                  </span>
-                ))}
+                {st.people.map((p, i) => <PersonName key={i} p={p} />)}
               </div>
             )}
           </div>
@@ -1416,12 +1473,11 @@ function StationAssignmentsSlide() {
       {data.extras.length > 0 && (
         <div className="rounded-xl border border-border bg-secondary/20 px-4 py-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Also in today</p>
-          <p className="text-sm">
+          <p className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm">
             {data.extras.map((p, i) => (
-              <span key={i}>
-                <span className="font-semibold">{p.name}</span>
-                <span className="text-muted-foreground"> ({p.position}{p.start ? ` · ${p.start}` : ""})</span>
-                {i < data.extras.length - 1 && <span className="text-muted-foreground"> · </span>}
+              <span key={i} className="inline-flex items-baseline gap-1.5">
+                <PersonName p={p} size="small" />
+                <span className="text-muted-foreground text-xs">({p.position})</span>
               </span>
             ))}
           </p>

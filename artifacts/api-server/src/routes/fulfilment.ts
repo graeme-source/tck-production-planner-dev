@@ -2,7 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db, skuLocationsTable, skuBarcodesTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable, apcConsignmentsTable, pagePermissionsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
-import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
+import { shopifyAdminOrderUrl, getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
 import { nextAvailableDeliveryDate, rescheduleTags, withDeliveryDate, rescheduleEmailText, rescheduleEmailHtml, friendlyDate, firstNameOf, toZapietDate } from "../lib/order-reschedule";
 import { validate } from "../middleware/validate";
 import { sendEmail } from "../lib/email";
@@ -39,6 +39,29 @@ async function requireAdmin(req: Request, res: Response, next: NextFunction) {
 }
 
 const ROLE_RANK: Record<string, number> = { viewer: 0, manager: 1, admin: 2 };
+
+/**
+ * Manager or admin, regardless of the /fulfilment page permission.
+ *
+ * PACKING is open to viewers — that is the whole point of the page permission,
+ * and the kitchen team are viewers. But two things on this page are not
+ * packing:
+ *
+ *   * booking consignments — every one is a real, billable courier booking
+ *   * rescheduling an order — rewrites a live customer order's tags and
+ *     delivery date, and sends that customer an email
+ *
+ * Neither should be reachable by the eleven viewers who need the page to pack
+ * (Graeme, 2026-08-21). The page permission stays where it is; these specific
+ * endpoints sit above it.
+ */
+async function requireManagerForCourierActions(req: Request, res: Response, next: NextFunction) {
+  const role = await resolveRole(req);
+  if (role === "admin" || role === "manager") { next(); return; }
+  res.status(403).json({
+    error: "Booking consignments and rescheduling orders are manager-only. Ask a manager or admin to do this one.",
+  });
+}
 
 // Operational fulfilment endpoints (list orders, verify labels, complete)
 // honour the "/fulfilment" page permission set in Settings → Page Access
@@ -343,7 +366,7 @@ router.get("/dispatch-tags", requireFulfilmentAccess, async (_req: Request, res:
     let postcodeIssuesByTag = new Map<string, number>();
     if (dateTags.length > 0) {
       try {
-        const issueRows = await db.execute(sql`
+        const issueRows = await db.execute<{ dispatch_tag: string; issue_count: number }>(sql`
           SELECT dispatch_tag, COUNT(*)::int as issue_count FROM (
             SELECT DISTINCT ON (shopify_order_id, dispatch_tag) shopify_order_id, dispatch_tag, available
             FROM postcode_validations
@@ -352,9 +375,7 @@ router.get("/dispatch-tags", requireFulfilmentAccess, async (_req: Request, res:
           ) latest WHERE available = false
           GROUP BY dispatch_tag
         `);
-        interface TagIssueRow { dispatch_tag: string; issue_count: number }
-        for (const row of issueRows.rows) {
-          const r: TagIssueRow = row as TagIssueRow;
+        for (const r of issueRows.rows) {
           postcodeIssuesByTag.set(r.dispatch_tag, r.issue_count);
         }
       } catch {
@@ -753,15 +774,14 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
     // advisory (amber chip), never a postcode verdict, so they don't block
     // booking either: a genuinely bad postcode still fails loudly at
     // createShipment, which books against APC production.
-    const existingValidation = await db.execute(sql`
+    const existingValidation = await db.execute<{ available: boolean; reason: string | null; service_code: string }>(sql`
       SELECT available, reason, service_code FROM postcode_validations
       WHERE shopify_order_id = ${orderId} AND dispatch_tag = ${tag} AND service_code = ${serviceCode} AND available = false
         AND (reason IS NULL OR reason NOT LIKE 'Check failed:%')
       ORDER BY checked_at DESC LIMIT 1
     `);
-    interface ValidationRow { available: boolean; reason: string | null; service_code: string }
     if (existingValidation.rows.length > 0) {
-      const v: ValidationRow = existingValidation.rows[0] as ValidationRow;
+      const v = existingValidation.rows[0];
       res.status(422).json({
         error: `Postcode issue: ${v.reason || "Service not available for this postcode"} (Service: ${v.service_code}). Re-check the postcode before packing.`,
         postcodeBlocked: true,
@@ -1210,7 +1230,7 @@ async function getTestModeApiBase(): Promise<string | undefined> {
   return testModeSetting === "true" ? APC_TRAINING_BASE : undefined;
 }
 
-router.post("/shipments/:waybill/add-parcel", requireFulfilmentAccess, async (req: Request, res: Response) => {
+router.post("/shipments/:waybill/add-parcel", requireFulfilmentAccess, async (req: Request<{ waybill: string }>, res: Response) => {
   const { waybill } = req.params;
   const { weight, length, width, height } = (req.body ?? {}) as {
     weight?: number; length?: number; width?: number; height?: number;
@@ -1248,7 +1268,7 @@ router.post("/shipments/:waybill/add-parcel", requireFulfilmentAccess, async (re
   }
 });
 
-router.post("/shipments/:waybill/reprint-label", requireFulfilmentAccess, async (req: Request, res: Response) => {
+router.post("/shipments/:waybill/reprint-label", requireFulfilmentAccess, async (req: Request<{ waybill: string }>, res: Response) => {
   const { waybill } = req.params;
 
   if (!isApcConfigured()) {
@@ -1392,7 +1412,7 @@ async function buildReschedulePlan(orderId: number, fromDate: string, toDate: st
 
 // GET /orders/:orderId/reschedule-preview?from=YYYY-MM-DD&date=YYYY-MM-DD
 // Read-only. Shows the exact tag and attribute changes plus the rendered email.
-router.get("/orders/:orderId/reschedule-preview", requireFulfilmentAccess, async (req: Request, res: Response) => {
+router.get("/orders/:orderId/reschedule-preview", requireManagerForCourierActions, async (req: Request, res: Response) => {
   const orderId = Number(req.params.orderId);
   const fromDate = String(req.query.from ?? "");
   if (!Number.isFinite(orderId) || !/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) {
@@ -1439,7 +1459,7 @@ router.get("/orders/:orderId/reschedule-preview", requireFulfilmentAccess, async
 });
 
 // POST /orders/:orderId/reschedule — writes the tags + attribute, then emails.
-router.post("/orders/:orderId/reschedule", requireFulfilmentAccess, validate(RescheduleBody), async (req: Request, res: Response) => {
+router.post("/orders/:orderId/reschedule", requireManagerForCourierActions, validate(RescheduleBody), async (req: Request, res: Response) => {
   const orderId = Number(req.params.orderId);
   const { date: toDate, fromDate, sendCustomerEmail } = req.body as z.infer<typeof RescheduleBody>;
   if (!Number.isFinite(orderId)) { res.status(400).json({ error: "Invalid orderId" }); return; }
@@ -1493,7 +1513,7 @@ router.post("/orders/:orderId/reschedule", requireFulfilmentAccess, validate(Res
 // state to reset is the APC consignment itself. The frontend removes the local
 // shipment reference and returns the operator to the order list, where the order
 // remains in the unfulfilled queue ready to be re-packed.
-router.post("/shipments/:waybill/cancel", requireFulfilmentAccess, async (req: Request, res: Response) => {
+router.post("/shipments/:waybill/cancel", requireFulfilmentAccess, async (req: Request<{ waybill: string }>, res: Response) => {
   const { waybill } = req.params;
 
   if (!isApcConfigured()) {
@@ -1758,7 +1778,7 @@ async function buildPreflight(tag: string, dispatchDate: Date) {
 }
 
 // GET /batch-preflight?tag=YYYY-MM-DD — what WOULD happen. Books nothing.
-router.get("/batch-preflight", requireFulfilmentAccess, async (req: Request, res: Response) => {
+router.get("/batch-preflight", requireManagerForCourierActions, async (req: Request, res: Response) => {
   const { tag, dispatchDate } = req.query as { tag?: string; dispatchDate?: string };
   if (!tag) { res.status(400).json({ error: "tag query param required" }); return; }
   try {
@@ -1774,7 +1794,7 @@ router.get("/batch-preflight", requireFulfilmentAccess, async (req: Request, res
 // Books each order in turn. One order failing never stops the rest, and every
 // order comes back with its own outcome so a partial run is fully accounted
 // for. Orders that already hold a live consignment are skipped, not re-booked.
-router.post("/batch-book", requireFulfilmentAccess, async (req: Request, res: Response) => {
+router.post("/batch-book", requireManagerForCourierActions, async (req: Request, res: Response) => {
   const parsed = z.object({
     tag: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     orderIds: z.array(z.number()).min(1).max(500),
@@ -1809,6 +1829,9 @@ router.post("/batch-book", requireFulfilmentAccess, async (req: Request, res: Re
 
     const results: Array<{
       orderId: number; orderName: string;
+      /** Deep link into the Shopify admin, so a failure in the report can be
+       *  opened and assessed without hunting for the order by hand. */
+      adminUrl: string;
       status: "booked" | "skipped" | "failed";
       waybill?: string; serviceCode?: string; reference?: string;
       reason?: string; recordError?: string;
@@ -1817,16 +1840,16 @@ router.post("/batch-book", requireFulfilmentAccess, async (req: Request, res: Re
     for (const order of orders) {
       const tagsLower = order.tags.split(",").map(t => t.trim().toLowerCase());
       if (tagsLower.includes("local-delivery")) {
-        results.push({ orderId: order.id, orderName: order.name, status: "skipped", reason: "Local delivery — no courier label" });
+        results.push({ orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "skipped", reason: "Local delivery — no courier label" });
         continue;
       }
       const live = await liveConsignmentFor(order.id);
       if (live) {
-        results.push({ orderId: order.id, orderName: order.name, status: "skipped", reason: "Already has a consignment", waybill: live.waybill });
+        results.push({ orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "skipped", reason: "Already has a consignment", waybill: live.waybill });
         continue;
       }
       if (!order.shipping_address?.address1 || !order.shipping_address?.zip) {
-        results.push({ orderId: order.id, orderName: order.name, status: "failed", reason: "Missing address or postcode" });
+        results.push({ orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "failed", reason: "Missing address or postcode" });
         continue;
       }
 
@@ -1869,20 +1892,23 @@ router.post("/batch-book", requireFulfilmentAccess, async (req: Request, res: Re
         });
 
         results.push({
-          orderId: order.id, orderName: order.name, status: "booked",
+          orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "booked",
           waybill: result.consignmentNumber, serviceCode, reference,
           ...(recordError ? { recordError } : {}),
         });
       } catch (bookErr) {
         const msg = bookErr instanceof Error ? bookErr.message : String(bookErr);
         console.error(`[Fulfilment] batch-book FAILED for ${order.name}:`, msg);
-        results.push({ orderId: order.id, orderName: order.name, status: "failed", reason: msg });
+        results.push({ orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "failed", reason: msg });
       }
     }
 
     const missing = orderIds.filter(id => !results.some(r => r.orderId === id));
     for (const id of missing) {
-      results.push({ orderId: id, orderName: `(order ${id})`, status: "failed", reason: "Order not found on this dispatch day" });
+      // Still linkable: "not found on this dispatch day" usually means the
+      // order was re-tagged mid-batch, and the admin page is where that gets
+      // sorted out.
+      results.push({ orderId: id, orderName: `(order ${id})`, adminUrl: shopifyAdminOrderUrl(id), status: "failed", reason: "Order not found on this dispatch day" });
     }
 
     res.json({
@@ -2402,6 +2428,7 @@ router.post("/process-fulfilled-today", async (_req: Request, res: Response) => 
         const lineItems: ShopifyLineItem[] = node.lineItems.edges.map(li => ({
           id: 0, // unused downstream
           variant_id: li.node.variant?.id ? (Number(li.node.variant.id.split("/").pop()) || null) : null,
+          product_id: null, // not fetched via GraphQL; unused downstream
           title: li.node.title,
           variant_title: null,
           quantity: li.node.quantity,
@@ -2529,7 +2556,7 @@ const UpsertLocationBody = z.object({
   locationLabel: z.string().min(1, "Location label is required"),
 });
 
-router.put("/sku-locations/:sku", requireAdmin, async (req: Request, res: Response) => {
+router.put("/sku-locations/:sku", requireAdmin, async (req: Request<{ sku: string }>, res: Response) => {
   const sku = decodeURIComponent(req.params.sku);
   const parsed = UpsertLocationBody.safeParse(req.body);
   if (!parsed.success) {
@@ -2552,7 +2579,7 @@ router.put("/sku-locations/:sku", requireAdmin, async (req: Request, res: Respon
   }
 });
 
-router.delete("/sku-locations/:sku", requireAdmin, async (req: Request, res: Response) => {
+router.delete("/sku-locations/:sku", requireAdmin, async (req: Request<{ sku: string }>, res: Response) => {
   const sku = decodeURIComponent(req.params.sku);
   try {
     await db.delete(skuLocationsTable).where(eq(skuLocationsTable.sku, sku));

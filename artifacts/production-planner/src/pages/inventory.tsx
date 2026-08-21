@@ -34,6 +34,16 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 type TabType = "ingredients" | "supplies";
 
+// Fields the list endpoint returns beyond the generated Ingredient type
+// (api-server routes/ingredients.ts GET / spreads the full DB row and joins
+// usage counts) — the OpenAPI spec lags behind the actual response.
+type IngredientRow = Ingredient & {
+  usedInRecipes?: number;
+  usedInSubRecipes?: number;
+  perishable?: boolean;
+  palletSize?: number | null;
+};
+
 type FormValues = IngredientFormValues;
 
 function emptyDefaults(mode: TabType): FormValues {
@@ -437,8 +447,8 @@ export default function Inventory() {
   // Ingredients used in a recipe/sub-recipe with no NOVA class yet — the
   // "Analyze UPF" button shows the count and classifies exactly these.
   const unclassifiedInUse = (allIngredients ?? []).filter(i => {
-    const rec = i as Record<string, unknown>;
-    const inUse = (Number(rec.usedInRecipes) || 0) + (Number(rec.usedInSubRecipes) || 0) > 0;
+    const rec = i as IngredientRow;
+    const inUse = (rec.usedInRecipes ?? 0) + (rec.usedInSubRecipes ?? 0) > 0;
     return inUse && i.novaClass == null;
   }).length;
 
@@ -474,7 +484,7 @@ export default function Inventory() {
 
   const tabItems = useMemo(() => {
     return (allIngredients ?? []).filter(i => {
-      const itemPerishable = (i as Record<string, unknown>).perishable !== false;
+      const itemPerishable = (i as IngredientRow).perishable !== false;
       return activeTab === "ingredients" ? itemPerishable : !itemPerishable;
     });
   }, [allIngredients, activeTab]);
@@ -487,8 +497,8 @@ export default function Inventory() {
       const matchesCategory =
         filterCategory === "all" ||
         (filterCategory === "uncategorised" ? !i.category : i.category === filterCategory);
-      const rec = i as Record<string, unknown>;
-      const totalUsage = (Number(rec.usedInRecipes) || 0) + (Number(rec.usedInSubRecipes) || 0);
+      const rec = i as IngredientRow;
+      const totalUsage = (rec.usedInRecipes ?? 0) + (rec.usedInSubRecipes ?? 0);
       const matchesUsage =
         filterUsage === "all" ||
         (filterUsage === "used" ? totalUsage > 0 : totalUsage === 0);
@@ -538,8 +548,8 @@ export default function Inventory() {
     }
   };
 
-  const ingredientCount = (allIngredients ?? []).filter(i => (i as Record<string, unknown>).perishable !== false).length;
-  const supplyCount = (allIngredients ?? []).filter(i => (i as Record<string, unknown>).perishable === false).length;
+  const ingredientCount = (allIngredients ?? []).filter(i => (i as IngredientRow).perishable !== false).length;
+  const supplyCount = (allIngredients ?? []).filter(i => (i as IngredientRow).perishable === false).length;
 
   return (
     <div className="space-y-6">
@@ -703,8 +713,8 @@ export default function Inventory() {
             </thead>
             <tbody className="divide-y divide-border/60">
               {filtered.map(item => {
-                const itemPerishable = (item as Record<string, unknown>).perishable !== false;
-                const palletSz = (item as Record<string, unknown>).palletSize as number | null ?? null;
+                const itemPerishable = (item as IngredientRow).perishable !== false;
+                const palletSz = (item as IngredientRow).palletSize ?? null;
                 return (
                   <tr key={item.id} className="hover:bg-secondary/20 transition-colors group">
                     <td className="py-3 px-4">
@@ -723,7 +733,7 @@ export default function Inventory() {
                       {item.category ? categoryLabel(item.category, itemPerishable) : <span className="opacity-40">—</span>}
                     </td>
                     {activeTab === "ingredients" && (
-                      <td className="py-3 px-3" title={(item as Record<string, unknown>).novaReasoning as string | undefined}>
+                      <td className="py-3 px-3" title={item.novaReasoning ?? undefined}>
                         <NovaPill novaClass={item.novaClass} markers={item.novaMarkers} />
                       </td>
                     )}
@@ -760,9 +770,9 @@ export default function Inventory() {
                     </td>
                     <td className="py-3 px-3 text-center">
                       {(() => {
-                        const rec = item as Record<string, unknown>;
-                        const r = Number(rec.usedInRecipes) || 0;
-                        const s = Number(rec.usedInSubRecipes) || 0;
+                        const rec = item as IngredientRow;
+                        const r = rec.usedInRecipes ?? 0;
+                        const s = rec.usedInSubRecipes ?? 0;
                         const total = r + s;
                         if (total === 0) return <span className="text-muted-foreground opacity-40 text-xs">—</span>;
                         const parts: string[] = [];
@@ -781,7 +791,7 @@ export default function Inventory() {
                       })()}
                     </td>
                     <td className="py-3 px-3 text-center">
-                      {(item as Record<string, unknown>).kanbanEnabled ? (
+                      {item.kanbanEnabled ? (
                         <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary">Active</span>
                       ) : (
                         <span className="text-muted-foreground opacity-40 text-xs">—</span>

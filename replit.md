@@ -16,6 +16,14 @@ Key capabilities include:
 
 The project envisions empowering food businesses with a robust, integrated platform to manage their entire production lifecycle, from raw materials to final dispatch, with a focus on profitability and efficiency.
 
+# Objectives & Development Charter — read first, every session
+
+The product objectives live in `docs/PRODUCT_SPEC.md` (objectives A–I; the letters are names, not rankings — all equally important). Read them at the start of every session, frame all advice and prioritisation against them, and name the objective every change serves.
+
+Before writing any code, read and follow `docs/DEVELOPMENT_CHARTER.md` (12 non-negotiable rules — including: no new code in `routes/production-plans.ts` / `pages/settings.tsx` / `pages/reports.tsx`; schema changes via Drizzle migration files, never `runStartupMigrations()`; zod `validate()` on every new endpoint; React Query for all new data fetching; no hard-coded product/recipe/category names in logic; autosave with visible state on every data-entry field).
+
+`docs/CODEBASE_ANALYSIS.md` holds the known structural problems, open defects, and the roadmap — check it before diagnosing anything, and `docs/ISSUE_PIPELINE.md` describes how team-reported issues flow to fixes.
+
 # User Preferences
 
 I prefer iterative development. Before making any major changes, please ask. I like detailed explanations for complex logic. Do not make changes to files outside of `artifacts/api-server` and `artifacts/production-planner` unless explicitly requested, or for shared utility functions in `lib/`. Do not make changes to the folder `lib/api-spec`. Do not make changes to the file `lib/api-zod/src/index.ts`.

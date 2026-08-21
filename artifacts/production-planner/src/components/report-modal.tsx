@@ -101,13 +101,14 @@ interface ReportModalProps {
 }
 
 export function ReportModal({ open, onClose, defaultStation, reportContext, tabSettings = DEFAULT_TAB_SETTINGS }: ReportModalProps) {
-  const enabledTabs: { key: Tab; settingKey: keyof QuickIdeaTabSettings }[] = [
+  const allTabs: { key: Tab; settingKey: keyof QuickIdeaTabSettings }[] = [
     { key: "pullKanban", settingKey: "kanban" },
     { key: "improvements", settingKey: "idea" },
     // "Struggle" merged into "Improvement" — one improvements concept now.
     { key: "andon", settingKey: "issue" },
     { key: "ai", settingKey: "ai" },
-  ].filter(t => tabSettings[t.settingKey]) as { key: Tab; settingKey: keyof QuickIdeaTabSettings }[];
+  ];
+  const enabledTabs = allTabs.filter(t => tabSettings[t.settingKey]);
 
   // Prefer "andon" (Issue) as the default landing tab when it's enabled; otherwise
   // fall back to the first enabled tab so the modal always has something to show.
@@ -201,6 +202,7 @@ export function ReportModal({ open, onClose, defaultStation, reportContext, tabS
       const t = setTimeout(() => andonDescriptionRef.current?.focus(), 120);
       return () => clearTimeout(t);
     }
+    return undefined;
   }, [open, activeTab]);
 
   const parseQrData = useCallback((raw: string): { type: string; id: number } | null => {

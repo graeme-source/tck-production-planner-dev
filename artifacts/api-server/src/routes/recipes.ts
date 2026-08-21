@@ -10,6 +10,8 @@ import { computeSubRecipeCosts } from "../lib/sub-recipe-costs";
 import { generateQrCode } from "../lib/qr-code";
 import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
 import { londonDateString } from "../lib/london-time";
+import { toGrams } from "../lib/units";
+import { requireManagerOrAdmin } from "../middleware/roles";
 import * as z from "zod";
 
 function requireAdmin(req: Request, res: Response, next: NextFunction) {
@@ -172,6 +174,17 @@ interface MarinadeInput {
   gramsPerKg: number;
 }
 
+// Fields these routes accept that the generated CreateRecipeBody /
+// UpdateRecipeBody schemas haven't caught up with yet — the validate()
+// middleware passes unknown fields through, so they reach the handler at
+// runtime. marinades is overridden because the generated schema still has
+// the old ingredient-only shape (no marinadeSubRecipeId).
+type RecipeBodyExtras = {
+  dietaryCategory?: string | null;
+  tags?: unknown;
+  marinades?: MarinadeInput[];
+};
+
 function validateMarinades(marinades: MarinadeInput[], recipeIngredientIds: number[]): string | null {
   for (const m of marinades) {
     const hasIng = m.marinadeIngredientId != null;
@@ -189,7 +202,7 @@ function validateMarinades(marinades: MarinadeInput[], recipeIngredientIds: numb
 // never stripped, and the OpenAPI spec has been updated with all fields.
 
 router.post("/", validate(CreateRecipeBody), async (req, res) => {
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, builderFillingDeductionGrams, dietaryCategory, tags, ingredients, subRecipes, marinades } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, builderFillingDeductionGrams, dietaryCategory, tags, ingredients, subRecipes, marinades } = req.body as Omit<z.infer<typeof CreateRecipeBody>, "marinades"> & RecipeBodyExtras;
 
   if (marinades?.length) {
     const recipeIngIds = (ingredients ?? []).map(i => i.ingredientId);
@@ -228,52 +241,59 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
     tags: normaliseTags(tags),
   };
 
+  // Everything in ONE transaction — a failed ingredient/sub-recipe/marinade
+  // insert must roll the recipe row back too, never leave an orphan recipe
+  // with no ingredients. (The PUT handler was fixed for this long ago; the
+  // POST path had kept the old split writes.)
   const [recipe] = await db.transaction(async (tx) => {
     if (isCurrentSpecial === true) {
       await tx.update(recipesTable).set({ isCurrentSpecial: false });
     }
-    return tx.insert(recipesTable).values(insertValues).returning();
-  });
+    const inserted = await tx.insert(recipesTable).values(insertValues).returning();
+    const created = inserted[0];
 
-  if (ingredients?.length) {
-    await db.insert(recipeIngredientsTable).values(
-      ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
-        recipeId: recipe.id, ingredientId: i.ingredientId, quantity: String(i.quantity),
-        marinadeForIngredientId: i.marinadeForIngredientId ?? null,
-        marinadeAddAtCooking: i.marinadeAddAtCooking ?? false,
-        includeInFillingMix: i.includeInFillingMix ?? false,
-        quid: i.quid ?? false,
-        isTopping: i.isTopping ?? false,
-        showInPrep: i.showInPrep ?? false,
-        mixingOverage: String(i.mixingOverage ?? 0),
-      }))
-    );
-  }
-  if (subRecipes?.length) {
-    await db.insert(recipeSubRecipesTable).values(
-      subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
-        recipeId: recipe.id, subRecipeId: s.subRecipeId, quantity: String(s.quantity),
-        marinadeForIngredientId: s.marinadeForIngredientId ?? null,
-        marinadeAddAtCooking: s.marinadeAddAtCooking ?? false,
-        includeInFillingMix: s.includeInFillingMix ?? false,
-        quid: s.quid ?? false,
-        isTopping: s.isTopping ?? false,
-        showInPrep: s.showInPrep ?? false,
-        mixingOverage: String(s.mixingOverage ?? 0),
-      }))
-    );
-  }
-  if (marinades?.length) {
-    await db.insert(recipeMeatMarinadesTable).values(
-      marinades.map((m) => ({
-        recipeId: recipe.id,
-        rawMeatIngredientId: m.rawMeatIngredientId,
-        marinadeIngredientId: m.marinadeIngredientId ?? null,
-        marinadeSubRecipeId: m.marinadeSubRecipeId ?? null,
-        gramsPerKg: String(m.gramsPerKg),
-      }))
-    );
-  }
+    if (ingredients?.length) {
+      await tx.insert(recipeIngredientsTable).values(
+        ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
+          recipeId: created.id, ingredientId: i.ingredientId, quantity: String(i.quantity),
+          marinadeForIngredientId: i.marinadeForIngredientId ?? null,
+          marinadeAddAtCooking: i.marinadeAddAtCooking ?? false,
+          includeInFillingMix: i.includeInFillingMix ?? false,
+          quid: i.quid ?? false,
+          isTopping: i.isTopping ?? false,
+          showInPrep: i.showInPrep ?? false,
+          mixingOverage: String(i.mixingOverage ?? 0),
+        }))
+      );
+    }
+    if (subRecipes?.length) {
+      await tx.insert(recipeSubRecipesTable).values(
+        subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
+          recipeId: created.id, subRecipeId: s.subRecipeId, quantity: String(s.quantity),
+          marinadeForIngredientId: s.marinadeForIngredientId ?? null,
+          marinadeAddAtCooking: s.marinadeAddAtCooking ?? false,
+          includeInFillingMix: s.includeInFillingMix ?? false,
+          quid: s.quid ?? false,
+          isTopping: s.isTopping ?? false,
+          showInPrep: s.showInPrep ?? false,
+          mixingOverage: String(s.mixingOverage ?? 0),
+        }))
+      );
+    }
+    if (marinades?.length) {
+      await tx.insert(recipeMeatMarinadesTable).values(
+        marinades.map((m) => ({
+          recipeId: created.id,
+          rawMeatIngredientId: m.rawMeatIngredientId,
+          marinadeIngredientId: m.marinadeIngredientId ?? null,
+          marinadeSubRecipeId: m.marinadeSubRecipeId ?? null,
+          gramsPerKg: String(m.gramsPerKg),
+        }))
+      );
+    }
+
+    return inserted;
+  });
 
   const mapped = mapRecipe(recipe);
   const rawCosts = await computeCosts([recipe.id]);
@@ -371,6 +391,7 @@ router.get("/:id", async (req, res) => {
   });
 
   const subIngredientsBySubId: Record<number, Array<{
+    ingredientId: number;
     ingredientName: string | null;
     unit: string | null;
     quantity: number;
@@ -500,7 +521,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, builderFillingDeductionGrams, dietaryCategory, tags, ingredients, subRecipes, marinades } = req.body;
+  const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, builderFillingDeductionGrams, dietaryCategory, tags, ingredients, subRecipes, marinades } = req.body as Omit<z.infer<typeof UpdateRecipeBody>, "marinades"> & RecipeBodyExtras;
 
   if (marinades?.length) {
     const recipeIngIds = (ingredients ?? []).map(i => i.ingredientId);
@@ -682,7 +703,9 @@ router.patch("/:id/special", async (req, res) => {
   res.json({ id: updatedRow.id, isCurrentSpecial: updatedRow.isCurrentSpecial });
 });
 
-router.delete("/:id", async (req, res) => {
+// Destructive: cascades through recipe_ingredients into plan history.
+// Managers and admins only (Graeme, 2026-08-20).
+router.delete("/:id", requireManagerOrAdmin, async (req, res) => {
   const id = Number(req.params.id);
   await db.delete(recipesTable).where(eq(recipesTable.id, id));
   res.status(204).send();
@@ -907,6 +930,7 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
       ingredientId: recipeIngredientsTable.ingredientId,
       quantity: recipeIngredientsTable.quantity,
       name: ingredientsTable.name,
+      unit: ingredientsTable.unit,
       labelDeclaration: ingredientsTable.labelDeclaration,
       allergens: ingredientsTable.allergens,
       energyKj: ingredientsTable.energyKj,
@@ -926,7 +950,9 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
   const items: IngredientNutrientRow[] = directIngs.map(i => ({
     ingredientId: i.ingredientId,
     name: i.name,
-    quantityG: Number(i.quantity),
+    // Recipe quantities are stored in the ingredient's native unit — a kg
+    // ingredient entered as 1.2 must contribute 1200 g here, not 1.2 g.
+    quantityG: toGrams(Number(i.quantity), i.unit),
     labelDeclaration: i.labelDeclaration,
     allergens: (i.allergens as string[] | null) ?? [],
     nutrients: {
@@ -1001,6 +1027,7 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
         ingredientId: subRecipeIngredientsTable.ingredientId,
         quantity: subRecipeIngredientsTable.quantity,
         name: ingredientsTable.name,
+        unit: ingredientsTable.unit,
         labelDeclaration: ingredientsTable.labelDeclaration,
         allergens: ingredientsTable.allergens,
         energyKj: ingredientsTable.energyKj,
@@ -1017,7 +1044,9 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
       .innerJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
       .where(eq(subRecipeIngredientsTable.subRecipeId, subRecipeId));
 
-    for (const si of srIngs) addItem(si, Number(si.quantity) * scaleFactor);
+    // Sub-recipe ingredient quantities are in each ingredient's native unit;
+    // the scale factor is dimensionless (used ÷ yield in the same unit).
+    for (const si of srIngs) addItem(si, toGrams(Number(si.quantity), si.unit) * scaleFactor);
 
     // Descend into nested sub-recipes, scaling their used weight the same way.
     const nested = await db
@@ -1237,13 +1266,8 @@ router.get("/:id/ingredient-deck", async (req, res) => {
       .from(recipeSubRecipesTable)
       .where(eq(recipeSubRecipesTable.recipeId, recipeId));
 
-    function toGrams(qty: number, unit: string): number {
-      const u = unit.toLowerCase().trim();
-      if (u === "kg") return qty * 1000;
-      if (u === "l" || u === "litre" || u === "litres" || u === "liter" || u === "liters") return qty * 1000;
-      if (u === "ml") return qty;
-      return qty;
-    }
+    // Unit conversion lives in ../lib/units (shared with the nutritionals
+    // gatherer) so the deck and the nutrition panel can never disagree.
 
     type FlatSubIng = {
       ingredientId: number;
@@ -1783,12 +1807,24 @@ router.get("/:id/spec-sheet.pdf", requireAdmin, async (req, res) => {
     const [specRow] = await db.select().from(productSpecificationsTable).where(eq(productSpecificationsTable.recipeId, recipeId));
     const [company] = await db.select().from(companyProfileTable).where(eq(companyProfileTable.id, 1));
 
-    // Best-effort barcode: match a Shopify SKU row by product title.
-    const [barcodeRow] = await db
-      .select({ barcode: skuBarcodesTable.barcode })
-      .from(skuBarcodesTable)
-      .where(sql`lower(${skuBarcodesTable.productTitle}) = lower(${recipe.name.trim()})`)
-      .limit(1);
+    // Barcode: prefer the recipe's mapped Shopify variants — that link is by
+    // id, so renaming the recipe in the app can't lose the barcode. Fall back
+    // to the old best-effort product-title match for unmapped recipes.
+    const mappedBarcodeRes = await db.execute<{ barcode: string }>(sql`
+      SELECT sb.barcode
+      FROM recipe_shopify_mappings m
+      JOIN sku_barcodes sb ON sb.variant_id = m.shopify_variant_id
+      WHERE m.recipe_id = ${recipeId} AND COALESCE(sb.barcode, '') <> ''
+      LIMIT 1
+    `);
+    let [barcodeRow] = mappedBarcodeRes.rows as Array<{ barcode: string }>;
+    if (!barcodeRow) {
+      [barcodeRow] = await db
+        .select({ barcode: skuBarcodesTable.barcode })
+        .from(skuBarcodesTable)
+        .where(sql`lower(${skuBarcodesTable.productTitle}) = lower(${recipe.name.trim()})`)
+        .limit(1);
+    }
 
     // Cook CCPs: any ingredient used by this recipe (directly, via a
     // sub-recipe, or as a marinaded raw meat) that carries a minimum cooking

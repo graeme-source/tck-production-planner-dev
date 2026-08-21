@@ -19,9 +19,10 @@ import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import {
   Loader2, AlertTriangle, CheckCircle2, XCircle, PackageCheck,
-  Truck, ClipboardCopy, ShieldAlert,
+  Truck, ClipboardCopy, ShieldAlert, CalendarClock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { RescheduleOrderDialog } from "@/components/reschedule-order-dialog";
 import { toast } from "@/hooks/use-toast";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
@@ -52,6 +53,9 @@ interface Preflight {
 interface BookResult {
   orderId: number;
   orderName: string;
+  /** Deep link into the Shopify admin, built server-side. Lets a failure be
+   *  opened and assessed without hunting for the order by hand. */
+  adminUrl?: string;
   status: "booked" | "skipped" | "failed";
   waybill?: string;
   serviceCode?: string;
@@ -163,6 +167,9 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
   const [error, setError] = useState<string | null>(null);
   const [stage, setStage] = useState<"review" | "confirm" | "booking" | "report">("review");
   const [report, setReport] = useState<BookResponse | null>(null);
+  // Which failed row has its reschedule dialog open. One at a time by
+  // design — each customer gets a personally addressed email.
+  const [rescheduling, setRescheduling] = useState<BookResult | null>(null);
   // Nothing ticked to begin with: booking the whole wave has to be chosen,
   // not defaulted into.
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -394,7 +401,23 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
                   {r.status === "booked" && <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0 mt-0.5" />}
                   {r.status === "skipped" && <Truck className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />}
                   {r.status === "failed" && <XCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />}
-                  <span className="font-semibold w-[4.5rem] shrink-0">{r.orderName}</span>
+                  {/* The order number is the way into Shopify — a failure is
+                      almost always assessed there, and hunting for the order
+                      by hand is the slow part. Opens in a new tab so the
+                      report stays put while several are checked. */}
+                  {r.adminUrl ? (
+                    <a
+                      href={r.adminUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-semibold w-[4.5rem] shrink-0 text-primary hover:underline"
+                      title={`Open ${r.orderName} in Shopify`}
+                    >
+                      {r.orderName}
+                    </a>
+                  ) : (
+                    <span className="font-semibold w-[4.5rem] shrink-0">{r.orderName}</span>
+                  )}
                   <span className="flex-1 min-w-0">
                     {r.waybill && <span className="font-mono text-xs">{r.waybill}</span>}
                     {r.reference && r.reference !== r.orderName && (
@@ -404,6 +427,19 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
                     {r.recordError && <span className="block text-xs text-red-600 font-semibold">NOT SAVED LOCALLY — write this number down</span>}
                   </span>
                   {r.serviceCode && <span className="text-xs font-mono text-muted-foreground shrink-0">{r.serviceCode}</span>}
+                  {/* A failure here is usually a postcode that genuinely can't
+                      take this delivery day. Rescheduling is the resolution,
+                      so it belongs on the row rather than somewhere else. One
+                      at a time — each customer gets their own email. */}
+                  {r.status === "failed" && (
+                    <button
+                      onClick={() => setRescheduling(r)}
+                      className="shrink-0 text-xs px-2 py-1 rounded-lg border border-amber-400 dark:border-amber-700 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 inline-flex items-center gap-1"
+                      title="Move this order to a later delivery date and email the customer"
+                    >
+                      <CalendarClock className="w-3 h-3" /> Reschedule
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -418,6 +454,32 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
           </div>
         )}
       </DialogContent>
+
+      {/* Rendered outside the report list so it survives the list re-sorting
+          underneath it. `tag` is the dispatch day being booked, which is the
+          date the order is moving OFF. */}
+      {rescheduling && (
+        <RescheduleOrderDialog
+          orderId={rescheduling.orderId}
+          orderName={rescheduling.orderName}
+          fromDate={tag}
+          adminUrl={rescheduling.adminUrl}
+          onClose={() => setRescheduling(null)}
+          onDone={() => {
+            // The order has left this dispatch day — mark it so in the report
+            // rather than leaving a stale "failed" row the operator might act
+            // on twice.
+            setReport(prev => prev && ({
+              ...prev,
+              results: prev.results.map(r =>
+                r.orderId === rescheduling.orderId
+                  ? { ...r, status: "skipped" as const, reason: "Rescheduled — moved off this dispatch day" }
+                  : r),
+            }));
+            onBooked();
+          }}
+        />
+      )}
     </Dialog>
   );
 }

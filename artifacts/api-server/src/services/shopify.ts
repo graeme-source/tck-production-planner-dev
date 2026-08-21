@@ -1001,6 +1001,17 @@ export async function replaceTagOnOrder(orderId: number, currentTags: string, ol
 
 // ── Rescheduling a delivery ────────────────────────────────────────────────
 
+/** Deep link to an order in the Shopify admin.
+ *
+ *  Built server-side because the store domain is a server env var — sending
+ *  the finished URL saves leaking the domain into the browser bundle and
+ *  saves every caller reconstructing it. The `/admin/orders/:id` form on the
+ *  myshopify domain redirects to whichever admin host is current, so it keeps
+ *  working when Shopify moves the console again. */
+export function shopifyAdminOrderUrl(orderId: number): string {
+  return `https://${STORE_DOMAIN}/admin/orders/${orderId}`;
+}
+
 export interface ShopifyNoteAttribute { name: string; value: string }
 
 export interface ShopifyOrderForReschedule {

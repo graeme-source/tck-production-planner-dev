@@ -29,7 +29,10 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-interface SopRow {
+// Type alias (not interface) so it satisfies db.execute's
+// `Record<string, unknown>` constraint — interfaces have no implicit
+// index signature.
+type SopRow = {
   id: number;
   title: string;
   stations: string[] | null;
@@ -41,7 +44,7 @@ interface SopRow {
   step_count: number;
   first_image_step_id: number | null;
   steps_per_page: number | null;
-}
+};
 
 function shapeSop(row: SopRow) {
   return {
@@ -91,7 +94,7 @@ router.get("/", requireAuth, async (req, res) => {
   }
 });
 
-interface StepRow {
+type StepRow = {
   id: number;
   sop_id: number;
   position: number;
@@ -99,7 +102,7 @@ interface StepRow {
   has_image: boolean;
   has_video: boolean;
   video_mime: string | null;
-}
+};
 
 // Get one SOP with its steps.
 router.get("/:id", requireAuth, async (req, res) => {
@@ -604,6 +607,28 @@ router.get("/links/for-ingredients", requireAuth, async (req, res) => {
       recipeId: r.target_type === "recipe_ingredient" ? r.target_a : null,
       recipeName: r.recipe_name,
     });
+  }
+  res.json(out);
+});
+
+// GET /links/for-recipes?ids=1,2 → { [recipeId]: [{linkId,sopId,title}] }
+//
+// Recipe-level SOPs: the process for making THIS recipe, wherever that recipe
+// shows up. First consumer is the wrapping station (the cream cheese icing
+// step on Cinnamon Buns), but nothing here is station-specific — the ovens,
+// building and dough screens can hang chips off the same links.
+router.get("/links/for-recipes", requireAuth, async (req, res) => {
+  const ids = parseIdsParam(req.query.ids);
+  if (ids.length === 0) { res.json({}); return; }
+  const rows = await db.execute<{ link_id: number; target_a: number; sop_id: number; title: string }>(sql`
+    SELECT l.id AS link_id, l.target_a, l.sop_id, s.title
+    FROM sop_links l JOIN standards_sops s ON s.id = l.sop_id
+    WHERE l.target_type = 'recipe' AND l.target_a = ANY(${`{${ids.join(",")}}`}::int[])
+    ORDER BY s.title
+  `);
+  const out: Record<number, Array<{ linkId: number; sopId: number; title: string }>> = {};
+  for (const r of rows.rows ?? []) {
+    (out[r.target_a] ??= []).push({ linkId: r.link_id, sopId: r.sop_id, title: r.title });
   }
   res.json(out);
 });
