@@ -52,6 +52,9 @@ interface Preflight {
 interface BookResult {
   orderId: number;
   orderName: string;
+  /** Deep link into the Shopify admin, built server-side. Lets a failure be
+   *  opened and assessed without hunting for the order by hand. */
+  adminUrl?: string;
   status: "booked" | "skipped" | "failed";
   waybill?: string;
   serviceCode?: string;
@@ -394,7 +397,23 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
                   {r.status === "booked" && <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0 mt-0.5" />}
                   {r.status === "skipped" && <Truck className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />}
                   {r.status === "failed" && <XCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />}
-                  <span className="font-semibold w-[4.5rem] shrink-0">{r.orderName}</span>
+                  {/* The order number is the way into Shopify — a failure is
+                      almost always assessed there, and hunting for the order
+                      by hand is the slow part. Opens in a new tab so the
+                      report stays put while several are checked. */}
+                  {r.adminUrl ? (
+                    <a
+                      href={r.adminUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-semibold w-[4.5rem] shrink-0 text-primary hover:underline"
+                      title={`Open ${r.orderName} in Shopify`}
+                    >
+                      {r.orderName}
+                    </a>
+                  ) : (
+                    <span className="font-semibold w-[4.5rem] shrink-0">{r.orderName}</span>
+                  )}
                   <span className="flex-1 min-w-0">
                     {r.waybill && <span className="font-mono text-xs">{r.waybill}</span>}
                     {r.reference && r.reference !== r.orderName && (

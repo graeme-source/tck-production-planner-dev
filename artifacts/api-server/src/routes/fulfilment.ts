@@ -2,7 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db, skuLocationsTable, skuBarcodesTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable, apcConsignmentsTable, pagePermissionsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
-import { getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
+import { shopifyAdminOrderUrl, getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
 import { nextAvailableDeliveryDate, rescheduleTags, withDeliveryDate, rescheduleEmailText, rescheduleEmailHtml, friendlyDate, firstNameOf, toZapietDate } from "../lib/order-reschedule";
 import { validate } from "../middleware/validate";
 import { sendEmail } from "../lib/email";
@@ -1806,6 +1806,9 @@ router.post("/batch-book", requireFulfilmentAccess, async (req: Request, res: Re
 
     const results: Array<{
       orderId: number; orderName: string;
+      /** Deep link into the Shopify admin, so a failure in the report can be
+       *  opened and assessed without hunting for the order by hand. */
+      adminUrl: string;
       status: "booked" | "skipped" | "failed";
       waybill?: string; serviceCode?: string; reference?: string;
       reason?: string; recordError?: string;
@@ -1814,16 +1817,16 @@ router.post("/batch-book", requireFulfilmentAccess, async (req: Request, res: Re
     for (const order of orders) {
       const tagsLower = order.tags.split(",").map(t => t.trim().toLowerCase());
       if (tagsLower.includes("local-delivery")) {
-        results.push({ orderId: order.id, orderName: order.name, status: "skipped", reason: "Local delivery — no courier label" });
+        results.push({ orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "skipped", reason: "Local delivery — no courier label" });
         continue;
       }
       const live = await liveConsignmentFor(order.id);
       if (live) {
-        results.push({ orderId: order.id, orderName: order.name, status: "skipped", reason: "Already has a consignment", waybill: live.waybill });
+        results.push({ orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "skipped", reason: "Already has a consignment", waybill: live.waybill });
         continue;
       }
       if (!order.shipping_address?.address1 || !order.shipping_address?.zip) {
-        results.push({ orderId: order.id, orderName: order.name, status: "failed", reason: "Missing address or postcode" });
+        results.push({ orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "failed", reason: "Missing address or postcode" });
         continue;
       }
 
@@ -1866,20 +1869,23 @@ router.post("/batch-book", requireFulfilmentAccess, async (req: Request, res: Re
         });
 
         results.push({
-          orderId: order.id, orderName: order.name, status: "booked",
+          orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "booked",
           waybill: result.consignmentNumber, serviceCode, reference,
           ...(recordError ? { recordError } : {}),
         });
       } catch (bookErr) {
         const msg = bookErr instanceof Error ? bookErr.message : String(bookErr);
         console.error(`[Fulfilment] batch-book FAILED for ${order.name}:`, msg);
-        results.push({ orderId: order.id, orderName: order.name, status: "failed", reason: msg });
+        results.push({ orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "failed", reason: msg });
       }
     }
 
     const missing = orderIds.filter(id => !results.some(r => r.orderId === id));
     for (const id of missing) {
-      results.push({ orderId: id, orderName: `(order ${id})`, status: "failed", reason: "Order not found on this dispatch day" });
+      // Still linkable: "not found on this dispatch day" usually means the
+      // order was re-tagged mid-batch, and the admin page is where that gets
+      // sorted out.
+      results.push({ orderId: id, orderName: `(order ${id})`, adminUrl: shopifyAdminOrderUrl(id), status: "failed", reason: "Order not found on this dispatch day" });
     }
 
     res.json({
