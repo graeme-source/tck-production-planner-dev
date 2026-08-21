@@ -838,11 +838,29 @@ export default function Orders() {
     if (!editPoParam) return;
     const editPoId = Number(editPoParam);
     if (!Number.isFinite(editPoId)) return;
-    const target = placedOrders.find(o => o.id === editPoId);
-    if (!target) return;
-    handleEditPlacedOrder(target);
+    // Strip the param FIRST: the fallback below is async, and leaving it in
+    // place would re-fire this effect on every placedOrders update while the
+    // fetch is in flight.
     url.searchParams.delete("editPo");
     window.history.replaceState({}, "", url.toString());
+    const target = placedOrders.find(o => o.id === editPoId);
+    if (target) {
+      handleEditPlacedOrder(target);
+      return;
+    }
+    // Not in the plan-scoped list — a PO with no plan (queued test
+    // production) or another plan's. Fetch it by id; every order must be
+    // editable whether or not a plan stands behind it (Graeme, 2026-08-21).
+    (async () => {
+      try {
+        const res = await fetch(`${BASE}/api/orders/purchase-orders?id=${editPoId}`, { credentials: "include" });
+        const list = res.ok ? await res.json() : [];
+        if (list[0]) handleEditPlacedOrder(list[0]);
+        else toast({ title: "Order not found", description: `Purchase order #${editPoId} no longer exists.`, variant: "destructive" });
+      } catch {
+        toast({ title: "Couldn't open the order", description: "Try again from the Deliveries page.", variant: "destructive" });
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [placedOrders]);
 
