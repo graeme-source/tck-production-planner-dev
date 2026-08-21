@@ -17,7 +17,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import type React from "react";
 import { useLocation, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { format, addDays } from "date-fns";
+import { format } from "date-fns";
 import {
   ArrowLeft, ArrowRight, ChevronLeft, ChevronRight, X, Play,
   Sparkles, ChefHat, Truck, ShoppingBag, AlertCircle, FileText, MessageCircle,
@@ -1244,7 +1244,10 @@ function SetupScreen({
         <SetupLessonCard data={data} ensureMeeting={ensureMeeting} onReadBriefing={onReadBriefing} />
         <SetupGratitudeCard data={data} ensureMeeting={ensureMeeting} />
         <SetupSlidesCard data={data} ensureMeeting={ensureMeeting} onEditToday={onEditToday} />
-        <SetupTomorrowCard date={format(addDays(new Date(data.today + "T00:00:00"), 1), "yyyy-MM-dd")} />
+        {/* data.tomorrow is the next MEETING day (Monday on a Friday) — the
+            old calendar-tomorrow here filed Friday's photo/lesson under a
+            Saturday meeting that never runs. */}
+        <SetupTomorrowCard date={data.tomorrow} />
 
         <button
           onClick={onStart}
