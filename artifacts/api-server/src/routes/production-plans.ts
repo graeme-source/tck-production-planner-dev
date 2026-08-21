@@ -3384,13 +3384,16 @@ router.post("/:id/batch-completions", async (req, res) => {
   const startedAtDate = startedAt ? new Date(startedAt) : null;
   const isWrapping = stationType === "wrapping";
 
-  // packsPerBatch mirrors recipe-completion.ts: floor(portionsPerBatch / 2),
-  // min 1. On a partial-batch commit, we subtract ppb from the COMMITTING
+  // packsPerBatch mirrors recipe-completion.ts: floor(portions / packSize),
+  // min 1. It divided by a hardcoded 2 until 2026-08-21 — the calzone
+  // convention, and wrong by a factor of three on anything packed in sixes. On a partial-batch commit, we subtract ppb from the COMMITTING
   // builder's per-station extra_packs — i.e. record the slot's shortfall as a
   // negative-going adjustment to that builder's extras — so the existing
   // `combinedBuildCount × ppb + extras` totals (extras = sum across builders)
   // keep producing the correct pack count.
-  const ppb = Math.max(1, Math.floor((Number(planItem.portionsPerBatch) || 10) / 2));
+  const ppb = Math.max(1, Math.floor(
+    (Number(planItem.portionsPerBatch) || 10) / (Number(planItem.packSize) || 2),
+  ));
   const partialPacksValue = isPartial ? Number(partialPacks) : null;
   const extrasDelta = isPartial ? -ppb : 0;
   const isBuildingStation = stationType === "building_1" || stationType === "building_2";
@@ -5928,6 +5931,7 @@ router.post("/:id/items/:itemId/manual-batch", async (req, res) => {
   const [planItem] = await db.select({
     id: productionPlanItemsTable.id,
     portionsPerBatch: recipesTable.portionsPerBatch,
+    packSize: recipesTable.packSize,
   })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
@@ -5938,7 +5942,9 @@ router.post("/:id/items/:itemId/manual-batch", async (req, res) => {
   }
 
   const sessionUserId = (req.session as { userId?: number }).userId ?? null;
-  const ppb = Math.max(1, Math.floor((Number(planItem.portionsPerBatch) || 10) / 2));
+  const ppb = Math.max(1, Math.floor(
+    (Number(planItem.portionsPerBatch) || 10) / (Number(planItem.packSize) || 2),
+  ));
   // Self-contained partial accounting: unlike the live builder flow (which
   // pre-adds packs to extras via the +Extra Pack PATCH before tapping
   // Complete Partial Batch), the admin form sends the pack count directly,
@@ -7171,6 +7177,7 @@ router.get("/:id/packing", async (req, res) => {
       status: productionPlanItemsTable.status,
       orderPosition: productionPlanItemsTable.orderPosition,
       portionsPerBatch: recipesTable.portionsPerBatch,
+      packSize: recipesTable.packSize,
     })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
@@ -7202,7 +7209,11 @@ router.get("/:id/packing", async (req, res) => {
     // Once the builder has marked a recipe complete, the legacy shortCount is
     // historical and no longer subtracted from the reported output.
     const shortCount = item.builderMarkedCompleteAt ? 0 : (Number(item.shortCount) || 0);
-    const grossPacks = Math.floor((batchesComplete * portionsPerBatch) / 2); // 2 portions per pack
+    // Divide by the recipe's own pack size, not a hardcoded 2 — see
+    // recipe-completion.ts. Two portions per pack is the calzone convention
+    // only; Cinnamon Buns pack in sixes.
+    const packSize = Number(item.packSize) || 2;
+    const grossPacks = Math.floor((batchesComplete * portionsPerBatch) / packSize);
     const netPacks = Math.max(0, grossPacks - (eightPackBagCount * 4) - wonlyCount - shortCount) + extraPacksBuilt;
     const itemDispatches = dispatches.filter(d => d.recipeId === item.recipeId);
 
@@ -7213,6 +7224,9 @@ router.get("/:id/packing", async (req, res) => {
       batchesTarget: Number(item.batchesTarget) || 0,
       batchesComplete,
       portionsPerBatch: Number(item.portionsPerBatch) || 10,
+      // The packing screen derives planned packs from this; without it, it
+      // falls back to a two-pack and reads triple for six-packs.
+      packSize: Number(item.packSize) || 2,
       fridgeQty: Number(item.fridgeQty) || 0,
       fridgeEightPackQty: Number(item.fridgeEightPackQty) || 0,
       eightPackBagCount,

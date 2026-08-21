@@ -57,11 +57,15 @@ type PostOvenMap = Record<number, PostOvenItem[]>;
  * that must use the recipe's OWN pack size — `portionsPerBatch / packSize`,
  * the same formula the server uses everywhere it counts packs.
  *
- * Do NOT use the shared packsPerBatch() helper here: it hardcodes a two-pack
- * (`portionsPerBatch / 2`), which is the calzone convention and silently
- * wrong for anything else. On Cinnamon Buns that put a third of the real dose
- * on screen (Graeme caught it, 2026-08-20). Wrong here means wrong icing on
- * real product, so the pack size is read, never assumed.
+ * Kept separate from the shared packsPerBatch() helper deliberately. That
+ * helper floors to whole packs, which is right for counting output and wrong
+ * for a dose: a recipe whose portions don't divide evenly into packs would
+ * get its topping rounded up. Here the division stays exact.
+ *
+ * (The helper itself hardcoded a two-pack until 2026-08-21 — the calzone
+ * convention, silently wrong for anything else, and on Cinnamon Buns it put a
+ * third of the real dose on screen. Both read pack size now.) Wrong here
+ * means wrong icing on real product, so the pack size is read, never assumed.
  */
 function postOvenGramsPerPack(poi: PostOvenItem, item: ProductionPlanItem): number {
   // packSize arrives as a numeric string ("1.0000") from the plan API.

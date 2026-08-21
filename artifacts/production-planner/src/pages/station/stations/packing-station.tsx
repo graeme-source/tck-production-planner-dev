@@ -111,6 +111,7 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
     recipeName: string;
     batchesTarget: number;
     portionsPerBatch: number;
+    packSize: number;
     fridgeQty: number;
     totalDispatch: number;
   }>>([]);
@@ -162,7 +163,12 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
     .filter(item => item.totalDispatch > 0)
     .flatMap(item => {
       const fridgeQty = item.fridgeQty ?? 0;
-      const plannedPacks = Math.floor((item.batchesTarget ?? 0) * (item.portionsPerBatch ?? 10) / 2);
+      // Pack size, not a hardcoded 2 — see recipe-completion.ts. A six-pack
+      // recipe read triple its real planned output, which flipped shortfall
+      // warnings the wrong way.
+      const plannedPacks = Math.floor(
+        (item.batchesTarget ?? 0) * (item.portionsPerBatch ?? 10) / (Number(item.packSize) || 2),
+      );
       const totalDispatch = item.totalDispatch ?? 0;
       if (fridgeQty >= totalDispatch) return [];
       const shortfall = totalDispatch - (fridgeQty + plannedPacks);
