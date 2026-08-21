@@ -8,7 +8,7 @@ import { validate } from "../middleware/validate";
 import { sendEmail } from "../lib/email";
 import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService, lookupOrderByReference, lookupOrdersByReference, lookupOrderByWaybill, parseApcBarcode, waybillCore, apcTrackingUrl, type ApcOrderLookup } from "../services/apc";
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
-import { declaredParcelWeightKg } from "../lib/parcel-weight";
+import { declaredParcelWeightKg, isLargeBox } from "../lib/parcel-weight";
 import { sql } from "drizzle-orm";
 
 const router = Router();
@@ -102,15 +102,11 @@ async function getApcMode(): Promise<ApcMode> {
   return legacy === "false" ? "off" : "full";
 }
 
-/** Is this a large box? Tags first, nominal weight as the fallback. */
+/** Is this a large box? Weight decides; the tag can only promote to large.
+ *  See lib/parcel-weight.ts — a mis-tagged big parcel on a light service can
+ *  be refused at the depot, which costs the whole order. */
 function isLargeBoxOrder(order: ShopifyOrder, weightThresholdG: number): boolean {
-  const tags = order.tags.split(",").map(t => t.trim().toLowerCase());
-  const weightG = order.total_weight ?? 0;
-  // Use explicit box-size tags when present. Weight is a fallback only when
-  // neither tag is found (e.g. no Shopify tagging rule has run yet).
-  const hasLargeTag = tags.includes("large box") || tags.includes("wholesale");
-  const hasSmallTag = tags.includes("small box");
-  return hasLargeTag || (!hasSmallTag && weightG >= weightThresholdG);
+  return isLargeBox(order.tags, order.total_weight, weightThresholdG);
 }
 
 /** The weight we declare to APC. Capped on the light services — see

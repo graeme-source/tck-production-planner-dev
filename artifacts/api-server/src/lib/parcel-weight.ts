@@ -19,6 +19,30 @@
  * code actually about to be sent.
  */
 
+/**
+ * Is this a large box?
+ *
+ * WEIGHT decides, and the box-size tag can only ever PROMOTE to large — never
+ * demote. That asymmetry is the whole point: forcing a genuinely large box
+ * onto a light service puts a small-service label on a big parcel, which APC
+ * can refuse at the depot. The order is then binned and remade, which is worse
+ * than any booking failure. A mis-tagged order must still route by what is
+ * actually in it (Graeme, 2026-08-21).
+ *
+ * The tag used to win outright, so a "Small Box"-tagged 8-pack was sent as a
+ * small parcel. Before the 5kg cap that failed loudly at booking, which is how
+ * the mis-tag got noticed; with the cap it would have booked silently on the
+ * wrong service. Hence weight-first.
+ *
+ * `thresholdGrams` is a VOLUME rule in disguise — Shopify records every pack
+ * as a flat 1kg, so 7001g means "more than 7 packs, won't fit a small box".
+ */
+export function isLargeBox(tags: string, weightGrams: number | null | undefined, thresholdGrams: number): boolean {
+  const list = (tags ?? "").split(",").map(t => t.trim().toLowerCase());
+  const hasLargeTag = list.includes("large box") || list.includes("wholesale");
+  return hasLargeTag || (weightGrams ?? 0) >= thresholdGrams;
+}
+
 /** Ceiling for the light services (LW16 weekday / WL16 weekend). Proven: no
  *  WL16 consignment has ever carried more, and every one that tried was
  *  refused. */
