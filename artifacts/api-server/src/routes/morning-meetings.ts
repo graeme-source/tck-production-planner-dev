@@ -43,7 +43,7 @@ import {
   computeBuilderBatchesPerHourForDay,
   computePackingOrdersPerHourForDay,
 } from "../lib/yesterday-kpis";
-import { getPreviousDispatchDayAsync } from "./production-plans";
+import { getPreviousDispatchDayAsync, getNextDispatchDayAsync } from "./production-plans";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 import { leanCorpusPrompt } from "../lib/lean-corpus";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -316,7 +316,12 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
     // previous calendar day — so on Monday we show Friday, on Friday Thursday,
     // and bank holidays are skipped (Mon-Fri minus non-dispatch dates).
     const yesterday = await getPreviousDispatchDayAsync(today);
-    const tomorrow = isoDateMinusDays(today, -1);
+    // "Tomorrow" means the next PACK day, not the next calendar day: the
+    // Friday-afternoon pack report sizes Monday's pack, and calendar-tomorrow
+    // pointed it at an (empty) Saturday dispatch, showing 0 to dispatch all
+    // Friday afternoon. Same walk as `yesterday`: Mon–Fri minus non-dispatch
+    // dates, so bank-holiday Mondays are skipped too.
+    const tomorrow = await getNextDispatchDayAsync(today);
 
     // ── Today's special ─────────────────────────────────────────────
     const [special] = await db

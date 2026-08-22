@@ -4,6 +4,7 @@ import { Link } from "wouter";
 import { Loader2, Boxes, Snowflake, TrendingUp } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
+import { packDayNameCap } from "@/lib/pack-day";
 import {
   ProductionPlanSlide,
   fetchDashboard,
@@ -17,19 +18,21 @@ import {
 // vs what the next dispatch needs — red = short, amber = tight — without
 // having to start a meeting.
 
-// After 3pm London the slide flips to tomorrow's dispatch (see
-// ProductionPlanSlide), so the page title follows suit.
+// After 3pm London the slide flips to the NEXT pack's dispatch (see
+// ProductionPlanSlide), so the page title follows suit. That next pack is
+// `data.tomorrow` — the next dispatch day, which is Monday on a Friday — so
+// the title names the day ("Monday's Pack") rather than assuming "Tomorrow's".
 function isAfter3pmLondon(): boolean {
   return Number(
     new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", hour12: false }).format(new Date()),
   ) >= 15;
 }
 
-function reportSlide(): MeetingSlide {
+function reportSlide(dayCap: string): MeetingSlide {
   return {
     id: 0,
     kind: "short_on_pack",
-    title: `${isAfter3pmLondon() ? "Tomorrow's" : "Today's"} Pack — Stock vs Dispatch`,
+    title: `${dayCap} Pack — Stock vs Dispatch`,
     orderPosition: 0,
     contentMd: null,
     configJson: null,
@@ -124,7 +127,12 @@ export default function PackReport() {
         // here so recipe names fit an iPad in portrait without touching the
         // shared component.
         <div className="[&_.text-2xl]:text-lg [&_.text-4xl]:text-2xl">
-          <ProductionPlanSlide data={data} slide={reportSlide()} isPreviewing={false} stockMode={stockMode} />
+          <ProductionPlanSlide
+            data={data}
+            slide={reportSlide(isAfter3pmLondon() ? `${packDayNameCap(data.today, data.tomorrow)}'s` : "Today's")}
+            isPreviewing={false}
+            stockMode={stockMode}
+          />
         </div>
       )}
     </div>
