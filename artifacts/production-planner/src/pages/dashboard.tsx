@@ -493,6 +493,42 @@ export default function Dashboard() {
   });
   const madePacksByDate = new Map((weekPacksMade ?? []).map(r => [r.date, r.calzonePacks]));
 
+  // Forecast capacity for weekdays that have NO production plan yet, today
+  // onwards. Deliberately calls the SAME /schedule-capacity endpoint the
+  // Create Plan dialog uses (Planday shifts → dough-prep rule → capacity
+  // settings), so this forecast can never drift from the planner's own
+  // suggestion. Packs = batches × 5 (default 10 portions per batch ÷ 2 per
+  // pack — how plan batches translate to calzone packs).
+  const plannedDatesKey = (weekPacksMade ?? []).map(r => `${r.date}:${r.calzonePacks}`).join(",");
+  const { data: forecastByDate } = useQuery({
+    queryKey: ["capacity-forecast", weekStartStr, plannedDatesKey],
+    enabled: !!weekPacksMade,
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const today = format(new Date(), "yyyy-MM-dd");
+      const dates: string[] = [];
+      for (let i = 0; i < 7; i++) {
+        const d = addDays(selectedMonday, i);
+        const ds = format(d, "yyyy-MM-dd");
+        const isWeekday = d.getDay() >= 1 && d.getDay() <= 5;
+        const hasPlan = (madePacksByDate.get(ds) ?? 0) > 0;
+        if (isWeekday && !hasPlan && ds >= today) dates.push(ds);
+      }
+      const out: Record<string, number> = {};
+      await Promise.all(dates.map(async ds => {
+        try {
+          const res = await fetch(`${BASE}/api/production-plans/schedule-capacity?planDate=${ds}`, { credentials: "include" });
+          if (!res.ok) return;
+          const data = await res.json() as { available?: boolean; capacityBatches?: number };
+          if (data?.available && Number.isFinite(data.capacityBatches)) {
+            out[ds] = Math.round((data.capacityBatches as number) * 5);
+          }
+        } catch { /* Planday hiccup — that day simply shows no forecast bar */ }
+      }));
+      return out;
+    },
+  });
+
   const { data: weeklyOrders, isLoading: weeklyLoading, error: weeklyError, refetch } = useQuery({
     queryKey: ["shopify-weekly-orders-dashboard", weekStartStr],
     queryFn: () => fetchWeeklyOrders(weekStartStr),
@@ -512,8 +548,9 @@ export default function Dashboard() {
     return weeklyOrders.map(d => ({
       ...d,
       madePacks: madePacksByDate.get(d.date) ?? 0,
+      forecastPacks: forecastByDate?.[d.date] ?? 0,
     }));
-  }, [weeklyOrders, weekPacksMade]);
+  }, [weeklyOrders, weekPacksMade, forecastByDate]);
 
   const dispatchWeekTotals = useMemo(() => {
     if (!dispatchChartData) return undefined;
@@ -524,6 +561,7 @@ export default function Dashboard() {
       fulfilledCount: sum(d => d.fulfilledCount),
       packCount: sum(d => d.packCount),
       madePacks: sum(d => d.madePacks),
+      forecastPacks: sum(d => d.forecastPacks),
     };
   }, [dispatchChartData]);
 
@@ -654,6 +692,11 @@ export default function Dashboard() {
           <p className="font-semibold">Dispatch: {item.date}</p>
           <p className="text-muted-foreground text-xs">Delivery: {item.deliveryDate}</p>
           <p className="font-bold pt-1">{item.packCount} packs dispatching</p>
+          {(item.forecastPacks ?? 0) > 0 && (
+            <p className="font-bold" style={{ color: "hsl(38 92% 50%)" }}>
+              {item.forecastPacks} packs possible — no plan yet (team-based forecast)
+            </p>
+          )}
           {(item.madePacks ?? 0) > 0 && (
             <p className="font-bold text-blue-500">{item.madePacks} calzone packs making</p>
           )}
@@ -884,6 +927,11 @@ export default function Dashboard() {
                 <span className="px-4 py-1.5 rounded-lg text-base font-bold text-white" style={{ background: "hsl(217 91% 60%)" }}>
                   Making <span className="font-normal text-sm opacity-80">(calzone packs)</span>
                 </span>
+                {(dispatchWeekTotals?.forecastPacks ?? 0) > 0 && (
+                  <span className="px-4 py-1.5 rounded-lg text-base font-bold text-white" style={{ background: "hsl(38 92% 50%)" }}>
+                    Could make <span className="font-normal text-sm opacity-80">(forecast)</span>
+                  </span>
+                )}
               </div>
             </div>
             <button
@@ -959,6 +1007,19 @@ export default function Dashboard() {
                     ))}
                     <LabelList dataKey="madePacks" content={renderBarLabel} />
                   </Bar>
+                  {/* Forecast: what we COULD make on plan-less weekdays at
+                      the Create Plan dialog's own suggested capacity — only
+                      non-zero on days with no plan, so it never doubles up
+                      with a Making bar. */}
+                  <Bar dataKey="forecastPacks" name="Could make (forecast)" radius={[6, 6, 0, 0]}>
+                    {dispatchChartData?.map(entry => (
+                      <Cell
+                        key={entry.date}
+                        fill="hsl(38 92% 50% / 0.85)"
+                      />
+                    ))}
+                    <LabelList dataKey="forecastPacks" content={renderBarLabel} />
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
               </div>
@@ -982,6 +1043,14 @@ export default function Dashboard() {
                     </p>
                     <p className="text-xs text-muted-foreground leading-snug">making (calzone packs)</p>
                   </div>
+                  {dispatchWeekTotals.forecastPacks > 0 && (
+                    <div>
+                      <p className="text-3xl font-display font-bold tabular-nums" style={{ color: "hsl(38 92% 50%)" }}>
+                        {dispatchWeekTotals.forecastPacks.toLocaleString()}
+                      </p>
+                      <p className="text-xs text-muted-foreground leading-snug">could still make (forecast, unplanned days)</p>
+                    </div>
+                  )}
                 </div>
               )}
               </>
