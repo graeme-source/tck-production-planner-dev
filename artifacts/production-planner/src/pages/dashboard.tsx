@@ -998,7 +998,11 @@ export default function Dashboard() {
                     ))}
                     <LabelList dataKey="packCount" content={renderBarLabel} />
                   </Bar>
-                  <Bar dataKey="madePacks" name="Making (calzone packs)" radius={[6, 6, 0, 0]}>
+                  {/* Making and forecast SHARE one column (stackId): a day
+                      has a plan or it doesn't, so only one of the pair is
+                      ever non-zero. Three separate series squeezed every
+                      bar too thin for its number (Graeme, 2026-08-23). */}
+                  <Bar dataKey="madePacks" stackId="madeOrForecast" name="Making (calzone packs)" radius={[6, 6, 0, 0]}>
                     {dispatchChartData?.map(entry => (
                       <Cell
                         key={entry.date}
@@ -1008,10 +1012,8 @@ export default function Dashboard() {
                     <LabelList dataKey="madePacks" content={renderBarLabel} />
                   </Bar>
                   {/* Forecast: what we COULD make on plan-less weekdays at
-                      the Create Plan dialog's own suggested capacity — only
-                      non-zero on days with no plan, so it never doubles up
-                      with a Making bar. */}
-                  <Bar dataKey="forecastPacks" name="Could make (forecast)" radius={[6, 6, 0, 0]}>
+                      the Create Plan dialog's own suggested capacity. */}
+                  <Bar dataKey="forecastPacks" stackId="madeOrForecast" name="Could make (forecast)" radius={[6, 6, 0, 0]}>
                     {dispatchChartData?.map(entry => (
                       <Cell
                         key={entry.date}
