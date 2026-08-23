@@ -626,12 +626,13 @@ function PinSection() {
   );
 }
 
-type SettingsSection = "profile" | "team" | "production" | "storage" | "sops" | "features" | "sensors";
+type SettingsSection = "profile" | "team" | "production" | "packing" | "storage" | "sops" | "features" | "sensors";
 
 const NAV_ITEMS: { id: SettingsSection; label: string; icon: typeof User }[] = [
   { id: "profile", label: "My Profile", icon: User },
   { id: "team", label: "Team & Access", icon: Users },
   { id: "production", label: "Production", icon: BarChart2 },
+  { id: "packing", label: "Packing", icon: Package },
   { id: "storage", label: "Storage & Inventory", icon: Warehouse },
   { id: "sops", label: "Standards & SOPs", icon: BookOpen },
   { id: "sensors", label: "Temperature Sensors", icon: Thermometer },
@@ -658,8 +659,8 @@ const SETTINGS_SEARCH_INDEX: { tab: SettingsSection; title: string; keywords: st
   { tab: "production", title: "Macaroni Cheese Defaults", keywords: "mac cheese extra packs buffer" },
   { tab: "production", title: "Factory Number Scope", keywords: "core menu only stock count fridge factory number" },
   { tab: "production", title: "Shopify Freezer Stock Sync", keywords: "wonky freezer shopify inventory push frozen" },
-  { tab: "production", title: "Fulfilment — Manual Tick", keywords: "packing scan skip tick orders fulfilment" },
-  { tab: "production", title: "Fulfilment — Speak Customer Name", keywords: "voice speak name packing announce mute" },
+  { tab: "packing", title: "Fulfilment — Manual Tick", keywords: "packing scan skip tick orders fulfilment" },
+  { tab: "packing", title: "Fulfilment — Speak Customer Name", keywords: "voice speak name packing announce mute" },
   { tab: "production", title: "Building Timer", keywords: "batch built countdown timer target build seconds station" },
   { tab: "production", title: "Station Timing Standards", keywords: "timing standards station speed batches per hour bph" },
   { tab: "production", title: "Mixer Capacity (Flour)", keywords: "mixer flour kg capacity dough" },
@@ -667,11 +668,11 @@ const SETTINGS_SEARCH_INDEX: { tab: SettingsSection; title: string; keywords: st
   { tab: "production", title: "Pack Weights & HACCP Chill", keywords: "weight grams chill haccp cooling check pack weight" },
   { tab: "production", title: "Oven Defaults", keywords: "oven temperature steam meat vegetarian cooking defaults" },
   { tab: "production", title: "Extra Tomato Base", keywords: "tomato base extra sauce batches" },
-  { tab: "production", title: "Despatch Ice Packs", keywords: "ice packs boxes weather forecast summer despatch" },
+  { tab: "packing", title: "Despatch Ice Packs", keywords: "ice packs boxes weather forecast summer despatch" },
   { tab: "production", title: "Pasta Cooking", keywords: "pasta cook mac cheese boil" },
   { tab: "production", title: "Break Durations", keywords: "breaks snack lunch minutes schedule" },
   { tab: "production", title: "Day Schedule", keywords: "start time changeover builders schedule defaults timeline" },
-  { tab: "production", title: "APC Service Codes", keywords: "apc courier hypaship tracking labels shipping service codes" },
+  { tab: "packing", title: "APC Service Codes", keywords: "apc courier hypaship tracking labels shipping service codes" },
   { tab: "storage", title: "Category Defaults", keywords: "category packaging labour cost defaults recipe" },
   { tab: "storage", title: "Storage Locations", keywords: "fridge freezer dry store locations zones" },
   { tab: "storage", title: "Ingredient Default Locations", keywords: "ingredient storage where kept location assignment" },
@@ -1423,7 +1424,7 @@ export default function Settings() {
 
   const params = new URLSearchParams(search);
   const sectionParam = params.get("section") as SettingsSection | null;
-  const validSections: SettingsSection[] = ["profile", "team", "production", "storage", "sops", "features", "sensors"];
+  const validSections: SettingsSection[] = ["profile", "team", "production", "packing", "storage", "sops", "features", "sensors"];
   const activeSection: SettingsSection = sectionParam && validSections.includes(sectionParam) ? sectionParam : "profile";
 
   const setSection = (s: SettingsSection) => {
@@ -1578,8 +1579,6 @@ export default function Settings() {
               {user?.role === "admin" && <FactoryNumberSection />}
               {user?.role === "admin" && <ShopifyFreezerSyncSection />}
               {user?.role === "admin" && <StockGateSection />}
-              {user?.role === "admin" && <FulfilmentManualTickSection />}
-              {user?.role === "admin" && <FulfilmentSpeakNameSection />}
               {(user?.role === "admin" || user?.role === "manager") && <BuildingTimerSection />}
               {user?.role === "admin" && <TimingStandardsSection />}
               {user?.role === "admin" && <MixerCapacitySection />}
@@ -1587,10 +1586,20 @@ export default function Settings() {
               {user?.role === "admin" && <WeightChillSettingsSection />}
               {user?.role === "admin" && <OvenDefaultsSection />}
               {user?.role === "admin" && <ExtraTomatoBaseSection />}
-              {user?.role === "admin" && <IcePackSettingsSection />}
               {user?.role === "admin" && <PastaCookingSection />}
               {user?.role === "admin" && <BreakDefaultsSection />}
               {user?.role === "admin" && <ScheduleDefaultsSection />}
+            </div>
+          )}
+
+          {/* Packing: everything the packing/dispatch bench configures —
+              split out of Production, which had grown to ~20 sections
+              (Graeme, 2026-08-23). */}
+          {activeSection === "packing" && (
+            <div className="space-y-8">
+              {user?.role === "admin" && <FulfilmentManualTickSection />}
+              {user?.role === "admin" && <FulfilmentSpeakNameSection />}
+              {user?.role === "admin" && <IcePackSettingsSection />}
               {user?.role === "admin" && <ApcServiceCodesSection />}
             </div>
           )}
