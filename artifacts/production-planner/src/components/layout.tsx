@@ -693,18 +693,14 @@ export function Layout({ children }: { children: ReactNode }) {
 }
 
 // Quick Idea + Ask Caz, folded into one edge tab so they stay off the
-// content (they used to float over table footers and totals). Collapsed by
-// default: a slim orange/blue tab on the right edge, higher up the screen —
-// tap the arrow to slide the two buttons out. Remembered per device.
+// content (they used to float over table footers and totals). ALWAYS starts
+// collapsed: it used to be remembered per device, which meant any tablet
+// where someone once expanded it greeted every later user with the menu
+// already open (Graeme, 2026-08-22). Expansion now lasts only until the
+// next full page load.
 function FloatingActionsTab({ assistantOpen, onOpenAssistant, onOpenTodos }: { assistantOpen: boolean; onOpenAssistant: () => void; onOpenTodos: () => void }) {
-  const [expanded, setExpanded] = useState<boolean>(() => {
-    try { return localStorage.getItem("floating_actions_expanded") === "1"; } catch { return false; }
-  });
-  const toggle = () => setExpanded(prev => {
-    const next = !prev;
-    try { localStorage.setItem("floating_actions_expanded", next ? "1" : "0"); } catch { /* private mode */ }
-    return next;
-  });
+  const [expanded, setExpanded] = useState(false);
+  const toggle = () => setExpanded(prev => !prev);
   const openTodoCount = useMyOpenTodoCount();
 
   return (
@@ -720,10 +716,12 @@ function FloatingActionsTab({ assistantOpen, onOpenAssistant, onOpenTodos }: { a
           >
             <ChevronRight className="w-4 h-4" />
           </button>
+          {/* All three actions share one width so the stack reads as a menu,
+              not three stray buttons. */}
           <button
             type="button"
             onClick={onOpenTodos}
-            className="flex items-center gap-2 px-4 h-12 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 hover:opacity-90 active:scale-95 transition-all"
+            className="w-44 flex items-center justify-center gap-2 px-4 h-12 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 hover:opacity-90 active:scale-95 transition-all"
             aria-label="My to-dos"
             title="My to-dos"
           >
@@ -735,12 +733,12 @@ function FloatingActionsTab({ assistantOpen, onOpenAssistant, onOpenTodos }: { a
               </span>
             )}
           </button>
-          <ReportButton className="relative bottom-auto right-auto z-auto" />
+          <ReportButton className="relative bottom-auto right-auto z-auto w-44 h-12 py-0 justify-center" />
           {!assistantOpen && (
             <button
               type="button"
               onClick={onOpenAssistant}
-              className="flex items-center gap-2 px-4 h-12 rounded-full bg-orange-500 text-white shadow-lg shadow-orange-500/30 hover:bg-orange-600 active:scale-95 transition-all"
+              className="w-44 flex items-center justify-center gap-2 px-4 h-12 rounded-full bg-orange-500 text-white shadow-lg shadow-orange-500/30 hover:bg-orange-600 active:scale-95 transition-all"
               aria-label={`Ask ${ASSISTANT_NAME}`}
               title={`Ask ${ASSISTANT_NAME}`}
             >
