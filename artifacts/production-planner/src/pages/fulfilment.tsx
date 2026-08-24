@@ -540,6 +540,10 @@ async function fetchBookedConsignments(tag: string): Promise<BookedConsignment[]
 interface FridgeAvailability {
   stock: Array<{ recipeId: number; recipeName: string; packs: number }>;
   variants: Record<string, { recipeId: number; packsPerUnit: number }>;
+  /** Name for every mapped recipe — recipes with no fridge stock row (the
+   *  short ones) aren't in `stock`, but the deficit card must still name
+   *  them. */
+  recipeNames?: Record<number, string>;
   specialRecipeId: number | null;
 }
 
@@ -1576,6 +1580,9 @@ export default function Fulfilment() {
     if (!fridgeGate || !fridgeAvailability) return { ...empty, pickable: labelledOrdered };
     const remaining = new Map<number, number>();
     const names = new Map<number, string>();
+    for (const [rid, name] of Object.entries(fridgeAvailability.recipeNames ?? {})) {
+      names.set(Number(rid), name);
+    }
     for (const s of fridgeAvailability.stock) {
       remaining.set(s.recipeId, s.packs);
       names.set(s.recipeId, s.recipeName);
