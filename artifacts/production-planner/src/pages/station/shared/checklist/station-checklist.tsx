@@ -1626,11 +1626,12 @@ function DynamicDataDisplay({ type, data, loading, planId }: { type: string; dat
         </div>
       );
     }
-    const report = (data as any[])[0] as { tag: string; deliveryLabel: string; products: Array<{ title: string; quantity: number; orderCount: number }>; totalQuantity: number; dessertProductCount: number } | undefined;
+    const report = (data as any[])[0] as { tag: string; deliveryLabel: string; products: Array<{ title: string; quantity: number; orderCount: number }>; fivePackProducts?: Array<{ title: string; quantity: number; orderCount: number }>; fivePackTotal?: number; totalQuantity: number; dessertProductCount: number } | undefined;
+    const fivePack = report?.fivePackProducts ?? [];
     // Belt-and-braces shape guard: this renderer crashed the whole checklist
     // when handed another check's rows (see useDynamicData) — never trust
     // the payload shape blindly again.
-    if (!report || !Array.isArray(report.products) || report.products.length === 0) {
+    if (!report || !Array.isArray(report.products) || (report.products.length === 0 && fivePack.length === 0)) {
       return (
         <div className="mb-4 p-3 bg-secondary/30 rounded-lg text-sm text-muted-foreground">
           No dessert orders found for delivery.
@@ -1647,6 +1648,28 @@ function DynamicDataDisplay({ type, data, loading, planId }: { type: string; dat
             Delivery: {report.deliveryLabel}
           </span>
         </div>
+        {/* 5-packs share ONE label — headline number first, per-recipe
+            breakdown under it, grouped server-side so every surface of this
+            report agrees. */}
+        {fivePack.length > 0 && (
+          <div className="mb-3 p-3 rounded-lg bg-purple-100/70 dark:bg-purple-900/30 border border-purple-300 dark:border-purple-700">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-bold text-purple-800 dark:text-purple-200">5-Pack Desserts (one label)</span>
+              <span className="text-2xl font-bold tabular-nums text-purple-800 dark:text-purple-200">{report.fivePackTotal ?? 0}</span>
+            </div>
+            <div className="mt-1.5 space-y-1">
+              {fivePack.map((p, i) => (
+                <div key={i} className="flex items-center justify-between text-xs text-purple-900/80 dark:text-purple-200/80">
+                  <span className="truncate">{p.title}</span>
+                  <div className="flex items-center gap-3 shrink-0 ml-2">
+                    <span className="text-purple-700/60 dark:text-purple-300/60">{p.orderCount} order{p.orderCount !== 1 ? "s" : ""}</span>
+                    <span className="font-semibold tabular-nums w-8 text-right">{p.quantity}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="space-y-1.5">
           {report.products.map((p, i) => (
             <div key={i} className="flex items-center justify-between text-sm">
