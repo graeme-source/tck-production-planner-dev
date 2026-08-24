@@ -47,6 +47,7 @@ import { NotificationFlash } from "@/components/notification-flash";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assistant";
 import { TodoSheet, TodoInterstitial, useMyOpenTodoCount } from "@/components/todo-lists";
+import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
 import { BookOpen, Bot, GraduationCap, ChevronLeft, ChevronRight, ListTodo } from "lucide-react";
 
 export type NavItem = { name: string; href: string; icon: React.ComponentType<{ className?: string }> };
@@ -688,6 +689,9 @@ export function Layout({ children }: { children: ReactNode }) {
           somebody has put an unacknowledged task on this user's list. */}
       <TodoSheet open={todosOpen} onClose={() => setTodosOpen(false)} />
       <TodoInterstitial />
+      {/* Weekly sales-derived DPT refresh — renders nothing except for
+          managers/admins in the week it's due. */}
+      <DptSuggestionPrompt />
     </div>
   );
 }
