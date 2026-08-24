@@ -1,3 +1,4 @@
+import { formatBatches, batchesToPacks } from "../shared/format-batches";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   getGetProductionPlanQueryKey,
@@ -586,7 +587,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
         <div className="flex items-center justify-between mb-2">
           <p className="text-base font-medium">
             Daily Progress —{" "}
-            {calzoneTarget > 0 && <>{calzoneDone} / {calzoneTarget} batches</>}
+            {calzoneTarget > 0 && <>{formatBatches(calzoneDone)} / {formatBatches(calzoneTarget)} batches{" "}<span className="text-sm font-normal text-muted-foreground">({batchesToPacks(calzoneDone)}/{batchesToPacks(calzoneTarget)} packs)</span></>}
             {calzoneTarget > 0 && macTarget > 0 && " · "}
             {macTarget > 0 && <>{macDone} / {macTarget} mac packs</>}
           </p>
@@ -609,6 +610,13 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
               <h3 className="font-bold text-lg text-amber-800 dark:text-amber-200">
                 Any wonky calzones for {promptItem.recipeName ?? "this recipe"}?
               </h3>
+              <p className="text-sm text-amber-700 dark:text-amber-300 mt-0.5">
+                Through the ovens for this recipe:{" "}
+                <strong>{formatBatches(getStationCount(promptItem, "ovens"), Math.max(1, Math.floor((promptItem.portionsPerBatch ?? 10) / 2)))} batches</strong>
+                {" · "}
+                <strong>{ovenPacksDone(promptItem)} packs</strong>
+                {" "}— check this matches what physically came out before moving on.
+              </p>
               <p className="text-sm text-amber-700 dark:text-amber-300 mt-0.5">
                 Record any quality rejects before moving on.
                 Current wonky count: <strong>{promptItem.wonlyCount ?? 0}</strong>

@@ -1,3 +1,4 @@
+import { formatBatches } from "../shared/format-batches";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   useListSubRecipes,
@@ -1006,7 +1007,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                       {group.recipeName}
                     </p>
                     <span className="text-sm text-yellow-600 dark:text-yellow-400 ml-2 whitespace-nowrap">
-                      {group.batchesTarget} batch{group.batchesTarget !== 1 ? "es" : ""}
+                      {formatBatches(group.batchesTarget)} batch{group.batchesTarget !== 1 ? "es" : ""}
                     </span>
                   </div>
                   {visibleItems.map(({ ing }) => {

@@ -1,3 +1,4 @@
+import { formatBatches } from "../shared/format-batches";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   getGetProductionPlanQueryKey,
@@ -979,7 +980,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                                   </div>
                                 </div>
                                 <p className="text-xs text-muted-foreground mt-0.5">
-                                  {Math.round(totalWeight)}g across all {item.batchesTarget ?? 0} batches
+                                  {Math.round(totalWeight)}g across all {formatBatches(item.batchesTarget ?? 0)} batches
                                 </p>
                               </div>
                             );

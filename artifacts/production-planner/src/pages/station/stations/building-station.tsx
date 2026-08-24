@@ -1,3 +1,4 @@
+import { formatBatches, batchesToPacks } from "../shared/format-batches";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import {
@@ -1002,7 +1003,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
           <div>
             <h2 className="font-semibold text-lg">Today's Production</h2>
             <p className="text-base text-muted-foreground">
-              {totalBatchesDone} / {totalBatchesTarget} batches
+              {formatBatches(totalBatchesDone)} / {formatBatches(totalBatchesTarget)} batches
               {totalMacPacksTarget > 0 && (
                 <> · {totalMacPacksDone} / {totalMacPacksTarget} mac packs</>
               )}
@@ -1415,7 +1416,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
 
                   {/* Stats */}
                   <span className="text-sm tabular-nums font-medium flex-shrink-0">
-                    {combinedCount}/{item.batchesTarget ?? 0}
+                    {formatBatches(combinedCount)}/{formatBatches(item.batchesTarget ?? 0)}{" "}<span className="text-xs font-normal text-muted-foreground">({batchesToPacks(item.batchesTarget ?? 0, Math.max(1, Math.floor((item.portionsPerBatch ?? 10) / 2)))} packs)</span>
                   </span>
                   {paceData[item.id] != null && (
                     <span className="text-xs tabular-nums text-violet-600 dark:text-violet-400 font-medium flex-shrink-0">
@@ -1802,7 +1803,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                                 <Minus className="w-4 h-4" />
                               </button>
                               <span className="text-xl font-bold tabular-nums min-w-[3rem] text-center">
-                                {combinedCount} / {item.batchesTarget ?? 0}
+                                {formatBatches(combinedCount)} / {formatBatches(item.batchesTarget ?? 0)}{" "}<span className="text-xs font-normal text-muted-foreground">({batchesToPacks(item.batchesTarget ?? 0, Math.max(1, Math.floor((item.portionsPerBatch ?? 10) / 2)))} packs)</span>
                               </span>
                               <button
                                 onClick={(e) => {
@@ -2123,14 +2124,22 @@ function RecipeFinishedControls({
 
   const markFinished = () => {
     if (isOnBreak) return;
-    const summary = `${combinedCount}/${target} batch${target === 1 ? "" : "es"} built (both builders combined)` +
-      (extras > 0 ? ` + ${extras} loose pack${extras === 1 ? "" : "s"}` : "");
+    // Confirm in batches AND packs (decimals like "3.2" were misread as
+    // "3 batches 2 packs"; and a missed batch registration hid inside a
+    // rounded counter — Graeme, 2026-08-26). The builder is signing off
+    // that this is EXACTLY what physically exists.
+    const ppb = Math.max(1, Math.floor((item.portionsPerBatch ?? 10) / 2));
+    const packsMade = batchesToPacks(combinedCount, ppb) + extras;
+    const summary =
+      `Built: ${formatBatches(combinedCount, ppb)} of ${formatBatches(target, ppb)} batches` +
+      (extras > 0 ? ` + ${extras} loose pack${extras === 1 ? "" : "s"}` : "") +
+      `\nTotal packs made: ${packsMade} (plan wanted ${batchesToPacks(target, ppb)})`;
     const shortWarning = isShort
-      ? `\n\nYou are ${target - combinedCount} batch${target - combinedCount === 1 ? "" : "es"} SHORT of the plan — ovens and wrapping will work to the ${combinedCount} that exist, not the planned ${target}.`
+      ? `\n\nYou are SHORT of the plan — ovens and wrapping will work to what exists, not the planned target. If a batch was built but not recorded, cancel and register it first.`
       : "";
     const msg =
       `Mark this recipe FINISHED for the day?\n\n` +
-      `${summary}.${shortWarning}\n\n` +
+      `Please check this is EXACTLY what you made:\n\n${summary}${shortWarning}\n\n` +
       `Ovens and wrapping will process exactly what was built. You can still add batches or packs afterwards if more get made.`;
     if (!window.confirm(msg)) return;
     runAction((signal) =>

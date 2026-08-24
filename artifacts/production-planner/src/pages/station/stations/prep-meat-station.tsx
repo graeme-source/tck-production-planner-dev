@@ -1,3 +1,4 @@
+import { formatBatches } from "../shared/format-batches";
 import React from "react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
@@ -402,7 +403,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                   </a>
                 )}
               </div>
-              <p className="text-base text-muted-foreground mt-1">{selected.batchesTarget} batch{selected.batchesTarget !== 1 ? "es" : ""}</p>
+              <p className="text-base text-muted-foreground mt-1">{formatBatches(selected.batchesTarget)} batch{selected.batchesTarget !== 1 ? "es" : ""}</p>
             </div>
 
             {/* Summary bar — total trays */}

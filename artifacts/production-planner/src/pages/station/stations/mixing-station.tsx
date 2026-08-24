@@ -1,3 +1,4 @@
+import { formatBatches } from "../shared/format-batches";
 import React from "react";
 import { useState, useEffect, useCallback } from "react";
 import {
@@ -1131,7 +1132,7 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                           )}
                         </p>
                         <div className="flex items-baseline gap-2 mt-0.5">
-                          <span className="text-sm text-muted-foreground">{recipe.batchesTarget} batches</span>
+                          <span className="text-sm text-muted-foreground">{formatBatches(recipe.batchesTarget)} batches</span>
                           <span className="text-xl font-extrabold tabular-nums leading-none">
                             {totalTraysForRecipe}
                             <span className="text-sm font-semibold text-muted-foreground ml-0.5">tray{totalTraysForRecipe !== 1 ? "s" : ""}</span>

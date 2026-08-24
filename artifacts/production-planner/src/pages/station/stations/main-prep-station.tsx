@@ -1,3 +1,4 @@
+import { formatBatches } from "../shared/format-batches";
 import React from "react";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -820,7 +821,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                         {group.recipeName}
                       </p>
                       <span className="text-sm text-emerald-600 dark:text-emerald-400 ml-2 whitespace-nowrap">
-                        {group.batchesTarget} batch{group.batchesTarget !== 1 ? "es" : ""}
+                        {formatBatches(group.batchesTarget)} batch{group.batchesTarget !== 1 ? "es" : ""}
                       </span>
                     </div>
                     {visibleItems.map(({ ing, qtyForRecipe }) => {

@@ -1,3 +1,4 @@
+import { formatBatches } from "../shared/format-batches";
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   useCreateBatchCompletion,
@@ -192,7 +193,7 @@ function SameDayDoughSection({ groups, isOnBreak = false }: { groups: NonNullabl
                 <div key={r.recipeId} className="flex items-center justify-between bg-background/60 rounded-lg px-3 py-2">
                   <span className="font-medium">{r.recipeName}</span>
                   <span className="text-sm text-muted-foreground">
-                    {r.batchesTarget} {r.batchesTarget === 1 ? "batch" : "batches"} × {r.doughKgPerBatch.toFixed(2)} kg
+                    {formatBatches(r.batchesTarget)} {r.batchesTarget === 1 ? "batch" : "batches"} × {r.doughKgPerBatch.toFixed(2)} kg
                     {" "}({r.gramsPerPortion} g each) = <span className="font-semibold text-foreground">{r.doughKgTotal.toFixed(2)} kg</span>
                   </span>
                 </div>
