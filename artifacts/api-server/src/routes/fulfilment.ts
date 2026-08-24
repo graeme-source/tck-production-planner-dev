@@ -1842,11 +1842,15 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
     tag: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     orderIds: z.array(z.number()).min(1).max(500),
     dispatchDate: z.string().optional(),
+    // Retry path: book these orders on a specific service code instead of
+    // pickServiceCode's choice — e.g. Isle of Wight postcodes take ND but
+    // not the Lightweight small-box code (2026-08-26).
+    serviceCodeOverride: z.string().min(1).max(20).optional(),
   }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "tag and orderIds[] are required" }); return; }
   if (!isApcConfigured()) { res.status(503).json({ error: "APC credentials not configured." }); return; }
 
-  const { tag, orderIds } = parsed.data;
+  const { tag, orderIds, serviceCodeOverride } = parsed.data;
   const dispatchDate = parsed.data.dispatchDate ? new Date(parsed.data.dispatchDate) : new Date(tag);
   const bookedBy = await resolveUserName(req);
 
@@ -1878,6 +1882,10 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
       status: "booked" | "skipped" | "failed";
       waybill?: string; serviceCode?: string; reference?: string;
       reason?: string; recordError?: string;
+      /** On failure: the code the booking was attempted with, and (when the
+       *  failure smells like a service-availability rejection) the standard
+       *  same-day code to offer as a one-tap retry. */
+      usedServiceCode?: string; suggestedRetryCode?: string;
     }> = [];
 
     for (const order of orders) {
@@ -1896,7 +1904,7 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
         continue;
       }
 
-      const serviceCode = pickServiceCode(order, { smallWeekday, largeWeekday, smallFriday, largeFriday }, weightThresholdG, dispatchDate);
+      const serviceCode: string = serviceCodeOverride ?? pickServiceCode(order, { smallWeekday, largeWeekday, smallFriday, largeFriday }, weightThresholdG, dispatchDate);
       const reference = order.name;
       const sa = order.shipping_address;
       let specialInstructions = "X227 - PERISHABLE";
@@ -1973,9 +1981,20 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
           }
         }
 
+        // Suggest the standard (large/ND) code for the same day-type when a
+        // Lightweight small-box booking is refused — restricted routes (e.g.
+        // Isle of Wight) often accept ND while rejecting Lightweight with a
+        // bare 104. Only when no override was already in play.
+        let suggestedRetryCode: string | undefined;
+        if (!serviceCodeOverride && (/\b104\b/.test(msg) || isNoServiceFailure(msg))) {
+          if (serviceCode === smallWeekday && largeWeekday !== smallWeekday) suggestedRetryCode = largeWeekday;
+          else if (serviceCode === smallFriday && largeFriday !== smallFriday) suggestedRetryCode = largeFriday;
+        }
         results.push({
           orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id),
           status: "failed", reason: msg,
+          usedServiceCode: serviceCode,
+          ...(suggestedRetryCode ? { suggestedRetryCode } : {}),
           ...(taggedNoService ? { taggedNoService } : {}),
         });
       }

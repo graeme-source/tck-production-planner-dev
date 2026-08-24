@@ -62,6 +62,11 @@ interface BookResult {
   reference?: string;
   reason?: string;
   recordError?: string;
+  usedServiceCode?: string;
+  /** Standard same-day code offered as a one-tap retry when the failure
+   *  looks like a service-availability rejection (e.g. Lightweight refused
+   *  for an Isle of Wight postcode while ND is accepted). */
+  suggestedRetryCode?: string;
   /** Set when APC refused on coverage grounds and the order was marked in
    *  Shopify so it can be found there later. */
   taggedNoService?: boolean;
@@ -173,6 +178,47 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
   // Which failed row has its reschedule dialog open. One at a time by
   // design — each customer gets a personally addressed email.
   const [rescheduling, setRescheduling] = useState<BookResult | null>(null);
+  // One-tap retry of a failed row on a different service code. The result
+  // row is replaced in place and the summary counts recomputed.
+  const [retryingOrderId, setRetryingOrderId] = useState<number | null>(null);
+  async function retryWithCode(row: BookResult, code: string) {
+    setRetryingOrderId(row.orderId);
+    try {
+      const res = await fetch(`${BASE}/api/fulfilment/batch-book`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tag, orderIds: [row.orderId], serviceCodeOverride: code }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Retry failed");
+      const replacement = (data as BookResponse).results.find(r => r.orderId === row.orderId);
+      if (replacement) {
+        setReport(prev => {
+          if (!prev) return prev;
+          const results = prev.results.map(r => (r.orderId === row.orderId ? replacement : r));
+          return {
+            ...prev,
+            results,
+            booked: results.filter(r => r.status === "booked").length,
+            skipped: results.filter(r => r.status === "skipped").length,
+            failed: results.filter(r => r.status === "failed").length,
+            recordErrors: results.filter(r => r.recordError).length,
+          };
+        });
+        if (replacement.status === "booked") {
+          toast({ title: `${row.orderName} booked on ${code}` });
+          onBooked();
+        } else {
+          toast({ title: `${row.orderName} still failing on ${code}`, description: replacement.reason, variant: "destructive" });
+        }
+      }
+    } catch (e) {
+      toast({ title: "Retry failed", description: e instanceof Error ? e.message : "Request failed", variant: "destructive" });
+    } finally {
+      setRetryingOrderId(null);
+    }
+  }
   // Nothing ticked to begin with: booking the whole wave has to be chosen,
   // not defaulted into.
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -474,6 +520,17 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
                       take this delivery day. Rescheduling is the resolution,
                       so it belongs on the row rather than somewhere else. One
                       at a time — each customer gets their own email. */}
+                  {r.status === "failed" && r.suggestedRetryCode && (
+                    <button
+                      onClick={() => retryWithCode(r, r.suggestedRetryCode!)}
+                      disabled={retryingOrderId === r.orderId}
+                      className="shrink-0 text-xs px-2 py-1 rounded-lg border border-blue-400 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30 inline-flex items-center gap-1 disabled:opacity-50"
+                      title={`This route may not take ${r.usedServiceCode ?? "the chosen service"} — retry the booking on ${r.suggestedRetryCode}`}
+                    >
+                      {retryingOrderId === r.orderId ? <Loader2 className="w-3 h-3 animate-spin" /> : <PackageCheck className="w-3 h-3" />}
+                      Retry as {r.suggestedRetryCode}
+                    </button>
+                  )}
                   {r.status === "failed" && (
                     <button
                       onClick={() => setRescheduling(r)}
