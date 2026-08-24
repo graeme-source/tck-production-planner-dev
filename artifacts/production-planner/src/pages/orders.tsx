@@ -270,6 +270,18 @@ function inboundQtyLabel(qty: number, unit: string, packWeight: number): string 
   return `${qty} ${unit}`;
 }
 
+// Cost per kilo (or per native unit) for a line — the like-for-like number
+// suppliers' own websites show, so alternatives can be compared without
+// doing maths at the bench. g/ml pack weights convert to per-kg / per-litre.
+function costPerUnitLabel(line: { costPerPack: number; packWeight: number; unit: string }): string | null {
+  if (!(line.costPerPack > 0) || !(line.packWeight > 0)) return null;
+  const u = (line.unit || "").toLowerCase().trim();
+  if (u === "g") return `£${(line.costPerPack / (line.packWeight / 1000)).toFixed(2)}/kg`;
+  if (u === "ml") return `£${(line.costPerPack / (line.packWeight / 1000)).toFixed(2)}/L`;
+  if (u === "kg" || u === "l") return `£${(line.costPerPack / line.packWeight).toFixed(2)}/${u === "l" ? "L" : "kg"}`;
+  return `£${(line.costPerPack / line.packWeight).toFixed(2)}/${u || "unit"}`;
+}
+
 function lineOrderQty(line: EditableLine): string {
   if (line.stockInPacks || line.unit === "packs" || line.unit === "bottles") {
     return `${line.editedPacks} ${line.stockInPacks ? packNoun(line.unit, line.editedPacks) : line.unit}`;
@@ -2057,6 +2069,12 @@ export default function Orders() {
                           {lines.some(l => l.costPerPack > 0) && (
                             <td className="p-3 text-right tabular-nums">
                               {line.costPerPack > 0 ? `\u00A3${(line.editedPacks * line.costPerPack).toFixed(2)}` : "-"}
+                              {/* Cost per kilo (or per native unit) \u2014 the number
+                                  compared against other suppliers' sites when
+                                  deciding where to order (Graeme, 2026-08-27). */}
+                              {costPerUnitLabel(line) && (
+                                <span className="block text-xs text-muted-foreground">{costPerUnitLabel(line)}</span>
+                              )}
                             </td>
                           )}
                           <td className="p-3 text-right">
