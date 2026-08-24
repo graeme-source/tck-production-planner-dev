@@ -3,7 +3,7 @@
 
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { db, usersTable, stockGateHoldsTable } from "@workspace/db";
-import { eq, isNull, and } from "drizzle-orm";
+import { eq, isNull, and, sql } from "drizzle-orm";
 import {
   getStockGateStatus,
   getStockGateSettings,
@@ -34,7 +34,7 @@ router.get("/status", async (_req, res) => {
 // PUT /api/stock-gating/config — body: partial settings, all values as strings
 // (matches app_settings storage; booleans "true"/"false").
 router.put("/config", requireAdmin, async (req, res) => {
-  const allowed = ["enabled", "dryRun", "thresholdPacks", "releasePacks", "autoRelease", "tag", "intervalMinutes", "zapietLocationId"] as const;
+  const allowed = ["enabled", "dryRun", "thresholdPacks", "releasePacks", "autoRelease", "tag", "intervalMinutes", "zapietLocationId", "excludedRecipeIds"] as const;
   const patch: Partial<Record<(typeof allowed)[number], string>> = {};
   for (const field of allowed) {
     const v = req.body?.[field];
@@ -44,6 +44,27 @@ router.put("/config", requireAdmin, async (req, res) => {
   }
   await setStockGateSettings(patch);
   res.json({ settings: await getStockGateSettings() });
+});
+
+// GET /api/stock-gating/scope — the recipes the gate CAN cover (core menu /
+// fridge-held) with each one's current excluded flag, for the Settings
+// tick-list. Frozen lines stay excluded until their stock recording is
+// trustworthy; re-including one is a tick, not a deploy.
+router.get("/scope", requireAdmin, async (_req, res) => {
+  const { getStockGateSettings } = await import("../lib/stock-gating");
+  const settings = await getStockGateSettings();
+  const excluded = new Set(settings.excludedRecipeIds);
+  const rows = await db.execute<{ id: number; name: string; is_core_menu: boolean; is_fridge_product: boolean }>(sql`
+    SELECT id, name, is_core_menu, is_fridge_product
+    FROM recipes
+    WHERE is_core_menu = TRUE OR is_fridge_product = TRUE
+    ORDER BY name ASC
+  `);
+  res.json(rows.rows.map(r => ({
+    recipeId: Number(r.id),
+    name: r.name,
+    excluded: excluded.has(Number(r.id)),
+  })));
 });
 
 // POST /api/stock-gating/run — force a check cycle now (admin button).

@@ -3382,6 +3382,24 @@ function StockGateSection() {
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   // Text-input drafts so typing doesn't fire a save per keystroke.
   const [drafts, setDrafts] = useState<{ thresholdPacks: string; releasePacks: string; tag: string; intervalMinutes: string } | null>(null);
+  // Products the gate CAN cover (core menu / fridge-held) with per-recipe
+  // opt-out. Frozen lines stay excluded until their stock recording is
+  // reliable; re-including one is a tick here, not a deploy.
+  const [scope, setScope] = useState<Array<{ recipeId: number; name: string; excluded: boolean }> | null>(null);
+  const loadScope = () => {
+    fetch("/api/stock-gating/scope", { credentials: "include" })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (Array.isArray(d)) setScope(d); })
+      .catch(() => {});
+  };
+  useEffect(loadScope, []);
+  async function toggleScope(recipeId: number) {
+    if (!scope) return;
+    const next = scope.map(r => (r.recipeId === recipeId ? { ...r, excluded: !r.excluded } : r));
+    setScope(next);
+    await save({ excludedRecipeIds: next.filter(r => r.excluded).map(r => r.recipeId).join(",") });
+    loadScope();
+  }
 
   useEffect(() => {
     fetch("/api/stock-gating/status", { credentials: "include" })
@@ -3507,6 +3525,31 @@ function StockGateSection() {
             className="w-44 px-2 py-1.5 border border-border rounded-lg text-sm bg-background font-mono"
           />
         </label>
+        <div className="pt-2 border-t border-border">
+          <p className="text-sm font-medium">Products the gate watches</p>
+          <p className="text-xs text-muted-foreground mb-2">
+            Core-menu and fridge-held products only. Untick anything whose stock the
+            system can't yet track reliably (frozen kanban lines) — tick it back when
+            its recording is trustworthy.
+          </p>
+          {!scope ? (
+            <p className="text-xs text-muted-foreground">Loading…</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+              {scope.map(r => (
+                <label key={r.recipeId} className="flex items-center gap-2 text-sm py-0.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!r.excluded}
+                    onChange={() => toggleScope(r.recipeId)}
+                    disabled={saving}
+                  />
+                  <span className={r.excluded ? "text-muted-foreground line-through decoration-border" : ""}>{r.name}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

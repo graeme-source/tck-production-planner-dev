@@ -40,6 +40,10 @@ export type StockGateSettings = {
   tag: string;
   intervalMinutes: number;
   zapietLocationId: string;
+  /** Recipe ids explicitly opted OUT of the gate (on top of the built-in
+   *  scope of core-menu / fridge-held recipes). Frozen lines live here until
+   *  their stock recording is reliable (Graeme, 2026-08-26). */
+  excludedRecipeIds: number[];
 };
 
 const KEYS = {
@@ -51,6 +55,7 @@ const KEYS = {
   tag: "stock_gate_tag",
   intervalMinutes: "stock_gate_interval_minutes",
   zapietLocationId: "stock_gate_zapiet_location_id",
+  excludedRecipeIds: "stock_gate_excluded_recipe_ids",
 } as const;
 
 const DEFAULTS: StockGateSettings = {
@@ -62,6 +67,7 @@ const DEFAULTS: StockGateSettings = {
   tag: "low-stock-hold",
   intervalMinutes: 5,
   zapietLocationId: "270812",
+  excludedRecipeIds: [],
 };
 
 function parseBool(v: string | undefined, fallback: boolean): boolean {
@@ -88,6 +94,10 @@ export async function getStockGateSettings(): Promise<StockGateSettings> {
     tag: (map.get(KEYS.tag) || DEFAULTS.tag).trim(),
     intervalMinutes: Math.max(1, parseNum(map.get(KEYS.intervalMinutes), DEFAULTS.intervalMinutes)),
     zapietLocationId: (map.get(KEYS.zapietLocationId) || DEFAULTS.zapietLocationId).trim(),
+    excludedRecipeIds: (map.get(KEYS.excludedRecipeIds) ?? "")
+      .split(",")
+      .map(v => Number(v.trim()))
+      .filter(n => Number.isInteger(n) && n > 0),
   };
 }
 
@@ -274,11 +284,38 @@ export async function runStockGateCycle(trigger: "timer" | "manual"): Promise<St
       dispatch2Qty: number;
       salesSource: "shopify" | "dpt";
     };
-    const rows = (data.recipes as Row[]).filter(r => r.recipeId != null);
+    const allRows = (data.recipes as Row[]).filter(r => r.recipeId != null);
+
+    // Scope: only recipes whose fridge stock the system actually tracks —
+    // core menu and fridge-held products — minus any explicit opt-outs.
+    // Frozen lines (fried chicken, cinnamon buns) run on kanban and have no
+    // live counts, so gating them held products on fictional surpluses
+    // (2026-08-26). Re-inclusion later is: fix the stock recording, then
+    // untick the exclusion in Settings.
+    const scopeRes = await db.execute<{ id: number }>(sql`
+      SELECT id FROM recipes WHERE is_core_menu = TRUE OR is_fridge_product = TRUE
+    `);
+    const scopedIds = new Set(scopeRes.rows.map(r => Number(r.id)));
+    const excluded = new Set(settings.excludedRecipeIds);
+    const inScope = (rid: number) => scopedIds.has(rid) && !excluded.has(rid);
+    const rows = allRows.filter(r => inScope(r.recipeId as number));
 
     const activeHolds = await db.select().from(stockGateHoldsTable).where(isNull(stockGateHoldsTable.releasedAt));
     const holdByRecipe = new Map(activeHolds.map(h => [h.recipeId, h]));
     const variantByRecipe = await loadMainVariantIds(rows.map(r => r.recipeId as number));
+
+    // Holds on recipes no longer in scope are released immediately — a
+    // product we can't measure must not stay blocked on a stale number.
+    for (const h of activeHolds) {
+      if (inScope(h.recipeId)) continue;
+      try {
+        await releaseHold(h, "auto (out of gate scope)", null);
+        holdByRecipe.delete(h.recipeId);
+        released.push(`${h.recipeName} (out of scope)`);
+      } catch (err) {
+        console.error(`[stock-gate] out-of-scope release failed for ${h.recipeName}:`, err);
+      }
+    }
 
     for (const row of rows) {
       const recipeId = row.recipeId as number;
