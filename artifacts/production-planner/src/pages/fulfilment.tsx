@@ -1403,7 +1403,9 @@ export default function Fulfilment() {
   })();
   const { data: packingPace, refetch: refetchPace } = useQuery({
     queryKey: ["fulfilment-packing-pace", dispatchDayStr],
-    enabled: !!dispatchDayStr && view === "picking",
+    // List view too — the pace should be in sight while processing and
+    // tagging, not only mid-pick (Graeme, 2026-08-25).
+    enabled: !!dispatchDayStr && (view === "picking" || view === "list"),
     refetchInterval: 60_000,
     queryFn: async () => {
       const res = await fetch(`${BASE}/api/reports/packing-speed?from=${dispatchDayStr}&to=${dispatchDayStr}`, { credentials: "include" });
@@ -3757,6 +3759,13 @@ export default function Fulfilment() {
       {progress && (
         <DispatchProgressHeader progress={progress} />
       )}
+      {/* Packing pace stays in sight while processing/tagging, not only
+          mid-pick — rides with the dispatch progress bar. */}
+      <PackingPaceStrip
+        packed={progress?.totalFulfilled ?? null}
+        total={progress?.totalOrders ?? null}
+        oph={packingPace?.ordersPerHour ?? null}
+      />
 
       {orders && (
         <div className="space-y-4">
