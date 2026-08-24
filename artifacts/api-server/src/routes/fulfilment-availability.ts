@@ -42,6 +42,13 @@ router.get("/fridge-availability", async (_req, res) => {
       SELECT m.recipe_id, r.name AS recipe_name, m.shopify_variant_id, m.wonky_variant_id
       FROM recipe_shopify_mappings m
       JOIN recipes r ON r.id = m.recipe_id
+      -- Gate ONLY on products whose stock the production fridge actually
+      -- tracks: core-menu recipes and fridge-held products (core + test
+      -- calzones). Freezer lines (fried chicken, cinnamon buns) and bottled
+      -- items (mayo, hot sauce) have no live fridge count, so gating on
+      -- them held orders against fictional zeroes (Graeme, 2026-08-26).
+      -- Unmapped lines never gate, so these now simply pass through.
+      WHERE r.is_core_menu = TRUE OR r.is_fridge_product = TRUE
     `);
 
     const specialRes = await db.execute<{ id: number }>(sql`
