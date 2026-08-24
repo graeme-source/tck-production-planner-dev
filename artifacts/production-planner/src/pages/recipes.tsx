@@ -1201,7 +1201,7 @@ function EditRecipeDialog({
         labourCost: Number(detail.labourCost) || 0,
         portionsPerBatch: Number(detail.portionsPerBatch) || 10,
         targetBuildMinutes: detail.targetBuildSeconds != null
-          ? Number(detail.targetBuildSeconds) / 60
+          ? Math.round((Number(detail.targetBuildSeconds) / 60) * 10) / 10
           : null,
         shelfLifeDays: detail.shelfLifeDays != null ? Number(detail.shelfLifeDays) : undefined,
         tinSize: detail.tinSize ?? "",
@@ -2190,7 +2190,7 @@ export default function Recipes() {
         labourCost: Number(duplicateDetail.labourCost) || 0,
         portionsPerBatch: Number(duplicateDetail.portionsPerBatch) || 10,
         targetBuildMinutes: duplicateDetail.targetBuildSeconds != null
-          ? Number(duplicateDetail.targetBuildSeconds) / 60
+          ? Math.round((Number(duplicateDetail.targetBuildSeconds) / 60) * 10) / 10
           : null,
         shelfLifeDays: duplicateDetail.shelfLifeDays != null ? Number(duplicateDetail.shelfLifeDays) : undefined,
         tinSize: duplicateDetail.tinSize ?? "",
