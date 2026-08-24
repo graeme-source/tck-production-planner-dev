@@ -1458,6 +1458,8 @@ export default function Fulfilment() {
   // satisfy, and turn the remainder into a wrap-deficit signal. Refetched
   // every minute — wrapping is adding stock all morning.
   const [fridgeGate, setFridgeGate] = useState(true);
+  // Filter sheet reachable from inside the picking cycle.
+  const [pickingFiltersOpen, setPickingFiltersOpen] = useState(false);
   const { data: fridgeAvailability } = useQuery({
     queryKey: ["fulfilment-fridge-availability"],
     queryFn: fetchFridgeAvailability,
@@ -2767,6 +2769,73 @@ export default function Fulfilment() {
         )}
         {showTestModeBanner && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
         {reconcileMode && <ReconcileModeBanner />}
+        {/* Mid-cycle filter sheet — same state as the list view's filters, so
+            a change here shapes the rest of the wave. The order being picked
+            is never yanked away; filters bite on the next advance. */}
+        {pickingFiltersOpen && (
+          <div className="fixed inset-0 z-50 bg-black/60 flex items-start justify-center p-4 overflow-y-auto" onClick={() => setPickingFiltersOpen(false)}>
+            <div className="bg-card rounded-2xl border border-border shadow-2xl max-w-2xl w-full p-5 space-y-4 mt-10" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <h2 className="font-display text-lg font-bold">Wave filters</h2>
+                <button onClick={() => setPickingFiltersOpen(false)} className="p-2 text-muted-foreground hover:text-foreground rounded-lg hover:bg-secondary/50">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Changes apply from the next order — the one on screen stays put.
+              </p>
+              {fridgeAvailability && (
+                <button
+                  onClick={() => setFridgeGate(v => !v)}
+                  className={cn(
+                    "w-full flex items-center justify-between px-4 py-3 rounded-xl border text-sm font-medium transition-colors",
+                    fridgeGate
+                      ? "border-blue-300 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-200"
+                      : "border-border bg-secondary/40 text-muted-foreground",
+                  )}
+                >
+                  <span>Fridge gate — only offer orders the fridge can fill</span>
+                  <span className="font-semibold">{fridgeGate ? "On" : "Off"}</span>
+                </button>
+              )}
+              {fridgeGate && fridgeAllocation.deficits.length > 0 && (
+                <div className="px-4 py-3 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20">
+                  <p className="text-xs font-semibold text-blue-900 dark:text-blue-200 mb-1.5">
+                    Held back until wrapped:
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {fridgeAllocation.deficits.map(d => (
+                      <span key={d.recipeName} className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200 tabular-nums">
+                        {d.recipeName} × {d.packs}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <FilterChipRow
+                label="Order tags"
+                items={availableTags.map(t => ({ key: t, label: t }))}
+                include={includeTags}
+                exclude={excludeTags}
+                onToggle={k => cycleChip(k, includeTags, excludeTags, setIncludeTags, setExcludeTags)}
+                emptyText="No other tags on today's orders."
+              />
+              <FilterChipRow
+                label="Products (exclude one to drop every order containing it)"
+                items={availableProducts}
+                include={includeProducts}
+                exclude={excludeProducts}
+                onToggle={k => cycleChip(k, includeProducts, excludeProducts, setIncludeProducts, setExcludeProducts)}
+                emptyText="No products found on today's orders."
+              />
+              {filtersActive && (
+                <button onClick={clearFilters} className="text-xs text-primary hover:underline">
+                  Clear all tag & product filters
+                </button>
+              )}
+            </div>
+          </div>
+        )}
         {/* Today's counts stay in sight for every order, not just the gated
             first few. */}
         <IcePackBanner />
@@ -2799,6 +2868,26 @@ export default function Fulfilment() {
         <div className="flex items-center gap-3">
           <button onClick={goBack} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
             <ArrowLeft className="w-5 h-5" />
+          </button>
+          {/* Mid-cycle filter control: the packer must be able to exclude a
+              product or flip the fridge gate WITHOUT leaving the cycle —
+              changes apply from the next advance (Graeme, 2026-08-25). */}
+          <button
+            onClick={() => setPickingFiltersOpen(true)}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-colors",
+              (filtersActive || (fridgeGate && fridgeAllocation.held.length > 0))
+                ? "border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-300"
+                : "border-border text-muted-foreground hover:bg-secondary/50 hover:text-foreground",
+            )}
+          >
+            <Filter className="w-4 h-4" />
+            Filters
+            {fridgeGate && fridgeAllocation.held.length > 0 && (
+              <span className="text-[10px] px-1 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/40 tabular-nums">
+                {fridgeAllocation.held.length} held
+              </span>
+            )}
           </button>
           <div className="flex-1" />
           {speakNameEnabled && (
