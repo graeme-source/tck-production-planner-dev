@@ -35,11 +35,13 @@ router.get("/fridge-availability", async (_req, res) => {
 
     const variantRes = await db.execute<{
       recipe_id: number;
+      recipe_name: string;
       shopify_variant_id: string | null;
       wonky_variant_id: string | null;
     }>(sql`
-      SELECT recipe_id, shopify_variant_id, wonky_variant_id
-      FROM recipe_shopify_mappings
+      SELECT m.recipe_id, r.name AS recipe_name, m.shopify_variant_id, m.wonky_variant_id
+      FROM recipe_shopify_mappings m
+      JOIN recipes r ON r.id = m.recipe_id
     `);
 
     const specialRes = await db.execute<{ id: number }>(sql`
@@ -56,7 +58,12 @@ router.get("/fridge-availability", async (_req, res) => {
     // so bag orders now stay pickable; the wholesale-bags flow owns their
     // real stock accounting.
     const variants: Record<string, { recipeId: number; packsPerUnit: number }> = {};
+    // Names for EVERY mapped recipe — the deficit card must name a recipe
+    // even when it has no fridge stock row (those are exactly the short
+    // ones; "Recipe 29" means nothing to the wrapping team).
+    const recipeNames: Record<number, string> = {};
     for (const row of variantRes.rows) {
+      recipeNames[row.recipe_id] = row.recipe_name;
       if (row.shopify_variant_id) variants[row.shopify_variant_id] = { recipeId: row.recipe_id, packsPerUnit: 1 };
       if (row.wonky_variant_id) variants[row.wonky_variant_id] = { recipeId: row.recipe_id, packsPerUnit: 1 };
     }
@@ -68,6 +75,7 @@ router.get("/fridge-availability", async (_req, res) => {
         packs: Math.max(0, Math.floor(Number(r.packs) || 0)),
       })),
       variants,
+      recipeNames,
       specialRecipeId: specialRes.rows[0]?.id ?? null,
     });
   } catch (err) {
