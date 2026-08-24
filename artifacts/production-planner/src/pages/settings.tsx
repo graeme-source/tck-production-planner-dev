@@ -659,6 +659,7 @@ const SETTINGS_SEARCH_INDEX: { tab: SettingsSection; title: string; keywords: st
   { tab: "production", title: "Macaroni Cheese Defaults", keywords: "mac cheese extra packs buffer" },
   { tab: "production", title: "Factory Number Scope", keywords: "core menu only stock count fridge factory number" },
   { tab: "production", title: "Shopify Freezer Stock Sync", keywords: "wonky freezer shopify inventory push frozen" },
+  { tab: "production", title: "Next-Day Delivery Stock Gate", keywords: "stock gate zapiet low stock hold next day delivery date blocker tag surplus threshold dry run" },
   { tab: "packing", title: "Fulfilment — Manual Tick", keywords: "packing scan skip tick orders fulfilment" },
   { tab: "packing", title: "Fulfilment — Speak Customer Name", keywords: "voice speak name packing announce mute" },
   { tab: "production", title: "Building Timer", keywords: "batch built countdown timer target build seconds station" },

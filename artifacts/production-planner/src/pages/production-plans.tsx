@@ -6473,7 +6473,11 @@ export default function ProductionPlans() {
             description="Schedule daily production runs with DPT-calculated batch targets."
             action={
               <div className="flex items-center gap-2">
-                <ProcessFulfilledTodayButton size="md" className="rounded-xl" />
+                {/* "Process Fulfilled Today" removed from the header (Graeme,
+                    2026-08-24) — scanning decrements fridge stock live, so the
+                    manual sweep is no longer a daily action. It still exists
+                    inside the Update Factory Number stale-stock prompt and on
+                    the Stock Control fridge card. */}
                 <button
                   onClick={handleGoToday}
                   className="px-4 py-2.5 border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors text-sm"

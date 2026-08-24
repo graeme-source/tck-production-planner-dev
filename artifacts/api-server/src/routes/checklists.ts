@@ -1065,6 +1065,11 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
           .where(and(
             inArray(fridgeStockBatchesTable.recipeId, fridgeRecipeIds),
             sql`${fridgeStockBatchesTable.quantity} > 0`,
+            // Only batches from the last two weeks. The batch table's
+            // quantities drift, so without a recency window stale months-old
+            // rows with phantom stock filled all six chip slots and crowded
+            // out the batches actually on the bench (Graeme, 2026-08-25).
+            sql`${fridgeStockBatchesTable.createdAt} >= NOW() - INTERVAL '14 days'`,
           ))
           .orderBy(asc(fridgeStockBatchesTable.useByDate))
       : [];
