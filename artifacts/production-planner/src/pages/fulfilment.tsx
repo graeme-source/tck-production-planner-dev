@@ -539,11 +539,13 @@ async function fetchBookedConsignments(tag: string): Promise<BookedConsignment[]
  *  pick list can be gated to orders the fridge can actually satisfy. */
 interface FridgeAvailability {
   stock: Array<{ recipeId: number; recipeName: string; packs: number }>;
-  variants: Record<string, { recipeId: number; packsPerUnit: number }>;
+  variants: Record<string, { recipeId: number; packsPerUnit: number; pool?: "packs" | "bags" }>;
   /** Name for every mapped recipe — recipes with no fridge stock row (the
    *  short ones) aren't in `stock`, but the deficit card must still name
    *  them. */
   recipeNames?: Record<number, string>;
+  /** 8-pack bags wrapped TODAY per recipe — the pool bag orders gate on. */
+  bagStock?: Array<{ recipeId: number; bags: number }>;
   specialRecipeId: number | null;
 }
 
@@ -1582,56 +1584,71 @@ export default function Fulfilment() {
       shortFor: new Map<number, string[]>(),
     };
     if (!fridgeGate || !fridgeAvailability) return { ...empty, pickable: labelledOrdered };
-    const remaining = new Map<number, number>();
+    // Two pools per recipe, keyed "packs:<id>" and "bags:<id>". 2-pack lines
+    // draw on the fridge's 2-pack level; 8-pack bag lines draw on bags
+    // wrapped TODAY (backend sends only today's entries) — so a bag order
+    // stays held until its bags are wrapped that day.
+    const remaining = new Map<string, number>();
     const names = new Map<number, string>();
     for (const [rid, name] of Object.entries(fridgeAvailability.recipeNames ?? {})) {
       names.set(Number(rid), name);
     }
     for (const s of fridgeAvailability.stock) {
-      remaining.set(s.recipeId, s.packs);
+      remaining.set(`packs:${s.recipeId}`, s.packs);
       names.set(s.recipeId, s.recipeName);
     }
+    for (const b of fridgeAvailability.bagStock ?? []) {
+      remaining.set(`bags:${b.recipeId}`, b.bags);
+    }
+    const poolLabel = (key: string) => {
+      const [pool, rid] = key.split(":");
+      const name = names.get(Number(rid)) ?? `Recipe ${rid}`;
+      return pool === "bags" ? `${name} (8-pack bags)` : name;
+    };
     const needsFor = (o: ShopifyOrder) => {
-      const needs = new Map<number, number>();
+      const needs = new Map<string, number>();
       for (const li of o.line_items ?? []) {
         const mapped = li.variant_id != null ? fridgeAvailability.variants[String(li.variant_id)] : undefined;
         let recipeId = mapped?.recipeId;
         let packsPer = mapped?.packsPerUnit ?? 1;
+        let pool: "packs" | "bags" = mapped?.pool ?? "packs";
         if (recipeId == null && fridgeAvailability.specialRecipeId != null
             && li.title.toLowerCase().includes("calzone club special")) {
           recipeId = fridgeAvailability.specialRecipeId;
           packsPer = 1;
+          pool = "packs";
         }
         if (recipeId == null) continue; // unmappable line — never gates
-        needs.set(recipeId, (needs.get(recipeId) ?? 0) + li.quantity * packsPer);
+        const key = `${pool}:${recipeId}`;
+        needs.set(key, (needs.get(key) ?? 0) + li.quantity * packsPer);
       }
       return needs;
     };
     const pickable: ShopifyOrder[] = [];
     const held: ShopifyOrder[] = [];
-    const heldDemand = new Map<number, number>();
+    const heldDemand = new Map<string, number>();
     const shortFor = new Map<number, string[]>();
     for (const o of labelledOrdered) {
       const needs = needsFor(o);
-      const fits = [...needs].every(([rid, qty]) => (remaining.get(rid) ?? 0) >= qty);
+      const fits = [...needs].every(([key, qty]) => (remaining.get(key) ?? 0) >= qty);
       if (fits) {
-        for (const [rid, qty] of needs) remaining.set(rid, (remaining.get(rid) ?? 0) - qty);
+        for (const [key, qty] of needs) remaining.set(key, (remaining.get(key) ?? 0) - qty);
         pickable.push(o);
       } else {
         held.push(o);
         const shorts: string[] = [];
-        for (const [rid, qty] of needs) {
-          heldDemand.set(rid, (heldDemand.get(rid) ?? 0) + qty);
-          const have = remaining.get(rid) ?? 0;
-          if (have < qty) shorts.push(`${names.get(rid) ?? `Recipe ${rid}`} (need ${qty}, fridge has ${have})`);
+        for (const [key, qty] of needs) {
+          heldDemand.set(key, (heldDemand.get(key) ?? 0) + qty);
+          const have = remaining.get(key) ?? 0;
+          if (have < qty) shorts.push(`${poolLabel(key)} (need ${qty}, ${key.startsWith("bags") ? "wrapped today" : "fridge has"} ${have})`);
         }
         shortFor.set(o.id, shorts);
       }
     }
     const deficits = [...heldDemand]
-      .map(([rid, demand]) => ({
-        recipeName: names.get(rid) ?? `Recipe ${rid}`,
-        packs: Math.max(0, demand - (remaining.get(rid) ?? 0)),
+      .map(([key, demand]) => ({
+        recipeName: poolLabel(key),
+        packs: Math.max(0, demand - (remaining.get(key) ?? 0)),
       }))
       .filter(d => d.packs > 0)
       .sort((a, b) => b.packs - a.packs);

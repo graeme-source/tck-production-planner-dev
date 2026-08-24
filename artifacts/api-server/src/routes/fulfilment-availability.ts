@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import { londonDateString } from "../lib/london-time";
 
 // Fridge availability data for the fulfilment pick list (Objective B: what
 // the bench can pack is driven by what is actually wrapped and in the
@@ -38,8 +39,9 @@ router.get("/fridge-availability", async (_req, res) => {
       recipe_name: string;
       shopify_variant_id: string | null;
       wonky_variant_id: string | null;
+      eight_pack_variant_id: string | null;
     }>(sql`
-      SELECT m.recipe_id, r.name AS recipe_name, m.shopify_variant_id, m.wonky_variant_id
+      SELECT m.recipe_id, r.name AS recipe_name, m.shopify_variant_id, m.wonky_variant_id, m.eight_pack_variant_id
       FROM recipe_shopify_mappings m
       JOIN recipes r ON r.id = m.recipe_id
       -- Gate ONLY on products whose stock the production fridge actually
@@ -55,24 +57,41 @@ router.get("/fridge-availability", async (_req, res) => {
       SELECT id FROM recipes WHERE is_current_special = TRUE LIMIT 1
     `);
 
-    // variantId -> { recipeId, packsPerUnit }
+    // 8-pack bag pool: bags wrapped TODAY only (entries since London
+    // midnight). Wrapping reliably writes the 8-pack fridge count, but
+    // packing never decrements it — so yesterday's level would let bag
+    // orders through before anything was wrapped. Counting only today's
+    // entries implements the floor rule exactly: a bag order stays held
+    // until its bags are wrapped that day (Graeme, 2026-08-26).
+    const todayLondon = londonDateString();
+    const bagRes = await db.execute<{ recipe_id: number; bags: string }>(sql`
+      SELECT DISTINCT ON (se.recipe_id) se.recipe_id, se.quantity AS bags
+      FROM stock_entries se
+      JOIN recipes r ON r.id = se.recipe_id
+      WHERE se.recipe_id IS NOT NULL
+        AND se.location = 'production_fridge'
+        AND se.pack_size = 8
+        AND se.checked_at >= ${`${todayLondon}T00:00:00`}::timestamp
+        AND (r.is_core_menu = TRUE OR r.is_fridge_product = TRUE)
+      ORDER BY se.recipe_id, se.checked_at DESC
+    `);
+
+    // variantId -> { recipeId, packsPerUnit, pool }
     //
-    // 8-pack bag variants are deliberately ABSENT: bags live in the fridge as
-    // their own pack-size-8 stock, not in the 2-pack pool this endpoint
-    // serves. Charging bag lines 4 two-packs each made every bag-heavy large
-    // order look unfillable and starved the rest of the wave (2026-08-25 —
-    // ten booked large orders, gate allowed two). Unmapped lines never gate,
-    // so bag orders now stay pickable; the wholesale-bags flow owns their
-    // real stock accounting.
-    const variants: Record<string, { recipeId: number; packsPerUnit: number }> = {};
+    // Two separate pools: 2-packs gate against the fridge's 2-pack level;
+    // 8-pack bag variants gate against TODAY's wrapped bags (see bagRes) —
+    // never against the 2-pack pool (charging bags 4 two-packs each starved
+    // whole waves, 2026-08-25).
+    const variants: Record<string, { recipeId: number; packsPerUnit: number; pool: "packs" | "bags" }> = {};
     // Names for EVERY mapped recipe — the deficit card must name a recipe
     // even when it has no fridge stock row (those are exactly the short
     // ones; "Recipe 29" means nothing to the wrapping team).
     const recipeNames: Record<number, string> = {};
     for (const row of variantRes.rows) {
       recipeNames[row.recipe_id] = row.recipe_name;
-      if (row.shopify_variant_id) variants[row.shopify_variant_id] = { recipeId: row.recipe_id, packsPerUnit: 1 };
-      if (row.wonky_variant_id) variants[row.wonky_variant_id] = { recipeId: row.recipe_id, packsPerUnit: 1 };
+      if (row.shopify_variant_id) variants[row.shopify_variant_id] = { recipeId: row.recipe_id, packsPerUnit: 1, pool: "packs" };
+      if (row.wonky_variant_id) variants[row.wonky_variant_id] = { recipeId: row.recipe_id, packsPerUnit: 1, pool: "packs" };
+      if (row.eight_pack_variant_id) variants[row.eight_pack_variant_id] = { recipeId: row.recipe_id, packsPerUnit: 1, pool: "bags" };
     }
 
     res.json({
@@ -83,6 +102,10 @@ router.get("/fridge-availability", async (_req, res) => {
       })),
       variants,
       recipeNames,
+      bagStock: bagRes.rows.map(r => ({
+        recipeId: r.recipe_id,
+        bags: Math.max(0, Math.floor(Number(r.bags) || 0)),
+      })),
       specialRecipeId: specialRes.rows[0]?.id ?? null,
     });
   } catch (err) {
