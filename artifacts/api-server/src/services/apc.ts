@@ -446,8 +446,25 @@ async function placeOrder(req: ApcShipmentRequest): Promise<PlaceOrderResult> {
   const topCode = json?.Orders?.Messages?.Code;
   const orderCode = json?.Orders?.Order?.Messages?.Code;
   if (topCode !== "SUCCESS" || orderCode !== "SUCCESS") {
-    const desc = json?.Orders?.Order?.Messages?.Description ?? json?.Orders?.Messages?.Description ?? "Unknown error";
-    throw new Error(`APC order failed: ${desc}`);
+    // APC's Description can be as terse as "104 ERROR". Pull out the
+    // per-field detail it ships alongside (ErrorFields), and translate the
+    // known terse codes so the batch report explains itself (2026-08-26:
+    // an Isle of Wight order failed with a bare "104 ERROR" — no service
+    // for the postcode on the chosen product code).
+    const msgs = json?.Orders?.Order?.Messages ?? json?.Orders?.Messages ?? {};
+    const desc: string = msgs?.Description ?? "Unknown error";
+    const rawFields = msgs?.ErrorFields?.ErrorField ?? msgs?.ErrorFields;
+    const fieldList = rawFields ? (Array.isArray(rawFields) ? rawFields : [rawFields]) : [];
+    const details = fieldList
+      .map((f: { FieldName?: string; ErrorMessage?: string; Message?: string }) =>
+        [f?.FieldName, f?.ErrorMessage ?? f?.Message].filter(Boolean).join(": "))
+      .filter(Boolean)
+      .join("; ");
+    let explained = details ? `${desc} — ${details}` : desc;
+    if (/^104\b/i.test(desc)) {
+      explained += " (APC rejected the booking data — most often the service code isn't offered for this postcode/route. Check which services APC's portal offers for this address.)";
+    }
+    throw new Error(`APC order failed: ${explained}`);
   }
 
   const waybill: string = json?.Orders?.Order?.WayBill;
