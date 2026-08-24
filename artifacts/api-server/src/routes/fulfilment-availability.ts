@@ -13,8 +13,8 @@ import { sql } from "drizzle-orm";
 //     stock_entries row per recipe, packSize = 2 — the same read model as
 //     the factory-number calc in routes/stock.ts)
 //   - the Shopify variant → recipe map, including wonky variants (1 pack
-//     per unit) and 8-pack bag variants (4 two-packs per unit — same
-//     equivalence the plans page uses: "each 8-pack bag deducts 4 two-packs")
+//     per unit). 8-pack bag variants are intentionally excluded — see the
+//     comment on the map below.
 //   - the current special recipe, because "Calzone Club Special" order lines
 //     carry the special's product title, not the recipe's own mapping
 //     (same title-routing as lib/inventory-sync.ts).
@@ -37,9 +37,8 @@ router.get("/fridge-availability", async (_req, res) => {
       recipe_id: number;
       shopify_variant_id: string | null;
       wonky_variant_id: string | null;
-      eight_pack_variant_id: string | null;
     }>(sql`
-      SELECT recipe_id, shopify_variant_id, wonky_variant_id, eight_pack_variant_id
+      SELECT recipe_id, shopify_variant_id, wonky_variant_id
       FROM recipe_shopify_mappings
     `);
 
@@ -48,11 +47,18 @@ router.get("/fridge-availability", async (_req, res) => {
     `);
 
     // variantId -> { recipeId, packsPerUnit }
+    //
+    // 8-pack bag variants are deliberately ABSENT: bags live in the fridge as
+    // their own pack-size-8 stock, not in the 2-pack pool this endpoint
+    // serves. Charging bag lines 4 two-packs each made every bag-heavy large
+    // order look unfillable and starved the rest of the wave (2026-08-25 —
+    // ten booked large orders, gate allowed two). Unmapped lines never gate,
+    // so bag orders now stay pickable; the wholesale-bags flow owns their
+    // real stock accounting.
     const variants: Record<string, { recipeId: number; packsPerUnit: number }> = {};
     for (const row of variantRes.rows) {
       if (row.shopify_variant_id) variants[row.shopify_variant_id] = { recipeId: row.recipe_id, packsPerUnit: 1 };
       if (row.wonky_variant_id) variants[row.wonky_variant_id] = { recipeId: row.recipe_id, packsPerUnit: 1 };
-      if (row.eight_pack_variant_id) variants[row.eight_pack_variant_id] = { recipeId: row.recipe_id, packsPerUnit: 4 };
     }
 
     res.json({
