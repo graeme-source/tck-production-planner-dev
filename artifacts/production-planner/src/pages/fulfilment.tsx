@@ -916,83 +916,117 @@ function ProgressBar({ label, fulfilled, total, color, weight }: { label: string
   );
 }
 
-function DispatchProgressHeader({ progress }: { progress: DispatchProgress }) {
-  const { categories, totalOrders, totalFulfilled } = progress;
-  const remaining = totalOrders - totalFulfilled;
-  const pct = totalOrders > 0 ? Math.round((totalFulfilled / totalOrders) * 100) : 0;
-
-  return (
-    <div className="glass-panel p-4 rounded-2xl border border-border">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <Truck className="w-5 h-5 text-primary" />
-          <h3 className="font-semibold text-sm">Dispatch Progress</h3>
-        </div>
-        <div className="flex items-center gap-2 text-sm">
-          <span className="font-bold text-primary tabular-nums">{totalFulfilled}/{totalOrders}</span>
-          <span className="text-muted-foreground">({pct}%)</span>
-          {remaining > 0 && (
-            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-medium">
-              {remaining} remaining
-            </span>
-          )}
-          {remaining === 0 && totalOrders > 0 && (
-            <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 font-medium">
-              All done!
-            </span>
-          )}
-        </div>
-      </div>
-      <div className="flex gap-4 flex-wrap">
-        <ProgressBar label="Small Box" fulfilled={categories.smallBox.fulfilled} total={categories.smallBox.total} color="bg-blue-500" weight={categories.smallBox.total} />
-        <ProgressBar label="Large Box" fulfilled={categories.largeBox.fulfilled} total={categories.largeBox.total} color="bg-indigo-500" weight={categories.largeBox.total} />
-        <ProgressBar label="Wholesale" fulfilled={categories.wholesale.fulfilled} total={categories.wholesale.total} color="bg-amber-500" weight={categories.wholesale.total} />
-        {categories.other.total > 0 && (
-          <ProgressBar label="Other" fulfilled={categories.other.fulfilled} total={categories.other.total} color="bg-gray-500" weight={categories.other.total} />
-        )}
-      </div>
-    </div>
-  );
-}
-
-// Constant motivator for the packing team: live packed-count plus a
-// traffic-light orders-per-hour tile. Bands agreed with Graeme 2026-08-03:
-// under 50 red, 50–55 amber, 55–60 green, over 60 purple ("smashing it").
+/** Encouraging pace bands. The bottom band used to bark "Speed up!" at the
+ *  packer; it now points at the lean habit instead — find the five seconds,
+ *  don't just run faster (Graeme, 2026-08-28). */
 function paceBand(oph: number): { tile: string; label: string } {
-  if (oph > 60) return { tile: "bg-purple-600 text-white animate-pulse", label: "SMASHING IT! 🔥" };
-  if (oph >= 55) return { tile: "bg-green-600 text-white", label: "On target — keep going!" };
-  if (oph >= 50) return { tile: "bg-amber-500 text-white", label: "Almost there — push on!" };
-  return { tile: "bg-red-600 text-white", label: "Speed up!" };
+  if (oph > 60) return { tile: "bg-purple-600 text-white", label: "Smashing it! 🔥" };
+  if (oph >= 55) return { tile: "bg-green-600 text-white", label: "On target — nice work" };
+  if (oph >= 50) return { tile: "bg-amber-500 text-white", label: "Close — what would save 5s?" };
+  return { tile: "bg-sky-600 text-white", label: "Spot a 5s saving?" };
 }
 
-function PackingPaceStrip({ packed, total, oph }: { packed: number | null; total: number | null; oph: number | null }) {
+/**
+ * ONE summary block for the dispatch day: packed count, progress (overall and
+ * by box size), live pace, and buttons for the two things that are NOT the
+ * packer's job right now — orders awaiting a dispatch tag, and products the
+ * fridge gate can't check. Those open panels on demand instead of shouting
+ * from the top of the screen all day (Graeme, 2026-08-28).
+ */
+function DispatchSummary({
+  progress, packed, total, oph,
+  awaitingCount, onOpenAwaiting, awaitingOpen,
+  uncheckedCount, onOpenUnchecked, uncheckedOpen,
+}: {
+  progress: DispatchProgress | null;
+  packed: number | null;
+  total: number | null;
+  oph: number | null;
+  awaitingCount: number;
+  onOpenAwaiting: () => void;
+  awaitingOpen: boolean;
+  uncheckedCount: number;
+  onOpenUnchecked: () => void;
+  uncheckedOpen: boolean;
+}) {
   const pct = packed != null && total ? Math.min(100, Math.round((packed / total) * 100)) : 0;
   const band = oph != null ? paceBand(oph) : null;
+  const cats = progress?.categories;
+  const remaining = (total ?? 0) - (packed ?? 0);
+
   return (
-    <div className="flex items-stretch gap-3">
-      <div className="flex-1 glass-panel rounded-2xl border border-border px-4 py-3 flex items-center gap-4">
-        <Package className="w-7 h-7 text-primary flex-shrink-0" />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-2 flex-wrap">
-            <span className="text-3xl md:text-4xl font-extrabold tabular-nums leading-none">
+    <div className="glass-panel rounded-2xl border border-border p-5 space-y-4">
+      <div className="flex items-stretch gap-4 flex-wrap">
+        <div className="flex-1 min-w-[16rem]">
+          <div className="flex items-baseline gap-3 flex-wrap">
+            <span className="text-5xl font-extrabold tabular-nums leading-none">
               {packed ?? "—"}
-              <span className="text-muted-foreground font-bold text-xl md:text-2xl">/{total ?? "—"}</span>
+              <span className="text-muted-foreground font-bold text-3xl">/{total ?? "—"}</span>
             </span>
-            <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">packed</span>
+            <span className="text-base font-semibold text-muted-foreground uppercase tracking-wide">packed</span>
+            {remaining > 0 && total != null && (
+              <span className="text-sm px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-semibold">
+                {remaining} to go
+              </span>
+            )}
+            {remaining === 0 && (total ?? 0) > 0 && (
+              <span className="text-sm px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 font-semibold">
+                All done!
+              </span>
+            )}
           </div>
-          <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden mt-2">
+          <div className="w-full h-3 bg-secondary rounded-full overflow-hidden mt-3">
             <div className="h-full rounded-full bg-primary transition-all duration-700" style={{ width: `${pct}%` }} />
           </div>
+          {cats && (
+            <div className="flex gap-4 flex-wrap mt-3">
+              <ProgressBar label="Small Box" fulfilled={cats.smallBox.fulfilled} total={cats.smallBox.total} color="bg-blue-500" weight={cats.smallBox.total} />
+              <ProgressBar label="Large Box" fulfilled={cats.largeBox.fulfilled} total={cats.largeBox.total} color="bg-indigo-500" weight={cats.largeBox.total} />
+              <ProgressBar label="Wholesale" fulfilled={cats.wholesale.fulfilled} total={cats.wholesale.total} color="bg-amber-500" weight={cats.wholesale.total} />
+              {cats.other.total > 0 && (
+                <ProgressBar label="Other" fulfilled={cats.other.fulfilled} total={cats.other.total} color="bg-gray-500" weight={cats.other.total} />
+              )}
+            </div>
+          )}
+        </div>
+        <div
+          className={cn("rounded-2xl px-6 py-4 flex flex-col items-center justify-center flex-shrink-0 min-w-[11rem] transition-colors", band ? band.tile : "bg-secondary text-muted-foreground")}
+          aria-label={oph != null ? `Packing pace ${oph.toFixed(1)} orders per hour` : "Packing pace not available yet"}
+        >
+          <span className="text-5xl font-extrabold tabular-nums leading-none">{oph != null ? oph.toFixed(1) : "—"}</span>
+          <span className="text-xs font-bold uppercase tracking-wider mt-1 opacity-90">orders/hr</span>
+          <span className="text-sm font-bold mt-1 text-center leading-tight">{band ? band.label : "warming up…"}</span>
         </div>
       </div>
-      <div
-        className={`rounded-2xl px-5 py-3 flex flex-col items-center justify-center flex-shrink-0 min-w-[9rem] transition-colors ${band ? band.tile : "bg-secondary text-muted-foreground"}`}
-        aria-label={oph != null ? `Packing pace ${oph.toFixed(1)} orders per hour` : "Packing pace not available yet"}
-      >
-        <span className="text-3xl md:text-4xl font-extrabold tabular-nums leading-none">{oph != null ? oph.toFixed(1) : "—"}</span>
-        <span className="text-[11px] font-bold uppercase tracking-wider mt-1 opacity-90">orders/hr</span>
-        <span className="text-xs font-bold mt-0.5 text-center leading-tight">{band ? band.label : "warming up…"}</span>
-      </div>
+
+      {(awaitingCount > 0 || uncheckedCount > 0) && (
+        <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-border/60">
+          {awaitingCount > 0 && (
+            <button
+              type="button"
+              onClick={onOpenAwaiting}
+              aria-expanded={awaitingOpen}
+              className="px-3 py-2 rounded-xl text-sm font-semibold border border-orange-300 dark:border-orange-800 bg-orange-50 dark:bg-orange-950/30 text-orange-800 dark:text-orange-300 hover:bg-orange-100 transition-colors flex items-center gap-1.5"
+              title="Orders that arrived since the last tagging round — tag them when you're between waves"
+            >
+              <Tag className="w-4 h-4" />
+              {awaitingCount} to tag
+            </button>
+          )}
+          {uncheckedCount > 0 && (
+            <button
+              type="button"
+              onClick={onOpenUnchecked}
+              aria-expanded={uncheckedOpen}
+              className="px-3 py-2 rounded-xl text-sm font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors flex items-center gap-1.5"
+              title="Products the fridge gate can't stock-check"
+            >
+              <AlertTriangle className="w-4 h-4" />
+              {uncheckedCount} not stock-checked
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1524,6 +1558,10 @@ export default function Fulfilment() {
   const [fridgeGate, setFridgeGate] = useState(true);
   // Filter sheet reachable from inside the picking cycle.
   const [pickingFiltersOpen, setPickingFiltersOpen] = useState(false);
+  // Both collapsed by default: they're pre/post-picking concerns, and a
+  // packer mid-wave shouldn't have to read past them.
+  const [awaitingPanelOpen, setAwaitingPanelOpen] = useState(false);
+  const [uncheckedPanelOpen, setUncheckedPanelOpen] = useState(false);
   const { data: fridgeAvailability } = useQuery({
     queryKey: ["fulfilment-fridge-availability"],
     queryFn: fetchFridgeAvailability,
@@ -2889,11 +2927,24 @@ export default function Fulfilment() {
           title={activeOrder.name}
           description={activeOrder.shipping_address?.name ?? `${activeOrder.customer?.first_name} ${activeOrder.customer?.last_name}`}
         />
-        <PackingPaceStrip
-          packed={progress?.totalFulfilled ?? null}
-          total={progress?.totalOrders ?? null}
-          oph={packingPace?.ordersPerHour ?? null}
-        />
+        {/* Compact pace line while picking — the full summary belongs on the
+            list view; here the order in hand is the point. */}
+        {(progress || packingPace) && (
+          <div className="flex items-center gap-3 flex-wrap text-base">
+            <span className="font-bold tabular-nums">
+              {progress?.totalFulfilled ?? "—"}<span className="text-muted-foreground">/{progress?.totalOrders ?? "—"}</span>
+              <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wide ml-1.5">packed</span>
+            </span>
+            {packingPace?.ordersPerHour != null && (() => {
+              const band = paceBand(packingPace.ordersPerHour);
+              return (
+                <span className={cn("px-3 py-1 rounded-full text-sm font-bold", band.tile)}>
+                  {packingPace.ordersPerHour.toFixed(1)} orders/hr · {band.label}
+                </span>
+              );
+            })()}
+          </div>
+        )}
         {pendingPickOrder && (
           <ShopifyConfirmDialog
             title={`Ship order ${pendingPickOrder.name}?`}
@@ -3929,38 +3980,47 @@ export default function Fulfilment() {
         <AuditModal tag={queryTag} onClose={() => setShowAuditModal(false)} adminBase={configStatus?.shopifyAdminOrderBase} />
       )}
 
-      {progress && (
-        <DispatchProgressHeader progress={progress} />
-      )}
-      {/* Packing pace stays in sight while processing/tagging, not only
-          mid-pick — rides with the dispatch progress bar. */}
-      <PackingPaceStrip
+      {/* One summary for the day. Tagging and gate warnings live behind
+          buttons here: they belong BEFORE picking (tag → book → pick) or
+          after it, never competing with the order in the packer's hands. */}
+      <DispatchSummary
+        progress={progress ?? null}
         packed={progress?.totalFulfilled ?? null}
         total={progress?.totalOrders ?? null}
         oph={packingPace?.ordersPerHour ?? null}
+        awaitingCount={filteredUntagged.length}
+        onOpenAwaiting={() => setAwaitingPanelOpen(v => !v)}
+        awaitingOpen={awaitingPanelOpen}
+        uncheckedCount={fridgeAllocation.uncheckedTitles.size}
+        onOpenUnchecked={() => setUncheckedPanelOpen(v => !v)}
+        uncheckedOpen={uncheckedPanelOpen}
       />
 
       {orders && (
         <div className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            {unfulfilledOrders.filter(o => !lacksLabel(o)).length} ready to pack &middot;{" "}
+          <p className="text-base text-muted-foreground">
+            <span className="font-semibold text-foreground tabular-nums">{unfulfilledOrders.filter(o => !lacksLabel(o)).length}</span> ready to pack
             {unfulfilledOrders.filter(lacksLabel).length > 0 && (
-              <span className="text-amber-700 dark:text-amber-400 font-medium">{unfulfilledOrders.filter(lacksLabel).length} no label &middot;{" "}</span>
+              <span className="text-amber-700 dark:text-amber-400 font-medium"> &middot; {unfulfilledOrders.filter(lacksLabel).length} no label</span>
             )}
-            {untaggedOrders.length} awaiting approval &middot; {progress ? progress.totalFulfilled : fulfilledOrders.length} fulfilled
+            {" "}&middot; {progress ? progress.totalFulfilled : fulfilledOrders.length} fulfilled
           </p>
 
           {/* ONE filter bar, two labelled segments that combine (AND):
               Box × Label. "Small + Booked" = small boxes with labels booked.
               Actions (Book APC labels, Tags & Products) live at the right so
               they can't be mistaken for a third filter group. */}
+          <div className="glass-panel rounded-2xl border-2 border-primary/30 p-4 space-y-3">
+            <p className="text-sm font-bold uppercase tracking-wide text-primary flex items-center gap-2">
+              <Filter className="w-4 h-4" /> Showing these orders below
+            </p>
           <div className="flex gap-2 flex-wrap items-center">
-            <div className="flex items-center gap-1 rounded-xl bg-secondary/60 p-0.5 pl-2.5">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mr-1">Box</span>
+            <div className="flex items-center gap-1 rounded-xl bg-secondary/60 p-1 pl-3">
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mr-1">Box</span>
               <button
                 onClick={() => setBoxFilter(new Set())}
                 className={cn(
-                  "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                  "px-4 py-2 rounded-lg text-sm font-semibold transition-colors",
                   boxFilter.size === 0
                     ? "bg-primary text-primary-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
@@ -3988,7 +4048,7 @@ export default function Fulfilment() {
                       setBoxFilter(next);
                     }}
                     className={cn(
-                      "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5",
+                      "px-4 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center gap-1.5",
                       active
                         ? "bg-primary text-primary-foreground shadow-sm"
                         : "text-muted-foreground hover:text-foreground"
@@ -4005,8 +4065,8 @@ export default function Fulfilment() {
             </div>
 
             {apcMode === "full" && (
-              <div className="flex items-center gap-1 rounded-xl bg-secondary/60 p-0.5 pl-2.5">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mr-1">Label</span>
+              <div className="flex items-center gap-1 rounded-xl bg-secondary/60 p-1 pl-3">
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mr-1">Label</span>
                 {([
                   { key: "all" as const, label: "All" },
                   { key: "unbooked" as const, label: `No label (${allUnfulfilledOrders.filter(o => !bookedMap.has(o.id)).length})` },
@@ -4016,7 +4076,7 @@ export default function Fulfilment() {
                     key={opt.key}
                     onClick={() => setLabelFilter(opt.key)}
                     className={cn(
-                      "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                      "px-4 py-2 rounded-lg text-sm font-semibold transition-colors",
                       labelFilter === opt.key
                         ? "bg-primary text-primary-foreground shadow-sm"
                         : "text-muted-foreground hover:text-foreground",
@@ -4099,11 +4159,12 @@ export default function Fulfilment() {
           </div>
 
           {/* How many orders this wave will actually cycle through. */}
-          <p className="text-sm text-muted-foreground">
-            Picking <span className="font-semibold text-foreground tabular-nums">{filteredUnfulfilled.length}</span>
-            {" "}of {unfulfilledOrders.length} dispatch-tagged orders
-            {filtersActive && <span className="text-indigo-600 dark:text-indigo-400"> · filters active</span>}
+          <p className="text-base font-medium">
+            Picking <span className="font-bold text-foreground tabular-nums text-lg">{filteredUnfulfilled.length}</span>
+            <span className="text-muted-foreground"> of {unfulfilledOrders.length} dispatch-tagged orders</span>
+            {filtersActive && <span className="text-indigo-600 dark:text-indigo-400 font-semibold"> · filters active</span>}
           </p>
+          </div>
 
           {filtersOpen && (
             <div className="glass-panel p-4 rounded-2xl border border-border space-y-4">
@@ -4140,7 +4201,7 @@ export default function Fulfilment() {
             </div>
           )}
 
-          {filteredUntagged.length > 0 && (
+          {filteredUntagged.length > 0 && awaitingPanelOpen && (
             <div className="glass-panel p-4 rounded-2xl border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -4285,7 +4346,7 @@ export default function Fulfilment() {
 
           {filteredUnfulfilled.length > 0 && (
             <div className="flex items-center justify-between mb-2 px-1">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Ready to Pack</p>
+              <p className="text-sm font-bold text-foreground uppercase tracking-wide">Ready to Pack</p>
               <button
                 onClick={() => setPickListReversed(v => !v)}
                 className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 border border-border rounded-lg hover:bg-secondary/50 transition-colors"
@@ -4476,7 +4537,7 @@ export default function Fulfilment() {
           {/* The gate is only as good as the recipe mappings: a variant with
               no mapping can't be checked, so say which ones rather than
               letting the gate look broken. */}
-          {fridgeAllocation.active && fridgeAllocation.uncheckedTitles.size > 0 && (
+          {fridgeAllocation.active && fridgeAllocation.uncheckedTitles.size > 0 && uncheckedPanelOpen && (
             <div className="glass-panel px-4 py-3 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 mt-4">
               <p className="text-sm font-semibold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
                 <AlertTriangle className="w-4 h-4" /> The fridge gate can't check these products
@@ -4505,16 +4566,19 @@ export default function Fulfilment() {
               </p>
               {fridgeAllocation.deficits.length > 0 && (
                 <div className="glass-panel px-4 py-3 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20">
-                  <p className="text-sm font-semibold text-blue-900 dark:text-blue-200 mb-1">
+                  <p className="text-base font-semibold text-blue-900 dark:text-blue-200 mb-2">
                     To release these orders, wrap:
                   </p>
-                  <div className="flex flex-wrap gap-2">
+                  {/* One per line — a wrap of chips is unreadable at arm's
+                      length on the bench (Graeme, 2026-08-28). */}
+                  <ul className="divide-y divide-blue-200/60 dark:divide-blue-800/60">
                     {fridgeAllocation.deficits.map(d => (
-                      <span key={d.recipeName} className="text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200 font-medium tabular-nums">
-                        {d.recipeName} × {d.packs}
-                      </span>
+                      <li key={d.recipeName} className="flex items-center justify-between py-1.5">
+                        <span className="text-base text-blue-900 dark:text-blue-100">{d.recipeName}</span>
+                        <span className="text-xl font-bold tabular-nums text-blue-900 dark:text-blue-100">{d.packs}</span>
+                      </li>
                     ))}
-                  </div>
+                  </ul>
                 </div>
               )}
               {fridgeAllocation.held.map(order => (
