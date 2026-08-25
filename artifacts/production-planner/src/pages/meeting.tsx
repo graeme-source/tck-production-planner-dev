@@ -37,6 +37,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { ImprovementAttachments } from "@/components/improvement-attachments";
 import { LessonDiagram, DIAGRAM_OPTIONS } from "@/components/lesson-diagrams";
+import { MarkdownBlock, YouTubeEmbed } from "@/components/lesson-media";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -175,44 +176,6 @@ function StretchesPanel() {
 // Lesson content is markdown but pulling in a full parser would be
 // overkill for what we need. Handle bold (**), bullet lists, headings,
 // tables, and paragraphs — enough for the curriculum content.
-function renderInlineMd(text: string): React.ReactNode {
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
-  return parts.map((p, i) =>
-    p.startsWith("**") && p.endsWith("**")
-      ? <strong key={i}>{p.slice(2, -2)}</strong>
-      : <span key={i}>{p}</span>,
-  );
-}
-
-function MarkdownBlock({ content }: { content: string }) {
-  const blocks = content.split(/\n\n+/);
-  return (
-    <div className="space-y-4 text-lg leading-relaxed">
-      {blocks.map((block, bi) => {
-        const lines = block.split("\n");
-        if (lines.every(l => l.startsWith("- "))) {
-          return (
-            <ul key={bi} className="list-disc list-inside space-y-1.5 pl-2">
-              {lines.map((l, li) => <li key={li}>{renderInlineMd(l.slice(2))}</li>)}
-            </ul>
-          );
-        }
-        if (lines.length >= 2 && lines[0].startsWith("|") && lines[1].includes("---")) {
-          const headerCells = lines[0].split("|").map(s => s.trim()).filter(Boolean);
-          const rows = lines.slice(2).map(r => r.split("|").map(s => s.trim()).filter(Boolean));
-          return (
-            <table key={bi} className="w-full text-base border border-border rounded-lg overflow-hidden">
-              <thead className="bg-secondary/40"><tr>{headerCells.map((h, hi) => <th key={hi} className="px-3 py-2 text-left font-semibold">{renderInlineMd(h)}</th>)}</tr></thead>
-              <tbody>{rows.map((r, ri) => <tr key={ri} className="border-t border-border">{r.map((c, ci) => <td key={ci} className="px-3 py-2">{renderInlineMd(c)}</td>)}</tr>)}</tbody>
-            </table>
-          );
-        }
-        return <p key={bi}>{renderInlineMd(block)}</p>;
-      })}
-    </div>
-  );
-}
-
 // ── Slide kind registry ──────────────────────────────────────────────
 // Icon + colour per slide kind. The actual ordered list and per-slide
 // titles come from meeting_slides in the DB so admins can reorder
@@ -743,6 +706,7 @@ function SetupGratitudeCard({ data, ensureMeeting }: {
 }) {
   const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [cacheBust, setCacheBust] = useState(0);
   const meeting = data.meeting;
@@ -786,23 +750,29 @@ function SetupGratitudeCard({ data, ensureMeeting }: {
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Gratitude photo</p>
           <p className="text-sm text-muted-foreground">
-            {hasPhoto ? "Loaded — it'll fill the gratitude slide." : "Add a team photo for the gratitude slide (optional)."}
+            {hasPhoto ? "Loaded — it'll fill the gratitude slide, uncropped." : "Add a team photo for the gratitude slide (optional)."}
           </p>
         </div>
         {hasPhoto && meeting && (
           <img
             src={`${BASE}/api/morning-meetings/${meeting.id}/gratitude-photo?v=${cacheBust}`}
             alt="Gratitude"
-            className="w-16 h-16 rounded-xl object-cover border border-border flex-shrink-0"
+            className="w-16 h-16 rounded-xl object-contain bg-black/5 border border-border flex-shrink-0"
           />
         )}
       </div>
-      <div className="flex gap-2 mt-3">
+      <div className="flex gap-2 mt-3 flex-wrap">
+        <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ""; }} />
         <input ref={fileRef} type="file" accept="image/*" className="hidden"
           onChange={e => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ""; }} />
+        <button onClick={() => cameraRef.current?.click()} disabled={busy}
+          className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-50 inline-flex items-center gap-1.5">
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />} Take photo
+        </button>
         <button onClick={() => fileRef.current?.click()} disabled={busy}
           className="px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
-          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImageIcon className="w-4 h-4" />}
+          <ImageIcon className="w-4 h-4" />
           {hasPhoto ? "Replace photo" : "Add photo"}
         </button>
         {hasPhoto && (
@@ -826,6 +796,7 @@ function SetupGratitudeCard({ data, ensureMeeting }: {
 function SetupTomorrowCard({ date }: { date: string }) {
   const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
+  const tomorrowCameraRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [picking, setPicking] = useState(false);
   const [cacheBust, setCacheBust] = useState(0);
@@ -1003,16 +974,22 @@ function SetupTomorrowCard({ date }: { date: string }) {
             <img
               src={`${BASE}/api/morning-meetings/${setup.meetingId}/gratitude-photo?v=${cacheBust}`}
               alt="Tomorrow's gratitude"
-              className="w-16 h-16 rounded-xl object-cover border border-border flex-shrink-0"
+              className="w-16 h-16 rounded-xl object-contain bg-black/5 border border-border flex-shrink-0"
             />
           )}
         </div>
-        <div className="flex gap-2 mt-3">
+        <div className="flex gap-2 mt-3 flex-wrap">
+          <input ref={tomorrowCameraRef} type="file" accept="image/*" capture="environment" className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(f); e.target.value = ""; }} />
           <input ref={fileRef} type="file" accept="image/*" className="hidden"
             onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(f); e.target.value = ""; }} />
+          <button onClick={() => tomorrowCameraRef.current?.click()} disabled={busy}
+            className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-50 inline-flex items-center gap-1.5">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />} Take photo
+          </button>
           <button onClick={() => fileRef.current?.click()} disabled={busy}
             className="px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
-            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImageIcon className="w-4 h-4" />}
+            <ImageIcon className="w-4 h-4" />
             {hasPhoto ? "Replace photo" : "Add photo"}
           </button>
           {hasPhoto && (
@@ -1556,53 +1533,6 @@ function CustomMarkdownSlide({ slide }: { slide: MeetingSlide }) {
 /** Parse YouTube share URLs (youtu.be, youtube.com/watch?v=, embed,
  *  shorts) to a bare 11-char video ID. Returns null for anything we
  *  can't parse so callers can fall back. */
-function youtubeIdFromUrl(url: string): string | null {
-  try {
-    const u = new URL(url);
-    if (u.hostname === "youtu.be") {
-      const id = u.pathname.replace(/^\//, "").split("/")[0];
-      return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
-    }
-    if (u.hostname.endsWith("youtube.com") || u.hostname.endsWith("youtube-nocookie.com")) {
-      if (u.pathname.startsWith("/embed/")) {
-        const id = u.pathname.split("/embed/")[1]?.split("/")[0] ?? "";
-        return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
-      }
-      if (u.pathname.startsWith("/shorts/")) {
-        const id = u.pathname.split("/shorts/")[1]?.split("/")[0] ?? "";
-        return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
-      }
-      const v = u.searchParams.get("v");
-      if (v && /^[A-Za-z0-9_-]{11}$/.test(v)) return v;
-    }
-  } catch {
-    // not a URL — fall through
-  }
-  return null;
-}
-
-function YouTubeEmbed({ url }: { url: string }) {
-  const id = youtubeIdFromUrl(url);
-  if (!id) {
-    return (
-      <a href={url} target="_blank" rel="noopener" className="inline-flex items-center gap-2 text-sm text-primary hover:underline">
-        <Play className="w-4 h-4" /> Open video in new tab
-      </a>
-    );
-  }
-  return (
-    <div className="w-full rounded-2xl overflow-hidden bg-black" style={{ aspectRatio: "16 / 9" }}>
-      <iframe
-        src={`https://www.youtube.com/embed/${id}?rel=0`}
-        title="Video"
-        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-        allowFullScreen
-        className="w-full h-full border-0"
-      />
-    </div>
-  );
-}
-
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="text-5xl font-display font-bold mb-4 leading-tight">{children}</h2>;
 }
@@ -2997,11 +2927,14 @@ function pickGratitudeForDay(dateIso: string) {
   return GRATITUDE_PROMPTS[dateSeed(dateIso) % GRATITUDE_PROMPTS.length];
 }
 
-// "Things that are free in life that we can be grateful for" — one theme is
-// chosen per day (deterministically from the date) when no photo is uploaded.
+// Fallback photo themes when no photo is uploaded — deliberately narrowed
+// to reliably beautiful subjects only (Graeme, 2026-08-25): sunsets,
+// flowers, beaches. One theme is chosen per day, deterministically from
+// the date.
 const GRATITUDE_PHOTO_THEMES = [
-  "sunset", "flowers", "food", "nature,landscape", "ocean,beach",
-  "mountains", "garden,flowers", "sky,clouds", "forest", "coffee",
+  "sunset", "sunset,sky", "sunset,sea",
+  "flowers", "flowers,garden", "flowers,meadow",
+  "beach", "beach,ocean",
 ] as const;
 
 // Live, key-less themed image for the fallback. LoremFlickr serves a random
@@ -3015,82 +2948,21 @@ function fallbackGratitudePhotoUrl(dateIso: string): string {
 
 function GratitudeSlide({ data, slide, onRefresh }: { data: DashboardData; slide: MeetingSlide; onRefresh: () => void }) {
   void slide;
+  void onRefresh;
   const todayIso = data.today || new Date().toISOString().slice(0, 10);
   const prompt = pickGratitudeForDay(todayIso);
   const meetingId = data.meeting?.id ?? null;
   const hasPhoto = Boolean(data.meeting?.hasGratitudePhoto);
   const serverCaption = data.meeting?.gratitudeCaption ?? "";
 
-  // Bumped on each upload/remove so the browser refetches the streamed image
-  // instead of showing a cached previous photo after a replace.
-  const [photoVersion, setPhotoVersion] = useState(0);
-  const [caption, setCaption] = useState(serverCaption);
-  const [busy, setBusy] = useState(false);
-  const [savingCaption, setSavingCaption] = useState(false);
+  // Display-only: the photo is chosen on the presenter setup screen (today's
+  // card, or the get-ahead card the afternoon before). The slide itself
+  // carries no upload/caption controls — it's a presentation, not a form
+  // (Graeme, 2026-08-25).
   const [fallbackFailed, setFallbackFailed] = useState(false);
-  const fileRef = useRef<HTMLInputElement | null>(null);
-  const cameraRef = useRef<HTMLInputElement | null>(null);
 
-  // Keep the caption box in sync when the dashboard refetches.
-  useEffect(() => { setCaption(serverCaption); }, [serverCaption]);
-
-  const uploadedUrl = meetingId ? `${BASE}/api/morning-meetings/${meetingId}/gratitude-photo?v=${photoVersion}` : "";
+  const uploadedUrl = meetingId ? `${BASE}/api/morning-meetings/${meetingId}/gratitude-photo` : "";
   const fallbackUrl = fallbackGratitudePhotoUrl(todayIso);
-
-  const uploadPhoto = async (file: File) => {
-    if (!meetingId) { toast({ title: "Start the meeting first", variant: "destructive" }); return; }
-    if (file.size > 10 * 1024 * 1024) { toast({ title: "Image too large (max 10MB)", variant: "destructive" }); return; }
-    setBusy(true);
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      if (caption.trim()) form.append("caption", caption.trim());
-      const res = await fetch(`${BASE}/api/morning-meetings/${meetingId}/gratitude-photo`, { method: "POST", credentials: "include", body: form });
-      if (!res.ok) throw new Error("Failed");
-      setPhotoVersion(v => v + 1);
-      onRefresh();
-      toast({ title: "Photo added" });
-    } catch {
-      toast({ title: "Upload failed", variant: "destructive" });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const saveCaption = async () => {
-    if (!meetingId) return;
-    setSavingCaption(true);
-    try {
-      const res = await fetch(`${BASE}/api/morning-meetings/${meetingId}/gratitude-caption`, {
-        method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ caption: caption.trim() }),
-      });
-      if (!res.ok) throw new Error("Failed");
-      onRefresh();
-      toast({ title: "Caption saved" });
-    } catch {
-      toast({ title: "Couldn't save caption", variant: "destructive" });
-    } finally {
-      setSavingCaption(false);
-    }
-  };
-
-  const removePhoto = async () => {
-    if (!meetingId) return;
-    setBusy(true);
-    try {
-      const res = await fetch(`${BASE}/api/morning-meetings/${meetingId}/gratitude-photo`, { method: "DELETE", credentials: "include" });
-      if (!res.ok) throw new Error("Failed");
-      setCaption("");
-      setPhotoVersion(v => v + 1);
-      onRefresh();
-      toast({ title: "Photo removed" });
-    } catch {
-      toast({ title: "Couldn't remove photo", variant: "destructive" });
-    } finally {
-      setBusy(false);
-    }
-  };
 
   // Show an image whenever we have an uploaded one, or the live themed fallback
   // hasn't failed to load. If the fallback can't load (e.g. offline), drop back
@@ -3108,12 +2980,22 @@ function GratitudeSlide({ data, slide, onRefresh }: { data: DashboardData; slide
     <div className="relative w-full flex-1 min-h-0 rounded-3xl overflow-hidden shadow-inner bg-gradient-to-br from-rose-100 via-amber-50 to-emerald-100 dark:from-rose-900/30 dark:via-amber-900/20 dark:to-emerald-900/30">
       {showImage ? (
         <>
-          {/* Full-bleed photo */}
+          {/* Uploaded photos show WHOLE — portrait shots must never lose
+              someone's head to a crop. A blurred copy fills the stage behind
+              the letterboxed photo so the slide still feels full-bleed. The
+              themed fallback stays cover: it's decorative scenery. */}
+          {hasPhoto && (
+            <img
+              aria-hidden
+              src={imageSrc}
+              className="absolute inset-0 w-full h-full object-cover blur-2xl scale-110 opacity-60"
+            />
+          )}
           <img
             key={imageSrc}
             src={imageSrc}
             alt={hasPhoto ? (serverCaption || "Today's gratitude photo") : "Something to be grateful for"}
-            className="absolute inset-0 w-full h-full object-cover"
+            className={cn("absolute inset-0 w-full h-full", hasPhoto ? "object-contain" : "object-cover")}
             onError={() => { if (!hasPhoto) setFallbackFailed(true); }}
           />
           {/* Scrim — darkens top + bottom so the label and caption read over
@@ -3133,9 +3015,8 @@ function GratitudeSlide({ data, slide, onRefresh }: { data: DashboardData; slide
         </>
       )}
 
-      {/* Overlay layout: label up top, big caption anchored at the bottom,
-          host controls below it. Pointer-events pass through except on the
-          actual controls so swipe/nav still works over the image. */}
+      {/* Overlay: label up top, big text anchored at the bottom. Pointer
+          events pass straight through so swipe/nav works over the image. */}
       <div className="absolute inset-0 flex flex-col p-4 sm:p-6 pointer-events-none">
         {showImage && (
           <div className="flex justify-center">
@@ -3143,7 +3024,7 @@ function GratitudeSlide({ data, slide, onRefresh }: { data: DashboardData; slide
           </div>
         )}
 
-        {/* Big caption — fills the space and sits just above the controls. */}
+        {/* Big prompt/caption — fills the space, sits at the bottom. */}
         <div className="flex-1 flex items-end justify-center text-center pb-3">
           {showImage && overlayText && (
             <h2
@@ -3154,37 +3035,6 @@ function GratitudeSlide({ data, slide, onRefresh }: { data: DashboardData; slide
             </h2>
           )}
         </div>
-
-        {/* Host controls — only once today's meeting exists. */}
-        {meetingId && (
-          <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-2 rounded-2xl bg-black/40 backdrop-blur-md p-2" data-no-swipe>
-            <input
-              value={caption}
-              onChange={e => setCaption(e.target.value)}
-              placeholder="Add a caption (optional)"
-              maxLength={300}
-              className="flex-1 min-w-[180px] bg-white/90 text-foreground placeholder:text-muted-foreground border border-white/40 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-            />
-            {hasPhoto && (
-              <button onClick={saveCaption} disabled={savingCaption} className="px-3 py-2 rounded-xl bg-white/90 text-foreground text-sm font-medium disabled:opacity-50 inline-flex items-center gap-1.5">
-                {savingCaption ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save caption
-              </button>
-            )}
-            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(f); e.target.value = ""; }} />
-            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(f); e.target.value = ""; }} />
-            <button onClick={() => cameraRef.current?.click()} disabled={busy} className="px-3 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50">
-              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />} Take photo
-            </button>
-            <button onClick={() => fileRef.current?.click()} disabled={busy} className="px-3 py-2 rounded-xl bg-primary/90 text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50">
-              <ImageIcon className="w-4 h-4" /> {hasPhoto ? "Replace" : "Add photo"}
-            </button>
-            {hasPhoto && (
-              <button onClick={removePhoto} disabled={busy} className="px-3 py-2 rounded-xl bg-destructive/80 text-white text-sm font-medium inline-flex items-center gap-1.5 disabled:opacity-50">
-                <Trash2 className="w-4 h-4" /> Remove
-              </button>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -3620,6 +3470,59 @@ interface ExampleRow {
 // ── Weekly focus picker ─────────────────────────────────────────────
 // "This week we're on X; next week I want Y." A pinned week overrides
 // the curriculum rotation; clearing it falls back to the rotation.
+/** The weekly-review kill switch — one tap to pull the whole "review this
+ *  week's lesson" experience (strip, page, auto to-dos) if it's not landing
+ *  well, without a deploy. Admin/manager only (this editor is admin-gated). */
+function WeeklyReviewToggleCard() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery<{ enabled: boolean }>({
+    queryKey: ["lean-review-settings"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/lean-reviews/settings`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load setting");
+      return res.json();
+    },
+  });
+  const toggle = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      const res = await fetch(`${BASE}/api/lean-reviews/settings`, {
+        method: "PATCH", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+    },
+    onSuccess: (_r, enabled) => {
+      queryClient.invalidateQueries({ queryKey: ["lean-review-settings"] });
+      queryClient.invalidateQueries({ queryKey: ["lean-weekly-review"] });
+      toast({ title: enabled ? "Weekly reviews are ON" : "Weekly reviews are OFF" });
+    },
+    onError: () => toast({ title: "Couldn't save the setting", variant: "destructive" }),
+  });
+  const enabled = data?.enabled ?? true;
+  return (
+    <div className="border border-border rounded-xl bg-card p-4 flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <p className="font-medium">Weekly lesson reviews</p>
+        <p className="text-xs text-muted-foreground">
+          The team's "review this week's lesson" flow: the reminder strip, the module with the quiz, and the auto
+          to-dos. Switch it off to pull the whole thing instantly if it's not working.
+        </p>
+      </div>
+      <button
+        onClick={() => toggle.mutate(!enabled)}
+        disabled={toggle.isPending || !data}
+        className={cn(
+          "flex-shrink-0 px-4 py-2 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50",
+          enabled ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground border border-border",
+        )}
+      >
+        {enabled ? "On" : "Off"}
+      </button>
+    </div>
+  );
+}
+
 function WeeklyFocusCard() {
   const queryClient = useQueryClient();
   const { data } = useQuery<{
@@ -3736,6 +3639,7 @@ function CurriculumEditor({ onClose }: { onClose: () => void }) {
         </p>
 
         <WeeklyFocusCard />
+        <WeeklyReviewToggleCard />
 
         {isLoading ? (
           <div className="py-12 text-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground inline" /></div>
