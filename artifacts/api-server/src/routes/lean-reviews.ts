@@ -343,7 +343,10 @@ router.get("/preview", requireManagerOrAdmin, async (req: Request, res: Response
 router.post("/preview/complete", requireManagerOrAdmin, async (req: Request, res: Response) => {
   const userId = req.session.userId!;
   if (!(await isFounder(userId))) { res.status(403).json({ error: "Founder only" }); return; }
-  if (!(await reviewsEnabled())) { res.status(409).json({ error: "Weekly reviews are switched off" }); return; }
+  // Deliberately NOT gated on reviewsEnabled: the launch plan is to ship
+  // with the team-facing switch off during the prep week while the founder
+  // reviews ahead — their review-ahead must work while everything else
+  // stays dark.
   const nextMonday = nextMondayFrom(mondayOf(londonDateString()));
   const { principle } = (await getWeekFocusPrinciple(nextMonday)) as { principle: LeanPrincipleRow | null };
   if (!principle) { res.status(409).json({ error: "No lean focus is set for next week" }); return; }
