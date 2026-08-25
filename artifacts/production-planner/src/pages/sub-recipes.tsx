@@ -8,7 +8,7 @@ import { boldAllergens } from "@workspace/allergens";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
 import { IngredientCombobox } from "@/components/ingredient-combobox";
-import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2, RotateCcw, FlaskConical, Info, Layers, Eye, Target, Minus, QrCode } from "lucide-react";
+import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2, RotateCcw, FlaskConical, Info, Layers, Eye, Target, Minus, QrCode, LayoutGrid, Table2, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useForm, useFieldArray } from "react-hook-form";
 import * as z from "zod";
@@ -52,6 +52,11 @@ type FormValues = z.infer<typeof schema>;
 type IngredientOption = Pick<Ingredient, "id" | "name" | "unit" | "processingRatio" | "novaClass" | "novaMarkers"> & {
   labelDeclaration: string | null;
   allergens: string[];
+  // Same fields the recipe form's rows show — a sub-recipe is a recipe, so
+  // the row should tell you as much (Graeme, 2026-08-28).
+  supplierName?: string | null;
+  costPerPack?: number | null;
+  packWeight?: number | null;
 };
 type SubRecipeOption = Pick<SubRecipe, "id" | "name" | "yieldUnit">;
 
@@ -570,6 +575,15 @@ function SubRecipeForm({
             </div>
           )}
 
+          {ingFields.length > 0 && (
+            <div className="grid grid-cols-[1fr_7rem_120px_3.5rem_44px] gap-2 items-end px-1 mb-1">
+              <span className="text-[10px] text-muted-foreground font-medium">Name</span>
+              <span className="text-[10px] text-muted-foreground font-medium">Supplier</span>
+              <span className="text-[10px] text-muted-foreground font-medium">Qty</span>
+              <span className="text-[10px] text-muted-foreground font-medium text-right">Cost</span>
+              <span />
+            </div>
+          )}
           <div className="space-y-2">
             {ingFields.map((field, index) => {
               const selectedId = Number(watchedIngredients?.[index]?.ingredientId ?? 0);
@@ -578,7 +592,7 @@ function SubRecipeForm({
               const ratio = selectedIng?.processingRatio;
               return (
                 <div key={field.id}>
-                  <div className="grid grid-cols-[1fr_120px_44px] gap-2 items-center">
+                  <div className="grid grid-cols-[1fr_7rem_120px_3.5rem_44px] gap-2 items-center">
                     <div className="flex items-center gap-1.5 min-w-0">
                       <div className="flex-1 min-w-0">
                         <IngredientCombobox
@@ -591,6 +605,10 @@ function SubRecipeForm({
                       </div>
                       <UpfChip novaClass={selectedIng?.novaClass} markers={selectedIng?.novaMarkers} />
                     </div>
+                    {/* Supplier — same column the recipe form shows. */}
+                    <span className="text-[11px] text-muted-foreground truncate" title={selectedIng?.supplierName ?? undefined}>
+                      {selectedIng?.supplierName ?? <span className="text-muted-foreground/40">—</span>}
+                    </span>
                     {(() => {
                       const isKg = unit === "kg";
                       const displayUnit = isKg ? (ingDisplayUnits[index] ?? "g") : null;
@@ -634,6 +652,17 @@ function SubRecipeForm({
                         </div>
                       );
                     })()}
+                    {/* Line cost — same read the recipe form gives you, so a
+                        sub-recipe's expensive lines are visible while editing. */}
+                    <span className="text-[11px] tabular-nums text-right text-muted-foreground">
+                      {(() => {
+                        const qty = Number(watchedIngredients?.[index]?.quantity) || 0;
+                        const cpp = Number(selectedIng?.costPerPack) || 0;
+                        const pw = Number(selectedIng?.packWeight) || 0;
+                        if (!(qty > 0) || !(cpp > 0) || !(pw > 0)) return <span className="text-muted-foreground/40">—</span>;
+                        return `£${((qty / pw) * cpp).toFixed(2)}`;
+                      })()}
+                    </span>
                     <button
                       type="button"
                       onClick={() => removeIng(index)}
@@ -1250,8 +1279,38 @@ export default function SubRecipes() {
   const addSubmitRef = useRef<(() => void) | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [viewingId, setViewingId] = useState<number | null>(null);
+  // Same list controls as the recipes page — a sub-recipe is a recipe, so
+  // browsing them should feel identical (Graeme, 2026-08-28).
+  const [viewMode, setViewMode] = useState<"cards" | "table">("table");
+  type SubSortKey = "name" | "yield" | "upf";
+  const [sortKey, setSortKey] = useState<SubSortKey>("name");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
-  const filtered = subRecipes?.filter(r => r.name.toLowerCase().includes(debouncedSearch.toLowerCase()));
+  const searched = subRecipes?.filter(r => r.name.toLowerCase().includes(debouncedSearch.toLowerCase()));
+  const filtered = [...(searched ?? [])].sort((a, b) => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    if (sortKey === "yield") return (Number(a.yield) - Number(b.yield)) * dir;
+    if (sortKey === "upf") {
+      const av = subUpfById.get(a.id)?.upfPercent ?? -1;
+      const bv = subUpfById.get(b.id)?.upfPercent ?? -1;
+      return (Number(av) - Number(bv)) * dir;
+    }
+    return a.name.localeCompare(b.name) * dir;
+  });
+  const toggleSort = (key: SubSortKey) => {
+    if (sortKey === key) setSortDir(d => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  };
+  const SortHead = ({ label, k, align = "left" }: { label: string; k: SubSortKey; align?: "left" | "right" }) => (
+    <th className={cn("px-3 py-2 font-medium", align === "right" ? "text-right" : "text-left")}>
+      <button type="button" onClick={() => toggleSort(k)} className="inline-flex items-center gap-1 hover:text-foreground transition-colors">
+        {label}
+        {sortKey === k
+          ? (sortDir === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />)
+          : <ArrowUpDown className="w-3 h-3 opacity-40" />}
+      </button>
+    </th>
+  );
 
   const ingredientList: IngredientOption[] = (ingredients ?? []).map(i => ({
     id: i.id,
@@ -1262,6 +1321,9 @@ export default function SubRecipes() {
     novaMarkers: i.novaMarkers ?? [],
     labelDeclaration: (i as { labelDeclaration?: string | null }).labelDeclaration ?? null,
     allergens: (i as { allergens?: string[] }).allergens ?? [],
+    supplierName: (i as unknown as { supplierName?: string | null }).supplierName ?? null,
+    costPerPack: Number((i as unknown as { costPerPack?: number | string }).costPerPack ?? 0) || 0,
+    packWeight: Number((i as unknown as { packWeight?: number | string }).packWeight ?? 0) || 0,
   }));
 
   const subRecipeList: SubRecipeOption[] = (subRecipes ?? []).map(sr => ({
@@ -1359,15 +1421,45 @@ export default function SubRecipes() {
         />
       )}
 
-      <div className="mb-4">
-        <div className="relative max-w-md">
+      <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
+        <div className="relative max-w-md flex-1 min-w-[16rem]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search sub-recipes..."
-            className="w-full pl-9 pr-4 py-2 bg-card border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            className="w-full pl-9 pr-8 py-2 bg-card border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              title="Clear search"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+        <div className="inline-flex rounded-lg border border-border overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setViewMode("cards")}
+            className={cn("px-2.5 py-1.5 flex items-center", viewMode === "cards" ? "bg-primary text-primary-foreground" : "bg-card text-muted-foreground hover:text-foreground")}
+            title="Card view"
+            aria-pressed={viewMode === "cards"}
+          >
+            <LayoutGrid className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("table")}
+            className={cn("px-2.5 py-1.5 flex items-center border-l border-border", viewMode === "table" ? "bg-primary text-primary-foreground" : "bg-card text-muted-foreground hover:text-foreground")}
+            title="Table view"
+            aria-pressed={viewMode === "table"}
+          >
+            <Table2 className="w-4 h-4" />
+          </button>
         </div>
       </div>
 
@@ -1383,7 +1475,57 @@ export default function SubRecipes() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+      {viewMode === "table" && !isLoading && (filtered?.length ?? 0) > 0 && (
+        <div className="rounded-2xl border border-border overflow-hidden bg-card">
+          <table className="w-full text-sm">
+            <thead className="bg-secondary/40 text-muted-foreground">
+              <tr>
+                <SortHead label="Name" k="name" />
+                <th className="px-3 py-2 font-medium text-left">Code</th>
+                <SortHead label="Yield" k="yield" align="right" />
+                <SortHead label="UPF" k="upf" align="right" />
+                <th className="px-3 py-2 font-medium text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered?.map(recipe => {
+                const upf = subUpfById.get(recipe.id);
+                return (
+                  <tr key={recipe.id} className="border-t border-border/60 hover:bg-secondary/20">
+                    <td className="px-3 py-2">
+                      <button onClick={() => setViewingId(recipe.id)} className="font-medium hover:text-primary transition-colors text-left">
+                        {recipe.name}
+                      </button>
+                      {recipe.description && (
+                        <span className="block text-xs text-muted-foreground truncate max-w-md">{recipe.description}</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground tabular-nums">SR-{recipe.id.toString().padStart(4, "0")}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{recipe.yield} {recipe.yieldUnit}</td>
+                    <td className="px-3 py-2 text-right">
+                      {upf ? (
+                        <UpfPercentPill
+                          percent={upf.upfPercent}
+                          unclassifiedCount={upf.unclassifiedIngredients.length}
+                          upfNames={upf.upfIngredients.map(u => u.name)}
+                        />
+                      ) : <span className="text-muted-foreground/40">—</span>}
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center justify-end gap-1">
+                        <button onClick={() => setViewingId(recipe.id)} className="p-1.5 text-muted-foreground hover:text-primary rounded-lg transition-colors" title="View & Scale"><Eye className="w-4 h-4" /></button>
+                        <button onClick={() => setEditingId(recipe.id)} className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors" title="Edit"><Edit2 className="w-4 h-4" /></button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className={cn("grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5", viewMode === "table" && "hidden")}>
         {filtered?.map((recipe) => (
           <div key={recipe.id} className="rounded-2xl border border-border bg-card p-6 flex flex-col gap-3 group hover:shadow-md transition-shadow">
             <div className="flex items-start justify-between">
