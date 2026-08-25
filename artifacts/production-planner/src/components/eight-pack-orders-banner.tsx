@@ -28,6 +28,10 @@ interface PlanInfo { planId: number; planDate: string; status: string; recipeIds
 interface QueuePayload {
   generatedAt: string;
   today: string;
+  // First day bags may be produced: today before the 7 a.m. London cutoff,
+  // tomorrow after it. Optional so an older cached server response degrades
+  // to the previous behaviour (today).
+  earliestProductionDate?: string;
   deliveryDates: string[];
   plansByDespatchDate: Record<string, PlanInfo>;
   orders: QueueOrder[];
@@ -88,12 +92,13 @@ function evaluate(order: QueueOrder, deliveryDate: string, productionDate: strin
 }
 
 // Candidate production days for a delivery: despatch day (delivery − 1) back
-// to delivery − 3, never in the past. Earliest first.
-function productionCandidates(deliveryDate: string, today: string): string[] {
+// to delivery − 3, never before the earliest production day (today before the
+// 7 a.m. cutoff, tomorrow after it — Graeme, 2026-08-25). Earliest first.
+function productionCandidates(deliveryDate: string, earliestProduction: string): string[] {
   const out: string[] = [];
   for (let back = 3; back >= 1; back--) {
     const d = addDaysStr(deliveryDate, -back);
-    if (d >= today) out.push(d);
+    if (d >= earliestProduction) out.push(d);
   }
   return out;
 }
@@ -104,14 +109,14 @@ function productionCandidates(deliveryDate: string, today: string): string[] {
 // rather than the despatch day itself: producing, wrapping and despatching
 // all on the same day is a squeeze reserved for when time has run out
 // (Graeme, 2026-08-20). Falls back to the despatch day only when delivery − 2
-// is already in the past.
-function defaultProductionDate(order: QueueOrder, deliveryDate: string, today: string, plans: Record<string, PlanInfo>): string {
-  const candidates = productionCandidates(deliveryDate, today);
+// is before the earliest production day.
+function defaultProductionDate(order: QueueOrder, deliveryDate: string, earliestProduction: string, plans: Record<string, PlanInfo>): string {
+  const candidates = productionCandidates(deliveryDate, earliestProduction);
   for (const d of candidates) {
     if (evaluateProduction(order, d, plans).ok) return d;
   }
   const dayBeforeDespatch = addDaysStr(deliveryDate, -2);
-  return dayBeforeDespatch >= today ? dayBeforeDespatch : addDaysStr(deliveryDate, -1);
+  return dayBeforeDespatch >= earliestProduction ? dayBeforeDespatch : addDaysStr(deliveryDate, -1);
 }
 
 export function EightPackOrdersBanner({ userRole }: { userRole?: string }) {
@@ -176,6 +181,7 @@ export function EightPackOrdersBanner({ userRole }: { userRole?: string }) {
 }
 
 function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onClose: () => void; onProcessed: () => void }) {
+  const earliestProduction = data.earliestProductionDate ?? data.today;
   // per-order selected delivery date
   const [selected, setSelected] = useState<Record<number, string>>(() => {
     const init: Record<number, string> = {};
@@ -186,7 +192,7 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
   // delivery − 3 … − 1) that already has all the order's products on it.
   const [selectedProduction, setSelectedProduction] = useState<Record<number, string>>(() => {
     const init: Record<number, string> = {};
-    for (const o of data.orders) init[o.orderId] = defaultProductionDate(o, o.proposedDeliveryDate, data.today, data.plansByDespatchDate);
+    for (const o of data.orders) init[o.orderId] = defaultProductionDate(o, o.proposedDeliveryDate, data.earliestProductionDate ?? data.today, data.plansByDespatchDate);
     return init;
   });
   const [processing, setProcessing] = useState<number | null>(null);
@@ -197,7 +203,7 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
     // Re-derive the best production day for the new delivery date.
     setSelectedProduction(prev => ({
       ...prev,
-      [order.orderId]: defaultProductionDate(order, deliveryDate, data.today, data.plansByDespatchDate),
+      [order.orderId]: defaultProductionDate(order, deliveryDate, earliestProduction, data.plansByDespatchDate),
     }));
   };
 
@@ -262,7 +268,7 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
     const production = selectedProduction[order.orderId];
     const status = evaluate(order, delivery, production, data.plansByDespatchDate);
     const isWholesale = order.kind === "wholesale_2pack";
-    const prodCandidates = productionCandidates(delivery, data.today);
+    const prodCandidates = productionCandidates(delivery, earliestProduction);
     // merge the proposed date into options if it's outside the standard window
     const options = data.deliveryDates.includes(order.proposedDeliveryDate)
       ? data.deliveryDates

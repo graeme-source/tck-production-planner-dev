@@ -10,6 +10,9 @@
 // Rules baked in (from Graeme, 2026-06):
 //  - Delivery days are Tue–Sat. Despatch happens the day before delivery, so
 //    bags go on the plan dated (deliveryDate − 1). Deliver tomorrow ⇒ today's plan.
+//  - Today's plan only takes new bags before 07:00 London (Graeme, 2026-08-25);
+//    after the cutoff the earliest production day is tomorrow, and the proposed
+//    delivery defaults to production + 2 (produce, despatch, deliver).
 //  - We NEVER add a recipe to a plan. If an order's 8-pack recipe isn't already
 //    on the target plan, the order is skipped with a reason and stays in the queue.
 //  - "Eight-pack bag" is detected by variant_title containing "8 pack bag".
@@ -21,6 +24,7 @@ import { Router, type IRouter } from "express";
 import { db, productionPlanItemsTable } from "@workspace/db";
 import { inArray, sql } from "drizzle-orm";
 import { londonDateString } from "../lib/london-time";
+import { earliestProductionDay, defaultDeliveryDay, SAME_DAY_PRODUCTION_CUTOFF } from "../lib/production-cutoff";
 import { getRecentUnfulfilledOrders, getOrderById, addTagsToOrder } from "../services/shopify";
 
 const router: IRouter = Router();
@@ -39,14 +43,11 @@ function addDays(s: string, n: number): string { const d = parseDay(s); d.setUTC
 function weekday(s: string): number { return parseDay(s).getUTCDay(); } // 0 Sun … 6 Sat
 function isDeliveryDay(s: string): boolean { const w = weekday(s); return w >= 2 && w <= 6; } // Tue–Sat
 function despatchDateFor(deliveryDay: string): string { return addDays(deliveryDay, -1); }
-function nextDeliveryDay(todayStr: string): string {
-  let d = addDays(todayStr, 1);
-  for (let i = 0; i < 14 && !isDeliveryDay(d); i++) d = addDays(d, 1);
-  return d;
-}
-function deliveryDateOptions(todayStr: string, count: number): string[] {
+// Options start the day after the earliest production day: producing and
+// despatching on the same day is the tightest turnaround we ever offer.
+function deliveryDateOptions(earliestProductionDate: string, count: number): string[] {
   const out: string[] = [];
-  let d = addDays(todayStr, 1);
+  let d = addDays(earliestProductionDate, 1);
   let guard = 0;
   while (out.length < count && guard++ < count * 3 + 14) {
     if (isDeliveryDay(d)) out.push(d);
@@ -126,12 +127,16 @@ router.get("/queue", async (_req, res) => {
       return;
     }
     const today = londonDateString();
+    // Before the 7 a.m. London cutoff orders may still join today's plan; after
+    // it the earliest production day is tomorrow, and the proposed delivery
+    // allows two days from production (produce, despatch, deliver).
+    const earliestProductionDate = earliestProductionDay();
     const [orders, titleToRecipe] = await Promise.all([
       getRecentUnfulfilledOrders(SCAN_DAYS_BACK),
       loadTitleToRecipe(),
     ]);
 
-    const deliveryDates = deliveryDateOptions(today, 18); // ~3 weeks of Tue–Sat
+    const deliveryDates = deliveryDateOptions(earliestProductionDate, 18); // ~3 weeks of Tue–Sat
     const plansByDate = await loadPlansByDate(addDays(today, -2), addDays(today, 25));
 
     const mapLine = (li: { id: number; title: string | null; variant_title: string | null; quantity: number }) => {
@@ -164,7 +169,7 @@ router.get("/queue", async (_req, res) => {
         const existingDateTag = firstDateTag(o.tags);
         const proposedDeliveryDate = existingDateTag && isDeliveryDay(existingDateTag)
           ? existingDateTag
-          : nextDeliveryDay(today);
+          : defaultDeliveryDay();
         const customerName = o.shipping_address?.name
           || (o.customer ? `${o.customer.first_name ?? ""} ${o.customer.last_name ?? ""}`.trim() : "")
           || "";
@@ -179,6 +184,7 @@ router.get("/queue", async (_req, res) => {
     const payload = {
       generatedAt: new Date().toISOString(),
       today,
+      earliestProductionDate,
       deliveryDates,
       plansByDespatchDate,
       orders: queueOrders,
@@ -257,6 +263,17 @@ router.post("/process", async (req, res) => {
     const despatchDate = despatchDateFor(deliveryDate);
     // The plan that gets the bags: the override when given, else the despatch day.
     const productionDate = requestedProductionDate ?? despatchDate;
+    // 7 a.m. rule: today's plan only takes new bags before the cutoff — after
+    // that the earliest production day is tomorrow.
+    const earliestAllowed = earliestProductionDay();
+    if (productionDate < earliestAllowed) {
+      res.status(409).json({
+        error: `Too late to add bags to the ${productionDate} plan — after the ${SAME_DAY_PRODUCTION_CUTOFF} cutoff the earliest production day is ${earliestAllowed}. Choose a later production or delivery day.`,
+        despatchDate,
+        productionDate,
+      });
+      return;
+    }
     const plan = (await loadPlansByDate(productionDate, productionDate)).get(productionDate);
     if (!plan) {
       res.status(409).json({
