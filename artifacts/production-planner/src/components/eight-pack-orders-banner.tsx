@@ -33,6 +33,10 @@ interface QueuePayload {
   // to the previous behaviour (today).
   earliestProductionDate?: string;
   deliveryDates: string[];
+  // Delivery options for tag-only wholesale (2-pack) orders — governed by the
+  // 14:00 despatch cutoff rather than production, so after 2 p.m. next-day
+  // delivery drops off. Optional for older cached server responses.
+  wholesaleDeliveryDates?: string[];
   plansByDespatchDate: Record<string, PlanInfo>;
   orders: QueueOrder[];
 }
@@ -269,10 +273,13 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
     const status = evaluate(order, delivery, production, data.plansByDespatchDate);
     const isWholesale = order.kind === "wholesale_2pack";
     const prodCandidates = productionCandidates(delivery, earliestProduction);
+    // 2-pack-only orders are limited by the 14:00 despatch cutoff, not by
+    // production, so they get their own (possibly earlier) delivery options.
+    const kindDates = (isWholesale ? data.wholesaleDeliveryDates : undefined) ?? data.deliveryDates;
     // merge the proposed date into options if it's outside the standard window
-    const options = data.deliveryDates.includes(order.proposedDeliveryDate)
-      ? data.deliveryDates
-      : [order.proposedDeliveryDate, ...data.deliveryDates];
+    const options = kindDates.includes(order.proposedDeliveryDate)
+      ? kindDates
+      : [order.proposedDeliveryDate, ...kindDates];
     return (
       <div
         key={order.orderId}

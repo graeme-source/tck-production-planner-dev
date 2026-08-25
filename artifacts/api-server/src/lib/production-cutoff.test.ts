@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { earliestProductionDay, defaultDeliveryDay, isDeliveryDay } from "./production-cutoff";
+import {
+  earliestProductionDay,
+  defaultDeliveryDay,
+  earliestDespatchDay,
+  earliestTagOnlyDeliveryDay,
+  isDeliveryDay,
+} from "./production-cutoff";
 
 // 2026-08-25 is a Tuesday, and August in London is BST (UTC+1) — so 13:00Z is
 // 2 p.m. on the kitchen wall clock.
@@ -44,6 +50,41 @@ describe("defaultDeliveryDay", () => {
     // Friday 28th afternoon: earliest production Sat 29th, +2 = Mon 31st →
     // not a delivery day, so Tue 1 Sep
     expect(defaultDeliveryDay(new Date("2026-08-28T13:00:00Z"))).toBe("2026-09-01");
+  });
+});
+
+describe("earliestDespatchDay", () => {
+  it("allows today's despatch before the 2 p.m. cutoff", () => {
+    // 12:59Z = 13:59 London (BST)
+    expect(earliestDespatchDay(new Date("2026-08-25T12:59:00Z"))).toBe("2026-08-25");
+  });
+
+  it("moves to tomorrow at 2 p.m. exactly", () => {
+    // 13:00Z = 14:00 London
+    expect(earliestDespatchDay(new Date("2026-08-25T13:00:00Z"))).toBe("2026-08-26");
+  });
+});
+
+describe("earliestTagOnlyDeliveryDay", () => {
+  // Regression (Graeme, 2026-08-25): a 2-pack order processed on Tuesday
+  // afternoon was offered Wednesday delivery, which needed a despatch that had
+  // already sailed — despatch closes at 2 p.m., so the earliest is Thursday.
+  it("skips next-day delivery once the 2 p.m. despatch has gone", () => {
+    expect(earliestTagOnlyDeliveryDay(new Date("2026-08-25T14:30:00Z"))).toBe("2026-08-27");
+  });
+
+  it("still offers next-day delivery before 2 p.m.", () => {
+    expect(earliestTagOnlyDeliveryDay(new Date("2026-08-25T09:00:00Z"))).toBe("2026-08-26");
+  });
+
+  it("rolls a weekend despatch forward to the Tuesday delivery", () => {
+    // Friday 28th after 2 p.m.: earliest despatch Sat, but despatch runs
+    // Mon–Fri (delivery Tue–Sat), so the next slot is Mon despatch → Tue 1 Sep
+    expect(earliestTagOnlyDeliveryDay(new Date("2026-08-28T14:30:00Z"))).toBe("2026-09-01");
+  });
+
+  it("keeps Saturday delivery for a Friday morning order", () => {
+    expect(earliestTagOnlyDeliveryDay(new Date("2026-08-28T09:00:00Z"))).toBe("2026-08-29");
   });
 });
 

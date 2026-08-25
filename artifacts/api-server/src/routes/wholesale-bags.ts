@@ -24,7 +24,14 @@ import { Router, type IRouter } from "express";
 import { db, productionPlanItemsTable } from "@workspace/db";
 import { inArray, sql } from "drizzle-orm";
 import { londonDateString } from "../lib/london-time";
-import { earliestProductionDay, defaultDeliveryDay, SAME_DAY_PRODUCTION_CUTOFF } from "../lib/production-cutoff";
+import {
+  earliestProductionDay,
+  defaultDeliveryDay,
+  earliestDespatchDay,
+  earliestTagOnlyDeliveryDay,
+  SAME_DAY_PRODUCTION_CUTOFF,
+  DESPATCH_CUTOFF,
+} from "../lib/production-cutoff";
 import { getRecentUnfulfilledOrders, getOrderById, addTagsToOrder } from "../services/shopify";
 
 const router: IRouter = Router();
@@ -43,11 +50,12 @@ function addDays(s: string, n: number): string { const d = parseDay(s); d.setUTC
 function weekday(s: string): number { return parseDay(s).getUTCDay(); } // 0 Sun … 6 Sat
 function isDeliveryDay(s: string): boolean { const w = weekday(s); return w >= 2 && w <= 6; } // Tue–Sat
 function despatchDateFor(deliveryDay: string): string { return addDays(deliveryDay, -1); }
-// Options start the day after the earliest production day: producing and
+// Options start the day after the given earliest working day (production day
+// for 8-pack orders, despatch day for tag-only wholesale): working and
 // despatching on the same day is the tightest turnaround we ever offer.
-function deliveryDateOptions(earliestProductionDate: string, count: number): string[] {
+function deliveryDateOptions(earliestWorkDay: string, count: number): string[] {
   const out: string[] = [];
-  let d = addDays(earliestProductionDate, 1);
+  let d = addDays(earliestWorkDay, 1);
   let guard = 0;
   while (out.length < count && guard++ < count * 3 + 14) {
     if (isDeliveryDay(d)) out.push(d);
@@ -131,12 +139,18 @@ router.get("/queue", async (_req, res) => {
     // it the earliest production day is tomorrow, and the proposed delivery
     // allows two days from production (produce, despatch, deliver).
     const earliestProductionDate = earliestProductionDay();
+    // Tag-only wholesale (2-pack) orders need no production — for them the
+    // binding rule is the 14:00 despatch cutoff: processed after 2 p.m. means
+    // the earliest despatch is tomorrow, so the earliest delivery is the day
+    // after.
+    const wholesaleEarliestDelivery = earliestTagOnlyDeliveryDay();
     const [orders, titleToRecipe] = await Promise.all([
       getRecentUnfulfilledOrders(SCAN_DAYS_BACK),
       loadTitleToRecipe(),
     ]);
 
     const deliveryDates = deliveryDateOptions(earliestProductionDate, 18); // ~3 weeks of Tue–Sat
+    const wholesaleDeliveryDates = deliveryDateOptions(earliestDespatchDay(), 18);
     const plansByDate = await loadPlansByDate(addDays(today, -2), addDays(today, 25));
 
     const mapLine = (li: { id: number; title: string | null; variant_title: string | null; quantity: number }) => {
@@ -167,9 +181,15 @@ router.get("/queue", async (_req, res) => {
       })
       .map(({ o, kind, lines }) => {
         const existingDateTag = firstDateTag(o.tags);
-        const proposedDeliveryDate = existingDateTag && isDeliveryDay(existingDateTag)
+        // A customer-requested date is respected only when it's still feasible
+        // from now — otherwise we propose the kind's own default: 8-pack bags
+        // get production + 2, tag-only wholesale gets the earliest despatchable
+        // delivery.
+        const kindEarliest = kind === "wholesale_2pack" ? wholesaleEarliestDelivery : addDays(earliestProductionDate, 1);
+        const kindDefault = kind === "wholesale_2pack" ? wholesaleEarliestDelivery : defaultDeliveryDay();
+        const proposedDeliveryDate = existingDateTag && isDeliveryDay(existingDateTag) && existingDateTag >= kindEarliest
           ? existingDateTag
-          : defaultDeliveryDay();
+          : kindDefault;
         const customerName = o.shipping_address?.name
           || (o.customer ? `${o.customer.first_name ?? ""} ${o.customer.last_name ?? ""}`.trim() : "")
           || "";
@@ -186,6 +206,7 @@ router.get("/queue", async (_req, res) => {
       today,
       earliestProductionDate,
       deliveryDates,
+      wholesaleDeliveryDates,
       plansByDespatchDate,
       orders: queueOrders,
     };
@@ -246,6 +267,15 @@ router.post("/process", async (req, res) => {
       // don't require a plan to exist (per Graeme, 2026-06).
       if (!hasWholesaleTag(order.tags)) {
         res.status(409).json({ error: "Order has no eight-pack bag lines and is not tagged wholesale." });
+        return;
+      }
+      // 14:00 rule: the delivery's despatch day (delivery − 1) must still be
+      // reachable — despatch closes at 2 p.m., so an order processed after
+      // that can't go out until tomorrow.
+      if (despatchDateFor(deliveryDate) < earliestDespatchDay()) {
+        res.status(409).json({
+          error: `Too late to despatch for delivery ${deliveryDate} — despatch closes at ${DESPATCH_CUTOFF}, so the earliest delivery is now ${earliestTagOnlyDeliveryDay()}.`,
+        });
         return;
       }
       let updatedTags: string;
