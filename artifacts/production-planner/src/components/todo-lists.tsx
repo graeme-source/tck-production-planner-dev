@@ -52,6 +52,9 @@ export interface TodoTask {
   comment_count: number;
   attachment_count: number;
   improvement_id: number | null;
+  /** Set on the auto-created weekly lean lesson task — the interstitial
+   *  softens into "get it done by Friday" rather than "do this now". */
+  lean_week_start: string | null;
 }
 
 interface TodoAttachment {
@@ -1030,6 +1033,13 @@ export function TodoInterstitial() {
 
   const meta = PRIORITY_META[task.priority];
 
+  // The weekly lean lesson isn't a drop-everything task — it just has to be
+  // done by its due date (Graeme, 2026-08-25: "I thought I had to start
+  // doing this now"). Soften the copy and make the button say exactly what
+  // acknowledging means.
+  const isWeeklyLesson = !!task.lean_week_start;
+  const dueLabel = task.due_date ? format(parseISO(task.due_date), "EEEE d MMM") : "the due date";
+
   return (
     <div className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center p-4 md:p-8 overflow-y-auto">
       <div className="bg-background rounded-3xl border border-border shadow-2xl max-w-2xl w-full my-auto overflow-hidden">
@@ -1060,6 +1070,12 @@ export function TodoInterstitial() {
             {task.due_date && <DateChip label="Due" iso={task.due_date} overdue={isOverdue(task)} big />}
           </div>
 
+          {isWeeklyLesson && (
+            <p className="text-lg text-muted-foreground">
+              Nothing to do this second — just make sure it's done by <strong className="text-foreground">{dueLabel}</strong>.
+            </p>
+          )}
+
           {task.url && <LinkButton url={task.url} big />}
 
           {askOpen ? (
@@ -1085,8 +1101,14 @@ export function TodoInterstitial() {
             disabled={ackMut.isPending}
             className="w-full h-20 rounded-2xl bg-primary text-primary-foreground text-2xl font-bold flex items-center justify-center gap-3 hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50 shadow-lg shadow-primary/25"
           >
-            {ackMut.isPending ? <Loader2 className="w-7 h-7 animate-spin" /> : <CheckCircle2 className="w-8 h-8" />}
-            {question.trim() ? "Send question — seen it" : "Seen it — understood"}
+            {ackMut.isPending ? <Loader2 className="w-7 h-7 animate-spin" /> : <CheckCircle2 className="w-8 h-8 flex-shrink-0" />}
+            <span className={cn(isWeeklyLesson && !question.trim() && "text-xl md:text-2xl")}>
+              {question.trim()
+                ? "Send question — seen it"
+                : isWeeklyLesson
+                  ? `No problem — I'll get it done by ${dueLabel}`
+                  : "Seen it — understood"}
+            </span>
           </button>
         </div>
       </div>
