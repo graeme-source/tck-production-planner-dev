@@ -25,6 +25,10 @@ interface SuggestionRow {
   currentPacksSold: number;
   suggestedPacksSold: number;
   salesPacks30d: number;
+  /** Share of the whole split — the only number that compares like for
+   *  like, since the stored packs-sold are hand-set on a different scale. */
+  currentSharePct: number;
+  suggestedSharePct: number;
 }
 
 interface SuggestionResponse {
@@ -34,24 +38,31 @@ interface SuggestionResponse {
   windowDays?: number;
   rows?: SuggestionRow[];
   excludedSpecials?: string[];
+  excludedNonCore?: string[];
 }
 
-async function fetchSuggestion(): Promise<SuggestionResponse | null> {
-  const res = await fetch(`${BASE}/api/dpt-suggestions`, { credentials: "include" });
+async function fetchSuggestion(preview: boolean): Promise<SuggestionResponse | null> {
+  // preview=1 asks for the numbers regardless of the weekly cadence, so the
+  // on-demand "Check sales now" button never disturbs the schedule.
+  const res = await fetch(`${BASE}/api/dpt-suggestions${preview ? "?preview=1" : ""}`, { credentials: "include" });
   if (!res.ok) return null;
   return res.json();
 }
 
-export function DptSuggestionPrompt() {
+export function DptSuggestionPrompt({ previewMode = false, onClose }: { previewMode?: boolean; onClose?: () => void } = {}) {
   const { state } = useAuth();
   const role = state.status === "authenticated" ? state.user.role : null;
-  const eligible = role === "admin" || role === "manager";
+  const isPlanner = state.status === "authenticated"
+    ? Boolean((state.user as { isProductionPlanner?: boolean }).isProductionPlanner)
+    : false;
+  // Planning decision, not general manager territory (Graeme, 2026-08-28).
+  const eligible = role === "admin" || isPlanner;
   const [dismissed, setDismissed] = useState(false);
   const queryClient = useQueryClient();
 
   const { data } = useQuery({
-    queryKey: ["dpt-suggestion-due"],
-    queryFn: fetchSuggestion,
+    queryKey: ["dpt-suggestion-due", previewMode],
+    queryFn: () => fetchSuggestion(previewMode),
     enabled: eligible,
     staleTime: 60 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -74,6 +85,7 @@ export function DptSuggestionPrompt() {
     onSuccess: () => {
       toast({ title: "DPT updated from sales", description: "Ingredient requirements recalculated. Next check-in is in a week." });
       setDismissed(true);
+      onClose?.();
       void queryClient.invalidateQueries({ queryKey: ["dpt-suggestion-due"] });
       void queryClient.invalidateQueries();
     },
@@ -92,13 +104,19 @@ export function DptSuggestionPrompt() {
     },
   });
 
-  if (!eligible || dismissed || !data?.due || !data.rows?.length) return null;
+  // Preview (on-demand) shows whenever there are rows; the scheduled prompt
+  // only when the weekly check is actually due.
+  if (!eligible || dismissed || !data || (!previewMode && !data.due) || !data.rows?.length) return null;
 
   const rows = data.rows;
   const busy = confirm.isPending || snooze.isPending;
 
   return (
-    <Dialog open onOpenChange={(v) => { if (!v && !busy) void snooze.mutate(); }}>
+    <Dialog open onOpenChange={(v) => {
+      if (v || busy) return;
+      if (previewMode) { setDismissed(true); onClose?.(); return; }
+      void snooze.mutate();
+    }}>
       <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -108,7 +126,9 @@ export function DptSuggestionPrompt() {
             Based on the last {data.windowDays ?? 30} days of Shopify sales
             ({data.windowStart} → {data.windowEnd}), shown as weekly packs.
             {data.excludedSpecials?.length ? ` The rotating special (${data.excludedSpecials.join(", ")}) is excluded.` : " The rotating special is excluded."}
-            {" "}Nothing changes until you apply.
+            {data.excludedNonCore?.length ? ` Non-core products are excluded (${data.excludedNonCore.join(", ")}).` : ""}
+            {" "}Compare the SHARE columns — the split only cares about each recipe's
+            percentage, not the raw pack numbers. Nothing changes until you apply.
           </DialogDescription>
         </DialogHeader>
 
@@ -117,26 +137,32 @@ export function DptSuggestionPrompt() {
             <thead className="bg-secondary/50 text-muted-foreground">
               <tr>
                 <th className="text-left px-3 py-2 font-medium">Recipe</th>
-                <th className="text-right px-3 py-2 font-medium">Current</th>
-                <th className="text-right px-3 py-2 font-medium">Suggested</th>
+                <th className="text-right px-3 py-2 font-medium">Now %</th>
+                <th className="text-right px-3 py-2 font-medium">Sales %</th>
                 <th className="text-right px-3 py-2 font-medium">Change</th>
               </tr>
             </thead>
             <tbody>
               {rows.map(r => {
-                const diff = r.suggestedPacksSold - r.currentPacksSold;
+                // Percentage POINTS of share — the meaningful delta.
+                const diff = Math.round((r.suggestedSharePct - r.currentSharePct) * 10) / 10;
                 return (
                   <tr key={r.recipeId} className="border-t border-border/60">
-                    <td className="px-3 py-1.5">{r.name}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">{r.currentPacksSold}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums font-semibold">{r.suggestedPacksSold}</td>
+                    <td className="px-3 py-1.5">
+                      {r.name}
+                      <span className="block text-[11px] text-muted-foreground tabular-nums">
+                        {r.currentPacksSold} → {r.suggestedPacksSold} packs/wk
+                      </span>
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">{r.currentSharePct.toFixed(1)}%</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums font-semibold">{r.suggestedSharePct.toFixed(1)}%</td>
                     <td className={cn(
                       "px-3 py-1.5 text-right tabular-nums font-medium",
-                      diff > 0 ? "text-emerald-600 dark:text-emerald-400" : diff < 0 ? "text-destructive" : "text-muted-foreground",
+                      diff > 0.05 ? "text-emerald-600 dark:text-emerald-400" : diff < -0.05 ? "text-destructive" : "text-muted-foreground",
                     )}>
                       <span className="inline-flex items-center gap-1">
-                        {diff > 0 ? <TrendingUp className="w-3.5 h-3.5" /> : diff < 0 ? <TrendingDown className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
-                        {diff > 0 ? `+${diff}` : diff}
+                        {diff > 0.05 ? <TrendingUp className="w-3.5 h-3.5" /> : diff < -0.05 ? <TrendingDown className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
+                        {diff > 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1)} pts
                       </span>
                     </td>
                   </tr>
@@ -150,10 +176,13 @@ export function DptSuggestionPrompt() {
           <button
             type="button"
             disabled={busy}
-            onClick={() => void snooze.mutate()}
+            onClick={() => {
+              if (previewMode) { setDismissed(true); onClose?.(); return; }
+              void snooze.mutate();
+            }}
             className="px-4 py-2 rounded-xl text-sm font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors disabled:opacity-50"
           >
-            Not now
+            {previewMode ? "Close" : "Not now"}
           </button>
           <button
             type="button"

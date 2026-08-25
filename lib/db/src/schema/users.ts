@@ -28,6 +28,9 @@ export const usersTable = pgTable("app_users", {
   // which also keeps the boot-time seed from ever re-flagging the user.
   passwordResetDeadline: timestamp("password_reset_deadline"),
   passwordChangedAt: timestamp("password_changed_at"),
+  // Production-planner capability flag: a manager subtype. Gates planning
+  // surfaces like the weekly DPT sales suggestion (admins always qualify).
+  isProductionPlanner: boolean("is_production_planner").notNull().default(false),
 });
 
 export const insertUserSchema = createInsertSchema(usersTable).omit({ id: true, createdAt: true, updatedAt: true });

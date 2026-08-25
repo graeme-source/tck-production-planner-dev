@@ -61,7 +61,7 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateUserBody), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, email, role, isActive, password } = req.body;
+  const { name, email, role, isActive, password, isProductionPlanner } = req.body;
   const updates: Partial<typeof usersTable.$inferInsert> & { updatedAt: Date } = {
     name,
     email,
@@ -69,6 +69,9 @@ router.put("/:id", validate(UpdateUserBody), async (req, res) => {
     isActive,
     updatedAt: new Date(),
   };
+  // Production-planner capability flag (manager subtype) — optional so
+  // older clients that don't send it leave it untouched.
+  if (typeof isProductionPlanner === "boolean") updates.isProductionPlanner = isProductionPlanner;
   if (password) {
     const policyError = validatePassword(password);
     if (policyError) {

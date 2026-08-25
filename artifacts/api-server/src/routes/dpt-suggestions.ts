@@ -1,9 +1,8 @@
-import { Router, type IRouter } from "express";
-import { db, dptSettingsTable, recipesTable, appSettingsTable } from "@workspace/db";
+import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
+import { db, dptSettingsTable, recipesTable, appSettingsTable, usersTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import * as z from "zod";
 import { validate } from "../middleware/validate";
-import { requireManagerOrAdmin } from "../middleware/roles";
 import { computeSalesPacksByRecipe, weeklyAverage, type VariantMapRow } from "../lib/dpt-suggestion";
 import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
 import { getCachedOrders } from "../lib/orders-cache";
@@ -21,6 +20,21 @@ const CADENCE_MS = 7 * 24 * 60 * 60 * 1000;
 
 const router: IRouter = Router();
 
+// Admins and production planners only (Graeme, 2026-08-28): the DPT split is
+// a planning decision, not general manager territory. The flag lives on
+// app_users.is_production_planner (Team & Access).
+async function requireProductionPlanner(req: Request, res: Response, next: NextFunction) {
+  if (req.session.userRole === "admin") { next(); return; }
+  if (req.session.userId) {
+    const [u] = await db
+      .select({ role: usersTable.role, isProductionPlanner: usersTable.isProductionPlanner })
+      .from(usersTable)
+      .where(eq(usersTable.id, req.session.userId));
+    if (u && (u.role === "admin" || u.isProductionPlanner)) { next(); return; }
+  }
+  res.status(403).json({ error: "Production planner or admin access required" });
+}
+
 async function getSetting(key: string): Promise<string | null> {
   const [row] = await db.select({ value: appSettingsTable.value }).from(appSettingsTable).where(eq(appSettingsTable.key, key));
   return row?.value ?? null;
@@ -37,7 +51,7 @@ function isoDaysAgo(days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-router.get("/", requireManagerOrAdmin, async (req, res) => {
+router.get("/", requireProductionPlanner, async (req, res) => {
   try {
     const preview = req.query["preview"] === "1";
     const confirmedAt = await getSetting(KEY_CONFIRMED);
@@ -86,13 +100,19 @@ router.get("/", requireManagerOrAdmin, async (req, res) => {
         isActive: dptSettingsTable.isActive,
         name: recipesTable.name,
         isCurrentSpecial: recipesTable.isCurrentSpecial,
+        isCoreMenu: recipesTable.isCoreMenu,
       })
       .from(dptSettingsTable)
       .innerJoin(recipesTable, eq(dptSettingsTable.recipeId, recipesTable.id));
 
     const excludedSpecials = dptRows.filter(r => r.isCurrentSpecial).map(r => r.name);
-    const rows = dptRows
-      .filter(r => r.isActive && !r.isCurrentSpecial)
+    // Core menu only (Graeme, 2026-08-28): non-core lines (retired tests,
+    // frozen kanban products) don't belong in the split. A non-core recipe
+    // still appearing here means its is_core_menu flag is stale — fix the
+    // recipe, not this filter.
+    const excludedNonCore = dptRows.filter(r => r.isActive && !r.isCurrentSpecial && !r.isCoreMenu).map(r => r.name);
+    const base = dptRows
+      .filter(r => r.isActive && !r.isCurrentSpecial && r.isCoreMenu)
       .map(r => {
         const salesPacks30d = salesByRecipe.get(r.recipeId) ?? 0;
         return {
@@ -105,7 +125,19 @@ router.get("/", requireManagerOrAdmin, async (req, res) => {
       })
       .sort((a, b) => b.suggestedPacksSold - a.suggestedPacksSold);
 
-    res.json({ due: true, windowStart, windowEnd, windowDays: WINDOW_DAYS, rows, excludedSpecials, confirmedAt });
+    // What matters is each recipe's SHARE of the split, not the absolute
+    // packs — the current numbers are hand-set on a different scale than a
+    // 30-day sales window, so only percentage points compare like for like
+    // (Graeme, 2026-08-28).
+    const currentTotal = base.reduce((s, r) => s + r.currentPacksSold, 0);
+    const suggestedTotal = base.reduce((s, r) => s + r.suggestedPacksSold, 0);
+    const rows = base.map(r => ({
+      ...r,
+      currentSharePct: currentTotal > 0 ? Math.round((r.currentPacksSold / currentTotal) * 1000) / 10 : 0,
+      suggestedSharePct: suggestedTotal > 0 ? Math.round((r.suggestedPacksSold / suggestedTotal) * 1000) / 10 : 0,
+    }));
+
+    res.json({ due: true, windowStart, windowEnd, windowDays: WINDOW_DAYS, rows, excludedSpecials, excludedNonCore, confirmedAt });
   } catch (err) {
     console.error("[dpt-suggestions] error:", err instanceof Error ? err.message : String(err));
     res.status(500).json({ error: "Could not compute the DPT suggestion" });
@@ -119,7 +151,7 @@ const ConfirmBody = z.object({
   })).min(1),
 });
 
-router.post("/confirm", requireManagerOrAdmin, validate(ConfirmBody), async (req, res) => {
+router.post("/confirm", requireProductionPlanner, validate(ConfirmBody), async (req, res) => {
   try {
     const { rows } = req.body as z.infer<typeof ConfirmBody>;
     for (const row of rows) {
@@ -139,7 +171,7 @@ router.post("/confirm", requireManagerOrAdmin, validate(ConfirmBody), async (req
   }
 });
 
-router.post("/snooze", requireManagerOrAdmin, async (_req, res) => {
+router.post("/snooze", requireProductionPlanner, async (_req, res) => {
   try {
     await setSetting(KEY_SNOOZED, new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString());
     res.json({ ok: true });

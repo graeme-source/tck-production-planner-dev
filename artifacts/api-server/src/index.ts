@@ -636,6 +636,7 @@ async function runStartupMigrations() {
     // when migrating up from a pre-a9fa76c snapshot.
     // PIN login & avatar support (Task #36)
     await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS pin_hash TEXT`);
+  await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS is_production_planner boolean NOT NULL DEFAULT false`);
     await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS pin_attempts INTEGER NOT NULL DEFAULT 0`);
     await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS pin_locked_until TIMESTAMP`);
     await db.execute(sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS avatar_url TEXT`);

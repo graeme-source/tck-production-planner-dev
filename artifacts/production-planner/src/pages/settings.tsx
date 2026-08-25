@@ -6,6 +6,7 @@ import { useAppMutations } from "@/hooks/use-mutations";
 import { usePagePermissions, useSavePagePermissions } from "@/hooks/use-page-permissions";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
+import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
 import {
   Plus, Trash2, Edit2, Loader2, Users, ShieldCheck, Eye, Wrench,
   CheckCircle2, XCircle, KeyRound, Package, ChevronDown, ChevronUp,
@@ -75,6 +76,7 @@ const createSchema = z.object({
   password: passwordFieldSchema,
   role: z.enum(["admin", "manager", "viewer"]),
   isActive: z.boolean(),
+  isProductionPlanner: z.boolean().optional(),
 });
 
 const editSchema = z.object({
@@ -83,6 +85,7 @@ const editSchema = z.object({
   password: passwordFieldSchema.optional().or(z.literal("")),
   role: z.enum(["admin", "manager", "viewer"]),
   isActive: z.boolean(),
+  isProductionPlanner: z.boolean().optional(),
 });
 
 type CreateValues = z.infer<typeof createSchema>;
@@ -94,6 +97,7 @@ type AppUser = {
   email: string;
   role: Role;
   isActive: boolean;
+  isProductionPlanner?: boolean;
   createdAt: string;
 };
 
@@ -301,6 +305,23 @@ function UserForm({
           })}
         </div>
       </div>
+
+      {selectedRole === "manager" && (
+        <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-xl">
+          <input
+            type="checkbox"
+            {...register("isProductionPlanner")}
+            id="isProductionPlanner"
+            className="w-4 h-4 rounded accent-primary"
+          />
+          <label htmlFor="isProductionPlanner" className="text-sm font-medium cursor-pointer">
+            Production planner
+            <span className="text-muted-foreground font-normal ml-1">
+              (sees planning tools such as the weekly DPT sales suggestion; admins always do)
+            </span>
+          </label>
+        </div>
+      )}
 
       <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-xl">
         <input
@@ -707,7 +728,7 @@ function TeamAccessContent({
   const [inviteResult, setInviteResult] = useState<{ url: string | null; email: string; emailSent: boolean } | null>(null);
 
   const createDefaults: CreateValues = {
-    name: "", email: "", password: "", role: "viewer", isActive: true,
+    name: "", email: "", password: "", role: "viewer", isActive: true, isProductionPlanner: false,
   };
 
   const sendInvite = async () => {
@@ -882,6 +903,7 @@ function TeamAccessContent({
                   password: "",
                   role: editingUser.role,
                   isActive: editingUser.isActive,
+                  isProductionPlanner: editingUser.isProductionPlanner ?? false,
                 }}
                 isPending={updateUser.isPending}
                 onCancel={() => setEditingUser(null)}
@@ -892,7 +914,8 @@ function TeamAccessContent({
                     email: editData.email,
                     role: editData.role,
                     isActive: editData.isActive,
-                  };
+                    isProductionPlanner: editData.isProductionPlanner ?? false,
+                  } as UpdateUser & { isProductionPlanner: boolean };
                   if (editData.password) payload.password = editData.password;
                   updateUser.mutate({ id: editingUser.id, data: payload }, { onSuccess: () => setEditingUser(null) });
                 }}
@@ -1941,6 +1964,25 @@ function CategoryDefaultsSection() {
   );
 }
 
+/** Run the sales-vs-DPT comparison on demand (admins / production planners),
+ *  rather than waiting for the weekly prompt. Opens the same dialog in
+ *  preview mode, so testing it never disturbs the weekly cadence. */
+function DptSuggestionCheckButton() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        className="px-3 py-2 border border-border rounded-lg text-sm font-medium hover:bg-secondary/50 transition-colors flex items-center gap-1.5"
+        title="Compare the current DPT split against the last 30 days of Shopify sales"
+      >
+        <BarChart2 className="w-3.5 h-3.5" /> Check sales now
+      </button>
+      {open && <DptSuggestionPrompt previewMode onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
 function DptSettingsSection() {
   const { data: dptSettings, isLoading: dptLoading } = useListDptSettings();
   const { data: recipes, isLoading: recipesLoading } = useListRecipes();
@@ -2053,6 +2095,7 @@ function DptSettingsSection() {
         </div>
         <div className="flex items-center gap-2">
           {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
+          <DptSuggestionCheckButton />
           <button
             onClick={handleSaveAll}
             disabled={saving || isLoading}
