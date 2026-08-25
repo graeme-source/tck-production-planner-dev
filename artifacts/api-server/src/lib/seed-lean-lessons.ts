@@ -8,11 +8,14 @@
  *   - what_to_show_md → what the team sees on the slide (Page 2)
  *   - delivery_notes_md → talking points / discussion prompts (Page 3)
  *
- * Seeded once on startup. Re-runs are safe — ON CONFLICT DO NOTHING
- * keeps any admin edits intact.
+ * Seeded on startup for FRESH installs only. Once a curriculum has been
+ * installed by a library script it owns the lean tables and the seeder
+ * stands down (see the guard in seedLeanLessonsIfNeeded). Within a fresh
+ * install, re-runs are safe — ON CONFLICT DO NOTHING keeps admin edits.
  */
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
+import { curriculumIsExternallyManaged } from "./lean-library-guard";
 
 interface LessonSeed {
   weekNumber: number;
@@ -1207,6 +1210,24 @@ const DEFAULT_TEMPLATE_SLIDES = [
 ] as const;
 
 export async function seedLeanLessonsIfNeeded() {
+  // The starter curriculum (steps 1–2e) belongs to a fresh install only —
+  // see lean-library-guard.ts for why the seeder must stand down once an
+  // installed library owns the lean tables.
+  const markerRows = await db.execute<{ value: string }>(sql`
+    SELECT value FROM app_settings WHERE key = 'lean_library_version'
+  `);
+  const marker = (markerRows.rows ?? markerRows)[0]?.value ?? null;
+  const archivedRows = await db.execute<{ count: number }>(sql`
+    SELECT COUNT(*)::int AS count FROM lean_principles WHERE week_position >= 1000
+  `);
+  const archived = Number((archivedRows.rows ?? archivedRows)[0]?.count ?? 0);
+  if (!curriculumIsExternallyManaged(marker, archived)) {
+    await seedStarterCurriculum();
+  }
+  await ensureDefaultMeetingTemplate();
+}
+
+async function seedStarterCurriculum() {
   // Step 1: seed/update the legacy lean_lessons rows (kept for older code paths)
   for (const l of LESSONS) {
     await db.execute(sql`
@@ -1383,9 +1404,12 @@ A calzone made two seconds faster, a tool given a home, one less walk to the fri
       `);
     }
   }
+}
 
-  // Step 3: ensure there's a default meeting template with the 12
-  // slide rows. New meetings clone these into meeting_slides.
+// Step 3: ensure there's a default meeting template with the 12
+// slide rows. New meetings clone these into meeting_slides. Runs on every
+// boot regardless of who owns the curriculum content.
+async function ensureDefaultMeetingTemplate() {
   let templateId: number | null = null;
   const existingTpl = await db.execute<{ id: number }>(sql`
     SELECT id FROM meeting_templates WHERE is_default = TRUE LIMIT 1
