@@ -16,10 +16,12 @@
  *     amber early in the week, red from Thursday, gone once completed
  */
 import { useState } from "react";
-import { Link } from "wouter";
+import { Link, useSearch } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, ChevronLeft, ChevronRight, CheckCircle2, Loader2, GraduationCap } from "lucide-react";
+import { BookOpen, ChevronLeft, ChevronRight, CheckCircle2, Loader2, GraduationCap, Eye, Save } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { toast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/auth-context";
 import { LessonDiagram } from "@/components/lesson-diagrams";
 import { MarkdownBlock, YouTubeEmbed } from "@/components/lesson-media";
 
@@ -38,9 +40,13 @@ interface ReviewData {
   weekStart: string;
   principle: { id: number; title: string; summary: string } | null;
   lessons: ReviewLesson[];
-  quiz: Array<{ question: string; options: string[] }>;
+  quiz: Array<{ question: string; options: string[]; answer?: number }>;
   completed: boolean;
   completedAt: string | null;
+  /** Preview only: the founder can count reviewing-ahead as their own
+   *  completion for next week. */
+  canSelfComplete?: boolean;
+  selfCompleted?: boolean;
 }
 
 const QUERY_KEY = ["lean-weekly-review"];
@@ -92,12 +98,89 @@ export function LeanWeeklyStrip() {
   );
 }
 
+/** Inline video swap for the founder's preview: paste any YouTube URL and
+ *  it embeds for that page — the whole point is changing a video without
+ *  anyone touching code. Saves through the existing example PUT. */
+function VideoSwapBox({ lesson }: { lesson: ReviewLesson }) {
+  const queryClient = useQueryClient();
+  const [url, setUrl] = useState(lesson.videoUrl ?? "");
+  const save = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${BASE}/api/morning-meetings/examples/${lesson.id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoUrl: url.trim() || null }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["lean-week-preview"] });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEY });
+      toast({ title: url.trim() ? "Video updated" : "Video removed" });
+    },
+    onError: () => toast({ title: "Couldn't save the video", variant: "destructive" }),
+  });
+  const dirty = (url.trim() || null) !== (lesson.videoUrl ?? null);
+  return (
+    <div className="rounded-xl border border-dashed border-border p-3 space-y-2">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">This page's video</p>
+      <div className="flex gap-2">
+        <input
+          value={url}
+          onChange={e => setUrl(e.target.value)}
+          placeholder="Paste a YouTube URL — or clear to remove the video"
+          className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-border bg-background text-sm"
+        />
+        <button
+          onClick={() => save.mutate()}
+          disabled={!dirty || save.isPending}
+          className="flex-shrink-0 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-50 inline-flex items-center gap-1.5"
+        >
+          {save.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
+        </button>
+      </div>
+      {dirty && url.trim() && <YouTubeEmbed url={url.trim()} />}
+    </div>
+  );
+}
+
 export function LeanReviewPage() {
   const queryClient = useQueryClient();
-  const { data, isLoading } = useLeanWeeklyReview();
+  const search = useSearch();
+  const isPreview = new URLSearchParams(search).get("week") === "next";
+  const { state } = useAuth();
+  const canPreview = state.status === "authenticated" && (state.user.role === "admin" || state.user.role === "manager");
+
+  const thisWeek = useLeanWeeklyReview();
+  const preview = useQuery<ReviewData>({
+    queryKey: ["lean-week-preview"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/lean-reviews/preview`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load next week's lesson");
+      const raw = await res.json();
+      return { ...raw, completed: false, completedAt: null };
+    },
+    enabled: isPreview && canPreview,
+  });
+  const { data, isLoading } = isPreview ? preview : thisWeek;
   const [pageIdx, setPageIdx] = useState(0);
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [lastResult, setLastResult] = useState<{ passed: boolean; correct: number; total: number } | null>(null);
+
+  // Founder review-ahead: reviewing next week counts as their completion
+  // for next week — same rules as everyone, a week early.
+  const previewComplete = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${BASE}/api/lean-reviews/preview/complete`, { method: "POST", credentials: "include" });
+      if (!res.ok) throw new Error("Failed to record the review");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["lean-week-preview"] });
+      queryClient.invalidateQueries({ queryKey: ["todos"] });
+      toast({ title: "Next week counted as done for you", description: "Matrix ticked, to-do closed." });
+    },
+    onError: () => toast({ title: "Couldn't record the review", variant: "destructive" }),
+  });
 
   const submit = useMutation({
     mutationFn: async () => {
@@ -126,7 +209,9 @@ export function LeanReviewPage() {
     return (
       <div className="max-w-2xl mx-auto py-16 text-center text-muted-foreground">
         <GraduationCap className="w-10 h-10 mx-auto mb-3 opacity-40" />
-        <p className="font-medium">No lean focus is set for this week yet.</p>
+        <p className="font-medium">
+          {isPreview ? "No lean focus is set for next week yet." : "No lean focus is set for this week yet."}
+        </p>
       </div>
     );
   }
@@ -139,15 +224,34 @@ export function LeanReviewPage() {
   const allAnswered = data.quiz.every((_q, i) => answers[i] != null);
 
   return (
-    <div className="max-w-3xl mx-auto space-y-5 pb-16">
+    <div key={isPreview ? "preview" : "this-week"} className="max-w-3xl mx-auto space-y-5 pb-16">
       {/* Header */}
       <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-purple-500 mb-1">This week's lean lesson</p>
+        <p className={cn("text-xs font-semibold uppercase tracking-wide mb-1", isPreview ? "text-amber-600" : "text-purple-500")}>
+          {isPreview ? "Preview — next week's lesson" : "This week's lean lesson"}
+        </p>
         <h1 className="font-display text-3xl font-bold leading-tight">{data.principle.title}</h1>
         <p className="text-muted-foreground mt-1">{data.principle.summary}</p>
-        {data.completed && (
+        {isPreview && (
+          <p className="mt-2 text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+            This is what the whole team sees from Monday. Review it, swap any video by pasting a URL, and the quiz
+            answers are shown so you can sanity-check them — nothing here counts as your own weekly review.
+          </p>
+        )}
+        {!isPreview && data.completed && (
           <p className="mt-2 inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
             <CheckCircle2 className="w-4 h-4" /> Completed this week — nice one. The pages stay open for another look.
+          </p>
+        )}
+        {canPreview && (
+          <p className="mt-2">
+            <Link
+              href={isPreview ? "/lean-review" : "/lean-review?week=next"}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+            >
+              <Eye className="w-4 h-4" />
+              {isPreview ? "Back to this week's lesson" : "Preview next week's lesson"}
+            </Link>
           </p>
         )}
       </div>
@@ -182,18 +286,37 @@ export function LeanReviewPage() {
                 <p className="font-medium mb-2">{qi + 1}. {q.question}</p>
                 <div className="space-y-1.5">
                   {q.options.map((opt, oi) => (
-                    <button
-                      key={oi}
-                      onClick={() => { setAnswers(a => ({ ...a, [qi]: oi })); setLastResult(null); }}
-                      className={cn(
-                        "w-full text-left px-4 py-2.5 rounded-xl border text-sm transition-colors",
-                        answers[qi] === oi
-                          ? "border-primary bg-primary/10 font-semibold"
-                          : "border-border hover:border-primary/40 hover:bg-secondary/40",
-                      )}
-                    >
-                      {opt}
-                    </button>
+                    isPreview ? (
+                      <div
+                        key={oi}
+                        className={cn(
+                          "w-full text-left px-4 py-2.5 rounded-xl border text-sm flex items-center justify-between gap-2",
+                          q.answer === oi
+                            ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 font-semibold"
+                            : "border-border",
+                        )}
+                      >
+                        <span>{opt}</span>
+                        {q.answer === oi && (
+                          <span className="flex-shrink-0 text-xs font-bold text-emerald-600 dark:text-emerald-400 inline-flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> correct answer
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <button
+                        key={oi}
+                        onClick={() => { setAnswers(a => ({ ...a, [qi]: oi })); setLastResult(null); }}
+                        className={cn(
+                          "w-full text-left px-4 py-2.5 rounded-xl border text-sm transition-colors",
+                          answers[qi] === oi
+                            ? "border-primary bg-primary/10 font-semibold"
+                            : "border-border hover:border-primary/40 hover:bg-secondary/40",
+                        )}
+                      >
+                        {opt}
+                      </button>
+                    )
                   ))}
                 </div>
               </div>
@@ -211,7 +334,7 @@ export function LeanReviewPage() {
             </div>
           )}
 
-          {!data.completed && !lastResult?.passed && (
+          {!isPreview && !data.completed && !lastResult?.passed && (
             <button
               onClick={() => submit.mutate()}
               disabled={!allAnswered || submit.isPending}
@@ -220,6 +343,23 @@ export function LeanReviewPage() {
               {submit.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
               {allAnswered ? "Check my answers" : "Answer all three to finish"}
             </button>
+          )}
+
+          {isPreview && data.canSelfComplete && (
+            data.selfCompleted ? (
+              <div className="rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-4 py-3 text-sm font-semibold text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4" /> Next week is already counted as done for you.
+              </div>
+            ) : (
+              <button
+                onClick={() => previewComplete.mutate()}
+                disabled={previewComplete.isPending}
+                className="w-full py-3 rounded-xl bg-primary text-primary-foreground font-semibold disabled:opacity-50 inline-flex items-center justify-center gap-2"
+              >
+                {previewComplete.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                I've reviewed next week — count it as my completion
+              </button>
+            )
           )}
         </div>
       ) : lesson ? (
@@ -233,6 +373,7 @@ export function LeanReviewPage() {
             <MarkdownBlock content={lesson.whatToShowMd} />
           </div>
           {lesson.videoUrl && <YouTubeEmbed url={lesson.videoUrl} />}
+          {isPreview && <VideoSwapBox key={lesson.id} lesson={lesson} />}
           {lesson.diagram && <LessonDiagram id={lesson.diagram} />}
           {lesson.imageUrl && (
             <img src={lesson.imageUrl} alt="" className="w-full max-h-80 object-contain rounded-2xl bg-black/5" />
@@ -261,7 +402,9 @@ export function LeanReviewPage() {
 
       <p className="text-xs text-muted-foreground flex items-center gap-1.5">
         <BookOpen className="w-3.5 h-3.5" />
-        The same lesson everyone's covering in this week's morning meetings — the meeting shows it, this checks it stuck.
+        {isPreview
+          ? "This module goes live for the whole team on Monday, alongside that week's morning meetings."
+          : "The same lesson everyone's covering in this week's morning meetings — the meeting shows it, this checks it stuck."}
       </p>
     </div>
   );

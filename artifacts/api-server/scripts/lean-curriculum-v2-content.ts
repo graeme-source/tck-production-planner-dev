@@ -51,7 +51,7 @@ export const LEAN_CURRICULUM_V2: WeekV2[] = [
     lessons: [
       {
         title: "The Big Idea: Value and Waste",
-        videoUrl: "https://www.youtube.com/watch?v=sgNTDGI2ySY",
+        videoUrl: "https://www.youtube.com/watch?v=2wq7yfwxfrc",
         summary: "Everything we do is one or the other — and one question tells them apart.",
         explanationMd: `Every minute of a shift goes into one of two buckets.
 
@@ -96,7 +96,7 @@ That's why "we've always done it this way" doesn't settle anything. The only que
       },
       {
         title: "Waste Hides in Plain Sight",
-        videoUrl: "https://www.youtube.com/watch?v=hU_X3AbeUeE",
+        videoUrl: "https://www.youtube.com/watch?v=F7QUy7QEMRM",
         summary: "The most dangerous waste is the kind we've stopped noticing.",
         explanationMd: `Here's the uncomfortable bit: most waste is invisible — not because it's small, but because it's **familiar**.
 
@@ -118,6 +118,7 @@ That's why seeing waste is a skill and not just an attitude. The trick is to loo
       },
       {
         title: "What's In It For You",
+        videoUrl: "https://www.youtube.com/watch?v=rY7FTXU8UXI",
         summary: "Removing waste isn't about working harder — it's about getting the annoying stuff out of your day.",
         explanationMd: `Let's be straight about why we're doing this, because lean has a bad cousin: the version where "efficiency" means squeeze people harder. **That is not what this is.**
 
@@ -169,7 +170,7 @@ One find per person is a great first walk. Say it out loud, plainly: *"I spotted
     lessons: [
       {
         title: "Meet Overproduction",
-        videoUrl: "https://www.youtube.com/watch?v=SorjReTrF_Q",
+        videoUrl: "https://www.youtube.com/watch?v=MOtIQazaliY",
         summary: "Making more than ordered, or earlier than needed — the waste that breeds other wastes.",
         explanationMd: `The first of the Eight Wastes, and the one lean thinking treats as the biggest troublemaker: **Overproduction — making more than the customer demands.** More calzones than the orders need. More sauce than the plan calls for. Making it *earlier* than needed counts too.
 
@@ -258,6 +259,7 @@ Notice none of these are "work faster". Making *less* — exactly enough — is 
       },
       {
         title: "The Overproduction Hunt",
+        videoUrl: "https://www.youtube.com/watch?v=B9vUA-tjceQ",
         summary: "Find one live example of more-than-ordered before the meeting ends.",
         explanationMd: `Hunt day. This week we met Overproduction at the bench, followed it to the fridge, and counted the winnings for killing it. Now: find it live.
 
@@ -288,7 +290,7 @@ One find per person, said plainly and without blame: *"That's overproduction —
     lessons: [
       {
         title: "Meet Transportation",
-        videoUrl: "https://www.youtube.com/watch?v=1h1NSZV3CZY",
+        videoUrl: "https://www.youtube.com/watch?v=MTYqZHMzW5M",
         summary: "Product on a journey the customer never asked for.",
         explanationMd: `Waste number two: **Transportation — unnecessary movement of product or raw materials.** Not people (that's Motion, coming later) — *stuff*. Trays, tubs, boxes, ingredients, finished packs.
 
@@ -350,6 +352,7 @@ Each of these doubles the carrying and doubles the risk, and adds a third cost: 
       },
       {
         title: "Shorter Journeys, Better Days",
+        videoUrl: "https://www.youtube.com/watch?v=J1hrOlV-CS0",
         summary: "What we win when product moves less: time back, fewer knocks, clearer floors.",
         explanationMd: `Payday. What do shorter journeys actually buy us?
 
@@ -404,7 +407,7 @@ Find one each. Name it plainly: *"That's transportation — it moves without cha
     lessons: [
       {
         title: "Meet Inventory",
-        videoUrl: "https://www.youtube.com/watch?v=Fy2kWSK590w",
+        videoUrl: "https://www.youtube.com/watch?v=HRQgQGcsPn4",
         summary: "Excess stock is money parked on a shelf — with a use-by date.",
         explanationMd: `Waste number three: **Inventory — holding excess product or unprocessed materials.** Not stock itself; we need stock to cook. The waste is the *excess*: the third unopened tub of marinade when one lasts the week. The over-full freezer. The "just in case" pile that never gets its case.
 
@@ -450,6 +453,7 @@ The pattern: every over-stock is a signal about trust — in the numbers, the su
       },
       {
         title: "Just Enough: Kanban and the Art of the Right Amount",
+        videoUrl: "https://www.youtube.com/watch?v=9KgyYPdTqbI",
         summary: "How the kitchen already signals 'time to make more' — and why pull beats pile.",
         explanationMd: `If excess is the waste, what's the skill? **Letting what's *used* trigger what's *made or ordered*** — instead of guessing and padding. We already do this more than we might realise.
 
@@ -470,7 +474,7 @@ The picture to keep is water level: lower the stock slowly and problems that wer
       },
       {
         title: "What Right-Sized Stock Wins Us",
-        videoUrl: "https://www.youtube.com/watch?v=Ks30Wk2uQeo",
+        videoUrl: "https://www.youtube.com/watch?v=AaYHMEmCdQI",
         summary: "Space, fresher ingredients, faster counts, and money back in the business.",
         explanationMd: `The payoff day. Right-sized stock buys us:
 
@@ -527,7 +531,7 @@ One find each, named without blame: *"That's inventory — we're holding more th
     lessons: [
       {
         title: "Meet Defects",
-        videoUrl: "https://www.youtube.com/watch?v=PhcffrNONMQ",
+        videoUrl: "https://www.youtube.com/watch?v=Q7TrxEwYVEg",
         summary: "When work has to be done twice — or can't be sold at all.",
         explanationMd: `Waste number four, and the one with a TCK name of its own: **Defects — product that fails to meet customer expectations.** Here, that's the wonky. The burst calzone, the short-weight pack, the mislabelled box, the batch that cooked wrong.
 
@@ -590,6 +594,7 @@ That's why the lean rule is **quality at the source**: every station is the cust
       },
       {
         title: "What Fewer Defects Wins Us",
+        videoUrl: "https://www.youtube.com/watch?v=ryjVOGnO7uo",
         summary: "Full-price product, unbroken flow, and a team that trusts its own process.",
         explanationMd: `Payday. What do fewer defects actually buy?
 
@@ -614,6 +619,7 @@ And remember the week's maths: none of this comes from working more carefully un
       },
       {
         title: "The Defect Detective",
+        videoUrl: "https://www.youtube.com/watch?v=33TFwspsJ_0",
         summary: "Pick one recent defect and trace it to its birthplace — then fix the process, not the person.",
         explanationMd: `Hunt day — but this week it's detective day. Wonkies are already counted; the hunt is for **birthplaces**.
 
@@ -646,7 +652,7 @@ One traced defect that leads to one process fix is worth more than a month of "b
     lessons: [
       {
         title: "Meet Motion",
-        videoUrl: "https://www.youtube.com/watch?v=4_XCLnLvuZU",
+        videoUrl: "https://www.youtube.com/watch?v=yCHPCtj3tUQ",
         summary: "The miles we walk that nobody ordered — people-movement that adds no value.",
         explanationMd: `Waste number five: **Motion — unnecessary movement of people.** Transportation's twin, but this one's personal: it's *your* legs, *your* reach, *your* search.
 
@@ -668,7 +674,7 @@ Two things make Motion special. First, **it's paid for in your energy** — ever
       },
       {
         title: "The Spaghetti Test",
-        videoUrl: "https://www.youtube.com/watch?v=eQ6SGx-C7j0",
+        videoUrl: "https://www.youtube.com/watch?v=NY20p9GuGqY",
         summary: "If we drew your footsteps for one hour, what shape would they make?",
         explanationMd: `Imagine a pen tied to your shoes, drawing your path for one hour of a shift. Lean folk call the result a **spaghetti diagram** — because that's what it usually looks like: a tangled plate of crossings, loops and repeats.
 
@@ -731,6 +737,7 @@ And motion fixes are famously cheap: move the thing closer, give it a home, dupl
       },
       {
         title: "The Motion Hunt: Fix One Walk Today",
+        videoUrl: "https://www.youtube.com/watch?v=6m7Z9wyrFBM",
         summary: "Find one pointless walk, reach or search — and make its fix happen before tomorrow.",
         explanationMd: `Hunt day. The quarry: **one movement of yours that the work doesn't need** — a walk, a reach, a search, a bend.
 
@@ -763,7 +770,7 @@ Log the finds and the fixes. Next week: Overprocessing — doing more work than 
     lessons: [
       {
         title: "Meet Overprocessing",
-        videoUrl: "https://www.youtube.com/watch?v=VpGnJq-ah1M",
+        videoUrl: "https://www.youtube.com/watch?v=C-uo8z0hq_Q",
         summary: "Work beyond what the customer values — effort they'll never taste.",
         explanationMd: `Waste number six, and the strangest of the eight: **Overprocessing — doing more work than the customer needs.** Strange, because it's made entirely of effort. Good, honest, careful effort — aimed past the target.
 
@@ -829,6 +836,7 @@ This is what our SOPs and specs are really for — not paperwork, but agreed fin
       },
       {
         title: "What Trimming Extra Work Wins Us",
+        videoUrl: "https://www.youtube.com/watch?v=refb1eGbo_Y",
         summary: "Care aimed where it counts, time back, and standards everyone can trust.",
         explanationMd: `Payday. Trimming overprocessing pays differently from the other wastes — it pays in **aim**.
 
@@ -884,7 +892,7 @@ Log the trims AND the keeps — a check that survives the challenge is worth rec
     lessons: [
       {
         title: "Meet Waiting",
-        videoUrl: "https://www.youtube.com/watch?v=3EkCtKq78dQ",
+        videoUrl: "https://www.youtube.com/watch?v=7U9tQCpkCv4",
         summary: "The waste you can feel — people ready, work not.",
         explanationMd: `Waste number seven: **Waiting — time spent waiting for a process or a stage to finish.** People ready, work not. Standing by the mixer as it runs its last two minutes. The station waiting for the trolley that hasn't arrived. Everything paused until the oven frees up. Waiting for a sign-off, a decision, a "you can start now".
 
@@ -927,6 +935,7 @@ The lean move is **pairing**: match every machine wait with a piece of human wor
       },
       {
         title: "Waiting on Each Other",
+        videoUrl: "https://www.youtube.com/watch?v=_tSoUaXU_cg",
         summary: "Handovers and bottlenecks — when one station's pace sets everyone's day.",
         explanationMd: `Second family, the harder one: **waiting on each other.** Building waiting on dough. Wrapping waiting on the ovens. Packing waiting on wrapping. One station's hiccup arriving at the next station as dead time.
 
@@ -1003,7 +1012,7 @@ Next week, the final waste — and the one Ryan's book treats as the saddest of 
     lessons: [
       {
         title: "Meet the Waste of Skills",
-        videoUrl: "https://www.youtube.com/watch?v=Bpv2R_wf1xY",
+        videoUrl: "https://www.youtube.com/watch?v=3kty-JyMZJA",
         summary: "The saddest waste: brains in the building whose ideas never get asked for.",
         explanationMd: `The eighth and final waste — and the one Lean Made Simple treats as the saddest: **the Waste of Skills — failing to make the best use of people's talents and abilities.**
 
@@ -1025,6 +1034,7 @@ Here's what makes this waste special: **it's the master waste.** Every other was
       },
       {
         title: "The Person Doing the Job Knows the Job",
+        videoUrl: "https://www.youtube.com/watch?v=Y60WQdJ9_nI",
         summary: "Nobody knows a task's waste like the hands that do it daily.",
         explanationMd: `A plain truth that whole management books take three hundred pages to say: **the person who does a job every day knows more about that job than anyone else in the building.**
 
@@ -1073,7 +1083,7 @@ Every one of these is ours to remove — and the fix is the same for all four: m
       },
       {
         title: "What Using Every Brain Wins Us",
-        videoUrl: "https://www.youtube.com/watch?v=LoZxHBaTs_A",
+        videoUrl: "https://www.youtube.com/watch?v=YA2skNMrWGs",
         summary: "A kitchen that fixes itself — and work that's more interesting to do.",
         explanationMd: `Payday for the master waste — and it's the biggest of the programme.
 
@@ -1098,6 +1108,7 @@ Every one of these is ours to remove — and the fix is the same for all four: m
       },
       {
         title: "The Skills Harvest",
+        videoUrl: "https://www.youtube.com/watch?v=LOvqtTyJRHk",
         summary: "The final hunt: every person contributes one idea — and the programme becomes the culture.",
         explanationMd: `The final hunt of the programme — and this one hunts the eighth waste directly. The quarry isn't a thing. It's **the unsaid idea.**
 

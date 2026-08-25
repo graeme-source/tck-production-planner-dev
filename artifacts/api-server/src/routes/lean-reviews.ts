@@ -91,20 +91,47 @@ async function currentWeekContext(userId: number): Promise<{
   return { weekStart, principle, review: review ?? null };
 }
 
-/** Lazily ensure this person's weekly to-do exists — the push that makes
- *  the module findable from My To-dos. Identified by lean_week_start,
- *  never by title. No-op once the review is done or the task exists. */
-async function ensureWeeklyTodo(userId: number, weekStart: string, principleTitle: string) {
+// The founder reviews AHEAD: their weekly task is NEXT week's module,
+// done by the end of this week — so they always know what's coming, have
+// already fixed anything wrong with it, and (same rules as everyone)
+// completing it counts as their review for that week. Founder is matched
+// by email, same pattern as the founder pages; the local test account is
+// included so the flow is testable off-live (no such user exists on live).
+const FOUNDER_EMAILS = new Set([
+  "graeme@thecalzonekitchen.co.uk",
+  "claude-test@thecalzonekitchen.co.uk",
+]);
+
+async function isFounder(userId: number): Promise<boolean> {
+  const [user] = await db.select({ email: usersTable.email }).from(usersTable).where(eq(usersTable.id, userId));
+  return !!user && FOUNDER_EMAILS.has(user.email);
+}
+
+/** Monday + 7 days. */
+function nextMondayFrom(monday: string): string {
+  const d = new Date(`${monday}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 7);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Lazily ensure a weekly lean to-do exists — the push that makes the
+ *  module findable from My To-dos. Identified by (assignee, lean_week_start),
+ *  never by title. No-op once the task exists. */
+async function ensureWeeklyTodo(params: {
+  userId: number;
+  weekStart: string;
+  title: string;
+  notes: string;
+  url: string;
+  dueDate: string;
+}) {
   await db.execute(sql`
     INSERT INTO todo_tasks (assignee_id, created_by, created_by_name, title, notes, url, priority, due_date, status, lean_week_start)
-    SELECT ${userId}, NULL, 'Lean learning',
-           ${`Lean lesson of the week: ${principleTitle}`},
-           'Two minutes: the week''s five morning-meeting pages, then three quick questions. Completing it ticks your Lean training matrix.',
-           '/lean-review', 'normal',
-           (${weekStart}::date + 4), -- due Friday of that week
-           'open', ${weekStart}
+    SELECT ${params.userId}, NULL, 'Lean learning',
+           ${params.title}, ${params.notes}, ${params.url}, 'normal',
+           ${params.dueDate}::date, 'open', ${params.weekStart}
     WHERE NOT EXISTS (
-      SELECT 1 FROM todo_tasks WHERE assignee_id = ${userId} AND lean_week_start = ${weekStart}
+      SELECT 1 FROM todo_tasks WHERE assignee_id = ${params.userId} AND lean_week_start = ${params.weekStart}
     )
   `);
 }
@@ -139,8 +166,39 @@ router.get("/current", requireAuth, async (req: Request, res: Response) => {
 
   const quiz = parseQuiz(principle.quizJson ?? null);
 
-  if (!review) {
-    await ensureWeeklyTodo(userId, weekStart, principle.title);
+  if (await isFounder(userId)) {
+    // The founder's standing task is NEXT week's module, due by the end of
+    // THIS week. If they fall behind, the task simply ages into the normal
+    // current-week flow: completing this week's module closes it, because
+    // both key on the same lean_week_start.
+    const nextMonday = nextMondayFrom(weekStart);
+    const [nextReview] = await db
+      .select({ id: leanLessonReviewsTable.id })
+      .from(leanLessonReviewsTable)
+      .where(and(eq(leanLessonReviewsTable.userId, userId), eq(leanLessonReviewsTable.weekStart, nextMonday)));
+    if (!nextReview) {
+      const { principle: nextPrinciple } = (await getWeekFocusPrinciple(nextMonday)) as { principle: LeanPrincipleRow | null };
+      if (nextPrinciple) {
+        await ensureWeeklyTodo({
+          userId,
+          weekStart: nextMonday,
+          title: `Review next week's lean module: ${nextPrinciple.title}`,
+          notes: "Founder review-ahead: read next week's five pages, check the videos and quiz, swap anything that isn't right — then count it as your completion. Same rules as everyone, a week early.",
+          url: "/lean-review?week=next",
+          // Due the Friday of the CURRENT week — reviewed before it starts.
+          dueDate: new Date(new Date(`${weekStart}T00:00:00Z`).getTime() + 4 * 86_400_000).toISOString().slice(0, 10),
+        });
+      }
+    }
+  } else if (!review) {
+    await ensureWeeklyTodo({
+      userId,
+      weekStart,
+      title: `Lean lesson of the week: ${principle.title}`,
+      notes: "Two minutes: the week's five morning-meeting pages, then three quick questions. Completing it ticks your Lean training matrix.",
+      url: "/lean-review",
+      dueDate: new Date(new Date(`${weekStart}T00:00:00Z`).getTime() + 4 * 86_400_000).toISOString().slice(0, 10),
+    });
   }
 
   res.json({
@@ -234,6 +292,91 @@ router.get("/status", requireManagerOrAdmin, async (_req: Request, res: Response
     principleTitle: principle?.title ?? null,
     users: users.map(u => ({ id: u.id, name: u.name, completedAt: byUser.get(u.id) ?? null })),
   });
+});
+
+// GET /api/lean-reviews/preview — NEXT week's module, for the founder's
+// review-ahead ritual: learn next week's lesson by the end of this week,
+// swap a video, fix wording — before the team ever sees it. Returns the
+// quiz WITH its answers (this is a content review, not a test) and the
+// example ids so the page can offer inline video swapping via the existing
+// example PUT. Manager/admin only.
+router.get("/preview", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  const nextMonday = nextMondayFrom(mondayOf(londonDateString()));
+  const { principle } = (await getWeekFocusPrinciple(nextMonday)) as { principle: LeanPrincipleRow | null };
+  const founder = await isFounder(userId);
+  if (!principle) {
+    res.json({ weekStart: nextMonday, principle: null, lessons: [], quiz: [], canSelfComplete: founder, selfCompleted: false });
+    return;
+  }
+  const [nextReview] = await db
+    .select({ id: leanLessonReviewsTable.id })
+    .from(leanLessonReviewsTable)
+    .where(and(eq(leanLessonReviewsTable.userId, userId), eq(leanLessonReviewsTable.weekStart, nextMonday)));
+  const lessons = await db
+    .select({
+      id: leanExamplesTable.id,
+      title: leanExamplesTable.title,
+      summary: leanExamplesTable.summary,
+      whatToShowMd: leanExamplesTable.whatToShowMd,
+      diagram: leanExamplesTable.diagram,
+      imageUrl: leanExamplesTable.imageUrl,
+      videoUrl: leanExamplesTable.videoUrl,
+    })
+    .from(leanExamplesTable)
+    .where(and(eq(leanExamplesTable.principleId, principle.id), eq(leanExamplesTable.isActive, true)))
+    .orderBy(asc(leanExamplesTable.orderPosition));
+  res.json({
+    weekStart: nextMonday,
+    principle: { id: principle.id, title: principle.title, summary: principle.summary },
+    lessons,
+    quiz: parseQuiz(principle.quizJson ?? null),
+    canSelfComplete: founder,
+    selfCompleted: !!nextReview,
+  });
+});
+
+// POST /api/lean-reviews/preview/complete — the founder's review-ahead
+// completion: reviewing next week's module counts as their review for
+// that week (same rules as everyone, a week early), ticks their matrix
+// cell and closes the review-ahead to-do. Founder only.
+router.post("/preview/complete", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  if (!(await isFounder(userId))) { res.status(403).json({ error: "Founder only" }); return; }
+  if (!(await reviewsEnabled())) { res.status(409).json({ error: "Weekly reviews are switched off" }); return; }
+  const nextMonday = nextMondayFrom(mondayOf(londonDateString()));
+  const { principle } = (await getWeekFocusPrinciple(nextMonday)) as { principle: LeanPrincipleRow | null };
+  if (!principle) { res.status(409).json({ error: "No lean focus is set for next week" }); return; }
+
+  await db.insert(leanLessonReviewsTable).values({
+    userId,
+    principleId: principle.id,
+    weekStart: nextMonday,
+  }).onConflictDoNothing();
+
+  const [item] = await db
+    .select({ id: trainingMatrixItemsTable.id, matrixId: trainingMatrixItemsTable.matrixId })
+    .from(trainingMatrixItemsTable)
+    .where(eq(trainingMatrixItemsTable.principleId, principle.id));
+  if (item) {
+    await db.insert(trainingMatrixEnrolmentsTable)
+      .values({ matrixId: item.matrixId, userId })
+      .onConflictDoNothing();
+    await db.execute(sql`
+      INSERT INTO training_records (item_id, user_id, trained, trained_at, signed_off_by_user_id, signed_off_by_name)
+      VALUES (${item.id}, ${userId}, TRUE, ${londonDateString()}, NULL, 'In-app lesson review')
+      ON CONFLICT (item_id, user_id)
+      DO UPDATE SET trained = TRUE, trained_at = EXCLUDED.trained_at,
+                    signed_off_by_name = 'In-app lesson review', updated_at = NOW()
+    `);
+  }
+
+  await db.execute(sql`
+    UPDATE todo_tasks SET status = 'done', completed_at = NOW(), updated_at = NOW()
+    WHERE assignee_id = ${userId} AND lean_week_start = ${nextMonday} AND status <> 'done'
+  `);
+
+  res.json({ passed: true });
 });
 
 const settingsSchema = z.object({ enabled: z.boolean() });
