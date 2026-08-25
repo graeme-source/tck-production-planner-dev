@@ -38,6 +38,7 @@ import {
 import { eq, and, inArray, asc, desc, sql } from "drizzle-orm";
 import * as z from "zod";
 import { londonDateString } from "../lib/london-time";
+import { earliestProductionDay } from "../lib/production-cutoff";
 import { datesWithPosition } from "../services/planday";
 
 const router: IRouter = Router();
@@ -327,7 +328,8 @@ async function resolveCapacity(from: string, to: string): Promise<{
 }
 
 // ── Schedule suggestion ────────────────────────────────────────────────────
-// For each production day from today to the day before collection: how many
+// For each production day from the earliest allowed day (today before the
+// 07:00 cutoff, else tomorrow) to the day before collection: how many
 // bags of each recipe to make, given existing planned batches, the daily
 // ceiling, and per-recipe limits. Even spread with clamping — remaining work
 // rolls forward to later days; whatever can't fit anywhere is reported as an
@@ -338,12 +340,14 @@ router.get("/:id/schedule-suggestion", async (req: Request, res: Response) => {
   if (!order) { res.status(404).json({ error: "Case order not found" }); return; }
 
   const progress = await computeProgress(id);
-  const today = londonDateString();
 
-  // Production days: today .. target-1. Collection day itself is excluded —
-  // the bags must already be frozen when the driver arrives.
+  // Production days: earliest allowed day .. target-1. Collection day itself is
+  // excluded — the bags must already be frozen when the driver arrives. Today
+  // only counts before the 07:00 London cutoff (Graeme, 2026-08-25): after
+  // that the day's plan is already running, so the spread starts tomorrow.
+  const startDay = earliestProductionDay();
   const days: string[] = [];
-  for (let d = new Date(`${today}T12:00:00Z`); ; d.setUTCDate(d.getUTCDate() + 1)) {
+  for (let d = new Date(`${startDay}T12:00:00Z`); ; d.setUTCDate(d.getUTCDate() + 1)) {
     const ds = d.toISOString().slice(0, 10);
     if (ds >= order.targetCollectionDate) break;
     days.push(ds);
