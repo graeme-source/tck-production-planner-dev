@@ -36,6 +36,7 @@ import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { ImprovementAttachments } from "@/components/improvement-attachments";
+import { LessonDiagram, DIAGRAM_OPTIONS } from "@/components/lesson-diagrams";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -1602,122 +1603,6 @@ function YouTubeEmbed({ url }: { url: string }) {
   );
 }
 
-// ── Lesson diagrams ─────────────────────────────────────────────────
-// Code-drawn visuals for the Lean curriculum, keyed by
-// lean_examples.diagram. Self-contained SVG/markup — crisp on the iPad,
-// no external assets, works offline. Add a new `case` + a matching
-// diagram key in the seed (seed-lean-lessons.ts) to extend the bank.
-function LessonDiagram({ id }: { id: string }) {
-  switch (id) {
-    case "compound-growth": return <CompoundGrowthDiagram />;
-    case "eight-wastes":    return <EightWastesDiagram />;
-    case "3s-cycle":        return <ThreeSCycleDiagram />;
-    default:                return null;
-  }
-}
-
-// The hero: 1% better every day compounds to ~37.8× in a year; 1% worse
-// decays to ~0.03×. Plotted on a linear axis so the late "explosion" of
-// compounding reads instantly.
-function CompoundGrowthDiagram() {
-  const x0 = 56, x1 = 466, y0 = 30, y1 = 232, maxV = 38, days = 365;
-  const sx = (d: number) => x0 + (d / days) * (x1 - x0);
-  const sy = (v: number) => y1 - (Math.min(v, maxV) / maxV) * (y1 - y0);
-  const ds: number[] = [];
-  for (let d = 0; d <= days; d += 5) ds.push(d);
-  if (ds[ds.length - 1] !== days) ds.push(days);
-  const up = ds.map(d => `${sx(d).toFixed(1)},${sy(Math.pow(1.01, d)).toFixed(1)}`).join(" ");
-  const down = ds.map(d => `${sx(d).toFixed(1)},${sy(Math.pow(0.99, d)).toFixed(1)}`).join(" ");
-  const flatY = sy(1);
-  const upEndY = sy(Math.pow(1.01, days));
-  const downEndY = sy(Math.pow(0.99, days));
-  return (
-    <figure className="glass-panel rounded-2xl p-5">
-      <svg viewBox="0 0 500 268" className="w-full" role="img"
-        aria-label="Compound growth: improving 1% a day reaches about 37 times in a year, while declining 1% a day falls to almost nothing.">
-        <line x1={x0} y1={y1} x2={x1} y2={y1} stroke="#94a3b8" strokeWidth="1" />
-        <line x1={x0} y1={y0} x2={x0} y2={y1} stroke="#94a3b8" strokeWidth="1" />
-        <line x1={x0} y1={flatY} x2={x1} y2={flatY} stroke="#94a3b8" strokeWidth="1" strokeDasharray="4 4" />
-        <text x={x1} y={flatY - 6} textAnchor="end" fontSize="12" fill="#94a3b8">no change · 1×</text>
-        <polyline points={down} fill="none" stroke="#ef4444" strokeWidth="2.5" />
-        <polyline points={up} fill="none" stroke="#10b981" strokeWidth="3" />
-        <circle cx={sx(days)} cy={upEndY} r="4.5" fill="#10b981" />
-        <text x={sx(days) - 8} y={upEndY + 5} textAnchor="end" fontSize="16" fontWeight="700" fill="#10b981">37.8×</text>
-        <circle cx={sx(days)} cy={downEndY} r="4.5" fill="#ef4444" />
-        <text x={sx(days)} y={downEndY + 19} textAnchor="end" fontSize="13" fontWeight="700" fill="#ef4444">0.03×</text>
-        <text x={x0} y={y1 + 18} fontSize="12" fill="#94a3b8">Day 0</text>
-        <text x={x1} y={y1 + 18} textAnchor="end" fontSize="12" fill="#94a3b8">1 year</text>
-        <text x={x0 + 10} y={y0 + 12} fontSize="13" fontWeight="600" fill="#10b981">▲ 1% better / day</text>
-        <text x={x0 + 10} y={y0 + 30} fontSize="13" fontWeight="600" fill="#ef4444">▼ 1% worse / day</text>
-      </svg>
-      <figcaption className="text-center text-sm text-muted-foreground mt-2">
-        1.01³⁶⁵ ≈ 37.8 &nbsp;·&nbsp; 0.99³⁶⁵ ≈ 0.03
-      </figcaption>
-    </figure>
-  );
-}
-
-// The 8 wastes as the DOWNTIME acronym — a scannable 2-column grid.
-function EightWastesDiagram() {
-  const items: Array<[string, string, string]> = [
-    ["D", "Defects", "making it wrong"],
-    ["O", "Overproduction", "more than ordered"],
-    ["W", "Waiting", "staff or product idle"],
-    ["N", "Non-utilised talent", "ideas not used"],
-    ["T", "Transportation", "moving product"],
-    ["I", "Inventory", "too much sitting"],
-    ["M", "Motion", "unnecessary steps"],
-    ["E", "Excess processing", "more than needed"],
-  ];
-  return (
-    <div className="glass-panel rounded-2xl p-5">
-      <div className="grid grid-cols-2 gap-x-6 gap-y-3">
-        {items.map(([l, w, d]) => (
-          <div key={l} className="flex items-center gap-3">
-            <span className="flex items-center justify-center w-10 h-10 rounded-xl bg-purple-500/15 text-purple-600 dark:text-purple-300 font-display font-bold text-2xl shrink-0">{l}</span>
-            <div className="min-w-0">
-              <div className="font-semibold leading-tight truncate">{w}</div>
-              <div className="text-xs text-muted-foreground truncate">{d}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// Sweep → Sort → Standardise as a repeating cycle.
-function ThreeSCycleDiagram() {
-  const nodes = [
-    { x: 150, y: 56, t: "Sweep", s: "daily reset" },
-    { x: 248, y: 196, t: "Standardise", s: "the best way" },
-    { x: 52, y: 196, t: "Sort", s: "a home for all" },
-  ];
-  return (
-    <div className="glass-panel rounded-2xl p-5">
-      <svg viewBox="0 0 300 256" className="w-full max-w-md mx-auto" role="img"
-        aria-label="The 3S cycle: Sweep, then Sort, then Standardise, repeating.">
-        <defs>
-          <marker id="lean3sArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-            <path d="M0,0 L10,5 L0,10 z" fill="#a855f7" />
-          </marker>
-        </defs>
-        {/* cycle arrows (Sweep → Sort → Standardise → Sweep) */}
-        <path d="M120,78 A 110 110 0 0 0 72,168" fill="none" stroke="#a855f7" strokeWidth="2.5" markerEnd="url(#lean3sArrow)" />
-        <path d="M92,210 A 110 110 0 0 0 208,210" fill="none" stroke="#a855f7" strokeWidth="2.5" markerEnd="url(#lean3sArrow)" />
-        <path d="M228,168 A 110 110 0 0 0 180,78" fill="none" stroke="#a855f7" strokeWidth="2.5" markerEnd="url(#lean3sArrow)" />
-        {nodes.map(n => (
-          <g key={n.t}>
-            <circle cx={n.x} cy={n.y} r="40" fill="#a855f7" fillOpacity="0.12" stroke="#a855f7" strokeWidth="2" />
-            <text x={n.x} y={n.y - 2} textAnchor="middle" fontSize="15" fontWeight="700" fill="#7c3aed">{n.t}</text>
-            <text x={n.x} y={n.y + 15} textAnchor="middle" fontSize="10" fill="#94a3b8">{n.s}</text>
-          </g>
-        ))}
-      </svg>
-    </div>
-  );
-}
-
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="text-5xl font-display font-bold mb-4 leading-tight">{children}</h2>;
 }
@@ -2904,7 +2789,7 @@ function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSli
 
   // Every active example across all weeks — powers one-tap Shuffle and
   // the full library picker.
-  const { data: allExamples = [] } = useQuery<Array<{ id: number; title: string; principleTitle: string; weekPosition: number }>>({
+  const { data: allExamples = [] } = useQuery<Array<{ id: number; title: string; principleId: number; principleTitle: string; weekPosition: number }>>({
     queryKey: ["lesson-all-examples"],
     queryFn: async () => {
       const res = await fetch(`${BASE}/api/morning-meetings/examples`, { credentials: "include" });
@@ -2924,8 +2809,15 @@ function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSli
     return Array.from(groups.entries());
   }, [allExamples]);
 
+  // Shuffle stays INSIDE the week's principle — swapping the day's angle
+  // must never change the weekly topic (the library picker below is the
+  // deliberate way to leave the theme). Falls back to the full pool only
+  // when the current principle has nothing else to offer.
   const shuffle = () => {
-    const pool = allExamples.filter(ex => ex.id !== data.lesson?.id);
+    const samePrinciple = allExamples.filter(
+      ex => ex.id !== data.lesson?.id && ex.principleId === data.lesson?.principleId,
+    );
+    const pool = samePrinciple.length > 0 ? samePrinciple : allExamples.filter(ex => ex.id !== data.lesson?.id);
     if (pool.length === 0) return;
     const pick = pool[Math.floor(Math.random() * pool.length)];
     setOverride.mutate(pick.id);
@@ -2977,33 +2869,41 @@ function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSli
       </div>
     );
   }
+  // The WEEK'S principle is the headline — today's example is an angle on
+  // it, not a new topic. Ad-hoc lessons live under the "On-demand lessons"
+  // principle (same sentinel the server's rotation filters by), which is
+  // meaningless as a headline, so they fall back to the example title.
+  const principleTitle = data.lesson.principleTitle;
+  const hasWeeklyTheme = !!principleTitle && principleTitle !== "On-demand lessons";
+  const media = data.lesson.diagram || data.lesson.videoUrl || data.lesson.imageUrl;
   return (
     <div>
       <p className="text-xs font-semibold uppercase tracking-wide text-purple-500 mb-2">
-        Lean Lesson — {data.lesson.principleTitle ?? `Week ${data.lesson.weekNumber}`}
+        {hasWeeklyTheme ? "This week's lean focus" : "Lean lesson"}
       </p>
-      <h2 className="text-3xl font-display font-bold mb-2">{data.lesson.title}</h2>
+      <h2 className="text-4xl font-display font-bold mb-2">
+        {hasWeeklyTheme ? principleTitle : data.lesson.title}
+      </h2>
+      {hasWeeklyTheme && (
+        <p className="text-xl font-semibold text-purple-600 dark:text-purple-300 mb-1">{data.lesson.title}</p>
+      )}
       <p className="text-lg text-muted-foreground mb-6">{data.lesson.summary}</p>
-      {data.lesson.diagram ? (
+      {media ? (
         <div className="grid gap-4 md:grid-cols-2 items-start">
           <div className="glass-panel rounded-2xl p-6">
             <MarkdownBlock content={data.lesson.whatToShowMd} />
           </div>
-          <LessonDiagram id={data.lesson.diagram} />
+          <div className="space-y-4">
+            {data.lesson.videoUrl && <YouTubeEmbed url={data.lesson.videoUrl} />}
+            {data.lesson.diagram && <LessonDiagram id={data.lesson.diagram} />}
+            {data.lesson.imageUrl && (
+              <img src={data.lesson.imageUrl} alt="" className="w-full max-h-80 object-contain rounded-2xl bg-black/5" />
+            )}
+          </div>
         </div>
       ) : (
         <div className="glass-panel rounded-2xl p-6">
           <MarkdownBlock content={data.lesson.whatToShowMd} />
-        </div>
-      )}
-      {data.lesson.imageUrl && (
-        <div className="mt-4">
-          <img src={data.lesson.imageUrl} alt="" className="w-full max-h-80 object-contain rounded-2xl bg-black/5" />
-        </div>
-      )}
-      {data.lesson.videoUrl && (
-        <div className="mt-4">
-          <YouTubeEmbed url={data.lesson.videoUrl} />
         </div>
       )}
       {meetingId && (
@@ -3034,7 +2934,7 @@ function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSli
               </button>
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
-              Saved to your library and shown now. Joins the daily rotation from then on.
+              Saved to your library and shown now — find it again any time in the picker below. It doesn't change the weekly plan.
             </p>
           </div>
 
@@ -3712,6 +3612,8 @@ interface ExampleRow {
   whatToShowMd: string;
   deliveryNotesMd: string;
   videoUrl: string | null;
+  diagram: string | null;
+  imageUrl: string | null;
   isActive: boolean;
 }
 
@@ -4056,18 +3958,24 @@ function ExampleRowEdit({ example, principleId }: { example: ExampleRow; princip
   const [whatToShow, setWhatToShow] = useState(example.whatToShowMd);
   const [deliveryNotes, setDeliveryNotes] = useState(example.deliveryNotesMd);
   const [videoUrl, setVideoUrl] = useState(example.videoUrl ?? "");
+  const [diagram, setDiagram] = useState(example.diagram ?? "");
+  const [imageUrl, setImageUrl] = useState(example.imageUrl ?? "");
   useEffect(() => {
     setTitle(example.title); setSummary(example.summary);
     setExplanation(example.explanationMd); setWhatToShow(example.whatToShowMd);
     setDeliveryNotes(example.deliveryNotesMd); setVideoUrl(example.videoUrl ?? "");
-  }, [example.id, example.title, example.summary, example.explanationMd, example.whatToShowMd, example.deliveryNotesMd, example.videoUrl]);
+    setDiagram(example.diagram ?? ""); setImageUrl(example.imageUrl ?? "");
+  }, [example.id, example.title, example.summary, example.explanationMd, example.whatToShowMd, example.deliveryNotesMd, example.videoUrl, example.diagram, example.imageUrl]);
 
   const save = useMutation({
     mutationFn: async () => {
       await fetch(`${BASE}/api/morning-meetings/examples/${example.id}`, {
         method: "PUT", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, summary, explanationMd: explanation, whatToShowMd: whatToShow, deliveryNotesMd: deliveryNotes, videoUrl: videoUrl.trim() || null }),
+        body: JSON.stringify({
+          title, summary, explanationMd: explanation, whatToShowMd: whatToShow, deliveryNotesMd: deliveryNotes,
+          videoUrl: videoUrl.trim() || null, diagram: diagram || null, imageUrl: imageUrl.trim() || null,
+        }),
       });
     },
     onSuccess: () => {
@@ -4103,6 +4011,25 @@ function ExampleRowEdit({ example, principleId }: { example: ExampleRow; princip
             />
             {videoUrl && <div className="mt-2"><YouTubeEmbed url={videoUrl} /></div>}
           </div>
+          <div>
+            <select
+              value={diagram}
+              onChange={e => setDiagram(e.target.value)}
+              className="w-full bg-background border border-border rounded-lg p-2 text-sm"
+            >
+              <option value="">No diagram</option>
+              {DIAGRAM_OPTIONS.map(d => (
+                <option key={d.key} value={d.key}>{d.label}</option>
+              ))}
+            </select>
+            {diagram && <div className="mt-2"><LessonDiagram id={diagram} /></div>}
+          </div>
+          <input
+            value={imageUrl}
+            onChange={e => setImageUrl(e.target.value)}
+            placeholder="Image URL (optional) — shown large on the slide"
+            className="w-full bg-background border border-border rounded-lg p-2 text-sm"
+          />
           <details className="text-xs">
             <summary className="cursor-pointer text-muted-foreground">Host briefing (Markdown — optional)</summary>
             <div className="mt-2 space-y-2">
