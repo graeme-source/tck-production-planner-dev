@@ -398,7 +398,7 @@ export default function Reports() {
         description={isManagerOrAdmin ? "Production KPIs, break and lunch tracking analytics." : "View and respond to reported issues."}
       />
 
-      <div className="flex gap-6 items-start">
+      <div className="flex flex-col md:flex-row gap-6 md:items-start">
         {/* Left nav — only show when more than one tab */}
         {visibleTabs.length > 1 && (
           <nav className="w-52 flex-shrink-0 sticky top-6 hidden md:block">
