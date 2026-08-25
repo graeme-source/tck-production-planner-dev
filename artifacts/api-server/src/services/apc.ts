@@ -579,7 +579,12 @@ export async function createShipment(req: ApcShipmentRequest): Promise<ApcShipme
   // is why booking 17 consignments took over five minutes (2026-08-21).
   const labels = req.skipLabel ? [] : await fetchLabel(waybill, apiBase);
 
-  const trackingUrl = `https://apc.hypaship.com/tracking?waybill=${waybill}`;
+  // The CUSTOMER-facing link — apcTrackingUrl, always. The Hypaship portal
+  // URL (apc.hypaship.com/tracking?...) is a logged-in back-office page that
+  // 404s for the public; booking with it here sent 200+ customers a dead
+  // link between 2026-08-21 and 2026-08-25, because this value is stored on
+  // apc_consignments and then wins over the fulfil-time URL.
+  const trackingUrl = apcTrackingUrl(waybill, req.recipient.postcode);
 
   return {
     consignmentNumber: waybill,
