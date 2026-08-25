@@ -165,7 +165,7 @@ export function EightPackOrdersBanner({ userRole }: { userRole?: string }) {
         >
           <PackageCheck className="w-4 h-4 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
           <span className="text-sm font-semibold text-indigo-700 dark:text-indigo-300">
-            {count} order{count !== 1 ? "s" : ""} to process <span className="font-normal text-indigo-600/70 dark:text-indigo-400/70">({banner})</span>
+            {count} order{count !== 1 ? "s" : ""} to process <span className="font-normal text-indigo-600/70 dark:text-indigo-400/70 whitespace-nowrap">({banner})</span>
           </span>
           <span className="ml-auto flex items-center gap-1 text-xs font-medium text-indigo-600/70 dark:text-indigo-400/70">
             Review &amp; process <ArrowRight className="w-3.5 h-3.5" />

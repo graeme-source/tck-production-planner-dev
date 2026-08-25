@@ -781,7 +781,7 @@ function FloatingActionsTab({ assistantOpen, onOpenAssistant, onOpenTodos }: { a
           onClick={toggle}
           aria-label={`Show quick actions — My to-dos, Quick Idea and Ask ${ASSISTANT_NAME}`}
           title={`My to-dos · Quick Idea · Ask ${ASSISTANT_NAME}`}
-          className="h-16 w-8 rounded-l-xl border border-r-0 border-border bg-card shadow-lg flex flex-col items-center justify-center gap-1 hover:w-9 transition-all relative"
+          className="h-16 w-8 rounded-l-xl border border-r-0 border-border bg-card/80 backdrop-blur-sm shadow-lg flex flex-col items-center justify-center gap-1 hover:w-9 transition-all relative"
         >
           <ChevronLeft className="w-4 h-4 text-muted-foreground" />
           <span className="w-2.5 h-2.5 rounded-full bg-primary" />

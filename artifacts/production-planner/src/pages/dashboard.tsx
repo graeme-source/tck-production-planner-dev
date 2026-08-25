@@ -876,7 +876,7 @@ export default function Dashboard() {
         </Link>
 
         <div className="lg:col-span-2 glass-panel p-6 rounded-2xl">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <Link href="/dispatches" className="group inline-flex items-center gap-1.5 hover:text-primary transition-colors">
@@ -919,17 +919,19 @@ export default function Dashboard() {
                 )}
               </div>
               {/* Legend as big solid blocks in each series' colour — the tiny
-                  dot legend was unreadable at a glance (Graeme, 2026-08-20). */}
-              <div className="flex items-center gap-2 mt-2">
-                <span className="px-4 py-1.5 rounded-lg text-base font-bold text-white" style={{ background: "hsl(var(--primary))" }}>
-                  Dispatching <span className="font-normal text-sm opacity-80">(packs)</span>
+                  dot legend was unreadable at a glance (Graeme, 2026-08-20).
+                  Smaller and allowed to wrap on phones, full size on the
+                  kitchen screens. */}
+              <div className="flex items-center flex-wrap gap-2 mt-2">
+                <span className="px-3 py-1 sm:px-4 sm:py-1.5 rounded-lg text-sm sm:text-base font-bold text-white whitespace-nowrap" style={{ background: "hsl(var(--primary))" }}>
+                  Dispatching <span className="font-normal text-xs sm:text-sm opacity-80">(packs)</span>
                 </span>
-                <span className="px-4 py-1.5 rounded-lg text-base font-bold text-white" style={{ background: "hsl(217 91% 60%)" }}>
-                  Making <span className="font-normal text-sm opacity-80">(calzone packs)</span>
+                <span className="px-3 py-1 sm:px-4 sm:py-1.5 rounded-lg text-sm sm:text-base font-bold text-white whitespace-nowrap" style={{ background: "hsl(217 91% 60%)" }}>
+                  Making <span className="font-normal text-xs sm:text-sm opacity-80">(calzone packs)</span>
                 </span>
                 {(dispatchWeekTotals?.forecastPacks ?? 0) > 0 && (
-                  <span className="px-4 py-1.5 rounded-lg text-base font-bold text-white" style={{ background: "hsl(38 92% 50%)" }}>
-                    Could make <span className="font-normal text-sm opacity-80">(forecast)</span>
+                  <span className="px-3 py-1 sm:px-4 sm:py-1.5 rounded-lg text-sm sm:text-base font-bold text-white whitespace-nowrap" style={{ background: "hsl(38 92% 50%)" }}>
+                    Could make <span className="font-normal text-xs sm:text-sm opacity-80">(forecast)</span>
                   </span>
                 )}
               </div>
@@ -944,23 +946,25 @@ export default function Dashboard() {
             </button>
           </div>
 
-          <div className="h-[300px] w-full flex items-stretch">
+          {/* Phones stack the week-total figures BELOW the chart — beside it
+              they stole nearly half the width and the bars printed over each
+              other (Graeme, 2026-08-25). */}
+          <div className="w-full flex flex-col sm:flex-row sm:items-stretch">
             {weeklyLoading ? (
-              <div className="flex items-center justify-center h-full w-full text-muted-foreground">
+              <div className="flex items-center justify-center h-[300px] w-full text-muted-foreground">
                 <RefreshCw className="w-6 h-6 animate-spin mr-2" />
                 <span className="text-sm">Fetching Shopify orders…</span>
               </div>
             ) : weeklyError ? (
-              <div className="flex items-center justify-center h-full w-full text-destructive text-sm">
+              <div className="flex items-center justify-center h-[300px] w-full text-destructive text-sm">
                 Could not load order data. Check Shopify connection.
               </div>
             ) : (
               <>
-              <div className="flex-1 min-w-0">
+              <div className="flex-1 min-w-0 h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
                   data={dispatchChartData}
-                  barSize={34}
                   barGap={3}
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
@@ -987,7 +991,9 @@ export default function Dashboard() {
                       Each bar carries its own number + what it is: inside
                       and rotated when there's room, perched on top when
                       the bar is too short. */}
-                  <Bar dataKey="packCount" name="Dispatching (packs)" radius={[6, 6, 0, 0]}>
+                  {/* maxBarSize instead of a fixed barSize: on phones the
+                      bars shrink to fit instead of overlapping. */}
+                  <Bar dataKey="packCount" name="Dispatching (packs)" maxBarSize={34} radius={[6, 6, 0, 0]}>
                     {dispatchChartData?.map((entry, i) => (
                       <Cell
                         key={entry.date}
@@ -1002,7 +1008,7 @@ export default function Dashboard() {
                       has a plan or it doesn't, so only one of the pair is
                       ever non-zero. Three separate series squeezed every
                       bar too thin for its number (Graeme, 2026-08-23). */}
-                  <Bar dataKey="madePacks" stackId="madeOrForecast" name="Making (calzone packs)" radius={[6, 6, 0, 0]}>
+                  <Bar dataKey="madePacks" stackId="madeOrForecast" name="Making (calzone packs)" maxBarSize={34} radius={[6, 6, 0, 0]}>
                     {dispatchChartData?.map(entry => (
                       <Cell
                         key={entry.date}
@@ -1013,7 +1019,7 @@ export default function Dashboard() {
                   </Bar>
                   {/* Forecast: what we COULD make on plan-less weekdays at
                       the Create Plan dialog's own suggested capacity. */}
-                  <Bar dataKey="forecastPacks" stackId="madeOrForecast" name="Could make (forecast)" radius={[6, 6, 0, 0]}>
+                  <Bar dataKey="forecastPacks" stackId="madeOrForecast" name="Could make (forecast)" maxBarSize={34} radius={[6, 6, 0, 0]}>
                     {dispatchChartData?.map(entry => (
                       <Cell
                         key={entry.date}
@@ -1028,8 +1034,8 @@ export default function Dashboard() {
               {/* Week total on its OWN scale, clearly fenced off from the
                   daily bars — as a bar it dwarfed them into unreadability. */}
               {dispatchWeekTotals && (
-                <div className="w-[150px] shrink-0 border-l-2 border-border pl-4 ml-3 flex flex-col justify-center gap-4">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Week total</p>
+                <div className="shrink-0 w-full sm:w-[150px] flex flex-wrap sm:flex-col sm:justify-center gap-x-8 gap-y-2 sm:gap-4 border-t-2 sm:border-t-0 sm:border-l-2 border-border pt-3 mt-3 sm:pt-0 sm:mt-0 sm:pl-4 sm:ml-3">
+                  <p className="w-full sm:w-auto text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Week total</p>
                   <div>
                     <p className="text-3xl font-display font-bold tabular-nums text-primary">
                       {dispatchWeekTotals.packCount.toLocaleString()}
@@ -1225,15 +1231,20 @@ function renderBarLabel(props: any) {
   const { x, y, width, height, value } = props;
   if (!value) return null;
   const cx = x + width / 2;
+  // The number shrinks with its bar so neighbouring labels can't print over
+  // each other on a phone; below ~14px there's no honest room for a number
+  // at all — the tooltip still carries it.
+  if ((width ?? 0) < 14) return null;
+  const fontSize = width >= 26 ? 15 : width >= 18 ? 11 : 9;
   if ((height ?? 0) < 26) {
     return (
-      <text x={cx} y={y - 5} textAnchor="middle" fontSize={14} fontWeight={800} fill="hsl(var(--foreground))">
+      <text x={cx} y={y - 5} textAnchor="middle" fontSize={Math.min(fontSize, 14)} fontWeight={800} fill="hsl(var(--foreground))">
         {value}
       </text>
     );
   }
   return (
-    <text x={cx} y={y + 19} textAnchor="middle" fontSize={15} fontWeight={800} fill="#fff">
+    <text x={cx} y={y + 19} textAnchor="middle" fontSize={fontSize} fontWeight={800} fill="#fff">
       {value}
     </text>
   );
