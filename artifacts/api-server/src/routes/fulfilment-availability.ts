@@ -34,23 +34,23 @@ router.get("/fridge-availability", async (_req, res) => {
       ORDER BY se.recipe_id, se.checked_at DESC
     `);
 
+    // ALL mappings, with the scope flags — the split happens below in JS so
+    // an out-of-scope recipe can be REPORTED rather than silently vanishing.
+    // Filtering it out in SQL made a mapped product indistinguishable from an
+    // unmapped one, and a Carnizone order sailed through an empty fridge
+    // (Graeme, 2026-08-28).
     const variantRes = await db.execute<{
       recipe_id: number;
       recipe_name: string;
       shopify_variant_id: string | null;
       wonky_variant_id: string | null;
       eight_pack_variant_id: string | null;
+      in_scope: boolean;
     }>(sql`
-      SELECT m.recipe_id, r.name AS recipe_name, m.shopify_variant_id, m.wonky_variant_id, m.eight_pack_variant_id
+      SELECT m.recipe_id, r.name AS recipe_name, m.shopify_variant_id, m.wonky_variant_id, m.eight_pack_variant_id,
+             (r.is_core_menu = TRUE OR r.is_fridge_product = TRUE) AS in_scope
       FROM recipe_shopify_mappings m
       JOIN recipes r ON r.id = m.recipe_id
-      -- Gate ONLY on products whose stock the production fridge actually
-      -- tracks: core-menu recipes and fridge-held products (core + test
-      -- calzones). Freezer lines (fried chicken, cinnamon buns) and bottled
-      -- items (mayo, hot sauce) have no live fridge count, so gating on
-      -- them held orders against fictional zeroes (Graeme, 2026-08-26).
-      -- Unmapped lines never gate, so these now simply pass through.
-      WHERE r.is_core_menu = TRUE OR r.is_fridge_product = TRUE
     `);
 
     const specialRes = await db.execute<{ id: number }>(sql`
@@ -83,12 +83,21 @@ router.get("/fridge-availability", async (_req, res) => {
     // never against the 2-pack pool (charging bags 4 two-packs each starved
     // whole waves, 2026-08-25).
     const variants: Record<string, { recipeId: number; packsPerUnit: number; pool: "packs" | "bags" }> = {};
+    // Mapped, but the recipe isn't flagged core-menu or fridge-product, so
+    // the fridge has no live count for it. Reported so the bench sees WHY a
+    // product isn't being checked (and which flag to tick to fix it).
+    const outOfScopeVariants: Record<string, string> = {};
     // Names for EVERY mapped recipe — the deficit card must name a recipe
     // even when it has no fridge stock row (those are exactly the short
     // ones; "Recipe 29" means nothing to the wrapping team).
     const recipeNames: Record<number, string> = {};
     for (const row of variantRes.rows) {
       recipeNames[row.recipe_id] = row.recipe_name;
+      const ids = [row.shopify_variant_id, row.wonky_variant_id, row.eight_pack_variant_id];
+      if (!row.in_scope) {
+        for (const id of ids) if (id) outOfScopeVariants[id] = row.recipe_name;
+        continue;
+      }
       if (row.shopify_variant_id) variants[row.shopify_variant_id] = { recipeId: row.recipe_id, packsPerUnit: 1, pool: "packs" };
       if (row.wonky_variant_id) variants[row.wonky_variant_id] = { recipeId: row.recipe_id, packsPerUnit: 1, pool: "packs" };
       if (row.eight_pack_variant_id) variants[row.eight_pack_variant_id] = { recipeId: row.recipe_id, packsPerUnit: 1, pool: "bags" };
@@ -101,6 +110,7 @@ router.get("/fridge-availability", async (_req, res) => {
         packs: Math.max(0, Math.floor(Number(r.packs) || 0)),
       })),
       variants,
+      outOfScopeVariants,
       recipeNames,
       bagStock: bagRes.rows.map(r => ({
         recipeId: r.recipe_id,

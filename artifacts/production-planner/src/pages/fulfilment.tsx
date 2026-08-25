@@ -544,6 +544,11 @@ interface FridgeAvailability {
    *  short ones) aren't in `stock`, but the deficit card must still name
    *  them. */
   recipeNames?: Record<number, string>;
+  /** variantId → recipe name for products that ARE mapped but whose recipe
+   *  isn't flagged core-menu / fridge-product, so the fridge holds no count
+   *  for them. Distinguishing these from truly unmapped lines is the
+   *  difference between "map the variant" and "tick Core menu". */
+  outOfScopeVariants?: Record<string, string>;
   /** 8-pack bags wrapped TODAY per recipe — the pool bag orders gate on. */
   bagStock?: Array<{ recipeId: number; bags: number }>;
   specialRecipeId: number | null;
@@ -1681,8 +1686,15 @@ export default function Fulfilment() {
           pool = "packs";
         }
         if (recipeId == null) {
-          // Unmappable line — never gates, but say so out loud.
-          uncheckedTitles.add(li.title);
+          // Can't be checked — never gates, but say so out loud, and say WHY:
+          // either the variant has no mapping at all, or it's mapped to a
+          // recipe the fridge doesn't count (not core-menu / fridge-product).
+          const outOfScopeName = li.variant_id != null
+            ? fridgeAvailability.outOfScopeVariants?.[String(li.variant_id)]
+            : undefined;
+          uncheckedTitles.add(outOfScopeName
+            ? `${li.title} — ${outOfScopeName} isn't flagged core menu / fridge product`
+            : `${li.title} — no recipe mapping`);
           uncheckedOrderIds.add(o.id);
           continue;
         }
@@ -4470,8 +4482,10 @@ export default function Fulfilment() {
                 <AlertTriangle className="w-4 h-4" /> The fridge gate can't check these products
               </p>
               <p className="text-xs text-amber-800/80 dark:text-amber-200/80 mt-0.5">
-                They have no Shopify variant → recipe mapping, so orders containing them are
-                never held back. Map them on the recipe to bring them under the gate.
+                Orders containing them are never held back. Each line says why: either the
+                variant has no recipe mapping, or its recipe isn't flagged <em>Core menu</em> /
+                <em> Fridge product</em>, which is what gives the fridge a live count. Fix that
+                on the recipe and it comes under the gate.
               </p>
               <div className="flex flex-wrap gap-1.5 mt-1.5">
                 {[...fridgeAllocation.uncheckedTitles].map(t => (
