@@ -1637,6 +1637,11 @@ export default function Fulfilment() {
       deficits: [] as Array<{ recipeName: string; packs: number }>,
       active: false,
       shortFor: new Map<number, string[]>(),
+      // Lines the gate CANNOT check — no recipe mapping for the variant. They
+      // never hold an order back, so without surfacing them the gate looks
+      // broken when it's actually blind (Graeme, 2026-08-28).
+      uncheckedTitles: new Set<string>(),
+      uncheckedOrderIds: new Set<number>(),
     };
     if (!fridgeGate || !fridgeAvailability) return { ...empty, pickable: labelledOrdered };
     // Two pools per recipe, keyed "packs:<id>" and "bags:<id>". 2-pack lines
@@ -1660,6 +1665,8 @@ export default function Fulfilment() {
       const name = names.get(Number(rid)) ?? `Recipe ${rid}`;
       return pool === "bags" ? `${name} (8-pack bags)` : name;
     };
+    const uncheckedTitles = new Set<string>();
+    const uncheckedOrderIds = new Set<number>();
     const needsFor = (o: ShopifyOrder) => {
       const needs = new Map<string, number>();
       for (const li of o.line_items ?? []) {
@@ -1673,7 +1680,12 @@ export default function Fulfilment() {
           packsPer = 1;
           pool = "packs";
         }
-        if (recipeId == null) continue; // unmappable line — never gates
+        if (recipeId == null) {
+          // Unmappable line — never gates, but say so out loud.
+          uncheckedTitles.add(li.title);
+          uncheckedOrderIds.add(o.id);
+          continue;
+        }
         const key = `${pool}:${recipeId}`;
         needs.set(key, (needs.get(key) ?? 0) + li.quantity * packsPer);
       }
@@ -1707,7 +1719,7 @@ export default function Fulfilment() {
       }))
       .filter(d => d.packs > 0)
       .sort((a, b) => b.packs - a.packs);
-    return { pickable, held, deficits, active: true, shortFor };
+    return { pickable, held, deficits, active: true, shortFor, uncheckedTitles, uncheckedOrderIds };
   })();
   // Held orders drop out of the pickable list entirely, so the picking
   // cycle, counts, and advance-to-next all respect the gate automatically.
@@ -1836,6 +1848,27 @@ export default function Fulfilment() {
     );
   }
 
+  // Labels printed today, per device, keyed by waybill. The pre-print
+  // bookkeeping used to live only in a ref, so closing an order and coming
+  // back to it later reprinted the label — two identical labels floating
+  // around the bench is worse than none (Graeme, 2026-08-28).
+  function printedLabelsKey() {
+    return `fulfilment_printed_labels_${format(new Date(), "yyyy-MM-dd")}`;
+  }
+  function printedWaybills(): Set<string> {
+    try { return new Set(JSON.parse(localStorage.getItem(printedLabelsKey()) ?? "[]") as string[]); }
+    catch { return new Set(); }
+  }
+  function wasLabelPrinted(waybill: string | null | undefined): boolean {
+    return !!waybill && printedWaybills().has(waybill);
+  }
+  function recordLabelPrinted(waybill: string | null | undefined) {
+    if (!waybill) return;
+    const set = printedWaybills();
+    set.add(waybill);
+    try { localStorage.setItem(printedLabelsKey(), JSON.stringify([...set])); } catch { /* private mode */ }
+  }
+
   function preQueueNextOrder(nextOrderId: number) {
     // APC off → no shipment to pre-create, no label to pre-print. Reconcile
     // mode books nothing either — it warms the lookup via
@@ -1844,11 +1877,17 @@ export default function Fulfilment() {
     if (preQueueRef.current.has(nextOrderId)) return;
     const promise = createShipment(nextOrderId, queryTag, queryTag)
       .then((result) => {
-        // Background print the next order's label so it's done before the operator advances
+        // Background print the next order's label so it's done before the
+        // operator advances — unless this consignment's label already came
+        // off the printer today (reopened order → duplicate label).
+        if (wasLabelPrinted(result.consignmentNumber)) {
+          prePrintRef.current.set(nextOrderId, "done");
+          return result;
+        }
         prePrintRef.current.set(nextOrderId, "printing");
         printLabel(
           labelUrl(result.consignmentNumber, 1),
-          () => prePrintRef.current.set(nextOrderId, "done"),
+          () => { prePrintRef.current.set(nextOrderId, "done"); recordLabelPrinted(result.consignmentNumber); },
           () => prePrintRef.current.set(nextOrderId, "failed"),
           "label-preprint-frame",
         );
@@ -2342,10 +2381,21 @@ export default function Fulfilment() {
    *  moment it prints — so a consignment amended mid-wave prints as amended. */
   function printAllLabels(waybill: string, pieces: number) {
     const count = Math.max(1, pieces);
+    // Already off the printer today? Don't send it again — tell the packer
+    // to find it in the printed stack instead of making a duplicate.
+    if (wasLabelPrinted(waybill)) {
+      setPrintStatus("done");
+      toast({
+        title: "Label already printed",
+        description: `${waybill} came off the printer earlier today — take it from the printed stack rather than printing another.`,
+      });
+      return;
+    }
     startPrinting();
 
     function printNext(index: number) {
       if (index > count) {
+        recordLabelPrinted(waybill);
         printSucceeded();
         return;
       }
@@ -2844,6 +2894,15 @@ export default function Fulfilment() {
         )}
         {showTestModeBanner && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
         {reconcileMode && <ReconcileModeBanner />}
+        {fridgeGate && fridgeAllocation.uncheckedOrderIds.has(activeOrder.id) && (
+          <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/30 px-4 py-2.5 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <span className="text-sm text-amber-900 dark:text-amber-200">
+              This order has a product the fridge gate couldn't stock-check (no recipe mapping).
+              Confirm you can actually pack it before scanning.
+            </span>
+          </div>
+        )}
         {/* Mid-cycle filter sheet — same state as the list view's filters, so
             a change here shapes the rest of the wave. The order being picked
             is never yanked away; filters bite on the next advance. */}
@@ -4299,6 +4358,14 @@ export default function Fulfilment() {
                         <CheckCircle2 className="w-2.5 h-2.5" /> Label booked
                       </span>
                     )}
+                    {fridgeGate && fridgeAllocation.uncheckedOrderIds.has(order.id) && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-medium flex items-center gap-1"
+                        title="This order contains a product with no recipe mapping — the fridge gate could not check its stock"
+                      >
+                        <AlertTriangle className="w-2.5 h-2.5" /> Stock not checked
+                      </span>
+                    )}
                     {/* Booking failures used to be visible only inside the
                         batch-booking dialog's report — once closed, an order
                         with no (or a failed/cleared) label looked identical
@@ -4393,6 +4460,26 @@ export default function Fulfilment() {
               </div>
             );
           })}
+
+          {/* The gate is only as good as the recipe mappings: a variant with
+              no mapping can't be checked, so say which ones rather than
+              letting the gate look broken. */}
+          {fridgeAllocation.active && fridgeAllocation.uncheckedTitles.size > 0 && (
+            <div className="glass-panel px-4 py-3 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 mt-4">
+              <p className="text-sm font-semibold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4" /> The fridge gate can't check these products
+              </p>
+              <p className="text-xs text-amber-800/80 dark:text-amber-200/80 mt-0.5">
+                They have no Shopify variant → recipe mapping, so orders containing them are
+                never held back. Map them on the recipe to bring them under the gate.
+              </p>
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                {[...fridgeAllocation.uncheckedTitles].map(t => (
+                  <span key={t} className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200">{t}</span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* ── Awaiting wrapping: orders the fridge can't satisfy yet ────
               The deficit readout is the wrapping station's live to-do: wrap
