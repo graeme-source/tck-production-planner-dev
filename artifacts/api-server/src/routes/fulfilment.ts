@@ -11,6 +11,7 @@ import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
 import { declaredParcelWeightKg, isLargeBox } from "../lib/parcel-weight";
 import { APC_NO_SERVICE_TAG, isNoServiceFailure } from "../lib/apc-failure-tags";
 import { settledOrders } from "../lib/order-age";
+import { isDispatchTagged } from "../lib/dispatch-tag";
 import { sql } from "drizzle-orm";
 
 const router = Router();
@@ -491,9 +492,7 @@ router.get("/scan-queue", requireFulfilmentAccess, async (req: Request, res: Res
     const all = settledOrders(await getUnfulfilledOrdersByTag(tag));
 
     // Only orders explicitly tagged for dispatch enter the packing queue.
-    let queue = all.filter(o =>
-      o.tags.split(",").map(t => t.trim()).includes("dispatch")
-    );
+    let queue = all.filter(o => isDispatchTagged(o.tags));
 
     if (category && category !== "all") {
       const wanted = category.toLowerCase();
@@ -1593,7 +1592,7 @@ router.post("/tag-dispatch", requireFulfilmentAccess, async (req: Request, res: 
       res.status(404).json({ error: `Order ${orderName.trim()} not found` });
       return;
     }
-    const alreadyTagged = order.tags.split(",").map(t => t.trim()).includes("dispatch");
+    const alreadyTagged = isDispatchTagged(order.tags);
     if (!alreadyTagged) {
       await addTagToOrder(order.id, order.tags, "dispatch");
     }
@@ -1658,9 +1657,7 @@ router.post("/tag-dispatch-bulk", requireFulfilmentAccess, async (req: Request, 
   try {
     const orders = await getOrdersByTag(tag);
     const unfulfilled = orders.filter(o => o.fulfillment_status !== "fulfilled");
-    const untagged = unfulfilled.filter(o =>
-      !o.tags.split(",").map(t => t.trim()).includes("dispatch")
-    );
+    const untagged = unfulfilled.filter(o => !isDispatchTagged(o.tags));
 
     // Even when ids are supplied, only ever tag orders that are genuinely
     // untagged and unfulfilled *within this date tag* — a stale or hand-crafted
@@ -1741,16 +1738,32 @@ async function buildPreflight(tag: string, dispatchDate: Date) {
   const { normaliseAddress } = await import("../services/apc");
   // settledOrders: an order still inside AfterSell's 15-minute window can
   // gain items — a consignment booked now would carry the pre-upsell weight.
-  const orders = settledOrders(await getOrdersByTag(tag)).filter(o =>
-    o.fulfillment_status !== "fulfilled" &&
-    o.tags.split(",").map(t => t.trim().toLowerCase()).includes("dispatch"),
+  const unfulfilled = settledOrders(await getOrdersByTag(tag)).filter(o =>
+    o.fulfillment_status !== "fulfilled",
   );
+  const orders = unfulfilled.filter(o => isDispatchTagged(o.tags));
 
   const ready: PreflightOrder[] = [];
   const needsReview: PreflightOrder[] = [];
   const blocked: PreflightOrder[] = [];
   const alreadyBooked: PreflightOrder[] = [];
   const localDeliveries: PreflightOrder[] = [];
+  // Untagged orders are NOT bookable — tagging is step one and a label must
+  // never run ahead of it. They used to be filtered away silently, which
+  // read as "that's the whole day"; now they're reported so the operator
+  // can see what still needs approving (Graeme, 2026-08-29).
+  const notTagged: PreflightOrder[] = unfulfilled.filter(o => !isDispatchTagged(o.tags)).map(order => ({
+    orderId: order.id,
+    orderName: order.name,
+    customerName: order.shipping_address?.name
+      ?? `${order.customer?.first_name ?? ""} ${order.customer?.last_name ?? ""}`.trim(),
+    serviceCode: null,
+    boxCategory: "other",
+    weightKg: Math.round((order.total_weight ?? 0) / 100) / 10,
+    existingWaybill: null,
+    problems: ["Not tagged for dispatch — tag it first"],
+    reviews: [],
+  }));
 
   for (const order of orders) {
     const tags = order.tags.split(",").map(t => t.trim().toLowerCase());
@@ -1815,8 +1828,9 @@ async function buildPreflight(tag: string, dispatchDate: Date) {
       blocked: blocked.length,
       alreadyBooked: alreadyBooked.length,
       localDeliveries: localDeliveries.length,
+      notTagged: notTagged.length,
     },
-    ready, needsReview, blocked, alreadyBooked, localDeliveries,
+    ready, needsReview, blocked, alreadyBooked, localDeliveries, notTagged,
   };
 }
 
@@ -1890,6 +1904,18 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
 
     for (const order of orders) {
       const tagsLower = order.tags.split(",").map(t => t.trim().toLowerCase());
+      // Tagging comes FIRST. A courier label commits us to shipping the
+      // order, so it must never run ahead of the approval that says the
+      // order is going out. The preflight already only offers dispatch-
+      // tagged orders; this is the guard that makes it true of the booking
+      // itself, whatever ids arrive in the body (Graeme, 2026-08-29).
+      if (!isDispatchTagged(order.tags)) {
+        results.push({
+          orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id),
+          status: "skipped", reason: "Not tagged for dispatch — tag it first",
+        });
+        continue;
+      }
       if (tagsLower.includes("local-delivery")) {
         results.push({ orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "skipped", reason: "Local delivery — no courier label" });
         continue;
@@ -2232,9 +2258,7 @@ router.post("/postcode-validate-tag", requireFulfilmentAccess, async (req: Reque
   try {
     const orders = await getOrdersByTag(tag);
     const unfulfilled = orders.filter(o => o.fulfillment_status !== "fulfilled");
-    const dispatched = unfulfilled.filter(o =>
-      o.tags.split(",").map(t => t.trim()).includes("dispatch")
-    );
+    const dispatched = unfulfilled.filter(o => isDispatchTagged(o.tags));
 
     let checked = 0;
     const issues: Array<{ orderName: string; orderId: number; reason: string }> = [];

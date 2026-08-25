@@ -42,12 +42,16 @@ export interface PreflightOrder {
 interface Preflight {
   tag: string;
   codesConfigured: boolean;
-  counts: { total: number; ready: number; needsReview: number; blocked: number; alreadyBooked: number; localDeliveries: number };
+  counts: { total: number; ready: number; needsReview: number; blocked: number; alreadyBooked: number; localDeliveries: number; notTagged?: number };
   ready: PreflightOrder[];
   needsReview: PreflightOrder[];
   blocked: PreflightOrder[];
   alreadyBooked: PreflightOrder[];
   localDeliveries: PreflightOrder[];
+  /** Unfulfilled orders on this day that have NOT been approved for
+   *  dispatch. Never bookable — the server refuses them too. Listed so the
+   *  operator can see what still needs tagging (Graeme, 2026-08-29). */
+  notTagged?: PreflightOrder[];
 }
 
 interface BookResult {
@@ -384,11 +388,25 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
               </div>
             )}
 
+            {/* Tagging is step one: a label commits us to shipping, so it
+                can't run ahead of the approval. These orders are shown, not
+                offered — the API skips them too. */}
+            {(preflight.counts.notTagged ?? 0) > 0 && (
+              <div className="flex items-start gap-2 text-sm rounded-xl border-2 border-orange-400 dark:border-orange-700 bg-orange-50 dark:bg-orange-950/30 px-3 py-2.5">
+                <ShieldAlert className="w-4 h-4 flex-shrink-0 mt-0.5 text-orange-600" />
+                <span className="text-orange-900 dark:text-orange-200">
+                  <strong>{preflight.counts.notTagged} order(s) aren't tagged for dispatch yet</strong> and
+                  can't be booked. Tag them on the packing screen first, then reopen this.
+                </span>
+              </div>
+            )}
+
             <Section title="Ready to book" count={preflight.counts.ready} tone="ready" orders={preflight.ready} defaultOpen
               selectable selected={selected} onToggle={toggle} />
             <Section title="Needs a look before booking" count={preflight.counts.needsReview} tone="review" orders={preflight.needsReview} defaultOpen
               selectable selected={selected} onToggle={toggle} />
             <Section title="Can't be booked — fix in Shopify first" count={preflight.counts.blocked} tone="blocked" orders={preflight.blocked} defaultOpen />
+            <Section title="Not tagged for dispatch — tag before booking" count={preflight.counts.notTagged ?? 0} tone="blocked" orders={preflight.notTagged ?? []} />
             <Section title="Already booked" count={preflight.counts.alreadyBooked} tone="done" orders={preflight.alreadyBooked} />
             <Section title="Local delivery — no label needed" count={preflight.counts.localDeliveries} tone="done" orders={preflight.localDeliveries} />
 

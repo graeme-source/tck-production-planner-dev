@@ -928,23 +928,21 @@ function paceBand(oph: number): { tile: string; label: string } {
 
 /**
  * ONE summary block for the dispatch day: packed count, progress (overall and
- * by box size), live pace, and buttons for the two things that are NOT the
- * packer's job right now — orders awaiting a dispatch tag, and products the
- * fridge gate can't check. Those open panels on demand instead of shouting
- * from the top of the screen all day (Graeme, 2026-08-28).
+ * by box size), live pace, and a button for the thing that is NOT the packer's
+ * job right now — products the fridge gate can't check. That opens on demand
+ * instead of shouting from the top of the screen all day (Graeme, 2026-08-28).
+ *
+ * Tagging is NOT in here: it's step one of the day and now has its own panel
+ * directly above the filters (Graeme, 2026-08-29).
  */
 function DispatchSummary({
   progress, packed, total, oph,
-  awaitingCount, onOpenAwaiting, awaitingOpen,
   uncheckedCount, onOpenUnchecked, uncheckedOpen,
 }: {
   progress: DispatchProgress | null;
   packed: number | null;
   total: number | null;
   oph: number | null;
-  awaitingCount: number;
-  onOpenAwaiting: () => void;
-  awaitingOpen: boolean;
   uncheckedCount: number;
   onOpenUnchecked: () => void;
   uncheckedOpen: boolean;
@@ -988,6 +986,14 @@ function DispatchSummary({
               )}
             </div>
           )}
+          {/* Every per-size bar hides itself at a total of 0, so a day with
+              nothing tagged yet collapsed to a bare "0/0" and read as a broken
+              KPI. Say what's actually true instead (Graeme, 2026-08-29). */}
+          {!total && (
+            <p className="text-base text-muted-foreground mt-3">
+              Nothing tagged for dispatch on this day yet — the counters start once orders are tagged.
+            </p>
+          )}
         </div>
         <div
           className={cn("rounded-2xl px-6 py-4 flex flex-col items-center justify-center flex-shrink-0 min-w-[11rem] transition-colors", band ? band.tile : "bg-secondary text-muted-foreground")}
@@ -999,32 +1005,18 @@ function DispatchSummary({
         </div>
       </div>
 
-      {(awaitingCount > 0 || uncheckedCount > 0) && (
+      {uncheckedCount > 0 && (
         <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-border/60">
-          {awaitingCount > 0 && (
-            <button
-              type="button"
-              onClick={onOpenAwaiting}
-              aria-expanded={awaitingOpen}
-              className="px-3 py-2 rounded-xl text-sm font-semibold border border-orange-300 dark:border-orange-800 bg-orange-50 dark:bg-orange-950/30 text-orange-800 dark:text-orange-300 hover:bg-orange-100 transition-colors flex items-center gap-1.5"
-              title="Orders that arrived since the last tagging round — tag them when you're between waves"
-            >
-              <Tag className="w-4 h-4" />
-              {awaitingCount} to tag
-            </button>
-          )}
-          {uncheckedCount > 0 && (
-            <button
-              type="button"
-              onClick={onOpenUnchecked}
-              aria-expanded={uncheckedOpen}
-              className="px-3 py-2 rounded-xl text-sm font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors flex items-center gap-1.5"
-              title="Products the fridge gate can't stock-check"
-            >
-              <AlertTriangle className="w-4 h-4" />
-              {uncheckedCount} not stock-checked
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={onOpenUnchecked}
+            aria-expanded={uncheckedOpen}
+            className="px-4 py-2.5 rounded-xl text-base font-semibold border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 hover:bg-amber-100 transition-colors flex items-center gap-2"
+            title="Products the fridge gate can't stock-check"
+          >
+            <AlertTriangle className="w-5 h-5" />
+            {uncheckedCount} not stock-checked
+          </button>
         </div>
       )}
     </div>
@@ -1287,13 +1279,15 @@ export default function Fulfilment() {
   // Prefetched consignment lookups, so opening an order is instant and an APC
   // outage shows up before packing starts rather than mid-order.
   const consignmentCacheRef = useRef<Map<string, Promise<ExpectedConsignment | null>>>(new Map());
-  // Box categories are multi-select now: the operator can pick a wave of
-  // Small + Large together. An empty set means "no category constraint".
-  // Defaults to Small Box, matching the team's existing muscle memory.
-  // Empty set = no category constraint = All Boxes. The day now starts by
-  // tagging and booking the WHOLE wave, so the default view must be
-  // everything; narrowing to a category is a deliberate choice afterwards.
+  // Box categories are multi-select: the operator can pick a wave of Small +
+  // Large together. An empty set means "no category constraint" (= All).
+  //
+  // Starts empty and is set once, from the day's actual mix, by the effect
+  // below — large boxes first, small if the day has no large ones.
   const [boxFilter, setBoxFilter] = useState<Set<BoxCategory>>(new Set<BoxCategory>());
+  // One-shot: applied when the day's orders first land, never again, so a
+  // deliberate choice by the operator is never overwritten by a refetch.
+  const boxDefaultApplied = useRef(false);
   // Fourth filter axis, only meaningful when the app books labels itself:
   // work through the wave a slice at a time by hiding what's already booked.
   const [labelFilter, setLabelFilter] = useState<"all" | "booked" | "unbooked">("all");
@@ -1842,6 +1836,19 @@ export default function Fulfilment() {
     "local delivery": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "local delivery").length,
     "other": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "other").length,
   };
+
+  // The wave starts on LARGE boxes — they're the slow ones and they set the
+  // pace of the day, so the bench should open on them rather than on a mixed
+  // list. A day with no large boxes opens on small instead (Graeme,
+  // 2026-08-29). Runs once, when the day's orders first arrive.
+  const largeBoxCount = boxCounts["large box"];
+  const smallBoxCount = boxCounts["small box"];
+  useEffect(() => {
+    if (boxDefaultApplied.current) return;
+    if (largeBoxCount === 0 && smallBoxCount === 0) return;
+    boxDefaultApplied.current = true;
+    setBoxFilter(new Set<BoxCategory>([largeBoxCount > 0 ? "large box" : "small box"]));
+  }, [largeBoxCount, smallBoxCount]);
 
   const taggedCounts = {
     "small box": unfulfilledOrders.filter(o => getOrderCategory(o) === "small box").length,
@@ -3980,17 +3987,14 @@ export default function Fulfilment() {
         <AuditModal tag={queryTag} onClose={() => setShowAuditModal(false)} adminBase={configStatus?.shopifyAdminOrderBase} />
       )}
 
-      {/* One summary for the day. Tagging and gate warnings live behind
-          buttons here: they belong BEFORE picking (tag → book → pick) or
-          after it, never competing with the order in the packer's hands. */}
+      {/* One summary for the day. Gate warnings live behind a button here:
+          they belong BEFORE picking (tag → book → pick) or after it, never
+          competing with the order in the packer's hands. */}
       <DispatchSummary
         progress={progress ?? null}
         packed={progress?.totalFulfilled ?? null}
         total={progress?.totalOrders ?? null}
         oph={packingPace?.ordersPerHour ?? null}
-        awaitingCount={filteredUntagged.length}
-        onOpenAwaiting={() => setAwaitingPanelOpen(v => !v)}
-        awaitingOpen={awaitingPanelOpen}
         uncheckedCount={fridgeAllocation.uncheckedTitles.size}
         onOpenUnchecked={() => setUncheckedPanelOpen(v => !v)}
         uncheckedOpen={uncheckedPanelOpen}
@@ -4006,106 +4010,245 @@ export default function Fulfilment() {
             {" "}&middot; {progress ? progress.totalFulfilled : fulfilledOrders.length} fulfilled
           </p>
 
-          {/* ONE filter bar, two labelled segments that combine (AND):
-              Box × Label. "Small + Booked" = small boxes with labels booked.
-              Actions (Book APC labels, Tags & Products) live at the right so
-              they can't be mistaken for a third filter group. */}
-          <div className="glass-panel rounded-2xl border-2 border-primary/30 p-4 space-y-3">
-            <p className="text-sm font-bold uppercase tracking-wide text-primary flex items-center gap-2">
-              <Filter className="w-4 h-4" /> Showing these orders below
-            </p>
-          <div className="flex gap-2 flex-wrap items-center">
-            <div className="flex items-center gap-1 rounded-xl bg-secondary/60 p-1 pl-3">
-              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mr-1">Box</span>
-              <button
-                onClick={() => setBoxFilter(new Set())}
-                className={cn(
-                  "px-4 py-2 rounded-lg text-sm font-semibold transition-colors",
-                  boxFilter.size === 0
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                All
-              </button>
-              {([
-                { key: "small box" as const, label: "Small" },
-                { key: "large box" as const, label: "Large" },
-                { key: "wholesale" as const, label: "Wholesale" },
-                { key: "local delivery" as const, label: "Local" },
-                { key: "other" as const, label: "Other" },
-              ] as const).map(tab => {
-                const count = boxCounts[tab.key];
-                if (count === 0) return null;
-                const active = boxFilter.has(tab.key);
-                const tagged = taggedCounts[tab.key];
-                return (
+          {/* ── Step 1 of the day: TAGGING ───────────────────────────────
+              Tagging happens before booking and before picking, so it sits
+              ABOVE the filters and above Book APC labels rather than behind
+              a button on the summary (Graeme, 2026-08-29). The order list
+              stays collapsed — the count and the action are what matter at
+              a glance. */}
+          {filteredUntagged.length > 0 && (
+            <div className="glass-panel rounded-2xl border-2 border-orange-300 dark:border-orange-800 bg-orange-50/60 dark:bg-orange-950/20 p-4 space-y-3">
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-sm font-bold uppercase tracking-widest text-orange-700 dark:text-orange-400 flex items-center gap-2">
+                  <Tag className="w-4 h-4" /> Step 1 — tag
+                </span>
+                <span className="text-lg font-bold text-orange-900 dark:text-orange-200">
+                  {filteredUntagged.length} {filteredUntagged.length === 1 ? "order" : "orders"} awaiting approval
+                  {(boxFilter.size > 0 || filtersActive) && (
+                    <span className="font-medium text-base"> (matching your filters)</span>
+                  )}
+                </span>
+                <div className="ml-auto flex items-center gap-2 flex-wrap">
                   <button
-                    key={tab.key}
-                    onClick={() => {
-                      const next = new Set(boxFilter);
-                      if (next.has(tab.key)) next.delete(tab.key); else next.add(tab.key);
-                      setBoxFilter(next);
-                    }}
-                    className={cn(
-                      "px-4 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center gap-1.5",
-                      active
-                        ? "bg-primary text-primary-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground"
-                    )}
+                    onClick={() => setAwaitingPanelOpen(v => !v)}
+                    aria-expanded={awaitingPanelOpen}
+                    className="px-5 py-3 rounded-xl text-base font-semibold border-2 border-orange-300 dark:border-orange-800 text-orange-900 dark:text-orange-200 hover:bg-orange-100 dark:hover:bg-orange-900/30 transition-colors"
                   >
-                    {tab.label}
-                    <span className={cn(
-                      "text-[10px] px-1 py-0.5 rounded-full tabular-nums",
-                      active ? "bg-primary-foreground/20" : "bg-secondary"
-                    )}>{tagged}/{count}</span>
+                    {awaitingPanelOpen ? "Hide orders" : "Show orders"}
                   </button>
-                );
-              })}
+                  <button
+                    onClick={() => setShowBulkTagConfirm(true)}
+                    disabled={bulkTagging}
+                    className="flex items-center gap-2 px-5 py-3 bg-orange-600 text-white rounded-xl text-base font-bold hover:bg-orange-700 transition-colors disabled:opacity-50"
+                  >
+                    {bulkTagging ? (
+                      <><Loader2 className="w-5 h-5 animate-spin" /> Tagging…</>
+                    ) : (
+                      <><Tag className="w-5 h-5" /> Tag {filteredUntagged.length} for dispatch</>
+                    )}
+                  </button>
+                </div>
+              </div>
+              {/* Says out loud why this panel is first: booking skips
+                  untagged orders, so a label can never run ahead of the
+                  approval. The API enforces it — this only explains it. */}
+              <p className="text-sm font-medium text-orange-800 dark:text-orange-300">
+                APC labels are only ever booked for tagged orders — tag these before booking.
+              </p>
+              {showBulkTagConfirm && (
+                <ShopifyConfirmDialog
+                  title="Tag orders for dispatch?"
+                  description={`This will tag ${filteredUntagged.length} order${filteredUntagged.length === 1 ? "" : "s"} on Shopify as ready to dispatch. This cannot be undone.`}
+                  products={filteredUntagged.slice(0, 10).map(o => ({
+                    name: `${o.name} — ${o.shipping_address?.name ?? `${o.customer?.first_name ?? ""} ${o.customer?.last_name ?? ""}`.trim()}`,
+                  }))}
+                  confirmLabel="Tag All for Dispatch"
+                  onConfirm={async () => {
+                    setShowBulkTagConfirm(false);
+                    setBulkTagging(true);
+                    try {
+                      await bulkTagDispatch(queryTag, filteredUntagged.map(o => o.id));
+                      refetch();
+                      refetchProgress();
+                      refetchTags();
+                      refetchPostcodes();
+                    } catch (err) {
+                      console.warn("[Fulfilment] Bulk tag dispatch failed:", err);
+                      toast({ title: "Bulk tagging failed", description: "Please try again.", variant: "destructive" });
+                    } finally {
+                      setBulkTagging(false);
+                    }
+                  }}
+                  onCancel={() => setShowBulkTagConfirm(false)}
+                />
+              )}
+              {awaitingPanelOpen && (
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  {filteredUntagged.map(order => (
+                    <div key={order.id} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-orange-100/60 dark:bg-orange-900/20 text-base">
+                      <OrderNumber
+                        orderId={order.id}
+                        name={order.name}
+                        adminBase={configStatus?.shopifyAdminOrderBase}
+                        className="font-mono font-bold text-orange-900 dark:text-orange-200"
+                      />
+                      <span className="text-orange-800 dark:text-orange-300 truncate flex-1">
+                        {order.shipping_address?.name ?? `${order.customer?.first_name} ${order.customer?.last_name}`}
+                      </span>
+                      <span className="text-sm font-semibold text-orange-700 dark:text-orange-400">
+                        {order.line_items.reduce((s, i) => s + i.quantity, 0)} items
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── The filters that own the list below ──────────────────────
+              Every control here is a primary action at the bench, so they
+              are sized like Book APC labels rather than drawn as small grey
+              chips. Group names are plain headings ABOVE their row: sat
+              inside the row they read as one more filter (Graeme,
+              2026-08-29). Box × Label combine (AND): "Large + Booked" =
+              large boxes whose labels are already booked. */}
+          <div className="glass-panel rounded-2xl border-2 border-primary/30 p-4 space-y-4">
+            <div className="flex items-center gap-3 flex-wrap">
+              <p className="text-base font-bold uppercase tracking-wide text-primary flex items-center gap-2">
+                <Filter className="w-5 h-5" /> Showing these orders below
+              </p>
+              <div className="ml-auto flex items-center gap-2 flex-wrap">
+                {/* canBookCourier: booking is manager-only (other session,
+                    2026-08-21) — merged with the unified-bar layout. */}
+                {apcMode === "full" && canBookCourier && (
+                  <button
+                    onClick={() => setShowBatchBooking(true)}
+                    className="px-5 py-3 rounded-xl text-base font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-2"
+                    title="Raise APC consignments — pick first 5, all, small boxes, or large boxes. Untagged orders are never booked."
+                  >
+                    <PackageCheck className="w-5 h-5" /> Book APC labels
+                  </button>
+                )}
+                <button
+                  onClick={() => setFiltersOpen(v => !v)}
+                  className={cn(
+                    "px-5 py-3 rounded-xl text-base font-bold transition-all flex items-center gap-2 border-2",
+                    filtersActive
+                      ? "bg-indigo-600 border-indigo-600 text-white shadow-sm"
+                      : "bg-card border-border text-foreground hover:border-primary/50"
+                  )}
+                >
+                  <Filter className="w-5 h-5" />
+                  Tags &amp; Products
+                  {filtersActive && (
+                    <span className="text-sm px-2 py-0.5 rounded-full bg-white/20 tabular-nums">
+                      {includeTags.size + excludeTags.size + includeProducts.size + excludeProducts.size}
+                    </span>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-sm font-bold uppercase tracking-widest text-foreground">Box size</p>
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  onClick={() => setBoxFilter(new Set())}
+                  className={cn(
+                    "px-5 py-3 rounded-xl text-base font-bold transition-colors border-2",
+                    boxFilter.size === 0
+                      ? "bg-primary border-primary text-primary-foreground shadow-sm"
+                      : "bg-card border-border text-foreground hover:border-primary/50"
+                  )}
+                >
+                  All
+                </button>
+                {([
+                  { key: "small box" as const, label: "Small" },
+                  { key: "large box" as const, label: "Large" },
+                  { key: "wholesale" as const, label: "Wholesale" },
+                  { key: "local delivery" as const, label: "Local" },
+                  { key: "other" as const, label: "Other" },
+                ] as const).map(tab => {
+                  const count = boxCounts[tab.key];
+                  if (count === 0) return null;
+                  const active = boxFilter.has(tab.key);
+                  const tagged = taggedCounts[tab.key];
+                  return (
+                    <button
+                      key={tab.key}
+                      onClick={() => {
+                        const next = new Set(boxFilter);
+                        if (next.has(tab.key)) next.delete(tab.key); else next.add(tab.key);
+                        setBoxFilter(next);
+                      }}
+                      className={cn(
+                        "px-5 py-3 rounded-xl text-base font-bold transition-colors flex items-center gap-2 border-2",
+                        active
+                          ? "bg-primary border-primary text-primary-foreground shadow-sm"
+                          : "bg-card border-border text-foreground hover:border-primary/50"
+                      )}
+                      title={`${tagged} of ${count} tagged for dispatch`}
+                    >
+                      {tab.label}
+                      <span className={cn(
+                        "text-sm font-bold px-2 py-0.5 rounded-full tabular-nums",
+                        active ? "bg-primary-foreground/20" : "bg-secondary"
+                      )}>{tagged}/{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {apcMode === "full" && (
-              <div className="flex items-center gap-1 rounded-xl bg-secondary/60 p-1 pl-3">
-                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mr-1">Label</span>
-                {([
-                  { key: "all" as const, label: "All" },
-                  { key: "unbooked" as const, label: `No label (${allUnfulfilledOrders.filter(o => !bookedMap.has(o.id)).length})` },
-                  { key: "booked" as const, label: `Booked (${bookedMap.size})` },
-                ]).map(opt => (
-                  <button
-                    key={opt.key}
-                    onClick={() => setLabelFilter(opt.key)}
-                    className={cn(
-                      "px-4 py-2 rounded-lg text-sm font-semibold transition-colors",
-                      labelFilter === opt.key
-                        ? "bg-primary text-primary-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
+              <div className="space-y-2">
+                <p className="text-sm font-bold uppercase tracking-widest text-foreground">Labels</p>
+                <div className="flex gap-2 flex-wrap">
+                  {([
+                    { key: "all" as const, label: "All" },
+                    { key: "unbooked" as const, label: `No label (${allUnfulfilledOrders.filter(o => !bookedMap.has(o.id)).length})` },
+                    { key: "booked" as const, label: `Booked (${bookedMap.size})` },
+                  ]).map(opt => (
+                    <button
+                      key={opt.key}
+                      onClick={() => setLabelFilter(opt.key)}
+                      className={cn(
+                        "px-5 py-3 rounded-xl text-base font-bold transition-colors border-2",
+                        labelFilter === opt.key
+                          ? "bg-primary border-primary text-primary-foreground shadow-sm"
+                          : "bg-card border-border text-foreground hover:border-primary/50",
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 
             {fridgeAvailability && (
-              <button
-                onClick={() => setFridgeGate(v => !v)}
-                className={cn(
-                  "px-3 py-1.5 rounded-xl text-xs font-medium transition-colors border",
-                  fridgeGate
-                    ? "border-blue-300 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-200"
-                    : "border-border bg-secondary/60 text-muted-foreground hover:text-foreground",
-                )}
-                title="When on, only orders the production fridge can currently satisfy are offered for picking; the rest wait under 'Awaiting Wrapping' with a wrap-deficit readout"
-              >
-                Fridge gate: {fridgeGate ? "On" : "Off"}
-                {fridgeGate && fridgeAllocation.held.length > 0 && (
-                  <span className="ml-1.5 text-[10px] px-1 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/40 tabular-nums">
-                    {fridgeAllocation.held.length} held
-                  </span>
-                )}
-              </button>
+              <div className="space-y-2">
+                <p className="text-sm font-bold uppercase tracking-widest text-foreground">Fridge stock</p>
+                <button
+                  onClick={() => setFridgeGate(v => !v)}
+                  className={cn(
+                    "px-5 py-3 rounded-xl text-base font-bold transition-colors border-2 flex items-center gap-2",
+                    fridgeGate
+                      ? "border-blue-500 bg-blue-50 text-blue-900 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+                      : "border-border bg-card text-foreground hover:border-primary/50",
+                  )}
+                  title="When on, only orders the production fridge can currently satisfy are offered for picking; the rest wait under 'Awaiting Wrapping' with a wrap-deficit readout"
+                >
+                  <Snowflake className="w-5 h-5" />
+                  Fridge gate: {fridgeGate ? "On" : "Off"}
+                  {fridgeGate && fridgeAllocation.held.length > 0 && (
+                    <span className="text-sm font-bold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/40 tabular-nums">
+                      {fridgeAllocation.held.length} held
+                    </span>
+                  )}
+                </button>
+              </div>
             )}
 
             {rescheduleTarget && (
@@ -4126,44 +4269,12 @@ export default function Fulfilment() {
               />
             )}
 
-            <div className="ml-auto flex items-center gap-2">
-              {/* canBookCourier: booking is manager-only (other session,
-                  2026-08-21) — merged with the unified-bar layout. */}
-              {apcMode === "full" && canBookCourier && (
-                <button
-                  onClick={() => setShowBatchBooking(true)}
-                  className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-2"
-                  title="Raise APC consignments — pick first 5, all, small boxes, or large boxes"
-                >
-                  <PackageCheck className="w-4 h-4" /> Book APC labels
-                </button>
-              )}
-              <button
-                onClick={() => setFiltersOpen(v => !v)}
-                className={cn(
-                  "px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2",
-                  filtersActive
-                    ? "bg-indigo-600 text-white shadow-sm"
-                    : "bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground"
-                )}
-              >
-                <Filter className="w-4 h-4" />
-                Tags & Products
-                {filtersActive && (
-                  <span className="text-xs px-1.5 py-0.5 rounded-full bg-white/20 tabular-nums">
-                    {includeTags.size + excludeTags.size + includeProducts.size + excludeProducts.size}
-                  </span>
-                )}
-              </button>
-            </div>
-          </div>
-
-          {/* How many orders this wave will actually cycle through. */}
-          <p className="text-base font-medium">
-            Picking <span className="font-bold text-foreground tabular-nums text-lg">{filteredUnfulfilled.length}</span>
-            <span className="text-muted-foreground"> of {unfulfilledOrders.length} dispatch-tagged orders</span>
-            {filtersActive && <span className="text-indigo-600 dark:text-indigo-400 font-semibold"> · filters active</span>}
-          </p>
+            {/* How many orders this wave will actually cycle through. */}
+            <p className="text-base font-medium border-t border-border pt-3">
+              Picking <span className="font-bold text-foreground tabular-nums text-lg">{filteredUnfulfilled.length}</span>
+              <span className="text-muted-foreground"> of {unfulfilledOrders.length} dispatch-tagged orders</span>
+              {filtersActive && <span className="text-indigo-600 dark:text-indigo-400 font-semibold"> · filters active</span>}
+            </p>
           </div>
 
           {filtersOpen && (
@@ -4201,74 +4312,6 @@ export default function Fulfilment() {
             </div>
           )}
 
-          {filteredUntagged.length > 0 && awaitingPanelOpen && (
-            <div className="glass-panel p-4 rounded-2xl border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Tag className="w-4 h-4 text-amber-600" />
-                  <span className="font-semibold text-sm text-amber-900 dark:text-amber-200">
-                    {filteredUntagged.length} {filteredUntagged.length === 1 ? "order" : "orders"} awaiting approval
-                    {(boxFilter.size > 0 || filtersActive) && <span className="font-normal"> (matching your filters)</span>}
-                  </span>
-                </div>
-                <button
-                  onClick={() => setShowBulkTagConfirm(true)}
-                  disabled={bulkTagging}
-                  className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-xl text-sm font-semibold hover:bg-amber-700 transition-colors disabled:opacity-50"
-                >
-                  {bulkTagging ? (
-                    <><Loader2 className="w-4 h-4 animate-spin" /> Tagging…</>
-                  ) : (
-                    <><Tag className="w-4 h-4" /> Tag {filteredUntagged.length} Order{filteredUntagged.length === 1 ? "" : "s"} for Dispatch</>
-                  )}
-                </button>
-                {showBulkTagConfirm && (
-                  <ShopifyConfirmDialog
-                    title="Tag orders for dispatch?"
-                    description={`This will tag ${filteredUntagged.length} order${filteredUntagged.length === 1 ? "" : "s"} on Shopify as ready to dispatch. This cannot be undone.`}
-                    products={filteredUntagged.slice(0, 10).map(o => ({
-                      name: `${o.name} — ${o.shipping_address?.name ?? `${o.customer?.first_name ?? ""} ${o.customer?.last_name ?? ""}`.trim()}`,
-                    }))}
-                    confirmLabel="Tag All for Dispatch"
-                    onConfirm={async () => {
-                      setShowBulkTagConfirm(false);
-                      setBulkTagging(true);
-                      try {
-                        await bulkTagDispatch(queryTag, filteredUntagged.map(o => o.id));
-                        refetch();
-                        refetchProgress();
-                        refetchTags();
-                        refetchPostcodes();
-                      } catch (err) {
-                        console.warn("[Fulfilment] Bulk tag dispatch failed:", err);
-                        toast({ title: "Bulk tagging failed", description: "Please try again.", variant: "destructive" });
-                      } finally {
-                        setBulkTagging(false);
-                      }
-                    }}
-                    onCancel={() => setShowBulkTagConfirm(false)}
-                  />
-                )}
-              </div>
-              <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                {filteredUntagged.map(order => (
-                  <div key={order.id} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-amber-100/50 dark:bg-amber-900/20 text-sm">
-                    <OrderNumber
-                      orderId={order.id}
-                      name={order.name}
-                      adminBase={configStatus?.shopifyAdminOrderBase}
-                      className="font-mono font-bold text-amber-900 dark:text-amber-200"
-                    />
-                    <span className="text-amber-700 dark:text-amber-400 truncate flex-1">
-                      {order.shipping_address?.name ?? `${order.customer?.first_name} ${order.customer?.last_name}`}
-                    </span>
-                    <span className="text-xs text-amber-600 dark:text-amber-500">{order.line_items.reduce((s, i) => s + i.quantity, 0)} items</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {filteredUnfulfilled.length === 0 && fridgeAllocation.held.length === 0 && filteredUntagged.length === 0 && allUnfulfilledOrders.length === 0 && (
             <div className="glass-panel p-10 rounded-2xl border border-border text-center text-muted-foreground">
               <CheckCircle2 className="w-12 h-12 mx-auto mb-3 text-green-500 opacity-60" />
@@ -4280,8 +4323,13 @@ export default function Fulfilment() {
           {filteredUnfulfilled.length === 0 && fridgeAllocation.held.length === 0 && filteredUntagged.length === 0 && allUnfulfilledOrders.length > 0 && (
             <div className="glass-panel p-8 rounded-2xl border border-border text-center text-muted-foreground">
               <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-green-500 opacity-60" />
-              <p className="font-medium">All {boxFilter} orders done!</p>
-              <p className="text-sm mt-1">Switch to another category to continue packing.</p>
+              {/* boxFilter is a Set — rendering it straight into JSX threw
+                  "Objects are not valid as a React child" and blanked the
+                  page. Name the categories instead (2026-08-29). */}
+              <p className="text-lg font-semibold text-foreground">
+                {boxFilter.size === 0 ? "All orders done!" : `All ${[...boxFilter].join(" + ")} orders done!`}
+              </p>
+              <p className="text-base mt-1">Switch to another box size above to carry on packing.</p>
             </div>
           )}
 
