@@ -890,37 +890,12 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
         getOrdersByTag(tag),
       ]);
 
-      const productTotals = new Map<string, { quantity: number; orderCount: number }>();
-      for (const order of orders) {
-        for (const item of order.line_items) {
-          if (dessertTitles.has(item.title)) {
-            const existing = productTotals.get(item.title) ?? { quantity: 0, orderCount: 0 };
-            existing.quantity += item.quantity;
-            existing.orderCount += 1;
-            productTotals.set(item.title, existing);
-          }
-        }
-      }
-
-      const all = [...productTotals.entries()]
-        .map(([title, stats]) => ({ title, ...stats }))
-        .sort((a, b) => a.title.localeCompare(b.title));
-
-      // 5-pack desserts share one label, so the packer needs ONE headline
-      // count plus the per-recipe breakdown — adding them up by hand was the
-      // slow bit (Graeme, 2026-08-27). Grouped HERE so every surface that
-      // renders this report shows the identical split (single source of
-      // truth). "5 pack" in the title is the same pack-format convention the
-      // 8-pack-bag matching uses.
-      const FIVE_PACK_RE = /5[\s-]*pack/i;
-      const fivePackProducts = all.filter(p => FIVE_PACK_RE.test(p.title));
-      const products = all.filter(p => !FIVE_PACK_RE.test(p.title));
-      const fivePackTotal = fivePackProducts.reduce((s, p) => s + p.quantity, 0);
-
-      const totalQuantity = all.reduce((s, p) => s + p.quantity, 0);
+      // One implementation, shared with the packing station's report.
+      const { buildDessertReport } = await import("../lib/desserts-report");
+      const report = buildDessertReport(orders, dessertTitles);
       const deliveryLabel = tomorrow.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short" });
 
-      res.json([{ tag, deliveryLabel, products, fivePackProducts, fivePackTotal, totalQuantity, dessertProductCount: dessertTitles.size }]);
+      res.json([{ tag, deliveryLabel, ...report, dessertProductCount: dessertTitles.size }]);
     } catch (err: any) {
       console.error("[checklist] desserts_report error:", err.message);
       res.json([]);

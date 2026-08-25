@@ -531,9 +531,8 @@ export function Layout({ children }: { children: ReactNode }) {
   // that traps any fixed-position child's z-index inside it. Rendering the
   // dialog as a sibling of <main> keeps it above everything.
   const [sopsOpen, setSopsOpen] = useState(false);
-  const [assistantOpen, setAssistantOpen] = useState(false);
-  const [todosOpen, setTodosOpen] = useState(false);
-  const isFounder = user?.email === "graeme@thecalzonekitchen.co.uk";
+  // Dock state now lives inside QuickActionsDock so station pages (which
+  // render outside Layout) can mount the same thing.
 
   const userRole = user?.role ?? "viewer";
   const isManagerOrAdmin = userRole === "admin" || userRole === "manager";
@@ -679,20 +678,40 @@ export function Layout({ children }: { children: ReactNode }) {
       {/* Caz is available to every logged-in user. The founder additionally
           gets recipe-design + memory powers; staff get a read-only look-up
           assistant (enforced server-side, not just here). */}
-      <>
-        <FoundersAssistant open={assistantOpen} onClose={() => setAssistantOpen(false)} isFounder={isFounder} />
-        <FloatingActionsTab assistantOpen={assistantOpen} onOpenAssistant={() => setAssistantOpen(true)} onOpenTodos={() => setTodosOpen(true)} />
-      </>
-
-      {/* Per-user to-do lists: the sheet opens from the edge tab (and the
-          Employee Hub); the interstitial takes the whole screen whenever
-          somebody has put an unacknowledged task on this user's list. */}
-      <TodoSheet open={todosOpen} onClose={() => setTodosOpen(false)} />
-      <TodoInterstitial />
+      <QuickActionsDock />
       {/* Weekly sales-derived DPT refresh — renders nothing except for
           managers/admins in the week it's due. */}
       <DptSuggestionPrompt />
     </div>
+  );
+}
+
+/**
+ * The quick-actions dock: the edge tab (My to-dos · Quick Idea · Ask Caz),
+ * Caz herself, the to-do sheet and the unacknowledged-task interstitial.
+ *
+ * Self-contained so it can be mounted BOTH inside Layout and on full-screen
+ * pages that render outside it — station screens had no dock at all, which
+ * is where the team spends the day (Graeme, 2026-08-28). Deliberately not
+ * mounted on the visitor kiosk or print views: the kiosk is handed to
+ * members of the public, so app nav must stay unreachable there.
+ */
+export function QuickActionsDock() {
+  const { state } = useAuth();
+  const user = state.status === "authenticated" ? state.user : null;
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [todosOpen, setTodosOpen] = useState(false);
+  const isFounder = user?.email === "graeme@thecalzonekitchen.co.uk";
+
+  if (!user) return null;
+
+  return (
+    <>
+      <FoundersAssistant open={assistantOpen} onClose={() => setAssistantOpen(false)} isFounder={isFounder} />
+      <FloatingActionsTab assistantOpen={assistantOpen} onOpenAssistant={() => setAssistantOpen(true)} onOpenTodos={() => setTodosOpen(true)} />
+      <TodoSheet open={todosOpen} onClose={() => setTodosOpen(false)} />
+      <TodoInterstitial />
+    </>
   );
 }
 

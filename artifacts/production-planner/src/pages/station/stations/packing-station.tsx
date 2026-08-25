@@ -50,12 +50,16 @@ interface DispatchProgress {
 interface DessertItem {
   title: string;
   quantity: number;
-  orderCount: number;
 }
 
 interface DessertsReport {
   tag: string;
   products: DessertItem[];
+  /** 5-packs share one label: a headline count plus the per-variant pull
+   *  list. Grouped server-side (lib/desserts-report) so this station and the
+   *  opening checklist can never disagree. */
+  fivePackProducts?: DessertItem[];
+  fivePackTotal?: number;
   totalQuantity: number;
   dessertProductCount: number;
 }
@@ -401,7 +405,7 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
         </>
       )}
 
-      {desserts && desserts.products.length > 0 && (
+      {desserts && (desserts.products.length > 0 || (desserts.fivePackProducts?.length ?? 0) > 0) && (
         <div className="bg-card border border-border rounded-xl overflow-hidden">
           <div className="px-4 py-3 border-b border-border/50 bg-pink-50/50 dark:bg-pink-900/10">
             <div className="flex items-center gap-2">
@@ -410,6 +414,22 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
               <span className="text-sm text-muted-foreground ml-auto">{desserts.totalQuantity} units total</span>
             </div>
           </div>
+          {(desserts.fivePackProducts?.length ?? 0) > 0 && (
+            <div className="px-4 py-3 bg-pink-100/60 dark:bg-pink-900/20 border-b border-border/50">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-base">5-Pack labels to print</span>
+                <span className="font-bold tabular-nums text-xl text-pink-800 dark:text-pink-200">{desserts.fivePackTotal ?? 0}</span>
+              </div>
+              <div className="mt-1.5 space-y-1">
+                {desserts.fivePackProducts?.map(p => (
+                  <div key={p.title} className="flex items-center justify-between text-sm text-pink-900/80 dark:text-pink-200/80">
+                    <span className="truncate">{p.title}</span>
+                    <span className="font-semibold tabular-nums shrink-0 ml-2">{p.quantity}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="divide-y divide-border/50">
             {desserts.products.map(p => (
               <div key={p.title} className="flex items-center justify-between px-4 py-2.5">

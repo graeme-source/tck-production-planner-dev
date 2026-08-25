@@ -23,6 +23,7 @@ import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
 import { ReportButton } from "@/components/report-modal";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
+import { QuickActionsDock } from "@/components/layout";
 import { CurrentUserBadge } from "@/components/current-user-badge";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -361,6 +362,11 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
         onClose={() => setStandardsOpen(false)}
         currentStationType={stationType}
       />
+
+      {/* Station screens render outside Layout, so the quick-actions dock
+          (My to-dos · Quick Idea · Ask Caz) was missing exactly where the
+          team spends the day (Graeme, 2026-08-28). */}
+      <QuickActionsDock />
     </div>
   );
 }

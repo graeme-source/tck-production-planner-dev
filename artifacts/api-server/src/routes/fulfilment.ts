@@ -2966,26 +2966,11 @@ router.get("/desserts-report", async (req: Request, res: Response) => {
       getOrdersByTag(tag),
     ]);
 
-    const productTotals = new Map<string, { quantity: number; orderCount: number }>();
+    // One implementation, shared with the opening checklist's version.
+    const { buildDessertReport } = await import("../lib/desserts-report");
+    const report = buildDessertReport(orders, dessertTitles);
 
-    for (const order of orders) {
-      for (const item of order.line_items) {
-        if (dessertTitles.has(item.title)) {
-          const existing = productTotals.get(item.title) ?? { quantity: 0, orderCount: 0 };
-          existing.quantity += item.quantity;
-          existing.orderCount += 1;
-          productTotals.set(item.title, existing);
-        }
-      }
-    }
-
-    const products = [...productTotals.entries()]
-      .map(([title, stats]) => ({ title, ...stats }))
-      .sort((a, b) => a.title.localeCompare(b.title));
-
-    const totalQuantity = products.reduce((s, p) => s + p.quantity, 0);
-
-    res.json({ tag, products, totalQuantity, dessertProductCount: dessertTitles.size });
+    res.json({ tag, ...report, dessertProductCount: dessertTitles.size });
   } catch (err: any) {
     console.error("[Fulfilment] desserts-report error:", err.message);
     res.status(502).json({ error: err.message });
