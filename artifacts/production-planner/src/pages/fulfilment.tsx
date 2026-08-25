@@ -1339,17 +1339,49 @@ export default function Fulfilment() {
   // size — the packer confirms the packs went in before picking starts.
   const { data: icePacks } = useIcePacks();
   const [icePackGate, setIcePackGate] = useState<{ packs: number; boxLabel: string } | null>(null);
+  // The label's service code for the first orders of each size — a mis-coded
+  // label can be refused at the depot, and the code differs by box size AND
+  // by Friday/weekend dispatch (Graeme, 2026-08-28).
+  const [serviceCodeGate, setServiceCodeGate] = useState<{ code: string; boxLabel: string; weekend: boolean; dispatchDay: string } | null>(null);
 
-  const ICE_PACK_CONFIRMS_TARGET = 3;
-  function icePackConfirmsKey() {
-    return `fulfilment_icepack_confirms_${format(new Date(), "yyyy-MM-dd")}`;
+  const { data: packingChecks } = useQuery({
+    queryKey: ["fulfilment-packing-checks-config"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/fulfilment/packing-checks-config`, { credentials: "include" });
+      if (!res.ok) return { icePackCheck: true, serviceCodeCheck: true };
+      return res.json() as Promise<{ icePackCheck: boolean; serviceCodeCheck: boolean }>;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: serviceCodes } = useQuery({
+    queryKey: ["fulfilment-service-codes", queryTag],
+    enabled: !!queryTag && apcMode === "full",
+    staleTime: 10 * 60 * 1000,
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/fulfilment/service-codes?tag=${encodeURIComponent(queryTag)}`, { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json() as Promise<{ configured: boolean; small?: string; large?: string; weekendDispatch?: boolean; dispatchDay?: string }>;
+    },
+  });
+
+  // Both bench checks run on the first TWO orders of EACH box size: the
+  // counts and the service code both differ between small and large, so a
+  // flat "first three orders" could easily never show one of the sizes.
+  const CHECK_CONFIRMS_PER_SIZE = 2;
+  function confirmsKey(check: "icepack" | "servicecode", size: string) {
+    return `fulfilment_${check}_confirms_${size.replace(/\s+/g, "_")}_${format(new Date(), "yyyy-MM-dd")}`;
   }
-  function icePackConfirmsSoFar() {
-    const n = Number(localStorage.getItem(icePackConfirmsKey()) ?? "0");
+  function confirmsSoFar(check: "icepack" | "servicecode", size: string) {
+    const n = Number(localStorage.getItem(confirmsKey(check, size)) ?? "0");
     return Number.isFinite(n) ? n : 0;
+  }
+  function recordConfirm(check: "icepack" | "servicecode", size: string) {
+    localStorage.setItem(confirmsKey(check, size), String(confirmsSoFar(check, size) + 1));
   }
 
   function maybeOpenIcePackGate(order: ShopifyOrder) {
+    if (packingChecks?.icePackCheck === false) return;
     if (!icePacks || icePacks.enabled === false) return;
     // Only small/large boxes have an ice-pack count. Wholesale bags leave as
     // they're made and local deliveries go straight on the van.
@@ -1358,16 +1390,39 @@ export default function Fulfilment() {
       : category === "large box" ? icePacks.largeBoxPacks
         : null;
     if (packs == null || packs <= 0) return;
-    if (icePackConfirmsSoFar() >= ICE_PACK_CONFIRMS_TARGET) return;
+    if (confirmsSoFar("icepack", category) >= CHECK_CONFIRMS_PER_SIZE) return;
     setIcePackGate({ packs, boxLabel: category });
   }
 
   // Counts CONFIRMS, not showings — backing out of an order without tapping
-  // doesn't use up one of the day's three.
+  // doesn't use up one of the size's two.
   function confirmIcePackGate() {
-    localStorage.setItem(icePackConfirmsKey(), String(icePackConfirmsSoFar() + 1));
+    if (icePackGate) recordConfirm("icepack", icePackGate.boxLabel);
     setIcePackGate(null);
     // Hand focus back to the scan field so the next scanner burst lands right.
+    requestAnimationFrame(() => barcodeRef.current?.focus());
+  }
+
+  function maybeOpenServiceCodeGate(order: ShopifyOrder) {
+    if (packingChecks?.serviceCodeCheck === false) return;
+    if (!serviceCodes?.configured) return;
+    const category = getOrderCategory(order);
+    const code = category === "small box" ? serviceCodes.small
+      : category === "large box" ? serviceCodes.large
+        : null;
+    if (!code) return; // wholesale / local delivery aren't APC-coded here
+    if (confirmsSoFar("servicecode", category) >= CHECK_CONFIRMS_PER_SIZE) return;
+    setServiceCodeGate({
+      code,
+      boxLabel: category,
+      weekend: Boolean(serviceCodes.weekendDispatch),
+      dispatchDay: serviceCodes.dispatchDay ?? "",
+    });
+  }
+
+  function confirmServiceCodeGate() {
+    if (serviceCodeGate) recordConfirm("servicecode", serviceCodeGate.boxLabel);
+    setServiceCodeGate(null);
     requestAnimationFrame(() => barcodeRef.current?.focus());
   }
 
@@ -1854,6 +1909,7 @@ export default function Fulfilment() {
     setView("picking");
     // First orders of the day: make the packer confirm the ice packs went in.
     maybeOpenIcePackGate(order);
+    maybeOpenServiceCodeGate(order);
 
     // Local delivery: the van does the last mile, APC is never involved.
     // No consignment to look up (reconcile) or book (full) — straight to
@@ -2861,6 +2917,35 @@ export default function Fulfilment() {
         {/* One-tap ice-pack confirm on the first orders of the day. Rendered
             over everything, and the confirm button takes focus so a stray
             scanner burst can't land in the pick list underneath. */}
+        {/* Service-code check — shown once the ice-pack gate is cleared so the
+            two never stack on top of each other. */}
+        {!icePackGate && serviceCodeGate && (
+          <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6">
+            <div className="bg-card rounded-2xl border border-border shadow-2xl max-w-md w-full p-6 space-y-4 text-center">
+              <div className="mx-auto w-16 h-16 rounded-2xl bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center">
+                <PackageCheck className="w-9 h-9 text-indigo-600 dark:text-indigo-400" />
+              </div>
+              <p className="text-sm text-muted-foreground">Check the shipping label on this {serviceCodeGate.boxLabel}</p>
+              <h2 className="text-4xl font-display font-bold leading-tight tracking-wide">
+                {serviceCodeGate.code}
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                That's today's service code for a <strong>{serviceCodeGate.boxLabel}</strong>
+                {serviceCodeGate.weekend
+                  ? ` — weekend rate, because dispatch is ${serviceCodeGate.dispatchDay}.`
+                  : "."}
+                {" "}If the label says anything else, stop and tell a manager before it goes out.
+              </p>
+              <button
+                autoFocus
+                onClick={confirmServiceCodeGate}
+                className="w-full py-4 rounded-xl bg-primary text-primary-foreground text-lg font-semibold hover:opacity-90 transition-opacity"
+              >
+                Label matches — carry on
+              </button>
+            </div>
+          </div>
+        )}
         {icePackGate && (
           <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6">
             <div className="bg-card rounded-2xl border border-border shadow-2xl max-w-md w-full p-6 space-y-4 text-center">

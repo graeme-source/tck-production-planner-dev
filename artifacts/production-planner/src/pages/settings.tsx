@@ -681,6 +681,7 @@ const SETTINGS_SEARCH_INDEX: { tab: SettingsSection; title: string; keywords: st
   { tab: "production", title: "Factory Number Scope", keywords: "core menu only stock count fridge factory number" },
   { tab: "production", title: "Shopify Freezer Stock Sync", keywords: "wonky freezer shopify inventory push frozen" },
   { tab: "production", title: "Next-Day Delivery Stock Gate", keywords: "stock gate zapiet low stock hold next day delivery date blocker tag surplus threshold dry run" },
+  { tab: "packing", title: "Packing Bench Checks", keywords: "ice packs service code label check first two orders confirm packing bench" },
   { tab: "packing", title: "Fulfilment — Manual Tick", keywords: "packing scan skip tick orders fulfilment" },
   { tab: "packing", title: "Fulfilment — Speak Customer Name", keywords: "voice speak name packing announce mute" },
   { tab: "production", title: "Building Timer", keywords: "batch built countdown timer target build seconds station" },
@@ -1621,6 +1622,7 @@ export default function Settings() {
               (Graeme, 2026-08-23). */}
           {activeSection === "packing" && (
             <div className="space-y-8">
+              {user?.role === "admin" && <PackingChecksSection />}
               {user?.role === "admin" && <FulfilmentManualTickSection />}
               {user?.role === "admin" && <FulfilmentSpeakNameSection />}
               {user?.role === "admin" && <IcePackSettingsSection />}
@@ -3604,6 +3606,98 @@ function StockGateSection() {
  * unit was physically present at packing time. Backed by the
  * `fulfilment_manual_tick_enabled` row in app_settings.
  */
+/**
+ * Packing bench checks: the first-two-per-box-size confirmations on the
+ * picking screen (ice packs in the box, service code on the label). Both
+ * default on; either can be switched off here (Graeme, 2026-08-28).
+ */
+function PackingChecksSection() {
+  const [config, setConfig] = useState<{ icePackCheck: boolean; serviceCodeCheck: boolean } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/fulfilment/packing-checks-config", { credentials: "include" })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d) setConfig(d); })
+      .catch(() => {});
+  }, []);
+
+  async function save(patch: Partial<{ icePackCheck: boolean; serviceCodeCheck: boolean }>) {
+    setSaving(true);
+    setSavedMsg(null);
+    try {
+      const res = await fetch("/api/fulfilment/packing-checks-config", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) throw new Error("Failed");
+      setConfig(await res.json());
+      setSavedMsg("Saved");
+      setTimeout(() => setSavedMsg(null), 2000);
+    } catch {
+      setSavedMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!config) return null;
+
+  const row = (
+    label: string,
+    field: "icePackCheck" | "serviceCodeCheck",
+    hint: string,
+  ) => (
+    <label className="flex items-center justify-between gap-3 text-sm">
+      <span className="min-w-0">
+        <span className="font-medium">{label}</span>
+        <span className="block text-xs text-muted-foreground">{hint}</span>
+      </span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={config[field]}
+        disabled={saving}
+        onClick={() => save({ [field]: !config[field] })}
+        className={cn(
+          "relative w-11 h-6 rounded-full transition-colors shrink-0 disabled:opacity-50",
+          config[field] ? "bg-primary" : "bg-secondary",
+        )}
+      >
+        <span className={cn(
+          "absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform",
+          config[field] ? "translate-x-[22px]" : "translate-x-0.5",
+        )} />
+      </button>
+    </label>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-primary" /> Packing Bench Checks
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            One-tap confirmations on the first two orders of <em>each</em> box size —
+            small and large differ, so a flat "first three orders" could miss a size
+            entirely.
+          </p>
+        </div>
+        {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
+      </div>
+      <div className="bg-card border border-border rounded-xl p-4 space-y-4">
+        {row("Ice packs in the box", "icePackCheck", "Names the day's weather-driven count for that box size before picking starts.")}
+        {row("Service code on the label", "serviceCodeCheck", "Shows the code that should be printed — including the Friday/weekend rate — so a mis-coded label is caught before it ships.")}
+      </div>
+    </div>
+  );
+}
+
 function FulfilmentManualTickSection() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);

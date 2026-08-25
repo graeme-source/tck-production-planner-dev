@@ -2692,6 +2692,48 @@ router.delete("/sku-locations/:sku", requireAdmin, async (req: Request<{ sku: st
 // barcode is missing/damaged. Defaults to enabled.
 const MANUAL_TICK_KEY = "fulfilment_manual_tick_enabled";
 
+// Packing bench checks — the first-two-per-box-size confirmations on the
+// picking screen. Both default ON; admins can switch either off in
+// Settings → Packing (Graeme, 2026-08-28).
+const ICE_PACK_CHECK_KEY = "packing_ice_pack_check_enabled";
+const SERVICE_CODE_CHECK_KEY = "packing_service_code_check_enabled";
+
+router.get("/packing-checks-config", async (_req: Request, res: Response) => {
+  const [ice, code] = await Promise.all([
+    getAppSetting(ICE_PACK_CHECK_KEY),
+    getAppSetting(SERVICE_CODE_CHECK_KEY),
+  ]);
+  res.json({
+    icePackCheck: ice === null ? true : ice !== "false",
+    serviceCodeCheck: code === null ? true : code !== "false",
+  });
+});
+
+router.put("/packing-checks-config", requireAdmin, async (req: Request, res: Response) => {
+  const body = (req.body ?? {}) as { icePackCheck?: unknown; serviceCodeCheck?: unknown };
+  const writes: Array<Promise<unknown>> = [];
+  const setKey = (key: string, value: boolean) => {
+    writes.push(db.insert(appSettingsTable)
+      .values({ key, value: String(value) })
+      .onConflictDoUpdate({ target: appSettingsTable.key, set: { value: String(value), updatedAt: new Date() } }));
+  };
+  if (typeof body.icePackCheck === "boolean") setKey(ICE_PACK_CHECK_KEY, body.icePackCheck);
+  if (typeof body.serviceCodeCheck === "boolean") setKey(SERVICE_CODE_CHECK_KEY, body.serviceCodeCheck);
+  if (writes.length === 0) {
+    res.status(400).json({ error: "icePackCheck and/or serviceCodeCheck (boolean) required" });
+    return;
+  }
+  await Promise.all(writes);
+  const [ice, code] = await Promise.all([
+    getAppSetting(ICE_PACK_CHECK_KEY),
+    getAppSetting(SERVICE_CODE_CHECK_KEY),
+  ]);
+  res.json({
+    icePackCheck: ice === null ? true : ice !== "false",
+    serviceCodeCheck: code === null ? true : code !== "false",
+  });
+});
+
 router.get("/manual-tick-config", async (_req: Request, res: Response) => {
   const value = await getAppSetting(MANUAL_TICK_KEY);
   // Default true — preserves the existing behaviour for sites that haven't
@@ -2950,6 +2992,57 @@ router.get("/dispatch-progress", async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error("[Fulfilment] dispatch-progress error:", err.message);
     res.status(502).json({ error: err.message });
+  }
+});
+
+// GET /service-codes?tag=YYYY-MM-DD — the codes that SHOULD appear on today's
+// labels, per box size. Computed with pickServiceCode itself (same settings,
+// same Friday/weekend dispatch rule) so the packer's label check can never
+// drift from what booking actually uses. Feeds the first-two-per-size
+// service-code check on the picking screen (Graeme, 2026-08-28).
+router.get("/service-codes", async (req: Request, res: Response) => {
+  const { tag } = req.query as { tag?: string };
+  if (!tag || !/^\d{4}-\d{2}-\d{2}$/.test(tag)) {
+    res.status(400).json({ error: "tag query param (YYYY-MM-DD) required" });
+    return;
+  }
+  try {
+    const [smallWeekday, largeWeekday, smallFriday, largeFriday, weightThreshStr] = await Promise.all([
+      getAppSetting("apc_service_code_small_weekday"),
+      getAppSetting("apc_service_code_large_weekday"),
+      getAppSetting("apc_service_code_small_friday"),
+      getAppSetting("apc_service_code_large_friday"),
+      getAppSetting("apc_weight_threshold_grams"),
+    ]);
+    if (!smallWeekday || !largeWeekday || !smallFriday || !largeFriday) {
+      res.json({ configured: false });
+      return;
+    }
+    const codes = { smallWeekday, largeWeekday, smallFriday, largeFriday };
+    const weightThresholdG = Number(weightThreshStr) || 1000;
+    const deliveryDate = new Date(`${tag}T12:00:00Z`);
+    // Synthetic orders: the box size is what varies, so ask pickServiceCode
+    // for each size rather than restating its weekend rule here.
+    const asOrder = (large: boolean) => ({
+      tags: large ? "large box" : "small box",
+      total_weight: large ? weightThresholdG + 1 : 0,
+    } as ShopifyOrder);
+    const small = pickServiceCode(asOrder(false), codes, weightThresholdG, deliveryDate);
+    const large = pickServiceCode(asOrder(true), codes, weightThresholdG, deliveryDate);
+    const dispatch = new Date(deliveryDate);
+    dispatch.setDate(dispatch.getDate() - 1);
+    res.json({
+      configured: true,
+      tag,
+      small,
+      large,
+      weekendDispatch: small === smallFriday,
+      dispatchDay: dispatch.toLocaleDateString("en-GB", { weekday: "long" }),
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Fulfilment] service-codes error:", msg);
+    res.status(500).json({ error: "Could not resolve service codes" });
   }
 });
 
