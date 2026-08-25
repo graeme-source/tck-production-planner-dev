@@ -75,6 +75,7 @@ The test is one question: **"Would the customer pay for what I'm doing right now
       },
       {
         title: "Through the Customer's Eyes",
+        videoUrl: "https://www.youtube.com/watch?v=MTYqZHMzW5M",
         summary: "What actually makes the calzone worth paying for — value as the customer defines it.",
         explanationMd: `Yesterday we split work into value and waste. Today: who decides which is which? **The customer does — nobody else.**
 
@@ -192,6 +193,7 @@ The sneaky part: overproduction *feels* virtuous. "Better safe than sorry." "May
       },
       {
         title: "Overproduction at the Prep Bench",
+        videoUrl: "https://www.youtube.com/watch?v=_tSoUaXU_cg",
         summary: "Where 'do the whole tub' beats 'do what the plan says' — and what it costs later.",
         explanationMd: `Prep is where overproduction is born, because prep is where rounding up feels natural. The plan says 6kg; the tub holds 8; washing up twice is annoying — so 8 it is. The recipe makes 40 portions of filling; today needs 32; the other 8 go in the fridge "for tomorrow".
 
@@ -212,6 +214,7 @@ The lean habit is trusting the plan's number: it already contains the buffer we 
       },
       {
         title: "The Fridge Doesn't Lie",
+        videoUrl: "https://www.youtube.com/watch?v=B9vUA-tjceQ",
         summary: "A walk through where extra product actually ends up — and what the shelves can tell us.",
         explanationMd: `If overproduction is invisible at the bench, it's very visible somewhere else: **the fridges.** Every "bit extra" ends up on a shelf, and the shelves keep the receipts.
 
@@ -233,6 +236,7 @@ The fridge is where overproduction converts into other wastes before your eyes: 
       },
       {
         title: "What Killing Overproduction Wins Us",
+        videoUrl: "https://www.youtube.com/watch?v=chLt4uTn1OM",
         summary: "Fridge space, fresher food, truer numbers, calmer days — the payoff for making just enough.",
         explanationMd: `So what do we actually get if we make **just enough, just in time?**
 
@@ -259,7 +263,7 @@ Notice none of these are "work faster". Making *less* — exactly enough — is 
       },
       {
         title: "The Overproduction Hunt",
-        videoUrl: "https://www.youtube.com/watch?v=B9vUA-tjceQ",
+        videoUrl: "https://www.youtube.com/watch?v=iym-Y87g5cA",
         summary: "Find one live example of more-than-ordered before the meeting ends.",
         explanationMd: `Hunt day. This week we met Overproduction at the bench, followed it to the fridge, and counted the winnings for killing it. Now: find it live.
 
@@ -290,7 +294,7 @@ One find per person, said plainly and without blame: *"That's overproduction —
     lessons: [
       {
         title: "Meet Transportation",
-        videoUrl: "https://www.youtube.com/watch?v=MTYqZHMzW5M",
+        videoUrl: "https://www.youtube.com/watch?v=J1hrOlV-CS0",
         summary: "Product on a journey the customer never asked for.",
         explanationMd: `Waste number two: **Transportation — unnecessary movement of product or raw materials.** Not people (that's Motion, coming later) — *stuff*. Trays, tubs, boxes, ingredients, finished packs.
 
@@ -312,6 +316,7 @@ Every journey costs twice: someone's time to carry it, and **risk to the product
       },
       {
         title: "The Journey of a Calzone",
+        videoUrl: "https://www.youtube.com/watch?v=1h1NSZV3CZY",
         summary: "Trace one product from ingredients to the van — every leg of the trip is a question.",
         explanationMd: `Today we follow one calzone through the building, and count the legs of its journey.
 
@@ -333,6 +338,7 @@ Nobody redesigns the kitchen today. Today we just see the map honestly.`,
       },
       {
         title: "Double-Handling: Touched Twice, Improved Never",
+        videoUrl: "https://www.youtube.com/watch?v=Z46BCTVc4p8",
         summary: "Put-downs that need a second pick-up — the clearest transportation waste to kill.",
         explanationMd: `The easiest transportation waste to spot has a name: **double-handling.** Anything put down somewhere it can't stay — because that guarantees a second journey.
 
@@ -352,7 +358,7 @@ Each of these doubles the carrying and doubles the risk, and adds a third cost: 
       },
       {
         title: "Shorter Journeys, Better Days",
-        videoUrl: "https://www.youtube.com/watch?v=J1hrOlV-CS0",
+        videoUrl: "https://www.youtube.com/watch?v=Kzbm60fcaj4",
         summary: "What we win when product moves less: time back, fewer knocks, clearer floors.",
         explanationMd: `Payday. What do shorter journeys actually buy us?
 
@@ -377,6 +383,7 @@ And the fixes are usually small: move the thing closer to where it's used, or us
       },
       {
         title: "The Transportation Hunt",
+        videoUrl: "https://www.youtube.com/watch?v=46qtoltrhs4",
         summary: "Find one pointless journey and name the smallest change that shortens it.",
         explanationMd: `Hunt day. The quarry: **one journey product makes that it doesn't need to** — an address-only move, a double-handle, a park-and-shift.
 
@@ -429,6 +436,7 @@ And excess stock is a bully: it fills fridges (making Transportation's parking p
       },
       {
         title: "Why We Over-Stock",
+        videoUrl: "https://www.youtube.com/watch?v=sjmrB4oOW-k",
         summary: "Excess stock is fear made visible — and the fears have better answers.",
         explanationMd: `Nobody orders too much on purpose. Excess stock is **fear made visible**, and it's worth naming the fears, because each has a better answer than a bigger pile.
 
@@ -501,6 +509,7 @@ None of this needs anyone to work harder. It needs the pile to get smaller — c
       },
       {
         title: "The Inventory Hunt",
+        videoUrl: "https://www.youtube.com/watch?v=yv4PcWHXiC0",
         summary: "Find one thing we hold too much of — and name the signal that should replace the pile.",
         explanationMd: `Hunt day. The quarry: **one thing we hold more of than we need.** The extra tubs. The over-deep pile. The "just in case" that's outlived its case. The thing nobody remembers ordering that's still here.
 
@@ -553,6 +562,7 @@ The lean view, and the heart of this week: a defect is **evidence about the proc
       },
       {
         title: "The Life Story of a Wonky",
+        videoUrl: "https://www.youtube.com/watch?v=ryjVOGnO7uo",
         summary: "Trace one defect backwards — the flaw is usually born long before it's noticed.",
         explanationMd: `Today, one defect, told as a biography — because **where a defect is *noticed* is almost never where it was *born*.**
 
@@ -594,7 +604,7 @@ That's why the lean rule is **quality at the source**: every station is the cust
       },
       {
         title: "What Fewer Defects Wins Us",
-        videoUrl: "https://www.youtube.com/watch?v=ryjVOGnO7uo",
+        videoUrl: "https://www.youtube.com/watch?v=krub0SyGAhA",
         summary: "Full-price product, unbroken flow, and a team that trusts its own process.",
         explanationMd: `Payday. What do fewer defects actually buy?
 
@@ -695,6 +705,7 @@ The dream shape is boring: short lines, few crossings, everything within a step 
       },
       {
         title: "A Home for Everything",
+        videoUrl: "https://www.youtube.com/watch?v=d3sfD-7wN1k",
         summary: "Searching is motion's sneakiest form — and a labelled home kills it dead.",
         explanationMd: `The sneakiest motion waste doesn't look like walking at all. It looks like **searching** — and searching is just motion in a small space with rising blood pressure.
 
@@ -715,6 +726,7 @@ The kill is total and cheap: **a home for everything, and everything in its home
       },
       {
         title: "Save Your Legs",
+        videoUrl: "https://www.youtube.com/watch?v=Knlg6CodUN4",
         summary: "Motion fixes are energy refunds — the same shift, less worn out.",
         explanationMd: `Payday — and Motion's payday is the most personal of all eight wastes.
 
@@ -792,6 +804,7 @@ The tricky part: overprocessing masquerades as **high standards**. "We're thorou
       },
       {
         title: "Where Extra Work Hides at TCK",
+        videoUrl: "https://www.youtube.com/watch?v=refb1eGbo_Y",
         summary: "Double entries, double checks, double handling of information — the paperwork has spaghetti too.",
         explanationMd: `Yesterday's definition; today, where it actually lives here. Overprocessing loves three homes:
 
@@ -816,6 +829,7 @@ Careful, though: some double-checks ARE the value — allergen checks, label che
       },
       {
         title: "Good Enough Is a Standard, Not a Shrug",
+        videoUrl: "https://www.youtube.com/watch?v=sK6goWfW8RA",
         summary: "The customer defines done — a clear standard protects both quality and effort.",
         explanationMd: `"Good enough" gets a bad name, as if it means settling. In lean it means something precise and rather liberating: **done is defined by the customer, and written down.**
 
@@ -836,7 +850,7 @@ This is what our SOPs and specs are really for — not paperwork, but agreed fin
       },
       {
         title: "What Trimming Extra Work Wins Us",
-        videoUrl: "https://www.youtube.com/watch?v=refb1eGbo_Y",
+        videoUrl: "https://www.youtube.com/watch?v=shxvPBbc70Y",
         summary: "Care aimed where it counts, time back, and standards everyone can trust.",
         explanationMd: `Payday. Trimming overprocessing pays differently from the other wastes — it pays in **aim**.
 
@@ -861,6 +875,7 @@ And the discipline stays: we trim what the customer can't taste. Anything that p
       },
       {
         title: "The Overprocessing Hunt",
+        videoUrl: "https://www.youtube.com/watch?v=Hz0Slx39gi4",
         summary: "Find one piece of work the customer would never miss — and check it's truly ornamental before it goes.",
         explanationMd: `Hunt day — with this week's special rule: **verify before you trim.**
 
@@ -915,6 +930,7 @@ Two truths for the week. First, **waiting is a symptom** — somewhere upstream,
       },
       {
         title: "Waiting on Machines",
+        videoUrl: "https://www.youtube.com/watch?v=QOSqNHrtkVQ",
         summary: "The mixer doesn't need company — pair machine time with human work.",
         explanationMd: `First family of waits: **machine waits.** The mixer running, the oven cooking, the sheeter working through a batch — and a person stood watching.
 
@@ -956,6 +972,7 @@ Two flow-savers cost nothing. **A heads-up beats a surprise:** "dough's running 
       },
       {
         title: "What Killing Waits Wins Us",
+        videoUrl: "https://www.youtube.com/watch?v=VIIEXSezpoo",
         summary: "Days that flow — shorter in feel, smoother in fact, and less overtime at the edges.",
         explanationMd: `Payday. What does a low-waiting day actually feel like?
 
@@ -1057,6 +1074,7 @@ So today's shift is small but real: your observations aren't interruptions to th
       },
       {
         title: "Why Good Ideas Stay Unsaid",
+        videoUrl: "https://www.youtube.com/watch?v=_Ik8u28kfQc",
         summary: "The barriers that keep ideas in heads — and how we take each one down.",
         explanationMd: `If everyone's an expert in their own job, why do so many ideas die unsaid? Because saying an idea has costs, and unless we remove them, silence is the rational choice. The barriers have names:
 
