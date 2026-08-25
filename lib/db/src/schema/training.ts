@@ -30,6 +30,10 @@ export const trainingMatrixItemsTable = pgTable("training_matrix_items", {
   matrixId: integer("matrix_id").notNull().references(() => trainingMatricesTable.id, { onDelete: "cascade" }),
   label: text("label").notNull(),
   sopId: integer("sop_id").references(() => riskAssessmentsTable.id, { onDelete: "set null" }),
+  // Lean matrix items certify a weekly lean principle: completing that
+  // week's in-app lesson review auto-ticks this item (migration 0055).
+  // Plain integer (no FK helper import) — the DB carries the constraint.
+  principleId: integer("principle_id"),
   sortOrder: integer("sort_order").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

@@ -62,6 +62,7 @@ import ResetPassword from "@/pages/reset-password";
 import { Loader2 } from "lucide-react";
 import { PinLockOverlay } from "@/components/pin-lock-overlay";
 import { PasswordResetGate } from "@/components/password-reset-gate";
+import { LeanReviewPage } from "@/components/lean-weekly-review";
 import { toast } from "@/hooks/use-toast";
 
 function isApiError(error: unknown): error is { status: number; message: string } {
@@ -178,6 +179,7 @@ function Router() {
               <Route path="/reports">{() => <ProtectedRoute component={Reports} pageKey="/reports" />}</Route>
               <Route path="/training">{() => <ProtectedRoute component={TrainingMatrix} pageKey="/training" />}</Route>
               <Route path="/lean-cave" component={LeanCave} />
+              <Route path="/lean-review" component={LeanReviewPage} />
               <Route path="/hub" component={EmployeeHub} />
               <Route path="/documents/:id" component={DocumentViewer} />
               <Route path="/settings" component={Settings} />

@@ -24,6 +24,7 @@ import { useStationAssignment } from "@/hooks/use-station-assignment";
 import { ReportButton } from "@/components/report-modal";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { StationSopRail } from "@/components/sop-link-chips";
+import { LeanWeeklyStrip } from "@/components/lean-weekly-review";
 import { QuickActionsDock } from "@/components/layout";
 import { CurrentUserBadge } from "@/components/current-user-badge";
 
@@ -348,6 +349,9 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
         {/* Station-scoped SOPs — the "any process on this station" anchor.
             Attach here for anything that isn't a specific recipe or
             ingredient; the linked SOPs render as "Show me how" buttons. */}
+        <div className="mb-3 empty:hidden">
+          <LeanWeeklyStrip />
+        </div>
         <div className="mb-4">
           <StationSopRail stationType={stationType} stationLabel={meta.label} />
         </div>

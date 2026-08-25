@@ -43,6 +43,7 @@ import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/user-avatar";
 import { NotificationBell } from "@/components/notification-bell";
 import { CurrentUserBadge } from "@/components/current-user-badge";
+import { LeanWeeklyStrip } from "@/components/lean-weekly-review";
 import { NotificationFlash } from "@/components/notification-flash";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assistant";
@@ -661,6 +662,10 @@ export function Layout({ children }: { children: ReactNode }) {
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
         <TopBar onMenu={handleMenuButton} fallbackTitle={currentPageName} onOpenSops={() => setSopsOpen(true)} />
         <div className="flex-1 overflow-y-auto p-4 md:p-8 pb-[200px] relative">
+          {/* Weekly lean lesson reminder — every main page, until completed */}
+          <div className="mb-4 empty:hidden">
+            <LeanWeeklyStrip />
+          </div>
           <motion.div
             key={location}
             initial={{ opacity: 0, y: 10 }}

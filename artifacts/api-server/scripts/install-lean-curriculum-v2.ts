@@ -34,7 +34,7 @@
  */
 
 import { pool } from "@workspace/db";
-import { LEAN_CURRICULUM_V2 } from "./lean-curriculum-v2-content";
+import { LEAN_CURRICULUM_V2, LEAN_QUIZZES_V2 } from "./lean-curriculum-v2-content";
 
 const APPLY = process.argv.includes("--apply");
 const ANCHOR_ARG = process.argv.find(a => a.startsWith("--anchor="))?.slice("--anchor=".length);
@@ -78,6 +78,20 @@ function validate(): string[] {
       }
     });
   });
+  if (LEAN_QUIZZES_V2.length !== LEAN_CURRICULUM_V2.length) {
+    problems.push(`expected ${LEAN_CURRICULUM_V2.length} quizzes, got ${LEAN_QUIZZES_V2.length}`);
+  }
+  LEAN_QUIZZES_V2.forEach((quiz, wi) => {
+    if (quiz.length < 3) problems.push(`week ${wi + 1} quiz: expected at least 3 questions, got ${quiz.length}`);
+    quiz.forEach((q, qi) => {
+      const where = `week ${wi + 1} quiz q${qi + 1}`;
+      if (!q.question?.trim()) problems.push(`${where}: empty question`);
+      if (!Array.isArray(q.options) || q.options.length < 2) problems.push(`${where}: needs at least 2 options`);
+      if (!Number.isInteger(q.answer) || q.answer < 0 || q.answer >= q.options.length) {
+        problems.push(`${where}: answer index ${q.answer} out of range`);
+      }
+    });
+  });
   return problems;
 }
 
@@ -116,8 +130,8 @@ async function main() {
     await pg.query(`DELETE FROM lean_week_focus`);
     for (const [i, week] of LEAN_CURRICULUM_V2.entries()) {
       const { rows } = await pg.query<{ id: number }>(
-        `INSERT INTO lean_principles (week_position, title, summary, is_active) VALUES ($1, $2, $3, TRUE) RETURNING id`,
-        [i + 1, week.title, week.summary],
+        `INSERT INTO lean_principles (week_position, title, summary, quiz_json, is_active) VALUES ($1, $2, $3, $4, TRUE) RETURNING id`,
+        [i + 1, week.title, week.summary, JSON.stringify(LEAN_QUIZZES_V2[i])],
       );
       const principleId = rows[0].id;
       for (const [j, l] of week.lessons.entries()) {

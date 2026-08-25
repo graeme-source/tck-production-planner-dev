@@ -1121,3 +1121,307 @@ Every idea logged today. Every one gets an answer. That's the deal — and it st
     ],
   },
 ];
+
+// ── Weekly quizzes ────────────────────────────────────────────────────
+// Three questions per week, indexed to LEAN_CURRICULUM_V2. The quiz is the
+// last page of the weekly review module: it checks the week's idea actually
+// landed ("they genuinely can't pass it without understanding" — Graeme,
+// 2026-08-25). All questions must be answered correctly to complete;
+// retries are free — the goal is understanding, not examination.
+
+export interface QuizQuestionV2 {
+  question: string;
+  options: string[];
+  /** Index into options. */
+  answer: number;
+}
+
+export const LEAN_QUIZZES_V2: QuizQuestionV2[][] = [
+  // Week 1 — Seeing Waste
+  [
+    {
+      question: "What makes something \"waste\"?",
+      options: [
+        "It takes a long time",
+        "The customer wouldn't pay for it",
+        "It's hard work",
+        "It happens away from the kitchen",
+      ],
+      answer: 1,
+    },
+    {
+      question: "Who decides what counts as value?",
+      options: ["The head chef", "Whoever's done the job longest", "The customer", "The plan"],
+      answer: 2,
+    },
+    {
+      question: "Why is familiar waste the most dangerous kind?",
+      options: [
+        "It's usually the biggest",
+        "We stop noticing it — it just feels normal",
+        "It only happens in the fridges",
+        "It costs the most money",
+      ],
+      answer: 1,
+    },
+  ],
+  // Week 2 — Overproduction
+  [
+    {
+      question: "What is Overproduction?",
+      options: [
+        "Making food too fast",
+        "Making more than the customer demands",
+        "Using too many ingredients in a batch",
+        "Cooking at too high a temperature",
+      ],
+      answer: 1,
+    },
+    {
+      question: "Why is overproduction \"the waste that feeds the others\"?",
+      options: [
+        "It's the most common waste",
+        "It always happens first in the day",
+        "The extra needs storing, moving, counting — and often binning",
+        "It uses the most electricity",
+      ],
+      answer: 2,
+    },
+    {
+      question: "The plan says 6kg but the tub holds 8kg. The lean move is…",
+      options: [
+        "Prep 8kg and keep the extra for tomorrow",
+        "Prep 6kg — the plan's number already includes the buffer",
+        "Prep 8kg and bin the extra",
+        "Split the difference at 7kg",
+      ],
+      answer: 1,
+    },
+  ],
+  // Week 3 — Transportation
+  [
+    {
+      question: "Transportation waste is…",
+      options: [
+        "People walking too much",
+        "The delivery van's fuel costs",
+        "Unnecessary movement of product and materials",
+        "Moving things too slowly",
+      ],
+      answer: 2,
+    },
+    {
+      question: "The \"mid-air test\" asks, before you put something down…",
+      options: [
+        "Is this heavy?",
+        "Is this its home — or will someone have to touch it again?",
+        "Is the fridge full?",
+        "Who moved this last?",
+      ],
+      answer: 1,
+    },
+    {
+      question: "Every extra journey costs twice because…",
+      options: [
+        "Two people have to carry it",
+        "It uses fuel and time",
+        "Someone's time is spent carrying AND every move risks the product",
+        "It always happens twice a day",
+      ],
+      answer: 2,
+    },
+  ],
+  // Week 4 — Inventory
+  [
+    {
+      question: "Inventory waste is best described as…",
+      options: [
+        "Having any stock at all",
+        "Cash sitting on a shelf — with a use-by date",
+        "Food stored in the freezer",
+        "A full order book",
+      ],
+      answer: 1,
+    },
+    {
+      question: "Excess stock is usually caused by…",
+      options: [
+        "Laziness",
+        "Fear — like \"what if we run out?\"",
+        "Suppliers sending too much",
+        "Having big fridges",
+      ],
+      answer: 1,
+    },
+    {
+      question: "What happens when we lower the \"water level\" (stock) slowly?",
+      options: [
+        "We run out immediately",
+        "Stock counts take longer",
+        "Hidden problems surface — so we can finally fix them",
+        "The kanban cards stop working",
+      ],
+      answer: 2,
+    },
+  ],
+  // Week 5 — Defects
+  [
+    {
+      question: "Why does a wonky calzone hurt more than it looks?",
+      options: [
+        "It looks unprofessional",
+        "All the cost is spent either way — same dough, filling and oven time, less money back",
+        "It takes longer to bin",
+        "It upsets whoever built it",
+      ],
+      answer: 1,
+    },
+    {
+      question: "Where is a defect usually BORN?",
+      options: [
+        "Exactly where it's noticed",
+        "Upstream of where it's noticed",
+        "In the oven",
+        "At packing",
+      ],
+      answer: 1,
+    },
+    {
+      question: "In lean thinking, a defect is…",
+      options: [
+        "Always someone's fault",
+        "Bad luck",
+        "Unavoidable in a kitchen",
+        "Evidence about the process — never a verdict on a person",
+      ],
+      answer: 3,
+    },
+  ],
+  // Week 6 — Motion
+  [
+    {
+      question: "Motion waste is…",
+      options: [
+        "Unnecessary movement of PEOPLE — steps, reaches, searches",
+        "Unnecessary movement of product",
+        "Machines vibrating",
+        "Walking too slowly",
+      ],
+      answer: 0,
+    },
+    {
+      question: "A spaghetti diagram of your footsteps mostly tells you about…",
+      options: [
+        "Your fitness",
+        "The layout — never the person",
+        "How fast you walk",
+        "Who's slowest on shift",
+      ],
+      answer: 1,
+    },
+    {
+      question: "The cure for searching is…",
+      options: [
+        "A better memory",
+        "More drawers",
+        "A home for everything, and everything in its home",
+        "Asking a manager",
+      ],
+      answer: 2,
+    },
+  ],
+  // Week 7 — Overprocessing
+  [
+    {
+      question: "Overprocessing means…",
+      options: [
+        "Processing food for too long",
+        "Doing more work than the customer needs",
+        "Working overtime",
+        "Using machines instead of hands",
+      ],
+      answer: 1,
+    },
+    {
+      question: "Which of these must NEVER be trimmed as overprocessing?",
+      options: [
+        "Writing the same number in two places",
+        "Allergen and food-safety checks",
+        "Re-counting a count that always matches",
+        "Polishing a surface the customer never sees",
+      ],
+      answer: 1,
+    },
+    {
+      question: "In lean, \"good enough\" means…",
+      options: [
+        "Settling for less",
+        "Roughly right",
+        "Whatever is fastest",
+        "Done as the customer defines it — written down as the standard",
+      ],
+      answer: 3,
+    },
+  ],
+  // Week 8 — Waiting
+  [
+    {
+      question: "Waiting waste is…",
+      options: [
+        "People ready, work not",
+        "Machines sitting idle overnight",
+        "Customers waiting for delivery",
+        "Walking slowly between stations",
+      ],
+      answer: 0,
+    },
+    {
+      question: "The mixer runs for 8 minutes. The lean move is…",
+      options: [
+        "Watch it so nothing goes wrong",
+        "Turn it up so it finishes faster",
+        "Pair the window with work that fits it — reset the station, weigh up, prep labels",
+        "Start it later in the day",
+      ],
+      answer: 2,
+    },
+    {
+      question: "In a chain of stations, everyone ends up working at the pace of…",
+      options: ["The fastest station", "The average", "The host", "The bottleneck"],
+      answer: 3,
+    },
+  ],
+  // Week 9 — Waste of Skills
+  [
+    {
+      question: "The Waste of Skills is…",
+      options: [
+        "Hiring the wrong people",
+        "Failing to use people's talents and ideas",
+        "Forgetting your training",
+        "Poor knife skills",
+      ],
+      answer: 1,
+    },
+    {
+      question: "Who knows a job's waste best?",
+      options: [
+        "The manager",
+        "The customer",
+        "The person who does the job every day",
+        "The supplier",
+      ],
+      answer: 2,
+    },
+    {
+      question: "Why is the Waste of Skills called the master waste?",
+      options: [
+        "It's the biggest in kilograms",
+        "It's the oldest of the eight",
+        "It costs the most per week",
+        "People find and fix the other seven — waste their ideas and every waste stays",
+      ],
+      answer: 3,
+    },
+  ],
+];

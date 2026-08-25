@@ -57,8 +57,10 @@ const GRATITUDE_IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp", "image/g
 
 const ON_DEMAND_PRINCIPLE_TITLE = "On-demand lessons";
 
-/** Monday (YYYY-MM-DD) of the week containing the given London date. */
-function mondayOf(iso: string): string {
+/** Monday (YYYY-MM-DD) of the week containing the given London date.
+ *  Exported for the weekly lesson-review flow, which must stay in lockstep
+ *  with the meeting's week. */
+export function mondayOf(iso: string): string {
   const d = new Date(`${iso}T00:00:00Z`);
   const shift = (d.getUTCDay() + 6) % 7; // Mon=0 … Sun=6
   d.setUTCDate(d.getUTCDate() - shift);
@@ -69,7 +71,7 @@ function mondayOf(iso: string): string {
  *  An explicit row in lean_week_focus wins; otherwise the active
  *  curriculum (minus the on-demand catch-all) is walked in weekPosition
  *  order from the anchor week. */
-async function getWeekFocusPrinciple(weekStart: string) {
+export async function getWeekFocusPrinciple(weekStart: string) {
   const [override] = await db.execute<{ principle_id: number }>(sql`
     SELECT principle_id FROM lean_week_focus WHERE week_start = ${weekStart}
   `).then(r => r.rows);

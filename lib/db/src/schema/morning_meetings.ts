@@ -32,11 +32,30 @@ export const leanPrinciplesTable = pgTable("lean_principles", {
   weekPosition: integer("week_position").notNull(),
   title: text("title").notNull(),
   summary: text("summary").notNull(),
+  // The week's review quiz: JSON array of { question, options[], answer }
+  // authored with the curriculum (migration 0055). Null = no quiz, the
+  // weekly review completes without one.
+  quizJson: text("quiz_json"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [
   unique("uq_lean_principle_week").on(table.weekPosition),
+]);
+
+// One row per person per week: they completed the week's lesson module
+// (pages + quiz). Feeds the Lean training matrix auto-tick and the weekly
+// to-do close-out (migration 0055).
+export const leanLessonReviewsTable = pgTable("lean_lesson_reviews", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  principleId: integer("principle_id").notNull().references(() => leanPrinciplesTable.id, { onDelete: "cascade" }),
+  weekStart: date("week_start").notNull(),
+  quizCorrect: integer("quiz_correct"),
+  quizTotal: integer("quiz_total"),
+  completedAt: timestamp("completed_at").notNull().defaultNow(),
+}, (table) => [
+  unique("uq_lean_review_user_week").on(table.userId, table.weekStart),
 ]);
 
 export const leanExamplesTable = pgTable("lean_examples", {

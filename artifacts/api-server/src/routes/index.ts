@@ -50,6 +50,7 @@ import standardsRouter from "./standards";
 import aiRouter from "./ai";
 import recipeDesignerRouter from "./recipe-designer";
 import morningMeetingsRouter from "./morning-meetings";
+import leanReviewsRouter from "./lean-reviews";
 import ingredientScrapeRouter from "./ingredient-scrape";
 import upfRouter from "./upf";
 import formsRouter from "./forms";
@@ -183,6 +184,9 @@ router.use("/compliance-actions", complianceActionsRouter);
 router.use("/standards", standardsRouter);
 router.use("/ai", aiRouter);
 router.use("/morning-meetings", morningMeetingsRouter);
+// Per-user, so NOT behind the manager guard — every team member completes
+// their own weekly lesson review (route file guards each endpoint).
+router.use("/lean-reviews", leanReviewsRouter);
 router.use("/forms", formsRouter);
 router.use("/system-updates", systemUpdatesRouter);
 router.use("/label-stock", labelStockRouter);
