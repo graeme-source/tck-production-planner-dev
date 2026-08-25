@@ -172,9 +172,18 @@ function EnergyDrainDiagram() {
                 x += s.w;
                 return [r, t];
               })}
-              <text x={x0 + used + (total - used) / 2} y={row.y + h / 2 + 4} textAnchor="middle" fontSize="10.5" fontWeight="600" fill={total - used > 100 ? GREEN : SLATE}>
-                {row.leftText}
-              </text>
+              {/* The remaining-charge label sits inside the empty part of
+                  the battery only when it fits; a near-empty battery gets
+                  it below the bar instead of smearing over the segments. */}
+              {total - used >= 140 ? (
+                <text x={x0 + used + (total - used) / 2} y={row.y + h / 2 + 4} textAnchor="middle" fontSize="10.5" fontWeight="600" fill={GREEN}>
+                  {row.leftText}
+                </text>
+              ) : (
+                <text x={x0 + total} y={row.y + h + 16} textAnchor="end" fontSize="10.5" fontWeight="600" fill={RED}>
+                  {row.leftText}
+                </text>
+              )}
             </g>
           );
         })}
