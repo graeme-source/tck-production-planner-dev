@@ -155,6 +155,10 @@ export const morningMeetingsTable = pgTable("morning_meetings", {
   gratitudePhoto: bytea("gratitude_photo"),
   gratitudePhotoMime: text("gratitude_photo_mime"),
   gratitudeCaption: text("gratitude_caption"),
+  // Names of anyone in on a trial shift today, typed by the presenter on
+  // the setup screen; the opening slide shows a welcome only when set
+  // (migration 0056).
+  trialWelcome: text("trial_welcome"),
   startedAt: timestamp("started_at").notNull().defaultNow(),
   endedAt: timestamp("ended_at"),
 }, (table) => [

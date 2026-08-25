@@ -93,7 +93,7 @@ export interface DashboardData {
     principleId?: number;
     principleTitle?: string;
   } | null;
-  meeting: { id: number; hostName: string | null; startedAt: string; endedAt: string | null; lessonId: number | null; exampleId: number | null; gratitudeCaption: string | null; hasGratitudePhoto: boolean } | null;
+  meeting: { id: number; hostName: string | null; startedAt: string; endedAt: string | null; lessonId: number | null; exampleId: number | null; gratitudeCaption: string | null; trialWelcome: string | null; hasGratitudePhoto: boolean } | null;
   slides: MeetingSlide[];
   gratitude: Array<{ id: number; fromName: string; toName: string | null; content: string }>;
 }
@@ -786,6 +786,75 @@ function SetupGratitudeCard({ data, ensureMeeting }: {
   );
 }
 
+/** Shared trial-shift welcome editor: type the name(s), save, done. Empty +
+ *  save clears it and the opening slide shows nothing at all. */
+function TrialWelcomeEditor({ value, onSave }: { value: string | null; onSave: (names: string) => Promise<void> }) {
+  const [names, setNames] = useState(value ?? "");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setNames(value ?? ""); }, [value]);
+  const dirty = names.trim() !== (value ?? "");
+  const save = async () => {
+    setBusy(true);
+    try {
+      await onSave(names.trim());
+      toast({ title: names.trim() ? "Trial-shift welcome set" : "Trial-shift welcome cleared" });
+    } catch {
+      toast({ title: "Couldn't save the welcome", variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex gap-2">
+      <input
+        value={names}
+        onChange={e => setNames(e.target.value)}
+        placeholder={'e.g. "Sam" or "Sam and Alex" — leave empty for none'}
+        maxLength={200}
+        className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-border bg-background text-sm"
+      />
+      <button
+        onClick={save}
+        disabled={!dirty || busy}
+        className="flex-shrink-0 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-50 inline-flex items-center gap-1.5"
+      >
+        {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
+      </button>
+    </div>
+  );
+}
+
+/** Today's trial-shift welcome — shows on the opening "Who's On Today"
+ *  slide so new people get a mention the moment the room looks up. */
+function TrialWelcomeCard({ data, ensureMeeting }: {
+  data: DashboardData;
+  ensureMeeting: () => Promise<number | null>;
+}) {
+  const queryClient = useQueryClient();
+  return (
+    <div className="glass-panel rounded-2xl p-6 mb-6">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Trial shifts today</p>
+      <p className="text-sm text-muted-foreground mb-3">
+        Anyone in on a trial? Their name gets a warm welcome on the opening slide. Leave empty and nothing shows.
+      </p>
+      <TrialWelcomeEditor
+        value={data.meeting?.trialWelcome ?? null}
+        onSave={async names => {
+          const id = await ensureMeeting();
+          if (!id) throw new Error("no meeting");
+          const res = await fetch(`${BASE}/api/morning-meetings/${id}/trial-welcome`, {
+            method: "PATCH", credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ names }),
+          });
+          if (!res.ok) throw new Error("failed");
+          queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
+        }}
+      />
+    </div>
+  );
+}
+
 /** Get-ahead setup for a future day — the photo and the lesson, which are
  *  the only two things about a meeting that can meaningfully be decided in
  *  advance. This replaced "Preview/Edit tomorrow's meeting": the preview
@@ -805,6 +874,7 @@ function SetupTomorrowCard({ date }: { date: string }) {
   const { data: setup } = useQuery<{
     meetingId: number | null;
     hasGratitudePhoto: boolean;
+    trialWelcome: string | null;
     exampleId: number | null;
     isLessonOverridden: boolean;
     lesson: { id: number; title: string; summary: string; weekNumber: number; principleTitle?: string } | null;
@@ -999,6 +1069,28 @@ function SetupTomorrowCard({ date }: { date: string }) {
             </button>
           )}
         </div>
+      </div>
+
+      {/* Trial shifts */}
+      <div className="border-t border-border/60 pt-4 mt-4">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Trial shifts</p>
+        <p className="text-sm text-muted-foreground mb-3">
+          Name(s) get a welcome on tomorrow's opening slide. Leave empty and nothing shows.
+        </p>
+        <TrialWelcomeEditor
+          value={setup?.trialWelcome ?? null}
+          onSave={async names => {
+            const id = await ensureTomorrowMeeting();
+            if (!id) throw new Error("no meeting");
+            const res = await fetch(`${BASE}/api/morning-meetings/${id}/trial-welcome`, {
+              method: "PATCH", credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ names }),
+            });
+            if (!res.ok) throw new Error("failed");
+            queryClient.invalidateQueries({ queryKey });
+          }}
+        />
       </div>
     </div>
   );
@@ -1221,6 +1313,7 @@ function SetupScreen({
 
         <SetupLessonCard data={data} ensureMeeting={ensureMeeting} onReadBriefing={onReadBriefing} />
         <SetupGratitudeCard data={data} ensureMeeting={ensureMeeting} />
+        <TrialWelcomeCard data={data} ensureMeeting={ensureMeeting} />
         <SetupSlidesCard data={data} ensureMeeting={ensureMeeting} onEditToday={onEditToday} />
         {/* data.tomorrow is the next MEETING day (Monday on a Friday) — the
             old calendar-tomorrow here filed Friday's photo/lesson under a
@@ -1372,7 +1465,7 @@ interface StationAssignmentsData {
   extras: StationAssignmentPerson[];
 }
 
-function StationAssignmentsSlide() {
+function StationAssignmentsSlide({ trialWelcome }: { trialWelcome?: string | null }) {
   const { data, isLoading } = useQuery<StationAssignmentsData>({
     queryKey: ["station-assignments-today"],
     queryFn: async () => {
@@ -1421,6 +1514,16 @@ function StationAssignmentsSlide() {
           Good morning, team
         </p>
       </div>
+
+      {/* Trial-shift welcome — set by the presenter on the setup screen;
+          absent = nothing renders at all. */}
+      {trialWelcome && (
+        <div className="flex justify-center">
+          <p className="inline-flex items-center gap-2.5 rounded-2xl bg-primary/10 border border-primary/30 px-5 py-2.5 text-xl sm:text-2xl font-display font-semibold text-primary">
+            <span aria-hidden>👋</span> A big welcome to <span className="font-bold">{trialWelcome}</span> — with us on a trial shift today!
+          </p>
+        </div>
+      )}
 
       {/* Clocked-in tally, so lateness registers before anyone reads a name. */}
       <div className="flex items-center justify-center gap-3 text-sm">
@@ -1496,7 +1599,7 @@ function SlideBody({ slide, data, onRefresh, isPreviewing, subIndex, reportSubCo
     case "special_prep": return <SpecialPrepSlide data={data} slide={slide} />;
     case "stretches": return <StretchesPanel />;
     case "yesterday_kpis": return <YesterdayKpisSlide data={data} slide={slide} />;
-    case "station_assignments": return <StationAssignmentsSlide />;
+    case "station_assignments": return <StationAssignmentsSlide trialWelcome={data.meeting?.trialWelcome ?? null} />;
     case "order_of_production": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} stickyTotals />;
     case "local_delivery": return <LocalDeliverySlide data={data} slide={slide} />;
     case "bag_orders": return <BagOrdersSlide data={data} slide={slide} />;

@@ -601,6 +601,7 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
         startedAt: morningMeetingsTable.startedAt,
         endedAt: morningMeetingsTable.endedAt,
         gratitudeCaption: morningMeetingsTable.gratitudeCaption,
+        trialWelcome: morningMeetingsTable.trialWelcome,
         hasGratitudePhoto: sql<boolean>`${morningMeetingsTable.gratitudePhoto} IS NOT NULL`,
       })
       .from(morningMeetingsTable)
@@ -666,6 +667,7 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
             lessonId: meeting.lessonId,
             exampleId: meeting.exampleId ?? null,
             gratitudeCaption: meeting.gratitudeCaption ?? null,
+            trialWelcome: meeting.trialWelcome ?? null,
             hasGratitudePhoto: Boolean(meeting.hasGratitudePhoto),
           }
         : null,
@@ -797,6 +799,22 @@ router.patch("/:id/gratitude-caption", async (req: Request, res: Response) => {
     .returning({ id: morningMeetingsTable.id });
   if (!row) { res.status(404).json({ error: "Meeting not found" }); return; }
   res.json({ ok: true, gratitudeCaption: caption });
+});
+
+/** Trial-shift welcome names for the opening slide. Empty clears it — the
+ *  slide then shows nothing at all. */
+router.patch("/:id/trial-welcome", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid meeting id" }); return; }
+  const raw = typeof req.body?.names === "string" ? req.body.names.trim() : "";
+  const names = raw.length > 0 ? raw.slice(0, 200) : null;
+  const [row] = await db
+    .update(morningMeetingsTable)
+    .set({ trialWelcome: names })
+    .where(eq(morningMeetingsTable.id, id))
+    .returning({ id: morningMeetingsTable.id });
+  if (!row) { res.status(404).json({ error: "Meeting not found" }); return; }
+  res.json({ ok: true, trialWelcome: names });
 });
 
 /** Remove the gratitude photo + caption — reverts the slide to the live
@@ -1306,6 +1324,7 @@ router.get("/day-setup", async (req: Request, res: Response) => {
         id: morningMeetingsTable.id,
         exampleId: morningMeetingsTable.exampleId,
         gratitudeCaption: morningMeetingsTable.gratitudeCaption,
+        trialWelcome: morningMeetingsTable.trialWelcome,
         hasGratitudePhoto: sql<boolean>`${morningMeetingsTable.gratitudePhoto} IS NOT NULL`,
       })
       .from(morningMeetingsTable)
@@ -1345,6 +1364,7 @@ router.get("/day-setup", async (req: Request, res: Response) => {
       meetingId: meeting?.id ?? null,
       hasGratitudePhoto: meeting?.hasGratitudePhoto ?? false,
       gratitudeCaption: meeting?.gratitudeCaption ?? null,
+      trialWelcome: meeting?.trialWelcome ?? null,
       exampleId: meeting?.exampleId ?? null,
       isLessonOverridden: meeting?.exampleId != null,
       lesson,
