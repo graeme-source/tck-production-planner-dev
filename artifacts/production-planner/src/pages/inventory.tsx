@@ -694,7 +694,11 @@ export default function Inventory() {
         </div>
       ) : (
         <div className="rounded-2xl border border-border overflow-hidden bg-card">
-          <table className="w-full text-sm">
+          {/* Horizontal scroll for narrow screens (iPad) — the actions
+              column stays pinned on the right so Edit/Delete are always
+              reachable instead of being clipped off-screen. */}
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[960px] text-sm">
             <thead className="border-b border-border bg-secondary/20">
               <tr>
                 <th className="text-left py-3 px-4 font-medium text-muted-foreground">Name</th>
@@ -708,7 +712,7 @@ export default function Inventory() {
                 <th className="text-left py-3 px-3 font-medium text-muted-foreground">Supplier</th>
                 <th className="text-center py-3 px-3 font-medium text-muted-foreground">Used In</th>
                 <th className="text-center py-3 px-3 font-medium text-muted-foreground">Kanban</th>
-                <th className="py-3 px-3" />
+                <th className="py-3 px-3 sticky right-0 bg-card border-l border-border" />
               </tr>
             </thead>
             <tbody className="divide-y divide-border/60">
@@ -797,7 +801,7 @@ export default function Inventory() {
                         <span className="text-muted-foreground opacity-40 text-xs">—</span>
                       )}
                     </td>
-                    <td className="py-3 px-3">
+                    <td className="py-3 px-3 sticky right-0 bg-card border-l border-border">
                       <div className="flex items-center gap-1 justify-end">
                         {activeTab === "ingredients" && (
                           <>
@@ -835,6 +839,7 @@ export default function Inventory() {
               </tr>
             </tfoot>
           </table>
+          </div>
         </div>
       )}
 
