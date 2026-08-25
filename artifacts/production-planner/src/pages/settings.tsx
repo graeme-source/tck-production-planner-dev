@@ -1532,9 +1532,12 @@ export default function Settings() {
         description="Manage your profile, team, production targets, and storage."
       />
 
-      <div className="flex gap-6 items-start">
+      {/* Column on phones (nav pills above the content), row with a sticky
+          sidebar from md up — beside each other the content was crushed to a
+          sliver on mobile. */}
+      <div className="flex flex-col md:flex-row gap-6 md:items-start">
         {/* Left nav */}
-        <nav className="w-52 flex-shrink-0 sticky top-6 space-y-3">
+        <nav className="w-full md:w-52 flex-shrink-0 md:sticky md:top-6 space-y-3">
           {/* Search across every section in every tab — type, pick, and it
               switches tab, scrolls there and flashes the section. */}
           <div className="relative">
@@ -1565,16 +1568,16 @@ export default function Settings() {
               </div>
             )}
           </div>
-          <ul className="space-y-1">
+          <ul className="flex md:block gap-1 overflow-x-auto md:overflow-visible pb-2 -mb-2 md:pb-0 md:mb-0 md:space-y-1">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
               const active = activeSection === item.id;
               return (
-                <li key={item.id}>
+                <li key={item.id} className="flex-shrink-0 md:flex-shrink">
                   <button
                     onClick={() => setSection(item.id)}
                     className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors text-left",
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors text-left whitespace-nowrap",
                       active
                         ? "bg-primary text-primary-foreground shadow-sm"
                         : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
