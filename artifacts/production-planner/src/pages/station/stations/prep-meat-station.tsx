@@ -3,8 +3,10 @@ import React from "react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import {
-  Loader2, CheckCircle2, Beef, ExternalLink, Package, Check,
+  Loader2, CheckCircle2, Beef, ExternalLink, Package, Check, BookOpen,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { useSearch } from "wouter";
@@ -63,6 +65,30 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   const { recipes, isLoading, nextPlan, targetPlanId, noFuturePlan } = usePrepByRecipe("prep_meat", plan.id, plan.planDate, isDirect);
   const isDraft = nextPlan?.status === "draft";
   const { completions, refetch } = usePrepMeatCompletions(targetPlanId ?? plan.id);
+
+  // SOP links for the whole board in two calls (recipes + ingredients),
+  // same pattern as main prep — "raw prep items" carry SOPs like any other.
+  const sopRecipeIds = [...new Set(recipes.map(r => r.recipeId))].sort((a, b) => a - b);
+  const sopRecipesKey = ["sop-links-recipes", "prep_meat", sopRecipeIds.join(",")];
+  const { data: sopLinksByRecipe } = useQuery<Record<number, SopLink[]>>({
+    queryKey: sopRecipesKey,
+    queryFn: async () => {
+      const res = await fetch(`/api/standards/links/for-recipes?ids=${sopRecipeIds.join(",")}`, { credentials: "include" });
+      return res.ok ? res.json() : {};
+    },
+    enabled: sopRecipeIds.length > 0,
+  });
+  const sopIngredientIds = [...new Set(recipes.flatMap(r => r.ingredients.map(i => i.ingredientId)))].sort((a, b) => a - b);
+  const sopIngredientsKey = ["sop-links-ingredients", "prep_meat", sopIngredientIds.join(",")];
+  const { data: sopLinksByIngredient } = useQuery<Record<number, Array<SopLink & { scope: "ingredient" | "recipe"; recipeId: number | null }>>>({
+    queryKey: sopIngredientsKey,
+    queryFn: async () => {
+      const res = await fetch(`/api/standards/links/for-ingredients?ids=${sopIngredientIds.join(",")}`, { credentials: "include" });
+      return res.ok ? res.json() : {};
+    },
+    enabled: sopIngredientIds.length > 0,
+  });
+  const sopViewer = useSopViewer("prep_meat");
 
   // Stock check state
   const [stockValues, setStockValues] = useState<Record<number, string>>({});
@@ -267,6 +293,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
       <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
 
       <PrepSubNav planId={plan.id} current="prep_meat" />
+      {sopViewer.dialog}
 
       <StockCheckStatusPanel checkDate={nextPlan?.planDate ?? plan.planDate} />
 
@@ -358,6 +385,9 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                         rAllDone && "line-through text-muted-foreground"
                       )}>
                         {recipe.recipeName}
+                        {(sopLinksByRecipe?.[recipe.recipeId] ?? []).length > 0 && (
+                          <BookOpen className="w-4 h-4 inline ml-1.5 mb-0.5 text-primary" aria-label="Has SOP" />
+                        )}
                       </p>
                     </div>
                     <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -404,6 +434,14 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                 )}
               </div>
               <p className="text-base text-muted-foreground mt-1">{formatBatches(selected.batchesTarget)} batch{selected.batchesTarget !== 1 ? "es" : ""}</p>
+              <div className="mt-2">
+                <SopChips
+                  links={sopLinksByRecipe?.[selected.recipeId] ?? []}
+                  onOpen={sopViewer.open}
+                  attach={{ targetType: "recipe", a: selected.recipeId, label: selected.recipeName }}
+                  queryKeysToInvalidate={[sopRecipesKey]}
+                />
+              </div>
             </div>
 
             {/* Summary bar — total trays */}
@@ -534,6 +572,19 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                           )}
                         </div>
                       )}
+                    </div>
+
+                    {/* SOPs for this meat — "Show me how" at the point of prep */}
+                    <div className="px-4 py-2 border-t border-rose-100 dark:border-rose-900/40 bg-white dark:bg-background/50">
+                      <SopChips
+                        links={(sopLinksByIngredient?.[ing.ingredientId] ?? []).filter(l => l.scope === "ingredient" || l.recipeId === selected.recipeId)}
+                        onOpen={sopViewer.open}
+                        attach={[
+                          { targetType: "ingredient", a: ing.ingredientId, label: "Everywhere" },
+                          { targetType: "recipe_ingredient", a: selected.recipeId, b: ing.ingredientId, label: `Only ${selected.recipeName}` },
+                        ]}
+                        queryKeysToInvalidate={[sopIngredientsKey]}
+                      />
                     </div>
 
                     {/* Linked ingredient sub-rows. Add-at-cooking items are NOT

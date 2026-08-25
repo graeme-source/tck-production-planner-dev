@@ -1,12 +1,14 @@
 /**
  * SOP links, rendered where the work happens (2026-08-19).
  *
- * A linked SOP shows as a small book chip on the checklist item / prep row /
- * wherever; tapping opens the full Standards & SOPs viewer on that SOP —
- * which includes Edit, so a wrong SOP can be fixed on the spot ("we want to
- * scrutinise them" — Graeme). The + chip opens a picker to attach another
- * SOP; chips expose a detach × while the picker is open. Attach/detach is
- * deliberately open to every signed-in user, same as SOP editing itself.
+ * A linked SOP shows as an unmissable primary "Show me how" button on the
+ * checklist item / prep row / wherever ("quite obvious, a primary-coloured
+ * button" — Graeme, 2026-08-25); tapping opens the full Standards & SOPs
+ * viewer on that SOP — which includes Edit, so a wrong SOP can be fixed on
+ * the spot ("we want to scrutinise them" — Graeme). The + chip opens a
+ * picker to attach another SOP; buttons expose a detach × while the picker
+ * is open. Attach/detach is deliberately open to every signed-in user, same
+ * as SOP editing itself.
  */
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -26,7 +28,7 @@ export interface SopLink {
 }
 
 export interface SopAttachTarget {
-  targetType: "checklist_template" | "ingredient" | "recipe_ingredient" | "recipe" | "station";
+  targetType: "checklist_template" | "ingredient" | "recipe_ingredient" | "recipe" | "sub_recipe" | "station";
   a?: number;
   b?: number;
   text?: string;
@@ -88,20 +90,24 @@ export function SopChips({ links, onOpen, attach, size = "sm", queryKeysToInvali
   return (
     <span className="inline-flex items-center gap-1 flex-wrap align-middle">
       {links.map(l => (
-        <span key={l.linkId} className={cn(chipCls, "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300")}>
+        // An attached SOP is a solid primary "Show me how" button — the one
+        // affordance a new starter must never miss. With several SOPs on the
+        // same row, each button carries its title so they stay tellable
+        // apart; the full detail always lives in the tooltip.
+        <span key={l.linkId} className={cn(chipCls, "border-primary bg-primary text-primary-foreground font-semibold shadow-sm")}>
           <button
             onClick={e => { e.stopPropagation(); onOpen(l.sopId); }}
-            className="inline-flex items-center gap-1 min-w-0 hover:underline"
+            className="inline-flex items-center gap-1.5 min-w-0"
             title={l.recipeName ? `${l.title} (for ${l.recipeName})` : l.title}
           >
-            <BookOpen className="w-3 h-3 flex-shrink-0" />
-            <span className="truncate">{l.title}</span>
-            {l.recipeName && <span className="opacity-70 flex-shrink-0">· {l.recipeName}</span>}
+            <BookOpen className={cn("flex-shrink-0", size === "sm" ? "w-3.5 h-3.5" : "w-3 h-3")} />
+            <span className="whitespace-nowrap">Show me how</span>
+            {links.length > 1 && <span className="truncate opacity-80 font-normal">· {l.title}</span>}
           </button>
           {attach && pickerOpen && (
             <button
               onClick={e => { e.stopPropagation(); detach.mutate(l.linkId); }}
-              className="flex-shrink-0 hover:text-destructive"
+              className="flex-shrink-0 opacity-80 hover:opacity-100"
               title="Detach this SOP" aria-label={`Detach ${l.title}`}
             >
               <X className="w-3 h-3" />
@@ -128,6 +134,34 @@ export function SopChips({ links, onOpen, attach, size = "sm", queryKeysToInvali
         />
       )}
     </span>
+  );
+}
+
+/** Station-level SOP rail — the catch-all anchor for processes that aren't
+ *  keyed to a recipe or ingredient. Rendered once by StationLayout, so every
+ *  station screen can attach and surface its own SOPs with no per-station
+ *  wiring. Self-contained: brings its own viewer dialog. */
+export function StationSopRail({ stationType, stationLabel }: { stationType: string; stationLabel: string }) {
+  const sopViewer = useSopViewer(stationType);
+  const queryKey = ["sop-links-station", stationType];
+  const { data: links = [] } = useQuery<SopLink[]>({
+    queryKey,
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/standards/links/for-station?station=${encodeURIComponent(stationType)}`, { credentials: "include" });
+      return res.ok ? res.json() : [];
+    },
+  });
+  return (
+    <div className="flex items-start gap-2 flex-wrap">
+      <span className="text-xs font-medium text-muted-foreground pt-1.5 flex-shrink-0">This station:</span>
+      <SopChips
+        links={links}
+        onOpen={sopViewer.open}
+        attach={{ targetType: "station", text: stationType, label: stationLabel }}
+        queryKeysToInvalidate={[queryKey]}
+      />
+      {sopViewer.dialog}
+    </div>
   );
 }
 

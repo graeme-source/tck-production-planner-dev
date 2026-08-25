@@ -544,7 +544,8 @@ router.post("/:id/steps/:stepId/build-from-video", requireAuth, async (req, res)
 // SOP links — attach SOPs to the places work happens (2026-08-19).
 // Target shapes: checklist_template(a) · ingredient(a) ·
 // recipe_ingredient(a=recipe, b=ingredient) · recipe(a) ·
-// station(target_text). The per-surface GET endpoints return everything a
+// sub_recipe(a) · station(target_text = station type, e.g. "prep_bases").
+// The per-surface GET endpoints return everything a
 // surface needs in ONE call so list rows never fan out into N requests.
 // Attach/detach is requireAuth like SOP editing itself — the whole point
 // is that anyone who spots a wrong or missing SOP can fix it on the spot.
@@ -633,7 +634,47 @@ router.get("/links/for-recipes", requireAuth, async (req, res) => {
   res.json(out);
 });
 
-const LINK_TYPES = new Set(["checklist_template", "ingredient", "recipe_ingredient", "recipe", "station"]);
+// GET /links/for-sub-recipes?ids=1,2 → { [subRecipeId]: [{linkId,sopId,title}] }
+//
+// Sub-recipe SOPs: how to make a base/marinade/dough itself (tomato base,
+// bun dough…). Closes the long-standing gap where sub-recipe rows on the
+// prep screens had no way to carry an SOP because their ids live in a
+// different table from ingredients.
+router.get("/links/for-sub-recipes", requireAuth, async (req, res) => {
+  const ids = parseIdsParam(req.query.ids);
+  if (ids.length === 0) { res.json({}); return; }
+  const rows = await db.execute<{ link_id: number; target_a: number; sop_id: number; title: string }>(sql`
+    SELECT l.id AS link_id, l.target_a, l.sop_id, s.title
+    FROM sop_links l JOIN standards_sops s ON s.id = l.sop_id
+    WHERE l.target_type = 'sub_recipe' AND l.target_a = ANY(${`{${ids.join(",")}}`}::int[])
+    ORDER BY s.title
+  `);
+  const out: Record<number, Array<{ linkId: number; sopId: number; title: string }>> = {};
+  for (const r of rows.rows ?? []) {
+    (out[r.target_a] ??= []).push({ linkId: r.link_id, sopId: r.sop_id, title: r.title });
+  }
+  res.json(out);
+});
+
+// GET /links/for-station?station=prep_bases → [{linkId,sopId,title}]
+//
+// Station-level SOPs: the catch-all for processes that aren't keyed to a
+// recipe or ingredient (how to run the pass, closing the room…). The write
+// path has accepted station links since day one; this is the read path
+// that finally lets them show up.
+router.get("/links/for-station", requireAuth, async (req, res) => {
+  const station = String(req.query.station ?? "").trim();
+  if (!station || station.length > 64) { res.json([]); return; }
+  const rows = await db.execute<{ link_id: number; sop_id: number; title: string }>(sql`
+    SELECT l.id AS link_id, l.sop_id, s.title
+    FROM sop_links l JOIN standards_sops s ON s.id = l.sop_id
+    WHERE l.target_type = 'station' AND l.target_text = ${station}
+    ORDER BY s.title
+  `);
+  res.json((rows.rows ?? []).map(r => ({ linkId: r.link_id, sopId: r.sop_id, title: r.title })));
+});
+
+const LINK_TYPES = new Set(["checklist_template", "ingredient", "recipe_ingredient", "recipe", "sub_recipe", "station"]);
 
 // POST /links {sopId, targetType, a?, b?, text?} — attach (idempotent).
 router.post("/links", requireAuth, async (req, res) => {

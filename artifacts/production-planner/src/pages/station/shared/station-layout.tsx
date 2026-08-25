@@ -23,6 +23,7 @@ import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
 import { ReportButton } from "@/components/report-modal";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
+import { StationSopRail } from "@/components/sop-link-chips";
 import { QuickActionsDock } from "@/components/layout";
 import { CurrentUserBadge } from "@/components/current-user-badge";
 
@@ -344,6 +345,12 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
       </div>
 
       <div className="max-w-7xl mx-auto px-4 pt-6 pb-[200px]">
+        {/* Station-scoped SOPs — the "any process on this station" anchor.
+            Attach here for anything that isn't a specific recipe or
+            ingredient; the linked SOPs render as "Show me how" buttons. */}
+        <div className="mb-4">
+          <StationSopRail stationType={stationType} stationLabel={meta.label} />
+        </div>
         <StationReminderBanner stationType={stationType} plan={plan} />
         {children}
       </div>

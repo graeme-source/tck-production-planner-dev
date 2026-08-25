@@ -7,8 +7,10 @@ import {
 import type { ProductionPlanDetail, SubRecipe } from "@workspace/api-client-react";
 import {
   Loader2, CheckCircle2, Layers, Square, ArrowLeft, Beaker, Search,
-  FlaskConical, ChevronRight, Minus, Plus, PackageSearch, Pencil, RotateCcw, Check,
+  FlaskConical, ChevronRight, Minus, Plus, PackageSearch, Pencil, RotateCcw, Check, BookOpen,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
 import { format } from "date-fns";
 import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
@@ -144,6 +146,9 @@ export function SubRecipeMakeFlow({
   onDone,
   completedIds,
   onToggleDone,
+  sopLinksBySubRecipe,
+  onOpenSop,
+  sopQueryKey,
 }: {
   mode: SubReplenishMode;
   planRequirements: SubRecipePlanRequirement[];
@@ -155,6 +160,11 @@ export function SubRecipeMakeFlow({
   /** Direct tick on a pick-list row — mark done/undone without running the
    *  flow, for when the base was assessed (or made) off-screen. */
   onToggleDone?: (subRecipeId: number) => void;
+  /** Optional SOP wiring: when the host page supplies these, each pick-list
+   *  row carries its "Show me how" button + attach affordance. */
+  sopLinksBySubRecipe?: Record<number, SopLink[]>;
+  onOpenSop?: (sopId: number) => void;
+  sopQueryKey?: unknown[];
 }) {
   const [search, setSearch] = useState("");
   const [state, setState] = useState<SubReplenishState>({
@@ -623,6 +633,16 @@ export function SubRecipeMakeFlow({
                           {mode === "plan" && sr.totalRequired > 0 && ` · ${sr.totalRequired.toFixed(3)} ${sr.yieldUnit} required`}
                         </>}
                   </p>
+                  {onOpenSop && (
+                    <div className="mt-1.5" onClick={e => e.stopPropagation()}>
+                      <SopChips
+                        links={sopLinksBySubRecipe?.[sr.subRecipeId] ?? []}
+                        onOpen={onOpenSop}
+                        attach={{ targetType: "sub_recipe", a: sr.subRecipeId, label: sr.subRecipeName }}
+                        queryKeysToInvalidate={sopQueryKey ? [sopQueryKey] : []}
+                      />
+                    </div>
+                  )}
                 </div>
                 {batchsNeeded !== null && !isDone && (
                   <div className="text-right flex-shrink-0">
@@ -745,6 +765,37 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
   );
   const completions = data?.completions ?? [];
   const linkedItems = data?.linkedItems ?? {};
+
+  // SOP links for every sauce ingredient on the board, in one call — the
+  // main-prep pattern. Base sub-recipes come from a second endpoint because
+  // their ids live in a different table (sub_recipe target type).
+  const sopIngredientIds = useMemo(
+    () => [...new Set((data?.ingredients ?? []).map(i => i.ingredientId))].sort((a, b) => a - b),
+    [data],
+  );
+  const sopLinksKey = ["sop-links-ingredients", "prep_bases", sopIngredientIds.join(",")];
+  const { data: sopLinksByIngredient } = useQuery<Record<number, Array<SopLink & { scope: "ingredient" | "recipe"; recipeId: number | null }>>>({
+    queryKey: sopLinksKey,
+    queryFn: async () => {
+      const res = await fetch(`/api/standards/links/for-ingredients?ids=${sopIngredientIds.join(",")}`, { credentials: "include" });
+      return res.ok ? res.json() : {};
+    },
+    enabled: sopIngredientIds.length > 0,
+  });
+  const subRecipeSopIds = useMemo(
+    () => [...new Set(planSubRecipes.map(sr => sr.subRecipeId))].sort((a, b) => a - b),
+    [planSubRecipes],
+  );
+  const subRecipeSopKey = ["sop-links-sub-recipes", subRecipeSopIds.join(",")];
+  const { data: sopLinksBySubRecipe } = useQuery<Record<number, SopLink[]>>({
+    queryKey: subRecipeSopKey,
+    queryFn: async () => {
+      const res = await fetch(`/api/standards/links/for-sub-recipes?ids=${subRecipeSopIds.join(",")}`, { credentials: "include" });
+      return res.ok ? res.json() : {};
+    },
+    enabled: subRecipeSopIds.length > 0,
+  });
+  const sopViewer = useSopViewer("prep_bases");
 
   // Tin count override state
   const [editingTinKey, setEditingTinKey] = useState<string | null>(null);
@@ -903,6 +954,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
       <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
 
       <PrepSubNav planId={plan.id} current="prep_bases" />
+      {sopViewer.dialog}
 
       <StockCheckStatusPanel checkDate={nextPlan?.planDate ?? plan.planDate} />
 
@@ -1052,6 +1104,9 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                             rStatus.allDone && "line-through text-muted-foreground"
                           )}>
                             {ing.ingredientName}
+                            {(sopLinksByIngredient?.[ing.ingredientId] ?? []).some(l => l.scope === "ingredient" || l.recipeId === group.recipeId) && (
+                              <BookOpen className="w-4 h-4 inline ml-1.5 mb-0.5 text-primary" aria-label="Has SOP" />
+                            )}
                           </p>
                           {ing.recipes.length > 1 && (
                             <p className="text-sm text-amber-500">shared</p>
@@ -1153,6 +1208,9 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                     onDone={handleSubRecipeDone}
                     completedIds={completedSubRecipeIds}
                     onToggleDone={toggleSubRecipeDone}
+                    sopLinksBySubRecipe={sopLinksBySubRecipe}
+                    onOpenSop={sopViewer.open}
+                    sopQueryKey={subRecipeSopKey}
                   />
                 )}
               </div>
@@ -1191,6 +1249,19 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                         {" in: "}{ing.recipes.map(r => r.recipeName).join(", ")}
                       </p>
                     )}
+                    <div className="mt-2">
+                      <SopChips
+                        links={sopLinksByIngredient?.[ing.ingredientId] ?? []}
+                        onOpen={sopViewer.open}
+                        attach={[
+                          { targetType: "ingredient", a: ing.ingredientId, label: "Everywhere" },
+                          ...[...new Map(ing.recipes.map(r => [r.recipeId, r.recipeName])).entries()].map(([recipeId, recipeName]) => ({
+                            targetType: "recipe_ingredient" as const, a: recipeId, b: ing.ingredientId, label: `Only ${recipeName}`,
+                          })),
+                        ]}
+                        queryKeysToInvalidate={[sopLinksKey]}
+                      />
+                    </div>
                   </div>
                   {status.totalTinCount > 0 && (
                     <div className="ml-4 flex-shrink-0 text-right">

@@ -15,7 +15,8 @@ import {
   useListBatchCompletions,
 } from "@workspace/api-client-react";
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
 import { useAuth } from "@/contexts/auth-context";
 import {
   Plus, Minus, CheckCircle2, Loader2, ChevronRight, RotateCcw,
@@ -553,6 +554,21 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   }
 
   const items = [...(plan.items ?? [])].sort(compareItemsForDisplay);
+
+  // Recipe-level SOP links for every recipe on today's build list, in one
+  // call — so "making the Godfather" carries the Godfather's build SOP
+  // right on the expanded card. Same pattern as the wrapping station.
+  const sopRecipeIds = [...new Set(items.map(it => it.recipeId).filter((id): id is number => id != null))].sort((a, b) => a - b);
+  const sopRecipesKey = ["sop-links-recipes", "building", sopRecipeIds.join(",")];
+  const { data: sopLinksByRecipe } = useQuery<Record<number, SopLink[]>>({
+    queryKey: sopRecipesKey,
+    queryFn: async () => {
+      const res = await fetch(`/api/standards/links/for-recipes?ids=${sopRecipeIds.join(",")}`, { credentials: "include" });
+      return res.ok ? res.json() : {};
+    },
+    enabled: sopRecipeIds.length > 0,
+  });
+  const sopViewer = useSopViewer(stationType);
   // Current = the selected recipe; default to the first recipe still under its
   // reference target (just a sensible starting point — the builder can tap any
   // recipe to switch). Targets never restrict which recipe is current.
@@ -997,6 +1013,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
 
   return (
     <div className="space-y-4">
+      {sopViewer.dialog}
       {/* Daily progress + KPI + break buttons */}
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
@@ -1475,6 +1492,16 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                         </a>
                       )}
                     </div>
+
+                    {/* Recipe SOPs — "Show me how" to build THIS recipe */}
+                    {item.recipeId != null && (
+                      <SopChips
+                        links={sopLinksByRecipe?.[item.recipeId] ?? []}
+                        onOpen={sopViewer.open}
+                        attach={{ targetType: "recipe", a: item.recipeId, label: item.recipeName ?? `Recipe #${item.recipeId}` }}
+                        queryKeysToInvalidate={[sopRecipesKey]}
+                      />
+                    )}
 
                     {/* Two-column layout: checklist left, batch controls right (on wider screens) */}
                     {isCurrent ? (
