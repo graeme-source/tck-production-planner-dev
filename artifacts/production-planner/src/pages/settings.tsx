@@ -306,22 +306,39 @@ function UserForm({
         </div>
       </div>
 
-      {selectedRole === "manager" && (
-        <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-xl">
+      {/* Always shown, never hidden by role: a hidden capability is an
+          undiscoverable one (Graeme, 2026-08-28). Admins already have it, so
+          for them it reads as ticked and locked rather than vanishing. */}
+      <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-xl">
+        {selectedRole === "admin" ? (
+          <input
+            type="checkbox"
+            checked
+            disabled
+            readOnly
+            id="isProductionPlannerAdmin"
+            className="w-4 h-4 rounded accent-primary opacity-60"
+          />
+        ) : (
           <input
             type="checkbox"
             {...register("isProductionPlanner")}
             id="isProductionPlanner"
             className="w-4 h-4 rounded accent-primary"
           />
-          <label htmlFor="isProductionPlanner" className="text-sm font-medium cursor-pointer">
-            Production planner
-            <span className="text-muted-foreground font-normal ml-1">
-              (sees planning tools such as the weekly DPT sales suggestion; admins always do)
-            </span>
-          </label>
-        </div>
-      )}
+        )}
+        <label
+          htmlFor={selectedRole === "admin" ? "isProductionPlannerAdmin" : "isProductionPlanner"}
+          className={cn("text-sm font-medium", selectedRole === "admin" ? "cursor-default" : "cursor-pointer")}
+        >
+          Production planner
+          <span className="text-muted-foreground font-normal ml-1">
+            {selectedRole === "admin"
+              ? "(admins always have planning access)"
+              : "(adds planning tools on top of this access level — e.g. the weekly DPT sales suggestion)"}
+          </span>
+        </label>
+      </div>
 
       <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-xl">
         <input
