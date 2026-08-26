@@ -7,6 +7,15 @@ import { IcePackBadge, IcePackBanner } from "@/components/ice-pack-callout";
 import { useIcePacks } from "@/hooks/use-ice-packs";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
+import {
+  LOCAL_DELIVERY_TAG,
+  isLocalDelivery,
+  isDispatchTagged,
+  boxCategoryOf,
+  ordersForTagging,
+  type BoxCategory as LibBoxCategory,
+  type TagScope,
+} from "@/lib/dispatch-tagging";
 import { ApcBatchBookingDialog } from "@/components/apc-batch-booking";
 import { RescheduleOrderDialog } from "@/components/reschedule-order-dialog";
 import { useAuth } from "@/contexts/auth-context";
@@ -40,15 +49,9 @@ interface LineItem {
   recipeColor: string | null;
 }
 
-type BoxCategory = "small box" | "large box" | "wholesale" | "local delivery" | "other";
-
-/** Orders tagged local-delivery go on the van, not APC — no consignment to
- *  book or look up, no label to print or verify. The tag is put on the order
- *  in Shopify when the local delivery is arranged. */
-const LOCAL_DELIVERY_TAG = "local-delivery";
-function isLocalDelivery(order: { tags: string }): boolean {
-  return order.tags.split(",").map(t => t.trim().toLowerCase()).includes(LOCAL_DELIVERY_TAG);
-}
+// Box categories, the dispatch tag and the tagging scope all live in
+// lib/dispatch-tagging so they can be unit-tested away from the page.
+type BoxCategory = LibBoxCategory;
 
 /** A row of tri-state filter chips. Green = include, red = exclude, plain =
  *  ignored. Used for both order tags and products so the two behave identically. */
@@ -95,6 +98,16 @@ function FilterChipRow({ label, items, include, exclude, onToggle, emptyText }: 
 /** The box-category tags, kept out of the generic tag chips so they aren't
  *  offered twice (they already have their own multi-select row). */
 const BOX_CATEGORIES: string[] = ["small box", "large box", "wholesale", LOCAL_DELIVERY_TAG];
+
+/** The box-size tabs in bench order, shared by the pick filters and the
+ *  tagging scope chooser so the two can never drift apart. */
+const BOX_TABS: { key: BoxCategory; label: string }[] = [
+  { key: "small box", label: "Small" },
+  { key: "large box", label: "Large" },
+  { key: "wholesale", label: "Wholesale" },
+  { key: "local delivery", label: "Local" },
+  { key: "other", label: "Other" },
+];
 
 /** Cycle a chip through untouched → include → exclude → untouched, keeping the
  *  two sets mutually exclusive so a tag can never be both. */
@@ -1569,23 +1582,10 @@ export default function Fulfilment() {
   const allUnfulfilledOrders = orders?.filter(o => o.fulfillment_status !== "fulfilled") ?? [];
   const fulfilledOrders = orders?.filter(o => o.fulfillment_status === "fulfilled") ?? [];
 
-  const unfulfilledOrders = allUnfulfilledOrders.filter(o =>
-    o.tags.split(",").map(t => t.trim()).includes("dispatch")
-  );
-  const untaggedOrders = allUnfulfilledOrders.filter(o =>
-    !o.tags.split(",").map(t => t.trim()).includes("dispatch")
-  );
+  const unfulfilledOrders = allUnfulfilledOrders.filter(isDispatchTagged);
+  const untaggedOrders = allUnfulfilledOrders.filter(o => !isDispatchTagged(o));
 
-  function getOrderCategory(order: ShopifyOrder): BoxCategory {
-    const tags = order.tags.split(",").map(t => t.trim().toLowerCase());
-    // Local delivery wins over everything — however big the box is, it goes
-    // on the van, and the packer needs it in the no-label wave.
-    if (tags.includes(LOCAL_DELIVERY_TAG)) return "local delivery";
-    if (tags.includes("wholesale")) return "wholesale";
-    if (tags.includes("large box")) return "large box";
-    if (tags.includes("small box")) return "small box";
-    return "other";
-  }
+  const getOrderCategory = (order: ShopifyOrder): BoxCategory => boxCategoryOf(order);
 
   // ── Wave filters ───────────────────────────────────────────────────────
   // The operator narrows the day's orders to the wave they want to pick, then
@@ -1768,7 +1768,25 @@ export default function Fulfilment() {
   // Held orders drop out of the pickable list entirely, so the picking
   // cycle, counts, and advance-to-next all respect the gate automatically.
   const filteredUnfulfilled = fridgeAllocation.pickable;
-  const filteredUntagged = untaggedOrders.filter(passesFilters);
+  const [tagScope, setTagScope] = useState<TagScope>("all");
+  // Tagging deliberately ignores the pick filters below it: those narrow the
+  // wave a packer is working through, but the day's approval is an all-or-
+  // nothing job and a filtered tag button silently left orders untagged
+  // (Graeme, 2026-08-26). Scope defaults to the whole day and is changed only
+  // inside the confirmation dialog.
+  const ordersToTag = ordersForTagging(allUnfulfilledOrders, tagScope);
+  // Offered inside the confirmation dialog. Only box sizes that actually have
+  // something awaiting approval are shown, so there is never a dead chip.
+  const tagScopeOptions: { key: TagScope; label: string; count: number }[] = [
+    { key: "all", label: "All orders", count: untaggedOrders.length },
+    ...BOX_TABS
+      .map(t => ({
+        key: t.key as TagScope,
+        label: t.label,
+        count: untaggedOrders.filter(o => getOrderCategory(o) === t.key).length,
+      }))
+      .filter(t => t.count > 0),
+  ];
   // Skipped orders still showing in this wave — counted against the filtered
   // list so ids left over from completed or filtered-out orders don't inflate
   // the "bring back" banner.
@@ -4013,20 +4031,20 @@ export default function Fulfilment() {
           {/* ── Step 1 of the day: TAGGING ───────────────────────────────
               Tagging happens before booking and before picking, so it sits
               ABOVE the filters and above Book APC labels rather than behind
-              a button on the summary (Graeme, 2026-08-29). The order list
-              stays collapsed — the count and the action are what matter at
-              a glance. */}
-          {filteredUntagged.length > 0 && (
+              a button on the summary (Graeme, 2026-08-29). It counts EVERY
+              untagged order of the day — the filters below belong to the
+              pick list, not to the day's approval — and the one-click path
+              is "tag everything", because that is every normal day. The
+              order list stays collapsed: the count and the action are what
+              matter at a glance. */}
+          {untaggedOrders.length > 0 && (
             <div className="glass-panel rounded-2xl border-2 border-orange-300 dark:border-orange-800 bg-orange-50/60 dark:bg-orange-950/20 p-4 space-y-3">
               <div className="flex items-center gap-3 flex-wrap">
                 <span className="text-sm font-bold uppercase tracking-widest text-orange-700 dark:text-orange-400 flex items-center gap-2">
                   <Tag className="w-4 h-4" /> Step 1 — tag
                 </span>
                 <span className="text-lg font-bold text-orange-900 dark:text-orange-200">
-                  {filteredUntagged.length} {filteredUntagged.length === 1 ? "order" : "orders"} awaiting approval
-                  {(boxFilter.size > 0 || filtersActive) && (
-                    <span className="font-medium text-base"> (matching your filters)</span>
-                  )}
+                  {untaggedOrders.length} {untaggedOrders.length === 1 ? "order" : "orders"} awaiting approval
                 </span>
                 <div className="ml-auto flex items-center gap-2 flex-wrap">
                   <button
@@ -4037,14 +4055,17 @@ export default function Fulfilment() {
                     {awaitingPanelOpen ? "Hide orders" : "Show orders"}
                   </button>
                   <button
-                    onClick={() => setShowBulkTagConfirm(true)}
+                    // Always reopens at "all orders": narrowing is a one-off
+                    // decision made in the dialog, never a setting that can
+                    // quietly persist into tomorrow's tagging.
+                    onClick={() => { setTagScope("all"); setShowBulkTagConfirm(true); }}
                     disabled={bulkTagging}
                     className="flex items-center gap-2 px-5 py-3 bg-orange-600 text-white rounded-xl text-base font-bold hover:bg-orange-700 transition-colors disabled:opacity-50"
                   >
                     {bulkTagging ? (
                       <><Loader2 className="w-5 h-5 animate-spin" /> Tagging…</>
                     ) : (
-                      <><Tag className="w-5 h-5" /> Tag {filteredUntagged.length} for dispatch</>
+                      <><Tag className="w-5 h-5" /> Tag all {untaggedOrders.length} for dispatch</>
                     )}
                   </button>
                 </div>
@@ -4054,20 +4075,47 @@ export default function Fulfilment() {
                   approval. The API enforces it — this only explains it. */}
               <p className="text-sm font-medium text-orange-800 dark:text-orange-300">
                 APC labels are only ever booked for tagged orders — tag these before booking.
+                {" "}Counts every order awaiting approval, whatever the filters below are showing.
               </p>
               {showBulkTagConfirm && (
                 <ShopifyConfirmDialog
                   title="Tag orders for dispatch?"
-                  description={`This will tag ${filteredUntagged.length} order${filteredUntagged.length === 1 ? "" : "s"} on Shopify as ready to dispatch. This cannot be undone.`}
-                  products={filteredUntagged.slice(0, 10).map(o => ({
+                  description={`This will tag ${ordersToTag.length} order${ordersToTag.length === 1 ? "" : "s"} on Shopify as ready to dispatch. This cannot be undone.`}
+                  // Narrowing lives HERE, out of the way of the everyday
+                  // path: open, confirm, done.
+                  extra={
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Which orders</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {tagScopeOptions.map(opt => (
+                            <button
+                              key={String(opt.key)}
+                              type="button"
+                              onClick={() => setTagScope(opt.key)}
+                              className={cn(
+                                "px-3 py-1.5 rounded-lg text-sm font-semibold border transition-colors flex items-center gap-1.5",
+                                tagScope === opt.key
+                                  ? "bg-primary border-primary text-primary-foreground"
+                                  : "bg-secondary/60 border-transparent text-muted-foreground hover:bg-secondary hover:text-foreground",
+                              )}
+                            >
+                              {opt.label}
+                              <span className="tabular-nums opacity-80">{opt.count}</span>
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  }
+                  products={ordersToTag.slice(0, 10).map(o => ({
                     name: `${o.name} — ${o.shipping_address?.name ?? `${o.customer?.first_name ?? ""} ${o.customer?.last_name ?? ""}`.trim()}`,
                   }))}
-                  confirmLabel="Tag All for Dispatch"
+                  confirmLabel={tagScope === "all" ? `Tag all ${ordersToTag.length}` : `Tag ${ordersToTag.length}`}
+                  confirmDisabled={ordersToTag.length === 0}
                   onConfirm={async () => {
                     setShowBulkTagConfirm(false);
                     setBulkTagging(true);
                     try {
-                      await bulkTagDispatch(queryTag, filteredUntagged.map(o => o.id));
+                      await bulkTagDispatch(queryTag, ordersToTag.map(o => o.id));
                       refetch();
                       refetchProgress();
                       refetchTags();
@@ -4076,15 +4124,16 @@ export default function Fulfilment() {
                       console.warn("[Fulfilment] Bulk tag dispatch failed:", err);
                       toast({ title: "Bulk tagging failed", description: "Please try again.", variant: "destructive" });
                     } finally {
+                      setTagScope("all");
                       setBulkTagging(false);
                     }
                   }}
-                  onCancel={() => setShowBulkTagConfirm(false)}
+                  onCancel={() => { setTagScope("all"); setShowBulkTagConfirm(false); }}
                 />
               )}
               {awaitingPanelOpen && (
                 <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                  {filteredUntagged.map(order => (
+                  {untaggedOrders.map(order => (
                     <div key={order.id} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-orange-100/60 dark:bg-orange-900/20 text-base">
                       <OrderNumber
                         orderId={order.id}
@@ -4163,13 +4212,7 @@ export default function Fulfilment() {
                 >
                   All
                 </button>
-                {([
-                  { key: "small box" as const, label: "Small" },
-                  { key: "large box" as const, label: "Large" },
-                  { key: "wholesale" as const, label: "Wholesale" },
-                  { key: "local delivery" as const, label: "Local" },
-                  { key: "other" as const, label: "Other" },
-                ] as const).map(tab => {
+                {BOX_TABS.map(tab => {
                   const count = boxCounts[tab.key];
                   if (count === 0) return null;
                   const active = boxFilter.has(tab.key);
@@ -4312,7 +4355,7 @@ export default function Fulfilment() {
             </div>
           )}
 
-          {filteredUnfulfilled.length === 0 && fridgeAllocation.held.length === 0 && filteredUntagged.length === 0 && allUnfulfilledOrders.length === 0 && (
+          {filteredUnfulfilled.length === 0 && fridgeAllocation.held.length === 0 && untaggedOrders.length === 0 && allUnfulfilledOrders.length === 0 && (
             <div className="glass-panel p-10 rounded-2xl border border-border text-center text-muted-foreground">
               <CheckCircle2 className="w-12 h-12 mx-auto mb-3 text-green-500 opacity-60" />
               <p className="font-medium">All orders fulfilled!</p>
@@ -4320,7 +4363,7 @@ export default function Fulfilment() {
             </div>
           )}
 
-          {filteredUnfulfilled.length === 0 && fridgeAllocation.held.length === 0 && filteredUntagged.length === 0 && allUnfulfilledOrders.length > 0 && (
+          {filteredUnfulfilled.length === 0 && fridgeAllocation.held.length === 0 && untaggedOrders.length === 0 && allUnfulfilledOrders.length > 0 && (
             <div className="glass-panel p-8 rounded-2xl border border-border text-center text-muted-foreground">
               <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-green-500 opacity-60" />
               {/* boxFilter is a Set — rendering it straight into JSX threw
