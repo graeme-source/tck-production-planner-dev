@@ -1,8 +1,12 @@
 FROM node:22-slim AS base
 RUN corepack enable && corepack prepare pnpm@10 --activate
 # ffmpeg/ffprobe power the "Build SOP from video" pipeline (keyframe + audio
-# extraction from uploaded SOP videos).
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+# extraction from uploaded SOP videos) and the improvement before/after
+# stitch. fonts-dejavu-core is needed for the BEFORE/AFTER captions burned
+# into that clip: --no-install-recommends brings no fonts, and ffmpeg's
+# drawtext needs a real font file. Without it the captions are skipped
+# rather than the render failing, but a labelled clip is the point.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 # Run the Node process in UTC so `new Date()` / `.toISOString()` always emit

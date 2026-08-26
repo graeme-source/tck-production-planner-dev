@@ -19,7 +19,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Loader2, Camera, CheckCircle2, Clock, ThumbsUp, RotateCcw,
-  Trophy, ChevronLeft, X, AlertCircle, Settings2,
+  Trophy, ChevronLeft, X, AlertCircle, Settings2, Clapperboard,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/contexts/auth-context";
@@ -347,6 +347,15 @@ function ImprovementDetail({ id, onBack, isManager }: {
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["improvements"] });
 
+  const stitch = useMutation({
+    mutationFn: () => api<{ bytes: number }>(`/improvements/${id}/stitch`, { method: "POST" }),
+    onSuccess: () => {
+      refresh();
+      toast({ title: "Clip ready", description: "Before and after, one after the other." });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't make the clip", description: e.message, variant: "destructive" }),
+  });
+
   const vote = useMutation({
     mutationFn: () => api(`/improvements/${id}/vote`, { method: "POST" }),
     onSuccess: refresh,
@@ -436,6 +445,22 @@ function ImprovementDetail({ id, onBack, isManager }: {
           <div>
             <p className="text-base font-bold mb-2">After</p>
             <ImprovementAttachments improvementId={id} editable phase="after" thumbSize="w-24 h-24" />
+          </div>
+        </div>
+
+        {/* One clip of the whole story, for the morning meeting and for
+            anyone reviewing it — the two halves joined, each labelled. */}
+        <div className="mt-4 pt-4 border-t border-border">
+          <button
+            onClick={() => stitch.mutate()}
+            disabled={stitch.isPending}
+            className="w-full h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 transition-colors disabled:opacity-50"
+          >
+            {stitch.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Clapperboard className="w-5 h-5" />}
+            {stitch.isPending ? "Joining them together…" : "Make one before & after clip"}
+          </button>
+          <div className="mt-3">
+            <ImprovementAttachments improvementId={id} phase="stitched" thumbSize="w-full h-40" />
           </div>
         </div>
       </div>

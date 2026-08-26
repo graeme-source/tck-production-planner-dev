@@ -11,6 +11,8 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { validate } from "../middleware/validate";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 import { shortlistDuplicates } from "../lib/improvement-similarity";
+import { stitchBeforeAfter } from "../lib/improvement-media";
+import { ffmpegAvailable } from "../lib/sop-video";
 
 const router: IRouter = Router();
 
@@ -416,6 +418,58 @@ Pick the single closest subject. If nothing fits well, return null rather than f
     console.error("[Improvements] subject suggestion failed:", err);
   }
 }
+
+/**
+ * POST /:id/stitch — join the before and the after into one clip.
+ *
+ * Stored as a normal attachment with phase 'stitched', so it streams through
+ * the same endpoint as everything else and survives whatever happens to the
+ * two halves. Re-running replaces the previous one rather than piling copies
+ * up: the halves change as people re-shoot them.
+ */
+router.post("/:id/stitch", async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  try {
+    if (!(await ffmpegAvailable())) {
+      res.status(503).json({ error: "Video joining isn't available on this server." });
+      return;
+    }
+
+    // The most recent of each half — someone who re-shoots the after means
+    // the newest one, not the first.
+    const rows = toRows<{ id: number; kind: string; phase: string | null; data: Buffer }>(await db.execute(sql`
+      SELECT DISTINCT ON (phase) id, kind, phase, data
+        FROM improvement_attachments
+       WHERE improvement_id = ${id} AND phase IN ('before', 'after')
+       ORDER BY phase, id DESC
+    `));
+    const before = rows.find(r => r.phase === "before");
+    const after = rows.find(r => r.phase === "after");
+    if (!before || !after) {
+      res.status(409).json({ error: "Needs both a before and an after before they can be joined." });
+      return;
+    }
+
+    const stitched = await stitchBeforeAfter([
+      { data: Buffer.isBuffer(before.data) ? before.data : Buffer.from(before.data), kind: before.kind, label: "Before" },
+      { data: Buffer.isBuffer(after.data) ? after.data : Buffer.from(after.data), kind: after.kind, label: "After" },
+    ]);
+
+    await db.execute(sql`DELETE FROM improvement_attachments WHERE improvement_id = ${id} AND phase = 'stitched'`);
+    const created = toRows<{ id: number }>(await db.execute(sql`
+      INSERT INTO improvement_attachments (improvement_id, kind, mime, data, file_name, phase)
+      VALUES (${id}, 'video', 'video/mp4', ${stitched}, 'before-after.mp4', 'stitched')
+      RETURNING id
+    `));
+
+    res.json({ ok: true, attachmentId: created[0]?.id, bytes: stitched.length });
+  } catch (err) {
+    console.error("[Improvements] stitch failed:", err);
+    res.status(500).json({ error: "Couldn't join those two clips together." });
+  }
+});
 
 // GET /scoreboard — approved improvements per person. The number that makes
 // the whole thing worth doing (Objective E: improvements per person).

@@ -13,7 +13,7 @@ interface Attachment {
   mime: string;
   fileName: string | null;
   createdAt: string;
-  phase: "before" | "after" | null;
+  phase: "before" | "after" | "stitched" | null;
 }
 
 const attachmentUrl = (id: number) => `${BASE}/api/improvements/attachments/${id}`;
@@ -27,9 +27,10 @@ export function ImprovementAttachments({
   improvementId: number;
   editable?: boolean;
   thumbSize?: string;
-  /** Show (and upload into) only one side of a before/after pair. Omit to
-   *  show everything, which is what the older callers still want. */
-  phase?: "before" | "after";
+  /** Show (and upload into) only one side of a before/after pair, or the
+   *  joined clip. Omit to show everything, which is what the older callers
+   *  still want. */
+  phase?: "before" | "after" | "stitched";
 }) {
   const [items, setItems] = useState<Attachment[] | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -40,9 +41,13 @@ export function ImprovementAttachments({
       .then(r => (r.ok ? r.json() : []))
       .then((all: Attachment[]) => setItems(
         // Media logged before the before/after split has no phase; it shows
-        // under "before", where an existing photo of a problem belongs.
+        // under "before", where an existing photo of a problem belongs. The
+        // joined clip only ever appears in its own slot.
         phase
-          ? all.filter(a => (phase === "before" ? a.phase !== "after" : a.phase === "after"))
+          ? all.filter(a =>
+              phase === "before"
+                ? a.phase !== "after" && a.phase !== "stitched"
+                : a.phase === phase)
           : all,
       ))
       .catch(() => setItems([]));
