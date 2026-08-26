@@ -26,3 +26,7 @@ pool.on("connect", (client) => {
 export const db = drizzle(pool, { schema });
 
 export * from "./schema";
+// Server-side only: the API computes each improvement's stage, label and
+// available actions and sends them to the screen, so the team's UI never has
+// to re-derive the rules (and can't drift from them).
+export * from "./improvement-stage";
