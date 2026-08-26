@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { db, usersTable } from "@workspace/db";
 import { sql, eq } from "drizzle-orm";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
+import type Anthropic from "@anthropic-ai/sdk";
 
 const execFileP = promisify(execFile);
 const router: IRouter = Router();
@@ -36,9 +37,11 @@ interface CachedFeed {
   available: boolean;
   last24h: Commit[];
   last7Days: Commit[];
-  /** Bullet-pointed plain-English summary of the last 24h. null when
-   *  there's nothing to summarise OR Claude isn't configured. */
+  /** Bullet-pointed plain-English summary. Kept as flat lines so older
+   *  persisted snapshots still render; summaryItems carries the titled,
+   *  prioritised form the slide prefers. */
   summary: string[] | null;
+  summaryItems?: SummaryItem[] | null;
   /** Which commit source produced the feed — "git" (local clone) or
    *  "github" (REST fallback for containers without .git). Null when
    *  neither worked; lastError says why. Diagnosability was the missing
@@ -57,7 +60,17 @@ const SNAPSHOT_ID = 1;
 // Summary cache keyed by the SHA-set of the summarised commits. Saves a
 // Claude call when the same commit set is summarised again (e.g. an
 // interval refresh with no new deploy).
-const summaryCache = new Map<string, string[]>();
+/** One change, named so it can be scanned rather than read (Graeme,
+ *  2026-08-28). teamFacing marks the ones worth meeting time. */
+export interface SummaryItem { title: string; detail: string; teamFacing: boolean }
+
+/** Kept alongside the structured items so anything still reading the old
+ *  flat bullet list — persisted snapshots included — keeps working. */
+export function summaryItemsToLines(items: SummaryItem[]): string[] {
+  return items.map(i => `${i.title}: ${i.detail}`);
+}
+
+const summaryCache = new Map<string, SummaryItem[]>();
 
 const FIELD_SEP = "\x1f"; // unit separator — unlikely to appear in commit text
 const RECORD_SEP = "\x1e"; // record separator
@@ -102,11 +115,11 @@ async function buildFeed(): Promise<CachedFeed> {
       lastError: "No commit source: no usable .git in this environment AND the GitHub API fallback failed (see server logs for the fetch status).",
     };
   }
-  let summary: string[] | null = null;
+  let summaryItems: SummaryItem[] | null = null;
   let lastError: string | null = null;
   try {
-    summary = await summariseCommits(src.last7Days);
-    if (summary == null && src.last7Days.length > 0) {
+    summaryItems = await summariseCommits(src.last7Days);
+    if (summaryItems == null && src.last7Days.length > 0) {
       lastError = isClaudeConfigured()
         ? "Claude returned no usable bullets — raw commit list shown instead."
         : "Claude isn't configured in this environment — raw commit list shown instead.";
@@ -119,7 +132,8 @@ async function buildFeed(): Promise<CachedFeed> {
     available: true,
     last24h: src.last24h,
     last7Days: src.last7Days,
-    summary,
+    summary: summaryItems ? summaryItemsToLines(summaryItems) : null,
+    summaryItems,
     source: fromGit ? "git" : "github",
     lastError,
   };
@@ -345,7 +359,7 @@ async function githubCompareRange(baselineSha: string): Promise<Commit[] | null>
  *  subjects, they care about "what's actually changed?" Returns null
  *  when there's nothing to summarise or Claude isn't configured; the
  *  slide falls back to the raw commit list. */
-async function summariseCommits(commits: Commit[]): Promise<string[] | null> {
+async function summariseCommits(commits: Commit[]): Promise<SummaryItem[] | null> {
   if (commits.length === 0) return null;
   if (!isClaudeConfigured()) return null;
 
@@ -367,12 +381,17 @@ async function summariseCommits(commits: Commit[]): Promise<string[] | null> {
 
 The audience: cooks and shift managers, not developers. They want to know "what's different now?" — what bugs got fixed, what new features they can use, what numbers will now look different. They do not care about code, schemas, refactors, or commit hygiene.
 
+For each change, decide honestly whether someone using the app would NOTICE it:
+- teamFacing TRUE: a new button or screen, a bug they'd have hit, a number that will now read differently, anything that changes how they work.
+- teamFacing FALSE: anything behind the scenes — refactors, schema changes, build and deploy plumbing, developer tooling. Still list these, briefly; they just aren't worth meeting time.
+
 Rules:
-- Output 3-6 short bullet points. One sentence each, plain English, present tense ("Packing speed now matches the Analytics page").
-- Lead with anything that affects the user-facing experience (bug fixes, new buttons, changed numbers). Skip anything internal-only.
-- If multiple commits relate to the same change, fold them into one bullet.
-- Never invent details. If a commit is unclear, leave it out.
-- Return ONLY the bullets, one per line, prefixed with "- ". No headings, no preamble.
+- At most 8 changes. Fold related commits into one.
+- title: 2-5 words, the thing itself, no verb padding ("Kanban scanning", "Packing speed figures"). This gets read at a glance to decide what's worth talking about.
+- detail: ONE sentence, plain English, present tense ("Packing speed now matches the Analytics page").
+- Never invent detail. If a commit is unclear, leave it out.
+
+Return the changes by calling emit_updates.
 
 Commits to summarise:
 ${bullets}`;
@@ -381,24 +400,56 @@ ${bullets}`;
     const client = getClaudeClient();
     const resp = await client.messages.create({
       model: CLAUDE_MODELS.haiku,
-      max_tokens: 600,
+      max_tokens: 1500,
+      tools: [{
+        name: "emit_updates",
+        description: "Return the week's changes, each with a short scannable title.",
+        input_schema: {
+          type: "object",
+          properties: {
+            updates: {
+              type: "array",
+              maxItems: 8,
+              items: {
+                type: "object",
+                properties: {
+                  title: { type: "string", description: "2-5 words naming the thing that changed." },
+                  detail: { type: "string", description: "One plain-English sentence." },
+                  teamFacing: { type: "boolean", description: "True if someone using the app would notice it." },
+                },
+                required: ["title", "detail", "teamFacing"],
+              },
+            },
+          },
+          required: ["updates"],
+        },
+      }],
       messages: [{ role: "user", content: prompt }],
     });
-    const text = resp.content
-      .map(b => (b.type === "text" ? b.text : ""))
-      .join("\n");
 
-    const lines = text
-      .split("\n")
-      .map(l => l.trim())
-      .filter(l => l.startsWith("-"))
-      .map(l => l.replace(/^-\s*/, "").trim())
-      .filter(Boolean)
-      .slice(0, 6);
+    const toolUse = resp.content.find(
+      (b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === "emit_updates",
+    );
+    const raw = (toolUse?.input as { updates?: unknown })?.updates;
+    if (!Array.isArray(raw)) return null;
 
-    if (lines.length === 0) return null;
-    summaryCache.set(key, lines);
-    return lines;
+    const items: SummaryItem[] = raw
+      .filter((u): u is Record<string, unknown> => !!u && typeof u === "object")
+      .map(u => ({
+        title: String(u.title ?? "").trim().slice(0, 60),
+        detail: String(u.detail ?? "").trim().slice(0, 300),
+        teamFacing: u.teamFacing === true,
+      }))
+      .filter(u => u.title && u.detail)
+      // What the team would notice comes first: the host reads down the list
+      // deciding what's worth meeting time, and backend plumbing at the top
+      // is what made the old slide look like a wall of irrelevance.
+      .sort((a, b) => Number(b.teamFacing) - Number(a.teamFacing))
+      .slice(0, 8);
+
+    if (items.length === 0) return null;
+    summaryCache.set(key, items);
+    return items;
   } catch (err) {
     console.warn("[system-updates] summarise failed:", err instanceof Error ? err.message : err);
     return null;

@@ -20,7 +20,7 @@ import { useLocation, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
-  ArrowLeft, ArrowRight, ChevronLeft, ChevronRight, X, Play,
+  ArrowLeft, ArrowRight, ChevronLeft, ChevronRight, X, Play, Eye,
   Sparkles, ChefHat, Truck, ShoppingBag, AlertCircle, FileText, MessageCircle,
   HeartHandshake, Activity, BookOpen, Award, Loader2, ClipboardCheck, Sun,
   CheckCircle2, Heart, Settings, Edit3, Calendar, GripVertical, Plus, Trash2, Save,
@@ -1131,6 +1131,110 @@ function SetupTomorrowCard({ date }: { date: string }) {
           }}
         />
       </div>
+
+      <TomorrowPreview date={date} setup={setup ?? null} cacheBust={cacheBust} />
+    </div>
+  );
+}
+
+/**
+ * See what's been set for tomorrow, tonight (Graeme, 2026-08-28: "I wanted
+ * to preview it today so I'm ready for it in the morning").
+ *
+ * Deliberately NOT a run-through of tomorrow's whole deck. The numbers
+ * slides — deliveries, the plan, yesterday's KPIs — are snapshots of the
+ * current day and simply don't exist for tomorrow yet; the old "preview
+ * tomorrow's meeting" wrapped tomorrow's slide list around today's figures
+ * and read as broken, which is why it was removed.
+ *
+ * What CAN be shown honestly is everything the host actually decided in
+ * advance: the welcome, the photo, and the lesson. Those are shown exactly
+ * as the room will see them, at the shape of the screen, and the rest is
+ * named rather than faked.
+ */
+function TomorrowPreview({ date, setup, cacheBust }: {
+  date: string;
+  setup: {
+    meetingId: number | null;
+    hasGratitudePhoto: boolean;
+    gratitudeCaption?: string | null;
+    trialWelcome: string | null;
+    lesson: { title: string; summary: string; whatToShowMd?: string | null; videoUrl?: string | null; diagram?: string | null } | null;
+  } | null;
+  cacheBust: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const dayName = format(new Date(date + "T00:00:00"), "EEEE");
+
+  return (
+    <div className="border-t border-border/60 pt-4 mt-4">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full h-12 rounded-xl border border-border text-sm font-semibold flex items-center justify-center gap-2 hover:bg-secondary/40 transition-colors"
+      >
+        <Eye className="w-4 h-4" />
+        {open ? "Hide the preview" : `Preview what's set for ${dayName}`}
+      </button>
+
+      {open && (
+        <div className="mt-4 space-y-4">
+          {/* Opening slide — the welcome, exactly as it will read. */}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Opening slide</p>
+            <div className="rounded-xl bg-card border border-border p-5 text-center">
+              <p className="text-2xl font-display font-bold">Good morning</p>
+              {setup?.trialWelcome
+                ? <p className="text-lg mt-2">A warm welcome to <strong>{setup.trialWelcome}</strong>, on trial with us today.</p>
+                : <p className="text-sm text-muted-foreground mt-2 italic">No trial-shift welcome set.</p>}
+            </div>
+          </div>
+
+          {/* Gratitude photo, in the shape the screen actually shows. */}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Gratitude slide</p>
+            {setup?.hasGratitudePhoto && setup.meetingId ? (
+              <div className="rounded-xl overflow-hidden bg-black border border-border" style={{ aspectRatio: "16 / 9" }}>
+                <img
+                  src={`${BASE}/api/morning-meetings/${setup.meetingId}/gratitude-photo?v=${cacheBust}`}
+                  alt="Tomorrow's gratitude slide"
+                  className="w-full h-full object-contain"
+                />
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground italic rounded-xl bg-card border border-border p-5">
+                No photo set — the slide will show the usual gratitude prompt.
+              </p>
+            )}
+            {setup?.gratitudeCaption && (
+              <p className="text-sm text-center mt-2">{setup.gratitudeCaption}</p>
+            )}
+          </div>
+
+          {/* The lesson, as the room sees it — the audience body, never the
+              host's prep notes. */}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Lean lesson</p>
+            <div className="rounded-xl bg-card border border-border p-5">
+              <p className="text-xl font-display font-bold">{setup?.lesson?.title ?? "No lesson set"}</p>
+              {setup?.lesson?.whatToShowMd
+                ? <div className="mt-3"><MarkdownBlock content={setup.lesson.whatToShowMd} /></div>
+                : setup?.lesson?.summary
+                  ? <p className="text-base text-muted-foreground mt-2">{setup.lesson.summary}</p>
+                  : null}
+              {setup?.lesson?.videoUrl && (
+                <p className="text-sm text-muted-foreground mt-3 flex items-center gap-1.5">
+                  <Play className="w-4 h-4" /> A video plays on this slide.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            The numbers slides — deliveries, the plan, yesterday's figures — aren't shown
+            here because tomorrow's don't exist yet. They fill in on the day.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -2488,6 +2592,10 @@ function SystemUpdatesSlide({ slide, subIndex, reportSubCount }: {
     last24h: SystemCommit[];
     last7Days: SystemCommit[];
     summary: string[] | null;
+    /** Titled and prioritised — what the team would notice, first. Absent
+     *  on snapshots written before titles existed, which fall back to the
+     *  flat `summary` lines. */
+    summaryItems?: Array<{ title: string; detail: string; teamFacing: boolean }> | null;
     updateTitle?: string | null;
     updateDate?: string | null;
   }>({
@@ -2501,6 +2609,7 @@ function SystemUpdatesSlide({ slide, subIndex, reportSubCount }: {
   });
 
   const summary = data?.summary ?? null;
+  const summaryItems = data?.summaryItems ?? null;
   const last7 = data?.last7Days ?? [];
   const updateTitle = data?.updateTitle ?? null;
   const updateDate = data?.updateDate ?? null;
@@ -2583,7 +2692,7 @@ function SystemUpdatesSlide({ slide, subIndex, reportSubCount }: {
         <div className="glass-panel rounded-2xl p-6 flex justify-center">
           <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
         </div>
-      ) : summary && summary.length > 0 ? (
+      ) : (summaryItems && summaryItems.length > 0) || (summary && summary.length > 0) ? (
         // Primary focus — the plain-English bullets (curated entry, or AI
         // summary of recent commits). Big and unembellished so the host can
         // read them out from across the kitchen.
@@ -2594,14 +2703,42 @@ function SystemUpdatesSlide({ slide, subIndex, reportSubCount }: {
               {updateDate ? ` · ${format(new Date(updateDate), "EEE d MMM")}` : ""}
             </p>
           )}
-          <ul className="space-y-3">
-            {summary.map((line, i) => (
-              <li key={i} className="flex items-start gap-4 text-2xl leading-snug">
-                <span className="text-primary font-bold shrink-0 mt-1">•</span>
-                <span>{line}</span>
-              </li>
-            ))}
-          </ul>
+          {/* Titled and prioritised: the host scans the bold titles to
+              decide what's worth the team's time, and the ones nobody
+              would notice sit quietly at the bottom marked as such
+              (Graeme, 2026-08-28). Falls back to the old flat lines for
+              snapshots written before titles existed. */}
+          {summaryItems && summaryItems.length > 0 ? (
+            <ul className="space-y-4">
+              {summaryItems.map((item, i) => (
+                <li key={i} className={cn("leading-snug", !item.teamFacing && "opacity-60")}>
+                  <div className="flex items-start gap-4">
+                    <span className={cn("font-bold shrink-0 mt-1", item.teamFacing ? "text-primary" : "text-muted-foreground")}>•</span>
+                    <div className="min-w-0">
+                      <p className="text-2xl font-bold">
+                        {item.title}
+                        {!item.teamFacing && (
+                          <span className="ml-3 align-middle text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                            behind the scenes
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-xl text-muted-foreground mt-0.5">{item.detail}</p>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <ul className="space-y-3">
+              {summary!.map((line, i) => (
+                <li key={i} className="flex items-start gap-4 text-2xl leading-snug">
+                  <span className="text-primary font-bold shrink-0 mt-1">•</span>
+                  <span>{line}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       ) : !data?.available ? (
         <div className="glass-panel rounded-2xl p-6 text-2xl text-muted-foreground">

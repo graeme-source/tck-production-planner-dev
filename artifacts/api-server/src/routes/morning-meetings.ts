@@ -1344,6 +1344,17 @@ router.get("/day-setup", async (req: Request, res: Response) => {
           id: leanExamplesTable.id,
           title: leanExamplesTable.title,
           summary: leanExamplesTable.summary,
+          // The slide body and its media have to come from the override too.
+          // Spreading the default lesson and replacing only the title left
+          // an overridden day showing the new title above the OLD lesson's
+          // content — invisible while the card only printed a title, and
+          // wrong the moment anything previews it.
+          explanationMd: leanExamplesTable.explanationMd,
+          whatToShowMd: leanExamplesTable.whatToShowMd,
+          deliveryNotesMd: leanExamplesTable.deliveryNotesMd,
+          videoUrl: leanExamplesTable.videoUrl,
+          diagram: leanExamplesTable.diagram,
+          imageUrl: leanExamplesTable.imageUrl,
           principleTitle: leanPrinciplesTable.title,
           weekPosition: leanPrinciplesTable.weekPosition,
         })
@@ -1358,6 +1369,13 @@ router.get("/day-setup", async (req: Request, res: Response) => {
           weekNumber: override.weekPosition,
           title: override.title,
           summary: override.summary,
+          explanationMd: override.explanationMd,
+          whatToShowMd: override.whatToShowMd,
+          deliveryNotesMd: override.deliveryNotesMd,
+          videoUrl: override.videoUrl,
+          diagram: override.diagram,
+          imageUrl: override.imageUrl,
+          principleId: override.id,
           principleTitle: override.principleTitle,
         } as typeof defaultLesson;
       }
