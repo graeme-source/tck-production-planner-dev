@@ -1,0 +1,18 @@
+-- Which despatch a stock-gate hold is defending.
+--
+-- "today"    = today's despatch, delivered tomorrow (2-day Zapiet rule)
+-- "tomorrow" = the next despatch day, delivered the day after (3-day rule)
+--
+-- The gate used to examine only today's despatch, so selling heavily on a
+-- Wednesday evening for Friday delivery went unchallenged: Thursday's
+-- despatch was not looked at until Thursday, by which point the orders were
+-- taken.
+--
+-- Free text rather than an enum because the horizons are a configured list —
+-- three- and four-day holds are the same idea with a longer preparation time.
+--
+-- A product still carries at most one LIVE hold, because Zapiet preparation
+-- time is a minimum lead time and therefore cumulative: the furthest
+-- horizon's tag already removes everything the nearer ones would. So
+-- uq_stock_gate_holds_active stays keyed on recipe_id alone.
+ALTER TABLE stock_gate_holds ADD COLUMN IF NOT EXISTS horizon TEXT NOT NULL DEFAULT 'today';

@@ -34,7 +34,12 @@ router.get("/status", async (_req, res) => {
 // PUT /api/stock-gating/config — body: partial settings, all values as strings
 // (matches app_settings storage; booleans "true"/"false").
 router.put("/config", requireAdmin, async (req, res) => {
-  const allowed = ["enabled", "dryRun", "thresholdPacks", "releasePacks", "autoRelease", "tag", "intervalMinutes", "zapietLocationId", "excludedRecipeIds"] as const;
+  const allowed = [
+    "enabled", "dryRun", "thresholdPacks", "releasePacks", "autoRelease", "tag",
+    "intervalMinutes", "zapietLocationId", "excludedRecipeIds",
+    // Look-ahead horizon: the next despatch day, with its own tag and bars.
+    "lookaheadEnabled", "lookaheadTag", "lookaheadThresholdPacks", "lookaheadReleasePacks",
+  ] as const;
   const patch: Partial<Record<(typeof allowed)[number], string>> = {};
   for (const field of allowed) {
     const v = req.body?.[field];

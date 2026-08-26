@@ -20,6 +20,16 @@ export const stockGateHoldsTable = pgTable("stock_gate_holds", {
   recipeName: text("recipe_name").notNull(),
   // The tag written to Shopify (snapshot — the setting may change later).
   tag: text("tag").notNull(),
+  // Which despatch the hold is defending: "today" = today's despatch
+  // (delivered tomorrow), "tomorrow" = the next despatch day (delivered the
+  // day after). Free text rather than an enum because the horizons are a
+  // configured list — three- and four-day holds are the same idea with a
+  // longer Zapiet preparation time (Graeme, 2026-08-26).
+  //
+  // A product still carries at most ONE live hold: preparation time is a
+  // minimum lead time, so the furthest horizon's tag subsumes the nearer
+  // ones. That is why the unique index below stays keyed on recipe alone.
+  horizon: text("horizon").notNull().default("today"),
   // gid://shopify/Product/… + display title, resolved from the recipe's
   // mapped 2-pack variant at hold time.
   productGid: text("product_gid"),

@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { ShieldAlert, Loader2, ArrowRight, CheckCircle2, AlertTriangle, FlaskConical } from "lucide-react";
+import { ShieldAlert, Loader2, ArrowRight, CheckCircle2, AlertTriangle, FlaskConical, CalendarDays } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 
@@ -18,13 +18,21 @@ interface Hold {
   tag: string;
   surplusAtHold: number;
   thresholdAtHold: number;
+  /** Which despatch this hold defends: "today" (delivered tomorrow) or
+   *  "tomorrow" (the next despatch day, delivered the day after). */
+  horizon?: string;
   dryRun: boolean;
   verifyStatus: string | null;
   verifyNote: string | null;
   heldAt: string;
 }
 interface StatusPayload {
-  settings: { enabled: boolean; dryRun: boolean; thresholdPacks: number; releasePacks: number; autoRelease: boolean; tag: string };
+  settings: {
+    enabled: boolean; dryRun: boolean; thresholdPacks: number; releasePacks: number;
+    autoRelease: boolean; tag: string;
+    lookaheadEnabled?: boolean; lookaheadTag?: string;
+    lookaheadThresholdPacks?: number; lookaheadReleasePacks?: number;
+  };
   zapietKeyConfigured: boolean;
   lastRun: { at: string; ok: boolean; note: string; productsChecked: number } | null;
   activeHolds: Hold[];
@@ -34,6 +42,18 @@ const DEFAULT_ROLES: Record<string, boolean> = { admin: true, manager: true, emp
 
 function fmtTime(iso: string): string {
   return new Date(iso).toLocaleString("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
+}
+
+/** A look-ahead hold takes two delivery days, not one. Saying which is the
+ *  difference between "we lost tomorrow" and "we lost tomorrow and Friday" —
+ *  the second is worth knowing at a glance. */
+function HorizonBadge({ hold }: { hold: Hold }) {
+  if (hold.horizon !== "tomorrow") return null;
+  return (
+    <span className="inline-flex items-center gap-1 text-xs text-purple-700 dark:text-purple-400" title="Held on the next despatch day's shortfall, so its tag removes two delivery days">
+      <CalendarDays className="w-3 h-3" /> next despatch day too
+    </span>
+  );
 }
 
 function VerifyBadge({ hold }: { hold: Hold }) {
@@ -162,9 +182,15 @@ export function StockGateBanner({ userRole }: { userRole?: string }) {
               <ShieldAlert className="w-5 h-5 text-amber-500" /> Held from next-day delivery
             </DialogTitle>
             <DialogDescription>
-              These products got within {data.settings.thresholdPacks} packs of not covering today's despatch, so the
-              <span className="font-mono text-xs mx-1 px-1 py-0.5 rounded bg-secondary">{data.settings.tag}</span>
-              tag pulled tomorrow from the website's date picker.
+              These products got close to not covering a despatch, so a tag pulled delivery dates
+              from the website's date picker. Within {data.settings.thresholdPacks} packs on today's
+              despatch takes tomorrow off
+              (<span className="font-mono text-xs px-1 py-0.5 rounded bg-secondary">{data.settings.tag}</span>);
+              {data.settings.lookaheadEnabled
+                ? <> within {data.settings.lookaheadThresholdPacks} packs on the NEXT despatch day takes
+                    that day off as well
+                    (<span className="font-mono text-xs px-1 py-0.5 rounded bg-secondary">{data.settings.lookaheadTag}</span>).</>
+                : <> the look-ahead horizon is switched off.</>}
               {data.settings.autoRelease
                 ? ` Each one releases automatically when its surplus recovers to ${data.settings.releasePacks}+ packs.`
                 : " Auto-release is off — release manually when stock recovers."}
@@ -180,7 +206,7 @@ export function StockGateBanner({ userRole }: { userRole?: string }) {
                     {h.productTitle && <span>{h.productTitle} · </span>}
                     surplus was {h.surplusAtHold} (≤ {h.thresholdAtHold}) · held {fmtTime(h.heldAt)}
                   </div>
-                  <div className="mt-1"><VerifyBadge hold={h} /></div>
+                  <div className="mt-1 flex items-center gap-3 flex-wrap"><VerifyBadge hold={h} /><HorizonBadge hold={h} /></div>
                 </div>
                 <button
                   onClick={() => releaseHold(h)}

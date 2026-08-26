@@ -29,6 +29,7 @@ import { sql, eq, isNull, desc, inArray } from "drizzle-orm";
 import { londonDateString } from "./london-time";
 import { isStaging, shouldSkipSideEffect, logSkippedSideEffect } from "./app-env";
 import { shouldVerify, MAX_VERIFIES_PER_CYCLE } from "./stock-gate-verify";
+import { desiredHold, holdMatches, type HorizonState } from "./stock-gate-decision";
 
 // ── Settings ────────────────────────────────────────────────────────────────
 
@@ -41,6 +42,14 @@ export type StockGateSettings = {
   tag: string;
   intervalMinutes: number;
   zapietLocationId: string;
+  /** The look-ahead horizon: the NEXT despatch day, delivered the day after
+   *  tomorrow. Its tag carries a longer Zapiet preparation time, so it
+   *  removes both days from the picker. Off by default — the near horizon
+   *  keeps working exactly as before until this is switched on. */
+  lookaheadEnabled: boolean;
+  lookaheadTag: string;
+  lookaheadThresholdPacks: number;
+  lookaheadReleasePacks: number;
   /** Recipe ids explicitly opted OUT of the gate (on top of the built-in
    *  scope of core-menu / fridge-held recipes). Frozen lines live here until
    *  their stock recording is reliable (Graeme, 2026-08-26). */
@@ -56,6 +65,10 @@ const KEYS = {
   tag: "stock_gate_tag",
   intervalMinutes: "stock_gate_interval_minutes",
   zapietLocationId: "stock_gate_zapiet_location_id",
+  lookaheadEnabled: "stock_gate_lookahead_enabled",
+  lookaheadTag: "stock_gate_lookahead_tag",
+  lookaheadThresholdPacks: "stock_gate_lookahead_threshold_packs",
+  lookaheadReleasePacks: "stock_gate_lookahead_release_packs",
   excludedRecipeIds: "stock_gate_excluded_recipe_ids",
 } as const;
 
@@ -68,6 +81,10 @@ const DEFAULTS: StockGateSettings = {
   tag: "low-stock-hold",
   intervalMinutes: 5,
   zapietLocationId: "270812",
+  lookaheadEnabled: false,
+  lookaheadTag: "low-stock-hold2",
+  lookaheadThresholdPacks: 5,
+  lookaheadReleasePacks: 10,
   excludedRecipeIds: [],
 };
 
@@ -95,6 +112,10 @@ export async function getStockGateSettings(): Promise<StockGateSettings> {
     tag: (map.get(KEYS.tag) || DEFAULTS.tag).trim(),
     intervalMinutes: Math.max(1, parseNum(map.get(KEYS.intervalMinutes), DEFAULTS.intervalMinutes)),
     zapietLocationId: (map.get(KEYS.zapietLocationId) || DEFAULTS.zapietLocationId).trim(),
+    lookaheadEnabled: parseBool(map.get(KEYS.lookaheadEnabled), DEFAULTS.lookaheadEnabled),
+    lookaheadTag: (map.get(KEYS.lookaheadTag) || DEFAULTS.lookaheadTag).trim(),
+    lookaheadThresholdPacks: parseNum(map.get(KEYS.lookaheadThresholdPacks), DEFAULTS.lookaheadThresholdPacks),
+    lookaheadReleasePacks: parseNum(map.get(KEYS.lookaheadReleasePacks), DEFAULTS.lookaheadReleasePacks),
     excludedRecipeIds: (map.get(KEYS.excludedRecipeIds) ?? "")
       .split(",")
       .map(v => Number(v.trim()))
@@ -198,8 +219,14 @@ async function verifyTomorrowBlocked(
   locationId: string,
   variantId: string,
   productId: string,
+  /** The first delivery date this hold is supposed to have removed. A
+   *  near-horizon hold removes tomorrow; a look-ahead hold's longer
+   *  preparation time removes tomorrow AND the day after, so checking only
+   *  tomorrow would pass a rule that had not actually taken the further day
+   *  away. Check the furthest day the hold claims to cover. */
+  targetDate?: string,
 ): Promise<{ status: "verified" | "failed" | "skipped"; note: string }> {
-  const tomorrow = nextCalendarDay(londonDateString());
+  const tomorrow = targetDate ?? nextCalendarDay(londonDateString());
   const cart: CartItem[] = [{ variant_id: Number(variantId), product_id: Number(productId), quantity: 1 }];
   const withProduct = await zapietCalendar(locationId, cart);
   if (!withProduct) return { status: "skipped", note: "ZAPIET_API_KEY or SHOPIFY_STORE_DOMAIN not set" };
@@ -273,7 +300,7 @@ export async function runStockGateCycle(trigger: "timer" | "manual"): Promise<St
     }
 
     // Same engine as the Create Plan screen and the pack report.
-    const { calculatePlanData } = await import("../routes/production-plans");
+    const { calculatePlanData, getNextDispatchDayAsync } = await import("../routes/production-plans");
     const today = londonDateString();
     const data = await calculatePlanData(today);
     type Row = {
@@ -283,9 +310,47 @@ export async function runStockGateCycle(trigger: "timer" | "manual"): Promise<St
       remainingWrappingPacksToday: number;
       dispatch2RemainingQty?: number;
       dispatch2Qty: number;
+      dispatch1Qty?: number;
+      prevProduction?: number;
       salesSource: "shopify" | "dpt";
     };
     const allRows = (data.recipes as Row[]).filter(r => r.recipeId != null);
+
+    // ── The look-ahead horizon ─────────────────────────────────────────────
+    // The near horizon only defends the despatch already in progress. To see
+    // the NEXT despatch day we ask the same engine for the day after it:
+    // calculatePlanData(D2) reports D1 as its "previous" day, which hands
+    // back D1's demand (dispatch1Qty) and D1's planned production
+    // (prevProduction) together, from one call.
+    //
+    // D1/D2 are DESPATCH days, walked by getNextDispatchDayAsync — it skips
+    // weekends and anything in non_dispatch_dates. On a Friday D1 is Monday,
+    // so the weekend is covered rather than looked straight past, which a
+    // naive "tomorrow" would have done at exactly the point where the most
+    // orders accumulate (Graeme, 2026-08-26).
+    //
+    // A failure here must never look like "no stock": lookaheadByRecipe stays
+    // empty, every look-ahead surplus reads null, and the decision refuses to
+    // act on it either way.
+    const lookaheadByRecipe = new Map<number, { demand: number; production: number }>();
+    let lookaheadDay: string | null = null;
+    if (settings.lookaheadEnabled) {
+      try {
+        const d1 = await getNextDispatchDayAsync(today);
+        const d2 = await getNextDispatchDayAsync(d1);
+        lookaheadDay = d1;
+        const ahead = await calculatePlanData(d2);
+        for (const r of ahead.recipes as Row[]) {
+          if (r.recipeId == null) continue;
+          lookaheadByRecipe.set(r.recipeId, {
+            demand: r.dispatch1Qty ?? 0,
+            production: r.prevProduction ?? 0,
+          });
+        }
+      } catch (err) {
+        console.error("[stock-gate] look-ahead unavailable, near horizon only:", err);
+      }
+    }
 
     // Scope: only recipes whose fridge stock the system actually tracks —
     // core menu and fridge-held products — minus any explicit opt-outs.
@@ -327,51 +392,108 @@ export async function runStockGateCycle(trigger: "timer" | "manual"): Promise<St
       if (row.salesSource !== "shopify" || !variantId) continue;
       productsChecked++;
 
-      const surplus = Math.round(
+      // Near horizon: what the pack report calls the predicted surplus —
+      // stock plus what is still to be wrapped today, less the packs still to
+      // go out on today's despatch.
+      const surplusToday = Math.round(
         row.fridgeStock + row.remainingWrappingPacksToday - (row.dispatch2RemainingQty ?? row.dispatch2Qty),
       );
-      const hold = holdByRecipe.get(recipeId);
 
-      if (!hold && surplus <= settings.thresholdPacks) {
-        let product: ProductRef | null = null;
-        try {
-          product = await resolveProductForVariant(variantId);
-        } catch (err) {
-          console.error(`[stock-gate] product lookup failed for ${row.recipeName}:`, err);
-        }
-        if (!product) continue;
-        if (!settings.dryRun) {
-          try {
-            await setProductTag(product.productGid, settings.tag, true);
-          } catch (err) {
-            console.error(`[stock-gate] tagging failed for ${row.recipeName}:`, err);
-            continue; // no hold row for a tag that never landed
-          }
-        }
-        await db.insert(stockGateHoldsTable).values({
-          recipeId,
-          recipeName: row.recipeName,
+      // Look-ahead horizon: carry today's closing position forward, add what
+      // is planned for the next despatch day, subtract what that day owes.
+      // Null when the look-ahead could not be computed, which never acts.
+      const ahead = lookaheadByRecipe.get(recipeId);
+      const surplusAhead = ahead
+        ? Math.round(surplusToday + ahead.production - ahead.demand)
+        : null;
+
+      const horizons: HorizonState[] = [
+        {
+          key: "today",
+          daysAhead: 0,
+          surplus: surplusToday,
+          threshold: settings.thresholdPacks,
+          release: settings.releasePacks,
           tag: settings.tag,
-          productGid: product.productGid,
-          productTitle: product.title,
-          shopifyVariantId: variantId,
-          surplusAtHold: surplus,
-          thresholdAtHold: settings.thresholdPacks,
-          dryRun: settings.dryRun,
-          verifyStatus: settings.dryRun ? "skipped" : null,
-          verifyNote: settings.dryRun ? "dry run — no tag written" : null,
-        }).onConflictDoNothing();
-        held.push(row.recipeName);
-        console.log(`[stock-gate] HOLD ${row.recipeName}: surplus ${surplus} ≤ ${settings.thresholdPacks}${settings.dryRun ? " (dry run)" : ""}`);
-      } else if (hold && settings.autoRelease && surplus >= settings.releasePacks) {
+          enabled: true,
+        },
+        {
+          key: "tomorrow",
+          daysAhead: 1,
+          surplus: surplusAhead,
+          threshold: settings.lookaheadThresholdPacks,
+          release: settings.lookaheadReleasePacks,
+          tag: settings.lookaheadTag,
+          enabled: settings.lookaheadEnabled,
+        },
+      ];
+
+      const hold = holdByRecipe.get(recipeId);
+      const existing = hold ? { horizon: hold.horizon, tag: hold.tag, dryRun: hold.dryRun } : null;
+      const want = desiredHold(horizons, existing);
+
+      // Auto-release off means holds are only ever added automatically; an
+      // existing one waits for a person. It must not block an ESCALATION
+      // though — a worse horizon is new protection, not a release.
+      const wouldRelease = hold !== undefined && want === null;
+      if (wouldRelease && !settings.autoRelease) continue;
+
+      if (holdMatches(existing, want, settings.dryRun)) continue;
+
+      // Anything else means the live hold no longer says what it should:
+      // released, escalated, stepped back down, or created under settings
+      // that have since changed (a dry-run hold once dry run is switched
+      // off). All of them are release-then-recreate.
+      if (hold) {
+        const surplusNow = hold.horizon === "tomorrow" ? surplusAhead : surplusToday;
         try {
-          await releaseHold(hold, "auto", surplus);
-          released.push(row.recipeName);
-          console.log(`[stock-gate] RELEASE ${row.recipeName}: surplus ${surplus} ≥ ${settings.releasePacks}`);
+          await releaseHold(hold, "auto", surplusNow);
+          holdByRecipe.delete(recipeId);
+          if (!want) {
+            released.push(row.recipeName);
+            console.log(`[stock-gate] RELEASE ${row.recipeName}: surplus ${surplusNow} cleared the release bar`);
+          }
         } catch (err) {
           console.error(`[stock-gate] release failed for ${row.recipeName}:`, err);
+          continue; // leave the old hold alone rather than double-tagging
         }
       }
+      if (!want) continue;
+
+      const chosen = horizons.find(h => h.key === want.horizon)!;
+      const surplusAtHold = chosen.surplus ?? surplusToday;
+
+      let product: ProductRef | null = null;
+      try {
+        product = await resolveProductForVariant(variantId);
+      } catch (err) {
+        console.error(`[stock-gate] product lookup failed for ${row.recipeName}:`, err);
+      }
+      if (!product) continue;
+      if (!settings.dryRun) {
+        try {
+          await setProductTag(product.productGid, want.tag, true);
+        } catch (err) {
+          console.error(`[stock-gate] tagging failed for ${row.recipeName}:`, err);
+          continue; // no hold row for a tag that never landed
+        }
+      }
+      await db.insert(stockGateHoldsTable).values({
+        recipeId,
+        recipeName: row.recipeName,
+        tag: want.tag,
+        horizon: want.horizon,
+        productGid: product.productGid,
+        productTitle: product.title,
+        shopifyVariantId: variantId,
+        surplusAtHold,
+        thresholdAtHold: chosen.threshold,
+        dryRun: settings.dryRun,
+        verifyStatus: settings.dryRun ? "skipped" : null,
+        verifyNote: settings.dryRun ? "dry run — no tag written" : null,
+      }).onConflictDoNothing();
+      held.push(want.horizon === "today" ? row.recipeName : `${row.recipeName} (${lookaheadDay ?? "next despatch"})`);
+      console.log(`[stock-gate] HOLD ${row.recipeName} [${want.horizon}]: surplus ${surplusAtHold} ≤ ${chosen.threshold}${settings.dryRun ? " (dry run)" : ""}`);
     }
 
     // Verify holds tagged on a previous cycle: has Zapiet actually pulled
@@ -382,7 +504,14 @@ export async function runStockGateCycle(trigger: "timer" | "manual"): Promise<St
     for (const h of pending) {
       try {
         const productId = h.productGid!.split("/").pop() ?? "";
-        const v = await verifyTomorrowBlocked(settings.zapietLocationId, h.shopifyVariantId!, productId);
+        // A look-ahead hold claims two days, so prove the FURTHER one is
+        // gone: the day after tomorrow. Tomorrow disappearing is implied by
+        // preparation time being a minimum lead time, and checking only it
+        // would mark a half-working rule as verified.
+        const target = h.horizon === "tomorrow"
+          ? nextCalendarDay(nextCalendarDay(londonDateString()))
+          : nextCalendarDay(londonDateString());
+        const v = await verifyTomorrowBlocked(settings.zapietLocationId, h.shopifyVariantId!, productId, target);
         await db.update(stockGateHoldsTable)
           .set({ verifyStatus: v.status, verifyNote: v.note })
           .where(eq(stockGateHoldsTable.id, h.id));

@@ -2956,6 +2956,11 @@ async function runStartupMigrations() {
       )
     `);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_stock_gate_holds_recipe ON stock_gate_holds (recipe_id)`);
+    // Which despatch each hold defends — see
+    // lib/db/migrations/0058_stock_gate_horizon.sql. Existing rows are
+    // today-holds, which is what the default records.
+    await db.execute(sql`ALTER TABLE stock_gate_holds ADD COLUMN IF NOT EXISTS horizon TEXT NOT NULL DEFAULT 'today'`);
+
     await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_stock_gate_holds_held_at ON stock_gate_holds (held_at)`);
     await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_gate_holds_active ON stock_gate_holds (recipe_id) WHERE released_at IS NULL`);
     await db.execute(sql`
@@ -2967,7 +2972,11 @@ async function runStartupMigrations() {
         ('stock_gate_auto_release', 'true', NOW()),
         ('stock_gate_tag', 'low-stock-hold', NOW()),
         ('stock_gate_interval_minutes', '5', NOW()),
-        ('stock_gate_zapiet_location_id', '270812', NOW())
+        ('stock_gate_zapiet_location_id', '270812', NOW()),
+        ('stock_gate_lookahead_enabled', 'false', NOW()),
+        ('stock_gate_lookahead_tag', 'low-stock-hold2', NOW()),
+        ('stock_gate_lookahead_threshold_packs', '5', NOW()),
+        ('stock_gate_lookahead_release_packs', '10', NOW())
       ON CONFLICT (key) DO NOTHING
     `);
 
