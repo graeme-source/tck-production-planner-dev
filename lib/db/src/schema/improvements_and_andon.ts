@@ -7,6 +7,16 @@ export const improvementApprovalTierEnum = pgEnum("improvement_approval_tier", [
 // Only "submitted_for_review" (shown as "Submitted") and "complete" are used
 // now — the intermediate statuses were collapsed in July 2026. The extra enum
 // values must stay listed because Postgres enums can't drop values cheaply.
+// The states that actually matter (migration 0059), in the order an
+// improvement moves through them:
+//   submitted_for_review — logged, still to do. The default, and what every
+//                          row already on live means.
+//   awaiting_approval    — the person says they've done it; a manager checks.
+//   complete             — approved. This is the one that counts for someone.
+//   rejected             — sent back with a note.
+// The rest (acknowledged, approved, in_development, testing) are dead values
+// from the July 2026 collapse. They must stay listed because Postgres can't
+// drop enum values cheaply; nothing writes them.
 export const improvementProgressStatusEnum = pgEnum("improvement_progress_status", [
   "submitted_for_review",
   "acknowledged",
@@ -15,6 +25,7 @@ export const improvementProgressStatusEnum = pgEnum("improvement_progress_status
   "testing",
   "complete",
   "rejected",
+  "awaiting_approval",
 ]);
 
 export const improvementSubmissionsTable = pgTable("improvement_submissions", {
@@ -32,6 +43,17 @@ export const improvementSubmissionsTable = pgTable("improvement_submissions", {
   progressStatus: improvementProgressStatusEnum("progress_status").notNull().default("submitted_for_review"),
   notes: text("notes"),
   reportContext: text("report_context"),
+  // Approval trail (migration 0059).
+  approvedBy: integer("approved_by").references(() => usersTable.id, { onDelete: "set null" }),
+  approvedByName: text("approved_by_name"),
+  approvedAt: timestamp("approved_at"),
+  // Who carried it out — defaults to whoever logged it, but a manager can
+  // move the credit on approval.
+  creditedTo: integer("credited_to").references(() => usersTable.id, { onDelete: "set null" }),
+  creditedToName: text("credited_to_name"),
+  // Why it was sent back, and when the person said it was done.
+  reviewNote: text("review_note"),
+  doneAt: timestamp("done_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
