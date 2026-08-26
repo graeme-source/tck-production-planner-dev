@@ -17,16 +17,24 @@ import { normaliseAddress, ADDRESS_LINE_MAX } from "./apc";
 //     door. That must be flagged as critical, and it must be fixable.
 
 describe("normaliseAddress — counties", () => {
-  it("drops a trailing county instead of flagging the address for review", () => {
-    // #133252. Previously truncated at 35 chars and pushed to "needs a look".
+  it("takes the county off the line but still reports the removal", () => {
+    // #133252. The county is what blew the 35-character limit, and the
+    // postcode already carries it — but Graeme reviews every real removal one
+    // by one, so it is reported rather than dropped quietly (2026-08-26).
     const r = normaliseAddress(
       "12 Beach Road",
       "Thornton, thornton-cleveleys, fylde, lancs.",
       "Thornton-Cleveleys",
       { postcode: "FY5 1AA" },
     );
-    expect(r.review).toHaveLength(0);
-    expect(r.address2 ?? "").not.toMatch(/lancs/i);
+    expect(r.address1 + (r.address2 ?? "")).not.toMatch(/lancs/i);
+    const flag = r.review.find(f => f.kind === "county-removed");
+    expect(flag).toBeDefined();
+    expect(flag!.dropped).toMatch(/lancs/i);
+    // Mild: it must never outrank an address that genuinely will not fit.
+    expect(flag!.severity).toBe("check");
+    // Nothing else was lost — the county alone made it fit.
+    expect(r.review.filter(f => f.kind === "truncated")).toHaveLength(0);
   });
 
   it("unwinds several redundant trailing components at once", () => {
@@ -37,7 +45,10 @@ describe("normaliseAddress — counties", () => {
       { postcode: "FY1 1AA" },
     );
     expect(r.address2 ?? "").not.toMatch(/lancashire|united kingdom/i);
-    expect(r.review).toHaveLength(0);
+    // The country is the same fact we already send in its own field, so it is
+    // not a "removal"; the county is, and is reported.
+    expect(r.review.map(f => f.kind)).toEqual(["county-removed"]);
+    expect(r.review[0]!.dropped).toMatch(/lancashire/i);
   });
 
   it("never strips a county name that is the whole line — that is the town", () => {
@@ -54,41 +65,79 @@ describe("normaliseAddress — counties", () => {
   });
 });
 
-describe("normaliseAddress — what gets dropped, and how much it matters", () => {
-  it("flags a lost building identifier as critical and names the lost text", () => {
-    // #133138 — the van number is what finds the door.
-    // The loss is a CASCADE, which is what made it hard to see: line 1 is too
-    // long, its tail is pushed down onto line 2, and line 2 — now carrying
-    // both — is cut at the end. So the text that disappears is the one the
-    // customer typed last, which is exactly where a pitch or flat number goes.
+describe("normaliseAddress — the apartment number always survives", () => {
+  // #133138, exactly as it sits in Shopify. The customer filled the
+  // "Apartment, suite, etc" box correctly; the old packer split the 43-char
+  // line 1, pushed its tail DOWN in front of line 2, then trimmed the end —
+  // so the van number was evicted by text we had just moved. The most
+  // specific part of the address was the one guaranteed to be lost.
+  const realOrder = () => normaliseAddress(
+    "Lakeside Park, Warren Road North Somercotes",
+    "Van 313 the lawns",
+    "Louth",
+    { postcode: "LN11 7RB" },
+  );
+
+  it("keeps the van number AND the road, losing nothing", () => {
+    const r = realOrder();
+    const label = `${r.address1} ${r.address2 ?? ""}`;
+    expect(label).toMatch(/van 313/i);
+    expect(label).toMatch(/warren road/i);
+    expect(r.review).toHaveLength(0);
+  });
+
+  it("leads with the sub-premise, the way a label should read", () => {
+    expect(realOrder().address1.toLowerCase().startsWith("van 313")).toBe(true);
+  });
+
+  it("promotes a flat number out of the apartment field", () => {
     const r = normaliseAddress(
-      "The Lawns Caravan Park, Warren Road North Somercotes",
-      "Van 313 the lawns",
+      "22 Longlands Estate Road, Little Chalfont",
+      "Flat 4b",
+      "Amersham",
+      { postcode: "HP7 9QQ" },
+    );
+    expect(r.address1).toMatch(/^Flat 4b/i);
+    expect(r.review).toHaveLength(0);
+  });
+
+  it("sacrifices the village before the road when something must go", () => {
+    // Graeme, 2026-08-26: the postcode usually gets a driver to the road, but
+    // "usually" is not good enough to throw the road name away.
+    const r = normaliseAddress(
+      "Flat 12, The Old Rectory Farmhouse Buildings",
+      "Longlands Lane Estate, Upper Bumbleton",
+      "Kingston upon Thames",
+      { postcode: "KT1 1AA" },
+    );
+    const label = `${r.address1} ${r.address2 ?? ""}`;
+    expect(label).toMatch(/flat 12/i);
+    expect(label).toMatch(/longlands lane/i);
+    // And the loss is reported for review, never made silently.
+    expect(r.review.some(f => f.kind === "truncated")).toBe(true);
+  });
+});
+
+describe("normaliseAddress — what gets dropped, and how much it matters", () => {
+  it("names the lost text on its own, cleanly", () => {
+    const r = normaliseAddress(
+      "Utterly Enormous Manor House Buildings Annexe",
+      "Somewhere Quite Long Indeed Estate, Little Bumbleton Magna",
       "Louth",
       { postcode: "LN11 7RB" },
     );
     const truncated = r.review.find(f => f.kind === "truncated");
     expect(truncated).toBeDefined();
-    expect(truncated!.severity).toBe("critical");
-    expect(truncated!.dropped).toMatch(/van 313/i);
-    // The dropped text is carried on its own, not only inside the sentence:
-    // the screen shows it separately.
+    expect(truncated!.dropped).toBeTruthy();
+    // Carried separately from the sentence, and never with a ragged edge.
     expect(truncated!.dropped).not.toMatch(/^Address line 2/);
+    expect(truncated!.dropped).not.toMatch(/^[,\s]/);
   });
 
-  it("does not leave a leading comma on the dropped text", () => {
-    // The loss is a CASCADE, which is what made it hard to see: line 1 is too
-    // long, its tail is pushed down onto line 2, and line 2 — now carrying
-    // both — is cut at the end. So the text that disappears is the one the
-    // customer typed last, which is exactly where a pitch or flat number goes.
-    const r = normaliseAddress(
-      "The Lawns Caravan Park, Warren Road North Somercotes",
-      "Van 313 the lawns",
-      "Louth",
-      { postcode: "LN11 7RB" },
-    );
-    const truncated = r.review.find(f => f.kind === "truncated");
-    expect(truncated!.dropped).not.toMatch(/^[,\s]/);
+  it("reports nothing at all when the address fitted", () => {
+    const r = normaliseAddress("14 Orchard Close", undefined, "Leeds", { postcode: "LS1 1AA" });
+    expect(r.review).toHaveLength(0);
+    expect(r.warnings).toHaveLength(0);
   });
 
   it("treats a conflicting postcode as critical", () => {

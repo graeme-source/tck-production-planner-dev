@@ -98,7 +98,7 @@ interface PlaceOrderResult {
 /** Something the app could not resolve confidently. These stop an address
  *  being booked blind — they surface on the packing queue for a human. */
 export interface AddressReviewFlag {
-  kind: "conflicting-postcode" | "town-too-long" | "truncated";
+  kind: "conflicting-postcode" | "town-too-long" | "truncated" | "county-removed";
   message: string;
   /** The exact text that will NOT appear on the label. This is the thing the
    *  operator actually needs to judge — "Van 313 The Lawns" being cut is a
@@ -187,6 +187,35 @@ const COUNTY_COMPONENTS = new Set([
 const BUILDING_IDENTIFIER_RE =
   /\d|\b(flat|apt|apartment|unit|van|pitch|plot|berth|caravan|lodge|chalet|block|suite|room|annexe|annex|floor|bungalow|cottage|barn|studio|penthouse|maisonette|mobile|static|park\s*home)\b/i;
 
+/** Thoroughfare types. A component naming one is the road, which a driver
+ *  still needs even though the postcode narrows it down — so it outranks a
+ *  village or district when something has to be sacrificed.
+ *
+ *  Deliberately unambiguous words only. "Park", "Green", "Hill", "End" and
+ *  the like name estates and villages at least as often as they name roads —
+ *  scoring "The Lawns Caravan Park" as a thoroughfare made it tie with
+ *  "Warren Road North Somercotes", and the tie-break then threw away the real
+ *  road. Bare "St" and "Dr" are out for the same reason (Saint, Doctor). */
+const ROAD_TYPE_RE =
+  /\b(road|rd|street|lane|avenue|ave|close|drive|way|crescent|court|terrace|grove|gardens?|mews|square|parade|broadway|causeway|embankment|quay|wharf|promenade|esplanade|circus|arcade|passage|boulevard|highway|byway)\b/i;
+
+/**
+ * How much a component must survive, when the address will not fit.
+ *
+ * 3 — the sub-premise (van, flat, unit, plot, house number). Without it the
+ *     parcel reaches the street and stops.
+ * 2 — the thoroughfare. The postcode usually gets a driver to the road, but
+ *     "usually" is not good enough to throw the road name away (Graeme,
+ *     2026-08-26).
+ * 1 — everything else: villages, districts, estate names. The postcode and
+ *     post town already carry these, so they go first.
+ */
+function importanceOf(part: string): 1 | 2 | 3 {
+  if (BUILDING_IDENTIFIER_RE.test(part)) return 3;
+  if (ROAD_TYPE_RE.test(part)) return 2;
+  return 1;
+}
+
 /** Words a place name can end on ("Aston in Makerfield", "Newcastle upon
  *  Tyne", "Bourton on the Water"). Never leave a line dangling on one — that
  *  is how "Aston in Makerfield" became "Aston in". */
@@ -246,20 +275,127 @@ function stripTrailingTown(line: string, town: string): string {
  *  component, never a line that is nothing but a county: "Durham" alone is the
  *  town, and an address stripped to nothing is worse than one carrying a
  *  redundant word. Repeats so "…, Fylde, Lancashire, UK" unwinds fully. */
-function stripTrailingCounty(line: string): string {
+function stripTrailingCounty(line: string): { line: string; removed: string[] } {
   let parts = components(line);
+  const removed: string[] = [];
   while (parts.length > 1 && COUNTY_COMPONENTS.has(key(parts[parts.length - 1]!))) {
+    removed.unshift(parts[parts.length - 1]!);
     parts = parts.slice(0, -1);
   }
-  return parts.join(", ");
+  return { line: parts.join(", "), removed };
 }
 
 /** Does this dropped text carry the information a driver needs to find the
  *  door? Anything with a number or a dwelling word does. */
 function severityOfLoss(dropped: string): "critical" | "check" {
-  const meaningful = stripTrailingCounty(squash(dropped));
+  const meaningful = stripTrailingCounty(squash(dropped)).line;
   if (!meaningful) return "check";
   return BUILDING_IDENTIFIER_RE.test(meaningful) ? "critical" : "check";
+}
+
+/** How many street lines the consignment carries. APC takes AddressLine1 and
+ *  AddressLine2; City and PostalCode travel in their own fields. If APC turns
+ *  out to accept an AddressLine3, raising this number is the whole change —
+ *  the packer below already spreads across however many lines it is given. */
+const ADDRESS_LINES = 2;
+
+/**
+ * Fill the available lines from a list of address components, most important
+ * first, and report anything that would not fit.
+ *
+ * Greedy and order-preserving: components join onto the current line while
+ * they fit, and start a new one when they don't. Whatever spills past the
+ * last line is DROPPED WHOLE rather than chopped mid-word, so the loss is a
+ * component the operator can recognise ("North Somercotes") instead of a
+ * ragged fragment ("North Somerc").
+ *
+ * Because the caller orders components most-specific-first, "what spills" is
+ * always the least specific thing present — the village or district the
+ * postcode already covers — never the number that finds the door.
+ */
+function packIntoLines(parts: string[]): { lines: string[]; dropped: string[] } {
+  // Anything longer than a single line is split first, and duplicates are
+  // removed across the whole address rather than per line, so the packer only
+  // ever handles distinct pieces it can actually place.
+  const seen = new Set<string>();
+  const fragments: string[] = [];
+  const add = (piece: string) => {
+    const k = key(piece);
+    if (!k || seen.has(k)) return;
+    seen.add(k);
+    fragments.push(piece);
+  };
+  for (const part of parts) {
+    let rest = squash(part);
+    while (rest.length > ADDRESS_LINE_MAX) {
+      const { head, tail } = splitToFit(rest);
+      if (!head || !tail) {
+        add(rest.slice(0, ADDRESS_LINE_MAX).trim());
+        rest = "";
+        break;
+      }
+      add(head);
+      rest = tail;
+    }
+    if (rest) add(rest);
+  }
+
+  // Greedy, order-preserving fill.
+  const fill = (pieces: string[]): string[] => {
+    const lines: string[] = [];
+    let current = "";
+    for (const piece of pieces) {
+      const candidate = current ? `${current}, ${piece}` : piece;
+      if (candidate.length <= ADDRESS_LINE_MAX) {
+        current = candidate;
+        continue;
+      }
+      if (current) lines.push(current);
+      current = piece;
+    }
+    if (current) lines.push(current);
+    return lines;
+  };
+
+  // When it genuinely will not fit, choose what to lose rather than letting
+  // whatever happens to be last fall off the end. Sacrifice the least
+  // important component — and among equals the one furthest down the address,
+  // because addresses run specific to general. A mask keeps every surviving
+  // component in its original position.
+  const keep = fragments.map(() => true);
+  const survivors = () => fragments.filter((_, i) => keep[i]);
+  let lines = fill(survivors());
+
+  while (lines.length > ADDRESS_LINES && keep.filter(Boolean).length > 1) {
+    let victim = -1;
+    let worst = Infinity;
+    fragments.forEach((piece, i) => {
+      if (!keep[i]) return;
+      const rank = importanceOf(piece);
+      if (rank <= worst) { worst = rank; victim = i; }
+    });
+    if (victim < 0) break;
+    keep[victim] = false;
+    lines = fill(survivors());
+  }
+
+  // Dropping one component can make room for one discarded earlier, so offer
+  // each back — most important first — and keep whichever still fit. Without
+  // this a line can end up empty while something sits in the dropped list.
+  const recoverable = fragments
+    .map((piece, i) => ({ piece, i }))
+    .filter(({ i }) => !keep[i])
+    .sort((a, b) => importanceOf(b.piece) - importanceOf(a.piece));
+  for (const { i } of recoverable) {
+    keep[i] = true;
+    const retry = fill(survivors());
+    if (retry.length <= ADDRESS_LINES) lines = retry;
+    else keep[i] = false;
+  }
+
+  // Report losses in the order they appeared, so the message reads like the
+  // address rather than like the order the packer discarded things.
+  return { lines: lines.slice(0, ADDRESS_LINES), dropped: fragments.filter((_, i) => !keep[i]) };
 }
 
 /** Split a line to fit, preferring a real boundary over an arbitrary word
@@ -345,6 +481,7 @@ export function normaliseAddress(
   if (looksLikeNote(a2)) { instructions = a2; a2 = ""; }
 
   // ── 2. Remove what other fields already carry ────────────────────────────
+  const countiesRemoved: string[] = [];
   const stripRedundant = (line: string, label: string): string => {
     if (!line) return line;
     let out = line;
@@ -380,7 +517,15 @@ export function normaliseAddress(
     // The postcode already carries the county, so a trailing one is dead
     // weight on a 35-character line. Removed here, alongside the country, for
     // the same reason: strip what other fields carry BEFORE splitting.
-    out = stripTrailingCounty(squash(out));
+    //
+    // Unlike the country and a repeated postcode — which are the SAME facts
+    // we already send in their own fields — a county is text the customer
+    // wrote that will not appear anywhere on the label. Graeme reviews every
+    // real removal one by one (2026-08-26), so it is recorded rather than
+    // dropped quietly.
+    const county = stripTrailingCounty(squash(out));
+    out = county.line;
+    countiesRemoved.push(...county.removed);
 
     return squash(dedupeComponents(squash(out)));
   };
@@ -395,25 +540,54 @@ export function normaliseAddress(
   if (!a1 && a2) { a1 = a2; a2 = ""; }
   if (!a1) a1 = originalA1.slice(0, ADDRESS_LINE_MAX);
 
-  // ── 4. Fit to 35 characters, overflow cascading down ─────────────────────
-  const fitted = splitToFit(a1);
-  a1 = fitted.head;
-  if (fitted.tail) a2 = a2 ? `${fitted.tail}, ${a2}` : fitted.tail;
+  // ── 4. Fit to APC's lines, most specific part first ──────────────────────
+  // Order matters more here than it looks. Shopify's second address field is
+  // the "Apartment, suite, etc" box, so when it holds a sub-premise — a van,
+  // flat, unit or plot number — that is the part that finds the door.
+  //
+  // The old code split line 1 first and pushed its overflow DOWN in front of
+  // line 2, then trimmed the end. So a long street line evicted the
+  // customer's own apartment number: #133138 had a 43-character line 1 and a
+  // correctly-filled "Van 313 the lawns", and threw the van number away to
+  // make room for text we had just moved. The most specific part was the one
+  // guaranteed to be lost.
+  //
+  // Now the sub-premise leads, and anything that will not fit falls off the
+  // least-specific end — the village or district the postcode already covers.
+  // The road name sits between the two and is only ever at risk once
+  // everything less important has already gone (Graeme, 2026-08-26).
+  const subPremiseLeads = !!a2 && BUILDING_IDENTIFIER_RE.test(a2);
+  const ordered = subPremiseLeads
+    ? [...components(a2), ...components(a1)]
+    : [...components(a1), ...components(a2)];
 
-  if (a2) {
-    a2 = squash(dedupeComponents(a2));
-    if (a2.length > ADDRESS_LINE_MAX) {
-      const full = a2;
-      a2 = splitToFit(a2).head.slice(0, ADDRESS_LINE_MAX).trim();
-      const lost = squash(full.slice(a2.length).replace(/^[,\s]+/, ""));
-      warnings.push(`Address line 2 truncated from "${full}" to "${a2}"`);
-      review.push({
-        kind: "truncated",
-        message: `Address line 2 was too long and lost "${lost}". Check the address before booking.`,
-        dropped: lost,
-        severity: severityOfLoss(lost),
-      });
-    }
+  const packed = packIntoLines(ordered);
+  a1 = packed.lines[0] ?? originalA1.slice(0, ADDRESS_LINE_MAX);
+  a2 = packed.lines[1] ?? "";
+
+  if (packed.dropped.length > 0) {
+    const lost = packed.dropped.join(", ");
+    warnings.push(`Address too long for APC's ${ADDRESS_LINES} lines — dropped "${lost}"`);
+    review.push({
+      kind: "truncated",
+      message: `The address needs more than APC's ${ADDRESS_LINES} lines and will lose "${lost}". Check it before booking.`,
+      dropped: lost,
+      severity: severityOfLoss(lost),
+    });
+  }
+
+  // A county removal is reported LAST and separately: it is the mildest kind
+  // of loss (the postcode carries the county), so it should never outrank a
+  // line that genuinely would not fit.
+  if (countiesRemoved.length > 0) {
+    const lost = countiesRemoved.join(", ");
+    warnings.push(`County removed — the postcode already carries it: "${lost}"`);
+    review.push({
+      kind: "county-removed",
+      message: `"${lost}" won't be on the label. The postcode already tells APC the county, so this is normally safe.`,
+      dropped: lost,
+      severity: "check",
+    });
   }
 
   return {

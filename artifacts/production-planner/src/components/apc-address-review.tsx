@@ -41,7 +41,7 @@ export interface PreflightAddress {
 }
 
 export interface AddressReviewFlag {
-  kind: "conflicting-postcode" | "town-too-long" | "truncated";
+  kind: "conflicting-postcode" | "town-too-long" | "truncated" | "county-removed";
   message: string;
   dropped?: string;
   severity: "critical" | "check";
