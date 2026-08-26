@@ -32,3 +32,15 @@ export async function requireManagerOrAdmin(req: Request, res: Response, next: N
   if (role === "admin" || role === "manager") { next(); return; }
   res.status(403).json({ error: "Manager access required" });
 }
+
+/** Who is acting — recorded against the rows an action writes, so an audit can
+ *  say who did what. Lives here beside the guards because every route file
+ *  that needs it also needs one of them. */
+export async function resolveUserName(req: Request): Promise<string> {
+  if (!req.session.userId) return "unknown";
+  const [user] = await db
+    .select({ name: usersTable.name })
+    .from(usersTable)
+    .where(eq(usersTable.id, req.session.userId));
+  return user?.name ?? `user ${req.session.userId}`;
+}

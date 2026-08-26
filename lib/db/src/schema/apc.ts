@@ -48,3 +48,48 @@ export const apcConsignmentsTable = pgTable("apc_consignments", {
 export type ApcConsignment = typeof apcConsignmentsTable.$inferSelect;
 
 export const insertApcConsignmentSchema = createInsertSchema(apcConsignmentsTable).omit({ id: true, createdAt: true });
+
+/**
+ * Operator-corrected delivery address for one order's courier label.
+ *
+ * APC allows 35 characters per address line. When a Shopify address doesn't
+ * fit, the normaliser cuts it — and the cut can land on the part that matters
+ * most ("Warren Road North Somercotes, Van 313 The Lawns" loses the van
+ * number, so the parcel reaches the park but not the pitch). No amount of
+ * parsing fixes that reliably: it needs someone who can look at the order and
+ * decide what the driver actually needs.
+ *
+ * A row here is that decision, recorded. It overrides the normaliser for this
+ * order's label ONLY — the Shopify order is deliberately left untouched, so
+ * the customer's own record stays as they wrote it and nothing we do here can
+ * corrupt the source. One row per order (`shopify_order_id` UNIQUE): the
+ * latest correction wins, and re-editing updates in place.
+ */
+export const apcLabelAddressesTable = pgTable("apc_label_addresses", {
+  id: serial("id").primaryKey(),
+  shopifyOrderId: bigint("shopify_order_id", { mode: "number" }).notNull().unique(),
+  shopifyOrderName: text("shopify_order_name"),
+  // Held pre-cut to APC's 35-character lines — what the operator saw is
+  // exactly what the label carries.
+  address1: text("address1").notNull(),
+  address2: text("address2"),
+  city: text("city").notNull(),
+  postcode: text("postcode").notNull(),
+  // Optional extras the operator can move text into rather than lose it: the
+  // company line prints above the address, instructions reach the driver.
+  companyName: text("company_name"),
+  instructions: text("instructions"),
+  // What the address looked like before the correction, so an audit can show
+  // what was changed and why without re-fetching the order from Shopify.
+  originalAddress1: text("original_address1"),
+  originalAddress2: text("original_address2"),
+  originalCity: text("original_city"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  updatedByUserId: integer("updated_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  updatedByName: text("updated_by_name"),
+}, (t) => ({
+  orderIdx: index("ix_apc_label_addresses_order").on(t.shopifyOrderId),
+}));
+
+export type ApcLabelAddress = typeof apcLabelAddressesTable.$inferSelect;

@@ -5,8 +5,11 @@ import * as z from "zod";
 import { removeTagFromOrder, shopifyAdminOrderUrl, shopifyAdminOrderBase, getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
 import { nextAvailableDeliveryDate, rescheduleTags, withDeliveryDate, rescheduleEmailText, rescheduleEmailHtml, friendlyDate, firstNameOf, toZapietDate } from "../lib/order-reschedule";
 import { validate } from "../middleware/validate";
+// Shared with the label-address routes — one definition of "who did this".
+import { resolveUserName } from "../middleware/roles";
 import { sendEmail } from "../lib/email";
-import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService, lookupOrderByReference, lookupOrdersByReference, lookupOrderByWaybill, parseApcBarcode, waybillCore, apcTrackingUrl, type ApcOrderLookup } from "../services/apc";
+import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService, lookupOrderByReference, lookupOrdersByReference, lookupOrderByWaybill, parseApcBarcode, waybillCore, apcTrackingUrl, type ApcOrderLookup, type AddressReviewFlag } from "../services/apc";
+import { getLabelAddressesFor, getLabelAddress } from "../services/label-address";
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
 import { declaredParcelWeightKg, isLargeBox } from "../lib/parcel-weight";
 import { APC_NO_SERVICE_TAG, isNoServiceFailure } from "../lib/apc-failure-tags";
@@ -15,14 +18,6 @@ import { isDispatchTagged } from "../lib/dispatch-tag";
 import { sql } from "drizzle-orm";
 
 const router = Router();
-
-/** Who is booking — recorded against each consignment so the end-of-day
- *  report can say who raised what. */
-async function resolveUserName(req: Request): Promise<string> {
-  if (!req.session.userId) return "unknown";
-  const [user] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, req.session.userId));
-  return user?.name ?? `user ${req.session.userId}`;
-}
 
 async function resolveRole(req: Request): Promise<"admin" | "manager" | "viewer" | null> {
   if (req.session.userRole) return req.session.userRole as "admin" | "manager" | "viewer";
@@ -1712,6 +1707,23 @@ router.post("/tag-dispatch-bulk", requireFulfilmentAccess, async (req: Request, 
 // questionable BEFORE anything is booked, then a batch that reports the
 // outcome of every single order individually and never fails silently.
 
+/** What the label will carry, next to what the customer actually typed.
+ *
+ *  Sent as structure rather than as a sentence because the operator's question
+ *  is always the same one — "what won't be on the label?" — and a paragraph of
+ *  amber prose makes that the hardest thing on screen to find. */
+type PreflightAddress = {
+  /** Verbatim from Shopify. */
+  original: { address1: string; address2: string | null; city: string; postcode: string; company: string | null };
+  /** What APC would receive, after normalisation or a saved correction. */
+  label: { address1: string; address2: string | null; city: string; postcode: string };
+  /** Text present in the Shopify address that will NOT reach the label. */
+  dropped: string[];
+  /** True when a person has already re-cut this address by hand. */
+  corrected: boolean;
+  correctedBy?: string;
+};
+
 type PreflightOrder = {
   orderId: number;
   orderName: string;
@@ -1721,7 +1733,13 @@ type PreflightOrder = {
   weightKg: number;
   existingWaybill: string | null;
   problems: string[];
+  /** Kept as flat strings for the rows that only ever need a one-liner
+   *  (blocked, not-tagged). The address detail lives in `address`. */
   reviews: string[];
+  /** Structured flags — same content as `reviews`, but each one carries the
+   *  dropped text and how much it matters, so the screen can rank them. */
+  reviewFlags?: AddressReviewFlag[];
+  address?: PreflightAddress;
 };
 
 async function buildPreflight(tag: string, dispatchDate: Date) {
@@ -1742,6 +1760,10 @@ async function buildPreflight(tag: string, dispatchDate: Date) {
     o.fulfillment_status !== "fulfilled",
   );
   const orders = unfulfilled.filter(o => isDispatchTagged(o.tags));
+
+  // Saved address corrections for the whole day in one query — a wave can be
+  // several hundred orders, so this must not become one lookup per row.
+  const overrides = await getLabelAddressesFor(orders.map(o => o.id));
 
   const ready: PreflightOrder[] = [];
   const needsReview: PreflightOrder[] = [];
@@ -1807,9 +1829,50 @@ async function buildPreflight(tag: string, dispatchDate: Date) {
       if (!sa.address1?.trim()) row.problems.push("No street address");
       if (!sa.zip?.trim()) row.problems.push("No postcode");
       if (!sa.city?.trim()) row.problems.push("No town");
-      const norm = normaliseAddress(sa.address1 ?? "", sa.address2 ?? undefined, sa.city ?? "", { postcode: sa.zip, countryCode: sa.country_code ?? "GB" });
-      for (const flag of norm.review) row.reviews.push(flag.message);
-      for (const w of norm.warnings) row.reviews.push(w);
+
+      const override = overrides.get(order.id);
+      const original = {
+        address1: sa.address1 ?? "",
+        address2: sa.address2?.trim() ? sa.address2 : null,
+        city: sa.city ?? "",
+        postcode: sa.zip ?? "",
+        company: sa.company?.trim() ? sa.company.trim() : null,
+      };
+
+      if (override) {
+        // A person has already decided what this label should say. Their
+        // version is used as-is and raises no flags — re-flagging an address
+        // someone deliberately corrected is how a screen teaches people to
+        // ignore it.
+        row.address = {
+          original,
+          label: {
+            address1: override.address1,
+            address2: override.address2,
+            city: override.city,
+            postcode: override.postcode,
+          },
+          dropped: [],
+          corrected: true,
+          ...(override.updatedByName ? { correctedBy: override.updatedByName } : {}),
+        };
+      } else {
+        const norm = normaliseAddress(sa.address1 ?? "", sa.address2 ?? undefined, sa.city ?? "", { postcode: sa.zip, countryCode: sa.country_code ?? "GB" });
+        for (const flag of norm.review) row.reviews.push(flag.message);
+        for (const w of norm.warnings) row.reviews.push(w);
+        row.reviewFlags = norm.review;
+        row.address = {
+          original,
+          label: {
+            address1: norm.address1,
+            address2: norm.address2 ?? null,
+            city: norm.city,
+            postcode: sa.zip ?? "",
+          },
+          dropped: norm.review.map(f => f.dropped).filter((d): d is string => !!d),
+          corrected: false,
+        };
+      }
     }
     if (!codesConfigured) row.problems.push("APC service codes not configured in Settings");
 
@@ -1936,20 +1999,29 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
       let specialInstructions = "X227 - PERISHABLE";
       if (order.note?.trim()) specialInstructions = `${specialInstructions} ${order.note.trim()}`.slice(0, 50);
 
+      // A saved correction replaces the automatic address entirely — the
+      // operator already cut it to fit, so it goes to APC as written rather
+      // than being re-shaped by the normaliser (see `addressAlreadyFitted`).
+      const override = await getLabelAddress(order.id);
+      if (override?.instructions) {
+        specialInstructions = `${specialInstructions} ${override.instructions}`.slice(0, 50);
+      }
+
       try {
         const result = await createShipment({
           serviceCode,
-          companyName: sa.company?.trim() || "Home Delivery",
+          companyName: override?.companyName || sa.company?.trim() || "Home Delivery",
           recipient: {
             name: sa.name || `${order.customer?.first_name ?? ""} ${order.customer?.last_name ?? ""}`.trim(),
-            address1: sa.address1,
-            address2: sa.address2,
-            city: sa.city,
-            postcode: sa.zip,
+            address1: override?.address1 ?? sa.address1,
+            address2: override ? (override.address2 ?? undefined) : sa.address2,
+            city: override?.city ?? sa.city,
+            postcode: override?.postcode || sa.zip,
             country: sa.country_code ?? "GB",
             phone: sa.phone ?? order.customer?.phone,
             email: order.customer?.email,
           },
+          ...(override ? { addressAlreadyFitted: true } : {}),
           parcels: [{ weight: declaredWeightFor(order, serviceCode, { smallWeekday, largeWeekday, smallFriday, largeFriday }) }],
           reference,
           specialInstructions,

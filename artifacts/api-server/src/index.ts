@@ -2902,6 +2902,35 @@ async function runStartupMigrations() {
     await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_apc_consignments_dispatch_tag ON apc_consignments (dispatch_tag)`);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_apc_consignments_order ON apc_consignments (shopify_order_id)`);
 
+    // Operator-corrected APC label addresses — see
+    // lib/db/migrations/0057_apc_label_addresses.sql, which is the source of
+    // truth for this shape. Repeated here because the .sql files are not
+    // applied on deploy (Railway runs `pnpm start`, nothing runs drizzle-kit),
+    // so a table that exists only as a migration file does not exist in
+    // production. Same duplication every table above carries; noted in the
+    // handover as the reason the single-migration-system job matters.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS apc_label_addresses (
+        id SERIAL PRIMARY KEY,
+        shopify_order_id BIGINT NOT NULL UNIQUE,
+        shopify_order_name TEXT,
+        address1 TEXT NOT NULL,
+        address2 TEXT,
+        city TEXT NOT NULL,
+        postcode TEXT NOT NULL,
+        company_name TEXT,
+        instructions TEXT,
+        original_address1 TEXT,
+        original_address2 TEXT,
+        original_city TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_by_user_id INTEGER REFERENCES app_users(id) ON DELETE SET NULL,
+        updated_by_name TEXT
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS ix_apc_label_addresses_order ON apc_label_addresses (shopify_order_id)`);
+
     // Stock-gate holds — see lib/db/migrations/0049_stock_gate_holds.sql.
     // Products automatically held back from next-day delivery (Shopify tag
     // + Zapiet prep-time rule) when fridge-vs-despatch surplus runs low.
