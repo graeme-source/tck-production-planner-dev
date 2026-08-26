@@ -50,6 +50,7 @@ import ProductHub from "@/pages/product-hub";
 import Surveys from "@/pages/surveys";
 import TrainingMatrix from "@/pages/training-matrix";
 import LeanCurriculum from "@/pages/lean-curriculum";
+import ScanPage from "@/pages/scan";
 import Onboarding from "@/pages/onboarding";
 import NotFound from "@/pages/not-found";
 import FireActionNoticePrint from "@/pages/print/fire-action-notice";
@@ -128,6 +129,9 @@ function Router() {
       {/* Visitor check-in — full-screen kiosk, no sidebar. The iPad gets
           handed to a visitor, so the app nav must not be reachable. */}
       <Route path="/visitor-check-in" component={VisitorCheckIn} />
+      {/* Where a QR scanned by a phone's own camera app lands. */}
+      <Route path="/scan" component={ScanPage} />
+      <Route path="/scan/:type/:id" component={ScanPage} />
 
       {/* Print / resource pages — full-screen, no sidebar, print-optimised */}
       <Route path="/print/fire-action-notice" component={FireActionNoticePrint} />

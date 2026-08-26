@@ -719,7 +719,6 @@ const SETTINGS_SEARCH_INDEX: { tab: SettingsSection; title: string; keywords: st
   { tab: "sops", title: "Standards & SOPs", keywords: "sop standard operating procedure documents steps" },
   { tab: "sensors", title: "Temperature Sensors", keywords: "govee sensors fridge freezer temperature monitoring alerts battery" },
   { tab: "features", title: "Feature Flags", keywords: "features toggle enable disable flags experiments" },
-  { tab: "features", title: "Quick Idea Tabs", keywords: "quick idea improvements tabs suggestion" },
   { tab: "features", title: "Dashboard Issue Banner", keywords: "issue banner andon dashboard roles" },
   { tab: "features", title: "8-Pack Orders Banner", keywords: "eight pack wholesale banner orders processing roles" },
   { tab: "features", title: "System Updates", keywords: "system updates changelog morning meeting slide automatic change feed commits what changed" },
@@ -1664,7 +1663,6 @@ export default function Settings() {
           {activeSection === "features" && user?.role === "admin" && (
             <div className="space-y-8">
               <FeaturesSection />
-              <QuickIdeaTabsSection />
               <DashboardBannerRolesSection />
               <EightPackBannerRolesSection />
               <SystemUpdatesSection />
@@ -4823,78 +4821,6 @@ function StandardsSopsSection() {
         <BookOpen className="w-4 h-4" /> Open SOP library
       </button>
       <StandardsSopsDialog open={open} onClose={() => setOpen(false)} currentStationType={null} />
-    </div>
-  );
-}
-
-function QuickIdeaTabsSection() {
-  const [tabs, setTabs] = useState({ kanban: true, idea: true, struggle: true, issue: true, ai: true });
-  const [loaded, setLoaded] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [savedMsg, setSavedMsg] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetch("/api/app-settings/quick_idea_tabs", { credentials: "include" })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.value) { try { setTabs(prev => ({ ...prev, ...JSON.parse(d.value) })); } catch {} } })
-      .catch(() => {})
-      .finally(() => setLoaded(true));
-  }, []);
-
-  const handleToggle = async (key: keyof typeof tabs) => {
-    const updated = { ...tabs, [key]: !tabs[key] };
-    setTabs(updated);
-    setSaving(true);
-    try {
-      const r = await fetch("/api/app-settings/quick_idea_tabs", {
-        method: "PUT", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value: JSON.stringify(updated) }),
-      });
-      if (!r.ok) throw new Error("Failed to save");
-      setSavedMsg("Saved");
-      setTimeout(() => setSavedMsg(null), 2000);
-    } catch {
-      setTabs(tabs); // revert
-      setSavedMsg("Error saving");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const items: { key: keyof typeof tabs; label: string }[] = [
-    { key: "kanban", label: "Pull Kanban" },
-    { key: "idea", label: "Improvement Idea" },
-    { key: "struggle", label: "Struggle" },
-    { key: "issue", label: "Issue" },
-    { key: "ai", label: "Ask AI" },
-  ];
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-base font-semibold flex items-center gap-2">
-            <CircleDot className="w-4 h-4 text-blue-500" /> Quick Idea Tabs
-          </h2>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Toggle which tabs appear in the Quick Idea modal (blue button, bottom-right of every page).
-          </p>
-        </div>
-        {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
-      </div>
-      <div className="space-y-3">
-        {items.map(({ key, label }) => (
-          <div key={key} className="flex items-center justify-between gap-4 p-4 bg-card border border-border rounded-xl">
-            <span className="text-sm font-semibold">{label}</span>
-            <Switch
-              checked={tabs[key]}
-              onCheckedChange={() => handleToggle(key)}
-              disabled={!loaded || saving}
-            />
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

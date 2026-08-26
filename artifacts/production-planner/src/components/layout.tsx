@@ -3,6 +3,7 @@ import { Link, useLocation, useSearch } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { RecordImprovementModal } from "@/components/record-improvement-modal";
 import { RecordIssueModal } from "@/components/record-issue-modal";
+import { PullKanbanModal } from "@/components/pull-kanban-modal";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { usePageHeaderValue } from "@/contexts/page-header-context";
@@ -50,7 +51,7 @@ import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assistant";
 import { TodoSheet, TodoInterstitial, useMyOpenTodoCount } from "@/components/todo-lists";
 import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
-import { BookOpen, Bot, GraduationCap, ChevronLeft, ChevronRight, ListTodo } from "lucide-react";
+import { BookOpen, Bot, GraduationCap, ChevronLeft, ChevronRight, ListTodo, ScanLine } from "lucide-react";
 
 export type NavItem = { name: string; href: string; icon: React.ComponentType<{ className?: string }> };
 
@@ -709,6 +710,7 @@ export function QuickActionsDock() {
   const [todosOpen, setTodosOpen] = useState(false);
   const [improvementOpen, setImprovementOpen] = useState(false);
   const [issueOpen, setIssueOpen] = useState(false);
+  const [kanbanOpen, setKanbanOpen] = useState(false);
   const isFounder = user?.email === "graeme@thecalzonekitchen.co.uk";
 
   if (!user) return null;
@@ -722,9 +724,11 @@ export function QuickActionsDock() {
         onOpenTodos={() => setTodosOpen(true)}
         onOpenImprovement={() => setImprovementOpen(true)}
         onOpenIssue={() => setIssueOpen(true)}
+        onOpenKanban={() => setKanbanOpen(true)}
       />
       <RecordImprovementModal open={improvementOpen} onClose={() => setImprovementOpen(false)} />
       <RecordIssueModal open={issueOpen} onClose={() => setIssueOpen(false)} />
+      <PullKanbanModal open={kanbanOpen} onClose={() => setKanbanOpen(false)} />
       <TodoSheet open={todosOpen} onClose={() => setTodosOpen(false)} />
       <TodoInterstitial />
     </>
@@ -737,12 +741,13 @@ export function QuickActionsDock() {
 // where someone once expanded it greeted every later user with the menu
 // already open (Graeme, 2026-08-22). Expansion now lasts only until the
 // next full page load.
-function FloatingActionsTab({ assistantOpen, onOpenAssistant, onOpenTodos, onOpenImprovement, onOpenIssue }: {
+function FloatingActionsTab({ assistantOpen, onOpenAssistant, onOpenTodos, onOpenImprovement, onOpenIssue, onOpenKanban }: {
   assistantOpen: boolean;
   onOpenAssistant: () => void;
   onOpenTodos: () => void;
   onOpenImprovement: () => void;
   onOpenIssue: () => void;
+  onOpenKanban: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const toggle = () => setExpanded(prev => !prev);
@@ -802,6 +807,16 @@ function FloatingActionsTab({ assistantOpen, onOpenAssistant, onOpenTodos, onOpe
           >
             <AlertTriangle className="w-5 h-5" />
             <span className="text-sm font-semibold">Report issue</span>
+          </button>
+          <button
+            type="button"
+            onClick={onOpenKanban}
+            className="w-44 flex items-center justify-center gap-2 px-4 h-12 rounded-full bg-violet-500 text-white shadow-lg shadow-violet-500/30 hover:bg-violet-600 active:scale-95 transition-all"
+            aria-label="Pull a kanban"
+            title="Pull a kanban"
+          >
+            <ScanLine className="w-5 h-5" />
+            <span className="text-sm font-semibold">Pull kanban</span>
           </button>
           {!assistantOpen && (
             <button

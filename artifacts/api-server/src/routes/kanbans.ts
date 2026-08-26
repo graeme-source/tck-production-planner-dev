@@ -360,6 +360,63 @@ router.post("/sync", async (_req, res) => {
 // scan rarely surfaced in the day's order list. kanban_items still carries
 // the state, but it's auto-created here — a scan ledger, not a hand-managed
 // board. The ingredient's kanban settings are the single source of truth.
+// POST /scan/preview — what WOULD happen if this card were pulled.
+//
+// Pulling a kanban puts something on a real order, so the scan itself must
+// not do it (Graeme, 2026-08-28). This answers "what am I about to order?"
+// so the confirmation can name the item, the quantity and the supplier
+// before anyone commits. Reads only — nothing is written here.
+router.post("/scan/preview", async (req, res) => {
+  const { type, id } = (req.body ?? {}) as { type?: string; id?: number | string };
+  if (type !== "ingredient" || !Number.isInteger(Number(id))) {
+    res.status(400).json({ error: "Not an ingredient kanban QR code" });
+    return;
+  }
+  const ingredientId = Number(id);
+  const [ing] = await db
+    .select({
+      id: ingredientsTable.id,
+      name: ingredientsTable.name,
+      unit: ingredientsTable.unit,
+      kanbanEnabled: ingredientsTable.kanbanEnabled,
+      kanbanQuantity: ingredientsTable.kanbanQuantity,
+      kanbanUnit: ingredientsTable.kanbanUnit,
+      kanbanOrderAmount: ingredientsTable.kanbanOrderAmount,
+      supplierId: ingredientsTable.supplierId,
+    })
+    .from(ingredientsTable)
+    .where(eq(ingredientsTable.id, ingredientId));
+  if (!ing) { res.status(404).json({ error: "Ingredient not found" }); return; }
+  if (!ing.kanbanEnabled) {
+    res.status(400).json({ error: `${ing.name} doesn't have kanban enabled — turn it on in the ingredient's settings first.` });
+    return;
+  }
+
+  const today = londonDateString();
+  const [existing] = await db
+    .select({ status: kanbanItemsTable.status, orderDayTarget: kanbanItemsTable.orderDayTarget })
+    .from(kanbanItemsTable)
+    .where(eq(kanbanItemsTable.ingredientId, ingredientId))
+    .orderBy(desc(kanbanItemsTable.id))
+    .limit(1);
+  const alreadyQueued = existing?.status === "pulled" && existing.orderDayTarget != null && existing.orderDayTarget <= today;
+
+  const orderQty = ing.kanbanOrderAmount != null ? Number(ing.kanbanOrderAmount)
+    : ing.kanbanQuantity != null ? Number(ing.kanbanQuantity) : 1;
+  const unitLabel =
+    ing.kanbanUnit === "pack" || ing.kanbanUnit === "packs" ? (orderQty === 1 ? "pack" : "packs")
+    : ing.kanbanUnit === "bottle" ? (orderQty === 1 ? "bottle" : "bottles")
+    : ing.kanbanUnit === "pallet" ? (orderQty === 1 ? "pallet" : "pallets")
+    : ing.unit;
+  let supplierName: string | null = null;
+  if (ing.supplierId) {
+    const [sup] = await db.select({ name: suppliersTable.name }).from(suppliersTable).where(eq(suppliersTable.id, ing.supplierId));
+    supplierName = sup?.name ?? null;
+  }
+
+  res.json({ ok: true, alreadyQueued, ingredientId, ingredientName: ing.name, orderQty, unitLabel, supplierName });
+});
+
 router.post("/scan", async (req, res) => {
   const { type, id } = (req.body ?? {}) as { type?: string; id?: number | string };
   if (type !== "ingredient" || !Number.isInteger(Number(id))) {

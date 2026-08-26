@@ -21,7 +21,6 @@ import {
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
-import { ReportButton } from "@/components/report-modal";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { StationSopRail } from "@/components/sop-link-chips";
 import { LeanWeeklyStrip } from "@/components/lean-weekly-review";
@@ -359,15 +358,6 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
         {children}
       </div>
 
-      <ReportButton
-        defaultStation={stationType}
-        reportContext={
-          plan
-            ? `${meta.label} station · Plan: ${format(parseISO(plan.planDate), "EEEE d MMM yyyy")}${plan.batchNumber ? ` · Batch #${plan.batchNumber}` : ""}`
-            : `${meta.label} station`
-        }
-      />
-
       <StandardsSopsDialog
         open={standardsOpen}
         onClose={() => setStandardsOpen(false)}
@@ -375,8 +365,11 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
       />
 
       {/* Station screens render outside Layout, so the quick-actions dock
-          (My to-dos · Quick Idea · Ask Caz) was missing exactly where the
-          team spends the day (Graeme, 2026-08-28). */}
+          (My to-dos · Improvement · Report issue · Ask Caz) was missing
+          exactly where the team spends the day (Graeme, 2026-08-28). It is
+          now the only way to raise anything from a station — the old
+          floating Report button that used to sit in the bottom-right corner
+          is gone, along with its tabbed modal. */}
       <QuickActionsDock />
     </div>
   );

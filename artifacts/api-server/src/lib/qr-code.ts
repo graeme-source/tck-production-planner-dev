@@ -19,6 +19,28 @@ function getBucketAndPrefix(): { bucketName: string; prefix: string } {
 
 export type QrSourceType = "ingredient" | "recipe" | "sub_recipe";
 
+/**
+ * What a newly-printed QR code contains.
+ *
+ * Codes used to encode a bare JSON blob — {"type":"ingredient","id":12}.
+ * That works with the in-app scanner, but a phone's own camera app shows
+ * JSON as unhelpful text, so scanning a card with the camera did nothing.
+ * A URL is the difference: the camera turns it into a tappable link, which
+ * opens /scan and pulls the kanban after confirming (Graeme, 2026-08-28).
+ *
+ * APP_BASE_URL is where the app lives (e.g. https://planner.example.co.uk).
+ * With it unset we fall back to the old JSON payload rather than printing a
+ * broken link — better a card that works in-app than one that works nowhere.
+ *
+ * Both formats are read by lib/kanban-qr.ts, so cards can be reprinted
+ * gradually. Nothing already stuck to a shelf stops working.
+ */
+function qrPayload(sourceType: QrSourceType, id: number): string {
+  const base = (process.env["APP_BASE_URL"] ?? "").trim().replace(/\/$/, "");
+  if (!base) return JSON.stringify({ type: sourceType, id });
+  return `${base}/scan?type=${sourceType}&id=${id}`;
+}
+
 const QR_OPTIONS = {
   type: "png" as const,
   width: 300,
@@ -34,16 +56,14 @@ export async function generateQrPngBuffer(
   sourceType: QrSourceType,
   id: number,
 ): Promise<Buffer> {
-  const payload = JSON.stringify({ type: sourceType, id });
-  return QRCode.toBuffer(payload, QR_OPTIONS);
+  return QRCode.toBuffer(qrPayload(sourceType, id), QR_OPTIONS);
 }
 
 export async function generateQrCode(
   sourceType: "ingredient" | "recipe" | "sub_recipe",
   id: number,
 ): Promise<string> {
-  const payload = JSON.stringify({ type: sourceType, id });
-  const pngBuffer = await QRCode.toBuffer(payload, {
+  const pngBuffer = await QRCode.toBuffer(qrPayload(sourceType, id), {
     type: "png",
     width: 300,
     margin: 2,
