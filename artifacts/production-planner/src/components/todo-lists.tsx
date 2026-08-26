@@ -21,6 +21,7 @@ import { format, isBefore, isToday, parseISO } from "date-fns";
 import { useAuth } from "@/contexts/auth-context";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { resolveTodoLink } from "@/lib/todo-link";
 import {
   ArrowLeft, CalendarDays, Camera, Check, CheckCircle2, ChevronRight, Circle, ClipboardList,
   ExternalLink, Flag, Lightbulb, Loader2, MessageSquare, Pencil, Plus, RotateCcw,
@@ -196,14 +197,14 @@ function DateChip({ label, iso, overdue, big }: { label: string; iso: string; ov
 }
 
 function LinkButton({ url, big }: { url: string; big?: boolean }) {
-  const href = /^https?:\/\//i.test(url) ? url : `https://${url}`;
-  let host = url;
-  try { host = new URL(href).hostname.replace(/^www\./, ""); } catch { /* show raw */ }
+  const { href, label, external } = resolveTodoLink(url);
+  // App-relative links deliberately use a plain same-tab anchor rather than
+  // SPA navigation: the sheet lives in Layout, so a wouter navigate would
+  // leave it open on top of the destination page. A full load closes it.
   return (
     <a
       href={href}
-      target="_blank"
-      rel="noopener noreferrer"
+      {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
       onClick={e => e.stopPropagation()}
       className={cn(
         "inline-flex items-center gap-2 rounded-xl border-2 border-blue-400 dark:border-blue-600 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-bold hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors",
@@ -211,7 +212,7 @@ function LinkButton({ url, big }: { url: string; big?: boolean }) {
       )}
     >
       <ExternalLink className={big ? "w-5 h-5" : "w-4 h-4"} />
-      Open link — {host}
+      Open link — {label}
     </a>
   );
 }
