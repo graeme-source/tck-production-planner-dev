@@ -1,0 +1,236 @@
+// "Record Improvement" — the quick-actions dock button that replaced Quick
+// Idea (Graeme, 2026-08-28).
+//
+// One question first, because it's the only one that changes what happens:
+//
+//   An idea       → snap the BEFORE photo now, while you're stood in front of
+//                   the problem. It's filed as an idea with its before shot,
+//                   and someone (often the same person, later) comes back,
+//                   adds the after and describes what changed.
+//   Already done  → snap the AFTER photo and it goes straight into the
+//                   approval queue.
+//
+// Photos are enough. Video is better and the camera offers it, but the point
+// is engagement — a picture people actually take beats a clip they don't.
+
+import { useState, useRef } from "react";
+import { useLocation } from "wouter";
+import { useQueryClient } from "@tanstack/react-query";
+import { Lightbulb, CheckCircle2, Camera, Loader2, X, ArrowRight, ListChecks } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { toast } from "@/hooks/use-toast";
+
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+type Mode = "choose" | "idea" | "done";
+
+export function RecordImprovementModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [, setLocation] = useLocation();
+  const queryClient = useQueryClient();
+  const [mode, setMode] = useState<Mode>("choose");
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [photoTaken, setPhotoTaken] = useState(false);
+  const pendingFile = useRef<File | null>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+
+  if (!open) return null;
+
+  const reset = () => {
+    setMode("choose"); setTitle(""); setDescription("");
+    setPhotoTaken(false); pendingFile.current = null; setBusy(false);
+  };
+  const close = () => { reset(); onClose(); };
+
+  const isIdea = mode === "idea";
+  const phase = isIdea ? "before" : "after";
+
+  const submit = async () => {
+    if (!title.trim()) return;
+    setBusy(true);
+    try {
+      // The improvement first, so the photo has something to attach to.
+      const res = await fetch(`${BASE}/api/improvements`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: title.trim(),
+          description: description.trim() || title.trim(),
+          station: "general",
+          // An idea is for whoever picks it up; something you've done is yours.
+          claim: !isIdea,
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Couldn't save it");
+      const improvement = await res.json();
+
+      if (pendingFile.current) {
+        const form = new FormData();
+        form.append("file", pendingFile.current);
+        form.append("phase", phase);
+        await fetch(`${BASE}/api/improvements/${improvement.id}/attachments`, {
+          method: "POST", credentials: "include", body: form,
+        });
+      }
+
+      // Something you've already done, with an after shot, is finished work —
+      // send it for sign-off rather than making them find it again.
+      if (!isIdea && pendingFile.current) {
+        await fetch(`${BASE}/api/improvements/${improvement.id}/done`, {
+          method: "POST", credentials: "include",
+        });
+      }
+
+      queryClient.invalidateQueries({ queryKey: ["improvements"] });
+      queryClient.invalidateQueries({ queryKey: ["improvement-scoreboard"] });
+      toast({
+        title: isIdea ? "Idea logged" : "Improvement logged",
+        description: isIdea
+          ? "Come back to it when it's done and add the after photo."
+          : pendingFile.current ? "A manager will sign it off." : "Add a photo to it so it can be signed off.",
+      });
+      close();
+    } catch (e) {
+      toast({ title: "Couldn't save it", description: (e as Error).message, variant: "destructive" });
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[150] bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={close}>
+      <div
+        className="bg-background w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl p-5 space-y-4 max-h-[92vh] overflow-y-auto"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-2xl font-bold">
+            {mode === "choose" ? "Record an improvement" : isIdea ? "An idea" : "Something you've done"}
+          </h2>
+          <button onClick={close} className="w-11 h-11 rounded-2xl bg-secondary flex items-center justify-center" aria-label="Close">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {mode === "choose" ? (
+          <>
+            <div className="space-y-3">
+              <button
+                onClick={() => setMode("idea")}
+                className="w-full rounded-2xl border-2 border-border bg-card p-5 text-left hover:border-amber-400 active:scale-[0.99] transition-all"
+              >
+                <div className="flex items-center gap-3">
+                  <Lightbulb className="w-8 h-8 text-amber-500 flex-shrink-0" />
+                  <div>
+                    <p className="text-xl font-bold">An improvement idea</p>
+                    <p className="text-base text-muted-foreground mt-0.5">
+                      Something that could be better. Take a <strong>before</strong> photo now.
+                    </p>
+                  </div>
+                </div>
+              </button>
+
+              <button
+                onClick={() => setMode("done")}
+                className="w-full rounded-2xl border-2 border-border bg-card p-5 text-left hover:border-emerald-500 active:scale-[0.99] transition-all"
+              >
+                <div className="flex items-center gap-3">
+                  <CheckCircle2 className="w-8 h-8 text-emerald-500 flex-shrink-0" />
+                  <div>
+                    <p className="text-xl font-bold">Something you've done</p>
+                    <p className="text-base text-muted-foreground mt-0.5">
+                      Already improved it. Take the <strong>after</strong> photo and send it for sign-off.
+                    </p>
+                  </div>
+                </div>
+              </button>
+            </div>
+
+            <button
+              onClick={() => { close(); setLocation("/improvements"); }}
+              className="w-full h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 transition-colors"
+            >
+              <ListChecks className="w-5 h-5" /> My improvements
+            </button>
+          </>
+        ) : (
+          <>
+            <div>
+              <label className="text-lg font-bold mb-2 block">
+                {isIdea ? "What could be better?" : "What did you improve?"}
+              </label>
+              <input
+                value={title}
+                onChange={e => setTitle(e.target.value)}
+                autoFocus
+                placeholder={isIdea ? "e.g. The tape gun is never where you need it" : "e.g. Moved the tape gun to the wrapping bench"}
+                className="w-full h-16 px-4 rounded-2xl border-2 border-border bg-card text-lg font-bold focus:outline-none focus:ring-2 focus:ring-primary/40"
+              />
+            </div>
+
+            <div>
+              <label className="text-lg font-bold mb-2 block">
+                Anything to add? <span className="font-normal text-muted-foreground">(optional)</span>
+              </label>
+              <textarea
+                value={description}
+                onChange={e => setDescription(e.target.value)}
+                rows={2}
+                placeholder={isIdea ? "Why it's a problem" : "What was wrong before, and what's better now"}
+                className="w-full px-4 py-3 rounded-2xl border-2 border-border bg-card text-lg focus:outline-none focus:ring-2 focus:ring-primary/40 resize-y"
+              />
+            </div>
+
+            <input
+              ref={cameraRef}
+              type="file"
+              accept="image/*,video/*"
+              capture="environment"
+              className="hidden"
+              onChange={e => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) { pendingFile.current = file; setPhotoTaken(true); }
+              }}
+            />
+            <button
+              onClick={() => cameraRef.current?.click()}
+              className={cn(
+                "w-full h-16 rounded-2xl border-2 text-lg font-bold flex items-center justify-center gap-3 transition-colors",
+                photoTaken
+                  ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400"
+                  : "border-dashed border-border hover:bg-secondary/50",
+              )}
+            >
+              {photoTaken ? <CheckCircle2 className="w-6 h-6" /> : <Camera className="w-6 h-6" />}
+              {photoTaken
+                ? `${isIdea ? "Before" : "After"} photo ready — tap to retake`
+                : `Take the ${isIdea ? "before" : "after"} photo`}
+            </button>
+            <p className="text-sm text-muted-foreground text-center -mt-1">
+              A photo is fine. A short video is even better.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                onClick={() => setMode("choose")}
+                className="h-14 rounded-2xl border-2 border-border text-lg font-bold hover:bg-secondary/50 transition-colors sm:order-1"
+              >
+                Back
+              </button>
+              <button
+                onClick={submit}
+                disabled={!title.trim() || busy}
+                className="h-16 sm:h-14 rounded-2xl bg-primary text-primary-foreground text-xl sm:text-lg font-bold flex items-center justify-center gap-3 disabled:opacity-50 active:scale-[0.99] transition-all shadow-lg shadow-primary/20 sm:order-2"
+              >
+                {busy ? <Loader2 className="w-6 h-6 animate-spin" /> : <ArrowRight className="w-6 h-6" />}
+                {isIdea ? "Log the idea" : "Send for sign-off"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

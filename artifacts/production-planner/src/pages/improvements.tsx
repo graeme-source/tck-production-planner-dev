@@ -393,21 +393,31 @@ function ImprovementDetail({ id, onBack, isManager }: {
         </div>
       )}
 
-      {/* Media — the thing that makes it count. Deliberately the biggest
-          block on the page when there isn't any yet. */}
+      {/* Before and after, side by side — the shape of the evidence, and the
+          way an idea logged weeks ago becomes a finished improvement: come
+          back, add the after shot, say what changed. */}
       <div className={cn(
         "rounded-2xl p-4 border-2",
         item.mediaCount === 0 ? "border-amber-400 bg-amber-50 dark:bg-amber-950/20" : "border-border bg-card",
       )}>
-        <p className="text-lg font-bold mb-3">
-          {item.mediaCount === 0 ? "Add a photo or a video" : "Photos & videos"}
+        <p className="text-lg font-bold mb-1">
+          {item.mediaCount === 0 ? "Add a photo or a video" : "Before & after"}
         </p>
-        {item.mediaCount === 0 && (
-          <p className="text-base text-muted-foreground mb-3">
-            This is what makes an improvement count. A quick before-and-after is perfect.
-          </p>
-        )}
-        <ImprovementAttachments improvementId={id} editable thumbSize="w-28 h-28" />
+        <p className="text-base text-muted-foreground mb-4">
+          {item.mediaCount === 0
+            ? "This is what makes an improvement count. A photo is fine — a short clip is better."
+            : "A photo is fine. A short clip is better."}
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <p className="text-base font-bold mb-2">Before</p>
+            <ImprovementAttachments improvementId={id} editable phase="before" thumbSize="w-24 h-24" />
+          </div>
+          <div>
+            <p className="text-base font-bold mb-2">After</p>
+            <ImprovementAttachments improvementId={id} editable phase="after" thumbSize="w-24 h-24" />
+          </div>
+        </div>
       </div>
 
       {/* The one action the person needs. */}

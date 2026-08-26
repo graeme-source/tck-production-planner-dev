@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { db, andonIssuesTable, andonCommentsTable, usersTable, notificationsTable } from "@workspace/db";
+import { db, andonIssuesTable, andonCommentsTable, usersTable, notificationsTable, improvementSubmissionsTable } from "@workspace/db";
 import { eq, isNull, desc, asc, and, SQL } from "drizzle-orm";
 import type { AndonIssue } from "@workspace/db";
 
@@ -66,7 +66,11 @@ router.get("/", async (req: Request, res: Response) => {
 
 router.post("/", async (req: Request, res: Response) => {
   try {
-    const { category, severity, description, station, reportContext } = req.body;
+    // area tells the two kinds of problem apart at the point of reporting:
+    // 'factory' is something physical, 'system' is the app misbehaving on the
+    // iPad. They reach different people (migration 0060).
+    const { category, severity, description, station, reportContext, area } = req.body;
+    const issueArea = area === "system" || area === "factory" ? area : null;
     if (!category || !severity || !station) {
       res.status(400).json({ error: "category, severity, and station are required" });
       return;
@@ -89,6 +93,7 @@ router.post("/", async (req: Request, res: Response) => {
         reportedBy: userId ?? null,
         reportedByName,
         reportContext: reportContext || null,
+        area: issueArea,
       })
       .returning();
 
@@ -314,6 +319,63 @@ router.post("/:id/comments", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("Error creating andon comment:", err);
     res.status(500).json({ error: "Failed to create comment" });
+  }
+});
+
+// POST /:id/tag-improvement — turn an issue into an improvement.
+//
+// A safety problem gets fixed by improving something, so the two shouldn't be
+// separate pieces of typing. This carries the issue's own words across as the
+// starting description, links the pair, and leaves the improvement as an idea
+// (with no media yet) for whoever picks it up. Idempotent: tagging twice
+// returns the improvement already made.
+router.post("/:id/tag-improvement", async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  try {
+    const [issue] = await db.select().from(andonIssuesTable).where(eq(andonIssuesTable.id, id));
+    if (!issue) { res.status(404).json({ error: "Issue not found" }); return; }
+    if (issue.improvementId) {
+      res.json({ ok: true, improvementId: issue.improvementId, alreadyTagged: true });
+      return;
+    }
+
+    const userId = req.session.userId ?? null;
+    let userName: string | null = null;
+    if (userId) {
+      const [user] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId));
+      userName = user?.name ?? null;
+    }
+
+    const label = ANDON_CATEGORY_LABELS[issue.category] ?? issue.category;
+    const title = (issue.description?.trim() || `${label} issue at ${issue.station}`).slice(0, 200);
+    const description = [
+      issue.description?.trim() || null,
+      `Raised as a ${issue.severity} ${label.toLowerCase()} issue at ${issue.station}${issue.area ? ` (${issue.area})` : ""}.`,
+      issue.reportedByName ? `Reported by ${issue.reportedByName}.` : null,
+    ].filter(Boolean).join("\n\n");
+
+    const [improvement] = await db.insert(improvementSubmissionsTable).values({
+      title,
+      description,
+      station: issue.station,
+      type: "improvement",
+      submittedBy: userId,
+      submittedByName: userName,
+      // Nobody has picked it up yet — it's an opportunity, not someone's job.
+      assignedTo: null,
+      assignedToName: null,
+      reportContext: issue.reportContext ?? null,
+    }).returning({ id: improvementSubmissionsTable.id });
+
+    await db.update(andonIssuesTable)
+      .set({ improvementId: improvement!.id })
+      .where(eq(andonIssuesTable.id, id));
+
+    res.json({ ok: true, improvementId: improvement!.id });
+  } catch (err) {
+    console.error("[Andon] tag-improvement error:", err);
+    res.status(500).json({ error: "Failed to turn this into an improvement" });
   }
 });
 

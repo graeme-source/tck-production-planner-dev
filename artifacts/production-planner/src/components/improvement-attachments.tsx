@@ -13,6 +13,7 @@ interface Attachment {
   mime: string;
   fileName: string | null;
   createdAt: string;
+  phase: "before" | "after" | null;
 }
 
 const attachmentUrl = (id: number) => `${BASE}/api/improvements/attachments/${id}`;
@@ -21,10 +22,14 @@ export function ImprovementAttachments({
   improvementId,
   editable = false,
   thumbSize = "w-24 h-24",
+  phase,
 }: {
   improvementId: number;
   editable?: boolean;
   thumbSize?: string;
+  /** Show (and upload into) only one side of a before/after pair. Omit to
+   *  show everything, which is what the older callers still want. */
+  phase?: "before" | "after";
 }) {
   const [items, setItems] = useState<Attachment[] | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -33,7 +38,13 @@ export function ImprovementAttachments({
   const load = () =>
     fetch(`${BASE}/api/improvements/${improvementId}/attachments`, { credentials: "include" })
       .then(r => (r.ok ? r.json() : []))
-      .then(setItems)
+      .then((all: Attachment[]) => setItems(
+        // Media logged before the before/after split has no phase; it shows
+        // under "before", where an existing photo of a problem belongs.
+        phase
+          ? all.filter(a => (phase === "before" ? a.phase !== "after" : a.phase === "after"))
+          : all,
+      ))
       .catch(() => setItems([]));
 
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [improvementId]);
@@ -43,6 +54,7 @@ export function ImprovementAttachments({
     try {
       const form = new FormData();
       form.append("file", file);
+      if (phase) form.append("phase", phase);
       const r = await fetch(`${BASE}/api/improvements/${improvementId}/attachments`, {
         method: "POST", credentials: "include", body: form,
       });

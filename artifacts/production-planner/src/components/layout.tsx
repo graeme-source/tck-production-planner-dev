@@ -1,7 +1,8 @@
 import React, { ReactNode, useState, useEffect, useRef } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
-import { ReportButton } from "@/components/report-modal";
+import { RecordImprovementModal } from "@/components/record-improvement-modal";
+import { RecordIssueModal } from "@/components/record-issue-modal";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { usePageHeaderValue } from "@/contexts/page-header-context";
@@ -706,6 +707,8 @@ export function QuickActionsDock() {
   const user = state.status === "authenticated" ? state.user : null;
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [todosOpen, setTodosOpen] = useState(false);
+  const [improvementOpen, setImprovementOpen] = useState(false);
+  const [issueOpen, setIssueOpen] = useState(false);
   const isFounder = user?.email === "graeme@thecalzonekitchen.co.uk";
 
   if (!user) return null;
@@ -713,7 +716,15 @@ export function QuickActionsDock() {
   return (
     <>
       <FoundersAssistant open={assistantOpen} onClose={() => setAssistantOpen(false)} isFounder={isFounder} />
-      <FloatingActionsTab assistantOpen={assistantOpen} onOpenAssistant={() => setAssistantOpen(true)} onOpenTodos={() => setTodosOpen(true)} />
+      <FloatingActionsTab
+        assistantOpen={assistantOpen}
+        onOpenAssistant={() => setAssistantOpen(true)}
+        onOpenTodos={() => setTodosOpen(true)}
+        onOpenImprovement={() => setImprovementOpen(true)}
+        onOpenIssue={() => setIssueOpen(true)}
+      />
+      <RecordImprovementModal open={improvementOpen} onClose={() => setImprovementOpen(false)} />
+      <RecordIssueModal open={issueOpen} onClose={() => setIssueOpen(false)} />
       <TodoSheet open={todosOpen} onClose={() => setTodosOpen(false)} />
       <TodoInterstitial />
     </>
@@ -726,7 +737,13 @@ export function QuickActionsDock() {
 // where someone once expanded it greeted every later user with the menu
 // already open (Graeme, 2026-08-22). Expansion now lasts only until the
 // next full page load.
-function FloatingActionsTab({ assistantOpen, onOpenAssistant, onOpenTodos }: { assistantOpen: boolean; onOpenAssistant: () => void; onOpenTodos: () => void }) {
+function FloatingActionsTab({ assistantOpen, onOpenAssistant, onOpenTodos, onOpenImprovement, onOpenIssue }: {
+  assistantOpen: boolean;
+  onOpenAssistant: () => void;
+  onOpenTodos: () => void;
+  onOpenImprovement: () => void;
+  onOpenIssue: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const toggle = () => setExpanded(prev => !prev);
   const openTodoCount = useMyOpenTodoCount();
@@ -761,7 +778,31 @@ function FloatingActionsTab({ assistantOpen, onOpenAssistant, onOpenTodos }: { a
               </span>
             )}
           </button>
-          <ReportButton className="relative bottom-auto right-auto z-auto w-44 h-12 py-0 justify-center" />
+          {/* Record Improvement replaced Quick Idea (Graeme, 2026-08-28):
+              the dock is where people actually reach for this, and the
+              improvement flow needs a photo taken at the point of work.
+              Record Issue sits beside it so a problem and an improvement are
+              equally easy to raise — a safety issue is often both. */}
+          <button
+            type="button"
+            onClick={onOpenImprovement}
+            className="w-44 flex items-center justify-center gap-2 px-4 h-12 rounded-full bg-blue-500 text-white shadow-lg shadow-blue-500/30 hover:bg-blue-600 active:scale-95 transition-all"
+            aria-label="Record an improvement"
+            title="Record an improvement"
+          >
+            <Lightbulb className="w-5 h-5" />
+            <span className="text-sm font-semibold">Improvement</span>
+          </button>
+          <button
+            type="button"
+            onClick={onOpenIssue}
+            className="w-44 flex items-center justify-center gap-2 px-4 h-12 rounded-full bg-rose-500 text-white shadow-lg shadow-rose-500/30 hover:bg-rose-600 active:scale-95 transition-all"
+            aria-label="Report an issue"
+            title="Report an issue"
+          >
+            <AlertTriangle className="w-5 h-5" />
+            <span className="text-sm font-semibold">Report issue</span>
+          </button>
           {!assistantOpen && (
             <button
               type="button"

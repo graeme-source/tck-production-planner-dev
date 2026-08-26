@@ -76,6 +76,12 @@ export const andonIssuesTable = pgTable("andon_issues", {
   resolvedBy: integer("resolved_by").references(() => usersTable.id, { onDelete: "set null" }),
   resolvedByName: text("resolved_by_name"),
   resolvedAt: timestamp("resolved_at"),
+  // 'factory' = something physical on the floor, 'system' = something wrong
+  // with the app on the iPad. They go to different people (migration 0060).
+  area: text("area"),
+  // Set when this issue was turned into an improvement — a safety problem
+  // gets fixed by improving something, and the pair stays joined up.
+  improvementId: integer("improvement_id").references(() => improvementSubmissionsTable.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

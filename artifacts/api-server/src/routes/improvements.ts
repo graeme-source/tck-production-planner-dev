@@ -406,12 +406,12 @@ const toRows = <T,>(r: unknown): T[] => ((r as { rows?: T[] }).rows ?? (r as T[]
 router.get("/:id/attachments", async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-  const rows = toRows<AttachmentRow>(await db.execute(sql`
-    SELECT id, kind, mime, file_name, created_at
+  const rows = toRows<AttachmentRow & { phase: string | null }>(await db.execute(sql`
+    SELECT id, kind, mime, file_name, created_at, phase
     FROM improvement_attachments WHERE improvement_id = ${id} ORDER BY created_at ASC
   `));
   res.json(rows.map(a => ({
-    id: a.id, kind: a.kind, mime: a.mime, fileName: a.file_name,
+    id: a.id, kind: a.kind, mime: a.mime, fileName: a.file_name, phase: a.phase,
     createdAt: a.created_at instanceof Date ? a.created_at.toISOString() : a.created_at,
   })));
 });
@@ -434,12 +434,15 @@ router.post("/:id/attachments", mediaUpload.single("file"), async (req: Request,
   }
   const exists = toRows<{ id: number }>(await db.execute(sql`SELECT id FROM improvement_submissions WHERE id = ${id}`));
   if (exists.length === 0) { res.status(404).json({ error: "Improvement not found" }); return; }
+  // "before" = what it looked like when the problem was spotted, "after" =
+  // once it was fixed. Anything else is just a photo (migration 0060).
+  const phase = req.body?.phase === "before" || req.body?.phase === "after" ? req.body.phase : null;
   const rows = toRows<{ id: number }>(await db.execute(sql`
-    INSERT INTO improvement_attachments (improvement_id, kind, mime, data, file_name)
-    VALUES (${id}, ${isImage ? "image" : "video"}, ${mime}, ${req.file.buffer}, ${req.file.originalname ?? null})
+    INSERT INTO improvement_attachments (improvement_id, kind, mime, data, file_name, phase)
+    VALUES (${id}, ${isImage ? "image" : "video"}, ${mime}, ${req.file.buffer}, ${req.file.originalname ?? null}, ${phase})
     RETURNING id
   `));
-  res.status(201).json({ id: rows[0]?.id, kind: isImage ? "image" : "video", mime });
+  res.status(201).json({ id: rows[0]?.id, kind: isImage ? "image" : "video", mime, phase });
 });
 
 // Stream the bytes of a single attachment.
