@@ -17,6 +17,7 @@ import {
   type TagScope,
 } from "@/lib/dispatch-tagging";
 import { ApcBatchBookingDialog } from "@/components/apc-batch-booking";
+import { OrderNumber } from "@/components/order-number";
 import { RescheduleOrderDialog } from "@/components/reschedule-order-dialog";
 import { useAuth } from "@/contexts/auth-context";
 import { format, addDays, parseISO } from "date-fns";
@@ -875,40 +876,6 @@ function printLabel(
   iframe.src = pdfUrl;
 }
 
-/** Order number as a link into the Shopify admin.
- *
- *  Wanted everywhere an order number appears on this page — a packer or
- *  manager assessing anything (an untagged order, a booking failure, a
- *  fulfilment error) ends up in Shopify, and hunting for the order by hand is
- *  the slow part. Opens in a new tab so the packing list stays put.
- *
- *  The base URL arrives once from /config-status rather than per order: a
- *  wave is several hundred rows. Falls back to plain text when the base
- *  hasn't loaded, so the number is never missing. */
-function OrderNumber({ orderId, name, adminBase, className }: {
-  orderId: number | string;
-  name: string;
-  adminBase?: string;
-  className?: string;
-}) {
-  if (!adminBase) return <span className={className}>{name}</span>;
-  return (
-    <a
-      href={`${adminBase}${orderId}`}
-      target="_blank"
-      rel="noopener noreferrer"
-      onClick={e => e.stopPropagation()}
-      // Underlined ALWAYS, not just on hover: the packing screen is used on
-      // an iPad, where there is no hover state, so a hover-only affordance is
-      // invisible to the people actually using it.
-      className={cn(className, "underline decoration-dotted underline-offset-2 decoration-current/40 hover:decoration-current")}
-      title={`Open ${name} in Shopify`}
-    >
-      {name}
-    </a>
-  );
-}
-
 type PrintStatus = "idle" | "printing" | "done" | "failed";
 
 type View = "dates" | "list" | "picking" | "pre-confirm" | "confirm";
@@ -1658,7 +1625,13 @@ export default function Fulfilment() {
   const labelGateActive = apcMode === "full" && bookedConsignments != null;
   const lacksLabel = (o: ShopifyOrder) =>
     labelGateActive && !isLocalDelivery(o) && !bookedMap.has(o.id);
-  const noLabelOrders = filteredUnfulfilledOrdered.filter(lacksLabel);
+  // Whole day, NOT the filtered wave. Booking labels is the label-booker's
+  // job and covers every dispatch-tagged order; filtered to the current wave
+  // this panel said "1 order has no label" while the day held several
+  // (Graeme, 2026-08-26). Same reasoning as the dispatch-tagging panel above
+  // it, and it sits in the same place on screen for the same reason.
+  const noLabelOrders = unfulfilledOrders.filter(lacksLabel);
+  // The pick list itself stays filtered — that IS the picker's wave.
   const labelledOrdered = filteredUnfulfilledOrdered.filter(o => !lacksLabel(o));
 
   // ── Fridge gate ─────────────────────────────────────────────────────────
@@ -4154,6 +4127,53 @@ export default function Fulfilment() {
             </div>
           )}
 
+          {/* ── No label yet: whoever is booking APC labels owns this ─────
+              Sits ABOVE the filters, with the tagging panel, because it is
+              the label-booker's job and not the picker's — and because it
+              covers the WHOLE day. Filtered down to the current wave it read
+              as "one order has no label" when the day had several (Graeme,
+              2026-08-26). Picking one of these would only fail at the
+              consignment step, so they carry the actions that actually
+              resolve them: Reschedule, or a retry through Book APC labels. */}
+          {noLabelOrders.length > 0 && (
+            <div className="glass-panel rounded-2xl border-2 border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 p-4 space-y-2.5">
+              <div className="flex items-center justify-between gap-3 flex-wrap px-1">
+                <p className="text-base font-bold uppercase tracking-wide text-amber-800 dark:text-amber-300 flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5" /> No label — not ready to pack ({noLabelOrders.length})
+                </p>
+                <p className="text-sm text-amber-700/90 dark:text-amber-400/90">Retry via Book APC labels, or reschedule</p>
+              </div>
+              {noLabelOrders.map(order => (
+                <div key={order.id} className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-card border border-amber-200 dark:border-amber-900 text-base">
+                  <OrderNumber
+                    orderId={order.id}
+                    name={order.name}
+                    adminBase={configStatus?.shopifyAdminOrderBase}
+                    className="font-mono font-bold"
+                  />
+                  <span className="text-muted-foreground truncate flex-1">
+                    {order.shipping_address?.name ?? `${order.customer?.first_name} ${order.customer?.last_name}`}
+                    {order.shipping_address && ` — ${order.shipping_address.city}, ${order.shipping_address.zip}`}
+                  </span>
+                  {order.tags.toLowerCase().includes("apc-no-service") && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 font-semibold flex-shrink-0"
+                          title="APC refused this postcode for this delivery day">
+                      APC: no service
+                    </span>
+                  )}
+                  {canBookCourier && (
+                    <button
+                      onClick={() => setRescheduleTarget(order)}
+                      className="flex-shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-600 text-white text-sm font-semibold hover:bg-amber-700 transition-colors"
+                    >
+                      <CalendarClock className="w-4 h-4" /> Reschedule
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* ── The filters that own the list below ──────────────────────
               Every control here is a primary action at the bench, so they
               are sized like Book APC labels rather than drawn as small grey
@@ -4389,49 +4409,6 @@ export default function Fulfilment() {
               >
                 <RotateCcw className="w-3.5 h-3.5" /> Bring back
               </button>
-            </div>
-          )}
-
-          {/* Orders with no label are NOT ready to pack — picking one would
-              only fail at the consignment step. They stay visible here with
-              the actions that can actually resolve them: Reschedule, or a
-              retry through Book APC labels. */}
-          {noLabelOrders.length > 0 && (
-            <div className="rounded-xl border-2 border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 p-3 space-y-2">
-              <div className="flex items-center justify-between px-1">
-                <p className="text-xs font-medium text-amber-800 dark:text-amber-300 uppercase tracking-wide flex items-center gap-1.5">
-                  <AlertCircle className="w-3.5 h-3.5" /> No label — not ready to pack ({noLabelOrders.length})
-                </p>
-                <p className="text-[11px] text-amber-700/80 dark:text-amber-400/80">Retry via Book APC labels, or reschedule</p>
-              </div>
-              {noLabelOrders.map(order => (
-                <div key={order.id} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-card border border-amber-200 dark:border-amber-900 text-sm">
-                  <OrderNumber
-                    orderId={order.id}
-                    name={order.name}
-                    adminBase={configStatus?.shopifyAdminOrderBase}
-                    className="font-bold"
-                  />
-                  <span className="text-muted-foreground truncate flex-1">
-                    {order.shipping_address?.name ?? `${order.customer?.first_name} ${order.customer?.last_name}`}
-                    {order.shipping_address && ` — ${order.shipping_address.city}, ${order.shipping_address.zip}`}
-                  </span>
-                  {order.tags.toLowerCase().includes("apc-no-service") && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 font-medium flex-shrink-0"
-                          title="APC refused this postcode for this delivery day">
-                      APC: no service
-                    </span>
-                  )}
-                  {canBookCourier && (
-                    <button
-                      onClick={() => setRescheduleTarget(order)}
-                      className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-semibold hover:bg-amber-700 transition-colors"
-                    >
-                      <CalendarClock className="w-3.5 h-3.5" /> Reschedule
-                    </button>
-                  )}
-                </div>
-              ))}
             </div>
           )}
 
