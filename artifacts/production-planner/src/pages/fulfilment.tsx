@@ -4329,6 +4329,7 @@ export default function Fulfilment() {
                 tag={queryTag}
                 onClose={() => setShowBatchBooking(false)}
                 onBooked={() => { void refetchBooked(); void refetch(); }}
+                adminBase={configStatus?.shopifyAdminOrderBase}
               />
             )}
 

@@ -15,7 +15,8 @@
  *
  * Nothing is booked without the operator seeing stages 1 and 2.
  */
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import {
   Loader2, AlertTriangle, CheckCircle2, XCircle, PackageCheck,
@@ -23,6 +24,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { RescheduleOrderDialog } from "@/components/reschedule-order-dialog";
+import { OrderNumber } from "@/components/order-number";
+import { AddressReviewCard, type PreflightAddress, type AddressReviewFlag } from "@/components/apc-address-review";
 import { toast } from "@/hooks/use-toast";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
@@ -37,6 +40,11 @@ export interface PreflightOrder {
   existingWaybill: string | null;
   problems: string[];
   reviews: string[];
+  /** Present on orders whose address needed reshaping — carries the dropped
+   *  text and how much it matters, so the card can rank and show it. */
+  reviewFlags?: AddressReviewFlag[];
+  /** What Shopify holds vs what the label will carry. */
+  address?: PreflightAddress;
 }
 
 interface Preflight {
@@ -87,24 +95,32 @@ interface BookResponse {
 
 type Tone = "ready" | "review" | "blocked" | "done";
 
-function OrderLine({ o, tone, selectable, checked, onToggle }: {
+function OrderLine({ o, tone, selectable, checked, onToggle, adminBase }: {
   o: PreflightOrder; tone: Tone; selectable?: boolean; checked?: boolean; onToggle?: () => void;
+  adminBase?: string;
 }) {
   const body = (
     <>
-      <span className="font-semibold w-[4.5rem] shrink-0">{o.orderName}</span>
+      {/* The order number links into Shopify wherever it appears — assessing
+          anything on this screen ends up there. */}
+      <OrderNumber
+        orderId={o.orderId}
+        name={o.orderName}
+        adminBase={adminBase}
+        className="font-mono font-bold w-[5.5rem] shrink-0"
+      />
       <span className="flex-1 min-w-0">
         <span className="text-muted-foreground">{o.customerName}</span>
         {(o.problems.length > 0 || o.reviews.length > 0) && (
-          <span className={cn("block text-xs mt-0.5", tone === "blocked" ? "text-destructive" : "text-amber-700 dark:text-amber-400")}>
+          <span className={cn("block text-sm mt-0.5", tone === "blocked" ? "text-destructive" : "text-amber-700 dark:text-amber-400")}>
             {[...o.problems, ...o.reviews].join(" · ")}
           </span>
         )}
         {o.existingWaybill && (
-          <span className="block text-xs text-muted-foreground font-mono mt-0.5">{o.existingWaybill}</span>
+          <span className="block text-sm text-muted-foreground font-mono mt-0.5">{o.existingWaybill}</span>
         )}
       </span>
-      <span className="text-xs text-muted-foreground shrink-0 text-right">
+      <span className="text-sm text-muted-foreground shrink-0 text-right">
         {o.serviceCode && <span className="font-mono">{o.serviceCode}</span>}
         <span className="block">{o.weightKg} kg</span>
       </span>
@@ -112,23 +128,25 @@ function OrderLine({ o, tone, selectable, checked, onToggle }: {
   );
 
   if (!selectable) {
-    return <div className="flex items-start gap-3 py-1.5 text-sm border-b border-border/50 last:border-0">{body}</div>;
+    return <div className="flex items-start gap-3 py-2 text-base border-b border-border/50 last:border-0">{body}</div>;
   }
 
   return (
     <label className={cn(
-      "flex items-start gap-3 py-1.5 text-sm border-b border-border/50 last:border-0 cursor-pointer -mx-1 px-1 rounded",
+      "flex items-start gap-3 py-2.5 text-base border-b border-border/50 last:border-0 cursor-pointer -mx-1 px-1 rounded-lg",
       checked && "bg-primary/5",
     )}>
-      <input type="checkbox" checked={!!checked} onChange={onToggle} className="mt-1 shrink-0" />
+      {/* Big enough to hit with a gloved finger on an iPad. */}
+      <input type="checkbox" checked={!!checked} onChange={onToggle} className="mt-1 shrink-0 w-5 h-5 accent-primary" />
       {body}
     </label>
   );
 }
 
-function Section({ title, count, tone, orders, defaultOpen = false, selectable, selected, onToggle }: {
+function Section({ title, count, tone, orders, defaultOpen = false, selectable, selected, onToggle, adminBase }: {
   title: string; count: number; tone: Tone; orders: PreflightOrder[]; defaultOpen?: boolean;
   selectable?: boolean; selected?: Set<number>; onToggle?: (id: number) => void;
+  adminBase?: string;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   if (count === 0) return null;
@@ -140,19 +158,19 @@ function Section({ title, count, tone, orders, defaultOpen = false, selectable, 
   }[tone];
   const chosen = selectable && selected ? orders.filter(o => selected.has(o.orderId)).length : 0;
   return (
-    <div className={cn("rounded-xl border overflow-hidden", toneClass)}>
-      <button onClick={() => setOpen(v => !v)} className="w-full flex items-center gap-2 px-3 py-2 text-sm font-semibold text-left">
-        {tone === "ready" && <CheckCircle2 className="w-4 h-4 text-green-600" />}
-        {tone === "review" && <AlertTriangle className="w-4 h-4 text-amber-600" />}
-        {tone === "blocked" && <XCircle className="w-4 h-4 text-red-600" />}
-        {tone === "done" && <PackageCheck className="w-4 h-4 text-muted-foreground" />}
+    <div className={cn("rounded-2xl border-2 overflow-hidden", toneClass)}>
+      <button onClick={() => setOpen(v => !v)} className="w-full flex items-center gap-2.5 px-4 py-3 text-base font-bold text-left">
+        {tone === "ready" && <CheckCircle2 className="w-5 h-5 text-green-600" />}
+        {tone === "review" && <AlertTriangle className="w-5 h-5 text-amber-600" />}
+        {tone === "blocked" && <XCircle className="w-5 h-5 text-red-600" />}
+        {tone === "done" && <PackageCheck className="w-5 h-5 text-muted-foreground" />}
         {title}
-        <span className="ml-auto tabular-nums text-muted-foreground">
+        <span className="ml-auto tabular-nums text-muted-foreground font-semibold">
           {selectable && chosen > 0 ? `${chosen} of ${count} ticked` : count}
         </span>
       </button>
       {open && (
-        <div className="px-3 pb-2 max-h-60 overflow-y-auto">
+        <div className="px-4 pb-3 max-h-80 overflow-y-auto">
           {orders.map(o => (
             <OrderLine
               key={o.orderId}
@@ -161,6 +179,7 @@ function Section({ title, count, tone, orders, defaultOpen = false, selectable, 
               selectable={selectable}
               checked={selected?.has(o.orderId)}
               onToggle={() => onToggle?.(o.orderId)}
+              adminBase={adminBase}
             />
           ))}
         </div>
@@ -169,13 +188,14 @@ function Section({ title, count, tone, orders, defaultOpen = false, selectable, 
   );
 }
 
-export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
+export function ApcBatchBookingDialog({ tag, onClose, onBooked, adminBase }: {
   tag: string;
   onClose: () => void;
   onBooked: () => void;
+  /** Shopify admin order base, sent once from /config-status. Makes every
+   *  order number here a link into the order. */
+  adminBase?: string;
 }) {
-  const [preflight, setPreflight] = useState<Preflight | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [stage, setStage] = useState<"review" | "confirm" | "booking" | "report">("review");
   const [report, setReport] = useState<BookResponse | null>(null);
@@ -227,21 +247,33 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
   // not defaulted into.
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`${BASE}/api/fulfilment/batch-preflight?tag=${encodeURIComponent(tag)}`, { credentials: "include" })
-      .then(async r => {
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.error ?? "Preflight failed");
-        if (!cancelled) setPreflight(d);
-      })
-      .catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : "Preflight failed"); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [tag]);
+  // React Query rather than a bare fetch so that saving an address
+  // correction can invalidate this key and the row moves itself out of
+  // "needs a look" without the operator reopening the dialog.
+  const {
+    data: preflight = null,
+    isLoading: loading,
+    error: preflightError,
+  } = useQuery<Preflight>({
+    queryKey: ["apc-batch-preflight", tag],
+    queryFn: async () => {
+      const r = await fetch(`${BASE}/api/fulfilment/batch-preflight?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error ?? "Preflight failed");
+      return d as Preflight;
+    },
+    // Nothing here should be served from cache: it decides what gets booked.
+    staleTime: 0,
+    refetchOnWindowFocus: false,
+  });
 
   const selectable: PreflightOrder[] = preflight ? [...preflight.ready, ...preflight.needsReview] : [];
   const toBook = selectable.filter(o => selected.has(o.orderId));
+  // Orders whose address a person has already re-cut. They are "ready" as far
+  // as booking is concerned; this is the record of the change, and the only
+  // route back to the automatic address.
+  const correctedReady = preflight ? preflight.ready.filter(o => o.address?.corrected) : [];
+  const [showCorrected, setShowCorrected] = useState(false);
 
   function toggle(id: number) {
     setSelected(prev => {
@@ -300,12 +332,16 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
       .catch(() => toast({ title: "Could not copy", variant: "destructive" }));
   }
 
+  // One shared style for the pick chips — they are all the same kind of
+  // control, so they should not each carry their own size.
+  const chipClass = "px-4 py-2 rounded-xl text-base font-semibold border-2 border-border hover:bg-secondary/60 disabled:opacity-40";
+
   const quickPick = (n: number) => (
     <button
       key={n}
       onClick={() => selectFirst(n)}
       disabled={!preflight || preflight.ready.length === 0}
-      className="px-2.5 py-1 rounded-lg text-xs font-medium border border-border hover:bg-secondary/60 disabled:opacity-40"
+      className={chipClass}
     >
       First {n}
     </button>
@@ -314,7 +350,11 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
   return (
     <Dialog open onOpenChange={(v) => { if (!v && stage !== "booking" && !rescheduling) onClose(); }}>
       <DialogContent
-        className="max-w-2xl max-h-[88vh] overflow-y-auto"
+        // Wide and tall: this screen carries addresses that have to be read
+        // and compared, on an iPad, at the bench. The old 2xl width forced
+        // them to wrap mid-line, which is what made them hard to read
+        // (Graeme, 2026-08-26).
+        className="max-w-4xl max-h-[92vh] overflow-y-auto"
         // The reschedule dialog renders over this one. Radix decides
         // "clicked outside" on POINTERDOWN, which fires before click — so
         // pressing a button in the child dialog tore this one down, unmounting
@@ -325,55 +365,56 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
         onEscapeKeyDown={e => { if (rescheduling) e.preventDefault(); }}
       >
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <PackageCheck className="w-5 h-5 text-primary" /> Book APC consignments — {tag}
+          <DialogTitle className="flex items-center gap-2.5 text-xl">
+            <PackageCheck className="w-6 h-6 text-primary" /> Book APC consignments — {tag}
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="text-base">
             {stage === "report"
               ? "Every order's outcome is listed below. Anything that failed still has no label."
               : "Tick the orders to book. Nothing is booked until you confirm on the next step."}
           </DialogDescription>
         </DialogHeader>
 
-        {loading && <div className="flex items-center gap-2 text-sm text-muted-foreground py-6"><Loader2 className="w-4 h-4 animate-spin" /> Checking the day's orders…</div>}
+        {loading && <div className="flex items-center gap-2.5 text-base text-muted-foreground py-6"><Loader2 className="w-5 h-5 animate-spin" /> Checking the day's orders…</div>}
 
-        {error && (
-          <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/10 rounded-xl px-3 py-2.5">
-            <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" /> <span>{error}</span>
+        {(error || preflightError) && (
+          <div className="flex items-start gap-2.5 text-base text-destructive bg-destructive/10 rounded-xl px-4 py-3">
+            <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+            <span>{error ?? (preflightError instanceof Error ? preflightError.message : "Preflight failed")}</span>
           </div>
         )}
 
         {/* ── Stage 1: review + pick ── */}
         {preflight && stage === "review" && (
-          <div className="space-y-3">
+          <div className="space-y-4">
             {!preflight.codesConfigured && (
-              <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/10 rounded-xl px-3 py-2.5">
-                <ShieldAlert className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <div className="flex items-start gap-2.5 text-base text-destructive bg-destructive/10 rounded-xl px-4 py-3">
+                <ShieldAlert className="w-5 h-5 flex-shrink-0 mt-0.5" />
                 <span>APC service codes aren't configured in Settings — nothing can be booked.</span>
               </div>
             )}
 
             {preflight.ready.length > 0 && (
-              <div className="flex items-center gap-2 flex-wrap text-sm">
-                <span className="text-muted-foreground">Quick pick:</span>
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <span className="text-base font-semibold text-muted-foreground">Quick pick:</span>
                 {[5].map(quickPick)}
                 <button
                   onClick={() => setSelected(new Set(preflight.ready.map(o => o.orderId)))}
-                  className="px-2.5 py-1 rounded-lg text-xs font-medium border border-border hover:bg-secondary/60"
+                  className={chipClass}
                 >
                   All ready ({preflight.ready.length})
                 </button>
                 <button
                   onClick={() => selectBySize("small")}
                   disabled={readySmallCount === 0}
-                  className="px-2.5 py-1 rounded-lg text-xs font-medium border border-border hover:bg-secondary/60 disabled:opacity-40"
+                  className={chipClass}
                 >
                   Small boxes ({readySmallCount})
                 </button>
                 <button
                   onClick={() => selectBySize("large")}
                   disabled={readyLargeCount === 0}
-                  className="px-2.5 py-1 rounded-lg text-xs font-medium border border-border hover:bg-secondary/60 disabled:opacity-40"
+                  className={chipClass}
                   title="Includes wholesale — they book on the large-box service code"
                 >
                   Large boxes ({readyLargeCount})
@@ -381,7 +422,7 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
                 <button
                   onClick={() => setSelected(new Set())}
                   disabled={selected.size === 0}
-                  className="px-2.5 py-1 rounded-lg text-xs font-medium border border-border hover:bg-secondary/60 disabled:opacity-40"
+                  className={chipClass}
                 >
                   Clear
                 </button>
@@ -392,8 +433,8 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
                 can't run ahead of the approval. These orders are shown, not
                 offered — the API skips them too. */}
             {(preflight.counts.notTagged ?? 0) > 0 && (
-              <div className="flex items-start gap-2 text-sm rounded-xl border-2 border-orange-400 dark:border-orange-700 bg-orange-50 dark:bg-orange-950/30 px-3 py-2.5">
-                <ShieldAlert className="w-4 h-4 flex-shrink-0 mt-0.5 text-orange-600" />
+              <div className="flex items-start gap-2.5 text-base rounded-xl border-2 border-orange-400 dark:border-orange-700 bg-orange-50 dark:bg-orange-950/30 px-4 py-3">
+                <ShieldAlert className="w-5 h-5 flex-shrink-0 mt-0.5 text-orange-600" />
                 <span className="text-orange-900 dark:text-orange-200">
                   <strong>{preflight.counts.notTagged} order(s) aren't tagged for dispatch yet</strong> and
                   can't be booked. Tag them on the packing screen first, then reopen this.
@@ -401,32 +442,123 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
               </div>
             )}
 
-            <Section title="Ready to book" count={preflight.counts.ready} tone="ready" orders={preflight.ready} defaultOpen
-              selectable selected={selected} onToggle={toggle} />
-            <Section title="Needs a look before booking" count={preflight.counts.needsReview} tone="review" orders={preflight.needsReview} defaultOpen
-              selectable selected={selected} onToggle={toggle} />
-            <Section title="Can't be booked — fix in Shopify first" count={preflight.counts.blocked} tone="blocked" orders={preflight.blocked} defaultOpen />
-            <Section title="Not tagged for dispatch — tag before booking" count={preflight.counts.notTagged ?? 0} tone="blocked" orders={preflight.notTagged ?? []} />
-            <Section title="Already booked" count={preflight.counts.alreadyBooked} tone="done" orders={preflight.alreadyBooked} />
-            <Section title="Local delivery — no label needed" count={preflight.counts.localDeliveries} tone="done" orders={preflight.localDeliveries} />
-
-            {preflight.counts.needsReview > 0 && (
-              <p className="text-xs text-amber-700 dark:text-amber-400">
-                Orders under "needs a look" can be ticked too — read their notes first. Their addresses
-                were reshaped to fit the label.
-              </p>
+            {/* ── Addresses that need a decision ──────────────────────────
+                One card per order rather than a row in a list: each is a
+                judgement to make, not an item to scan past, and the card
+                carries everything that judgement needs — before, after, what
+                is being dropped, and the means to change it. Shown ABOVE
+                "Ready to book" because it is the only part of this screen
+                that asks anything of the operator. */}
+            {preflight.needsReview.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2.5">
+                  <AlertTriangle className="w-5 h-5 text-amber-600" />
+                  <h3 className="text-base font-bold">
+                    {preflight.needsReview.length} address{preflight.needsReview.length !== 1 ? "es" : ""} won't fit the label as written
+                  </h3>
+                </div>
+                <p className="text-base text-muted-foreground">
+                  Fix the address, or tick the order to book it as it stands.
+                </p>
+                {preflight.needsReview.map(o => (
+                  <div key={o.orderId} className="space-y-2">
+                    {o.address ? (
+                      <AddressReviewCard
+                        orderId={o.orderId}
+                        orderName={o.orderName}
+                        customerName={o.customerName}
+                        address={o.address}
+                        flags={o.reviewFlags ?? []}
+                        adminBase={adminBase}
+                        onSaved={onBooked}
+                      />
+                    ) : (
+                      // No structured address (an older server, or a flag
+                      // that isn't about the address). Never drop the order
+                      // silently — show what we have.
+                      <div className="rounded-2xl border-2 border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 p-4">
+                        <OrderNumber orderId={o.orderId} name={o.orderName} adminBase={adminBase} className="font-mono text-lg font-bold" />
+                        <p className="text-base text-amber-800 dark:text-amber-300 mt-1">{o.reviews.join(" · ")}</p>
+                      </div>
+                    )}
+                    <label className={cn(
+                      "flex items-center gap-3 px-4 py-2.5 rounded-xl border-2 cursor-pointer text-base font-medium",
+                      selected.has(o.orderId)
+                        ? "border-primary bg-primary/10"
+                        : "border-border hover:bg-secondary/50",
+                    )}>
+                      <input
+                        type="checkbox"
+                        checked={selected.has(o.orderId)}
+                        onChange={() => toggle(o.orderId)}
+                        className="w-5 h-5 shrink-0 accent-primary"
+                      />
+                      Book {o.orderName} {o.address?.corrected ? "with the fixed address" : "anyway"}
+                    </label>
+                  </div>
+                ))}
+              </div>
             )}
 
-            <div className="flex items-center gap-3 pt-2 border-t border-border">
-              <span className="text-sm text-muted-foreground">
+            {/* Corrected addresses pass every check, so they sit in "Ready to
+                book" below and are ticked from there. They also need somewhere
+                to be checked and undone — a fix made in haste is otherwise
+                irreversible. Closed by default: once an address is sorted it
+                should stop taking up room. */}
+            {correctedReady.length > 0 && (
+              <div className="rounded-2xl border-2 border-green-300 dark:border-green-800 bg-green-50/60 dark:bg-green-950/20 overflow-hidden">
+                <button
+                  onClick={() => setShowCorrected(v => !v)}
+                  className="w-full flex items-center gap-2.5 px-4 py-3 text-base font-bold text-left"
+                >
+                  <CheckCircle2 className="w-5 h-5 text-green-600" />
+                  Addresses you've fixed
+                  <span className="ml-auto tabular-nums text-muted-foreground font-semibold">
+                    {showCorrected ? "Hide" : `${correctedReady.length} — view or undo`}
+                  </span>
+                </button>
+                {showCorrected && (
+                  <div className="px-4 pb-4 space-y-3">
+                    <p className="text-base text-muted-foreground">
+                      These are ready to book, and are listed again below with everything else.
+                    </p>
+                    {correctedReady.map(o => (
+                      <AddressReviewCard
+                        key={o.orderId}
+                        orderId={o.orderId}
+                        orderName={o.orderName}
+                        customerName={o.customerName}
+                        address={o.address!}
+                        flags={o.reviewFlags ?? []}
+                        adminBase={adminBase}
+                        onSaved={onBooked}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <Section title="Ready to book" count={preflight.counts.ready} tone="ready" orders={preflight.ready} defaultOpen
+              selectable selected={selected} onToggle={toggle} adminBase={adminBase} />
+            <Section title="Can't be booked — fix in Shopify first" count={preflight.counts.blocked} tone="blocked" orders={preflight.blocked} defaultOpen adminBase={adminBase} />
+            <Section title="Not tagged for dispatch — tag before booking" count={preflight.counts.notTagged ?? 0} tone="blocked" orders={preflight.notTagged ?? []} adminBase={adminBase} />
+            <Section title="Already booked" count={preflight.counts.alreadyBooked} tone="done" orders={preflight.alreadyBooked} adminBase={adminBase} />
+            <Section title="Local delivery — no label needed" count={preflight.counts.localDeliveries} tone="done" orders={preflight.localDeliveries} adminBase={adminBase} />
+
+            {/* Pinned outside the scrolling area: the green button used to be
+                buried under the panel behind this dialog, and the only way to
+                reach it was to resize the window (Graeme, 2026-08-26). */}
+            <div className="flex items-center gap-3 pt-3 border-t-2 border-border sticky bottom-0 bg-background">
+              <span className="text-base text-muted-foreground">
                 {toBook.length === 0 ? "Nothing ticked" : <><strong className="text-foreground">{toBook.length}</strong> order{toBook.length !== 1 ? "s" : ""} ticked</>}
               </span>
               <div className="flex-1" />
-              <button onClick={onClose} className="px-4 py-2 border border-border rounded-xl text-sm font-medium hover:bg-secondary/50">Cancel</button>
+              <button onClick={onClose} className="px-5 py-2.5 border-2 border-border rounded-xl text-base font-medium hover:bg-secondary/50">Cancel</button>
               <button
                 onClick={() => setStage("confirm")}
                 disabled={toBook.length === 0 || !preflight.codesConfigured}
-                className="px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:bg-primary/90 disabled:opacity-40"
+                className="px-6 py-2.5 bg-primary text-primary-foreground rounded-xl text-base font-bold hover:bg-primary/90 disabled:opacity-40"
               >
                 Continue
               </button>
