@@ -534,12 +534,25 @@ router.post("/:id/tag-improvement", async (req: Request, res: Response) => {
       task.url ? `Link: ${task.url}` : null,
       `From ${task.assignee_name ?? "a team member"}'s to-do list${task.created_by_name ? ` (task set by ${task.created_by_name})` : ""}.`,
     ].filter(Boolean).join("\n\n");
+    // A tagged job is work that's already been done, so if the task carries
+    // photos or video it goes straight into the approval queue rather than
+    // landing back on a to-do pile. With no media it can't (migration 0059's
+    // rule), so it waits as "to do" until someone adds a picture.
+    const { rows: mediaRows } = await db.execute<{ n: number }>(sql`
+      SELECT COUNT(*)::int AS n FROM todo_task_attachments WHERE task_id = ${task.id}
+    `);
+    const hasMedia = Number(mediaRows[0]?.n ?? 0) > 0;
+
     const created = await db.execute<{ id: number }>(sql`
       INSERT INTO improvement_submissions
-        (title, description, station, type, submitted_by, submitted_by_name, assigned_to, assigned_to_name)
+        (title, description, station, type, submitted_by, submitted_by_name, assigned_to, assigned_to_name,
+         progress_status, done_at, credited_to, credited_to_name)
       VALUES
         (${task.title}, ${description}, ${"To-do list"}, ${"improvement"},
-         ${user.id}, ${name}, ${task.assignee_id}, ${task.assignee_name})
+         ${user.id}, ${name}, ${task.assignee_id}, ${task.assignee_name},
+         ${hasMedia ? "awaiting_approval" : "submitted_for_review"}::improvement_progress_status,
+         ${hasMedia ? new Date() : null},
+         ${task.assignee_id ?? user.id}, ${task.assignee_name ?? name})
       RETURNING id
     `);
     const improvementId = created.rows[0].id;
@@ -551,8 +564,13 @@ router.post("/:id/tag-improvement", async (req: Request, res: Response) => {
       FROM todo_task_attachments WHERE task_id = ${task.id}
     `);
     await db.execute(sql`UPDATE todo_tasks SET improvement_id = ${improvementId}, updated_at = NOW() WHERE id = ${task.id}`);
-    await addTimeline(task.id, user.id, name, "event", `${name} tagged this as an improvement — it's in the improvement library`);
-    res.json({ ok: true, improvementId });
+    await addTimeline(
+      task.id, user.id, name, "event",
+      hasMedia
+        ? `${name} logged this as an improvement — it's waiting for a manager to sign off`
+        : `${name} logged this as an improvement — it needs a photo before it can be signed off`,
+    );
+    res.json({ ok: true, improvementId, awaitingApproval: hasMedia });
   } catch (err) {
     console.error("[Todos] tag-improvement error:", err);
     res.status(500).json({ error: "Failed to tag as improvement" });

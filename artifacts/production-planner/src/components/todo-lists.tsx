@@ -462,6 +462,10 @@ function TodoDetail({ taskId, meId, canManage, onEdit, onGone }: {
   const [comment, setComment] = useState("");
   const commentsEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Separate camera input for the "done + improvement" path: it opens the
+  // camera straight away and, once the shot lands, finishes the job.
+  const improvementCameraRef = useRef<HTMLInputElement>(null);
+  const [pendingImprovement, setPendingImprovement] = useState(false);
 
   function invalidate() {
     qc.invalidateQueries({ queryKey: ["todo", taskId] });
@@ -507,13 +511,35 @@ function TodoDetail({ taskId, meId, canManage, onEdit, onGone }: {
     onError: (e: Error) => toast({ title: "Couldn't delete it", description: e.message, variant: "destructive" }),
   });
   const tagImprovementMut = useMutation({
-    mutationFn: () => post(`/api/todos/${taskId}/tag-improvement`),
-    onSuccess: () => {
+    mutationFn: () => post(`/api/todos/${taskId}/tag-improvement`) as Promise<{ awaitingApproval?: boolean }>,
+    onSuccess: (res) => {
       invalidate();
-      toast({ title: "Tagged as an improvement", description: "It's in the improvement library, photos and all." });
+      toast({
+        title: "Logged as an improvement",
+        description: res?.awaitingApproval
+          ? "Photos and all — a manager will sign it off."
+          : "Add a photo to it and it'll be ready for sign-off.",
+      });
     },
-    onError: (e: Error) => toast({ title: "Couldn't tag it", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Couldn't log it", description: e.message, variant: "destructive" }),
   });
+
+  /**
+   * "Mark it done, and it's an improvement" — the moment someone finishes a
+   * job is the one moment they're standing in front of the evidence, so this
+   * is where we ask for the photo rather than hoping they go and file one
+   * later. With media already on the task it just completes and files it;
+   * without, it opens the camera first and files it once the shot is in.
+   */
+  const completeAsImprovement = async () => {
+    if ((task?.attachments?.length ?? 0) === 0) {
+      setPendingImprovement(true);
+      improvementCameraRef.current?.click();
+      return;
+    }
+    await completeMut.mutateAsync(true);
+    await tagImprovementMut.mutateAsync();
+  };
 
   if (isLoading) {
     return <div className="flex items-center justify-center py-16 text-muted-foreground gap-3 text-lg"><Loader2 className="w-6 h-6 animate-spin" /> Loading…</div>;
@@ -622,30 +648,43 @@ function TodoDetail({ taskId, meId, canManage, onEdit, onGone }: {
         </button>
       </div>
 
-      {/* Improvement library link — a done job with before/after photos IS
-          an improvement; one tap files it, media and all. */}
-      {task.improvement_id ? (
+      {/* Camera for the "done + improvement" path. Completing the job is
+          chained onto the upload so the photo and the sign-off are one
+          action from the person's point of view. */}
+      <input
+        ref={improvementCameraRef}
+        type="file"
+        accept="image/*,video/*"
+        capture="environment"
+        className="hidden"
+        onChange={async e => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (!file) { setPendingImprovement(false); return; }
+          try {
+            await uploadMut.mutateAsync(file);
+            await completeMut.mutateAsync(true);
+            await tagImprovementMut.mutateAsync();
+          } finally {
+            setPendingImprovement(false);
+          }
+        }}
+      />
+
+      {task.improvement_id && (
         <div className="flex items-center gap-2 text-base font-bold text-primary bg-primary/10 rounded-2xl px-5 py-3.5">
           <Lightbulb className="w-5 h-5 flex-shrink-0" />
           In the improvement library ✓
         </div>
-      ) : (canManage || task.assignee_id === meId) && (
-        <button
-          type="button"
-          onClick={() => tagImprovementMut.mutate()}
-          disabled={tagImprovementMut.isPending}
-          className="w-full h-14 rounded-2xl border-2 border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 text-lg font-bold flex items-center justify-center gap-2 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors disabled:opacity-50"
-        >
-          {tagImprovementMut.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Lightbulb className="w-5 h-5" />}
-          Tag as an improvement
-        </button>
       )}
 
-      {/* Actions */}
+      {/* Actions. Finishing a job is the moment someone is standing in front
+          of what they changed, so the improvement option lives here, next to
+          "done", rather than as a separate step they'd have to remember. */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <button
           onClick={() => completeMut.mutate(!isDone)}
-          disabled={completeMut.isPending}
+          disabled={completeMut.isPending || pendingImprovement}
           className={cn(
             "h-16 rounded-2xl text-xl font-bold flex items-center justify-center gap-3 transition-all active:scale-[0.99] disabled:opacity-50 sm:col-span-2",
             isDone ? "bg-secondary hover:bg-secondary/70" : "bg-primary text-primary-foreground hover:opacity-90 shadow-lg shadow-primary/20",
@@ -654,6 +693,35 @@ function TodoDetail({ taskId, meId, canManage, onEdit, onGone }: {
           {completeMut.isPending ? <Loader2 className="w-6 h-6 animate-spin" /> : isDone ? <RotateCcw className="w-6 h-6" /> : <Check className="w-7 h-7" />}
           {isDone ? "Put it back on the list" : "Mark it done"}
         </button>
+
+        {!isDone && !task.improvement_id && (canManage || task.assignee_id === meId) && (
+          <button
+            onClick={completeAsImprovement}
+            disabled={completeMut.isPending || tagImprovementMut.isPending || pendingImprovement}
+            className="h-16 rounded-2xl border-2 border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 text-xl font-bold flex flex-col items-center justify-center gap-0.5 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors disabled:opacity-50 active:scale-[0.99] sm:col-span-2"
+          >
+            <span className="flex items-center gap-3">
+              {pendingImprovement || tagImprovementMut.isPending
+                ? <Loader2 className="w-6 h-6 animate-spin" />
+                : <Lightbulb className="w-6 h-6" />}
+              Done — and it's an improvement
+            </span>
+            <span className="text-sm font-semibold opacity-80">
+              {(task.attachments?.length ?? 0) === 0 ? "Takes a photo first" : "Sends it for sign-off"}
+            </span>
+          </button>
+        )}
+
+        {isDone && !task.improvement_id && (canManage || task.assignee_id === meId) && (
+          <button
+            onClick={() => tagImprovementMut.mutate()}
+            disabled={tagImprovementMut.isPending}
+            className="h-14 rounded-2xl border-2 border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 text-lg font-bold flex items-center justify-center gap-2 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors disabled:opacity-50 sm:col-span-2"
+          >
+            {tagImprovementMut.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Lightbulb className="w-5 h-5" />}
+            This was an improvement
+          </button>
+        )}
         {canEdit && (
           <button
             onClick={() => onEdit(task)}
