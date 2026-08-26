@@ -3009,6 +3009,12 @@ async function startup() {
 
   try {
     await runStartupMigrations();
+    // The migration FILES runner (lib/db/migrations/*.sql) — after the boot
+    // DDL so the tables the files alter already exist. New schema change
+    // goes in a file per the charter; the file is now also sufficient — no
+    // hand-applying against each database (see lib/sql-migrations.ts).
+    const { runSqlMigrations } = await import("./lib/sql-migrations");
+    await runSqlMigrations();
     await seedAdminIfNeeded();
     // Fire-and-forget — runs against Shopify, can take a while on a
     // cold cache, but the server doesn't need to wait for it.
