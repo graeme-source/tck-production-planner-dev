@@ -216,6 +216,14 @@ router.get("/", async (_req: Request, res: Response) => {
             AND ${leanExamplesTable.videoUrl} IS NOT NULL
             AND ${leanExamplesTable.videoUrl} <> ''
         )`,
+        // How many days the writer judged worth a clip — the target the
+        // videos above are counted against.
+        videoWantedCount: sql<number>`(
+          SELECT COUNT(*) FROM ${leanExamplesTable}
+          WHERE ${leanExamplesTable.principleId} = ${leanPrinciplesTable.id}
+            AND ${leanExamplesTable.isActive} = TRUE
+            AND ${leanExamplesTable.videoWanted} = TRUE
+        )`,
       })
       .from(leanPrinciplesTable)
       .where(and(
@@ -249,6 +257,7 @@ router.get("/", async (_req: Request, res: Response) => {
           partIndex: w.partIndex,
           lessonCount: Number(w.lessonCount),
           videoCount: Number(w.videoCount),
+          videoWantedCount: Number(w.videoWantedCount),
           quizCount,
           matrixLabel: matrixLabelFor({ title: w.title, partLabel: w.partLabel }),
         };
@@ -491,14 +500,16 @@ router.delete("/weeks/:id", async (req: Request, res: Response) => {
 // ─── Writing a week's lessons ────────────────────────────────────────────────
 
 /**
- * The video rule (Graeme, 2026-08-26: "I only want videos if they're
- * relevant and make sense and really need to demonstrate the point").
+ * The video rule (Graeme, 2026-08-26: "We don't want it every day, maybe two
+ * or three a week").
  *
- * An earlier pass gave all 45 existing lessons a clip so no morning played
- * nothing — which turned into everyone watching a video every single day.
- * The generator now treats a video as something a day has to earn: normally
- * the Monday, where a new concept is being introduced, and otherwise only
- * where seeing it beats being told it.
+ * An earlier pass gave all 45 existing lessons a clip so that no morning
+ * played nothing — which turned into the team watching a video every single
+ * day. A video is now something a day has to earn, and the writer picks the
+ * two or three days in the week where seeing something beats being told it.
+ * Its choice is stored against the lesson, so a day that was meant to have a
+ * clip and hasn't got one shows up in the Friday review rather than being
+ * indistinguishable from a day that deliberately has none.
  */
 const WEEK_TOOL: Anthropic.Tool = {
   name: "emit_week",
@@ -520,8 +531,8 @@ const WEEK_TOOL: Anthropic.Tool = {
             explanationMd: { type: "string", description: "Markdown for the host's own prep — what this means, 2-4 short paragraphs. Never shown to the team. No headings (#)." },
             whatToShowMd: { type: "string", description: "THE SLIDE THE TEAM SEES. Speak TO them ('we', 'you'). A short **bold heading**, then 3-5 tight bullets, then a line starting '**Today:**' or '**Today's question:**'. Never instructions to the host. No headings (#)." },
             deliveryNotesMd: { type: "string", description: "Host directions — a '**Talking points:**' list of 2-3 bullets then a '**Prompt:**' line. Never shown to the team. No headings (#)." },
-            wantsVideo: { type: "boolean", description: "True ONLY if watching something would teach this day better than talking about it — typically the Monday introduction. Most days should be false; the team should not watch a video every morning." },
-            videoRationale: { type: "string", description: "If wantsVideo is true, one line on what the clip needs to show." },
+            wantsVideo: { type: "boolean", description: "True only for the two or three days in the week where watching something teaches it better than talking about it. Never all five." },
+            videoRationale: { type: "string", description: "If wantsVideo is true, one line on what the clip needs to show — this is the brief for finding it." },
           },
           required: ["title", "summary", "explanationMd", "whatToShowMd", "deliveryNotesMd", "wantsVideo"],
         },
@@ -564,7 +575,7 @@ THE THREE FIELDS — this contract is not negotiable:
 - whatToShowMd is the slide the ROOM sees. Short. Speaks to them. Big idea, few words.
 - explanationMd and deliveryNotesMd are for the HOST only and never render on the slide. Never write "point at this" or "ask the room" inside whatToShowMd.
 
-VIDEO: most days should have wantsVideo false. A video is for when seeing something beats being told it — usually the Monday introduction. Do not give every day a video; the team should not sit through a clip every morning.
+VIDEO: pick the two or three days in the week that most benefit from one, and set wantsVideo false on the rest. A video is for when watching something teaches it better than talking about it — Monday, introducing the concept, is almost always one of them; the others are usually a day where the thing is easier to recognise once you've seen someone point at it. Never mark all five: a clip every morning stops being a treat and starts being a queue. If a subject genuinely doesn't suit video at all, one is fine.
 
 VOICE: simple, warm, plain British English. Short sentences. No corporate jargon. No blame — waste is in the process, never the person. Always at least one concrete TCK example.
 
@@ -672,6 +683,10 @@ router.post("/weeks/:id/generate", validate(generateSchema), async (req: Request
           explanationMd: lesson.explanationMd,
           whatToShowMd: lesson.whatToShowMd,
           deliveryNotesMd: lesson.deliveryNotesMd,
+          // The recommendation is stored; the URL itself is pasted in during
+          // the weekly review, so a wanted-but-missing clip stays visible.
+          videoWanted: !!lesson.wantsVideo,
+          videoRationale: lesson.wantsVideo ? (lesson.videoRationale ?? null) : null,
           isActive: true,
         });
       }

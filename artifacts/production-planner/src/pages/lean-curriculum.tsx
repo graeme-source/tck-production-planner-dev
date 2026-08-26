@@ -34,6 +34,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { describeVideoCoverage } from "@/lib/video-coverage";
 import { useEffect, useRef } from "react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -64,6 +65,7 @@ type Week = {
   partIndex: number | null;
   lessonCount: number;
   videoCount: number;
+  videoWantedCount: number;
   quizCount: number;
   matrixLabel: string;
 };
@@ -89,9 +91,17 @@ type Lesson = {
   whatToShowMd: string;
   deliveryNotesMd: string;
   videoUrl: string | null;
+  videoWanted: boolean;
+  videoRationale: string | null;
 };
 
 const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+
+/** "Monday, Wednesday and Friday" — two or three days is the normal case. */
+function joinDays(days: string[]): string {
+  if (days.length <= 1) return days[0] ?? "";
+  return `${days.slice(0, -1).join(", ")} and ${days[days.length - 1]}`;
+}
 
 export default function LeanCurriculumPage() {
   const queryClient = useQueryClient();
@@ -274,6 +284,7 @@ function SortableWeekCard({ week, index, onReview, onRemove }: {
   const style = { transform: CSS.Transform.toString(transform), transition };
 
   const ready = week.lessonCount >= 5 && week.quizCount > 0;
+  const videos = describeVideoCoverage({ wanted: week.videoWantedCount, present: week.videoCount });
 
   return (
     <div
@@ -314,8 +325,8 @@ function SortableWeekCard({ week, index, onReview, onRemove }: {
           <span className={cn("flex items-center gap-1", week.lessonCount >= 5 ? "text-emerald-600" : "")}>
             <FileText className="w-3 h-3" /> {week.lessonCount}/5 lessons
           </span>
-          <span className="flex items-center gap-1">
-            <Video className="w-3 h-3" /> {week.videoCount === 0 ? "no video" : `${week.videoCount} video${week.videoCount === 1 ? "" : "s"}`}
+          <span className={cn("flex items-center gap-1", videos.state === "missing" ? "text-amber-600" : "")}>
+            <Video className="w-3 h-3" /> {videos.label}
           </span>
           <span className={cn("flex items-center gap-1", week.quizCount > 0 ? "text-emerald-600" : "")}>
             <HelpCircle className="w-3 h-3" /> {week.quizCount} quiz
@@ -548,7 +559,7 @@ function WeekReviewDialog({ weekId, onClose, onChanged }: {
       toast({
         title: "Week written",
         description: wanted.length
-          ? `Five lessons and a quiz. ${wanted.length === 1 ? "One day" : `${wanted.length} days`} would land better with a clip — paste a URL on ${wanted.map(w => DAY_NAMES[w.day - 1]).join(" and ")}.`
+          ? `Five lessons and a quiz. ${wanted.length === 1 ? "One day" : `${wanted.length} days`} would land better with a clip — paste a URL on ${joinDays(wanted.map(w => DAY_NAMES[w.day - 1] ?? `day ${w.day}`))}.`
           : "Five lessons and a quiz. No day needs a video this week.",
       });
     },
@@ -769,22 +780,40 @@ function VideoField({ lesson }: { lesson: Lesson }) {
     return () => { cancelled = true; };
   }, [debounced, lesson.id, queryClient]);
 
+  // Three states worth telling apart: this day was picked for a clip and has
+  // one; it was picked and is still empty (the thing the Friday review is
+  // looking for); or it was never meant to have one.
+  const missing = lesson.videoWanted && !value.trim();
+
   return (
     <div>
       <div className="flex items-center justify-between gap-2 mb-1">
-        <p className="text-[11px] font-medium text-muted-foreground flex items-center gap-1">
-          <Video className="w-3 h-3" /> Video <span className="font-normal">(only if it earns its place)</span>
+        <p className={cn(
+          "text-[11px] font-medium flex items-center gap-1",
+          missing ? "text-amber-600" : "text-muted-foreground",
+        )}>
+          <Video className="w-3 h-3" />
+          {lesson.videoWanted ? "Video — this day was picked for one" : "Video"}
+          {!lesson.videoWanted && <span className="font-normal">(not needed this day)</span>}
         </p>
         <span className="text-[10px] text-muted-foreground h-3">
           {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : ""}
         </span>
       </div>
+      {lesson.videoWanted && lesson.videoRationale && (
+        <p className="text-[11px] text-muted-foreground mb-1.5 italic">
+          Looking for: {lesson.videoRationale}
+        </p>
+      )}
       <div className="flex items-center gap-1.5">
         <input
           value={value}
           onChange={e => setValue(e.target.value)}
-          placeholder="Paste a YouTube URL, or leave empty for no video"
-          className="flex-1 px-2.5 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
+          placeholder={lesson.videoWanted ? "Paste the YouTube URL" : "Leave empty — this day doesn't need one"}
+          className={cn(
+            "flex-1 px-2.5 py-1.5 bg-background border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30",
+            missing ? "border-amber-500/50" : "border-border",
+          )}
         />
         {value && (
           <button

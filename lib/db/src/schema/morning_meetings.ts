@@ -104,6 +104,12 @@ export const leanExamplesTable = pgTable("lean_examples", {
   whatToShowMd: text("what_to_show_md").notNull(),
   deliveryNotesMd: text("delivery_notes_md").notNull(),
   videoUrl: text("video_url"),
+  // Whether this day was judged to be one of the two or three in the week
+  // that a video genuinely helps, and why (migration 0058). Kept apart from
+  // videoUrl so "meant to have a clip but hasn't got one" is visible in the
+  // weekly review, rather than looking the same as "deliberately none".
+  videoWanted: boolean("video_wanted").notNull().default(false),
+  videoRationale: text("video_rationale"),
   // Optional engagement media for the slide. `diagram` is a key into a
   // bank of code-drawn SVG visuals (e.g. "compound-growth", "eight-wastes",
   // "3s-cycle"); `imageUrl` is an optional photograph to show alongside.
