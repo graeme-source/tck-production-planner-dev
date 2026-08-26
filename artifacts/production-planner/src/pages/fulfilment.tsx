@@ -917,15 +917,11 @@ function paceBand(oph: number): { tile: string; label: string } {
  */
 function DispatchSummary({
   progress, packed, total, oph,
-  uncheckedCount, onOpenUnchecked, uncheckedOpen,
 }: {
   progress: DispatchProgress | null;
   packed: number | null;
   total: number | null;
   oph: number | null;
-  uncheckedCount: number;
-  onOpenUnchecked: () => void;
-  uncheckedOpen: boolean;
 }) {
   const pct = packed != null && total ? Math.min(100, Math.round((packed / total) * 100)) : 0;
   const band = oph != null ? paceBand(oph) : null;
@@ -985,20 +981,6 @@ function DispatchSummary({
         </div>
       </div>
 
-      {uncheckedCount > 0 && (
-        <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-border/60">
-          <button
-            type="button"
-            onClick={onOpenUnchecked}
-            aria-expanded={uncheckedOpen}
-            className="px-4 py-2.5 rounded-xl text-base font-semibold border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 hover:bg-amber-100 transition-colors flex items-center gap-2"
-            title="Products the fridge gate can't stock-check"
-          >
-            <AlertTriangle className="w-5 h-5" />
-            {uncheckedCount} not stock-checked
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -1535,7 +1517,6 @@ export default function Fulfilment() {
   // Both collapsed by default: they're pre/post-picking concerns, and a
   // packer mid-wave shouldn't have to read past them.
   const [awaitingPanelOpen, setAwaitingPanelOpen] = useState(false);
-  const [uncheckedPanelOpen, setUncheckedPanelOpen] = useState(false);
   const { data: fridgeAvailability } = useQuery({
     queryKey: ["fulfilment-fridge-availability"],
     queryFn: fetchFridgeAvailability,
@@ -1647,11 +1628,6 @@ export default function Fulfilment() {
       deficits: [] as Array<{ recipeName: string; packs: number }>,
       active: false,
       shortFor: new Map<number, string[]>(),
-      // Lines the gate CANNOT check — no recipe mapping for the variant. They
-      // never hold an order back, so without surfacing them the gate looks
-      // broken when it's actually blind (Graeme, 2026-08-28).
-      uncheckedTitles: new Set<string>(),
-      uncheckedOrderIds: new Set<number>(),
     };
     if (!fridgeGate || !fridgeAvailability) return { ...empty, pickable: labelledOrdered };
     // Two pools per recipe, keyed "packs:<id>" and "bags:<id>". 2-pack lines
@@ -1675,8 +1651,6 @@ export default function Fulfilment() {
       const name = names.get(Number(rid)) ?? `Recipe ${rid}`;
       return pool === "bags" ? `${name} (8-pack bags)` : name;
     };
-    const uncheckedTitles = new Set<string>();
-    const uncheckedOrderIds = new Set<number>();
     const needsFor = (o: ShopifyOrder) => {
       const needs = new Map<string, number>();
       for (const li of o.line_items ?? []) {
@@ -1691,16 +1665,16 @@ export default function Fulfilment() {
           pool = "packs";
         }
         if (recipeId == null) {
-          // Can't be checked — never gates, but say so out loud, and say WHY:
-          // either the variant has no mapping at all, or it's mapped to a
-          // recipe the fridge doesn't count (not core-menu / fridge-product).
-          const outOfScopeName = li.variant_id != null
-            ? fridgeAvailability.outOfScopeVariants?.[String(li.variant_id)]
-            : undefined;
-          uncheckedTitles.add(outOfScopeName
-            ? `${li.title} — ${outOfScopeName} isn't flagged core menu / fridge product`
-            : `${li.title} — no recipe mapping`);
-          uncheckedOrderIds.add(o.id);
+          // Nothing to check against — either the variant has no recipe
+          // mapping, or its recipe isn't one the fridge counts (not core-menu
+          // / fridge-product). Such a line never gates its order.
+          //
+          // This used to be announced three ways: a header count, a badge on
+          // the order, and a banner mid-pick. All three read as "something is
+          // wrong with this order" when nothing is, and the packer can't act
+          // on any of it — the fix lives on the recipe, not at the bench. So
+          // the gate stays quiet about what it cannot see (Graeme,
+          // 2026-08-26).
           continue;
         }
         const key = `${pool}:${recipeId}`;
@@ -1736,7 +1710,7 @@ export default function Fulfilment() {
       }))
       .filter(d => d.packs > 0)
       .sort((a, b) => b.packs - a.packs);
-    return { pickable, held, deficits, active: true, shortFor, uncheckedTitles, uncheckedOrderIds };
+    return { pickable, held, deficits, active: true, shortFor };
   })();
   // Held orders drop out of the pickable list entirely, so the picking
   // cycle, counts, and advance-to-next all respect the gate automatically.
@@ -2955,15 +2929,6 @@ export default function Fulfilment() {
         )}
         {showTestModeBanner && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
         {reconcileMode && <ReconcileModeBanner />}
-        {fridgeGate && fridgeAllocation.uncheckedOrderIds.has(activeOrder.id) && (
-          <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/30 px-4 py-2.5 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-            <span className="text-sm text-amber-900 dark:text-amber-200">
-              This order has a product the fridge gate couldn't stock-check (no recipe mapping).
-              Confirm you can actually pack it before scanning.
-            </span>
-          </div>
-        )}
         {/* Mid-cycle filter sheet — same state as the list view's filters, so
             a change here shapes the rest of the wave. The order being picked
             is never yanked away; filters bite on the next advance. */}
@@ -3986,9 +3951,6 @@ export default function Fulfilment() {
         packed={progress?.totalFulfilled ?? null}
         total={progress?.totalOrders ?? null}
         oph={packingPace?.ordersPerHour ?? null}
-        uncheckedCount={fridgeAllocation.uncheckedTitles.size}
-        onOpenUnchecked={() => setUncheckedPanelOpen(v => !v)}
-        uncheckedOpen={uncheckedPanelOpen}
       />
 
       {orders && (
@@ -4500,14 +4462,6 @@ export default function Fulfilment() {
                         <CheckCircle2 className="w-2.5 h-2.5" /> Label booked
                       </span>
                     )}
-                    {fridgeGate && fridgeAllocation.uncheckedOrderIds.has(order.id) && (
-                      <span
-                        className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-medium flex items-center gap-1"
-                        title="This order contains a product with no recipe mapping — the fridge gate could not check its stock"
-                      >
-                        <AlertTriangle className="w-2.5 h-2.5" /> Stock not checked
-                      </span>
-                    )}
                     {/* Booking failures used to be visible only inside the
                         batch-booking dialog's report — once closed, an order
                         with no (or a failed/cleared) label looked identical
@@ -4606,24 +4560,6 @@ export default function Fulfilment() {
           {/* The gate is only as good as the recipe mappings: a variant with
               no mapping can't be checked, so say which ones rather than
               letting the gate look broken. */}
-          {fridgeAllocation.active && fridgeAllocation.uncheckedTitles.size > 0 && uncheckedPanelOpen && (
-            <div className="glass-panel px-4 py-3 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 mt-4">
-              <p className="text-sm font-semibold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
-                <AlertTriangle className="w-4 h-4" /> The fridge gate can't check these products
-              </p>
-              <p className="text-xs text-amber-800/80 dark:text-amber-200/80 mt-0.5">
-                Orders containing them are never held back. Each line says why: either the
-                variant has no recipe mapping, or its recipe isn't flagged <em>Core menu</em> /
-                <em> Fridge product</em>, which is what gives the fridge a live count. Fix that
-                on the recipe and it comes under the gate.
-              </p>
-              <div className="flex flex-wrap gap-1.5 mt-1.5">
-                {[...fridgeAllocation.uncheckedTitles].map(t => (
-                  <span key={t} className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200">{t}</span>
-                ))}
-              </div>
-            </div>
-          )}
 
           {/* ── Awaiting wrapping: orders the fridge can't satisfy yet ────
               The deficit readout is the wrapping station's live to-do: wrap
