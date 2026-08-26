@@ -63,6 +63,10 @@ type Improvement = {
   approvedByName: string | null;
   reviewNote: string | null;
   createdAt: string;
+  voteCount: number;
+  votedByMe: boolean;
+  subjectTitle: string | null;
+  subjectConfirmed: boolean;
 };
 
 type ScoreRow = { userId: number | null; name: string; count: number; lastAt: string | null };
@@ -203,7 +207,17 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
         {item.mediaCount > 0 && (
           <span className="flex items-center gap-1.5"><Camera className="w-4 h-4" /> {item.mediaCount}</span>
         )}
+        {item.voteCount > 0 && (
+          <span className="flex items-center gap-1.5 font-semibold text-foreground">
+            <ThumbsUp className="w-4 h-4" /> {item.voteCount}
+          </span>
+        )}
         {item.creditedToName && <span>{item.creditedToName}</span>}
+        {item.subjectTitle && (
+          <span className="text-sm px-2 py-0.5 rounded-lg bg-secondary font-semibold">
+            {item.subjectTitle}{item.subjectConfirmed ? "" : "?"}
+          </span>
+        )}
         {item.stage === "todo" && item.mediaCount === 0 && (
           <span className="text-amber-600 font-semibold">Needs a photo</span>
         )}
@@ -333,6 +347,12 @@ function ImprovementDetail({ id, onBack, isManager }: {
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["improvements"] });
 
+  const vote = useMutation({
+    mutationFn: () => api(`/improvements/${id}/vote`, { method: "POST" }),
+    onSuccess: refresh,
+    onError: (e: Error) => toast({ title: "Couldn't save your vote", description: e.message, variant: "destructive" }),
+  });
+
   const markDone = useMutation({
     mutationFn: () => api(`/improvements/${id}/done`, { method: "POST" }),
     onSuccess: () => {
@@ -435,6 +455,28 @@ function ImprovementDetail({ id, onBack, isManager }: {
             <p className="text-base text-amber-600 font-semibold mt-2 text-center">{item.markDoneBlocker}</p>
           )}
         </div>
+      )}
+
+      {/* Backing an idea someone else raised. Only while it's still to do —
+          once it's done, voting on it means nothing. */}
+      {item.stage === "todo" && (
+        <button
+          onClick={() => vote.mutate()}
+          disabled={vote.isPending}
+          className={cn(
+            "w-full h-16 rounded-2xl border-2 text-xl font-bold flex items-center justify-center gap-3 transition-colors disabled:opacity-50",
+            item.votedByMe
+              ? "border-primary bg-primary/10 text-primary"
+              : "border-border hover:bg-secondary/50",
+          )}
+        >
+          {vote.isPending ? <Loader2 className="w-6 h-6 animate-spin" /> : <ThumbsUp className="w-6 h-6" />}
+          {item.votedByMe
+            ? `You're one of ${item.voteCount} — tap to take it back`
+            : item.voteCount > 0
+              ? `${item.voteCount} ${item.voteCount === 1 ? "person wants" : "people want"} this — add your vote`
+              : "This affects me too"}
+        </button>
       )}
 
       {item.stage === "waiting" && !item.canReview && (

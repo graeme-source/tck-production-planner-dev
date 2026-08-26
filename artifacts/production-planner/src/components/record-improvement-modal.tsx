@@ -16,7 +16,7 @@
 import { useState, useRef } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
-import { Lightbulb, CheckCircle2, Camera, Loader2, X, ArrowRight, ListChecks } from "lucide-react";
+import { Lightbulb, CheckCircle2, Camera, Loader2, X, ArrowRight, ListChecks, ThumbsUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 
@@ -31,6 +31,7 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
+  const [duplicates, setDuplicates] = useState<Array<{ id: number; title: string }>>([]);
   const [photoTaken, setPhotoTaken] = useState(false);
   const pendingFile = useRef<File | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -40,11 +41,55 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
   const reset = () => {
     setMode("choose"); setTitle(""); setDescription("");
     setPhotoTaken(false); pendingFile.current = null; setBusy(false);
+    setDuplicates([]);
   };
   const close = () => { reset(); onClose(); };
 
   const isIdea = mode === "idea";
   const phase = isIdea ? "before" : "after";
+
+  /**
+   * Before saving an idea, check whether someone has already reported it.
+   * A second copy of a known problem helps nobody; a second voice on the
+   * existing one is what tells us how many people it actually affects.
+   *
+   * Only for ideas — something you've personally just done is never a
+   * duplicate of someone else's report.
+   */
+  const checkThenSubmit = async () => {
+    if (!title.trim()) return;
+    if (!isIdea) { void submit(); return; }
+    setBusy(true);
+    try {
+      const res = await fetch(`${BASE}/api/improvements/check-duplicate`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: title.trim(), description: description.trim() || undefined }),
+      });
+      const body = await res.json().catch(() => ({ matches: [] }));
+      if (Array.isArray(body.matches) && body.matches.length > 0) {
+        setDuplicates(body.matches);
+        setBusy(false);
+        return;
+      }
+    } catch {
+      // A failed check must never block someone reporting something.
+    }
+    await submit();
+  };
+
+  const addVote = async (id: number) => {
+    setBusy(true);
+    try {
+      await fetch(`${BASE}/api/improvements/${id}/vote`, { method: "POST", credentials: "include" });
+      queryClient.invalidateQueries({ queryKey: ["improvements"] });
+      toast({ title: "Added your vote", description: "The more people it affects, the higher it climbs." });
+      close();
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submit = async () => {
     if (!title.trim()) return;
@@ -113,7 +158,46 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
           </button>
         </div>
 
-        {mode === "choose" ? (
+        {duplicates.length > 0 ? (
+          /* Someone has reported this already. Voting is offered first,
+             because a second voice on the existing report is more useful
+             than a second copy of it — but logging it anyway stays
+             available, since the match might simply be wrong. */
+          <>
+            <div className="rounded-2xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/30 p-4">
+              <p className="text-xl font-bold">
+                {duplicates.length === 1 ? "Someone's already reported this" : "This may already be reported"}
+              </p>
+              <p className="text-base text-muted-foreground mt-1">
+                Add your vote instead — the more people it affects, the higher it climbs.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              {duplicates.map(d => (
+                <div key={d.id} className="rounded-2xl border-2 border-border bg-card p-4">
+                  <p className="text-lg font-bold">{d.title}</p>
+                  <button
+                    onClick={() => addVote(d.id)}
+                    disabled={busy}
+                    className="w-full h-14 mt-3 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50 active:scale-[0.99] transition-all"
+                  >
+                    {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <ThumbsUp className="w-5 h-5" />}
+                    This is mine too — add my vote
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <button
+              onClick={() => { setDuplicates([]); void submit(); }}
+              disabled={busy}
+              className="w-full h-14 rounded-2xl border-2 border-border text-lg font-bold hover:bg-secondary/50 transition-colors disabled:opacity-50"
+            >
+              No — mine's different, log it anyway
+            </button>
+          </>
+        ) : mode === "choose" ? (
           <>
             <div className="space-y-3">
               <button
@@ -220,7 +304,7 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
                 Back
               </button>
               <button
-                onClick={submit}
+                onClick={checkThenSubmit}
                 disabled={!title.trim() || busy}
                 className="h-16 sm:h-14 rounded-2xl bg-primary text-primary-foreground text-xl sm:text-lg font-bold flex items-center justify-center gap-3 disabled:opacity-50 active:scale-[0.99] transition-all shadow-lg shadow-primary/20 sm:order-2"
               >

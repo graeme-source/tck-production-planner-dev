@@ -5,7 +5,12 @@ import {
   stageOf, STAGE_LABEL, canMarkDone, markDoneBlocker, canReview,
 } from "@workspace/db";
 import { eq, desc, asc, sql } from "drizzle-orm";
+import { z } from "zod";
 import type { ImprovementSubmission } from "@workspace/db";
+import type Anthropic from "@anthropic-ai/sdk";
+import { validate } from "../middleware/validate";
+import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
+import { shortlistDuplicates } from "../lib/improvement-similarity";
 
 const router: IRouter = Router();
 
@@ -38,6 +43,8 @@ function decorate(
   row: ImprovementSubmission,
   mediaCount: number,
   viewer: { id?: number; isManager: boolean },
+  votes: { count: number; mine: boolean } = { count: 0, mine: false },
+  subjectTitle: string | null = null,
 ) {
   const stage = stageOf(row.progressStatus);
   return {
@@ -45,6 +52,12 @@ function decorate(
     stage,
     stageLabel: STAGE_LABEL[stage],
     mediaCount,
+    voteCount: votes.count,
+    votedByMe: votes.mine,
+    subjectTitle,
+    // An AI tag is a suggestion until someone confirms it, and the screen
+    // says so rather than presenting a guess as a decision.
+    subjectConfirmed: row.subjectSource === "human",
     // "Mine" means work I'm carrying, not everything I've ever typed in — an
     // idea logged for someone else belongs in "up for grabs", so this keys on
     // credit and assignment rather than who submitted it.
@@ -72,9 +85,34 @@ router.get("/", async (req: Request, res: Response) => {
       .select()
       .from(improvementSubmissionsTable)
       .orderBy(desc(improvementSubmissionsTable.createdAt));
-    const counts = await attachmentCounts(rows.map(r => r.id));
+    const ids = rows.map(r => r.id);
+    const counts = await attachmentCounts(ids);
     const viewer = await viewerOf(req);
-    res.json(rows.map(r => decorate(r, counts.get(r.id) ?? 0, viewer)));
+
+    // Votes and subject names in one query each — the list is rendered on a
+    // kitchen iPad and N+1 across a few hundred improvements is not free.
+    const voteRows = ids.length === 0 ? { rows: [] } : await db.execute<{ improvement_id: number; n: number; mine: boolean }>(sql`
+      SELECT improvement_id,
+             COUNT(*)::int AS n,
+             BOOL_OR(user_id = ${viewer.id ?? -1}) AS mine
+        FROM improvement_votes
+       WHERE improvement_id = ANY(${ids})
+       GROUP BY improvement_id
+    `);
+    const votesById = new Map(
+      (voteRows.rows ?? []).map(v => [Number(v.improvement_id), { count: Number(v.n), mine: !!v.mine }]),
+    );
+
+    const subjectRows = await db.execute<{ id: number; title: string }>(sql`SELECT id, title FROM lean_subjects`);
+    const subjectTitles = new Map((subjectRows.rows ?? []).map(s => [Number(s.id), s.title]));
+
+    res.json(rows.map(r => decorate(
+      r,
+      counts.get(r.id) ?? 0,
+      viewer,
+      votesById.get(r.id) ?? { count: 0, mine: false },
+      r.subjectId != null ? subjectTitles.get(r.subjectId) ?? null : null,
+    )));
   } catch (err) {
     console.error("Error fetching improvement submissions:", err);
     res.status(500).json({ error: "Failed to fetch improvement submissions" });
@@ -191,6 +229,194 @@ router.post("/:id/review", async (req: Request, res: Response) => {
   }
 });
 
+// ── Duplicates, votes and lean subjects (the AI lift) ────────────────────
+
+const duplicateCheckSchema = z.object({
+  title: z.string().trim().min(1).max(300),
+  description: z.string().trim().max(4000).optional(),
+});
+
+/**
+ * POST /check-duplicate — "has someone already reported this?"
+ *
+ * Runs before anything is saved. Word-overlap picks a shortlist of at most
+ * five open improvements, then a model is asked which of those are genuinely
+ * the same problem — the shortlist keeps that question small and cheap no
+ * matter how many improvements pile up.
+ *
+ * With no API key configured this still works: the shortlist is returned on
+ * its own, marked as unconfirmed, so the obvious repeats are still caught.
+ */
+router.post("/check-duplicate", validate(duplicateCheckSchema), async (req: Request, res: Response) => {
+  const { title, description } = req.body as z.infer<typeof duplicateCheckSchema>;
+  try {
+    // Only things still outstanding can be duplicated — an improvement that
+    // was made and approved months ago is history, not a live report.
+    const open = await db
+      .select({
+        id: improvementSubmissionsTable.id,
+        title: improvementSubmissionsTable.title,
+        description: improvementSubmissionsTable.description,
+      })
+      .from(improvementSubmissionsTable)
+      .where(sql`${improvementSubmissionsTable.progressStatus} <> 'complete'`)
+      .orderBy(desc(improvementSubmissionsTable.createdAt))
+      .limit(300);
+
+    const shortlist = shortlistDuplicates({ title, description }, open);
+    if (shortlist.length === 0) { res.json({ matches: [] }); return; }
+
+    if (!isClaudeConfigured()) {
+      res.json({ matches: shortlist.map(c => ({ id: c.id, title: c.title, confirmed: false })) });
+      return;
+    }
+
+    const response = await getClaudeClient().messages.create({
+      model: CLAUDE_MODELS.haiku,
+      max_tokens: 1024,
+      system: `You decide whether a newly reported workplace problem is THE SAME problem as one already reported at a UK food production kitchen.
+
+Same problem means the same thing, in the same place, needing the same fix — even if worded completely differently. Two different things that happen to share words (two separate broken items, two different benches) are NOT the same.
+
+Be strict. A wrong match makes someone's report vanish into someone else's, which is worse than a duplicate.`,
+      tools: [{
+        name: "emit_matches",
+        description: "Return which of the existing reports describe the same problem.",
+        input_schema: {
+          type: "object",
+          properties: {
+            matchIds: {
+              type: "array",
+              items: { type: "number" },
+              description: "Ids of existing reports that are the SAME problem. Empty if none are.",
+            },
+          },
+          required: ["matchIds"],
+        },
+      }],
+      messages: [{
+        role: "user",
+        content: `NEW REPORT:\n${title}\n${description ?? ""}\n\nEXISTING REPORTS:\n${
+          shortlist.map(c => `[${c.id}] ${c.title} — ${c.description}`).join("\n")
+        }\n\nWhich existing reports are the same problem? Call emit_matches.`,
+      }],
+    });
+
+    const toolUse = response.content.find(
+      (b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === "emit_matches",
+    );
+    const matchIds: number[] = Array.isArray((toolUse?.input as { matchIds?: unknown })?.matchIds)
+      ? ((toolUse!.input as { matchIds: unknown[] }).matchIds).map(Number).filter(Number.isInteger)
+      : [];
+
+    const byId = new Map(shortlist.map(c => [c.id, c]));
+    res.json({
+      matches: matchIds
+        .filter(id => byId.has(id))
+        .map(id => ({ id, title: byId.get(id)!.title, confirmed: true })),
+    });
+  } catch (err) {
+    // A duplicate check failing must never stop someone reporting a problem.
+    console.error("[Improvements] duplicate check failed:", err);
+    res.json({ matches: [] });
+  }
+});
+
+// POST /:id/vote — "this one matters to me too". Toggles, so tapping it
+// again takes the vote back.
+router.post("/:id/vote", async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const userId = req.session.userId;
+  if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  try {
+    const existing = await db.execute<{ id: number }>(sql`
+      SELECT id FROM improvement_votes WHERE improvement_id = ${id} AND user_id = ${userId}
+    `);
+    const had = (existing.rows ?? []).length > 0;
+    if (had) {
+      await db.execute(sql`DELETE FROM improvement_votes WHERE improvement_id = ${id} AND user_id = ${userId}`);
+    } else {
+      await db.execute(sql`
+        INSERT INTO improvement_votes (improvement_id, user_id) VALUES (${id}, ${userId})
+        ON CONFLICT DO NOTHING
+      `);
+    }
+    const counted = await db.execute<{ n: number }>(sql`
+      SELECT COUNT(*)::int AS n FROM improvement_votes WHERE improvement_id = ${id}
+    `);
+    res.json({ voted: !had, votes: Number((counted.rows ?? [])[0]?.n ?? 0) });
+  } catch (err) {
+    console.error("[Improvements] vote failed:", err);
+    res.status(500).json({ error: "Couldn't record your vote" });
+  }
+});
+
+/**
+ * Suggest which lean subject an improvement is an example of.
+ *
+ * Fire-and-forget: called after an improvement is created so the person
+ * isn't kept waiting, and any failure is silent because a missing tag is a
+ * cosmetic loss. Stored with subject_source 'ai' so it always reads as a
+ * suggestion until a human confirms it.
+ */
+export async function suggestLeanSubject(improvementId: number): Promise<void> {
+  if (!isClaudeConfigured()) return;
+  try {
+    const [improvement] = await db
+      .select({ title: improvementSubmissionsTable.title, description: improvementSubmissionsTable.description })
+      .from(improvementSubmissionsTable)
+      .where(eq(improvementSubmissionsTable.id, improvementId));
+    if (!improvement) return;
+
+    const subjects = await db.execute<{ id: number; title: string; nutshell: string }>(sql`
+      SELECT id, title, nutshell FROM lean_subjects
+       WHERE is_archived = FALSE AND audience = 'team'
+       ORDER BY sort_order
+    `);
+    const options = subjects.rows ?? [];
+    if (options.length === 0) return;
+
+    const response = await getClaudeClient().messages.create({
+      model: CLAUDE_MODELS.haiku,
+      max_tokens: 512,
+      system: `You tag workplace improvements at a UK food production kitchen with the lean subject they best illustrate, so the team can see which ideas they're putting into practice.
+
+Pick the single closest subject. If nothing fits well, return null rather than forcing one — a wrong tag is worse than no tag.`,
+      tools: [{
+        name: "emit_subject",
+        description: "Return the lean subject this improvement best illustrates.",
+        input_schema: {
+          type: "object",
+          properties: {
+            subjectId: { type: ["number", "null"], description: "Id of the closest subject, or null if none fit." },
+          },
+          required: ["subjectId"],
+        },
+      }],
+      messages: [{
+        role: "user",
+        content: `IMPROVEMENT:\n${improvement.title}\n${improvement.description}\n\nSUBJECTS:\n${
+          options.map(s => `[${s.id}] ${s.title} — ${s.nutshell}`).join("\n")
+        }\n\nWhich subject does this best illustrate? Call emit_subject.`,
+      }],
+    });
+
+    const toolUse = response.content.find(
+      (b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === "emit_subject",
+    );
+    const subjectId = Number((toolUse?.input as { subjectId?: unknown })?.subjectId);
+    if (!Number.isInteger(subjectId)) return;
+    if (!options.some(s => Number(s.id) === subjectId)) return;
+
+    await db.update(improvementSubmissionsTable)
+      .set({ subjectId, subjectSource: "ai" })
+      .where(eq(improvementSubmissionsTable.id, improvementId));
+  } catch (err) {
+    console.error("[Improvements] subject suggestion failed:", err);
+  }
+}
+
 // GET /scoreboard — approved improvements per person. The number that makes
 // the whole thing worth doing (Objective E: improvements per person).
 router.get("/scoreboard", async (_req: Request, res: Response) => {
@@ -252,6 +478,10 @@ router.post("/", async (req: Request, res: Response) => {
         reportContext: reportContext || null,
       })
       .returning();
+
+    // Tag it with the lean subject it illustrates, without keeping anyone
+    // waiting — a missing tag is cosmetic, a slow submit is not.
+    if (row) void suggestLeanSubject(row.id);
 
     res.status(201).json(row);
   } catch (err) {

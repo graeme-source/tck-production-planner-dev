@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, timestamp, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, pgEnum, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { usersTable } from "./users";
@@ -54,6 +54,13 @@ export const improvementSubmissionsTable = pgTable("improvement_submissions", {
   // Why it was sent back, and when the person said it was done.
   reviewNote: text("review_note"),
   doneAt: timestamp("done_at"),
+  // Which lean subject this improvement is an example of (migration 0061).
+  // Linked to the subject, not a week: subjects are stable, weeks get
+  // re-ordered in the curriculum planner. subjectSource is 'ai' for an
+  // automatic suggestion and 'human' once someone has confirmed it, so an
+  // unreviewed guess is never mistaken for a decision.
+  subjectId: integer("subject_id"),
+  subjectSource: text("subject_source"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -101,6 +108,18 @@ export const insertAndonIssueSchema = createInsertSchema(andonIssuesTable).omit(
   resolvedByName: true,
   resolvedAt: true,
 });
+
+// One vote per person per improvement (migration 0061). A duplicate report
+// becomes a vote instead of a second copy, so the count measures how many
+// people a problem actually affects.
+export const improvementVotesTable = pgTable("improvement_votes", {
+  id: serial("id").primaryKey(),
+  improvementId: integer("improvement_id").notNull().references(() => improvementSubmissionsTable.id, { onDelete: "cascade" }),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => [
+  unique("uq_improvement_vote").on(table.improvementId, table.userId),
+]);
 
 export const improvementCommentsTable = pgTable("improvement_comments", {
   id: serial("id").primaryKey(),
