@@ -51,6 +51,7 @@ import aiRouter from "./ai";
 import recipeDesignerRouter from "./recipe-designer";
 import morningMeetingsRouter from "./morning-meetings";
 import leanReviewsRouter from "./lean-reviews";
+import leanCurriculumRouter from "./lean-curriculum";
 import ingredientScrapeRouter from "./ingredient-scrape";
 import upfRouter from "./upf";
 import formsRouter from "./forms";
@@ -187,6 +188,10 @@ router.use("/morning-meetings", morningMeetingsRouter);
 // Per-user, so NOT behind the manager guard — every team member completes
 // their own weekly lesson review (route file guards each endpoint).
 router.use("/lean-reviews", leanReviewsRouter);
+// Designing the curriculum is a manager-and-above job — the whole planner
+// (backlog, plan order, lesson writing, locking a week in) sits behind the
+// same guard as the training matrix it keeps in step with.
+router.use("/lean-curriculum", requireAdminOrManager, leanCurriculumRouter);
 router.use("/forms", formsRouter);
 router.use("/system-updates", systemUpdatesRouter);
 router.use("/label-stock", labelStockRouter);

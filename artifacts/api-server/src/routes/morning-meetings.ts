@@ -85,7 +85,11 @@ export async function getWeekFocusPrinciple(weekStart: string) {
     .from(leanPrinciplesTable)
     .where(eq(leanPrinciplesTable.isActive, true))
     .orderBy(asc(leanPrinciplesTable.weekPosition));
-  const rotation = actives.filter(p => p.title !== ON_DEMAND_PRINCIPLE_TITLE);
+  // Only LOCKED weeks are ever taught (migration 0057). A week being written
+  // in the curriculum planner sits in the plan as a draft — it must not reach
+  // a morning meeting, and it must not shift the rotation of the weeks that
+  // are ready, which is why it's filtered out here rather than at the edges.
+  const rotation = actives.filter(p => p.title !== ON_DEMAND_PRINCIPLE_TITLE && p.status === "locked");
   if (rotation.length === 0) return { principle: null, source: "curriculum" as const };
 
   const [anchorRow] = await db

@@ -21,7 +21,7 @@ export function isClaudeConfigured(): boolean {
 export const CLAUDE_MODELS = {
   haiku: "claude-haiku-4-5",
   sonnet: "claude-sonnet-4-6",
-  opus: "claude-opus-4-7",
+  opus: "claude-opus-5",
 } as const;
 
 export type ClaudeModel = (typeof CLAUDE_MODELS)[keyof typeof CLAUDE_MODELS];
