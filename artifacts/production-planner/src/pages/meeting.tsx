@@ -15,6 +15,7 @@
  */
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import type React from "react";
+import { ImageCropDialog } from "@/components/image-crop-dialog";
 import { useLocation, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -562,36 +563,55 @@ function MeetingShell({
         )}
       </div>
 
-      {/* Footer — compact Back / Next buttons sit either side of the
-          dot pagination so a desktop host can click through. On iPad
-          the swipe gesture is still the main way to navigate. */}
-      <div className="flex items-center justify-center gap-3 px-6 py-3 border-t border-border bg-card">
+      {/* Footer — the slide list spread across the full width, each one
+          named and big enough to hit. The dots this replaced were about
+          8px of target with nothing to say which slide was which, so
+          jumping to a particular slide meant guessing (Graeme, 2026-08-28).
+          Names are hidden on narrow screens, where the strip falls back to
+          numbers rather than becoming unreadably cramped. */}
+      <div className="flex items-stretch gap-2 px-3 py-2 border-t border-border bg-card">
         <button
           onClick={retreat}
           disabled={slideIndex === 0}
-          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          className="flex items-center gap-1 px-3 rounded-xl text-sm font-semibold text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0"
           aria-label="Previous slide"
           data-no-swipe
         >
-          <ChevronLeft className="w-4 h-4" /> Back
+          <ChevronLeft className="w-5 h-5" /> <span className="hidden sm:inline">Back</span>
         </button>
-        <div className="flex items-center gap-2" data-no-swipe>
-          {slides.map((s, i) => (
-            <button
-              key={s.id}
-              onClick={() => setSlideIndex(i)}
-              className={cn(
-                "h-2 rounded-full transition-all",
-                i === slideIndex ? "bg-primary w-8" : i < slideIndex ? "bg-primary/40 w-2.5" : "bg-secondary w-2.5",
-              )}
-              aria-label={`Go to slide ${i + 1}`}
-            />
-          ))}
+        <div className="flex items-stretch gap-1 flex-1 min-w-0 overflow-x-auto" data-no-swipe>
+          {slides.map((s, i) => {
+            const meta = SLIDE_KIND_META[s.kind as SlideKind] ?? SLIDE_KIND_META.custom_markdown;
+            const label = s.title?.trim() || meta.fallbackTitle;
+            const isCurrent = i === slideIndex;
+            return (
+              <button
+                key={s.id}
+                onClick={() => setSlideIndex(i)}
+                title={`${i + 1}. ${label}`}
+                aria-label={`Go to slide ${i + 1}: ${label}`}
+                aria-current={isCurrent ? "true" : undefined}
+                className={cn(
+                  "flex-1 min-w-[44px] px-1.5 py-2 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-colors border-2",
+                  isCurrent
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : i < slideIndex
+                      ? "bg-secondary/60 border-transparent text-muted-foreground hover:bg-secondary"
+                      : "bg-transparent border-transparent text-muted-foreground hover:bg-secondary/60",
+                )}
+              >
+                <span className="text-[11px] font-bold tabular-nums leading-none">{i + 1}</span>
+                <span className="hidden md:block text-[10px] font-semibold leading-tight text-center truncate max-w-full">
+                  {label}
+                </span>
+              </button>
+            );
+          })}
         </div>
         {slideIndex === slideCount - 1 ? (
           <button
             onClick={onEnd}
-            className="flex items-center gap-2 px-5 py-2 rounded-xl text-base font-semibold bg-emerald-600 text-white hover:bg-emerald-700"
+            className="flex items-center gap-2 px-5 rounded-xl text-base font-semibold bg-emerald-600 text-white hover:bg-emerald-700 flex-shrink-0"
             data-no-swipe
           >
             Finish <CheckCircle2 className="w-5 h-5" />
@@ -599,11 +619,11 @@ function MeetingShell({
         ) : (
           <button
             onClick={advance}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors"
+            className="flex items-center gap-1 px-3 rounded-xl text-sm font-semibold text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors flex-shrink-0"
             aria-label="Next slide"
             data-no-swipe
           >
-            Next <ChevronRight className="w-4 h-4" />
+            <span className="hidden sm:inline">Next</span> <ChevronRight className="w-5 h-5" />
           </button>
         )}
       </div>
@@ -707,6 +727,7 @@ function SetupGratitudeCard({ data, ensureMeeting }: {
   const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
+  const [pendingCrop, setPendingCrop] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [cacheBust, setCacheBust] = useState(0);
   const meeting = data.meeting;
@@ -762,10 +783,20 @@ function SetupGratitudeCard({ data, ensureMeeting }: {
         )}
       </div>
       <div className="flex gap-2 mt-3 flex-wrap">
+        {/* Both pickers hand the photo to the cropper first, so a portrait
+            phone shot becomes the landscape crop the host actually wants
+            rather than being letterboxed on the slide. */}
         <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
-          onChange={e => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ""; }} />
+          onChange={e => { const f = e.target.files?.[0]; if (f) setPendingCrop(f); e.target.value = ""; }} />
         <input ref={fileRef} type="file" accept="image/*" className="hidden"
-          onChange={e => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ""; }} />
+          onChange={e => { const f = e.target.files?.[0]; if (f) setPendingCrop(f); e.target.value = ""; }} />
+        {pendingCrop && (
+          <ImageCropDialog
+            file={pendingCrop}
+            onCancel={() => setPendingCrop(null)}
+            onCropped={async cropped => { setPendingCrop(null); await upload(cropped); }}
+          />
+        )}
         <button onClick={() => cameraRef.current?.click()} disabled={busy}
           className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-50 inline-flex items-center gap-1.5">
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />} Take photo
@@ -866,6 +897,7 @@ function SetupTomorrowCard({ date }: { date: string }) {
   const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const tomorrowCameraRef = useRef<HTMLInputElement>(null);
+  const [pendingCrop, setPendingCrop] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [picking, setPicking] = useState(false);
   const [cacheBust, setCacheBust] = useState(0);
@@ -1050,9 +1082,16 @@ function SetupTomorrowCard({ date }: { date: string }) {
         </div>
         <div className="flex gap-2 mt-3 flex-wrap">
           <input ref={tomorrowCameraRef} type="file" accept="image/*" capture="environment" className="hidden"
-            onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(f); e.target.value = ""; }} />
+            onChange={e => { const f = e.target.files?.[0]; if (f) setPendingCrop(f); e.target.value = ""; }} />
           <input ref={fileRef} type="file" accept="image/*" className="hidden"
-            onChange={e => { const f = e.target.files?.[0]; if (f) uploadPhoto(f); e.target.value = ""; }} />
+            onChange={e => { const f = e.target.files?.[0]; if (f) setPendingCrop(f); e.target.value = ""; }} />
+          {pendingCrop && (
+            <ImageCropDialog
+              file={pendingCrop}
+              onCancel={() => setPendingCrop(null)}
+              onCropped={async cropped => { setPendingCrop(null); await uploadPhoto(cropped); }}
+            />
+          )}
           <button onClick={() => tomorrowCameraRef.current?.click()} disabled={busy}
             className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-50 inline-flex items-center gap-1.5">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />} Take photo
