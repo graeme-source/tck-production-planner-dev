@@ -70,6 +70,16 @@ export interface ApcShipmentRequest {
    *  booking. Set this wherever the label isn't about to be printed — batch
    *  booking pulls each label live at print time instead. */
   skipLabel?: boolean;
+  /** The address lines were cut to fit by a person, not by the normaliser —
+   *  send them as written. Set only for a saved label-address override.
+   *
+   *  Without this the normaliser would re-shape a hand-corrected address and
+   *  could undo the very fix that was made: someone who deliberately moved
+   *  "Van 313 The Lawns" onto line 1 would watch it get shuffled back. A human
+   *  who has looked at the order knows more about it than the parser does.
+   *  Lines are still hard-capped at ADDRESS_LINE_MAX so a mistake can't send
+   *  APC something it will reject. */
+  addressAlreadyFitted?: boolean;
 }
 
 export interface ApcShipmentResult {
@@ -90,6 +100,17 @@ interface PlaceOrderResult {
 export interface AddressReviewFlag {
   kind: "conflicting-postcode" | "town-too-long" | "truncated";
   message: string;
+  /** The exact text that will NOT appear on the label. This is the thing the
+   *  operator actually needs to judge — "Van 313 The Lawns" being cut is a
+   *  failed delivery, a dropped county is nothing. Carried separately from
+   *  `message` so the screen can show it on its own rather than making
+   *  someone find it inside a sentence (Graeme, 2026-08-26). */
+  dropped?: string;
+  /** How much the loss matters. `critical` means the dropped text carries a
+   *  building identifier (a number, or a word like Flat/Unit/Van/Pitch) — the
+   *  part a driver needs to find the door. `check` is everything else: it
+   *  still wants human eyes, but it is usually a redundant place name. */
+  severity: "critical" | "check";
 }
 
 export interface NormalisedAddress {
@@ -104,7 +125,10 @@ export interface NormalisedAddress {
   review: AddressReviewFlag[];
 }
 
-const ADDRESS_LINE_MAX = 35;
+/** APC's per-line limit. Exported so the screen that lets an operator re-cut
+ *  an address can show the same limit the booking will enforce, instead of
+ *  letting them type a line that gets silently trimmed later. */
+export const ADDRESS_LINE_MAX = 35;
 
 /** Loose UK postcode matcher — good enough to spot a postcode typed into a
  *  street line. Deliberately permissive about the inner space. */
@@ -116,6 +140,52 @@ const COUNTRY_COMPONENTS = new Set([
   "unitedkingdom", "greatbritain", "england", "scotland", "wales",
   "northernireland", "uk", "gb", "u k",
 ]);
+
+/** Counties, and their common abbreviations. A UK postcode already determines
+ *  the county, so APC never needs it — but customers type it constantly, and
+ *  it is usually the reason a line blows the 35-character limit. Dropping it
+ *  BEFORE splitting is what a human does by hand, and it turns most
+ *  "needs a look" rows into ones that simply fit (Graeme, 2026-08-26: "the
+ *  courier doesn't need to know Lancashire").
+ *
+ *  Only ever removed as a separate trailing component — see
+ *  `stripTrailingCounty`. Several of these are also town names (Durham,
+ *  Lincoln, Cheshire East), so removing one mid-line would delete a real
+ *  address. */
+const COUNTY_COMPONENTS = new Set([
+  // England — ceremonial counties and the abbreviations people actually type.
+  "bedfordshire", "beds", "berkshire", "berks", "bristol", "buckinghamshire", "bucks",
+  "cambridgeshire", "cambs", "cheshire", "cleveland", "cornwall", "cumbria",
+  "derbyshire", "derbys", "devon", "dorset", "durham", "countydurham", "codurham",
+  "eastriding", "eastridingofyorkshire", "eastsussex", "essex",
+  "gloucestershire", "gloucs", "glos", "greatermanchester", "hampshire", "hants",
+  "herefordshire", "hertfordshire", "herts", "isleofwight", "iow", "kent",
+  "lancashire", "lancs", "leicestershire", "leics", "lincolnshire", "lincs",
+  "merseyside", "middlesex", "middx", "norfolk", "northamptonshire", "northants",
+  "northumberland", "northyorkshire", "nottinghamshire", "notts", "oxfordshire", "oxon",
+  "rutland", "shropshire", "salop", "somerset", "southyorkshire", "staffordshire", "staffs",
+  "suffolk", "surrey", "tyneandwear", "warwickshire", "warks", "westmidlands",
+  "westsussex", "westyorkshire", "wiltshire", "wilts", "worcestershire", "worcs",
+  // Wales.
+  "clwyd", "dyfed", "gwent", "gwynedd", "powys", "southglamorgan", "midglamorgan",
+  "westglamorgan", "monmouthshire", "pembrokeshire", "carmarthenshire", "ceredigion",
+  "denbighshire", "flintshire", "wrexham", "conwy", "anglesey", "isleofanglesey",
+  // Scotland.
+  "aberdeenshire", "angus", "argyll", "argyllandbute", "ayrshire", "banffshire",
+  "berwickshire", "caithness", "clackmannanshire", "dumfriesandgalloway",
+  "dunbartonshire", "eastlothian", "fife", "inverness", "invernessshire", "lanarkshire",
+  "midlothian", "moray", "perthshire", "renfrewshire", "rossshire", "roxburghshire",
+  "stirlingshire", "sutherland", "westlothian", "wigtownshire",
+  // Northern Ireland.
+  "antrim", "coantrim", "armagh", "coarmagh", "down", "codown", "fermanagh",
+  "cofermanagh", "londonderry", "colondonderry", "derry", "tyrone", "cotyrone",
+]);
+
+/** Marks text that identifies WHICH door — a number, or a dwelling word. If
+ *  this is what got cut off the label, the parcel does not arrive. Used to
+ *  separate a genuine problem from a dropped county. */
+const BUILDING_IDENTIFIER_RE =
+  /\d|\b(flat|apt|apartment|unit|van|pitch|plot|berth|caravan|lodge|chalet|block|suite|room|annexe|annex|floor|bungalow|cottage|barn|studio|penthouse|maisonette|mobile|static|park\s*home)\b/i;
 
 /** Words a place name can end on ("Aston in Makerfield", "Newcastle upon
  *  Tyne", "Bourton on the Water"). Never leave a line dangling on one — that
@@ -165,6 +235,31 @@ function stripTrailingTown(line: string, town: string): string {
     return before.replace(/[,.\s]+$/, "").trim();
   }
   return line;
+}
+
+/** Drop a trailing county component ("Thornton-Cleveleys, Fylde, Lancs." →
+ *  "Thornton-Cleveleys, Fylde"). The postcode already carries the county, so
+ *  nothing is lost — and the freed characters are usually what let the rest of
+ *  the address survive intact.
+ *
+ *  Deliberately conservative. It only ever removes a SEPARATE trailing
+ *  component, never a line that is nothing but a county: "Durham" alone is the
+ *  town, and an address stripped to nothing is worse than one carrying a
+ *  redundant word. Repeats so "…, Fylde, Lancashire, UK" unwinds fully. */
+function stripTrailingCounty(line: string): string {
+  let parts = components(line);
+  while (parts.length > 1 && COUNTY_COMPONENTS.has(key(parts[parts.length - 1]!))) {
+    parts = parts.slice(0, -1);
+  }
+  return parts.join(", ");
+}
+
+/** Does this dropped text carry the information a driver needs to find the
+ *  door? Anything with a number or a dwelling word does. */
+function severityOfLoss(dropped: string): "critical" | "check" {
+  const meaningful = stripTrailingCounty(squash(dropped));
+  if (!meaningful) return "check";
+  return BUILDING_IDENTIFIER_RE.test(meaningful) ? "critical" : "check";
 }
 
 /** Split a line to fit, preferring a real boundary over an arbitrary word
@@ -238,6 +333,8 @@ export function normaliseAddress(
     review.push({
       kind: "town-too-long",
       message: `Town "${rawCity}" is ${rawCity.length} characters — APC allows ${ADDRESS_LINE_MAX}. Check the correct post town before booking.`,
+      dropped: rawCity.slice(c.length).trim(),
+      severity: "check",
     });
   }
 
@@ -263,6 +360,9 @@ export function normaliseAddress(
         review.push({
           kind: "conflicting-postcode",
           message: `${label} contains "${match}" but the order's postcode is "${opts.postcode}". Confirm which is right before booking.`,
+          // Two postcodes means one of them ships the parcel to the wrong
+          // place — never a judgement to make on the operator's behalf.
+          severity: "critical",
         });
       }
     }
@@ -276,6 +376,11 @@ export function normaliseAddress(
         out = out.slice(0, out.length - word.length).trim();
       }
     }
+
+    // The postcode already carries the county, so a trailing one is dead
+    // weight on a 35-character line. Removed here, alongside the country, for
+    // the same reason: strip what other fields carry BEFORE splitting.
+    out = stripTrailingCounty(squash(out));
 
     return squash(dedupeComponents(squash(out)));
   };
@@ -300,10 +405,13 @@ export function normaliseAddress(
     if (a2.length > ADDRESS_LINE_MAX) {
       const full = a2;
       a2 = splitToFit(a2).head.slice(0, ADDRESS_LINE_MAX).trim();
+      const lost = squash(full.slice(a2.length).replace(/^[,\s]+/, ""));
       warnings.push(`Address line 2 truncated from "${full}" to "${a2}"`);
       review.push({
         kind: "truncated",
-        message: `Address line 2 was too long and lost "${full.slice(a2.length).trim()}". Check the address before booking.`,
+        message: `Address line 2 was too long and lost "${lost}". Check the address before booking.`,
+        dropped: lost,
+        severity: severityOfLoss(lost),
       });
     }
   }
@@ -330,12 +438,26 @@ async function placeOrder(req: ApcShipmentRequest): Promise<PlaceOrderResult> {
   // Postcode + country are passed in so the normaliser can drop them when a
   // customer has typed the whole address into the street line — they already
   // travel in their own fields.
-  const addr = normaliseAddress(
-    req.recipient.address1,
-    req.recipient.address2,
-    req.recipient.city,
-    { postcode: req.recipient.postcode, countryCode: req.recipient.country },
-  );
+  //
+  // An address a person has already cut to fit bypasses all of that: see
+  // `addressAlreadyFitted`. It still gets the hard 35-character cap, because
+  // the cap is APC's rule rather than ours.
+  const addr: NormalisedAddress = req.addressAlreadyFitted
+    ? {
+        address1: req.recipient.address1.slice(0, ADDRESS_LINE_MAX).trim(),
+        ...(req.recipient.address2?.trim()
+          ? { address2: req.recipient.address2.slice(0, ADDRESS_LINE_MAX).trim() }
+          : {}),
+        city: req.recipient.city.slice(0, ADDRESS_LINE_MAX).trim(),
+        warnings: [],
+        review: [],
+      }
+    : normaliseAddress(
+        req.recipient.address1,
+        req.recipient.address2,
+        req.recipient.city,
+        { postcode: req.recipient.postcode, countryCode: req.recipient.country },
+      );
 
   // Anything the normaliser could not resolve confidently is a warning on the
   // booking, not a silent guess.
