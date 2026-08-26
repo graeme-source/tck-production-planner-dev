@@ -25,6 +25,30 @@ import { usersTable } from "./users";
 
 // ── Curriculum: principles → examples ───────────────────────────────
 
+// The backlog of lean subjects to teach — the library the curriculum is
+// built FROM (migration 0057). Seeded from the verified corpus
+// (api-server/src/lib/lean-corpus.ts) and extended by hand in the planner.
+// `audience` separates what a team member needs to learn ('team') from the
+// owner-facing transformation steps ('leaders'), which stay out of the
+// team curriculum by default.
+export const leanSubjectsTable = pgTable("lean_subjects", {
+  id: serial("id").primaryKey(),
+  title: text("title").notNull(),
+  nutshell: text("nutshell").notNull(),
+  // 'waste' | 'concept' | 'step' | 'custom' — lets a corpus re-seed top up
+  // without disturbing hand-added subjects.
+  source: text("source").notNull().default("custom"),
+  audience: text("audience").notNull().default("team"),
+  // Typical length, and the per-week part names when a subject splits over
+  // several weeks (3S → an overview week, then Sweep / Sort / Standardise).
+  defaultWeeks: integer("default_weeks").notNull().default(1),
+  suggestedParts: jsonb("suggested_parts").$type<string[] | null>(),
+  sortOrder: integer("sort_order").notNull().default(0),
+  isArchived: boolean("is_archived").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 export const leanPrinciplesTable = pgTable("lean_principles", {
   id: serial("id").primaryKey(),
   // 1-N. Today's principle is the one at (week_of_year % count) + 1.
@@ -32,6 +56,14 @@ export const leanPrinciplesTable = pgTable("lean_principles", {
   weekPosition: integer("week_position").notNull(),
   title: text("title").notNull(),
   summary: text("summary").notNull(),
+  // Which backlog subject this week teaches, and which slice of it
+  // (migration 0057). partLabel null = the subject's own/overview week.
+  subjectId: integer("subject_id").references(() => leanSubjectsTable.id, { onDelete: "set null" }),
+  partLabel: text("part_label"),
+  partIndex: integer("part_index"),
+  // 'draft' while the week's lessons are being written and reviewed,
+  // 'locked' once signed off. Only locked weeks reach the team.
+  status: text("status").notNull().default("locked"),
   // The week's review quiz: JSON array of { question, options[], answer }
   // authored with the curriculum (migration 0055). Null = no quiz, the
   // weekly review completes without one.
@@ -197,6 +229,7 @@ export const insertMorningMeetingSchema = createInsertSchema(morningMeetingsTabl
 export const insertMeetingSlideSchema = createInsertSchema(meetingSlidesTable).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertMeetingGratitudeSchema = createInsertSchema(meetingGratitudeTable).omit({ id: true, createdAt: true });
 
+export type LeanSubject = typeof leanSubjectsTable.$inferSelect;
 export type LeanPrinciple = typeof leanPrinciplesTable.$inferSelect;
 export type LeanExample = typeof leanExamplesTable.$inferSelect;
 export type LeanLesson = typeof leanLessonsTable.$inferSelect;

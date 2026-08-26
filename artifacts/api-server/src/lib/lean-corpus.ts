@@ -71,6 +71,63 @@ export const LMS_VOICE = [
   "End with something the team can DO today — ideally a 2-second improvement.",
 ].join("\n");
 
+/**
+ * The curriculum backlog seed — every verified concept above, turned into a
+ * subject the planner can drag into a week (migration 0057).
+ *
+ * `audience` is the important call here. Lean Made Simple is written for a
+ * business OWNER transforming an organisation; our curriculum teaches people
+ * learning lean INSIDE one that's already transforming. So the steps about
+ * standing the transformation up — creating an example area, forming a lean
+ * leaders group, visiting other lean businesses — are marked 'leaders' and
+ * stay out of the team backlog by default. They aren't deleted: they're real
+ * parts of the book, and Graeme may well want to teach them to a supervisor
+ * group later.
+ *
+ * Nothing is invented here — every subject comes from one of the three
+ * verified arrays above, per this file's editing rules.
+ */
+export interface LeanBacklogSubjectSeed {
+  title: string;
+  nutshell: string;
+  source: "waste" | "concept" | "step";
+  audience: "team" | "leaders";
+  defaultWeeks: number;
+  suggestedParts?: string[];
+}
+
+/** Steps that teach a team member how to work, rather than an owner how to
+ *  transform. Everything else in the 12 is 'leaders'. */
+const TEAM_FACING_STEPS = new Set([5, 6, 7, 8, 10, 11]);
+
+export const LMS_BACKLOG_SUBJECTS: LeanBacklogSubjectSeed[] = [
+  ...LMS_EIGHT_WASTES.map((w): LeanBacklogSubjectSeed => ({
+    title: w.name,
+    nutshell: `${w.definition} At TCK: ${w.kitchenExample}`,
+    source: "waste",
+    audience: "team",
+    defaultWeeks: 1,
+  })),
+  ...LMS_CONCEPTS.map((c): LeanBacklogSubjectSeed => ({
+    title: c.term,
+    nutshell: c.nutshell,
+    source: "concept",
+    audience: "team",
+    // 3S is the one concept that naturally wants a month: a week on the
+    // idea, then a week on each S. Names and order follow the corpus
+    // definition above, not the 5S literature.
+    defaultWeeks: c.term === "3S" ? 4 : 1,
+    ...(c.term === "3S" ? { suggestedParts: ["Sweep", "Sort", "Standardise"] } : {}),
+  })),
+  ...LMS_TWELVE_STEPS.map((s): LeanBacklogSubjectSeed => ({
+    title: s.title,
+    nutshell: s.nutshell,
+    source: "step",
+    audience: TEAM_FACING_STEPS.has(s.step) ? "team" : "leaders",
+    defaultWeeks: 1,
+  })),
+];
+
 /** Terminology guard injected into every lesson-generation prompt. */
 export function leanCorpusPrompt(): string {
   return [
