@@ -3,6 +3,7 @@ import { Lightbulb, BookOpen, Play, ExternalLink, ArrowRight, TrendingUp, FileTe
 import { Link } from "wouter";
 import { cn } from "@/lib/utils";
 import { SopsBrowser } from "@/components/standards-sops-dialog";
+import { youtubeEmbedSrc, currentOrigin } from "@/lib/youtube-embed";
 
 // Left-nav model — same shape used in /settings and /reports so the
 // page feels native rather than bolted-on. Each entry corresponds to a
@@ -204,7 +205,7 @@ export default function LeanCave() {
             >
               <div className="aspect-video bg-black">
                 <iframe
-                  src={`https://www.youtube.com/embed/${video.id}`}
+                  src={youtubeEmbedSrc(video.id, currentOrigin())}
                   title={video.title}
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen

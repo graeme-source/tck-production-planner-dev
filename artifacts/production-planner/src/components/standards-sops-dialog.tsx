@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { STATIONS } from "@/pages/station/shared/constants";
+import { youtubeEmbedSrc, currentOrigin } from "@/lib/youtube-embed";
 
 interface SopSummary {
   id: number;
@@ -160,7 +161,9 @@ function detectVideoEmbed(description: string): EmbeddedVideo | null {
     if (videoId) {
       return {
         kind: "iframe",
-        src: `https://www.youtube.com/embed/${videoId}`,
+        // Origin included so the player can configure itself even if the
+        // referrer is ever stripped — see lib/youtube-embed.ts (Error 153).
+        src: youtubeEmbedSrc(videoId, currentOrigin()),
         title: "YouTube video",
       };
     }

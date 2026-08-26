@@ -5,6 +5,7 @@
  */
 import type React from "react";
 import { Play } from "lucide-react";
+import { youtubeIdFromUrl, youtubeEmbedSrc, currentOrigin } from "@/lib/youtube-embed";
 
 function renderInlineMd(text: string): React.ReactNode {
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
@@ -44,31 +45,6 @@ export function MarkdownBlock({ content }: { content: string }) {
   );
 }
 
-function youtubeIdFromUrl(url: string): string | null {
-  try {
-    const u = new URL(url);
-    if (u.hostname === "youtu.be") {
-      const id = u.pathname.replace(/^\//, "").split("/")[0];
-      return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
-    }
-    if (u.hostname.endsWith("youtube.com") || u.hostname.endsWith("youtube-nocookie.com")) {
-      if (u.pathname.startsWith("/embed/")) {
-        const id = u.pathname.split("/embed/")[1]?.split("/")[0] ?? "";
-        return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
-      }
-      if (u.pathname.startsWith("/shorts/")) {
-        const id = u.pathname.split("/shorts/")[1]?.split("/")[0] ?? "";
-        return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
-      }
-      const v = u.searchParams.get("v");
-      if (v && /^[A-Za-z0-9_-]{11}$/.test(v)) return v;
-    }
-  } catch {
-    // not a URL — fall through
-  }
-  return null;
-}
-
 export function YouTubeEmbed({ url }: { url: string }) {
   const id = youtubeIdFromUrl(url);
   if (!id) {
@@ -81,7 +57,7 @@ export function YouTubeEmbed({ url }: { url: string }) {
   return (
     <div className="w-full rounded-2xl overflow-hidden bg-black" style={{ aspectRatio: "16 / 9" }}>
       <iframe
-        src={`https://www.youtube.com/embed/${id}?rel=0`}
+        src={youtubeEmbedSrc(id, currentOrigin())}
         title="Video"
         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
         allowFullScreen

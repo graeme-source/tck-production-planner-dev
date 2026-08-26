@@ -57,6 +57,17 @@ app.use(cors({
 }));
 
 app.use(helmet({
+  // Helmet's default is `no-referrer`, which breaks embedded YouTube with
+  // "Video player configuration error / Error 153": the player has to know
+  // which site is embedding it before it will configure itself, and with no
+  // Referer header and no origin parameter it has nothing to check. It only
+  // ever showed on production, because in dev Vite serves the page without
+  // Helmet and the referrer flows normally.
+  //
+  // strict-origin-when-cross-origin is the browsers' own default: YouTube is
+  // told the origin (https://…), never the path, so nothing about which
+  // meeting or which page anyone is on leaves the building.
+  referrerPolicy: { policy: "strict-origin-when-cross-origin" },
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
