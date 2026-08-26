@@ -28,6 +28,7 @@ import { db, stockGateHoldsTable, appSettingsTable } from "@workspace/db";
 import { sql, eq, isNull, desc, inArray } from "drizzle-orm";
 import { londonDateString } from "./london-time";
 import { isStaging, shouldSkipSideEffect, logSkippedSideEffect } from "./app-env";
+import { shouldVerify, MAX_VERIFIES_PER_CYCLE } from "./stock-gate-verify";
 
 // ── Settings ────────────────────────────────────────────────────────────────
 
@@ -375,10 +376,9 @@ export async function runStockGateCycle(trigger: "timer" | "manual"): Promise<St
 
     // Verify holds tagged on a previous cycle: has Zapiet actually pulled
     // tomorrow? (Give Shopify→Zapiet a minute before judging.)
-    const pending = activeHolds.filter(h =>
-      h.verifyStatus === null && !h.dryRun && h.shopifyVariantId && h.productGid
-      && Date.now() - h.heldAt.getTime() > 60_000,
-    );
+    const pending = activeHolds
+      .filter(h => shouldVerify(h, Date.now()))
+      .slice(0, MAX_VERIFIES_PER_CYCLE);
     for (const h of pending) {
       try {
         const productId = h.productGid!.split("/").pop() ?? "";
