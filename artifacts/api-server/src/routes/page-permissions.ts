@@ -21,6 +21,7 @@ const KNOWN_PAGES = [
   { pageKey: "/product-hub", label: "Product Hub" },
   { pageKey: "/deliveries/receive", label: "Receive Deliveries (front door)" },
   { pageKey: "/training", label: "Training Matrix" },
+  { pageKey: "/lean-curriculum", label: "Lean Curriculum planner" },
   { pageKey: "/surveys", label: "Customer Surveys" },
 ];
 
@@ -32,6 +33,7 @@ const DEFAULT_PERMISSIONS: Record<string, string> = {
   "/dispatch-tag": "manager",
   "/deliveries/receive": "viewer",
   "/training": "manager",
+  "/lean-curriculum": "manager",
   "/surveys": "admin",
 };
 

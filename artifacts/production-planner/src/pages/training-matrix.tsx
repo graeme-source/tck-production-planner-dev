@@ -9,6 +9,7 @@
 // API requireAdminOrManager).
 
 import { useState } from "react";
+import { Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -17,7 +18,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import {
-  Plus, Trash2, GraduationCap, FileText, ChevronLeft, Pencil, Users,
+  Plus, Trash2, GraduationCap, FileText, ChevronLeft, Pencil, Users, BookOpen,
   Loader2, ExternalLink, Check, X, ClipboardList, MoreVertical,
 } from "lucide-react";
 
@@ -79,6 +80,16 @@ export default function TrainingMatrixPage() {
       <PageHeader
         title="Training"
         description="Onboarding & training sign-off matrices."
+        action={
+          // The lean matrix is a reflection of the curriculum, so the place
+          // to change it is the curriculum itself — reachable from here,
+          // always, rather than buried in the morning-meeting screens.
+          <Link href="/lean-curriculum">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary hover:bg-secondary/70 text-xs font-medium transition-colors cursor-pointer">
+              <BookOpen className="w-3.5 h-3.5" /> Lean curriculum
+            </span>
+          </Link>
+        }
       />
       {selectedId == null
         ? <MatrixList onOpen={setSelectedId} />

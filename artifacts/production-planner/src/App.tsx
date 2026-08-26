@@ -49,6 +49,7 @@ import StockControl from "@/pages/stock-control";
 import ProductHub from "@/pages/product-hub";
 import Surveys from "@/pages/surveys";
 import TrainingMatrix from "@/pages/training-matrix";
+import LeanCurriculum from "@/pages/lean-curriculum";
 import Onboarding from "@/pages/onboarding";
 import NotFound from "@/pages/not-found";
 import FireActionNoticePrint from "@/pages/print/fire-action-notice";
@@ -178,6 +179,7 @@ function Router() {
               <Route path="/founder/sales" component={FounderSales} />
               <Route path="/reports">{() => <ProtectedRoute component={Reports} pageKey="/reports" />}</Route>
               <Route path="/training">{() => <ProtectedRoute component={TrainingMatrix} pageKey="/training" />}</Route>
+              <Route path="/lean-curriculum">{() => <ProtectedRoute component={LeanCurriculum} pageKey="/lean-curriculum" />}</Route>
               <Route path="/lean-cave" component={LeanCave} />
               <Route path="/lean-review" component={LeanReviewPage} />
               <Route path="/hub" component={EmployeeHub} />
