@@ -190,9 +190,28 @@ async function cloneTemplateSlidesIfEmpty(meetingId: number) {
   );
 }
 
+/** The day's slides for the runner.
+ *
+ *  Columns are listed explicitly rather than `select()`-ing the row: slides
+ *  now carry a photo as bytea (migration 0062), and a bare select would ship
+ *  every image inline with the dashboard payload on every poll. The runner
+ *  only needs to know a photo EXISTS — it loads the bytes from
+ *  /slides/:id/photo, where the browser can cache them. */
 async function fetchMeetingSlides(meetingId: number) {
   return db
-    .select()
+    .select({
+      id: meetingSlidesTable.id,
+      meetingId: meetingSlidesTable.meetingId,
+      kind: meetingSlidesTable.kind,
+      title: meetingSlidesTable.title,
+      orderPosition: meetingSlidesTable.orderPosition,
+      contentMd: meetingSlidesTable.contentMd,
+      configJson: meetingSlidesTable.configJson,
+      hasPhoto: sql<boolean>`${meetingSlidesTable.photo} IS NOT NULL`,
+      photoCaption: meetingSlidesTable.photoCaption,
+      createdAt: meetingSlidesTable.createdAt,
+      updatedAt: meetingSlidesTable.updatedAt,
+    })
     .from(meetingSlidesTable)
     .where(eq(meetingSlidesTable.meetingId, meetingId))
     .orderBy(asc(meetingSlidesTable.orderPosition));
@@ -833,6 +852,62 @@ router.delete("/:id/gratitude-photo", async (req: Request, res: Response) => {
   res.json({ ok: true, hasGratitudePhoto: false });
 });
 
+// ── Slide photos ────────────────────────────────────────────────────
+// Any slide can carry a picture, not just gratitude (migration 0062): a
+// reminder lands far better shown than described. Same storage and limits
+// as the gratitude photo, just hung off the slide instead of the meeting.
+
+/** Upload (or replace) the photo on one slide. Multipart: `file` (image)
+ *  required, `caption` (text) optional. */
+router.post("/slides/:slideId/photo", photoUpload.single("file"), async (req: Request, res: Response) => {
+  const slideId = Number(req.params.slideId);
+  if (!slideId) { res.status(400).json({ error: "Invalid slide id" }); return; }
+  if (!req.file) { res.status(400).json({ error: "No file uploaded" }); return; }
+  const mime = req.file.mimetype;
+  if (!GRATITUDE_IMAGE_MIMES.includes(mime)) {
+    res.status(400).json({ error: "Unsupported image type. Use JPEG, PNG, WebP, GIF or HEIC." });
+    return;
+  }
+  if (req.file.size > 10 * 1024 * 1024) { res.status(400).json({ error: "Image too large (max 10MB)." }); return; }
+  const captionRaw = typeof req.body?.caption === "string" ? req.body.caption.trim() : "";
+  const caption = captionRaw.length > 0 ? captionRaw.slice(0, 300) : null;
+  const [row] = await db
+    .update(meetingSlidesTable)
+    .set({ photo: req.file.buffer, photoMime: mime, photoCaption: caption, updatedAt: new Date() })
+    .where(eq(meetingSlidesTable.id, slideId))
+    .returning({ id: meetingSlidesTable.id });
+  if (!row) { res.status(404).json({ error: "Slide not found" }); return; }
+  res.status(201).json({ ok: true, hasPhoto: true, photoCaption: caption });
+});
+
+/** Stream one slide's photo. 404 when none uploaded. */
+router.get("/slides/:slideId/photo", async (req: Request, res: Response) => {
+  const slideId = Number(req.params.slideId);
+  if (!slideId) { res.status(400).json({ error: "Invalid slide id" }); return; }
+  const [row] = await db
+    .select({ photo: meetingSlidesTable.photo, mime: meetingSlidesTable.photoMime })
+    .from(meetingSlidesTable)
+    .where(eq(meetingSlidesTable.id, slideId))
+    .limit(1);
+  if (!row || !row.photo) { res.status(404).json({ error: "No photo" }); return; }
+  res.setHeader("Content-Type", row.mime ?? "image/jpeg");
+  res.setHeader("Cache-Control", "private, max-age=300");
+  res.send(row.photo);
+});
+
+/** Remove a slide's photo, leaving the slide itself alone. */
+router.delete("/slides/:slideId/photo", async (req: Request, res: Response) => {
+  const slideId = Number(req.params.slideId);
+  if (!slideId) { res.status(400).json({ error: "Invalid slide id" }); return; }
+  const [row] = await db
+    .update(meetingSlidesTable)
+    .set({ photo: null, photoMime: null, photoCaption: null, updatedAt: new Date() })
+    .where(eq(meetingSlidesTable.id, slideId))
+    .returning({ id: meetingSlidesTable.id });
+  if (!row) { res.status(404).json({ error: "Slide not found" }); return; }
+  res.json({ ok: true, hasPhoto: false });
+});
+
 /** Stream the gratitude photo bytes for a meeting. 404 when none uploaded. */
 router.get("/:id/gratitude-photo", async (req: Request, res: Response) => {
   const id = Number(req.params.id);
@@ -1146,16 +1221,32 @@ router.put("/slides/:slideId", async (req: Request, res: Response) => {
     title: string;
     contentMd: string | null;
     configJson: Record<string, unknown> | null;
+    photoCaption: string | null;
   }>;
   const [updated] = await db.update(meetingSlidesTable)
     .set({
       ...(body.title !== undefined ? { title: body.title } : {}),
       ...(body.contentMd !== undefined ? { contentMd: body.contentMd } : {}),
       ...(body.configJson !== undefined ? { configJson: body.configJson } : {}),
+      // The caption is editable on its own — changing a few words shouldn't
+      // mean re-uploading the picture it sits under.
+      ...(body.photoCaption !== undefined
+        ? { photoCaption: body.photoCaption ? String(body.photoCaption).slice(0, 300) : null }
+        : {}),
       updatedAt: new Date(),
     })
     .where(eq(meetingSlidesTable.id, slideId))
-    .returning();
+    // Explicit columns: the row carries the photo as bytea now, and
+    // returning it would echo the whole image back on every title edit.
+    .returning({
+      id: meetingSlidesTable.id,
+      kind: meetingSlidesTable.kind,
+      title: meetingSlidesTable.title,
+      orderPosition: meetingSlidesTable.orderPosition,
+      contentMd: meetingSlidesTable.contentMd,
+      configJson: meetingSlidesTable.configJson,
+      photoCaption: meetingSlidesTable.photoCaption,
+    });
   if (!updated) { res.status(404).json({ error: "Slide not found" }); return; }
   res.json(updated);
 });

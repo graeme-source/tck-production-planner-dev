@@ -211,6 +211,12 @@ export const meetingSlidesTable = pgTable("meeting_slides", {
   orderPosition: integer("order_position").notNull().default(0),
   contentMd: text("content_md"),
   configJson: jsonb("config_json"),
+  // Any slide can carry a picture (migration 0062) — a reminder shown
+  // alongside the thing it's reminding people about. Slides are per-meeting
+  // copies, so the photo belongs to that day and goes with it.
+  photo: bytea("photo"),
+  photoMime: text("photo_mime"),
+  photoCaption: text("photo_caption"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

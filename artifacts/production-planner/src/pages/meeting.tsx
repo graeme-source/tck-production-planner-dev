@@ -49,6 +49,11 @@ export interface MeetingSlide {
   orderPosition: number;
   contentMd: string | null;
   configJson: Record<string, unknown> | null;
+  /** Whether this slide carries a photo. The bytes are never sent with the
+   *  slide list — they're loaded from /slides/:id/photo so the browser can
+   *  cache them (migration 0062). */
+  hasPhoto?: boolean;
+  photoCaption?: string | null;
 }
 
 export interface DashboardData {
@@ -1737,7 +1742,40 @@ function DoneScreen({ data, onClose }: { data: DashboardData; onClose: () => voi
 }
 
 // ── Slide body switcher ─────────────────────────────────────────────
-function SlideBody({ slide, data, onRefresh, isPreviewing, subIndex, reportSubCount }: { slide: MeetingSlide; data: DashboardData; onRefresh: () => void; isPreviewing: boolean; subIndex: number; reportSubCount: (n: number) => void }) {
+/** Any slide can carry a photo (migration 0062) — a reminder lands better
+ *  shown than described. Rendered here, once, so it works on every slide
+ *  kind rather than needing each one to opt in. Sits under the slide's own
+ *  content: the words set it up, the picture proves it. */
+function SlidePhoto({ slide }: { slide: MeetingSlide }) {
+  if (!slide.hasPhoto) return null;
+  return (
+    <figure className="mt-6 mb-0">
+      <div className="rounded-2xl overflow-hidden border-2 border-border bg-black/5">
+        <img
+          src={`${BASE}/api/morning-meetings/slides/${slide.id}/photo`}
+          alt={slide.photoCaption ?? `Photo on the ${slide.title} slide`}
+          className="w-full max-h-[52vh] object-contain bg-black/80"
+        />
+      </div>
+      {slide.photoCaption && (
+        <figcaption className="text-xl text-center mt-3 text-muted-foreground">
+          {slide.photoCaption}
+        </figcaption>
+      )}
+    </figure>
+  );
+}
+
+function SlideBody(props: { slide: MeetingSlide; data: DashboardData; onRefresh: () => void; isPreviewing: boolean; subIndex: number; reportSubCount: (n: number) => void }) {
+  return (
+    <>
+      <SlideBodyInner {...props} />
+      <SlidePhoto slide={props.slide} />
+    </>
+  );
+}
+
+function SlideBodyInner({ slide, data, onRefresh, isPreviewing, subIndex, reportSubCount }: { slide: MeetingSlide; data: DashboardData; onRefresh: () => void; isPreviewing: boolean; subIndex: number; reportSubCount: (n: number) => void }) {
   switch (slide.kind) {
     case "special_prep": return <SpecialPrepSlide data={data} slide={slide} />;
     case "stretches": return <StretchesPanel />;
@@ -3369,6 +3407,8 @@ interface EditorSlide {
   orderPosition: number;
   contentMd: string | null;
   configJson: Record<string, unknown> | null;
+  hasPhoto?: boolean;
+  photoCaption?: string | null;
 }
 
 function SlideEditor({
@@ -3517,6 +3557,7 @@ function SlideEditor({
                   onRemove={() => {
                     if (confirm(`Remove "${s.title}" from this list?`)) removeSlide.mutate(s.id);
                   }}
+                  onPhotoChanged={() => queryClient.invalidateQueries({ queryKey })}
                 />
               ))}
             </div>
@@ -3567,14 +3608,124 @@ function SlideEditor({
   );
 }
 
+/**
+ * A photo on any slide (migration 0062). Gratitude used to be the only slide
+ * that could carry one; a reminder is exactly the case that needs it — "the
+ * thing I'm telling you about, here it is".
+ *
+ * Goes through the same cropper as the gratitude photo, so a portrait phone
+ * screenshot becomes the landscape crop the screen actually shows.
+ */
+function SlidePhotoEditor({ slide, onChanged }: { slide: EditorSlide; onChanged: () => void }) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const [pendingCrop, setPendingCrop] = useState<File | null>(null);
+  const [caption, setCaption] = useState(slide.photoCaption ?? "");
+  const [busy, setBusy] = useState(false);
+  const [cacheBust, setCacheBust] = useState(0);
+  useEffect(() => { setCaption(slide.photoCaption ?? ""); }, [slide.id, slide.photoCaption]);
+
+  const upload = async (file: File) => {
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      if (caption.trim()) form.append("caption", caption.trim());
+      const res = await fetch(`${BASE}/api/morning-meetings/slides/${slide.id}/photo`, {
+        method: "POST", credentials: "include", body: form,
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "Upload failed");
+      setCacheBust(Date.now());
+      onChanged();
+      toast({ title: "Photo added to this slide" });
+    } catch (e) {
+      toast({ title: "Upload failed", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await fetch(`${BASE}/api/morning-meetings/slides/${slide.id}/photo`, { method: "DELETE", credentials: "include" });
+      onChanged();
+      toast({ title: "Photo removed" });
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="border-t border-border/60 pt-3">
+      <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5 block">
+        Photo on this slide (optional)
+      </label>
+
+      {slide.hasPhoto && (
+        <img
+          src={`${BASE}/api/morning-meetings/slides/${slide.id}/photo?v=${cacheBust}`}
+          alt=""
+          className="w-full max-h-48 object-contain rounded-lg border border-border bg-black/5 mb-2"
+        />
+      )}
+
+      <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
+        onChange={e => { const f = e.target.files?.[0]; if (f) setPendingCrop(f); e.target.value = ""; }} />
+      <input ref={fileRef} type="file" accept="image/*" className="hidden"
+        onChange={e => { const f = e.target.files?.[0]; if (f) setPendingCrop(f); e.target.value = ""; }} />
+      {pendingCrop && (
+        <ImageCropDialog
+          file={pendingCrop}
+          onCancel={() => setPendingCrop(null)}
+          onCropped={async cropped => { setPendingCrop(null); await upload(cropped); }}
+        />
+      )}
+
+      <div className="flex gap-2 flex-wrap">
+        <button onClick={() => cameraRef.current?.click()} disabled={busy}
+          className="px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />} Take photo
+        </button>
+        <button onClick={() => fileRef.current?.click()} disabled={busy}
+          className="px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+          <ImageIcon className="w-4 h-4" /> {slide.hasPhoto ? "Replace" : "Upload a picture"}
+        </button>
+        {slide.hasPhoto && (
+          <button onClick={remove} disabled={busy}
+            className="px-3 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:opacity-50 inline-flex items-center gap-1.5">
+            <Trash2 className="w-4 h-4" /> Remove
+          </button>
+        )}
+      </div>
+
+      {slide.hasPhoto && (
+        <input
+          value={caption}
+          onChange={e => setCaption(e.target.value)}
+          onBlur={async () => {
+            if ((slide.photoCaption ?? "") === caption.trim()) return;
+            await fetch(`${BASE}/api/morning-meetings/slides/${slide.id}`, {
+              method: "PUT",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ photoCaption: caption.trim() || null }),
+            });
+            onChanged();
+          }}
+          placeholder="Caption (optional)"
+          className="w-full mt-2 bg-background border border-border rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+        />
+      )}
+    </div>
+  );
+}
+
 function SortableSlideRow({
-  slide, expanded, onToggle, onSave, onRemove,
+  slide, expanded, onToggle, onSave, onRemove, onPhotoChanged,
 }: {
   slide: EditorSlide;
   expanded: boolean;
   onToggle: () => void;
   onSave: (patch: Partial<EditorSlide>) => void;
   onRemove: () => void;
+  onPhotoChanged: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: slide.id });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 };
@@ -3687,6 +3838,7 @@ function SortableSlideRow({
               </div>
             </div>
           )}
+          <SlidePhotoEditor slide={slide} onChanged={onPhotoChanged} />
           <div className="flex items-center justify-end gap-2">
             <button
               onClick={() => { setTitle(slide.title); setContentMd(slide.contentMd ?? ""); setVideoUrl(initialVideoUrl); }}
