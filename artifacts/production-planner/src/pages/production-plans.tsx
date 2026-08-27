@@ -54,6 +54,7 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { QueuedBagsPanel, type QueuedBag } from "@/components/queued-bags-panel";
 
 type PlanView = "list" | "detail";
 
@@ -1660,6 +1661,10 @@ interface CalcResponse {
   excludedWindowProducts?: Array<{ productTitle: string; totalQuantity: number }>;
   expiryWarnings?: ExpiryWarningRow[];
   queuedProduction?: QueuedProductionRow[];
+  // 8-pack bags owed on this date from orders processed before the plan
+  // existed. Already inside the batch maths; shown so the automation isn't
+  // silent (see components/queued-bags-panel.tsx).
+  queuedBags?: QueuedBag[];
   recipes: CalcRecipe[];
 }
 
@@ -3134,6 +3139,12 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                   </span>
                 </div>
               )}
+
+              <QueuedBagsPanel
+                queuedBags={calcData?.queuedBags ?? []}
+                includedRecipeIds={new Set(items.filter(it => it.included).map(it => it.recipeId))}
+                onAddRecipes={addRecipesToList}
+              />
 
               <ExpiryWarningsPanel warnings={calcData?.expiryWarnings ?? []} />
 

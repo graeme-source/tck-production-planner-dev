@@ -15,13 +15,19 @@
 //    delivery defaults to production + 2 (produce, despatch, deliver).
 //  - We NEVER add a recipe to a plan. If an order's 8-pack recipe isn't already
 //    on the target plan, the order is skipped with a reason and stays in the queue.
+//  - If the target plan does not EXIST yet, the order is queued instead of
+//    refused (Graeme, 2026-08-27). Plans are made a couple of days ahead, so an
+//    order for a delivery three weeks out had nowhere to go and sat unprocessed
+//    for a fortnight. Queueing tags the order immediately, exactly as processing
+//    always did, and writes a queued_bag_orders row that lands the bags on the
+//    plan for that date the moment it is created. See lib/queued-bags.ts.
 //  - "Eight-pack bag" is detected by variant_title containing "8 pack bag".
 //  - A line is mapped to a recipe by product title (the 8-pack is a variant of
 //    the same Shopify product as the 2-pack), since eight_pack_variant_id is not
 //    populated. Unmappable lines are skipped, never guessed.
 
 import { Router, type IRouter } from "express";
-import { db, productionPlanItemsTable } from "@workspace/db";
+import { db, productionPlanItemsTable, queuedBagOrdersTable } from "@workspace/db";
 import { inArray, sql } from "drizzle-orm";
 import { londonDateString } from "../lib/london-time";
 import {
@@ -33,6 +39,7 @@ import {
   DESPATCH_CUTOFF,
 } from "../lib/production-cutoff";
 import { getRecentUnfulfilledOrders, getOrderById, addTagsToOrder } from "../services/shopify";
+import { queuedBagsBetween } from "../lib/queued-bags";
 
 const router: IRouter = Router();
 
@@ -201,6 +208,11 @@ router.get("/queue", async (_req, res) => {
     const plansByDespatchDate: Record<string, PlanInfo> = {};
     for (const [date, p] of plansByDate) plansByDespatchDate[date] = p;
 
+    // Bags already queued against a future date, so the dialog can show what
+    // is waiting rather than leaving a processed order looking like it
+    // vanished.
+    const pendingBags = await queuedBagsBetween(addDays(today, -2), addDays(today, 60));
+
     const payload = {
       generatedAt: new Date().toISOString(),
       today,
@@ -209,6 +221,7 @@ router.get("/queue", async (_req, res) => {
       wholesaleDeliveryDates,
       plansByDespatchDate,
       orders: queueOrders,
+      pendingBags,
     };
     queueCache = { at: Date.now(), payload };
     res.json(payload);
@@ -305,18 +318,74 @@ router.post("/process", async (req, res) => {
       return;
     }
     const plan = (await loadPlansByDate(productionDate, productionDate)).get(productionDate);
+    const titleToRecipe = await loadTitleToRecipe();
+
+    // ── No plan yet for the chosen production day ──────────────────────────
+    // Plans are made a couple of days ahead, so an order for a delivery three
+    // weeks out has no plan to go on and used to be unprocessable — it just
+    // sat in this queue (Graeme, 2026-08-27). Now it is QUEUED instead: the
+    // order is tagged exactly as always (which is what routes despatch), and
+    // the bags land on the plan for that date the moment it is created.
     if (!plan) {
-      res.status(409).json({
-        error: productionDate === despatchDate
-          ? `No production plan exists for ${despatchDate} (despatch day for delivery ${deliveryDate}).`
-          : `No production plan exists for ${productionDate} (chosen production day).`,
-        despatchDate,
-        productionDate,
-      });
+      // Recipes still have to resolve. Queueing a bag we can't name would
+      // just move the problem three weeks down the line.
+      const queueResolved: Array<{ recipeId: number; recipeName: string; quantity: number }> = [];
+      const queueUnmapped: string[] = [];
+      for (const li of lines) {
+        const m = titleToRecipe.get((li.title ?? "").trim().toLowerCase());
+        if (!m) { queueUnmapped.push(li.title ?? "(untitled)"); continue; }
+        queueResolved.push({ recipeId: m.recipeId, recipeName: m.recipeName, quantity: li.quantity || 0 });
+      }
+      if (queueUnmapped.length || queueResolved.length === 0) {
+        res.status(409).json({
+          error: "Cannot queue this order — some products don't map to a recipe.",
+          unmappedProducts: queueUnmapped,
+          despatchDate,
+          productionDate,
+        });
+        return;
+      }
+
+      // Tag first, as in the with-a-plan path below: if this fails nothing
+      // else has changed and the order is safe to retry.
+      let queueTags: string;
+      try {
+        queueTags = await addTagsToOrder(orderId, order.tags, [deliveryDate, PRODUCTION_TAG]);
+      } catch (err) {
+        res.status(502).json({ error: `Failed to tag Shopify order — no changes made, safe to retry. (${err instanceof Error ? err.message : String(err)})` });
+        return;
+      }
+
+      const byRecipeQueued = new Map<number, { recipeName: string; bags: number }>();
+      for (const r of queueResolved) {
+        const prior = byRecipeQueued.get(r.recipeId);
+        byRecipeQueued.set(r.recipeId, { recipeName: r.recipeName, bags: (prior?.bags ?? 0) + r.quantity });
+      }
+      const queued: Array<{ recipeId: number; recipeName: string; bags: number }> = [];
+      for (const [recipeId, { recipeName, bags }] of byRecipeQueued) {
+        if (bags <= 0) continue;
+        await db.insert(queuedBagOrdersTable).values({
+          productionDate,
+          deliveryDate,
+          recipeId,
+          bags,
+          shopifyOrderId: String(orderId),
+          shopifyOrderName: order.name ?? null,
+          createdByUserId: req.session.userId ?? null,
+        }).onConflictDoUpdate({
+          // Re-processing the same order for the same day replaces the bag
+          // count rather than doubling it.
+          target: [queuedBagOrdersTable.shopifyOrderId, queuedBagOrdersTable.recipeId, queuedBagOrdersTable.productionDate],
+          set: { bags, deliveryDate, status: "queued", planId: null, landedAt: null },
+        });
+        queued.push({ recipeId, recipeName, bags });
+      }
+
+      queueCache = null;
+      res.json({ ok: true, queued: true, orderId, deliveryDate, despatchDate, productionDate, tags: queueTags, queuedBags: queued });
       return;
     }
 
-    const titleToRecipe = await loadTitleToRecipe();
     const planRecipes = new Set(plan.recipeIds);
     const resolved: Array<{ recipeId: number; recipeName: string; quantity: number }> = [];
     const unmappedProducts: string[] = [];

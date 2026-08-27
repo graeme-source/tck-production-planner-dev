@@ -15,6 +15,7 @@ import { logFridgeStockChange, type FridgeChangeSource } from "../lib/fridge-sto
 import { londonDateString, londonStartOfDay } from "../lib/london-time";
 import { productionDateFromJulianBatch } from "../lib/julian-batch";
 import { getStandardBreakConfig, computeBatchesPerHour } from "../lib/batches-per-hour";
+import { landQueuedBags, unlandQueuedBagsForPlan, queuedBagsForDate } from "../lib/queued-bags";
 import { computeDaySchedule, parseClock, formatClock, DEFAULT_START_TIME, DEFAULT_CHANGEOVER_SECONDS, DEFAULT_BUILDERS } from "@workspace/production-schedule";
 // Type-only import — purely compile-time, no runtime cost. The actual
 // PDF renderer (and the heavy @react-pdf/renderer dep tree it pulls in)
@@ -650,7 +651,12 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
         inArray(queuedProductionTable.recipeId, recipeIds),
       ));
   }
-  res.status(201).json(mapPlan(plan));
+
+  // 8-pack bags queued against this date land on the new plan's items. See
+  // lib/queued-bags.ts — a row only clears once its bags are really on an
+  // item, so anything that couldn't land stays queued and keeps showing up.
+  const bags = await landQueuedBags(plan.id, planDate);
+  res.status(201).json({ ...mapPlan(plan), queuedBagsLanded: bags.landed, queuedBagsUnlanded: bags.unlanded });
 });
 
 // GET /production-plans/calculate?planDate=YYYY-MM-DD
@@ -947,6 +953,17 @@ export async function calculatePlanData(planDate: string) {
   for (const row of targetPlanItems) {
     if (row.recipeId == null) continue;
     plannedBagsByRecipe[row.recipeId] = (plannedBagsByRecipe[row.recipeId] ?? 0) + (row.eightPackBagCount ?? 0);
+  }
+
+  // 8-pack bags QUEUED against this date — orders processed before the plan
+  // existed (see lib/queued-bags.ts). Folding them in here rather than
+  // bolting on a parallel calculation means every downstream number — the
+  // pack equivalents, the deficit, the suggested batches — accounts for them
+  // exactly as it does for bags already on a plan. So the plan the operator
+  // is shown is already big enough to cover them before they click save.
+  const queuedBags = await queuedBagsForDate(planDate);
+  for (const row of queuedBags) {
+    plannedBagsByRecipe[row.recipeId] = (plannedBagsByRecipe[row.recipeId] ?? 0) + row.bags;
   }
 
   const remainingWrappingPacksToday: Record<number, number> = {};
@@ -1863,6 +1880,11 @@ export async function calculatePlanData(planDate: string) {
     excludedWindowProducts,
     expiryWarnings,
     queuedProduction,
+    // 8-pack bags owed on this date from orders processed before the plan
+    // existed. Already folded into the batch maths above; returned so the
+    // Create Plan screen can SAY so — the automation landing them silently is
+    // exactly what would make it untrustworthy.
+    queuedBags,
     recipes: orderedResult,
   };
 }
@@ -3240,6 +3262,9 @@ router.delete("/:id", requireManagerOrAdminMw, async (req, res) => {
   await db.update(queuedProductionTable)
     .set({ status: "queued", planId: null })
     .where(and(eq(queuedProductionTable.planId, id), eq(queuedProductionTable.status, "planned")));
+  // Same for queued 8-pack bags: the plan's items (and their bag counts) go
+  // with it, so the bags are owed again and must be re-queued.
+  await unlandQueuedBagsForPlan(id);
   await db.delete(productionPlansTable).where(eq(productionPlansTable.id, id));
   res.status(204).send();
 });

@@ -29,6 +29,7 @@ export * from "./apc";
 export * from "./collections";
 export * from "./recipe_collections";
 export * from "./queued_production";
+export * from "./queued_bag_orders";
 export * from "./case_orders";
 export * from "./founder_focus";
 export * from "./surveys";
