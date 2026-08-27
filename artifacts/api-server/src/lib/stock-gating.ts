@@ -19,15 +19,18 @@
 //   • Only holds created here are released here. A tag added by hand in
 //     Shopify admin is invisible to this table and never touched.
 //
-// After tagging, the next cycle verifies through Zapiet's own calendar API
-// that tomorrow really disappeared for that product (compared against an
-// empty-cart baseline, so a day Zapiet wasn't offering anyway records
-// "skipped" rather than a false failure).
+// After tagging, later cycles verify through Zapiet's own calendar API that
+// tomorrow really disappeared for that product (compared against an empty-cart
+// baseline, so a day Zapiet wasn't offering anyway records "skipped" rather
+// than a false failure). The check REPEATS with a settling period — a single
+// early reading was producing false negatives on holds that were working.
+// See lib/stock-gate-verify.ts.
 
 import { db, stockGateHoldsTable, appSettingsTable } from "@workspace/db";
 import { sql, eq, isNull, desc, inArray } from "drizzle-orm";
 import { londonDateString } from "./london-time";
 import { isStaging, shouldSkipSideEffect, logSkippedSideEffect } from "./app-env";
+import { shouldVerify, nextVerifyStatus, CONFIDENCE_ATTEMPTS } from "./stock-gate-verify";
 
 // ── Settings ────────────────────────────────────────────────────────────────
 
@@ -374,19 +377,31 @@ export async function runStockGateCycle(trigger: "timer" | "manual"): Promise<St
     }
 
     // Verify holds tagged on a previous cycle: has Zapiet actually pulled
-    // tomorrow? (Give Shopify→Zapiet a minute before judging.)
-    const pending = activeHolds.filter(h =>
-      h.verifyStatus === null && !h.dryRun && h.shopifyVariantId && h.productGid
-      && Date.now() - h.heldAt.getTime() > 60_000,
-    );
-    for (const h of pending) {
+    // tomorrow? This is a REPEATED check with a settling period — see
+    // lib/stock-gate-verify.ts for why one early reading isn't evidence.
+    const now = new Date();
+    const dueForVerify = activeHolds.filter(h => shouldVerify(h, now));
+    for (const h of dueForVerify) {
       try {
         const productId = h.productGid!.split("/").pop() ?? "";
         const v = await verifyTomorrowBlocked(settings.zapietLocationId, h.shopifyVariantId!, productId);
+        const attempts = h.verifyAttempts + 1;
+        const status = nextVerifyStatus(v.status, h, attempts, new Date());
         await db.update(stockGateHoldsTable)
-          .set({ verifyStatus: v.status, verifyNote: v.note })
+          .set({
+            verifyStatus: status,
+            // Say what we actually observed, and how many times. "Not
+            // blocking" was a stronger claim than the check can support.
+            verifyNote: status === "unconfirmed"
+              ? `${v.note} (check ${attempts} of ${CONFIDENCE_ATTEMPTS} — still settling)`
+              : status === "failed"
+                ? `${v.note} (still offered after ${attempts} checks)`
+                : v.note,
+            verifyAttempts: attempts,
+            verifyCheckedAt: new Date(),
+          })
           .where(eq(stockGateHoldsTable.id, h.id));
-        if (v.status === "failed") console.error(`[stock-gate] VERIFY FAILED ${h.recipeName}: ${v.note}`);
+        if (status === "failed") console.error(`[stock-gate] VERIFY UNCONFIRMED after ${attempts} checks — ${h.recipeName}: ${v.note}`);
       } catch (err) {
         console.error(`[stock-gate] verify errored for ${h.recipeName}:`, err);
       }

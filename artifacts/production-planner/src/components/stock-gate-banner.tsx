@@ -6,7 +6,6 @@
 import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { ShieldAlert, Loader2, ArrowRight, CheckCircle2, AlertTriangle, FlaskConical } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
@@ -36,6 +35,10 @@ function fmtTime(iso: string): string {
   return new Date(iso).toLocaleString("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
 }
 
+// The Zapiet check tells us what Zapiet's calendar API says, which is NOT the
+// same as what the website does — so nothing here claims a hold "isn't
+// blocking". A hold that was genuinely blocking got reported that way, and a
+// safety banner that cries wolf is worse than no banner (Graeme, 2026-08-27).
 function VerifyBadge({ hold }: { hold: Hold }) {
   if (hold.dryRun) {
     return <span className="inline-flex items-center gap-1 text-xs text-sky-700 dark:text-sky-400"><FlaskConical className="w-3 h-3" /> dry run</span>;
@@ -44,7 +47,14 @@ function VerifyBadge({ hold }: { hold: Hold }) {
     return <span className="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="w-3 h-3" /> Zapiet confirmed</span>;
   }
   if (hold.verifyStatus === "failed") {
-    return <span className="inline-flex items-center gap-1 text-xs text-red-700 dark:text-red-400" title={hold.verifyNote ?? undefined}><AlertTriangle className="w-3 h-3" /> NOT blocking — check Zapiet rule</span>;
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400" title={hold.verifyNote ?? undefined}>
+        <AlertTriangle className="w-3 h-3" /> not confirmed by Zapiet — the tag is on, check the site
+      </span>
+    );
+  }
+  if (hold.verifyStatus === "unconfirmed") {
+    return <span className="text-xs text-muted-foreground" title={hold.verifyNote ?? undefined}>still checking…</span>;
   }
   if (hold.verifyStatus === "skipped") {
     return <span className="text-xs text-muted-foreground" title={hold.verifyNote ?? undefined}>check skipped</span>;
@@ -90,7 +100,6 @@ export function StockGateBanner({ userRole }: { userRole?: string }) {
 
   const count = data.activeHolds.length;
   const allDry = data.activeHolds.every(h => h.dryRun);
-  const anyFailed = data.activeHolds.some(h => !h.dryRun && h.verifyStatus === "failed");
 
   async function releaseHold(hold: Hold) {
     setBusy(hold.id);
@@ -129,25 +138,19 @@ export function StockGateBanner({ userRole }: { userRole?: string }) {
   }
 
   return (
+    // One appearance, always amber: a hold is information, not an emergency.
+    // The banner used to go red whenever the Zapiet check came back
+    // unconfirmed, which turned an unreliable check into an alarm.
     <div className="-mx-6 px-6 pb-2">
-      <div className={cn(
-        "rounded-xl border bg-card overflow-hidden shadow-sm",
-        anyFailed ? "border-red-300 dark:border-red-800" : "border-amber-300 dark:border-amber-800",
-      )}>
+      <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-card overflow-hidden shadow-sm">
         <button
           onClick={() => setOpen(true)}
-          className={cn(
-            "w-full flex items-center gap-2 px-4 py-2.5 transition-colors text-left",
-            anyFailed
-              ? "bg-red-50 dark:bg-red-950/30 hover:bg-red-100/70 dark:hover:bg-red-900/30"
-              : "bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100/70 dark:hover:bg-amber-900/30",
-          )}
+          className="w-full flex items-center gap-2 px-4 py-2.5 text-left transition-colors bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100/70 dark:hover:bg-amber-900/30"
         >
-          <ShieldAlert className={cn("w-4 h-4 flex-shrink-0", anyFailed ? "text-red-600 dark:text-red-400" : "text-amber-600 dark:text-amber-400")} />
-          <span className={cn("text-sm font-semibold", anyFailed ? "text-red-700 dark:text-red-300" : "text-amber-700 dark:text-amber-300")}>
+          <ShieldAlert className="w-4 h-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+          <span className="text-sm font-semibold text-amber-700 dark:text-amber-300">
             {count} product{count !== 1 ? "s" : ""} held from next-day delivery
             {allDry && <span className="font-normal opacity-70"> (dry run — nothing tagged)</span>}
-            {anyFailed && <span className="font-normal"> — a hold isn't blocking, check Zapiet</span>}
           </span>
           <span className="ml-auto flex items-center gap-1 text-xs font-medium opacity-70">
             Review <ArrowRight className="w-3.5 h-3.5" />

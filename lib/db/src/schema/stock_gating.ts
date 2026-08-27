@@ -30,9 +30,17 @@ export const stockGateHoldsTable = pgTable("stock_gate_holds", {
   thresholdAtHold: integer("threshold_at_hold").notNull(),
   // Dry-run holds record what WOULD have been tagged, with no Shopify write.
   dryRun: boolean("dry_run").notNull().default(false),
-  // Zapiet calendar check: null = pending, then verified | failed | skipped.
+  // Zapiet calendar check. null = no answer yet, then:
+  //   verified    — Zapiet confirms tomorrow is gone (terminal)
+  //   skipped     — the check couldn't say anything, re-checked later
+  //   unconfirmed — still offered, but too early to conclude anything
+  //   failed      — still offered after the confidence window
+  // The check repeats on a schedule (see lib/stock-gate-verify.ts): judging a
+  // hold on one reading a minute after tagging produced false negatives.
   verifyStatus: text("verify_status"),
   verifyNote: text("verify_note"),
+  verifyAttempts: integer("verify_attempts").notNull().default(0),
+  verifyCheckedAt: timestamp("verify_checked_at"),
   heldAt: timestamp("held_at").notNull().defaultNow(),
   // released_at IS NULL = the hold is live.
   releasedAt: timestamp("released_at"),
