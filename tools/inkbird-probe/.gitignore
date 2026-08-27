@@ -1,0 +1,3 @@
+.venv/
+readings.csv
+__pycache__/
