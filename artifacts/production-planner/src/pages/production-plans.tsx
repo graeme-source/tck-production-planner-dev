@@ -55,6 +55,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { QueuedBagsPanel, type QueuedBag } from "@/components/queued-bags-panel";
+import { BagCoverPanel } from "@/components/bag-cover-panel";
 
 type PlanView = "list" | "detail";
 
@@ -3145,6 +3146,10 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                 includedRecipeIds={new Set(items.filter(it => it.included).map(it => it.recipeId))}
                 onAddRecipes={addRecipesToList}
               />
+
+              {/* Will the bags exist in time for the next three vans? Counts
+                  only production early enough to make each despatch. */}
+              <BagCoverPanel />
 
               <ExpiryWarningsPanel warnings={calcData?.expiryWarnings ?? []} />
 

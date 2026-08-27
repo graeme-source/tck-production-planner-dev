@@ -40,13 +40,14 @@ import {
 } from "../lib/production-cutoff";
 import { getRecentUnfulfilledOrders, getOrderById, addTagsToOrder } from "../services/shopify";
 import { queuedBagsBetween } from "../lib/queued-bags";
+import {
+  is8PackLine, loadTitleToRecipe, orderTags, hasProductionTag, firstDateTag,
+  PRODUCTION_TAG, DATE_TAG_RE,
+} from "../lib/eight-pack-orders";
 
 const router: IRouter = Router();
 
-const EIGHT_PACK_MATCH = "8 pack bag";
-const PRODUCTION_TAG = "production";
 const WHOLESALE_TAG = "wholesale";
-const DATE_TAG_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SCAN_DAYS_BACK = 30;
 const QUEUE_TTL_MS = 60_000;
 
@@ -71,35 +72,8 @@ function deliveryDateOptions(earliestWorkDay: string, count: number): string[] {
   return out;
 }
 
-function firstDateTag(tags: string): string | null {
-  for (const t of tags.split(",").map(t => t.trim())) if (DATE_TAG_RE.test(t)) return t;
-  return null;
-}
-function hasProductionTag(tags: string): boolean {
-  return tags.split(",").map(t => t.trim().toLowerCase()).includes(PRODUCTION_TAG);
-}
 function hasWholesaleTag(tags: string): boolean {
-  return tags.split(",").map(t => t.trim().toLowerCase()).includes(WHOLESALE_TAG);
-}
-function is8PackLine(li: { variant_title: string | null }): boolean {
-  return (li.variant_title ?? "").toLowerCase().includes(EIGHT_PACK_MATCH);
-}
-
-/** Map normalised product title → recipe. The 8-pack is a variant of the same
- *  product as the 2-pack, so the product title resolves the recipe. */
-async function loadTitleToRecipe(): Promise<Map<string, { recipeId: number; recipeName: string }>> {
-  const rows = await db.execute<{ title: string; recipe_id: number; name: string }>(sql`
-    SELECT DISTINCT m.shopify_product_title AS title, m.recipe_id, r.name
-    FROM recipe_shopify_mappings m
-    JOIN recipes r ON r.id = m.recipe_id
-    WHERE m.shopify_product_title IS NOT NULL
-  `);
-  const map = new Map<string, { recipeId: number; recipeName: string }>();
-  for (const row of rows.rows) {
-    const key = (row.title ?? "").trim().toLowerCase();
-    if (key && !map.has(key)) map.set(key, { recipeId: row.recipe_id, recipeName: row.name });
-  }
-  return map;
+  return orderTags(tags).map(t => t.toLowerCase()).includes(WHOLESALE_TAG);
 }
 
 interface PlanInfo { planId: number; planDate: string; status: string; recipeIds: number[]; }
