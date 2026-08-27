@@ -69,7 +69,7 @@ type Improvement = {
   subjectConfirmed: boolean;
 };
 
-type ScoreRow = { userId: number | null; name: string; count: number; lastAt: string | null };
+type ScoreRow = { userId: number | null; name: string; count: number; signedOff: number; lastAt: string | null };
 
 const STAGE_STYLE: Record<Stage, string> = {
   todo: "bg-secondary text-foreground",
@@ -582,11 +582,23 @@ function Scoreboard() {
   });
   if (data.length === 0) return null;
 
+  // Anything completed before sign-off existed was retro-credited so the
+  // tallies started from real history — but nobody approved it, so the
+  // heading says "completed" and the legacy portion is named rather than
+  // quietly counted as approvals.
+  const legacy = data.reduce((n, r) => n + (r.count - r.signedOff), 0);
+
   return (
     <section className="space-y-3">
       <h2 className="text-lg font-bold flex items-center gap-2">
-        <Trophy className="w-5 h-5 text-amber-500" /> Approved improvements
+        <Trophy className="w-5 h-5 text-amber-500" /> Improvements completed
       </h2>
+      {legacy > 0 && (
+        <p className="text-base text-muted-foreground -mt-1">
+          Includes {legacy} completed before sign-off existed — those were never
+          approved by anyone. New ones only count once a manager signs them off.
+        </p>
+      )}
       <div className="rounded-2xl border-2 border-border bg-card overflow-hidden">
         {data.map((row, i) => (
           <div

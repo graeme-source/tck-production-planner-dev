@@ -11,6 +11,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { validate } from "../middleware/validate";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 import { shortlistDuplicates } from "../lib/improvement-similarity";
+import { intArrayLiteral } from "../lib/int-array-literal";
 import { stitchBeforeAfter } from "../lib/improvement-media";
 import { ffmpegAvailable } from "../lib/sop-video";
 
@@ -30,7 +31,7 @@ async function attachmentCounts(ids: number[]): Promise<Map<number, number>> {
   const result = await db.execute<{ improvement_id: number; n: number }>(sql`
     SELECT improvement_id, COUNT(*)::int AS n
       FROM improvement_attachments
-     WHERE improvement_id = ANY(${ids})
+     WHERE improvement_id = ANY(${intArrayLiteral(ids)}::int[])
      GROUP BY improvement_id
   `);
   return new Map((result.rows ?? []).map(r => [Number(r.improvement_id), Number(r.n)]));
@@ -98,7 +99,7 @@ router.get("/", async (req: Request, res: Response) => {
              COUNT(*)::int AS n,
              BOOL_OR(user_id = ${viewer.id ?? -1}) AS mine
         FROM improvement_votes
-       WHERE improvement_id = ANY(${ids})
+       WHERE improvement_id = ANY(${intArrayLiteral(ids)}::int[])
        GROUP BY improvement_id
     `);
     const votesById = new Map(
@@ -475,10 +476,16 @@ router.post("/:id/stitch", async (req: Request, res: Response) => {
 // the whole thing worth doing (Objective E: improvements per person).
 router.get("/scoreboard", async (_req: Request, res: Response) => {
   try {
-    const result = await db.execute<{ user_id: number | null; name: string | null; n: number; last_at: Date | null }>(sql`
+    // `signed_off` counts only what a manager actually approved. Everything
+    // completed before sign-off existed was retro-credited by migration 0059
+    // so the tallies started from real history — but it was never approved by
+    // anyone, and a screen that calls it "approved" is telling a small lie
+    // (Graeme spotted exactly this, 2026-08-26).
+    const result = await db.execute<{ user_id: number | null; name: string | null; n: number; signed_off: number; last_at: Date | null }>(sql`
       SELECT credited_to AS user_id,
              COALESCE(credited_to_name, 'Unknown') AS name,
              COUNT(*)::int AS n,
+             COUNT(approved_at)::int AS signed_off,
              MAX(approved_at) AS last_at
         FROM improvement_submissions
        WHERE progress_status = 'complete' AND credited_to IS NOT NULL
@@ -486,7 +493,11 @@ router.get("/scoreboard", async (_req: Request, res: Response) => {
        ORDER BY n DESC, name ASC
     `);
     res.json((result.rows ?? []).map(r => ({
-      userId: r.user_id, name: r.name, count: Number(r.n), lastAt: r.last_at,
+      userId: r.user_id,
+      name: r.name,
+      count: Number(r.n),
+      signedOff: Number(r.signed_off),
+      lastAt: r.last_at,
     })));
   } catch (err) {
     console.error("Error building improvement scoreboard:", err);
