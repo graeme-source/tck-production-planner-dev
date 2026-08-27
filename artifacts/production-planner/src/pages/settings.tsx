@@ -17,6 +17,7 @@ import {
   AlarmClock, Search, ShieldAlert, Image as ImageIcon,
 } from "lucide-react";
 import { STATIONS } from "@/pages/station/shared/constants";
+import { DEFAULT_IDLE_TIMEOUTS, MIN_IDLE_MINUTES, MAX_IDLE_MINUTES } from "@/lib/idle-timeout";
 import { TIMED_REMINDERS_KEY, parseReminders, type TimedReminder } from "@/pages/station/shared/timed-reminders";
 import {
   isPushSupported, isStandalone, isSubscribedOnThisDevice,
@@ -692,6 +693,7 @@ const SETTINGS_SEARCH_INDEX: { tab: SettingsSection; title: string; keywords: st
   { tab: "production", title: "Admin Date Override", keywords: "pretend date testing simulate today" },
   { tab: "production", title: "Non-dispatch days", keywords: "bank holiday shutdown closed no dispatch dates christmas" },
   { tab: "production", title: "Timed reminders", keywords: "reminder alarm notification station time" },
+  { tab: "production", title: "Station auto log-out", keywords: "station idle timeout logout log out lock pin minutes dough sheeting packing inactivity" },
   { tab: "production", title: "Prep & Dough Schedule", keywords: "prep date dough date offsets day before defaults" },
   { tab: "production", title: "Daily Production Targets", keywords: "dpt packs sold split percentages total daily batches 75 target" },
   { tab: "production", title: "Macaroni Cheese Defaults", keywords: "mac cheese extra packs buffer" },
@@ -1614,6 +1616,7 @@ export default function Settings() {
               {user?.role === "admin" && <AdminDateOverrideSection />}
               {user?.role === "admin" && <NonDispatchDatesSection />}
               {user?.role === "admin" && <TimedRemindersSection />}
+              {user?.role === "admin" && <StationIdleTimeoutSection />}
               {user?.role === "admin" && <PrepDoughScheduleSection />}
               <div ref={dptRef}>
                 {(user?.role === "admin" || user?.role === "manager") && <DptSettingsSection />}
@@ -4138,6 +4141,121 @@ function PastaCookingSection() {
 // deadline — e.g. "stock checks due by 3pm" on Prep from 14:45. Stored as
 // a JSON array in app_settings; rendered by StationReminderBanner inside
 // the shared station layout. The team can add their own here.
+/**
+ * How long each station may sit untouched before it PIN-locks.
+ *
+ * One global fifteen minutes was wrong in both directions (Graeme,
+ * 2026-08-26): Dough Prep and Dough Sheeting are watched constantly and
+ * touched rarely, so people were being locked out of a screen they were
+ * reading, while the packing iPad could sit logged in for hours. Ships with
+ * the dough screens at three hours and everything else on the old fifteen.
+ */
+function StationIdleTimeoutSection() {
+  const [values, setValues] = useState<Record<string, number>>(DEFAULT_IDLE_TIMEOUTS);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/app-settings/station_idle_minutes", { credentials: "include" })
+      .then(r => (r.ok ? r.json() : null))
+      .then((row: { value?: string } | null) => {
+        if (row?.value) {
+          try {
+            const parsed = JSON.parse(row.value);
+            if (parsed && typeof parsed === "object") {
+              setValues({ ...DEFAULT_IDLE_TIMEOUTS, ...parsed });
+            }
+          } catch { /* keep the defaults */ }
+        }
+      })
+      .catch(() => { /* keep the defaults */ })
+      .finally(() => setLoaded(true));
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    setSavedMsg(null);
+    try {
+      const res = await fetch("/api/app-settings/station_idle_minutes", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: JSON.stringify(values) }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      setSavedMsg("Saved. Each iPad picks it up next time the app loads.");
+    } catch {
+      setSavedMsg("Couldn't save that — try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const row = (key: string, label: string, hint?: string) => (
+    <div key={key} className="flex items-center justify-between gap-4 py-2.5 border-b border-border/60 last:border-0">
+      <div className="min-w-0">
+        <p className="text-sm font-medium">{label}</p>
+        {hint && <p className="text-xs text-muted-foreground mt-0.5">{hint}</p>}
+      </div>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        <input
+          type="number"
+          min={MIN_IDLE_MINUTES}
+          max={MAX_IDLE_MINUTES}
+          value={values[key] ?? DEFAULT_IDLE_TIMEOUTS.default}
+          onChange={e => setValues(v => ({ ...v, [key]: Number(e.target.value) }))}
+          className="w-24 px-3 py-2 bg-background border border-border rounded-lg text-sm text-right tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/30"
+        />
+        <span className="text-xs text-muted-foreground w-12">mins</span>
+      </div>
+    </div>
+  );
+
+  return (
+    <section className="bg-card border border-border rounded-2xl p-5">
+      <h3 className="text-base font-semibold flex items-center gap-2 mb-1">
+        <Lock className="w-4 h-4 text-blue-500" /> Station auto log-out
+      </h3>
+      <p className="text-sm text-muted-foreground mb-4">
+        How long a screen can sit untouched before it asks for a PIN again. A screen
+        people watch while their hands are busy needs longer than an iPad that gets
+        used for a minute and left on the bench.
+      </p>
+
+      {!loaded ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : (
+        <>
+          <div className="mb-3">
+            {row("default", "Everywhere else", "The whole app, and any station not set below")}
+          </div>
+          <div className="rounded-xl border border-border/60 p-3">
+            {STATIONS.map(st => row(
+              st.key,
+              st.label,
+              st.key === "dough_prep" || st.key === "dough_sheeting"
+                ? "Watched constantly, touched rarely"
+                : undefined,
+            ))}
+          </div>
+
+          <div className="flex items-center gap-3 mt-4">
+            <button
+              onClick={save}
+              disabled={saving}
+              className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-50"
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+            {savedMsg && <span className="text-sm text-muted-foreground">{savedMsg}</span>}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 function TimedRemindersSection() {
   const [reminders, setReminders] = useState<TimedReminder[]>([]);
   const [loaded, setLoaded] = useState(false);

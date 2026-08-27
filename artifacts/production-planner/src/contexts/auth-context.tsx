@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { addDeviceUserId } from "@/lib/device-users";
 import { toast } from "@/hooks/use-toast";
+import { idleTimeoutMs, type IdleTimeoutSettings } from "@/lib/idle-timeout";
 
 export type AuthUser = {
   id: number;
@@ -47,7 +48,20 @@ const SENSITIVE_UNLOCK_TTL_MS = 5 * 60 * 1000;
 // overnight-PC fix — and (b) is shared ACROSS TABS, so typing in one tab
 // keeps a second tab from deciding the session is idle (that cross-tab gap
 // locked Graeme out mid-recipe and cost him unsaved work).
-const IDLE_TIMEOUT_MS = 15 * 60 * 1000;
+// Per-station now, not one number for the whole app: a screen that's watched
+// but rarely touched (Dough Prep, Dough Sheeting) was locking people out
+// mid-shift, while an iPad left on the packing bench stayed logged in for
+// hours. See lib/idle-timeout.ts for the rules; this reads whatever Settings
+// has stored and falls back to the shipped defaults until it loads.
+let idleSettings: IdleTimeoutSettings | null = null;
+
+/** The allowance for whatever screen is open right now. Read at the moment of
+ *  each check rather than captured once, so walking from the packing iPad to
+ *  a dough screen takes that screen's timeout with it. */
+function currentIdleTimeoutMs(): number {
+  const path = typeof window !== "undefined" ? window.location.pathname : "/";
+  return idleTimeoutMs(path, idleSettings);
+}
 const LAST_ACTIVITY_KEY = "tck_last_activity";
 function readStoredActivity(): number {
   try {
@@ -78,6 +92,22 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: "loading" });
+
+  // Load the per-station idle allowances once. Until they arrive the shipped
+  // defaults apply, so a slow or failed fetch can never make a screen lock
+  // sooner than it should — it just behaves as configured out of the box.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/app-settings/station_idle_minutes", { credentials: "include" })
+      .then(r => (r.ok ? r.json() : null))
+      .then((row: { value?: string } | null) => {
+        if (cancelled || !row?.value) return;
+        const parsed = JSON.parse(row.value) as IdleTimeoutSettings;
+        if (parsed && typeof parsed === "object") idleSettings = parsed;
+      })
+      .catch(() => { /* defaults stand */ });
+    return () => { cancelled = true; };
+  }, []);
   const [pinLocked, setPinLocked] = useState(false);
   // Mirror of pinLocked for the stable checkSession callback (empty deps —
   // it must not re-create on every lock change).
@@ -145,7 +175,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // lost a half-built recipe to the 10pm cutover, 2026-08-20). While
         // they're active we neither lock nor navigate; each 5-minute poll
         // re-checks, and the cutover lands once they've been idle for
-        // IDLE_TIMEOUT_MS. Nobody is genuinely typing at 4am, so in
+        // the screen's idle allowance. Nobody is genuinely typing at 4am, so in
         // practice this only softens the 10pm edge. An already-applied
         // lock always stays applied — typing PIN digits is "activity" but
         // must never dismiss the overlay.
@@ -155,7 +185,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           clearPinLockApplied();
         } else if (pinLockedRef.current) {
           prevPinRequiredRef.current = true;
-        } else if (!isPinLockApplied() && Date.now() - getLastActivity() < IDLE_TIMEOUT_MS) {
+        } else if (!isPinLockApplied() && Date.now() - getLastActivity() < currentIdleTimeoutMs()) {
           // Active AND no lock has been applied on this device yet — defer.
           // (An applied lock re-locks on reload regardless of activity;
           // otherwise tapping the PIN pad then refreshing would walk
@@ -210,7 +240,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         checkSession(true);
         // Also check idle timeout on each poll (catches tabs left open all night)
         const idleMs = Date.now() - getLastActivity();
-        if (idleMs >= IDLE_TIMEOUT_MS && state.status === "authenticated" && !pinLocked) {
+        if (idleMs >= currentIdleTimeoutMs() && state.status === "authenticated" && !pinLocked) {
           setPinLocked(true);
           markPinLockApplied();
           fetch("/api/auth/pin/lock", { method: "POST", credentials: "include" })
@@ -266,7 +296,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     bootIdleCheckedRef.current = true;
     if (pinLocked) return;
     const idleMs = Date.now() - getLastActivity();
-    if (idleMs >= IDLE_TIMEOUT_MS) {
+    if (idleMs >= currentIdleTimeoutMs()) {
       setPinLocked(true);
       markPinLockApplied();
       fetch("/api/auth/pin/lock", { method: "POST", credentials: "include" })
@@ -286,7 +316,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // touched in an hour no longer locks a session that was active in
       // another tab seconds ago.
       const idleMs = Date.now() - getLastActivity();
-      if (idleMs >= IDLE_TIMEOUT_MS && state.status === "authenticated" && !pinLocked) {
+      if (idleMs >= currentIdleTimeoutMs() && state.status === "authenticated" && !pinLocked) {
         setPinLocked(true);
         markPinLockApplied();
         fetch("/api/auth/pin/lock", { method: "POST", credentials: "include" })
@@ -332,7 +362,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // 2026-08-20).
     let id = 0;
     const fireWhenIdle = () => {
-      if (Date.now() - getLastActivity() < IDLE_TIMEOUT_MS) {
+      if (Date.now() - getLastActivity() < currentIdleTimeoutMs()) {
         id = window.setTimeout(fireWhenIdle, 5 * 60 * 1000);
         return;
       }
