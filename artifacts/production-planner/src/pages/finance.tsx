@@ -667,6 +667,20 @@ function AdminPanel() {
     onError: (e: Error) => toast({ title: "Sync failed to start", description: e.message, variant: "destructive" }),
   });
 
+  const qbo = useQuery<any>({
+    queryKey: ["/api/finance/qbo/status"],
+    queryFn: () => jsonFetch(`${BASE}/api/finance/qbo/status`),
+  });
+  const qboSync = useMutation({
+    mutationFn: () => jsonFetch(`${BASE}/api/finance/qbo/sync`, { method: "POST" }),
+    onSuccess: () => {
+      toast({ title: "QuickBooks sync started", description: "Posted transactions will close their card lines as it runs." });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/qbo/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+    },
+    onError: (e: Error) => toast({ title: "Sync failed to start", description: e.message, variant: "destructive" }),
+  });
+
   const scanRange = useMutation({
     mutationFn: () =>
       jsonFetch(`${BASE}/api/finance/mailbox/scan-range`, {
@@ -742,6 +756,40 @@ function AdminPanel() {
               </Button>
             </div>
           </div>
+        </div>
+
+        <div>
+          <div className="text-sm font-medium mb-2 flex items-center gap-2"><Banknote className="h-4 w-4" /> QuickBooks (read-only)</div>
+          {!qbo.data?.configured ? (
+            <p className="text-sm text-muted-foreground">
+              Needs the Intuit app credentials first: create an app at developer.intuit.com
+              (Accounting scope), set its redirect URI to <code className="text-xs bg-secondary px-1 rounded">{`${window.location.origin}/api/finance/qbo/callback`}</code>,
+              then add <code className="text-xs bg-secondary px-1 rounded">QBO_CLIENT_ID</code> and <code className="text-xs bg-secondary px-1 rounded">QBO_CLIENT_SECRET</code> to the server environment.
+            </p>
+          ) : qbo.data?.connected ? (
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">
+                Connected to company {qbo.data.realmId}
+                {qbo.data.lastSyncAt ? ` · last synced ${new Date(qbo.data.lastSyncAt).toLocaleString("en-GB")}` : " · never synced"}
+                {typeof qbo.data.mirroredTxns === "number" ? ` · ${qbo.data.mirroredTxns} posted transactions mirrored` : ""}
+                {qbo.data.lastError && <span className="text-destructive"> · {qbo.data.lastError}</span>}
+              </p>
+              <Button size="sm" variant="outline" onClick={() => qboSync.mutate()} disabled={qboSync.isPending}>
+                {qboSync.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />} Sync now
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">
+                Not connected. Connecting lets the app see which transactions are already
+                posted and close their card lines automatically — read-only, it never
+                changes anything in QuickBooks.
+              </p>
+              <Button size="sm" asChild>
+                <a href={`${BASE}/api/finance/qbo/connect`}>Connect QuickBooks</a>
+              </Button>
+            </div>
+          )}
         </div>
 
         <div>

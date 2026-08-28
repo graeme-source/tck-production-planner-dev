@@ -138,54 +138,81 @@ async function doSync(options: SyncOptions = {}): Promise<SyncOutcome> {
           ? (before ? { since, before } : { since })
           : since && startUid === 1 ? { since } : { uid: range };
 
+        // Large-mailbox hardening (2026-08-28: graeme@ holds 94k messages
+        // and one.com quietly kills bulk connections): progress persists
+        // as we go, every body download races a timeout, and a dropped
+        // connection ends the pass with everything so far kept — the next
+        // hourly pass (or bridge run) resumes from the saved cursor.
         let maxUid = startUid - 1;
-        for await (const msg of client.fetch(search, { uid: true, envelope: true, bodyStructure: true, internalDate: true }, { uid: !ranged && startUid > 1 })) {
-          scanned++;
-          if (msg.uid > maxUid) maxUid = msg.uid;
-          const env = msg.envelope;
-          const sender = env?.from?.[0]?.address ?? undefined;
-          const subject = env?.subject ?? undefined;
-          const hasPdf = structureHasPdf(msg.bodyStructure);
-          if (!looksInvoiceLike(subject, hasPdf, sender)) continue;
+        const persistProgress = async () => {
+          if (ranged || maxUid < startUid) return;
+          uidState[folder] = { uidvalidity: validity, uidnext: maxUid + 1 };
+          await db.update(finMailboxTable)
+            .set({ uidState, updatedAt: new Date() })
+            .where(eq(finMailboxTable.id, box.id))
+            .catch(() => undefined);
+        };
+        try {
+          for await (const msg of client.fetch(search, { uid: true, envelope: true, bodyStructure: true, internalDate: true }, { uid: !ranged && startUid > 1 })) {
+            scanned++;
+            if (msg.uid > maxUid) maxUid = msg.uid;
+            const env = msg.envelope;
+            const sender = env?.from?.[0]?.address ?? undefined;
+            const subject = env?.subject ?? undefined;
+            const hasPdf = structureHasPdf(msg.bodyStructure);
+            if (looksInvoiceLike(subject, hasPdf, sender)) {
+              // Transient body fetch for amount extraction; body discarded.
+              // Raced against a timeout: a stuck download means the server
+              // has starved the connection — fall back to subject-only.
+              let amounts: string[] = [];
+              try {
+                const dl = await Promise.race([
+                  client.download(String(msg.uid), undefined, { uid: true }),
+                  new Promise<null>((resolve) => setTimeout(() => resolve(null), 45_000).unref?.()),
+                ]);
+                if (dl?.content) {
+                  const parsed = await simpleParser(dl.content);
+                  amounts = extractAmounts(`${subject ?? ""}\n${parsed.text ?? ""}`);
+                } else {
+                  amounts = extractAmounts(subject ?? "");
+                }
+              } catch {
+                amounts = extractAmounts(subject ?? "");
+              }
 
-          // Transient body fetch for amount extraction; body is discarded.
-          let amounts: string[] = [];
-          try {
-            const dl = await client.download(String(msg.uid), undefined, { uid: true });
-            if (dl?.content) {
-              const parsed = await simpleParser(dl.content);
-              amounts = extractAmounts(`${subject ?? ""}\n${parsed.text ?? ""}`);
+              await db
+                .insert(finEmailIndexTable)
+                .values({
+                  folder,
+                  imapUid: msg.uid,
+                  messageIdHdr: env?.messageId ?? null,
+                  fromAddress: sender ?? null,
+                  fromDomain: fromDomain(sender),
+                  subject: subject ?? null,
+                  internalDate: msg.internalDate ? new Date(msg.internalDate) : null,
+                  hasPdf,
+                  amountsFound: amounts,
+                })
+                .onConflictDoNothing({ target: [finEmailIndexTable.folder, finEmailIndexTable.imapUid] });
+              indexed++;
             }
-          } catch {
-            amounts = extractAmounts(subject ?? "");
+            if (scanned % 25 === 0) {
+              await persistProgress();
+              console.log(`[finance] mailbox scan progress: ${scanned} scanned, ${indexed} indexed (${folder})`);
+            }
           }
-
-          await db
-            .insert(finEmailIndexTable)
-            .values({
-              folder,
-              imapUid: msg.uid,
-              messageIdHdr: env?.messageId ?? null,
-              fromAddress: sender ?? null,
-              fromDomain: fromDomain(sender),
-              subject: subject ?? null,
-              internalDate: msg.internalDate ? new Date(msg.internalDate) : null,
-              hasPdf,
-              amountsFound: amounts,
-            })
-            .onConflictDoNothing({ target: [finEmailIndexTable.folder, finEmailIndexTable.imapUid] });
-          indexed++;
-        }
-
-        if (!ranged) {
-          uidState[folder] = { uidvalidity: validity, uidnext: Math.max(maxUid + 1, Number(mailbox.uidNext ?? 1)) };
+          await persistProgress();
+        } catch (folderErr: any) {
+          // Connection died mid-folder — keep what we have and move on.
+          console.error(`[finance] scan of ${folder} interrupted after ${scanned} messages:`, folderErr?.message ?? folderErr);
+          await persistProgress();
         }
       } finally {
         lock.release();
       }
     }
 
-    await client.logout();
+    await client.logout().catch(() => undefined);
   } catch (e: any) {
     try { await client.close(); } catch { /* already closed */ }
     const msg = e?.message ?? String(e);

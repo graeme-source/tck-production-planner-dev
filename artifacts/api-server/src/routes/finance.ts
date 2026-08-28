@@ -20,6 +20,8 @@ import { parseCotCsv } from "../lib/finance/cot-csv";
 import { normaliseMerchant } from "../lib/finance/merchant-normalise";
 import { sealSecret } from "../lib/finance/secret-box";
 import { runMailboxSync, refreshSuggestions, fetchAttachmentForMessage } from "../lib/finance/mailbox-sync";
+import { authorizeUrl, exchangeCode, newStateToken, qboConfigured, qboStatus, runQboSync } from "../lib/finance/qbo";
+import { db as dbForQbo, finQboConnectionTable } from "@workspace/db";
 
 // Finance / VAT invoice reconciliation (docs/vat-reconciliation/PLAN.md).
 // Replaces the "Outstanding Transactions" Google Sheet. Access: admin, or a
@@ -523,6 +525,74 @@ router.post("/mailbox/sync", requireAdmin, async (_req: Request, res: Response) 
     })
     .catch((err) => console.error("[finance] sync crashed:", err));
   res.json({ started: true });
+});
+
+// ---------------------------------------------------------------------------
+// QuickBooks (read-only) — ADMIN ONLY. Rules out card lines that are
+// already posted. The app never writes to QuickBooks.
+
+router.get("/qbo/status", requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    res.json(await qboStatus());
+  } catch (err) {
+    console.error("[finance] qbo status error:", err);
+    res.status(500).json({ error: "Failed to load QuickBooks status" });
+  }
+});
+
+router.get("/qbo/connect", requireAdmin, async (req: Request, res: Response) => {
+  if (!qboConfigured()) {
+    res.status(503).json({ error: "QuickBooks app credentials not set — add QBO_CLIENT_ID and QBO_CLIENT_SECRET to the environment first." });
+    return;
+  }
+  const state = newStateToken();
+  (req.session as any).qboState = state;
+  res.redirect(authorizeUrl(state));
+});
+
+// Intuit redirects the admin's browser here after they approve access.
+router.get("/qbo/callback", async (req: Request, res: Response) => {
+  try {
+    const { code, realmId, state } = req.query as Record<string, string>;
+    const expected = (req.session as any).qboState;
+    if (!expected || state !== expected) {
+      res.status(400).send("QuickBooks connection failed: state mismatch. Go back to Finance and try Connect again.");
+      return;
+    }
+    if (req.session.userRole !== "admin") {
+      res.status(403).send("Admin access required.");
+      return;
+    }
+    if (!code || !realmId) {
+      res.status(400).send("QuickBooks did not return an authorisation code.");
+      return;
+    }
+    delete (req.session as any).qboState;
+    await exchangeCode(code, realmId);
+    // First sync in the background; the admin lands back on Finance.
+    runQboSync()
+      .then((o) => console.log(`[finance] first QBO sync: ${o.purchases} purchases, ${o.bills} bills, ${o.linesClosed} lines closed${o.error ? ` (error: ${o.error})` : ""}`))
+      .catch((e) => console.error("[finance] first QBO sync failed:", e));
+    res.redirect("/finance");
+  } catch (err) {
+    console.error("[finance] qbo callback error:", err);
+    res.status(500).send(`QuickBooks connection failed: ${err instanceof Error ? err.message : "unknown error"}. Go back to Finance and try again.`);
+  }
+});
+
+router.post("/qbo/sync", requireAdmin, async (_req: Request, res: Response) => {
+  runQboSync()
+    .then((o) => {
+      if (o.error) console.error("[finance] QBO sync finished with error:", o.error);
+      else console.log(`[finance] QBO sync done: ${o.purchases} purchases, ${o.bills} bills, ${o.linesClosed} lines closed`);
+    })
+    .catch((err) => console.error("[finance] QBO sync crashed:", err));
+  res.json({ started: true });
+});
+
+router.delete("/qbo", requireAdmin, async (_req: Request, res: Response) => {
+  await dbForQbo.delete(finQboConnectionTable);
+  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------------------

@@ -79,6 +79,10 @@ export const finLinesTable = pgTable("fin_lines", {
   statusNote: text("status_note"),
   doneAt: timestamp("done_at"),
   doneBy: integer("done_by"),
+  // Set when the QuickBooks sync matches this line to a posted
+  // transaction — the "ruled out, already posted" signal.
+  qboTxnId: integer("qbo_txn_id"),
+  postedDetectedAt: timestamp("posted_detected_at"),
   // sha256 over source|dates|amount|descriptor|card — makes re-uploads of
   // overlapping exports safe (dedupe on conflict).
   dedupeHash: text("dedupe_hash").notNull().unique(),
@@ -160,3 +164,34 @@ export type FinDocument = typeof finDocumentsTable.$inferSelect;
 export type FinEmailIndexRow = typeof finEmailIndexTable.$inferSelect;
 export type FinMatch = typeof finMatchesTable.$inferSelect;
 export type FinMailbox = typeof finMailboxTable.$inferSelect;
+
+// Read-only QuickBooks connection (single row). Tokens encrypted at the
+// app layer; refresh tokens rotate ~daily so pairs persist atomically.
+export const finQboConnectionTable = pgTable("fin_qbo_connection", {
+  id: serial("id").primaryKey(),
+  realmId: text("realm_id").notNull(),
+  accessTokenEnc: text("access_token_enc").notNull(),
+  refreshTokenEnc: text("refresh_token_enc").notNull(),
+  accessExpiresAt: timestamp("access_expires_at"),
+  refreshExpiresAt: timestamp("refresh_expires_at"),
+  syncCursor: timestamp("sync_cursor"),
+  lastSyncAt: timestamp("last_sync_at"),
+  lastError: text("last_error"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// Mirror of posted QuickBooks purchases/bills, for line matching + audit.
+export const finQboTxnsTable = pgTable("fin_qbo_txns", {
+  id: serial("id").primaryKey(),
+  qboId: text("qbo_id").notNull(),
+  entityType: text("entity_type").notNull(),
+  txnDate: date("txn_date"),
+  totalAmt: numeric("total_amt", { precision: 12, scale: 2 }),
+  vendorName: text("vendor_name"),
+  docNumber: text("doc_number"),
+  syncedAt: timestamp("synced_at").notNull().defaultNow(),
+});
+
+export type FinQboConnection = typeof finQboConnectionTable.$inferSelect;
+export type FinQboTxn = typeof finQboTxnsTable.$inferSelect;

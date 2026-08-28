@@ -3,6 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import { BACKLOG_ROWS, backlogDedupeHash } from "./backlog-seed";
 import { normaliseMerchant } from "./merchant-normalise";
 import { runMailboxSync } from "./mailbox-sync";
+import { runQboSync } from "./qbo";
 
 // Finance startup: one-time backlog seed + the hourly mailbox sync timer.
 // Seed is guarded by a _migrations_done key (the codebase's standard
@@ -66,7 +67,19 @@ export function startFinanceMailboxTimer(): void {
         }
       })
       .catch((e) => console.error("[finance] mailbox sync failed:", e));
+  const runQbo = () =>
+    runQboSync()
+      .then((o) => {
+        if (o.error && o.error !== "QuickBooks is not connected" && o.error !== "Sync already running") {
+          console.error("[finance] QBO sync:", o.error);
+        } else if (o.purchases + o.bills > 0 || o.linesClosed > 0) {
+          console.log(`[finance] QBO sync: ${o.purchases} purchases, ${o.bills} bills, ${o.linesClosed} lines closed`);
+        }
+      })
+      .catch((e) => console.error("[finance] QBO sync failed:", e));
   // First run shortly after boot (let migrations settle), then hourly.
   setTimeout(run, 30_000).unref();
   setInterval(run, 60 * 60_000).unref();
+  setTimeout(runQbo, 45_000).unref();
+  setInterval(runQbo, 60 * 60_000).unref();
 }
