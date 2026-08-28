@@ -138,11 +138,13 @@ async function doSync(options: SyncOptions = {}): Promise<SyncOutcome> {
           ? (before ? { since, before } : { since })
           : since && startUid === 1 ? { since } : { uid: range };
 
-        // Large-mailbox hardening (2026-08-28: graeme@ holds 94k messages
-        // and one.com quietly kills bulk connections): progress persists
-        // as we go, every body download races a timeout, and a dropped
-        // connection ends the pass with everything so far kept — the next
-        // hourly pass (or bridge run) resumes from the saved cursor.
+        // Large-mailbox hardening (2026-08-28: graeme@ holds 94k messages)
+        // AND the imapflow deadlock fix: download() must NEVER be called
+        // while the fetch iterator is still running — commands serialise on
+        // one connection, so the iterator waits on the download and the
+        // download queues behind the iterator. That deadlock is what made
+        // every earlier sync die silently (and crashed live at 08:15).
+        // Phase 1 collects metadata; phase 2 downloads bodies afterwards.
         let maxUid = startUid - 1;
         const persistProgress = async () => {
           if (ranged || maxUid < startUid) return;
@@ -152,59 +154,78 @@ async function doSync(options: SyncOptions = {}): Promise<SyncOutcome> {
             .where(eq(finMailboxTable.id, box.id))
             .catch(() => undefined);
         };
+
+        interface Collected {
+          uid: number;
+          sender?: string;
+          subject?: string;
+          hasPdf: boolean;
+          messageId: string | null;
+          internalDate: Date | null;
+        }
+        const collected: Collected[] = [];
         try {
           for await (const msg of client.fetch(search, { uid: true, envelope: true, bodyStructure: true, internalDate: true }, { uid: !ranged && startUid > 1 })) {
             scanned++;
             if (msg.uid > maxUid) maxUid = msg.uid;
             const env = msg.envelope;
-            const sender = env?.from?.[0]?.address ?? undefined;
-            const subject = env?.subject ?? undefined;
-            const hasPdf = structureHasPdf(msg.bodyStructure);
-            if (looksInvoiceLike(subject, hasPdf, sender)) {
-              // Transient body fetch for amount extraction; body discarded.
-              // Raced against a timeout: a stuck download means the server
-              // has starved the connection — fall back to subject-only.
-              let amounts: string[] = [];
-              try {
-                const dl = await Promise.race([
-                  client.download(String(msg.uid), undefined, { uid: true }),
-                  new Promise<null>((resolve) => setTimeout(() => resolve(null), 45_000).unref?.()),
-                ]);
-                if (dl?.content) {
-                  const parsed = await simpleParser(dl.content);
-                  amounts = extractAmounts(`${subject ?? ""}\n${parsed.text ?? ""}`);
-                } else {
-                  amounts = extractAmounts(subject ?? "");
-                }
-              } catch {
-                amounts = extractAmounts(subject ?? "");
-              }
+            collected.push({
+              uid: msg.uid,
+              sender: env?.from?.[0]?.address ?? undefined,
+              subject: env?.subject ?? undefined,
+              hasPdf: structureHasPdf(msg.bodyStructure),
+              messageId: env?.messageId ?? null,
+              internalDate: msg.internalDate ? new Date(msg.internalDate) : null,
+            });
+          }
+        } catch (fetchErr: any) {
+          console.error(`[finance] metadata fetch of ${folder} interrupted after ${scanned}:`, fetchErr?.message ?? fetchErr);
+        }
 
-              await db
-                .insert(finEmailIndexTable)
-                .values({
-                  folder,
-                  imapUid: msg.uid,
-                  messageIdHdr: env?.messageId ?? null,
-                  fromAddress: sender ?? null,
-                  fromDomain: fromDomain(sender),
-                  subject: subject ?? null,
-                  internalDate: msg.internalDate ? new Date(msg.internalDate) : null,
-                  hasPdf,
-                  amountsFound: amounts,
-                })
-                .onConflictDoNothing({ target: [finEmailIndexTable.folder, finEmailIndexTable.imapUid] });
-              indexed++;
+        // Phase 2: bodies for invoice-like messages, one command at a time,
+        // each raced against a timeout; progress persists as we go so an
+        // interruption costs nothing.
+        try {
+          for (const m of collected) {
+            if (!looksInvoiceLike(m.subject, m.hasPdf, m.sender)) continue;
+            let amounts: string[] = [];
+            try {
+              const dl = await Promise.race([
+                client.download(String(m.uid), undefined, { uid: true }),
+                new Promise<null>((resolve) => setTimeout(() => resolve(null), 45_000).unref?.()),
+              ]);
+              if (dl?.content) {
+                const parsed = await simpleParser(dl.content);
+                amounts = extractAmounts(`${m.subject ?? ""}\n${parsed.text ?? ""}`);
+              } else {
+                amounts = extractAmounts(m.subject ?? "");
+              }
+            } catch {
+              amounts = extractAmounts(m.subject ?? "");
             }
-            if (scanned % 25 === 0) {
-              await persistProgress();
-              console.log(`[finance] mailbox scan progress: ${scanned} scanned, ${indexed} indexed (${folder})`);
+
+            await db
+              .insert(finEmailIndexTable)
+              .values({
+                folder,
+                imapUid: m.uid,
+                messageIdHdr: m.messageId,
+                fromAddress: m.sender ?? null,
+                fromDomain: fromDomain(m.sender),
+                subject: m.subject ?? null,
+                internalDate: m.internalDate,
+                hasPdf: m.hasPdf,
+                amountsFound: amounts,
+              })
+              .onConflictDoNothing({ target: [finEmailIndexTable.folder, finEmailIndexTable.imapUid] });
+            indexed++;
+            if (indexed % 20 === 0) {
+              console.log(`[finance] mailbox scan: ${scanned} scanned, ${indexed} indexed (${folder})`);
             }
           }
           await persistProgress();
-        } catch (folderErr: any) {
-          // Connection died mid-folder — keep what we have and move on.
-          console.error(`[finance] scan of ${folder} interrupted after ${scanned} messages:`, folderErr?.message ?? folderErr);
+        } catch (bodyErr: any) {
+          console.error(`[finance] body pass of ${folder} interrupted after ${indexed} indexed:`, bodyErr?.message ?? bodyErr);
           await persistProgress();
         }
       } finally {

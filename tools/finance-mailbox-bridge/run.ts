@@ -10,6 +10,7 @@
  *   DATABASE_URL=... SESSION_SECRET=... npx tsx tools/finance-mailbox-bridge/run.ts [--from 2026-06-01 [--to 2026-07-01]]
  */
 import { runMailboxSync } from "../../artifacts/api-server/src/lib/finance/mailbox-sync";
+import { pool } from "@workspace/db";
 
 const args = process.argv.slice(2);
 function argVal(flag: string): string | undefined {
@@ -33,8 +34,8 @@ const rangeTo = argVal("--to");
   } finally {
     // Let node exit naturally so stdout flushes — process.exit() truncated
     // the outcome line on the first runs. The pg pool would otherwise keep
-    // the loop alive forever.
-    const { pool } = await import("@workspace/db");
+    // the loop alive forever. (Static import — the dynamic one resolved
+    // against the wrong root and threw after an otherwise clean run.)
     await pool.end().catch(() => undefined);
   }
 })();
