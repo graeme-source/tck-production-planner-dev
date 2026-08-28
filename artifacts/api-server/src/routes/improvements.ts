@@ -109,13 +109,32 @@ router.get("/", async (req: Request, res: Response) => {
     const subjectRows = await db.execute<{ id: number; title: string }>(sql`SELECT id, title FROM lean_subjects`);
     const subjectTitles = new Map((subjectRows.rows ?? []).map(s => [Number(s.id), s.title]));
 
-    res.json(rows.map(r => decorate(
-      r,
-      counts.get(r.id) ?? 0,
-      viewer,
-      votesById.get(r.id) ?? { count: 0, mine: false },
-      r.subjectId != null ? subjectTitles.get(r.subjectId) ?? null : null,
-    )));
+    // Media metadata rides the list so the feed can show photos and play
+    // videos inline (Graeme, 2026-08-28: "like a social media news feed").
+    // Stitched before/after clips sort first — one clip tells the story.
+    const mediaRows = ids.length === 0 ? { rows: [] } : await db.execute<{ id: number; improvement_id: number; kind: string; phase: string | null }>(sql`
+      SELECT id, improvement_id, kind, phase
+        FROM improvement_attachments
+       WHERE improvement_id = ANY(${intArrayLiteral(ids)}::int[])
+       ORDER BY (phase = 'stitched') DESC NULLS LAST, id ASC
+    `);
+    const mediaById = new Map<number, Array<{ id: number; kind: string; phase: string | null }>>();
+    for (const m of (mediaRows.rows ?? [])) {
+      const list = mediaById.get(Number(m.improvement_id)) ?? [];
+      list.push({ id: Number(m.id), kind: m.kind, phase: m.phase });
+      mediaById.set(Number(m.improvement_id), list);
+    }
+
+    res.json(rows.map(r => ({
+      ...decorate(
+        r,
+        counts.get(r.id) ?? 0,
+        viewer,
+        votesById.get(r.id) ?? { count: 0, mine: false },
+        r.subjectId != null ? subjectTitles.get(r.subjectId) ?? null : null,
+      ),
+      media: mediaById.get(r.id) ?? [],
+    })));
   } catch (err) {
     console.error("Error fetching improvement submissions:", err);
     res.status(500).json({ error: "Failed to fetch improvement submissions" });

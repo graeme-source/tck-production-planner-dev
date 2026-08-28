@@ -176,6 +176,15 @@ function printBagLabel(order: ShopifyOrder) {
     || `${order.customer?.first_name ?? ""} ${order.customer?.last_name ?? ""}`.trim()
     || "—";
   const code = collectionCodeOf(order);
+  // Frozen items are ADDED AT COLLECTION (Graeme, 2026-08-28): everything
+  // else is packed into the bag ahead of time, but freezer-stored products
+  // (frozen chickens, brownies, cinnamon buns, F2F...) only leave the
+  // freezer when the customer arrives — so the label lists them for
+  // whoever hands the bag over. "Frozen" = the item's storage location is
+  // in a freezer zone; no product names hard-coded.
+  const frozenItems = order.line_items.filter(li => li.location?.zone === "freezer" && li.quantity > 0);
+  const bagItemCount = order.line_items.filter(li => li.location?.zone !== "freezer").reduce((n, li) => n + li.quantity, 0);
+  const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
   const w = window.open("", "_blank", "width=420,height=560");
   if (!w) return;
   w.document.write(`<!doctype html><html><head><title>Collection ${order.name}</title>
@@ -187,15 +196,23 @@ function printBagLabel(order: ShopifyOrder) {
       .name { font-size: 26px; font-weight: 700; margin: 8px 0; }
       .code-label { font-size: 12px; letter-spacing: 2px; margin-top: 14px; color: #333; }
       .code { font-size: 38px; font-weight: 900; letter-spacing: 4px; border: 2px dashed #000; border-radius: 8px; padding: 6px 10px; display: inline-block; margin-top: 4px; }
+      .frozen { margin-top: 14px; border: 3px solid #000; border-radius: 8px; padding: 10px; text-align: left; background: #e8f4fd; }
+      .frozen-head { font-size: 14px; font-weight: 900; letter-spacing: 1px; text-align: center; margin-bottom: 6px; }
+      .frozen-item { font-size: 16px; font-weight: 700; padding: 2px 0; }
       .foot { margin-top: 14px; font-size: 13px; color: #333; }
       @media print { body { padding: 0; } }
     </style></head><body>
     <div class="label">
       <div class="kind">COLLECTION ORDER</div>
       <div class="order">${order.name}</div>
-      <div class="name">${collector}</div>
-      ${code ? `<div class="code-label">SECURITY CODE</div><div class="code">${code}</div>` : ""}
-      <div class="foot">Keep refrigerated · Hand over on code${code ? "" : " (no code on order — check ID)"}</div>
+      <div class="name">${esc(collector)}</div>
+      ${code ? `<div class="code-label">SECURITY CODE</div><div class="code">${esc(code)}</div>` : ""}
+      ${frozenItems.length > 0 ? `
+      <div class="frozen">
+        <div class="frozen-head">❄ ADD AT COLLECTION — FROM FREEZER ❄</div>
+        ${frozenItems.map(li => `<div class="frozen-item">${li.quantity} × ${esc(li.title)}</div>`).join("")}
+      </div>` : ""}
+      <div class="foot">${bagItemCount} item${bagItemCount === 1 ? "" : "s"} packed in the bag · Keep refrigerated · Hand over on code${code ? "" : " (no code on order — check ID)"}</div>
     </div>
     <script>window.onload = () => { window.print(); };</script>
     </body></html>`);
