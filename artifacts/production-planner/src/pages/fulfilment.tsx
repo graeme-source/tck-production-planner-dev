@@ -195,14 +195,15 @@ function printBagLabel(order: ShopifyOrder) {
       .name { font-size: 26px; font-weight: 700; margin: 8px 0; }
       .code-label { font-size: 12px; letter-spacing: 2px; margin-top: 14px; color: #333; }
       .code { font-size: 38px; font-weight: 900; letter-spacing: 4px; border: 2px dashed #000; border-radius: 8px; padding: 6px 10px; display: inline-block; margin-top: 4px; }
-      .slip { margin-top: 14px; text-align: left; }
-      .slip-head { font-size: 12px; font-weight: 900; letter-spacing: 1.5px; border-bottom: 2px solid #000; padding-bottom: 3px; margin-bottom: 5px; }
-      .slip-item { font-size: 15px; padding: 2px 0; display: flex; gap: 8px; }
-      .slip-qty { font-weight: 900; min-width: 30px; }
-      .frozen { margin-top: 14px; border: 3px solid #000; border-radius: 8px; padding: 10px; text-align: left; background: #e8f4fd; }
-      .frozen-head { font-size: 14px; font-weight: 900; letter-spacing: 1px; text-align: center; margin-bottom: 6px; }
-      .frozen-item { font-size: 16px; font-weight: 700; padding: 2px 0; display: flex; gap: 8px; }
-      .foot { margin-top: 14px; font-size: 13px; color: #333; }
+      .slip { margin-top: 16px; text-align: left; }
+      .slip-head { font-size: 15px; font-weight: 900; letter-spacing: 2px; border-bottom: 3px solid #000; padding-bottom: 4px; margin-bottom: 8px; }
+      .slip-item { font-size: 22px; font-weight: 700; padding: 4px 0; display: flex; gap: 10px; line-height: 1.25; }
+      .slip-qty { font-weight: 900; min-width: 42px; }
+      .frozen { margin-top: 16px; border: 3px solid #000; border-radius: 8px; padding: 12px; text-align: left; background: #e8f4fd; }
+      .frozen-head { font-size: 15px; font-weight: 900; letter-spacing: 1px; text-align: center; margin-bottom: 8px; }
+      .frozen-item { font-size: 22px; font-weight: 800; padding: 4px 0; display: flex; gap: 10px; line-height: 1.25; }
+      .foot { margin-top: 16px; font-size: 13px; color: #333; }
+      @page { size: portrait; margin: 8mm; }
       @media print { body { padding: 0; } }
     </style></head><body>
     <div class="label">
