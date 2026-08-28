@@ -1,6 +1,6 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { db, stockEntriesTable, recipesTable, ingredientsTable, stockItemsTable, usersTable, appSettingsTable, fridgeStockBatchesTable } from "@workspace/db";
-import { eq, and, desc, gt, asc, notInArray } from "drizzle-orm";
+import { eq, and, desc, gt, asc, notInArray, sql } from "drizzle-orm";
 import { CreateStockEntryBody, UpdateStockEntryBody } from "@workspace/api-zod";
 import { validate } from "../middleware/validate";
 import {
@@ -298,6 +298,47 @@ router.post("/reset-fridge-stock", requireAdmin, async (_req, res) => {
     coreMenuOnly,
     resetAt: now.toISOString(),
   });
+});
+
+/**
+ * Rebuild batch-level tracking WITHOUT touching pack counts (Graeme,
+ * 2026-08-28). The batch table had accumulated adds without matching
+ * consumes (pre-chokepoint writers), so FEFO highlights and batch
+ * suggestions were fiction — e.g. 818 "batch packs" of BBQ against a real
+ * count of 53. For each recipe: wipe its batch rows and restart with ONE
+ * row carrying the current aggregate under the unknown-batch sentinel
+ * (use-by today, so FIFO consumes it first). New production adds real
+ * batch rows through the chokepoint, and the table converges to truth as
+ * the old stock ships.
+ */
+router.post("/rebuild-fridge-batches", requireAdmin, async (_req, res) => {
+  const latest = await db.execute<{ recipe_id: number; quantity: string; name: string }>(sql`
+    SELECT se.recipe_id, se.quantity, r.name
+    FROM stock_entries se
+    JOIN recipes r ON r.id = se.recipe_id
+    WHERE se.id IN (
+      SELECT MAX(id) FROM stock_entries
+      WHERE item_type = 'recipe' AND location = 'production_fridge'
+      GROUP BY recipe_id
+    )
+  `);
+  const rows = (latest.rows ?? latest) as { recipe_id: number; quantity: string; name: string }[];
+  const today = new Date().toISOString().slice(0, 10);
+  const rebuilt: Array<{ recipeId: number; name: string; qty: number }> = [];
+  for (const r of rows) {
+    const qty = Math.max(0, Math.round(Number(r.quantity)));
+    await db.delete(fridgeStockBatchesTable).where(eq(fridgeStockBatchesTable.recipeId, r.recipe_id));
+    if (qty > 0) {
+      await db.insert(fridgeStockBatchesTable).values({
+        recipeId: r.recipe_id,
+        batchNumber: 0, // unknown sentinel — consumed first, see lib/fridge-stock
+        useByDate: today,
+        quantity: qty,
+      });
+    }
+    rebuilt.push({ recipeId: r.recipe_id, name: r.name, qty });
+  }
+  res.json({ ok: true, rebuilt, count: rebuilt.length });
 });
 
 /**
