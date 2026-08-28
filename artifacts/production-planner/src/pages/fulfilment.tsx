@@ -1273,10 +1273,16 @@ export default function Fulfilment() {
   // production view (Graeme, 2026-08-28 — the old packing screen was a
   // duplicate of this one).
   const stationPlanId = urlParams.get("plan");
-  const [tag, setTag] = useState(urlTag || today);
-  const [queryTag, setQueryTag] = useState(urlTag || today);
+  // With no ?tag= this page used to land on a date-picker list — a
+  // duplicate of Order Packing Live proper (Graeme, 2026-08-28). Land
+  // straight on the live screen instead: seed tomorrow (deliver tomorrow,
+  // pack today — the operational default), then snap to the next real
+  // dispatch date once the tags load.
+  const tomorrow = format(addDays(new Date(), 1), "yyyy-MM-dd");
+  const [tag, setTag] = useState(urlTag || tomorrow);
+  const [queryTag, setQueryTag] = useState(urlTag || tomorrow);
   const [includeAll, setIncludeAll] = useState(false);
-  const [view, setView] = useState<View>(urlTag ? "list" : "dates");
+  const [view, setView] = useState<View>("list");
   const [, navigate] = useLocation();
   const [activeOrder, setActiveOrder] = useState<ShopifyOrder | null>(null);
   // Orders the packer pressed Skip on. They stay out of the auto-advance
@@ -1540,6 +1546,21 @@ export default function Fulfilment() {
     queryFn: () => fetchOrders(queryTag, includeAll),
     staleTime: 2 * 60 * 1000,
   });
+
+  // No ?tag= in the URL: once the dispatch dates arrive, snap the seeded
+  // tomorrow-guess to the first real dispatch date from today onward.
+  // One-shot so it never fights a manual Load Date override.
+  const autoTagApplied = useRef(false);
+  useEffect(() => {
+    if (urlTag || autoTagApplied.current || !dispatchTags?.length) return;
+    autoTagApplied.current = true;
+    const next = dispatchTags.find(g => g.tag >= today)?.tag ?? dispatchTags[dispatchTags.length - 1].tag;
+    if (next !== queryTag) {
+      setTag(next);
+      setQueryTag(next);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dispatchTags, urlTag]);
 
   const { data: progress, refetch: refetchProgress } = useQuery({
     queryKey: ["fulfilment-dispatch-progress", queryTag],
@@ -4032,11 +4053,8 @@ export default function Fulfilment() {
 
       <div className="flex items-center gap-3">
         <button onClick={() => {
-          if (urlTag) {
-            navigate("/dispatches");
-          } else {
-            setView("dates");
-          }
+          // The date-list view is retired — back always means Dispatches.
+          navigate("/dispatches");
         }} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
           <ArrowLeft className="w-5 h-5" />
           <span className="sr-only">Back</span>
