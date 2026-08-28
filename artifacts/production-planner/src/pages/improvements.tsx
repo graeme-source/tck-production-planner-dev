@@ -67,7 +67,68 @@ type Improvement = {
   votedByMe: boolean;
   subjectTitle: string | null;
   subjectConfirmed: boolean;
+  /** Attachment metadata for the feed — rendered inline like a social
+   *  feed post (Graeme, 2026-08-28). */
+  media?: Array<{ id: number; kind: "image" | "video"; phase: "before" | "after" | "stitched" | null }>;
 };
+
+const mediaUrl = (id: number) => `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/improvements/attachments/${id}`;
+
+/** Inline feed media: the stitched before/after clip IS the story when it
+ *  exists; otherwise a before/after image pair sits side by side, videos
+ *  play in place, and anything past three tiles collapses to "+N". */
+function FeedMedia({ media, onOpen }: { media: Improvement["media"]; onOpen: () => void }) {
+  const items = media ?? [];
+  if (items.length === 0) return null;
+
+  const stitched = items.find(m => m.kind === "video" && m.phase === "stitched");
+  const shown = stitched ? [stitched] : items.slice(0, 3);
+  const hidden = stitched ? 0 : items.length - shown.length;
+
+  const before = !stitched ? shown.find(m => m.kind === "image" && (m.phase === "before" || m.phase === null)) : undefined;
+  const after = !stitched ? shown.find(m => m.kind === "image" && m.phase === "after") : undefined;
+  const pair = before && after;
+  const rest = pair ? shown.filter(m => m !== before && m !== after) : shown;
+
+  const img = (m: NonNullable<Improvement["media"]>[number], label?: string) => (
+    <button key={m.id} onClick={onOpen} className="relative block w-full overflow-hidden rounded-xl">
+      <img src={mediaUrl(m.id)} alt={label ?? "Improvement photo"} loading="lazy" className="w-full max-h-80 object-cover" />
+      {label && (
+        <span className="absolute top-2 left-2 text-[11px] font-bold px-2 py-0.5 rounded-full bg-black/60 text-white uppercase tracking-wide">{label}</span>
+      )}
+    </button>
+  );
+  const vid = (m: NonNullable<Improvement["media"]>[number], label?: string) => (
+    <div key={m.id} className="relative w-full overflow-hidden rounded-xl bg-black">
+      <video src={mediaUrl(m.id)} controls playsInline preload="metadata" className="w-full max-h-96" />
+      {label && (
+        <span className="absolute top-2 left-2 text-[11px] font-bold px-2 py-0.5 rounded-full bg-black/60 text-white uppercase tracking-wide pointer-events-none">{label}</span>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="mt-3 space-y-2">
+      {stitched && vid(stitched, "Before → After")}
+      {pair && (
+        <div className="grid grid-cols-2 gap-2">
+          {img(before!, "Before")}
+          {img(after!, "After")}
+        </div>
+      )}
+      {rest.filter(m => !stitched).map(m =>
+        m.kind === "video"
+          ? vid(m, m.phase === "before" ? "Before" : m.phase === "after" ? "After" : undefined)
+          : img(m, m.phase === "before" ? "Before" : m.phase === "after" ? "After" : undefined)
+      )}
+      {hidden > 0 && (
+        <button onClick={onOpen} className="w-full py-2 rounded-xl bg-secondary text-sm font-semibold text-muted-foreground hover:bg-secondary/70">
+          +{hidden} more photo{hidden === 1 ? "" : "s"} — open to see all
+        </button>
+      )}
+    </div>
+  );
+}
 
 type ScoreRow = { userId: number | null; name: string; count: number; signedOff: number; lastAt: string | null };
 
@@ -155,6 +216,15 @@ export default function Improvements() {
           )}
 
           <Scoreboard />
+
+          {/* The feed invites scrolling — meet the reader at the bottom of
+              it with the same call to action as the top. */}
+          <button
+            onClick={() => setLogging(true)}
+            className="w-full h-16 rounded-2xl bg-primary text-primary-foreground text-xl font-bold flex items-center justify-center gap-3 hover:opacity-90 active:scale-[0.99] transition-all shadow-lg shadow-primary/20"
+          >
+            <Plus className="w-6 h-6" /> Log an improvement
+          </button>
         </>
       )}
 
@@ -192,11 +262,12 @@ function Section({ title, icon, children, empty }: {
 }
 
 function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
+  // A feed post, not a button: the header and metadata open the item, but
+  // videos play right here in the feed — nesting a player inside a button
+  // would fight every tap (Graeme, 2026-08-28: "like a WhatsApp group").
   return (
-    <button
-      onClick={onOpen}
-      className="w-full text-left rounded-2xl border-2 border-border bg-card hover:border-primary/50 active:scale-[0.995] transition-all p-4 shadow-sm"
-    >
+    <div className="w-full text-left rounded-2xl border-2 border-border bg-card hover:border-primary/50 transition-all p-4 shadow-sm">
+      <button onClick={onOpen} className="w-full text-left">
       <div className="flex items-start justify-between gap-3">
         <p className="text-xl font-bold leading-snug break-words flex-1">{item.title}</p>
         <span className={cn("text-xs px-2.5 py-1 rounded-lg font-bold whitespace-nowrap", STAGE_STYLE[item.stage])}>
@@ -222,7 +293,9 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
           <span className="text-amber-600 font-semibold">Needs a photo</span>
         )}
       </div>
-    </button>
+      </button>
+      <FeedMedia media={item.media} onOpen={onOpen} />
+    </div>
   );
 }
 
