@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   BookOpen, X, Loader2, Plus, Upload, Trash2, Filter, ChevronLeft, ChevronRight,
   Edit2, ArrowUp, ArrowDown, FileText, Image as ImageIcon, Camera, CheckCircle2,
-  Search, ChevronDown, Check, Printer, Sparkles,
+  Search, ChevronDown, Check, Printer, Sparkles, Video, Film,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -1274,6 +1274,55 @@ function Editor({
     }
   };
 
+  // "Start from a video" — the front door to the AI drafter (Graeme,
+  // 2026-08-28: the build-from-video button was buried behind create SOP →
+  // add empty step → upload video onto it; nobody ever found it). One tap:
+  // create the source step, upload the clip, let the AI draft the steps.
+  const [videoBuildPhase, setVideoBuildPhase] = useState<null | "uploading" | "building">(null);
+  const startVideoCameraRef = useRef<HTMLInputElement>(null);
+  const startVideoPickRef = useRef<HTMLInputElement>(null);
+
+  const startFromVideo = async (file: File) => {
+    setVideoBuildPhase("uploading");
+    try {
+      const stepResp = await fetch(`/api/standards/${sopId}/steps`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: "Source video — the steps below were drafted from this clip." }),
+      });
+      if (!stepResp.ok) throw new Error(`HTTP ${stepResp.status}`);
+      const newStep: { id: number } = await stepResp.json();
+
+      const form = new FormData();
+      form.append("video", file);
+      const upResp = await fetch(`/api/standards/steps/${newStep.id}/video`, {
+        method: "POST", credentials: "include", body: form,
+      });
+      if (!upResp.ok) throw new Error((await upResp.json().catch(() => ({}))).error || `Upload failed (${upResp.status})`);
+
+      setVideoBuildPhase("building");
+      const buildResp = await fetch(`/api/standards/${sopId}/steps/${newStep.id}/build-from-video`, {
+        method: "POST", credentials: "include",
+      });
+      const build = await buildResp.json().catch(() => ({}));
+      if (!buildResp.ok) throw new Error(build.error || `Build failed (${buildResp.status})`);
+
+      toast({
+        title: `Drafted ${build.stepsCreated} step${build.stepsCreated === 1 ? "" : "s"} from the video`,
+        description: build.transcriptUsed
+          ? "The AI watched the video and listened to the narration. Read the steps and fix anything it misheard."
+          : "The AI watched the video (voice transcription is not switched on, so narration was not used). Read the steps and edit freely.",
+      });
+      fetchDetail();
+    } catch (err) {
+      toast({ title: "Couldn't build from the video", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+      fetchDetail(); // the source step may exist — show it rather than hide it
+    } finally {
+      setVideoBuildPhase(null);
+    }
+  };
+
   const moveStep = async (stepId: number, direction: -1 | 1) => {
     if (!sop) return;
     const idx = sop.steps.findIndex(s => s.id === stepId);
@@ -1452,8 +1501,59 @@ function Editor({
                   </button>
                 </div>
                 {sop.steps.length === 0 && (
-                  <div className="border-2 border-dashed border-border rounded-xl p-6 text-center text-muted-foreground text-sm">
-                    No steps yet. Tap &ldquo;Add step&rdquo; to start.
+                  <div className="border-2 border-dashed border-violet-300 dark:border-violet-800 rounded-xl p-6 space-y-3 text-center">
+                    <input
+                      ref={startVideoCameraRef}
+                      type="file"
+                      accept="video/*"
+                      capture="environment"
+                      className="hidden"
+                      onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void startFromVideo(f); }}
+                    />
+                    <input
+                      ref={startVideoPickRef}
+                      type="file"
+                      accept="video/*"
+                      className="hidden"
+                      onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void startFromVideo(f); }}
+                    />
+                    {videoBuildPhase ? (
+                      <div className="py-4 flex flex-col items-center gap-3 text-muted-foreground">
+                        <Loader2 className="w-8 h-8 animate-spin text-violet-500" />
+                        <p className="font-semibold text-foreground">
+                          {videoBuildPhase === "uploading" ? "Uploading the video…" : "AI is watching the video… (1–2 minutes)"}
+                        </p>
+                        <p className="text-sm">Steps with photos will appear below when it's done.</p>
+                      </div>
+                    ) : (
+                      <>
+                        <Sparkles className="w-7 h-7 mx-auto text-violet-500" />
+                        <p className="font-bold text-foreground text-base">
+                          Fastest way: film the job being done
+                        </p>
+                        <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                          Record someone doing it start to finish — talking through it as they go —
+                          and the AI drafts the steps, each with a photo from the video.
+                        </p>
+                        <div className="flex flex-col sm:flex-row gap-2 justify-center pt-1">
+                          <button
+                            onClick={() => startVideoCameraRef.current?.click()}
+                            className="px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 flex items-center justify-center gap-2"
+                          >
+                            <Video className="w-4 h-4" /> Record a video now
+                          </button>
+                          <button
+                            onClick={() => startVideoPickRef.current?.click()}
+                            className="px-4 py-2.5 rounded-xl border border-violet-300 dark:border-violet-700 text-sm font-semibold text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-900/20 flex items-center justify-center gap-2"
+                          >
+                            <Film className="w-4 h-4" /> Use a video from this device
+                          </button>
+                        </div>
+                        <p className="text-xs text-muted-foreground pt-1">
+                          Or tap &ldquo;Add step&rdquo; above to write it by hand.
+                        </p>
+                      </>
+                    )}
                   </div>
                 )}
                 {sop.steps.map((step, i) => (
