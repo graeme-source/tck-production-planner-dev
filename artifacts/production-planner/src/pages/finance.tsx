@@ -21,6 +21,7 @@ import {
   Mail,
   Paperclip,
   RefreshCw,
+  Search as SearchIcon,
   Upload,
   XCircle,
 } from "lucide-react";
@@ -112,6 +113,7 @@ export default function FinancePage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("outstanding");
+  const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<number | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -147,11 +149,20 @@ export default function FinancePage() {
   const data = linesQuery.data;
   const filtered = useMemo(() => {
     const lines = data?.lines ?? [];
-    if (filter === "all") return lines;
-    if (filter === "outstanding") return lines.filter((l) => l.status === "open" || l.status === "identified");
-    if (filter === "matched") return lines.filter((l) => l.status === "matched");
-    return lines.filter((l) => l.status === "done" || l.status === "not_needed");
-  }, [data, filter]);
+    let out = lines;
+    if (filter === "outstanding") out = lines.filter((l) => l.status === "open" || l.status === "identified");
+    else if (filter === "matched") out = lines.filter((l) => l.status === "matched");
+    else if (filter === "done") out = lines.filter((l) => l.status === "done" || l.status === "not_needed");
+    const q = search.trim().toLowerCase();
+    if (q) {
+      out = out.filter((l) => {
+        const vendor = l.vendorId ? data?.vendors[l.vendorId] : null;
+        return [l.descriptor, l.merchant, vendor?.name, l.cardholder, l.cardLast4, l.statusNote, l.amount, l.lineDate]
+          .some((v) => v && String(v).toLowerCase().includes(q));
+      });
+    }
+    return out;
+  }, [data, filter, search]);
 
   const outstandingTotal = useMemo(() => {
     const lines = data?.lines ?? [];
@@ -214,13 +225,31 @@ export default function FinancePage() {
         </Card>
       </div>
 
-      {/* Filter tabs */}
-      <div className="flex gap-2 flex-wrap">
+      {/* Filter tabs + search */}
+      <div className="flex gap-2 flex-wrap items-center">
         {FILTERS.map((f) => (
           <Button key={f.key} size="sm" variant={filter === f.key ? "default" : "outline"} onClick={() => setFilter(f.key)}>
             {f.label}
           </Button>
         ))}
+        <div className="relative flex-1 min-w-[200px] max-w-sm ml-auto">
+          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search supplier, amount, card, note…"
+            className="pl-9"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch("")}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label="Clear search"
+            >
+              <XCircle className="h-4 w-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Lines */}
