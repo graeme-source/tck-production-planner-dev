@@ -65,6 +65,18 @@ async function doSync(): Promise<SyncOutcome> {
     secure: true,
     auth: { user: box.emailAddress, pass: password },
     logger: false,
+    // A 3-month backfill over a shared host is slow; give commands room.
+    socketTimeout: 10 * 60_000,
+  });
+  // CRASH-PROOFING (live outage 2026-08-28): ImapFlow is an EventEmitter and
+  // emits 'error' for socket-level failures BETWEEN awaited operations (e.g.
+  // socket timeout mid-scan). With no listener, Node treats it as an
+  // unhandled 'error' event and kills the whole process — which took the
+  // live app down during Graeme's first big sync. The in-flight command
+  // still rejects and is handled by the try/catch below; this listener just
+  // absorbs the emitter-level duplicate.
+  client.on("error", (err: any) => {
+    console.error("[finance] IMAP connection error:", err?.message ?? err);
   });
 
   let scanned = 0;
@@ -248,6 +260,11 @@ export async function fetchAttachmentForMessage(
     secure: true,
     auth: { user: box.emailAddress, pass: openSecret(box.passwordEnc) },
     logger: false,
+    socketTimeout: 2 * 60_000,
+  });
+  // Same crash-proofing as the sync client (see above).
+  client.on("error", (err: any) => {
+    console.error("[finance] IMAP connection error:", err?.message ?? err);
   });
   try {
     await client.connect();
