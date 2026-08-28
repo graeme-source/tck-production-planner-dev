@@ -45,6 +45,16 @@ describe("scoreLineAgainstEmail", () => {
     expect(s).toBeNull();
   });
 
+  it("a PDF plus a close date is NOT evidence — needs amount or merchant", () => {
+    // The Starlink/Puffin case (2026-08-28): unrelated supplier, right
+    // week, PDF attached — must not be suggested.
+    const s = scoreLineAgainstEmail(
+      line({ merchant: "STARLINK INTERNET" }),
+      email({ fromDomain: "puffinpackaging.co.uk", fromAddress: "orders@puffinpackaging.co.uk", subject: "Sales Shipment 109077", amountsFound: [], hasPdf: true })
+    );
+    expect(s).toBeNull();
+  });
+
   it("matches the supplier-side original amount for foreign-currency lines", () => {
     const s = scoreLineAgainstEmail(
       line({ merchant: "RAILWAY", descriptor: "RAILWAY", amount: "14.93", originalAmount: "20.00" }),

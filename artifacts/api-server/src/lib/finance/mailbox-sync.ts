@@ -308,7 +308,16 @@ export async function refreshSuggestions(): Promise<number> {
       lineDate: l.lineDate,
       vendorDomains: l.vendorId ? (vendorDomains.get(l.vendorId) ?? []) : [],
     };
-    const emails: EmailForMatch[] = candidates.map((c) => ({
+    // Duplicate deliveries of the same email (same Message-ID under
+    // different UIDs — CC copies, resends) collapse to one candidate.
+    const seenMsgIds = new Set<string>();
+    const deduped = candidates.filter((c) => {
+      if (!c.messageIdHdr) return true;
+      if (seenMsgIds.has(c.messageIdHdr)) return false;
+      seenMsgIds.add(c.messageIdHdr);
+      return true;
+    });
+    const emails: EmailForMatch[] = deduped.map((c) => ({
       id: c.id,
       fromDomain: c.fromDomain,
       fromAddress: c.fromAddress,
@@ -329,6 +338,15 @@ export async function refreshSuggestions(): Promise<number> {
           setWhere: sql`${finMatchesTable.state} = 'suggested'`,
         });
     }
+    // Purge undecided suggestions that no longer qualify under the current
+    // rules (e.g. the pdf-plus-date junk this rule change removes). Human
+    // decisions — confirmed/rejected — are never touched.
+    const keepIds = suggestions.map((s) => s.emailIndexId);
+    await db.delete(finMatchesTable).where(and(
+      eq(finMatchesTable.lineId, l.id),
+      eq(finMatchesTable.state, "suggested"),
+      keepIds.length > 0 ? sql`${finMatchesTable.emailIndexId} NOT IN (${sql.join(keepIds.map(id => sql`${id}`), sql`, `)})` : sql`TRUE`,
+    ));
     if (suggestions.length > 0) refreshed++;
   }
   return refreshed;

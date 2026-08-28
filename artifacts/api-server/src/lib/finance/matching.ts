@@ -48,6 +48,12 @@ function amountsEqual(a: string, b: string): boolean {
 export function scoreLineAgainstEmail(line: LineForMatch, email: EmailForMatch): MatchSuggestion | null {
   const reasons: string[] = [];
   let points = 0;
+  // Real evidence = the amount appears, or the sender/subject ties to the
+  // merchant. Date proximity and a PDF attachment are only ever
+  // tiebreakers — "an email with a PDF from around the right date"
+  // described half the inbox and produced junk suggestions (Graeme,
+  // 2026-08-28: Puffin Packaging offered against a Starlink charge).
+  let hasEvidence = false;
 
   // Date window: emails from 30 days before to 5 days after the purchase.
   const offset = dayOffset(line, email);
@@ -60,29 +66,31 @@ export function scoreLineAgainstEmail(line: LineForMatch, email: EmailForMatch):
   const amountHit = email.amountsFound.some(
     (a) => amountsEqual(a, line.amount) || (line.originalAmount ? amountsEqual(a, line.originalAmount) : false)
   );
-  if (amountHit) { points += 40; reasons.push(`amount ${line.amount} appears in the email`); }
+  if (amountHit) { points += 40; hasEvidence = true; reasons.push(`amount ${line.amount} appears in the email`); }
 
   // Merchant: known vendor domain beats name similarity.
   const merchantName = line.merchant ?? line.descriptor;
   if (email.fromDomain && line.vendorDomains.includes(email.fromDomain.toLowerCase())) {
     points += 30;
+    hasEvidence = true;
     reasons.push(`sender ${email.fromDomain} is this supplier's known domain`);
   } else {
     const senderText = `${email.fromAddress ?? ""} ${email.subject ?? ""}`;
     const token = normaliseMerchant(merchantName).split(" ")[0];
     if (token && token.length >= 4 && senderText.toUpperCase().includes(token)) {
       points += 18;
+      hasEvidence = true;
       reasons.push(`"${token}" appears in the sender/subject`);
     } else if (email.fromDomain && merchantsLooselyMatch(merchantName, email.fromDomain.split(".")[0])) {
       points += 18;
+      hasEvidence = true;
       reasons.push(`sender domain resembles "${normaliseMerchant(merchantName)}"`);
     }
   }
 
   if (email.hasPdf) { points += 10; reasons.push("has a PDF attachment"); }
 
-  // Never suggest on date alone — needs amount or merchant evidence.
-  if (reasons.length === 0) return null;
+  if (!hasEvidence) return null;
 
   return { emailIndexId: email.id, score: Math.min(100, points), reasons };
 }
