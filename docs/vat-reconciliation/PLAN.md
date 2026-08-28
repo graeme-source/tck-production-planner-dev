@@ -15,12 +15,17 @@ version is the one to approve or amend.
 
 ## 1. The problem and the shape of the answer
 
-**How the bookkeeping actually works:** nothing is posted to QuickBooks until the invoice
-is in hand. Posting early means coming back, validating, and reprocessing — double work.
-So the transactions that need invoices are, almost by definition, **not in QuickBooks
-yet** — and the QuickBooks API cannot see the "For Review" bank-feed queue (confirmed:
-Intuit policy, permanent). Any design that asks the bookkeepers to change how they post
-creates the work this app exists to remove. Their workflow does not change. At all.
+**How the bookkeeping actually works** (refined 27 Aug against the real "Outstanding
+Transactions" Google Sheet): the ideal is not to post until the invoice is in hand, but
+in practice the bookkeepers often **do post with a best-guess category and an estimated
+VAT split** ("Posted to factory equipment — need invoice", "KC posted with VAT split —
+please provide invoice") and then track the missing document by hand in the sheet. Other
+lines sit unposted ("Not posted"). So the missing-invoice population spans **both** sides
+of QuickBooks — posted-but-undocumented and not-yet-posted — and the QuickBooks API
+cannot see the unposted side (the "For Review" queue is walled off; Intuit policy,
+permanent). Any design that asks the bookkeepers to change how they post creates the
+work this app exists to remove. Their workflow does not change. At all. The Google Sheet,
+however, retires: the app *is* that sheet, automated.
 
 **So the app works in front of QuickBooks, not behind it:**
 
@@ -36,8 +41,19 @@ creates the work this app exists to remove. Their workflow does not change. At a
 4. Genuinely missing invoices get a drafted chase email that appears in Graeme's Apple
    Mail drafts folder for him to review and send.
 5. When the bookkeeper posts the transaction in QuickBooks — exactly as she does today —
-   the app notices via its hourly sync and closes the line automatically. **Posting is
-   the "done" signal. Nobody ever ticks anything off.**
+   the app notices via its hourly sync. **A line closes itself when it is both posted
+   and adequately documented; nobody ever ticks anything off.** "Adequately" depends on
+   the line (next point): a posted line still missing its document stays open as
+   "posted — invoice still needed", which is exactly the state the green notes in the
+   Google Sheet track by hand today.
+6. **"Adequate" is judged against what the line actually needs.** A UK purchase with VAT
+   to reclaim needs a proper VAT invoice. An international or no-VAT purchase (Railway,
+   many SaaS tools, foreign suppliers) has no VAT to reclaim — a receipt or order
+   confirmation is normally sufficient evidence there, and the app treats it as
+   completing the line rather than flagging it forever. This one rule dissolves the
+   recurring "is an order confirmation good enough?" back-and-forth: the app answers it
+   per line, explicitly, instead of the accountants and Graeme re-litigating it by
+   email.
 
 **Decisions locked in from conversation with Graeme (27 Aug):**
 
@@ -54,7 +70,9 @@ creates the work this app exists to remove. Their workflow does not change. At a
 - No summary emails — the summary is the top of the dashboard they already log into.
 - Push found PDFs into QuickBooks: **yes**.
 - One-time backfill of the last 2–3 months; the app is a going-forward fix.
-- 2FA on one.com will be enabled (unlocks a dedicated app password for the connection).
+- one.com has no per-mailbox app passwords (checked 27 Aug — its 2FA covers the control
+  panel login only, now enabled). The app connects with the mailbox password itself,
+  exactly as Apple Mail does, stored encrypted.
 - **New: delivery-door photo capture** — staff photograph invoices/delivery notes as
   goods arrive; the photos land on the bookkeepers' dashboard the same day. See below.
 - **New: the app is an advisor, not just a filing cabinet.** The goal (Graeme, 27 Aug
@@ -103,7 +121,30 @@ gets its learning loops in Phase 3 alongside the matching engine, which feeds it
 
 Capital on Tap's website has an export button that downloads the card's transaction
 history as a spreadsheet file (CSV): one row per transaction — date, merchant descriptor,
-amount. There is no proper API for cardholders (verified — their accounting integration
+amount. **A real export is now in hand** (28 Jul–27 Aug, saved at
+`docs/vat-reconciliation/samples/capital-on-tap-2026-08.csv` as the parser's reference
+fixture), and it's richer than planned for:
+
+- **Both dates**: separate authorisation and clearance dates per line — the
+  auth-vs-settlement drift the matcher worried about is handed to us directly (match
+  against the authorisation date, the one closest to when the order was placed).
+- **A pre-cleaned `Merchant Name` column** alongside the raw descriptor — the
+  normalisation problem starts half-solved.
+- **`Cardholder Name` per line** — buyer attribution for free (three cardholders in the
+  sample: Graeme, Jane Miles, Jacqueline Carter).
+- **Foreign currency handled natively**: `Original Amount` + `Original Currency` (e.g.
+  Railway $20.00 → £14.93, Klaviyo $1,235 → £919.45) — no exchange-rate table needed for
+  card lines; the implied rate is on the row.
+- **Repayments are explicit**: negative "Payment made (…)" rows, excluded by rule.
+- A `Has Receipts` column — Capital on Tap has its own receipt-attachment feature
+  (unused: all "No"). Noted as a possible future complement, not part of this design —
+  the bookkeepers live in QuickBooks, not the card portal.
+- Sample volume: 96 purchase lines, ~£35.8k spend in the month — against ~34 unresolved
+  lines in four months on the outstanding sheet. So ~90% of lines already resolve
+  themselves through existing habits; the app's matching effort aims at the ~10%/month
+  tail, while its storage/advice value applies to everything.
+
+There is no proper API for cardholders (verified — their accounting integration
 feeds QuickBooks' For Review queue, the one place the API can't read), so the export is
 the clean route.
 
@@ -136,6 +177,32 @@ written off this quarter") and teach the app each vendor's VAT profile.
 Known limitation, stated honestly: a brand-new charge is invisible to the app until the
 next export lands. Bounded by the upload rhythm; the acceptable cost of leaving the
 bookkeepers' workflow untouched.
+
+### 2.2a Seed data: the Outstanding Transactions backlog
+
+The current manual system — the shared Google Sheet where the team logs transactions
+they can't document and Graeme hunts — is **replaced outright, immediately**. Graeme has
+supplied its full contents (screenshot, 27 Aug — roughly 35 open lines, ~£4,800 gross,
+aging back to April); that data is seeded into the app during Phase 1 as the opening
+backlog, statuses and notes included ("posted — need invoice", "not posted", "KC posted
+with VAT split", "chasing"). Nobody exports, shares, or updates the sheet again. The
+backlog also taught the plan things it now reflects: multiple cards are in play (the REF
+column holds card last-four digits — 3465, 9275, 3456, 7859 — mapping to team members,
+so lines carry per-card, per-buyer attribution), roughly half the outstanding lines are
+recurring subscriptions, and the bookkeepers have asked for the bank/card provider to be
+shown per line — the app does that natively.
+
+### 2.2b Moment-of-purchase capture (Graeme's addition)
+
+For odd, one-off purchases from random websites — the hardest lines to reconstruct weeks
+later — Graeme records them **at the moment of buying**, from his phone, in whatever form
+is fastest: a dictated/typed note ("just bought a replacement pump from Aluxo, about
+£315"), or a screenshot of the order confirmation. The app files it as a *pending
+purchase*; when the card line arrives days later, it matches on amount/date/supplier and
+the bookkeeper gets the full story without anyone reconstructing anything. Same phase as
+the delivery-door photos — it's the same principle (capture at the moment, not after)
+applied to online buying instead of the goods-in door. The planner already has an AI
+quick-add pattern (founder tasks) to reuse for parsing the free-text note.
 
 ### 2.3 Delivery-door photo capture (Graeme's addition — new)
 
@@ -219,6 +286,11 @@ these files come from arbitrary external senders.
   **The exact UK shapes are verified empirically in Phase 0** — a UK sandbox (region is
   permanent at creation; must be created as UK) plus a read-only pull of ~20 real
   transactions — before any matching logic depends on them.
+- **Cost:** Intuit's developer platform charges usage fees since mid-2025, but the free
+  tier allows 500,000 read operations/month and writes are free. Our design (one company,
+  hourly change-detection sync) uses roughly 1,000–3,000 reads/month — under 1% of the
+  free tier. Effectively £0, with a watch-item: if Intuit ever shrinks the free tier,
+  our usage is small enough that even the design's worst case stays far inside it.
 - **Tokens:** access tokens live 1 hour; refresh tokens live 100 days **but rotate
   roughly daily** — the app persists each new pair atomically before using it, refreshes
   proactively at ~45 minutes, and serialises refreshes behind a database lock so
@@ -242,10 +314,11 @@ these files come from arbitrary external senders.
 ## 5. The mailbox connection (one.com IMAP)
 
 - Connects to `imap.one.com` (SSL) exactly as Apple Mail does, authenticated with a
-  dedicated **app password** (unlocked once 2FA is enabled — Graeme will set this up).
+  the **mailbox password** — one.com offers no per-mailbox app passwords (confirmed
+  27 Aug; its 2FA protects only the control panel login, which Graeme has now enabled).
   Because this is IMAP and not Gmail, the entire Google verification bureaucracy from
   earlier drafts simply doesn't exist.
-- Honest trade-off: an IMAP app password is full-mailbox access — there's no read-only
+- Honest trade-off: the IMAP password is full-mailbox access — there's no read-only
   variant. Mitigations: it's encrypted at rest (below), the app contains **no code paths
   that delete or send mail at all**, and the password is revocable in one.com's control
   panel in seconds.
@@ -343,7 +416,19 @@ recognises Amazon descriptors, marks lines *identified*, and links to the orders
 No order-email harvesting, no clever machinery — revisit only if Amazon lines turn out
 to clog the review queue. Focus stays on other suppliers.
 
-### 6.3 Chasing
+### 6.3 Chasing — and the recurring-subscription rule
+
+**Recurring subscriptions get their own treatment, not chases.** The real outstanding
+list is dominated by them — Apple (twice monthly), one.com, Slack, Railway, Gigaclear,
+Starlink, HP Instant Ink, Indeed. Emailing Railway a chase is pointless: as Graeme says,
+they post "you have a new bill" and the invoice lives behind a login. For these, the
+supplier profile stores *where the invoice lives* (portal URL, which login, any direct
+invoice-page link) and the app rolls every portal-dwelling invoice into **one monthly
+"portal run" checklist** — a single sitting of ten downloads with links, instead of ten
+scattered nags across the month. Each new month's charge from a known subscription
+auto-creates its checklist entry; many of these are also international/no-VAT, where the
+emailed receipt already suffices (see the "adequate evidence" rule) and nothing needs
+doing at all.
 
 - **Priority is expected VAT at stake, not count.** TCK is a food business — much spend
   is zero-rated, where a chase recovers £0. Each vendor carries a learned VAT profile
@@ -367,7 +452,7 @@ to clog the review queue. Focus stays on other suppliers.
 
 ## 7. Security, privacy, compliance
 
-- **Credentials** (QuickBooks tokens, one.com app password) encrypted at the application
+- **Credentials** (QuickBooks tokens, one.com mailbox password) encrypted at the application
   layer (AES-256-GCM, key in a Railway env var). Reason: Railway's daily backups copy
   the database; plaintext credentials would make every backup a standing key to the
   mailbox. Encrypted, a leaked backup is inert. Never logged; auth headers redacted in
@@ -402,16 +487,22 @@ Graeme's question: this is a fundamental, common business problem — what would
 company in the world be doing? Honest answer, ranked by leverage for TCK, with what each
 one costs:
 
-**1. A dedicated invoices email address — the single biggest missing piece.**
-Well-run companies never let supplier invoices land in the founder's personal inbox.
-Create `invoices@thecalzonekitchen.co.uk` on one.com (minutes, no extra cost) and make it
-the accounts email on every supplier account, one at a time, as each supplier next comes
-up. Future invoices then arrive somewhere the app and the bookkeepers can see by default
-— Graeme's inbox stops being the bottleneck, and the chase problem shrinks at the source
-instead of being processed harder. The app watches both mailboxes (same IMAP machinery;
-graeme@ keeps mattering for history and stragglers). Every chase email the app drafts
-asks the supplier to send future invoices to invoices@ — so the fix spreads itself.
-**Adopted: recommended for Phase 1, decision is Graeme's.**
+**1. A dedicated accounts email address — exists, with a real limitation.**
+TCK already has `accounts@thecalzonekitchen.co.uk`. But Graeme's constraint (27 Aug) is
+structural: most supplier accounts allow **one email address**, which doubles as the
+login — and it has to be his, because 2FA codes and password resets land there, and he
+needs to order at will. Marketing spam to the accounts address is also unwanted. So the
+realistic rule is: **use the accounts address only where a supplier separates "billing
+email" from "login email"** (many do — set it and forget it), and everywhere else let
+invoices land in graeme@ — which is fine, *because reading graeme@ automatically is
+precisely what this app does*. The app's mailbox-scouring converts the personal-inbox
+bottleneck from a process problem into a solved technical one. The related shared-login
+pain (bookkeepers locked out of supplier portals by 2FA codes going to Graeme) is real
+but separate — the practical fix is a shared password manager whose vault holds the
+authenticator-app codes too (1Password-style, so codes generate for whoever has vault
+access, no inbox needed, wherever suppliers offer authenticator 2FA). Noted for Graeme;
+not an app feature. **The app watches both mailboxes if accounts@ receives anything
+today — to confirm.**
 
 **2. Fix it at the source: trade accounts with repeat suppliers.**
 The best companies make invoices arrive automatically rather than finding them cleverly.
@@ -471,7 +562,7 @@ cheapest things on this page.
 2. UK QuickBooks sandbox + read-only pull of ~20 real transactions: pin down the UK VAT
    field shapes; verify the unattached-document upload lands nicely in the Attachments
    list.
-3. one.com round trip with an app password: scan speed, the draft-into-Apple-Mail test,
+3. one.com round trip with the mailbox password: scan speed, the draft-into-Apple-Mail test,
    and the local-folders check.
 4. Count the problem: unposted card lines over the last 2–3 months and estimated VAT at
    stake. **If this comes back tiny, we stop and chase them by hand — that outcome is
@@ -483,9 +574,10 @@ CSV upload + dedupe → the line queue; QuickBooks sync + auto-close on posting;
 dashboard (summary block on top — their "digest" lives here, no emails) sorted by
 expected VAT at stake; manual PDF upload + viewer + validity check; bookkeeper access
 level; **supplier profile cards** (editable contacts, website, accounts email, notes —
-the knowledge base's skeleton, learning loops come in Phase 3); and, if Graeme says yes,
-the **invoices@ mailbox** created and shown on the dashboard as the address to give
-suppliers. No email reading yet. **This alone removes most of their information gap.**
+the knowledge base's skeleton, learning loops come in Phase 3); and the **one-time
+import of the Outstanding Transactions Google Sheet** (suppliers, statuses, notes,
+backlog to April), after which the sheet retires. No email reading yet. **This alone
+removes most of their information gap.**
 
 ### Phase 2 — delivery-door photos (~half a week)
 
@@ -521,7 +613,7 @@ ever warm to them.
 | Export habit lapses | High | The queue's freshness rests on a small recurring task. Mitigated: any-time overlap-safe uploads, visible "current to" date, and Phase 0's hunt for full automation. |
 | Line-to-QuickBooks completion matching errs | High | Wrongly closing a line whose invoice is missing is the silent failure the app exists to prevent. Conservative thresholds; ambiguity goes to review, never auto-close. |
 | Wrong invoice auto-attached | High | Looks correct, discovered by an HMRC inspector. Shadow mode, 99%-precision calibration, ambiguity guard, append-only documents, audit log. |
-| Silent sync death (rotated token lost, app password revoked) | High | A stale dashboard looks healthy. Per-connection heartbeats, loud banner after 6 hours, daily alert while broken. |
+| Silent sync death (rotated token lost, mailbox password changed) | High | A stale dashboard looks healthy. Per-connection heartbeats, loud banner after 6 hours, daily alert while broken. |
 | IMAP password is full-access | Med-High | No read-only IMAP exists. Encrypted at rest, no delete/send code paths, revocable in seconds, minimised data retention. Accepted trade. |
 | one.com drafts quirks | Medium | Shared-host IMAP varies. Phase 0 tests before the feature is promised; copy-paste fallback. |
 | Export format drift | Medium | Fixture-tested parsers; failures alarm, never import garbage. |
@@ -551,14 +643,21 @@ ever warm to them.
 
 ## 10. Your actions
 
-One decision plus four small tasks:
+Four small tasks, then a word:
 
-1. **Decide: create `invoices@thecalzonekitchen.co.uk`?** (Recommended — the highest-
-   leverage item on the industry-practice list. Minutes to set up on one.com.)
-2. Enable 2FA on the one.com account and create an app password for the app.
-3. Create the UK QuickBooks sandbox under your Intuit developer account (I'll walk you
-   through it — 10 minutes; the region choice is permanent, so it must be UK).
-4. Ask the bookkeepers to do one Capital on Tap export and send the file over, so the
-   real format is in hand.
-5. Say "go" — approving this plan approves Phase 0 only; each phase ends with a check-in
+1. ~~one.com setup~~ **Done 27 Aug** — control-panel 2FA enabled; no app passwords
+   exist on one.com, so the app will use the mailbox password (entered into the app's
+   settings screen when it exists, never shared in chat). Remember to update it there if
+   the email password ever changes. During Phase 0 we'll also check whether
+   `accounts@thecalzonekitchen.co.uk` receives supplier invoices — if it does, the app
+   watches that mailbox too.
+2. ~~Capital on Tap export~~ **Done 27 Aug** — real file received and saved as the
+   parser's reference sample; findings folded into the plan above.
+3. Create the UK QuickBooks practice company under your Intuit developer account (sign
+   in at developer.intuit.com with your normal QuickBooks login — safe, touches nothing;
+   10 minutes together; the country choice is permanent, so it must be United Kingdom).
+4. Say "go" — approving this plan approves Phase 0 only; each phase ends with a check-in
    before the next starts.
+
+The outstanding-backlog data is already in hand (from the screenshot); the Google Sheet
+needs nothing further from anyone and retires the day Phase 1 ships.

@@ -1,0 +1,39 @@
+# Outstanding Transactions backlog, transcribed from Graeme's screenshot of the Google
+# Sheet, 27 Aug 2026. This is the complete open list (per Graeme) and becomes the app's
+# opening data in Phase 1. Dates are DD/MM, year 2026 (12/04 = 12 April 2026).
+# ref: card last-4 digits, or DD = direct debit, BP = bank payment.
+supplier,ref,date,value,team_member,team_notes
+Indoors Outdoors,3465,12/04,68.00,Graeme,Posted to factory equipment but need invoice
+Costco,3465,07/05,229.99,Graeme,
+Indeed,3465,02/06,124.55,Graeme,Posted as previous invoice needed
+Gigaclear,DD,03/06,120.00,Graeme,Posted as previous invoice needed
+Discount Stickers,3465,05/06,311.99,Graeme,Posted to marketing need invoice
+Apple,3465,15/06,8.99,Graeme,Posted as previous need invoice
+Apple,3465,17/06,10.99,Graeme,Posted as previous need invoice
+Slack,3465,19/06,8.40,Graeme,Posted as previous need invoice
+Hammersley Brothers,3465,21/06,1300.00,Graeme,Posted as previous need invoice
+RS Components,3465,11/06,282.00,Graeme,Factory equipment - KC posted with VAT split - please provide invoice
+RS Components,3465,11/06,139.72,Graeme,Factory equipment - KC posted with VAT split - please provide invoice
+one.com,3465,29/06,7.19,Graeme,x2 invoices for 7.19 - posted as previous invoice needed
+Gigaclear,DD,03/07,120.00,Graeme,Posted as previous invoice needed
+FR Warren - Bristol Plastics,BP,02/07,425.40,Graeme,Graeme chasing; Kate copied in to chase this week (21/07/26)
+Railway,9275,02/07,15.14,Graeme,KC posted to Dues & Subs - no VAT - need invoice
+Indeed,3465,02/07,34.11,Graeme,Posted as previous need invoice
+Aluxo,3465,06/07,315.59,Graeme,Factory equipment - KC posted with VAT split - please provide invoice; waiting for supplier
+Apple,9275,13/07,8.99,Graeme,Posted as previous need invoice
+Apple,3465,16/07,10.99,Graeme,Posted as previous need invoice
+Costco,3465,15/07,429.99,Graeme,Factory equipment - KC posted with VAT split - please provide invoice; waiting for supplier
+HP Instant Ink,3456,26/07,20.99,Graeme,Posted as previous but need invoice
+one.com,3465,23/07,288.90,Graeme,Dues & subs - KC posted with VAT split - please provide invoice
+SP Carpet Warehouse,3465,23/07,105.88,Graeme,Not posted
+one.com,3465,28/07,7.19,Graeme,Posted as previous invoice needed
+one.com,3465,28/07,7.19,Graeme,Posted as previous need invoice
+Screwfix,3465,02/08,15.98,Graeme,Not posted
+Rotherley.com,3465,12/08,29.51,Graeme,Not posted
+Deliciously Guilt,3465,13/08,34.98,Graeme,Not posted
+Apple,9275,13/08,8.99,Graeme,Posted as previous need invoice
+Seedlegals,3465,16/08,58.50,Graeme,Posted as previous need invoice
+Apple,3465,16/08,10.99,Graeme,Posted as previous need invoice
+Bunzl,7859,18/08,58.03,Jane,Not posted
+Aluxo,3465,18/08,79.49,Graeme,Not posted
+Starlink,3465,18/08,107.50,Graeme,Posted as previous need invoice
