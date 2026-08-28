@@ -31,6 +31,7 @@ import Dispatches from "@/pages/dispatches";
 import CaseOrders from "@/pages/case-orders";
 import Suppliers from "@/pages/suppliers";
 import FinancePage from "@/pages/finance";
+import AccessPage from "@/pages/access";
 import Supplies from "@/pages/supplies";
 import Settings from "@/pages/settings";
 import LeanCave from "@/pages/lean-cave";
@@ -110,11 +111,18 @@ const queryClient = new QueryClient({
 
 const PUBLIC_PATHS = ["/accept-invite", "/forgot-password", "/reset-password"];
 
+// Pages a per-user feature grant can unlock even when the role check fails
+// (see the server's feature-access lib — this only mirrors it for routing).
+const PAGE_FEATURES: Record<string, string> = { "/fulfilment": "apc_label_printing" };
+
 function ProtectedRoute({ component: Component, pageKey }: { component: React.ComponentType; pageKey: string }) {
   const { state } = useAuth();
   const { canAccess } = usePagePermissions();
   const role = state.status === "authenticated" ? state.user.role : "viewer";
-  if (!canAccess(role, pageKey)) return <Redirect to="/" />;
+  const features = state.status === "authenticated" ? (state.user.features ?? []) : [];
+  const featureKey = PAGE_FEATURES[pageKey];
+  const viaFeature = featureKey !== undefined && features.includes(featureKey);
+  if (!canAccess(role, pageKey) && !viaFeature) return <Redirect to="/" />;
   return <Component />;
 }
 
@@ -172,6 +180,7 @@ function Router() {
               <Route path="/case-orders" component={CaseOrders} />
               <Route path="/suppliers" component={Suppliers} />
               <Route path="/finance" component={FinancePage} />
+              <Route path="/access" component={AccessPage} />
               <Route path="/supplies">{() => <Redirect to="/inventory?tab=supplies" />}</Route>
               <Route path="/orders" component={Orders} />
               <Route path="/fulfilment">{() => <ProtectedRoute component={Fulfilment} pageKey="/fulfilment" />}</Route>

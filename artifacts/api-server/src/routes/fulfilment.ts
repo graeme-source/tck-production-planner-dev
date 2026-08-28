@@ -5,6 +5,7 @@ import * as z from "zod";
 import { removeTagFromOrder, shopifyAdminOrderUrl, shopifyAdminOrderBase, getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
 import { nextAvailableDeliveryDate, rescheduleTags, withDeliveryDate, rescheduleEmailText, rescheduleEmailHtml, friendlyDate, firstNameOf, toZapietDate } from "../lib/order-reschedule";
 import { validate } from "../middleware/validate";
+import { userHasFeature } from "../lib/feature-access";
 import { sendEmail } from "../lib/email";
 import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService, lookupOrderByReference, lookupOrdersByReference, lookupOrderByWaybill, parseApcBarcode, waybillCore, apcTrackingUrl, type ApcOrderLookup } from "../services/apc";
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
@@ -81,6 +82,11 @@ async function requireFulfilmentAccess(req: Request, res: Response, next: NextFu
       .where(eq(pagePermissionsTable.pageKey, "/fulfilment"));
     const minRole = row?.minRole ?? "manager";
     if ((ROLE_RANK[role] ?? 0) >= (ROLE_RANK[minRole] ?? 1)) { next(); return; }
+  }
+  // Role too low — a per-user feature grant (optionally SOP-training gated)
+  // can still open this page: the APC-label-printing pilot.
+  if (req.session.userId && (await userHasFeature(req.session.userId, "apc_label_printing"))) {
+    next(); return;
   }
   res.status(403).json({ error: "Your role doesn't have access to Order Packing Live — an admin can change this under Settings → Page Access Control" });
 }

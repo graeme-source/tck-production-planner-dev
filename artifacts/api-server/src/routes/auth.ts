@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { allowedFeatureKeys } from "../lib/feature-access";
 import { db, usersTable } from "@workspace/db";
 import { eq, inArray, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
@@ -122,6 +123,7 @@ router.post("/login", loginLimiter, validate(LoginBody), async (req, res) => {
   req.session.userId = user.id;
   req.session.userRole = user.role as "admin" | "manager" | "viewer";
   req.session.pinVerifiedAt = new Date().toISOString();
+  const features = await allowedFeatureKeys(user.id);
   req.session.save((err) => {
     if (err) {
       console.error("Session save error:", err);
@@ -137,6 +139,7 @@ router.post("/login", loginLimiter, validate(LoginBody), async (req, res) => {
       hasPin: !!user.pinHash,
       isProductionPlanner: user.isProductionPlanner ?? false,
       isBookkeeper: user.isBookkeeper ?? false,
+      features,
       onboardingRequired: user.onboardingRequired ?? false,
       onboardingCompletedAt: user.onboardingCompletedAt ? user.onboardingCompletedAt.toISOString() : null,
       passwordResetDeadline: resetDeadline ? resetDeadline.toISOString() : null,
@@ -179,7 +182,8 @@ router.get("/me", async (req, res) => {
     avatarUrl: user.avatarUrl ?? null,
     hasPin: !!user.pinHash,
     isProductionPlanner: user.isProductionPlanner ?? false,
-      isBookkeeper: user.isBookkeeper ?? false,
+    isBookkeeper: user.isBookkeeper ?? false,
+    features: await allowedFeatureKeys(user.id),
     pinRequired,
     onboardingRequired: user.onboardingRequired ?? false,
     onboardingCompletedAt: user.onboardingCompletedAt ? user.onboardingCompletedAt.toISOString() : null,
@@ -350,6 +354,7 @@ router.post("/pin/login", loginLimiter, async (req, res) => {
     .where(eq(usersTable.id, userId));
 
   const resetDeadline = await ensurePasswordResetDeadline(user);
+  const featuresForPinUnlock = await allowedFeatureKeys(user.id);
 
   req.session.userId = user.id;
   req.session.userRole = user.role as "admin" | "manager" | "viewer";
@@ -369,6 +374,7 @@ router.post("/pin/login", loginLimiter, async (req, res) => {
       hasPin: true,
       isProductionPlanner: user.isProductionPlanner ?? false,
       isBookkeeper: user.isBookkeeper ?? false,
+      features: featuresForPinUnlock,
       onboardingRequired: user.onboardingRequired ?? false,
       onboardingCompletedAt: user.onboardingCompletedAt ? user.onboardingCompletedAt.toISOString() : null,
       passwordResetDeadline: resetDeadline ? resetDeadline.toISOString() : null,

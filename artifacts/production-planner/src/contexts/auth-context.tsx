@@ -10,6 +10,10 @@ export type AuthUser = {
   role: "admin" | "manager" | "viewer";
   avatarUrl: string | null;
   hasPin: boolean;
+  isProductionPlanner?: boolean;
+  isBookkeeper?: boolean;
+  /** Feature keys this user can use right now (grants + optional SOP gate). */
+  features?: string[];
   onboardingRequired?: boolean;
   onboardingCompletedAt?: string | null;
   // ISO timestamp of the forced password-reset deadline, or null when the

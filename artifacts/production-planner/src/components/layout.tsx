@@ -91,6 +91,8 @@ export const productNavItems: NavItem[] = [
 
 export const bottomNavItems: NavItem[] = [
   { name: "Lean Cave", href: "/lean-cave", icon: Lightbulb },
+  // Access is filtered to admins where the bottom nav renders.
+  { name: "Access", href: "/access", icon: KeyRound },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
@@ -478,7 +480,7 @@ export function NavLinks({
       </nav>
 
       <div className="px-3 pb-2">
-        {(hideBottomNav ? [] : bottomNavItems).map((item) => {
+        {(hideBottomNav ? [] : bottomNavItems.filter(i => i.href !== "/access" || user?.role === "admin")).map((item) => {
           const isActive = location === item.href;
           return (
             <Link
@@ -571,6 +573,12 @@ export function Layout({ children }: { children: ReactNode }) {
   const visibleInventoryItems = inventorySubItems.filter(item =>
     canAccess(userRole, item.href)
   );
+
+  // Feature grants surface their page for users whose role hides it.
+  const userFeatures = (user as { features?: string[] } | null)?.features ?? [];
+  if (userFeatures.includes("apc_label_printing") && userRole !== "admin" && !visibleNavItems.some(i => i.href === "/fulfilment")) {
+    visibleNavItems.push({ name: "Order Packing Live", href: "/fulfilment", icon: ScanLine });
+  }
 
   const navForUser = accountantOnly ? visibleNavItems.filter(i => i.href === "/finance") : visibleNavItems;
   const productForUser = accountantOnly ? [] : visibleProductItems;
