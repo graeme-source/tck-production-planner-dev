@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
 import { IcePackBadge, IcePackBanner } from "@/components/ice-pack-callout";
+import { DessertsReportCard } from "@/components/desserts-report-card";
 import { useIcePacks } from "@/hooks/use-ice-packs";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
@@ -26,6 +27,7 @@ import {
   RefreshCw, MapPin, SkipForward, RotateCcw, XCircle, Loader2,
   ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter, ArrowUpDown,
   Volume2, VolumeX, AlertTriangle, PackageCheck, Snowflake, CalendarClock,
+  ClipboardCheck, Factory,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -1219,6 +1221,11 @@ export default function Fulfilment() {
   const today = format(new Date(), "yyyy-MM-dd");
   const urlParams = new URLSearchParams(window.location.search);
   const urlTag = urlParams.get("tag");
+  // Arriving from a production plan's packing station: show the station
+  // Checklist/Production tabs so this page IS the packing station's
+  // production view (Graeme, 2026-08-28 — the old packing screen was a
+  // duplicate of this one).
+  const stationPlanId = urlParams.get("plan");
   const [tag, setTag] = useState(urlTag || today);
   const [queryTag, setQueryTag] = useState(urlTag || today);
   const [includeAll, setIncludeAll] = useState(false);
@@ -3944,8 +3951,26 @@ export default function Fulfilment() {
         </button>
       </div>
 
-      {/* Today's ice-pack rule, in sight before the first box is opened. */}
-      <IcePackBanner />
+      {stationPlanId && (
+        <div className="flex items-center gap-1 p-1 bg-secondary/40 rounded-xl w-fit">
+          <button
+            onClick={() => navigate(`/plans/${stationPlanId}/station/packing?view=checklist`)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ClipboardCheck className="w-4 h-4" /> Checklist
+          </button>
+          <button className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-card text-foreground shadow-sm">
+            <Factory className="w-4 h-4" /> Production
+          </button>
+        </div>
+      )}
+
+      {/* Today's ice-pack rule + dessert numbers, in sight before the first
+          box is opened — side by side where the width allows. */}
+      <div className="grid gap-3 lg:grid-cols-2 items-start">
+        <IcePackBanner />
+        <DessertsReportCard tag={queryTag} />
+      </div>
 
       {error && (
         <div className="flex items-center gap-3 p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive">

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useEffect } from "react";
 import { useParams, useLocation } from "wouter";
 import { useGetProductionPlan, getGetProductionPlanQueryKey } from "@workspace/api-client-react";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
@@ -71,6 +71,22 @@ class StationErrorBoundary extends React.Component<
   }
 }
 
+function PackingRedirect({ planId, planDate }: { planId: number; planDate: string }) {
+  const [, navigate] = useLocation();
+  useEffect(() => {
+    // Orders are tagged with the delivery date = the day after packing.
+    const d = new Date(`${planDate}T12:00:00`);
+    d.setDate(d.getDate() + 1);
+    const tag = d.toISOString().slice(0, 10);
+    navigate(`/fulfilment?tag=${tag}&plan=${planId}`, { replace: true });
+  }, [planId, planDate, navigate]);
+  return (
+    <div className="flex items-center justify-center py-16 text-muted-foreground">
+      <Loader2 className="w-5 h-5 animate-spin mr-2" /> Opening Order Packing Live…
+    </div>
+  );
+}
+
 export default function StationPage() {
   const params = useParams<{ planId: string; stationType: string }>();
   const planId = Number(params.planId);
@@ -101,8 +117,13 @@ export default function StationPage() {
     [plan?.status],
   );
 
+  // ?view=checklist|production overrides the time-of-day default — the
+  // fulfilment page's Checklist tab links back here with it.
+  const urlView = new URLSearchParams(window.location.search).get("view");
   const [activeView, setActiveView] = useState<StationView>(
-    checklistsEnabled ? defaults.view : "production",
+    urlView === "checklist" || urlView === "production"
+      ? (urlView as StationView)
+      : checklistsEnabled ? defaults.view : "production",
   );
 
   // If feature gets toggled off while on checklist view, switch back
@@ -157,7 +178,10 @@ export default function StationPage() {
       case "wrapping":
         return <WrappingStation plan={plan} isOnBreak={isOnBreak} />;
       case "packing":
-        return <PackingStation plan={plan} />;
+        // The packing station's production view IS Order Packing Live now
+        // (Graeme, 2026-08-28) — the old screen duplicated it. Redirect
+        // carries the plan id so the fulfilment page shows the station tabs.
+        return <PackingRedirect planId={planId} planDate={plan.planDate} />;
       case "macaroni_cheese":
         return <MacaroniCheeseStation plan={plan} isOnBreak={isOnBreak} />;
       case "dough_prep":
