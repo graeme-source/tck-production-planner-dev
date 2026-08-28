@@ -1735,7 +1735,18 @@ export default function Fulfilment() {
   // A no-label order being rescheduled straight from the list — the failure
   // used to be reachable only by re-attempting the booking.
   const [rescheduleTarget, setRescheduleTarget] = useState<ShopifyOrder | null>(null);
-  const filteredUnfulfilledBase = unfulfilledOrders.filter(passesFilters);
+  // Today's collections ALWAYS ride the main pick list (Graeme,
+  // 2026-08-28): amber rows above the courier orders, immune to the box
+  // filters — the default wave opens on Small, and a same-day collection
+  // hidden behind a filter is a customer at the door with no bag. The
+  // Collection chip narrows TO them (courier orders drop out); no chip
+  // combination drops them. They skip the dispatch-tag and label gates by
+  // design.
+  const collectionsForList = todaysCollectionOrders;
+  const filteredUnfulfilledBase = [
+    ...collectionsForList,
+    ...unfulfilledOrders.filter(passesFilters),
+  ];
   const filteredUnfulfilledOrdered = pickListReversed
     ? [...filteredUnfulfilledBase].reverse()
     : filteredUnfulfilledBase;
@@ -1947,7 +1958,7 @@ export default function Fulfilment() {
     "large box": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "large box").length,
     "wholesale": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "wholesale").length,
     "local delivery": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "local delivery").length,
-    "collection": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "collection").length,
+    "collection": todaysCollectionOrders.length,
     "other": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "other").length,
   };
 
@@ -1969,7 +1980,7 @@ export default function Fulfilment() {
     "large box": unfulfilledOrders.filter(o => getOrderCategory(o) === "large box").length,
     "wholesale": unfulfilledOrders.filter(o => getOrderCategory(o) === "wholesale").length,
     "local delivery": unfulfilledOrders.filter(o => getOrderCategory(o) === "local delivery").length,
-    "collection": unfulfilledOrders.filter(o => getOrderCategory(o) === "collection").length,
+    "collection": todaysCollectionOrders.length,
     "other": unfulfilledOrders.filter(o => getOrderCategory(o) === "other").length,
   };
 
@@ -4082,59 +4093,18 @@ export default function Fulfilment() {
         <DessertsReportCard tag={queryTag} />
       </div>
 
-      {/* Collection orders: packed separately in brown paper bags, never
-          APC. Their own loud card so they can't get mixed into the box
-          waves (Graeme, 2026-08-28). */}
-      {(() => {
-        const collectionOrders = todaysCollectionOrders;
-        if (collectionOrders.length === 0 && collectedTodayCount === 0) return null;
-        return (
-          <div className="rounded-xl border-2 border-amber-500 bg-amber-50 dark:bg-amber-950/30 overflow-hidden">
-            <div className="px-4 py-3 border-b border-amber-300 dark:border-amber-800 flex items-center gap-2">
-              <ShoppingBag className="w-5 h-5 text-amber-700 dark:text-amber-400" />
-              <h3 className="font-bold text-amber-900 dark:text-amber-200">
-                Collection orders — brown paper bags, no APC label
-              </h3>
-              <span className="ml-auto text-sm font-semibold text-amber-800 dark:text-amber-300">
-                {collectionOrders.length} to pack{collectedTodayCount > 0 ? ` · ${collectedTodayCount} done` : ""}
-              </span>
-            </div>
-            <div className="px-4 py-2 text-sm text-amber-900/80 dark:text-amber-200/80">
-              Collections are for TODAY ({today}) — pack separately from the courier orders: paper bag, bag label on, fridge until collected.
-            </div>
-            {collectionOrders.length === 0 && (
-              <div className="px-4 py-3 text-sm text-amber-900/80 dark:text-amber-200/80">All of today's collections are packed.</div>
-            )}
-            <div className="divide-y divide-amber-200 dark:divide-amber-800">
-              {collectionOrders.map(o => (
-                <div key={o.id} className="flex items-center gap-3 px-4 py-2.5">
-                  <div className="flex-1 min-w-0">
-                    <span className="font-bold">{o.name}</span>
-                    <span className="text-sm text-muted-foreground ml-2 truncate">
-                      {o.shipping_address?.name || `${o.customer?.first_name ?? ""} ${o.customer?.last_name ?? ""}`.trim()}
-                    </span>
-                    {collectionCodeOf(o) && (
-                      <span className="ml-2 text-xs font-mono font-bold bg-amber-200 dark:bg-amber-900 px-1.5 py-0.5 rounded">code {collectionCodeOf(o)}</span>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => printBagLabel(o)}
-                    className="text-sm px-3 py-1.5 rounded-lg border border-amber-400 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 flex items-center gap-1.5 font-medium"
-                  >
-                    <Printer className="w-3.5 h-3.5" /> Bag label
-                  </button>
-                  <button
-                    onClick={() => void startPicking(o)}
-                    className="text-sm px-3 py-1.5 rounded-lg bg-amber-600 text-white hover:bg-amber-700 font-semibold"
-                  >
-                    Pack
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      })()}
+      {/* Collections instruction banner — the orders themselves ride the
+          main pick list below as amber rows (Graeme, 2026-08-28). */}
+      {(todaysCollectionOrders.length > 0 || collectedTodayCount > 0) && (
+        <div className="rounded-xl border-2 border-amber-500 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 flex items-center gap-3">
+          <ShoppingBag className="w-5 h-5 text-amber-700 dark:text-amber-400 flex-shrink-0" />
+          <p className="text-sm text-amber-900 dark:text-amber-200">
+            <strong>{todaysCollectionOrders.length} collection order{todaysCollectionOrders.length === 1 ? "" : "s"} for TODAY</strong>
+            {collectedTodayCount > 0 ? ` (${collectedTodayCount} already packed)` : ""} — the amber rows below.
+            Brown paper bag, not a box · print the bag label · fridge until collected.
+          </p>
+        </div>
+      )}
 
       {error && (
         <div className="flex items-center gap-3 p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive">
@@ -4651,6 +4621,7 @@ export default function Fulfilment() {
             // Local deliveries never touch APC, so APC postcode coverage can't
             // block them — the van doesn't care what APC thinks of the postcode.
             const localOrder = isLocalDelivery(order);
+            const collectionOrder = isCollection(order);
             const postcodeIssue = apcMode === "full" && !localOrder ? postcodeIssueMap.get(order.id) : undefined;
             // "Check failed:" = the VALIDATOR broke (e.g. APC auth outage,
             // 2026-08-20 — every order went red at once), not the postcode.
@@ -4670,9 +4641,11 @@ export default function Fulfilment() {
                 key={order.id}
                 className={cn(
                   "glass-panel px-3.5 py-2.5 rounded-xl border flex items-center gap-3 transition-colors group",
-                  isBlocked
-                    ? "border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-950/10"
-                    : "border-border hover:border-primary/30"
+                  collectionOrder
+                    ? "border-amber-500 border-2 bg-amber-100/80 dark:bg-amber-900/40 hover:border-amber-600"
+                    : isBlocked
+                      ? "border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-950/10"
+                      : "border-border hover:border-primary/30"
                 )}
               >
                 <div className={cn(
@@ -4701,6 +4674,11 @@ export default function Fulfilment() {
                     {localOrder && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300 font-medium flex items-center gap-1">
                         <Truck className="w-2.5 h-2.5" /> Local Delivery
+                      </span>
+                    )}
+                    {collectionOrder && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-400 text-amber-950 font-bold flex items-center gap-1">
+                        <ShoppingBag className="w-2.5 h-2.5" /> COLLECTION · BROWN BAG
                       </span>
                     )}
                     {bookedMap.has(order.id) && (
@@ -4802,13 +4780,28 @@ export default function Fulfilment() {
                     )}
                   </button>
                 ) : (
-                  <button
-                    onClick={() => handleOrderSelect(order)}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:bg-primary/90 transition-colors flex-shrink-0"
-                  >
-                    <Scan className="w-4 h-4" /> Start Picking
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {collectionOrder && (
+                      <button
+                        onClick={() => printBagLabel(order)}
+                        className="flex items-center gap-1.5 px-3 py-2 border border-amber-500 text-amber-800 dark:text-amber-300 rounded-xl text-sm font-semibold hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors"
+                      >
+                        <Printer className="w-4 h-4" /> Bag label
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleOrderSelect(order)}
+                      className={cn(
+                        "flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold transition-colors",
+                        collectionOrder
+                          ? "bg-amber-600 text-white hover:bg-amber-700"
+                          : "bg-primary text-primary-foreground hover:bg-primary/90"
+                      )}
+                    >
+                      <Scan className="w-4 h-4" /> Start Picking
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
                 )}
               </div>
             );
