@@ -85,6 +85,7 @@ type MatchRow = {
   subject: string | null;
   internalDate: string | null;
   hasPdf: boolean;
+  snippet?: string | null;
 };
 
 async function jsonFetch(url: string, init?: RequestInit) {
@@ -473,6 +474,17 @@ function SuggestionsBlock({ lineId }: { lineId: number }) {
   });
 
   const open = (matches.data ?? []).filter((m) => m.state === "suggested");
+  const [expandedMatch, setExpandedMatch] = useState<number | null>(null);
+  const [fullEmail, setFullEmail] = useState<{ matchId: number; loading: boolean; error?: string; text?: string; from?: string; attachments?: Array<{ filename: string }> } | null>(null);
+  const openFullEmail = async (matchId: number) => {
+    setFullEmail({ matchId, loading: true });
+    try {
+      const body = await jsonFetch(`${BASE}/api/finance/matches/${matchId}/email`);
+      setFullEmail({ matchId, loading: false, text: body.text, from: body.from, attachments: body.attachments });
+    } catch (e) {
+      setFullEmail({ matchId, loading: false, error: (e as Error).message });
+    }
+  };
   if (matches.isLoading) return <div className="text-sm text-muted-foreground">Checking mailbox suggestions…</div>;
   if (open.length === 0) return null;
 
@@ -481,9 +493,13 @@ function SuggestionsBlock({ lineId }: { lineId: number }) {
       <div className="text-sm font-medium mb-2">Found in the mailbox — is one of these it?</div>
       <div className="space-y-2">
         {open.map((m) => (
-          <div key={m.id} className="flex items-center gap-3 rounded border px-3 py-2">
+          <div key={m.id} className="rounded border px-3 py-2">
+          <div className="flex items-center gap-3">
+            <button onClick={() => setExpandedMatch(expandedMatch === m.id ? null : m.id)} className="shrink-0 text-muted-foreground hover:text-foreground" aria-label="Show email content">
+              {expandedMatch === m.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </button>
             <Mail className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <div className="flex-1 min-w-0">
+            <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setExpandedMatch(expandedMatch === m.id ? null : m.id)}>
               <div className="text-sm truncate">{m.subject ?? "(no subject)"}</div>
               <div className="text-xs text-muted-foreground truncate">
                 {m.fromAddress} · {m.internalDate ? new Date(m.internalDate).toLocaleDateString("en-GB") : ""}
@@ -507,8 +523,49 @@ function SuggestionsBlock({ lineId }: { lineId: number }) {
               <XCircle className="h-4 w-4" />
             </Button>
           </div>
+          {expandedMatch === m.id && (
+            <div className="mt-2 ml-11 rounded bg-secondary/40 p-3 text-sm space-y-2">
+              {m.snippet ? (
+                <p className="whitespace-pre-wrap text-foreground/90">{m.snippet}{m.snippet.length >= 400 ? "…" : ""}</p>
+              ) : (
+                <p className="text-muted-foreground italic">No summary stored for this email yet — read the full email below.</p>
+              )}
+              <Button size="sm" variant="outline" onClick={() => openFullEmail(m.id)}>
+                <Mail className="h-4 w-4 mr-1" /> Read the full email
+              </Button>
+            </div>
+          )}
+          </div>
         ))}
       </div>
+
+      {fullEmail && (
+        <div className="fixed inset-0 z-[150] bg-black/60 flex items-center justify-center p-4" onClick={() => setFullEmail(null)}>
+          <div className="bg-background rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 px-4 py-3 border-b">
+              <Mail className="h-4 w-4 shrink-0" />
+              <span className="font-medium truncate flex-1">{fullEmail.from ?? "Email"}</span>
+              <Button size="sm" variant="ghost" onClick={() => setFullEmail(null)}><XCircle className="h-4 w-4" /></Button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              {fullEmail.loading ? (
+                <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Fetching from the mailbox…</div>
+              ) : fullEmail.error ? (
+                <p className="text-sm text-destructive">{fullEmail.error}</p>
+              ) : (
+                <>
+                  {(fullEmail.attachments?.length ?? 0) > 0 && (
+                    <p className="text-xs text-muted-foreground mb-3">
+                      Attachments: {fullEmail.attachments!.map((a) => a.filename).join(", ")}
+                    </p>
+                  )}
+                  <pre className="whitespace-pre-wrap text-sm font-sans">{fullEmail.text || "(no text content)"}</pre>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

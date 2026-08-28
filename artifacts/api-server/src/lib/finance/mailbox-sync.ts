@@ -190,6 +190,7 @@ async function doSync(options: SyncOptions = {}): Promise<SyncOutcome> {
             if (!looksInvoiceLike(m.subject, m.hasPdf, m.sender)) continue;
             let amounts: string[] = [];
             let refTokens: string[] = [];
+            let snippet: string | null = null;
             try {
               const dl = await Promise.race([
                 client.download(String(m.uid), undefined, { uid: true }),
@@ -197,9 +198,11 @@ async function doSync(options: SyncOptions = {}): Promise<SyncOutcome> {
               ]);
               if (dl?.content) {
                 const parsed = await simpleParser(dl.content);
-                const text = `${m.subject ?? ""}\n${parsed.text ?? ""}`;
+                const bodyText = parsed.text ?? "";
+                const text = `${m.subject ?? ""}\n${bodyText}`;
                 amounts = extractAmounts(text);
                 refTokens = extractRefTokens(text);
+                snippet = bodyText.replace(/\s+/g, " ").trim().slice(0, 400) || null;
               } else {
                 amounts = extractAmounts(m.subject ?? "");
                 refTokens = extractRefTokens(m.subject ?? "");
@@ -222,8 +225,12 @@ async function doSync(options: SyncOptions = {}): Promise<SyncOutcome> {
                 hasPdf: m.hasPdf,
                 amountsFound: amounts,
                 orderIdsFound: refTokens,
+                snippet,
               })
-              .onConflictDoNothing({ target: [finEmailIndexTable.folder, finEmailIndexTable.imapUid] });
+              .onConflictDoUpdate({
+                target: [finEmailIndexTable.folder, finEmailIndexTable.imapUid],
+                set: { amountsFound: amounts, orderIdsFound: refTokens, snippet },
+              });
             indexed++;
             if (indexed % 20 === 0) {
               console.log(`[finance] mailbox scan: ${scanned} scanned, ${indexed} indexed (${folder})`);
@@ -411,5 +418,56 @@ export async function fetchAttachmentForMessage(
   } catch {
     try { await client.close(); } catch { /* already closed */ }
     return null;
+  }
+}
+
+
+/** Full email preview for a suggestion — fetched live from the mailbox,
+ *  shown transiently, never stored. Raced against a timeout because the
+ *  server's route to one.com can be starved (Railway tar-pit). */
+export async function fetchEmailPreview(
+  folder: string,
+  uid: number
+): Promise<{ subject: string | null; from: string | null; date: string | null; text: string; attachments: Array<{ filename: string; contentType: string }> } | null> {
+  const [box] = await db.select().from(finMailboxTable).limit(1);
+  if (!box) return null;
+  const client = new ImapFlow({
+    host: box.imapHost,
+    port: 993,
+    secure: true,
+    auth: { user: box.emailAddress, pass: openSecret(box.passwordEnc) },
+    logger: false,
+    socketTimeout: 30_000,
+  });
+  client.on("error", (err: any) => console.error("[finance] IMAP preview error:", err?.message ?? err));
+  try {
+    const work = (async () => {
+      await client.connect();
+      const lock = await client.getMailboxLock(folder);
+      try {
+        const dl = await client.download(String(uid), undefined, { uid: true });
+        if (!dl?.content) return null;
+        const parsed = await simpleParser(dl.content);
+        return {
+          subject: parsed.subject ?? null,
+          from: parsed.from?.text ?? null,
+          date: parsed.date?.toISOString() ?? null,
+          text: (parsed.text ?? "").slice(0, 20_000),
+          attachments: parsed.attachments.map((a) => ({ filename: a.filename ?? "attachment", contentType: a.contentType })),
+        };
+      } finally {
+        lock.release();
+        await client.logout().catch(() => undefined);
+      }
+    })();
+    const result = await Promise.race([
+      work,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 25_000).unref?.()),
+    ]);
+    return result;
+  } catch {
+    return null;
+  } finally {
+    try { await client.close(); } catch { /* closed */ }
   }
 }

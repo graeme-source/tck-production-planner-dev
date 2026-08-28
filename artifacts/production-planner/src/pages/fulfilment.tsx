@@ -108,6 +108,7 @@ const BOX_TABS: { key: BoxCategory; label: string }[] = [
   { key: "large box", label: "Large" },
   { key: "wholesale", label: "Wholesale" },
   { key: "local delivery", label: "Local" },
+  { key: "collection", label: "Collection" },
   { key: "other", label: "Other" },
 ];
 
@@ -1859,6 +1860,7 @@ export default function Fulfilment() {
     "large box": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "large box").length,
     "wholesale": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "wholesale").length,
     "local delivery": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "local delivery").length,
+    "collection": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "collection").length,
     "other": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "other").length,
   };
 
@@ -1880,6 +1882,7 @@ export default function Fulfilment() {
     "large box": unfulfilledOrders.filter(o => getOrderCategory(o) === "large box").length,
     "wholesale": unfulfilledOrders.filter(o => getOrderCategory(o) === "wholesale").length,
     "local delivery": unfulfilledOrders.filter(o => getOrderCategory(o) === "local delivery").length,
+    "collection": unfulfilledOrders.filter(o => getOrderCategory(o) === "collection").length,
     "other": unfulfilledOrders.filter(o => getOrderCategory(o) === "other").length,
   };
 

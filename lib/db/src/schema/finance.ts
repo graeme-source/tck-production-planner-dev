@@ -126,6 +126,9 @@ export const finEmailIndexTable = pgTable("fin_email_index", {
   // avoid float drift ("48.98"); body itself is discarded.
   amountsFound: jsonb("amounts_found").$type<string[]>().notNull().default([]),
   orderIdsFound: jsonb("order_ids_found").$type<string[]>().notNull().default([]),
+  // First ~400 chars of the email text — enough to recognise it; never the
+  // full body (privacy minimisation).
+  snippet: text("snippet"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

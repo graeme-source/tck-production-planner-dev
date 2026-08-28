@@ -9,7 +9,7 @@
  *  order of the day, and knows nothing about the pick filters.
  */
 
-export type BoxCategory = "small box" | "large box" | "wholesale" | "local delivery" | "other";
+export type BoxCategory = "small box" | "large box" | "wholesale" | "local delivery" | "collection" | "other";
 
 /** What the tag button will act on: the whole day, or one box size. */
 export type TagScope = "all" | BoxCategory;
@@ -18,6 +18,12 @@ export type TagScope = "all" | BoxCategory;
  *  book or look up, no label to print or verify. The tag is put on the order
  *  in Shopify when the local delivery is arranged. */
 export const LOCAL_DELIVERY_TAG = "local-delivery";
+
+/** Orders the customer collects from the unit (Graeme's website collections
+ *  feature, 2026-08-28): packed into a BROWN PAPER BAG, never a box, bag
+ *  label stuck on, left in the fridge. Never booked with APC. The website
+ *  applies the tag at checkout. */
+export const COLLECTION_TAGS = ["collections", "collection"];
 
 /** The Shopify tag that means "approved to go out today". */
 export const DISPATCH_TAG = "dispatch";
@@ -32,14 +38,20 @@ export function isLocalDelivery(order: { tags: string }): boolean {
   return orderTags(order.tags).includes(LOCAL_DELIVERY_TAG);
 }
 
+export function isCollection(order: { tags: string }): boolean {
+  const tags = orderTags(order.tags);
+  return COLLECTION_TAGS.some(t => tags.includes(t));
+}
+
 export function isDispatchTagged(order: { tags: string }): boolean {
   return orderTags(order.tags).includes(DISPATCH_TAG);
 }
 
 export function boxCategoryOf(order: { tags: string }): BoxCategory {
   const tags = orderTags(order.tags);
-  // Local delivery wins over everything — however big the box is, it goes
-  // on the van, and the packer needs it in the no-label wave.
+  // Collection wins over everything — it never leaves the building in a
+  // box; then local delivery — however big, it goes on the van.
+  if (COLLECTION_TAGS.some(t => tags.includes(t))) return "collection";
   if (tags.includes(LOCAL_DELIVERY_TAG)) return "local delivery";
   if (tags.includes("wholesale")) return "wholesale";
   if (tags.includes("large box")) return "large box";

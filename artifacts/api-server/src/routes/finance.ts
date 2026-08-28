@@ -19,7 +19,7 @@ import { requireAdmin } from "../middleware/roles";
 import { parseCotCsv } from "../lib/finance/cot-csv";
 import { normaliseMerchant } from "../lib/finance/merchant-normalise";
 import { sealSecret } from "../lib/finance/secret-box";
-import { runMailboxSync, refreshSuggestions, fetchAttachmentForMessage } from "../lib/finance/mailbox-sync";
+import { runMailboxSync, refreshSuggestions, fetchAttachmentForMessage, fetchEmailPreview } from "../lib/finance/mailbox-sync";
 import { authorizeUrl, exchangeCode, newStateToken, qboConfigured, qboStatus, runQboSync } from "../lib/finance/qbo";
 import { db as dbForQbo, finQboConnectionTable } from "@workspace/db";
 
@@ -357,6 +357,7 @@ router.get("/lines/:id/matches", requireFinanceAccess, async (req: Request, res:
       subject: finEmailIndexTable.subject,
       internalDate: finEmailIndexTable.internalDate,
       hasPdf: finEmailIndexTable.hasPdf,
+      snippet: finEmailIndexTable.snippet,
     })
     .from(finMatchesTable)
     .innerJoin(finEmailIndexTable, eq(finMatchesTable.emailIndexId, finEmailIndexTable.id))
@@ -408,6 +409,28 @@ router.post("/matches/:id/confirm", requireFinanceAccess, async (req: Request, r
   } catch (err) {
     console.error("[finance] confirm match error:", err);
     res.status(500).json({ error: "Failed to confirm match" });
+  }
+});
+
+// Full email content for a suggestion — fetched live, shown transiently,
+// never stored. Available to finance users only for emails that are
+// already candidates on a line (bounded, purposeful mailbox exposure).
+router.get("/matches/:id/email", requireFinanceAccess, async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const [match] = await db.select().from(finMatchesTable).where(eq(finMatchesTable.id, id));
+    if (!match) { res.status(404).json({ error: "Match not found" }); return; }
+    const [emailRow] = await db.select().from(finEmailIndexTable).where(eq(finEmailIndexTable.id, match.emailIndexId));
+    if (!emailRow) { res.status(404).json({ error: "Email no longer indexed" }); return; }
+    const preview = await fetchEmailPreview(emailRow.folder, emailRow.imapUid);
+    if (!preview) {
+      res.status(502).json({ error: "Couldn't reach the mailbox right now — the stored summary is all that's available. Try again shortly." });
+      return;
+    }
+    res.json(preview);
+  } catch (err) {
+    console.error("[finance] email preview error:", err);
+    res.status(500).json({ error: "Failed to load the email" });
   }
 });
 
