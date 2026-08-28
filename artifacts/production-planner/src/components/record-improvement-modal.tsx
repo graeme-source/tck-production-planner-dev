@@ -32,21 +32,24 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [duplicates, setDuplicates] = useState<Array<{ id: number; title: string }>>([]);
-  const [photoTaken, setPhotoTaken] = useState(false);
-  const pendingFile = useRef<File | null>(null);
+  const [beforeTaken, setBeforeTaken] = useState(false);
+  const [afterTaken, setAfterTaken] = useState(false);
+  const beforeFile = useRef<File | null>(null);
+  const afterFile = useRef<File | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
+  const beforeLibraryRef = useRef<HTMLInputElement>(null);
 
   if (!open) return null;
 
   const reset = () => {
     setMode("choose"); setTitle(""); setDescription("");
-    setPhotoTaken(false); pendingFile.current = null; setBusy(false);
+    setBeforeTaken(false); setAfterTaken(false);
+    beforeFile.current = null; afterFile.current = null; setBusy(false);
     setDuplicates([]);
   };
   const close = () => { reset(); onClose(); };
 
   const isIdea = mode === "idea";
-  const phase = isIdea ? "before" : "after";
 
   /**
    * Before saving an idea, check whether someone has already reported it.
@@ -111,9 +114,10 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Couldn't save it");
       const improvement = await res.json();
 
-      if (pendingFile.current) {
+      for (const [phase, file] of [["before", beforeFile.current], ["after", afterFile.current]] as const) {
+        if (!file) continue;
         const form = new FormData();
-        form.append("file", pendingFile.current);
+        form.append("file", file);
         form.append("phase", phase);
         await fetch(`${BASE}/api/improvements/${improvement.id}/attachments`, {
           method: "POST", credentials: "include", body: form,
@@ -122,7 +126,7 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
 
       // Something you've already done, with an after shot, is finished work —
       // send it for sign-off rather than making them find it again.
-      if (!isIdea && pendingFile.current) {
+      if (!isIdea && afterFile.current) {
         await fetch(`${BASE}/api/improvements/${improvement.id}/done`, {
           method: "POST", credentials: "include",
         });
@@ -134,7 +138,7 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
         title: isIdea ? "Idea logged" : "Improvement logged",
         description: isIdea
           ? "Come back to it when it's done and add the after photo."
-          : pendingFile.current ? "A manager will sign it off." : "Add a photo to it so it can be signed off.",
+          : afterFile.current ? "A manager will sign it off." : "Add a photo to it so it can be signed off.",
       });
       close();
     } catch (e) {
@@ -266,6 +270,8 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
               />
             </div>
 
+            {/* Live camera — the before shot for an idea, the after shot for
+                finished work. */}
             <input
               ref={cameraRef}
               type="file"
@@ -275,22 +281,60 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
               onChange={e => {
                 const file = e.target.files?.[0];
                 e.target.value = "";
-                if (file) { pendingFile.current = file; setPhotoTaken(true); }
+                if (!file) return;
+                if (isIdea) { beforeFile.current = file; setBeforeTaken(true); }
+                else { afterFile.current = file; setAfterTaken(true); }
               }}
             />
+            {/* Done-mode before shot: the moment has passed, so no capture
+                attribute — the camera roll is where that photo lives, if it
+                exists at all (Graeme, 2026-08-28: ask for before FIRST when
+                the work isn't completing an existing idea). */}
+            <input
+              ref={beforeLibraryRef}
+              type="file"
+              accept="image/*,video/*"
+              className="hidden"
+              onChange={e => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) { beforeFile.current = file; setBeforeTaken(true); }
+              }}
+            />
+
+            {!isIdea && (
+              <button
+                onClick={() => beforeLibraryRef.current?.click()}
+                className={cn(
+                  "w-full h-16 rounded-2xl border-2 text-lg font-bold flex items-center justify-center gap-3 transition-colors",
+                  beforeTaken
+                    ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400"
+                    : "border-dashed border-border hover:bg-secondary/50",
+                )}
+              >
+                {beforeTaken ? <CheckCircle2 className="w-6 h-6" /> : <Camera className="w-6 h-6" />}
+                {beforeTaken ? "Before photo ready — tap to change" : "Add the before photo"}
+              </button>
+            )}
+            {!isIdea && !beforeTaken && (
+              <p className="text-sm text-muted-foreground text-center -mt-1">
+                From your camera roll if you snapped one earlier — skip it if there isn't one.
+              </p>
+            )}
+
             <button
               onClick={() => cameraRef.current?.click()}
               className={cn(
                 "w-full h-16 rounded-2xl border-2 text-lg font-bold flex items-center justify-center gap-3 transition-colors",
-                photoTaken
+                (isIdea ? beforeTaken : afterTaken)
                   ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400"
                   : "border-dashed border-border hover:bg-secondary/50",
               )}
             >
-              {photoTaken ? <CheckCircle2 className="w-6 h-6" /> : <Camera className="w-6 h-6" />}
-              {photoTaken
-                ? `${isIdea ? "Before" : "After"} photo ready — tap to retake`
-                : `Take the ${isIdea ? "before" : "after"} photo`}
+              {(isIdea ? beforeTaken : afterTaken) ? <CheckCircle2 className="w-6 h-6" /> : <Camera className="w-6 h-6" />}
+              {isIdea
+                ? (beforeTaken ? "Before photo ready — tap to retake" : "Take the before photo")
+                : (afterTaken ? "After photo ready — tap to retake" : "Take the after photo")}
             </button>
             <p className="text-sm text-muted-foreground text-center -mt-1">
               A photo is fine. A short video is even better.
