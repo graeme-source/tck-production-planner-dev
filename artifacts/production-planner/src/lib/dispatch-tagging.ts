@@ -23,7 +23,7 @@ export const LOCAL_DELIVERY_TAG = "local-delivery";
  *  feature, 2026-08-28): packed into a BROWN PAPER BAG, never a box, bag
  *  label stuck on, left in the fridge. Never booked with APC. The website
  *  applies the tag at checkout. */
-export const COLLECTION_TAGS = ["collections", "collection"];
+export const COLLECTION_TAGS = ["collections", "collection", "collection order"];
 
 /** The Shopify tag that means "approved to go out today". */
 export const DISPATCH_TAG = "dispatch";

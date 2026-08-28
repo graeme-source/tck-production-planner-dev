@@ -159,10 +159,13 @@ interface ShopifyOrder {
   note_attributes?: Array<{ name: string; value: string }>;
 }
 
-/** The collection security code the website stores as an order attribute. */
+/** The collection security code, when the website stores one as an order
+ *  attribute. Strict name match: the real orders carry Zapiet-style
+ *  attributes like Pickup-Location-Postal-Code, which a loose /code/ match
+ *  would print as the "security code" (seen on test order #133647). */
 function collectionCodeOf(order: ShopifyOrder): string | null {
   const attrs = order.note_attributes ?? [];
-  const hit = attrs.find(a => /code|collect|pickup|security/i.test(a.name));
+  const hit = attrs.find(a => /^(security|collection|pickup)[-_ ]?code$/i.test(a.name.trim()));
   return hit?.value?.trim() || null;
 }
 
@@ -1630,8 +1633,28 @@ export default function Fulfilment() {
 
   const [recheckingId, setRecheckingId] = useState<number | null>(null);
 
-  const allUnfulfilledOrders = orders?.filter(o => o.fulfillment_status !== "fulfilled") ?? [];
-  const fulfilledOrders = orders?.filter(o => o.fulfillment_status === "fulfilled") ?? [];
+  // Collections are SAME-DAY: the customer ordered for collection today,
+  // while this screen views orders by DELIVERY date (usually tomorrow). So
+  // the collection card feeds from today's tag, and collection-tagged
+  // orders are excluded from the delivery-date pipeline entirely — a
+  // collection order under tomorrow's tag is tomorrow's problem
+  // (Graeme, 2026-08-28).
+  const { data: todayOrdersRaw } = useQuery({
+    queryKey: ["fulfilment-orders-today-collections", today],
+    queryFn: () => fetchOrders(today, false),
+    staleTime: 2 * 60 * 1000,
+    enabled: view === "list" && queryTag !== today,
+  });
+  const collectionSourceOrders = queryTag === today ? orders : todayOrdersRaw;
+  const todaysCollectionOrders = (collectionSourceOrders ?? []).filter(
+    o => isCollection(o) && o.fulfillment_status !== "fulfilled"
+  );
+  const collectedTodayCount = (collectionSourceOrders ?? []).filter(
+    o => isCollection(o) && o.fulfillment_status === "fulfilled"
+  ).length;
+
+  const allUnfulfilledOrders = orders?.filter(o => o.fulfillment_status !== "fulfilled" && !isCollection(o)) ?? [];
+  const fulfilledOrders = orders?.filter(o => o.fulfillment_status === "fulfilled" && !isCollection(o)) ?? [];
 
   const unfulfilledOrders = allUnfulfilledOrders.filter(isDispatchTagged);
   const untaggedOrders = allUnfulfilledOrders.filter(o => !isDispatchTagged(o));
@@ -4045,8 +4068,8 @@ export default function Fulfilment() {
           APC. Their own loud card so they can't get mixed into the box
           waves (Graeme, 2026-08-28). */}
       {(() => {
-        const collectionOrders = allUnfulfilledOrders.filter(o => isCollection(o));
-        if (collectionOrders.length === 0) return null;
+        const collectionOrders = todaysCollectionOrders;
+        if (collectionOrders.length === 0 && collectedTodayCount === 0) return null;
         return (
           <div className="rounded-xl border-2 border-amber-500 bg-amber-50 dark:bg-amber-950/30 overflow-hidden">
             <div className="px-4 py-3 border-b border-amber-300 dark:border-amber-800 flex items-center gap-2">
@@ -4054,11 +4077,16 @@ export default function Fulfilment() {
               <h3 className="font-bold text-amber-900 dark:text-amber-200">
                 Collection orders — brown paper bags, no APC label
               </h3>
-              <span className="ml-auto text-sm font-semibold text-amber-800 dark:text-amber-300">{collectionOrders.length}</span>
+              <span className="ml-auto text-sm font-semibold text-amber-800 dark:text-amber-300">
+                {collectionOrders.length} to pack{collectedTodayCount > 0 ? ` · ${collectedTodayCount} done` : ""}
+              </span>
             </div>
             <div className="px-4 py-2 text-sm text-amber-900/80 dark:text-amber-200/80">
-              Pack these separately from the courier orders: paper bag, bag label on, fridge until collected.
+              Collections are for TODAY ({today}) — pack separately from the courier orders: paper bag, bag label on, fridge until collected.
             </div>
+            {collectionOrders.length === 0 && (
+              <div className="px-4 py-3 text-sm text-amber-900/80 dark:text-amber-200/80">All of today's collections are packed.</div>
+            )}
             <div className="divide-y divide-amber-200 dark:divide-amber-800">
               {collectionOrders.map(o => (
                 <div key={o.id} className="flex items-center gap-3 px-4 py-2.5">
