@@ -79,6 +79,10 @@ export const finLinesTable = pgTable("fin_lines", {
   statusNote: text("status_note"),
   doneAt: timestamp("done_at"),
   doneBy: integer("done_by"),
+  // Set when the QuickBooks sync matches this line to a posted
+  // transaction — the "ruled out, already posted" signal.
+  qboTxnId: integer("qbo_txn_id"),
+  postedDetectedAt: timestamp("posted_detected_at"),
   // sha256 over source|dates|amount|descriptor|card — makes re-uploads of
   // overlapping exports safe (dedupe on conflict).
   dedupeHash: text("dedupe_hash").notNull().unique(),
@@ -121,6 +125,10 @@ export const finEmailIndexTable = pgTable("fin_email_index", {
   // amounts found in subject/body during the transient scan, as strings to
   // avoid float drift ("48.98"); body itself is discarded.
   amountsFound: jsonb("amounts_found").$type<string[]>().notNull().default([]),
+  orderIdsFound: jsonb("order_ids_found").$type<string[]>().notNull().default([]),
+  // First ~400 chars of the email text — enough to recognise it; never the
+  // full body (privacy minimisation).
+  snippet: text("snippet"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -130,6 +138,11 @@ export const finMatchesTable = pgTable("fin_matches", {
   lineId: integer("line_id").notNull(),
   emailIndexId: integer("email_index_id").notNull(),
   score: integer("score").notNull(), // 0-100
+  // How many of the four signals matched (amount, date window, company
+  // name, reference id) and the tier that count maps to:
+  // 1 weak · 2 medium · 3 strong · 4 very_strong.
+  signals: integer("signals").notNull().default(1),
+  strength: text("strength").notNull().default("weak"),
   reasons: jsonb("reasons").$type<string[]>().notNull().default([]),
   // 'suggested' | 'confirmed' | 'rejected'
   state: text("state").notNull().default("suggested"),
@@ -160,3 +173,34 @@ export type FinDocument = typeof finDocumentsTable.$inferSelect;
 export type FinEmailIndexRow = typeof finEmailIndexTable.$inferSelect;
 export type FinMatch = typeof finMatchesTable.$inferSelect;
 export type FinMailbox = typeof finMailboxTable.$inferSelect;
+
+// Read-only QuickBooks connection (single row). Tokens encrypted at the
+// app layer; refresh tokens rotate ~daily so pairs persist atomically.
+export const finQboConnectionTable = pgTable("fin_qbo_connection", {
+  id: serial("id").primaryKey(),
+  realmId: text("realm_id").notNull(),
+  accessTokenEnc: text("access_token_enc").notNull(),
+  refreshTokenEnc: text("refresh_token_enc").notNull(),
+  accessExpiresAt: timestamp("access_expires_at"),
+  refreshExpiresAt: timestamp("refresh_expires_at"),
+  syncCursor: timestamp("sync_cursor"),
+  lastSyncAt: timestamp("last_sync_at"),
+  lastError: text("last_error"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// Mirror of posted QuickBooks purchases/bills, for line matching + audit.
+export const finQboTxnsTable = pgTable("fin_qbo_txns", {
+  id: serial("id").primaryKey(),
+  qboId: text("qbo_id").notNull(),
+  entityType: text("entity_type").notNull(),
+  txnDate: date("txn_date"),
+  totalAmt: numeric("total_amt", { precision: 12, scale: 2 }),
+  vendorName: text("vendor_name"),
+  docNumber: text("doc_number"),
+  syncedAt: timestamp("synced_at").notNull().defaultNow(),
+});
+
+export type FinQboConnection = typeof finQboConnectionTable.$inferSelect;
+export type FinQboTxn = typeof finQboTxnsTable.$inferSelect;

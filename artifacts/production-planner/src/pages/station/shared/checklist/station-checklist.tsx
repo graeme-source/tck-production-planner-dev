@@ -1653,9 +1653,19 @@ function DynamicDataDisplay({ type, data, loading, planId }: { type: string; dat
             Delivery: {report.deliveryLabel}
           </span>
         </div>
-        {/* 5-packs share ONE label — headline number first, per-recipe
-            breakdown under it, grouped server-side so every surface of this
-            report agrees. */}
+        {/* Every headline number gets the SAME banner treatment (Graeme,
+            2026-08-28): cinnamon buns and the 5-pack label count are equal
+            starting numbers for the packer. Cinnamon on top; the 5-pack
+            banner keeps its per-recipe breakdown underneath, grouped
+            server-side so every surface of this report agrees. */}
+        {report.products.map((p, i) => (
+          <div key={`prod-${i}`} className="mb-3 p-3 rounded-lg bg-purple-100/70 dark:bg-purple-900/30 border border-purple-300 dark:border-purple-700">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-bold text-purple-800 dark:text-purple-200">{p.title}</span>
+              <span className="text-2xl font-bold tabular-nums text-purple-800 dark:text-purple-200">{p.quantity}</span>
+            </div>
+          </div>
+        ))}
         {fivePack.length > 0 && (
           <div className="mb-3 p-3 rounded-lg bg-purple-100/70 dark:bg-purple-900/30 border border-purple-300 dark:border-purple-700">
             <div className="flex items-center justify-between">
@@ -1672,14 +1682,6 @@ function DynamicDataDisplay({ type, data, loading, planId }: { type: string; dat
             </div>
           </div>
         )}
-        <div className="space-y-1.5">
-          {report.products.map((p, i) => (
-            <div key={i} className="flex items-center justify-between text-sm">
-              <span className="truncate text-foreground/80">{p.title}</span>
-              <span className="font-bold tabular-nums text-purple-700 dark:text-purple-300 w-8 text-right shrink-0 ml-2">{p.quantity}</span>
-            </div>
-          ))}
-        </div>
         <div className="mt-3 pt-2 border-t border-purple-200 dark:border-purple-700 flex items-center justify-between">
           <span className="text-sm font-semibold text-purple-700 dark:text-purple-300">Total</span>
           <span className="text-lg font-bold tabular-nums text-purple-700 dark:text-purple-300">{report.totalQuantity}</span>

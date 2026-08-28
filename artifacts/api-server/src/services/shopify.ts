@@ -339,6 +339,8 @@ export interface ShopifyOrder {
   } | null;
   line_items: ShopifyLineItem[];
   note: string | null;
+  /** Order attributes from the storefront (collection security code etc.). */
+  note_attributes?: ShopifyNoteAttribute[];
   fulfillments?: ShopifyFulfillment[];
   refunds?: Array<{
     id: number;
@@ -374,7 +376,7 @@ export async function getOrdersByTag(tag: string): Promise<ShopifyOrder[]> {
       limit,
       status: "any",
       fields:
-        "id,name,tags,created_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,total_weight,customer,shipping_address,line_items,note,fulfillments",
+        "id,name,tags,created_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,total_weight,customer,shipping_address,line_items,note,note_attributes,fulfillments",
     };
     if (pageInfo) {
       params.page_info = pageInfo;

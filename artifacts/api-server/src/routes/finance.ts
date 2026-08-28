@@ -19,7 +19,9 @@ import { requireAdmin } from "../middleware/roles";
 import { parseCotCsv } from "../lib/finance/cot-csv";
 import { normaliseMerchant } from "../lib/finance/merchant-normalise";
 import { sealSecret } from "../lib/finance/secret-box";
-import { runMailboxSync, refreshSuggestions, fetchAttachmentForMessage } from "../lib/finance/mailbox-sync";
+import { runMailboxSync, refreshSuggestions, fetchAttachmentForMessage, fetchEmailPreview } from "../lib/finance/mailbox-sync";
+import { authorizeUrl, exchangeCode, newStateToken, qboConfigured, qboStatus, runQboSync } from "../lib/finance/qbo";
+import { db as dbForQbo, finQboConnectionTable } from "@workspace/db";
 
 // Finance / VAT invoice reconciliation (docs/vat-reconciliation/PLAN.md).
 // Replaces the "Outstanding Transactions" Google Sheet. Access: admin, or a
@@ -347,12 +349,15 @@ router.get("/lines/:id/matches", requireFinanceAccess, async (req: Request, res:
     .select({
       id: finMatchesTable.id,
       score: finMatchesTable.score,
+      signals: finMatchesTable.signals,
+      strength: finMatchesTable.strength,
       reasons: finMatchesTable.reasons,
       state: finMatchesTable.state,
       fromAddress: finEmailIndexTable.fromAddress,
       subject: finEmailIndexTable.subject,
       internalDate: finEmailIndexTable.internalDate,
       hasPdf: finEmailIndexTable.hasPdf,
+      snippet: finEmailIndexTable.snippet,
     })
     .from(finMatchesTable)
     .innerJoin(finEmailIndexTable, eq(finMatchesTable.emailIndexId, finEmailIndexTable.id))
@@ -404,6 +409,28 @@ router.post("/matches/:id/confirm", requireFinanceAccess, async (req: Request, r
   } catch (err) {
     console.error("[finance] confirm match error:", err);
     res.status(500).json({ error: "Failed to confirm match" });
+  }
+});
+
+// Full email content for a suggestion — fetched live, shown transiently,
+// never stored. Available to finance users only for emails that are
+// already candidates on a line (bounded, purposeful mailbox exposure).
+router.get("/matches/:id/email", requireFinanceAccess, async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const [match] = await db.select().from(finMatchesTable).where(eq(finMatchesTable.id, id));
+    if (!match) { res.status(404).json({ error: "Match not found" }); return; }
+    const [emailRow] = await db.select().from(finEmailIndexTable).where(eq(finEmailIndexTable.id, match.emailIndexId));
+    if (!emailRow) { res.status(404).json({ error: "Email no longer indexed" }); return; }
+    const preview = await fetchEmailPreview(emailRow.folder, emailRow.imapUid);
+    if (!preview) {
+      res.status(502).json({ error: "Couldn't reach the mailbox right now — the stored summary is all that's available. Try again shortly." });
+      return;
+    }
+    res.json(preview);
+  } catch (err) {
+    console.error("[finance] email preview error:", err);
+    res.status(500).json({ error: "Failed to load the email" });
   }
 });
 
@@ -494,6 +521,24 @@ router.get("/mailbox", requireAdmin, async (_req: Request, res: Response) => {
   res.json(box ?? null);
 });
 
+const scanRangeSchema = z.object({
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+// One-off ranged scan — reaches back before the configured backfill date
+// without touching the incremental cursor.
+router.post("/mailbox/scan-range", requireAdmin, validate(scanRangeSchema), async (req: Request, res: Response) => {
+  const { from, to } = req.body as z.infer<typeof scanRangeSchema>;
+  runMailboxSync({ rangeFrom: from, rangeTo: to })
+    .then((o) => {
+      if (o.error) console.error("[finance] range scan finished with error:", o.error);
+      else console.log(`[finance] range scan done: scanned ${o.scanned}, indexed ${o.indexed}`);
+    })
+    .catch((err) => console.error("[finance] range scan crashed:", err));
+  res.json({ started: true, from, to: to ?? null });
+});
+
 router.post("/mailbox/sync", requireAdmin, async (_req: Request, res: Response) => {
   // Fire-and-forget: a first backfill can take many minutes, and holding the
   // HTTP request open that long just times out and invites double-clicks.
@@ -505,6 +550,74 @@ router.post("/mailbox/sync", requireAdmin, async (_req: Request, res: Response) 
     })
     .catch((err) => console.error("[finance] sync crashed:", err));
   res.json({ started: true });
+});
+
+// ---------------------------------------------------------------------------
+// QuickBooks (read-only) — ADMIN ONLY. Rules out card lines that are
+// already posted. The app never writes to QuickBooks.
+
+router.get("/qbo/status", requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    res.json(await qboStatus());
+  } catch (err) {
+    console.error("[finance] qbo status error:", err);
+    res.status(500).json({ error: "Failed to load QuickBooks status" });
+  }
+});
+
+router.get("/qbo/connect", requireAdmin, async (req: Request, res: Response) => {
+  if (!qboConfigured()) {
+    res.status(503).json({ error: "QuickBooks app credentials not set — add QBO_CLIENT_ID and QBO_CLIENT_SECRET to the environment first." });
+    return;
+  }
+  const state = newStateToken();
+  (req.session as any).qboState = state;
+  res.redirect(authorizeUrl(state));
+});
+
+// Intuit redirects the admin's browser here after they approve access.
+router.get("/qbo/callback", async (req: Request, res: Response) => {
+  try {
+    const { code, realmId, state } = req.query as Record<string, string>;
+    const expected = (req.session as any).qboState;
+    if (!expected || state !== expected) {
+      res.status(400).send("QuickBooks connection failed: state mismatch. Go back to Finance and try Connect again.");
+      return;
+    }
+    if (req.session.userRole !== "admin") {
+      res.status(403).send("Admin access required.");
+      return;
+    }
+    if (!code || !realmId) {
+      res.status(400).send("QuickBooks did not return an authorisation code.");
+      return;
+    }
+    delete (req.session as any).qboState;
+    await exchangeCode(code, realmId);
+    // First sync in the background; the admin lands back on Finance.
+    runQboSync()
+      .then((o) => console.log(`[finance] first QBO sync: ${o.purchases} purchases, ${o.bills} bills, ${o.linesClosed} lines closed${o.error ? ` (error: ${o.error})` : ""}`))
+      .catch((e) => console.error("[finance] first QBO sync failed:", e));
+    res.redirect("/finance");
+  } catch (err) {
+    console.error("[finance] qbo callback error:", err);
+    res.status(500).send(`QuickBooks connection failed: ${err instanceof Error ? err.message : "unknown error"}. Go back to Finance and try again.`);
+  }
+});
+
+router.post("/qbo/sync", requireAdmin, async (_req: Request, res: Response) => {
+  runQboSync()
+    .then((o) => {
+      if (o.error) console.error("[finance] QBO sync finished with error:", o.error);
+      else console.log(`[finance] QBO sync done: ${o.purchases} purchases, ${o.bills} bills, ${o.linesClosed} lines closed`);
+    })
+    .catch((err) => console.error("[finance] QBO sync crashed:", err));
+  res.json({ started: true });
+});
+
+router.delete("/qbo", requireAdmin, async (_req: Request, res: Response) => {
+  await dbForQbo.delete(finQboConnectionTable);
+  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------------------

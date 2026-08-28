@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import {
   Banknote,
+  Download,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -21,6 +22,7 @@ import {
   Mail,
   Paperclip,
   RefreshCw,
+  Search as SearchIcon,
   Upload,
   XCircle,
 } from "lucide-react";
@@ -75,12 +77,15 @@ type LinesResponse = {
 type MatchRow = {
   id: number;
   score: number;
+  signals?: number;
+  strength?: "weak" | "medium" | "strong" | "very_strong";
   reasons: string[];
   state: string;
   fromAddress: string | null;
   subject: string | null;
   internalDate: string | null;
   hasPdf: boolean;
+  snippet?: string | null;
 };
 
 async function jsonFetch(url: string, init?: RequestInit) {
@@ -112,6 +117,8 @@ export default function FinancePage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("outstanding");
+  const [search, setSearch] = useState("");
+  const [csvDragOver, setCsvDragOver] = useState(false);
   const [expanded, setExpanded] = useState<number | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -147,11 +154,20 @@ export default function FinancePage() {
   const data = linesQuery.data;
   const filtered = useMemo(() => {
     const lines = data?.lines ?? [];
-    if (filter === "all") return lines;
-    if (filter === "outstanding") return lines.filter((l) => l.status === "open" || l.status === "identified");
-    if (filter === "matched") return lines.filter((l) => l.status === "matched");
-    return lines.filter((l) => l.status === "done" || l.status === "not_needed");
-  }, [data, filter]);
+    let out = lines;
+    if (filter === "outstanding") out = lines.filter((l) => l.status === "open" || l.status === "identified");
+    else if (filter === "matched") out = lines.filter((l) => l.status === "matched");
+    else if (filter === "done") out = lines.filter((l) => l.status === "done" || l.status === "not_needed");
+    const q = search.trim().toLowerCase();
+    if (q) {
+      out = out.filter((l) => {
+        const vendor = l.vendorId ? data?.vendors[l.vendorId] : null;
+        return [l.descriptor, l.merchant, vendor?.name, l.cardholder, l.cardLast4, l.statusNote, l.amount, l.lineDate]
+          .some((v) => v && String(v).toLowerCase().includes(q));
+      });
+    }
+    return out;
+  }, [data, filter, search]);
 
   const outstandingTotal = useMemo(() => {
     const lines = data?.lines ?? [];
@@ -193,7 +209,17 @@ export default function FinancePage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-muted-foreground flex items-center gap-2"><Upload className="h-4 w-4" /> Card statement</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
+          <CardContent
+            className={`space-y-2 rounded-b-xl transition-colors ${csvDragOver ? "bg-primary/10 outline-dashed outline-2 outline-primary" : ""}`}
+            onDragOver={(e) => { e.preventDefault(); setCsvDragOver(true); }}
+            onDragLeave={() => setCsvDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setCsvDragOver(false);
+              const f = Array.from(e.dataTransfer.files).find((x) => x.name.toLowerCase().endsWith(".csv"));
+              if (f) uploadMutation.mutate(f);
+            }}
+          >
             <input
               ref={fileInput}
               type="file"
@@ -209,18 +235,36 @@ export default function FinancePage() {
               {uploadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
               Upload Capital on Tap CSV
             </Button>
-            <p className="text-xs text-muted-foreground">Safe to re-upload overlapping exports — duplicates are ignored.</p>
+            <p className="text-xs text-muted-foreground">Or drop the file anywhere on this card. Safe to re-upload overlapping exports — duplicates are ignored.</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Filter tabs */}
-      <div className="flex gap-2 flex-wrap">
+      {/* Filter tabs + search */}
+      <div className="flex gap-2 flex-wrap items-center">
         {FILTERS.map((f) => (
           <Button key={f.key} size="sm" variant={filter === f.key ? "default" : "outline"} onClick={() => setFilter(f.key)}>
             {f.label}
           </Button>
         ))}
+        <div className="relative flex-1 min-w-[200px] max-w-sm ml-auto">
+          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search supplier, amount, card, note…"
+            className="pl-9"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch("")}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label="Clear search"
+            >
+              <XCircle className="h-4 w-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Lines */}
@@ -311,6 +355,8 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const input = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [preview, setPreview] = useState<FinDocMeta | null>(null);
   const upload = useMutation({
     mutationFn: async (file: File) => {
       const form = new FormData();
@@ -325,30 +371,48 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
   });
 
   return (
-    <div>
+    <div
+      className={`rounded-lg transition-colors ${dragOver ? "bg-primary/10 outline-dashed outline-2 outline-primary p-2 -m-2" : ""}`}
+      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragOver(false);
+        for (const f of Array.from(e.dataTransfer.files)) upload.mutate(f);
+      }}
+    >
       <div className="text-sm font-medium mb-2">Documents</div>
-      {docs.length === 0 && <p className="text-sm text-muted-foreground mb-2">None yet.</p>}
+      {docs.length === 0 && (
+        <p className="text-sm text-muted-foreground mb-2">None yet — drop a PDF or photo here, or use Add file.</p>
+      )}
       <div className="flex flex-wrap gap-2">
         {docs.map((d) => (
-          <a
-            key={d.id}
-            href={`${BASE}/api/finance/documents/${d.id}/file`}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-sm hover:bg-accent"
-          >
-            <FileText className="h-4 w-4" />
-            <span className="max-w-[220px] truncate">{d.fileName}</span>
-          </a>
+          <div key={d.id} className="inline-flex items-center rounded border text-sm overflow-hidden">
+            <button
+              onClick={() => setPreview(d)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-accent"
+              title="Preview"
+            >
+              <FileText className="h-4 w-4" />
+              <span className="max-w-[220px] truncate">{d.fileName}</span>
+            </button>
+            <a
+              href={`${BASE}/api/finance/documents/${d.id}/file?download=1`}
+              className="px-2 py-1.5 border-l hover:bg-accent text-muted-foreground"
+              title="Download"
+            >
+              <Download className="h-4 w-4" />
+            </a>
+          </div>
         ))}
         <input
           ref={input}
           type="file"
           accept=".pdf,image/*"
+          multiple
           className="hidden"
           onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) upload.mutate(f);
+            for (const f of Array.from(e.target.files ?? [])) upload.mutate(f);
             e.target.value = "";
           }}
         />
@@ -356,6 +420,38 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
           {upload.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />} Add file
         </Button>
       </div>
+
+      {/* Same-origin iframe preview — never blob: URLs (the CSP frame-src
+          'self' lesson). */}
+      {preview && (
+        <div className="fixed inset-0 z-[150] bg-black/60 flex items-center justify-center p-4" onClick={() => setPreview(null)}>
+          <div className="bg-background rounded-2xl w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 px-4 py-3 border-b">
+              <FileText className="h-4 w-4 shrink-0" />
+              <span className="font-medium truncate flex-1">{preview.fileName}</span>
+              <Button size="sm" variant="outline" asChild>
+                <a href={`${BASE}/api/finance/documents/${preview.id}/file?download=1`}>
+                  <Download className="h-4 w-4 mr-1" /> Download
+                </a>
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setPreview(null)}>
+                <XCircle className="h-4 w-4" />
+              </Button>
+            </div>
+            {preview.fileMime.startsWith("image/") ? (
+              <div className="flex-1 overflow-auto flex items-center justify-center bg-secondary/30 p-4">
+                <img src={`${BASE}/api/finance/documents/${preview.id}/file`} alt={preview.fileName} className="max-w-full max-h-full object-contain" />
+              </div>
+            ) : (
+              <iframe
+                src={`${BASE}/api/finance/documents/${preview.id}/file`}
+                title={preview.fileName}
+                className="flex-1 w-full border-0"
+              />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -378,6 +474,17 @@ function SuggestionsBlock({ lineId }: { lineId: number }) {
   });
 
   const open = (matches.data ?? []).filter((m) => m.state === "suggested");
+  const [expandedMatch, setExpandedMatch] = useState<number | null>(null);
+  const [fullEmail, setFullEmail] = useState<{ matchId: number; loading: boolean; error?: string; text?: string; from?: string; attachments?: Array<{ filename: string }> } | null>(null);
+  const openFullEmail = async (matchId: number) => {
+    setFullEmail({ matchId, loading: true });
+    try {
+      const body = await jsonFetch(`${BASE}/api/finance/matches/${matchId}/email`);
+      setFullEmail({ matchId, loading: false, text: body.text, from: body.from, attachments: body.attachments });
+    } catch (e) {
+      setFullEmail({ matchId, loading: false, error: (e as Error).message });
+    }
+  };
   if (matches.isLoading) return <div className="text-sm text-muted-foreground">Checking mailbox suggestions…</div>;
   if (open.length === 0) return null;
 
@@ -386,16 +493,29 @@ function SuggestionsBlock({ lineId }: { lineId: number }) {
       <div className="text-sm font-medium mb-2">Found in the mailbox — is one of these it?</div>
       <div className="space-y-2">
         {open.map((m) => (
-          <div key={m.id} className="flex items-center gap-3 rounded border px-3 py-2">
+          <div key={m.id} className="rounded border px-3 py-2">
+          <div className="flex items-center gap-3">
+            <button onClick={() => setExpandedMatch(expandedMatch === m.id ? null : m.id)} className="shrink-0 text-muted-foreground hover:text-foreground" aria-label="Show email content">
+              {expandedMatch === m.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </button>
             <Mail className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <div className="flex-1 min-w-0">
+            <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setExpandedMatch(expandedMatch === m.id ? null : m.id)}>
               <div className="text-sm truncate">{m.subject ?? "(no subject)"}</div>
               <div className="text-xs text-muted-foreground truncate">
                 {m.fromAddress} · {m.internalDate ? new Date(m.internalDate).toLocaleDateString("en-GB") : ""}
                 {m.hasPdf ? " · PDF attached" : ""} · {m.reasons.join("; ")}
               </div>
             </div>
-            <Badge variant="outline" className="shrink-0">{m.score}</Badge>
+            <Badge
+              className={`shrink-0 ${
+                m.strength === "very_strong" ? "bg-emerald-600 text-white"
+                : m.strength === "strong" ? "bg-emerald-100 text-emerald-900"
+                : m.strength === "medium" ? "bg-amber-100 text-amber-900"
+                : "bg-neutral-100 text-neutral-600"
+              }`}
+            >
+              {m.strength === "very_strong" ? "Very strong" : m.strength === "strong" ? "Strong" : m.strength === "medium" ? "Medium" : "Weak"}
+            </Badge>
             <Button size="sm" onClick={() => decide.mutate({ id: m.id, action: "confirm" })} disabled={decide.isPending}>
               <CheckCircle2 className="h-4 w-4 mr-1" /> Attach
             </Button>
@@ -403,8 +523,49 @@ function SuggestionsBlock({ lineId }: { lineId: number }) {
               <XCircle className="h-4 w-4" />
             </Button>
           </div>
+          {expandedMatch === m.id && (
+            <div className="mt-2 ml-11 rounded bg-secondary/40 p-3 text-sm space-y-2">
+              {m.snippet ? (
+                <p className="whitespace-pre-wrap text-foreground/90">{m.snippet}{m.snippet.length >= 400 ? "…" : ""}</p>
+              ) : (
+                <p className="text-muted-foreground italic">No summary stored for this email yet — read the full email below.</p>
+              )}
+              <Button size="sm" variant="outline" onClick={() => openFullEmail(m.id)}>
+                <Mail className="h-4 w-4 mr-1" /> Read the full email
+              </Button>
+            </div>
+          )}
+          </div>
         ))}
       </div>
+
+      {fullEmail && (
+        <div className="fixed inset-0 z-[150] bg-black/60 flex items-center justify-center p-4" onClick={() => setFullEmail(null)}>
+          <div className="bg-background rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 px-4 py-3 border-b">
+              <Mail className="h-4 w-4 shrink-0" />
+              <span className="font-medium truncate flex-1">{fullEmail.from ?? "Email"}</span>
+              <Button size="sm" variant="ghost" onClick={() => setFullEmail(null)}><XCircle className="h-4 w-4" /></Button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              {fullEmail.loading ? (
+                <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Fetching from the mailbox…</div>
+              ) : fullEmail.error ? (
+                <p className="text-sm text-destructive">{fullEmail.error}</p>
+              ) : (
+                <>
+                  {(fullEmail.attachments?.length ?? 0) > 0 && (
+                    <p className="text-xs text-muted-foreground mb-3">
+                      Attachments: {fullEmail.attachments!.map((a) => a.filename).join(", ")}
+                    </p>
+                  )}
+                  <pre className="whitespace-pre-wrap text-sm font-sans">{fullEmail.text || "(no text content)"}</pre>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -544,6 +705,8 @@ function AdminPanel() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [scanSince, setScanSince] = useState("");
+  const [rangeFrom, setRangeFrom] = useState("");
+  const [rangeTo, setRangeTo] = useState("");
 
   const saveMailbox = useMutation({
     mutationFn: () =>
@@ -570,6 +733,34 @@ function AdminPanel() {
       queryClient.invalidateQueries({ queryKey: ["/api/finance/mailbox"] });
     },
     onError: (e: Error) => toast({ title: "Sync failed to start", description: e.message, variant: "destructive" }),
+  });
+
+  const qbo = useQuery<any>({
+    queryKey: ["/api/finance/qbo/status"],
+    queryFn: () => jsonFetch(`${BASE}/api/finance/qbo/status`),
+  });
+  const qboSync = useMutation({
+    mutationFn: () => jsonFetch(`${BASE}/api/finance/qbo/sync`, { method: "POST" }),
+    onSuccess: () => {
+      toast({ title: "QuickBooks sync started", description: "Posted transactions will close their card lines as it runs." });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/qbo/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+    },
+    onError: (e: Error) => toast({ title: "Sync failed to start", description: e.message, variant: "destructive" }),
+  });
+
+  const scanRange = useMutation({
+    mutationFn: () =>
+      jsonFetch(`${BASE}/api/finance/mailbox/scan-range`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from: rangeFrom, ...(rangeTo ? { to: rangeTo } : {}) }),
+      }),
+    onSuccess: () => {
+      toast({ title: "Period scan started", description: "Running in the background — suggestions appear as it indexes that period." });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/mailbox"] });
+    },
+    onError: (e: Error) => toast({ title: "Scan failed to start", description: e.message, variant: "destructive" }),
   });
 
   const toggleAccess = useMutation({
@@ -614,7 +805,7 @@ function AdminPanel() {
               <Input type="date" value={scanSince} onChange={(e) => setScanSince(e.target.value)} />
             </div>
           </div>
-          <div className="flex gap-2 mt-3">
+          <div className="flex gap-2 mt-3 flex-wrap">
             <Button size="sm" onClick={() => saveMailbox.mutate()} disabled={saveMailbox.isPending || !email || !password}>
               {saveMailbox.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Save connection
             </Button>
@@ -622,10 +813,60 @@ function AdminPanel() {
               {syncNow.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />} Sync now
             </Button>
           </div>
+          <div className="mt-4 pt-3 border-t">
+            <Label className="text-xs">Scan a specific period (e.g. June, to cover old transactions)</Label>
+            <div className="flex gap-2 mt-1 flex-wrap items-center">
+              <Input type="date" value={rangeFrom} onChange={(e) => setRangeFrom(e.target.value)} className="w-40" />
+              <span className="text-muted-foreground text-sm">to</span>
+              <Input type="date" value={rangeTo} onChange={(e) => setRangeTo(e.target.value)} className="w-40" />
+              <Button size="sm" variant="outline" onClick={() => scanRange.mutate()} disabled={scanRange.isPending || !rangeFrom || !mailbox.data}>
+                {scanRange.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Mail className="h-4 w-4 mr-1" />} Scan this period
+              </Button>
+            </div>
+          </div>
         </div>
 
         <div>
-          <div className="text-sm font-medium mb-2">Who can see finance</div>
+          <div className="text-sm font-medium mb-2 flex items-center gap-2"><Banknote className="h-4 w-4" /> QuickBooks (read-only)</div>
+          {!qbo.data?.configured ? (
+            <p className="text-sm text-muted-foreground">
+              Needs the Intuit app credentials first: create an app at developer.intuit.com
+              (Accounting scope), set its redirect URI to <code className="text-xs bg-secondary px-1 rounded">{`${window.location.origin}/api/finance/qbo/callback`}</code>,
+              then add <code className="text-xs bg-secondary px-1 rounded">QBO_CLIENT_ID</code> and <code className="text-xs bg-secondary px-1 rounded">QBO_CLIENT_SECRET</code> to the server environment.
+            </p>
+          ) : qbo.data?.connected ? (
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">
+                Connected to company {qbo.data.realmId}
+                {qbo.data.lastSyncAt ? ` · last synced ${new Date(qbo.data.lastSyncAt).toLocaleString("en-GB")}` : " · never synced"}
+                {typeof qbo.data.mirroredTxns === "number" ? ` · ${qbo.data.mirroredTxns} posted transactions mirrored` : ""}
+                {qbo.data.lastError && <span className="text-destructive"> · {qbo.data.lastError}</span>}
+              </p>
+              <Button size="sm" variant="outline" onClick={() => qboSync.mutate()} disabled={qboSync.isPending}>
+                {qboSync.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />} Sync now
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">
+                Not connected. Connecting lets the app see which transactions are already
+                posted and close their card lines automatically — read-only, it never
+                changes anything in QuickBooks.
+              </p>
+              <Button size="sm" asChild>
+                <a href={`${BASE}/api/finance/qbo/connect`}>Connect QuickBooks</a>
+              </Button>
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div className="text-sm font-medium mb-2">Accountants — who can see finance</div>
+          <p className="text-xs text-muted-foreground mb-2">
+            Switched-on users get a finance-only view: this page and nothing of the
+            production app. Admins always see everything. Create new profiles via the
+            normal user invite, then switch them on here.
+          </p>
           <div className="space-y-1">
             {(users.data ?? []).map((u) => (
               <div key={u.id} className="flex items-center justify-between rounded border px-3 py-2">

@@ -5,6 +5,7 @@ import * as z from "zod";
 import { removeTagFromOrder, shopifyAdminOrderUrl, shopifyAdminOrderBase, getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
 import { nextAvailableDeliveryDate, rescheduleTags, withDeliveryDate, rescheduleEmailText, rescheduleEmailHtml, friendlyDate, firstNameOf, toZapietDate } from "../lib/order-reschedule";
 import { validate } from "../middleware/validate";
+import { userHasFeature } from "../lib/feature-access";
 import { sendEmail } from "../lib/email";
 import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService, lookupOrderByReference, lookupOrdersByReference, lookupOrderByWaybill, parseApcBarcode, waybillCore, apcTrackingUrl, type ApcOrderLookup } from "../services/apc";
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
@@ -81,6 +82,11 @@ async function requireFulfilmentAccess(req: Request, res: Response, next: NextFu
       .where(eq(pagePermissionsTable.pageKey, "/fulfilment"));
     const minRole = row?.minRole ?? "manager";
     if ((ROLE_RANK[role] ?? 0) >= (ROLE_RANK[minRole] ?? 1)) { next(); return; }
+  }
+  // Role too low — a per-user feature grant (optionally SOP-training gated)
+  // can still open this page: the APC-label-printing pilot.
+  if (req.session.userId && (await userHasFeature(req.session.userId, "apc_label_printing"))) {
+    next(); return;
   }
   res.status(403).json({ error: "Your role doesn't have access to Order Packing Live — an admin can change this under Settings → Page Access Control" });
 }
@@ -1748,6 +1754,7 @@ async function buildPreflight(tag: string, dispatchDate: Date) {
   const blocked: PreflightOrder[] = [];
   const alreadyBooked: PreflightOrder[] = [];
   const localDeliveries: PreflightOrder[] = [];
+  const collections: PreflightOrder[] = [];
   // Untagged orders are NOT bookable — tagging is step one and a label must
   // never run ahead of it. They used to be filtered away silently, which
   // read as "that's the whole day"; now they're reported so the operator
@@ -1788,6 +1795,12 @@ async function buildPreflight(tag: string, dispatchDate: Date) {
       reviews: [],
     };
 
+    // Collections are picked up from the unit in a brown paper bag — they
+    // must never get a consignment (Graeme, 2026-08-28).
+    if (tags.includes("collections") || tags.includes("collection")) {
+      collections.push(row);
+      continue;
+    }
     // Local deliveries go on the van — they must never get a consignment.
     if (tags.includes("local-delivery")) {
       localDeliveries.push(row);
@@ -1828,9 +1841,10 @@ async function buildPreflight(tag: string, dispatchDate: Date) {
       blocked: blocked.length,
       alreadyBooked: alreadyBooked.length,
       localDeliveries: localDeliveries.length,
+      collections: collections.length,
       notTagged: notTagged.length,
     },
-    ready, needsReview, blocked, alreadyBooked, localDeliveries, notTagged,
+    ready, needsReview, blocked, alreadyBooked, localDeliveries, collections, notTagged,
   };
 }
 
@@ -2328,10 +2342,14 @@ router.post("/orders/:id/complete", requireFulfilmentAccess, async (req: Request
   let localDelivery = false;
   if (apcEnabled && !consignmentNumber) {
     order = await getOrderById(orderId);
-    localDelivery = (order?.tags ?? "")
+    const tagsLower = (order?.tags ?? "")
       .split(",")
-      .map(t => t.trim().toLowerCase())
-      .includes("local-delivery");
+      .map(t => t.trim().toLowerCase());
+    // Collections and local deliveries never have a consignment: the bag
+    // stays in the fridge / the box goes on the van.
+    localDelivery = tagsLower.includes("local-delivery")
+      || tagsLower.includes("collections")
+      || tagsLower.includes("collection");
     if (!localDelivery) {
       res.status(400).json({ error: `consignmentNumber is required when apc_mode is "${apcMode}"` });
       return;

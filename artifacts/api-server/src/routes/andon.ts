@@ -1,6 +1,7 @@
 import { Router, type IRouter, type Request, type Response } from "express";
+import multer from "multer";
 import { db, andonIssuesTable, andonCommentsTable, usersTable, notificationsTable, improvementSubmissionsTable } from "@workspace/db";
-import { eq, isNull, desc, asc, and, SQL } from "drizzle-orm";
+import { eq, isNull, desc, asc, and, SQL, sql } from "drizzle-orm";
 import type { AndonIssue } from "@workspace/db";
 
 const router: IRouter = Router();
@@ -378,5 +379,69 @@ router.post("/:id/tag-improvement", async (req: Request, res: Response) => {
     res.status(500).json({ error: "Failed to turn this into an improvement" });
   }
 });
+
+
+
+// ── Attachments (photos, screenshots & videos) ─────────────────────────────
+// Same rules as improvement attachments: images to 10MB, video to 100MB.
+// Issue reports carry what the reporter can see — a photo of the problem,
+// a screenshot of the app misbehaving, a short clip (Graeme, 2026-08-28).
+
+const mediaUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+const IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+const VIDEO_MIMES = ["video/mp4", "video/webm", "video/quicktime", "video/ogg"];
+
+router.post("/:id/attachments", mediaUpload.single("file"), async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  if (!req.file) { res.status(400).json({ error: "No file uploaded" }); return; }
+  const mime = req.file.mimetype;
+  const isImage = IMAGE_MIMES.includes(mime);
+  const isVideo = VIDEO_MIMES.includes(mime);
+  if (!isImage && !isVideo) {
+    res.status(400).json({ error: "Unsupported file type. Use JPEG/PNG/WebP/GIF or MP4/WebM/MOV/OGG." });
+    return;
+  }
+  if (isImage && req.file.size > 10 * 1024 * 1024) {
+    res.status(400).json({ error: "Image too large (max 10MB)." });
+    return;
+  }
+  const [issue] = await db.select({ id: andonIssuesTable.id }).from(andonIssuesTable).where(eq(andonIssuesTable.id, id));
+  if (!issue) { res.status(404).json({ error: "Issue not found" }); return; }
+  const rows = await db.execute(sql`
+    INSERT INTO andon_attachments (issue_id, kind, mime, data, file_name)
+    VALUES (${id}, ${isImage ? "image" : "video"}, ${mime}, ${req.file.buffer}, ${req.file.originalname ?? null})
+    RETURNING id
+  `);
+  const inserted = (rows as any).rows?.[0];
+  res.status(201).json({ id: inserted?.id, kind: isImage ? "image" : "video", mime });
+});
+
+router.get("/:id/attachments", async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const rows = await db.execute(sql`
+    SELECT id, kind, mime, file_name, created_at FROM andon_attachments
+    WHERE issue_id = ${id} ORDER BY id
+  `);
+  res.json(((rows as any).rows ?? []).map((a: any) => ({
+    id: a.id, kind: a.kind, mime: a.mime, fileName: a.file_name, createdAt: a.created_at,
+  })));
+});
+
+router.get("/attachments/:attId/file", async (req: Request, res: Response) => {
+  const attId = parseInt(String(req.params.attId), 10);
+  if (isNaN(attId)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const rows = await db.execute(sql`SELECT mime, data, file_name FROM andon_attachments WHERE id = ${attId}`);
+  const a = (rows as any).rows?.[0];
+  if (!a) { res.status(404).json({ error: "Not found" }); return; }
+  const buf = Buffer.isBuffer(a.data) ? a.data : Buffer.from(a.data);
+  res.setHeader("Content-Type", a.mime);
+  res.setHeader("Content-Length", String(buf.length));
+  res.setHeader("Content-Disposition", `inline; filename="${(a.file_name || "attachment").replace(/["\r\n]/g, "")}"`);
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.end(buf);
+});
+
 
 export default router;

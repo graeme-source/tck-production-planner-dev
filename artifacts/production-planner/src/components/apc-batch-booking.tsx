@@ -42,12 +42,13 @@ export interface PreflightOrder {
 interface Preflight {
   tag: string;
   codesConfigured: boolean;
-  counts: { total: number; ready: number; needsReview: number; blocked: number; alreadyBooked: number; localDeliveries: number; notTagged?: number };
+  counts: { total: number; ready: number; needsReview: number; blocked: number; alreadyBooked: number; localDeliveries: number; collections?: number; notTagged?: number };
   ready: PreflightOrder[];
   needsReview: PreflightOrder[];
   blocked: PreflightOrder[];
   alreadyBooked: PreflightOrder[];
   localDeliveries: PreflightOrder[];
+  collections?: PreflightOrder[];
   /** Unfulfilled orders on this day that have NOT been approved for
    *  dispatch. Never bookable — the server refuses them too. Listed so the
    *  operator can see what still needs tagging (Graeme, 2026-08-29). */
@@ -409,6 +410,7 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
             <Section title="Not tagged for dispatch — tag before booking" count={preflight.counts.notTagged ?? 0} tone="blocked" orders={preflight.notTagged ?? []} />
             <Section title="Already booked" count={preflight.counts.alreadyBooked} tone="done" orders={preflight.alreadyBooked} />
             <Section title="Local delivery — no label needed" count={preflight.counts.localDeliveries} tone="done" orders={preflight.localDeliveries} />
+            <Section title="Collection — brown paper bag, never APC" count={preflight.counts.collections ?? 0} tone="done" orders={preflight.collections ?? []} />
 
             {preflight.counts.needsReview > 0 && (
               <p className="text-xs text-amber-700 dark:text-amber-400">

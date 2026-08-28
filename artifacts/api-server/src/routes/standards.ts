@@ -12,7 +12,7 @@ import { Router, type IRouter, type Request, type Response, type NextFunction } 
 import multer from "multer";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import { buildSopFromVideo, ffmpegAvailable } from "../lib/sop-video";
+import { buildSopFromVideo, buildSopFromMedia, ffmpegAvailable, type SuppliedPhoto } from "../lib/sop-video";
 import { isClaudeConfigured } from "../lib/ai/claude";
 
 const router: IRouter = Router();
@@ -514,10 +514,12 @@ router.post("/:id/steps/:stepId/build-from-video", requireAuth, async (req, res)
     `);
     const createdIds: number[] = [];
     for (const [i, s] of result.steps.entries()) {
-      const timeRef = `(${Math.floor(s.startSec / 60)}:${String(Math.round(s.startSec % 60)).padStart(2, "0")}–${Math.floor(s.endSec / 60)}:${String(Math.round(s.endSec % 60)).padStart(2, "0")} in the video)`;
+      const timeRef = s.startSec != null && s.endSec != null
+        ? `\n\n(${Math.floor(s.startSec / 60)}:${String(Math.round(s.startSec % 60)).padStart(2, "0")}–${Math.floor(s.endSec / 60)}:${String(Math.round(s.endSec % 60)).padStart(2, "0")} in the video)`
+        : "";
       const inserted = await db.execute<{ id: number }>(sql`
         INSERT INTO sop_steps (sop_id, position, description, image_mime, image_data)
-        VALUES (${sopId}, ${step.position + 1 + i}, ${`${s.description}\n\n${timeRef}`}, ${"image/jpeg"}, ${s.photoJpeg})
+        VALUES (${sopId}, ${step.position + 1 + i}, ${`${s.description}${timeRef}`}, ${s.photoMime}, ${s.photo})
         RETURNING id
       `);
       createdIds.push((((inserted.rows ?? inserted) as { id: number }[])[0]).id);
@@ -529,12 +531,206 @@ router.post("/:id/steps/:stepId/build-from-video", requireAuth, async (req, res)
       stepsCreated: n,
       createdStepIds: createdIds,
       suggestedTitle: result.suggestedTitle,
-      transcriptUsed: result.transcriptUsed,
     });
   } catch (err) {
     console.error("[standards] build-from-video failed:", err);
     const msg = err instanceof Error ? err.message : String(err);
     res.status(502).json({ error: `Video analysis failed: ${msg}` });
+  } finally {
+    sopBuildsInFlight.delete(sopId);
+  }
+});
+
+// ── Polish: AI rewrites every step's text for clarity ─────────────────────
+// (Graeme, 2026-08-28): people who aren't confident writers — or writing in
+// a second language — get the message down however they can; the AI rewrites
+// it clear, minimal and imperative without losing the information.
+const POLISH_TOOL = {
+  name: "polish_sop_steps",
+  description: "Record the rewritten SOP step instructions.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      steps: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "number", description: "The step id, unchanged." },
+            description: { type: "string", description: "The rewritten instruction." },
+          },
+          required: ["id", "description"],
+        },
+      },
+    },
+    required: ["steps"],
+  },
+};
+
+router.post("/:id/polish", requireAuth, async (req, res) => {
+  const sopId = Number(req.params.id);
+  if (!Number.isFinite(sopId)) { res.status(400).json({ error: "Invalid id" }); return; }
+  if (!isClaudeConfigured()) {
+    res.status(503).json({ error: "AI polish requires the Anthropic API key. Ask an admin to set ANTHROPIC_API_KEY." });
+    return;
+  }
+  const sopRows = await db.execute<{ title: string }>(sql`SELECT title FROM standards_sops WHERE id = ${sopId}`);
+  const sop = (((sopRows.rows ?? sopRows) as { title: string }[]))[0];
+  if (!sop) { res.status(404).json({ error: "SOP not found" }); return; }
+  const stepRows = await db.execute<{ id: number; description: string }>(sql`
+    SELECT id, description FROM sop_steps WHERE sop_id = ${sopId} ORDER BY position
+  `);
+  const steps = ((stepRows.rows ?? stepRows) as { id: number; description: string }[])
+    .filter(st => (st.description ?? "").trim().length > 0 && !st.description.startsWith("Source video —"));
+  if (steps.length === 0) { res.status(400).json({ error: "No written steps to polish yet." }); return; }
+
+  try {
+    const { getClaudeClient, CLAUDE_MODELS } = await import("../lib/ai/claude");
+    const client = getClaudeClient();
+    const response = await client.messages.create({
+      model: CLAUDE_MODELS.sonnet,
+      max_tokens: 4096,
+      tool_choice: { type: "tool", name: "polish_sop_steps" },
+      tools: [POLISH_TOOL as never],
+      messages: [{
+        role: "user",
+        content: `You are editing the steps of a Standard Operating Procedure ("${sop.title}") for The Calzone Kitchen, a UK food production kitchen. The authors may not be confident writers, and many readers have English as a second language. Rewrite each step so it is as clear, short and easy to follow as possible.
+
+Rules:
+- Imperative voice, present tense, written for a new starter ("Spread the sauce to 1cm from the edge").
+- Keep every piece of operating information: quantities, times, temperatures, equipment, settings. Never invent any.
+- Cut everything else: filler, hedging, repetition, irrelevant asides, jargon that doesn't help.
+- Simple everyday words. Short sentences. As little text as does the job.
+- Keep any line starting with ⚠ (a safety note) — you may tighten its wording but never remove it.
+- Keep any "(m:ss–m:ss in the video)" reference exactly as written.
+- Return every step by its id. If a step is already perfect, return it unchanged.
+
+The steps:
+
+${steps.map(st => `[id ${st.id}]\n${st.description}`).join("\n\n")}`,
+      }],
+    });
+    const toolUse = response.content.find(b => b.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") throw new Error("The AI did not return rewritten steps — try again");
+    const input = toolUse.input as { steps?: { id: number; description: string }[] };
+    const byId = new Map(steps.map(st => [st.id, st]));
+    let updated = 0;
+    for (const r of input.steps ?? []) {
+      const original = byId.get(r.id);
+      if (!original || typeof r.description !== "string" || !r.description.trim()) continue;
+      if (r.description.trim() === original.description.trim()) continue;
+      await db.execute(sql`
+        UPDATE sop_steps SET description = ${r.description.trim()}, updated_at = NOW() WHERE id = ${r.id} AND sop_id = ${sopId}
+      `);
+      updated++;
+    }
+    await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = ${sopId}`);
+    res.json({ ok: true, polished: updated, unchanged: steps.length - updated });
+  } catch (err) {
+    console.error("[standards] polish failed:", err);
+    res.status(502).json({ error: `Polish failed: ${err instanceof Error ? err.message : String(err)}` });
+  }
+});
+
+// ── Build from mixed media: one optional video + optional photos ──────────
+// The front door for new SOPs (Graeme, 2026-08-28): film the job and/or
+// supply photos; the AI thinks the process through, drafts the steps, and
+// picks the best illustration for each — a video moment or a supplied photo.
+const mediaBuildUpload = videoUpload.fields([
+  { name: "video", maxCount: 1 },
+  { name: "photos", maxCount: 12 },
+]);
+const BUILD_IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp"];
+
+router.post("/:id/build-from-media", requireAuth, mediaBuildUpload, async (req, res) => {
+  const sopId = Number(req.params.id);
+  if (!Number.isFinite(sopId)) { res.status(400).json({ error: "Invalid id" }); return; }
+  if (!isClaudeConfigured()) {
+    res.status(503).json({ error: "AI drafting requires the Anthropic API key. Ask an admin to set ANTHROPIC_API_KEY." });
+    return;
+  }
+  const files = req.files as Record<string, Express.Multer.File[]> | undefined;
+  const videoFile = files?.["video"]?.[0] ?? null;
+  const photoFiles = files?.["photos"] ?? [];
+  if (!videoFile && photoFiles.length === 0) {
+    res.status(400).json({ error: "Add a video or at least one photo first." });
+    return;
+  }
+  if (videoFile && !["video/mp4", "video/webm", "video/quicktime", "video/ogg"].includes(videoFile.mimetype)) {
+    res.status(400).json({ error: "Unsupported video type. Use MP4/WebM/MOV/OGG." });
+    return;
+  }
+  const badPhoto = photoFiles.find(f => !BUILD_IMAGE_MIMES.includes(f.mimetype));
+  if (badPhoto) {
+    res.status(400).json({ error: `Unsupported photo type ${badPhoto.mimetype}. Use JPEG/PNG/WebP.` });
+    return;
+  }
+  // ffmpeg shrinks supplied photos for analysis too, so it's needed for
+  // every media build, not just video ones.
+  if (!(await ffmpegAvailable())) {
+    res.status(503).json({ error: "ffmpeg is not installed on the server — media analysis unavailable." });
+    return;
+  }
+  if (sopBuildsInFlight.has(sopId)) {
+    res.status(409).json({ error: "A build is already running for this SOP — wait for it to finish." });
+    return;
+  }
+  const sopRows = await db.execute<{ id: number }>(sql`SELECT id FROM standards_sops WHERE id = ${sopId}`);
+  if (((sopRows.rows ?? sopRows) as { id: number }[]).length === 0) {
+    res.status(404).json({ error: "SOP not found" });
+    return;
+  }
+
+  sopBuildsInFlight.add(sopId);
+  try {
+    const photos: SuppliedPhoto[] = photoFiles.map(f => ({ buffer: f.buffer, mime: f.mimetype }));
+    const result = await buildSopFromMedia(
+      videoFile ? { buffer: videoFile.buffer, mime: videoFile.mimetype } : null,
+      photos,
+    );
+
+    // Position: after the current last step. When a video was supplied it
+    // becomes a reference step first, so the clip stays with the SOP.
+    const posRows = await db.execute<{ maxpos: number | null }>(sql`
+      SELECT MAX(position) AS maxpos FROM sop_steps WHERE sop_id = ${sopId}
+    `);
+    let nextPos = ((((posRows.rows ?? posRows) as { maxpos: number | null }[])[0])?.maxpos ?? -1) + 1;
+
+    if (videoFile) {
+      await db.execute(sql`
+        INSERT INTO sop_steps (sop_id, position, description, video_mime, video_data)
+        VALUES (${sopId}, ${nextPos}, ${"Source video — the steps below were drafted from this clip."}, ${videoFile.mimetype}, ${videoFile.buffer})
+      `);
+      nextPos++;
+    }
+
+    const createdIds: number[] = [];
+    for (const s of result.steps) {
+      const timeRef = s.startSec != null && s.endSec != null
+        ? `\n\n(${Math.floor(s.startSec / 60)}:${String(Math.round(s.startSec % 60)).padStart(2, "0")}–${Math.floor(s.endSec / 60)}:${String(Math.round(s.endSec % 60)).padStart(2, "0")} in the video)`
+        : "";
+      const inserted = await db.execute<{ id: number }>(sql`
+        INSERT INTO sop_steps (sop_id, position, description, image_mime, image_data)
+        VALUES (${sopId}, ${nextPos}, ${`${s.description}${timeRef}`}, ${s.photoMime}, ${s.photo})
+        RETURNING id
+      `);
+      createdIds.push((((inserted.rows ?? inserted) as { id: number }[])[0]).id);
+      nextPos++;
+    }
+    // A drafted title fills in for the placeholder, never overwrites a real one.
+    if (result.suggestedTitle) {
+      await db.execute(sql`
+        UPDATE standards_sops SET title = ${result.suggestedTitle}, updated_at = NOW()
+        WHERE id = ${sopId} AND (title = 'Untitled SOP' OR title = '' OR title IS NULL)
+      `);
+    }
+    await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = ${sopId}`);
+
+    res.json({ ok: true, stepsCreated: result.steps.length, createdStepIds: createdIds, suggestedTitle: result.suggestedTitle });
+  } catch (err) {
+    console.error("[standards] build-from-media failed:", err);
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(502).json({ error: `Media analysis failed: ${msg}` });
   } finally {
     sopBuildsInFlight.delete(sopId);
   }
