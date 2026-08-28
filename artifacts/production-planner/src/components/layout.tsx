@@ -51,7 +51,7 @@ import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assistant";
 import { TodoSheet, TodoInterstitial, useMyOpenTodoCount } from "@/components/todo-lists";
 import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
-import { BookOpen, Bot, GraduationCap, ChevronLeft, ChevronRight, ListTodo, ScanLine } from "lucide-react";
+import { Banknote, BookOpen, Bot, GraduationCap, ChevronLeft, ChevronRight, ListTodo, ScanLine } from "lucide-react";
 
 export type NavItem = { name: string; href: string; icon: React.ComponentType<{ className?: string }> };
 
@@ -549,6 +549,13 @@ export function Layout({ children }: { children: ReactNode }) {
       }
       return item;
     });
+
+  // Finance (VAT reconciliation) — admins and flagged bookkeepers only.
+  // Server-enforced too; this only controls nav visibility.
+  const isBookkeeper = Boolean((user as { isBookkeeper?: boolean } | null)?.isBookkeeper);
+  if (userRole === "admin" || isBookkeeper) {
+    visibleNavItems.push({ name: "Finance", href: "/finance", icon: Banknote });
+  }
 
   const visibleProductItems = productNavItems.filter(item =>
     canAccess(userRole, item.href)
