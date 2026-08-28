@@ -37,11 +37,32 @@ export function looksInvoiceLike(subject: string | undefined, hasPdf: boolean, s
   return false;
 }
 
+// Overall deadline on a whole sync pass. Live incident #2 (2026-08-28,
+// same morning as the crash): one.com tar-pits connections from Railway's
+// datacenter IPs — the socket opens and then starves, below the socket
+// timeout's radar, and the single-flight lock jammed until restart. The
+// watchdog guarantees the lock frees and the failure is visible.
+const SYNC_DEADLINE_MS = 15 * 60_000;
+
 export async function runMailboxSync(): Promise<SyncOutcome> {
   if (syncRunning) return { scanned: 0, indexed: 0, suggestionsRefreshed: 0, error: "Sync already running" };
   syncRunning = true;
   try {
-    return await doSync();
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<SyncOutcome>((resolve) => {
+      timer = setTimeout(async () => {
+        const msg = `Sync gave up after ${SYNC_DEADLINE_MS / 60000} minutes — the mail server accepted the connection but never answered (this happens when one.com throttles datacenter IPs). It will retry on the next hourly pass.`;
+        try {
+          const [box] = await db.select({ id: finMailboxTable.id }).from(finMailboxTable).limit(1);
+          if (box) await db.update(finMailboxTable).set({ lastError: msg, updatedAt: new Date() }).where(eq(finMailboxTable.id, box.id));
+        } catch { /* best effort */ }
+        resolve({ scanned: 0, indexed: 0, suggestionsRefreshed: 0, error: msg });
+      }, SYNC_DEADLINE_MS);
+      timer.unref?.();
+    });
+    const result = await Promise.race([doSync(), deadline]);
+    if (timer) clearTimeout(timer);
+    return result;
   } finally {
     syncRunning = false;
   }
