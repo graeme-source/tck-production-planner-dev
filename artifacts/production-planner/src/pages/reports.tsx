@@ -17,6 +17,7 @@ import {
   PoundSterling, Sunrise, Sunset, UserPlus, LogOut, Download, X as XIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { IssueAttachments } from "@/components/issue-attachments";
 import { useAuth } from "@/contexts/auth-context";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { FreshnessBadge } from "@/components/govee-freshness";
@@ -4829,6 +4830,8 @@ function AndonLogTab({ userRole, initialIssueId }: { userRole: string; initialIs
                   </td>
                   <td className="px-4 py-3 text-foreground font-semibold w-full">
                     <span className="whitespace-pre-wrap">{issue.description ?? "—"}</span>
+                    {/* Charter exception, one delegating line: attachments live in components/issue-attachments.tsx */}
+                    <IssueAttachments issueId={issue.id} />
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     <div className="text-foreground">{issue.reportedByName ?? "—"}</div>

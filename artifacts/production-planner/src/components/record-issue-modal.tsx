@@ -17,7 +17,7 @@
 
 import { useState, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Factory, Tablet, ShieldAlert, Camera, Loader2, X, ArrowRight, Lightbulb, CheckCircle2 } from "lucide-react";
+import { Factory, Tablet, ShieldAlert, Camera, Image as ImageIcon, Loader2, X, ArrowRight, Lightbulb, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 
@@ -32,15 +32,15 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
   const [isSafety, setIsSafety] = useState(false);
   const [alsoImprovement, setAlsoImprovement] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [photoTaken, setPhotoTaken] = useState(false);
-  const pendingFile = useRef<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const cameraRef = useRef<HTMLInputElement>(null);
+  const deviceRef = useRef<HTMLInputElement>(null);
 
   if (!open) return null;
 
   const reset = () => {
     setArea(null); setDescription(""); setIsSafety(false); setAlsoImprovement(false);
-    setPhotoTaken(false); pendingFile.current = null; setBusy(false);
+    setFiles([]); setBusy(false);
   };
   const close = () => { reset(); onClose(); };
 
@@ -74,15 +74,23 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
         if (tagged.ok) improvementId = (await tagged.json()).improvementId ?? null;
       }
 
-      // The photo goes on the improvement when there is one — that's where
-      // before-and-after evidence belongs and where it'll be looked at.
-      if (pendingFile.current && improvementId) {
+      // Everything attaches to the issue itself — that's the report's
+      // evidence. When it's also logged as an improvement, the first shot
+      // doubles as the improvement's "before" so both views are complete.
+      for (const [i, file] of files.entries()) {
         const form = new FormData();
-        form.append("file", pendingFile.current);
-        form.append("phase", "before");
-        await fetch(`${BASE}/api/improvements/${improvementId}/attachments`, {
+        form.append("file", file);
+        await fetch(`${BASE}/api/andon/${issue.id}/attachments`, {
           method: "POST", credentials: "include", body: form,
         });
+        if (i === 0 && improvementId) {
+          const impForm = new FormData();
+          impForm.append("file", file);
+          impForm.append("phase", "before");
+          await fetch(`${BASE}/api/improvements/${improvementId}/attachments`, {
+            method: "POST", credentials: "include", body: impForm,
+          });
+        }
       }
 
       queryClient.invalidateQueries({ queryKey: ["andon"] });
@@ -181,33 +189,70 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
               {alsoImprovement ? "Also an improvement to make" : "Could this be an improvement?"}
             </button>
 
-            {alsoImprovement && (
-              <>
-                <input
-                  ref={cameraRef}
-                  type="file"
-                  accept="image/*,video/*"
-                  capture="environment"
-                  className="hidden"
-                  onChange={e => {
-                    const file = e.target.files?.[0];
-                    e.target.value = "";
-                    if (file) { pendingFile.current = file; setPhotoTaken(true); }
-                  }}
-                />
-                <button
-                  onClick={() => cameraRef.current?.click()}
-                  className={cn(
-                    "w-full h-16 rounded-2xl border-2 text-lg font-bold flex items-center justify-center gap-3 transition-colors",
-                    photoTaken
-                      ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400"
-                      : "border-dashed border-border hover:bg-secondary/50",
-                  )}
-                >
-                  {photoTaken ? <CheckCircle2 className="w-6 h-6" /> : <Camera className="w-6 h-6" />}
-                  {photoTaken ? "Before photo ready — tap to retake" : "Take a before photo"}
-                </button>
-              </>
+            {/* Evidence — always offered, not only for improvements. A photo
+                of the problem, a screenshot of the app misbehaving, a short
+                clip: whatever shows it (Graeme, 2026-08-28). Camera for
+                what's in front of you; the device picker for screenshots
+                already taken. */}
+            <input
+              ref={cameraRef}
+              type="file"
+              accept="image/*,video/*"
+              capture="environment"
+              className="hidden"
+              onChange={e => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) setFiles(f => [...f, file]);
+              }}
+            />
+            <input
+              ref={deviceRef}
+              type="file"
+              accept="image/*,video/*"
+              multiple
+              className="hidden"
+              onChange={e => {
+                const picked = Array.from(e.target.files ?? []);
+                e.target.value = "";
+                if (picked.length) setFiles(f => [...f, ...picked]);
+              }}
+            />
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => cameraRef.current?.click()}
+                className="h-16 rounded-2xl border-2 border-dashed border-border text-base font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 transition-colors"
+              >
+                <Camera className="w-5 h-5" /> Take photo / video
+              </button>
+              <button
+                onClick={() => deviceRef.current?.click()}
+                className="h-16 rounded-2xl border-2 border-dashed border-border text-base font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 transition-colors"
+              >
+                <ImageIcon className="w-5 h-5" /> Add from device
+              </button>
+            </div>
+            {area === "system" && files.length === 0 && (
+              <p className="text-sm text-muted-foreground text-center -mt-1">
+                A screenshot of what went wrong helps enormously.
+              </p>
+            )}
+            {files.length > 0 && (
+              <div className="space-y-2">
+                {files.map((f, i) => (
+                  <div key={`${f.name}-${i}`} className="flex items-center gap-3 rounded-2xl border-2 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 px-4 py-3">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+                    <span className="flex-1 text-base font-bold truncate">{f.name || (f.type.startsWith("video") ? "Video" : "Photo")}</span>
+                    <button
+                      onClick={() => setFiles(cur => cur.filter((_, j) => j !== i))}
+                      className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center flex-shrink-0"
+                      aria-label="Remove"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
