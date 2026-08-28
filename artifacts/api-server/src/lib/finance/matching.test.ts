@@ -21,6 +21,7 @@ const email = (over: Partial<EmailForMatch> = {}): EmailForMatch => ({
   internalDate: new Date("2026-08-02T10:00:00Z"),
   hasPdf: true,
   amountsFound: ["15.98"],
+  orderIdsFound: [],
   ...over,
 });
 
@@ -68,6 +69,29 @@ describe("scoreLineAgainstEmail", () => {
     const known = scoreLineAgainstEmail(line({ vendorDomains: ["screwfix.com"] }), email());
     const unknown = scoreLineAgainstEmail(line(), email());
     expect(known!.score).toBeGreaterThan(unknown!.score);
+  });
+});
+
+describe("strength tiers (Graeme's 1-4 signal grading)", () => {
+  it("amount+date+name = strong; +reference = very strong", () => {
+    const strong = scoreLineAgainstEmail(line(), email());
+    expect(strong!.signals).toBe(3);
+    expect(strong!.strength).toBe("strong");
+    const veryStrong = scoreLineAgainstEmail(
+      line({ descriptor: "SCREWFIX F57441505 - Card Ending: 3465" }),
+      email({ subject: "Your Screwfix order F57441505" })
+    );
+    expect(veryStrong!.signals).toBe(4);
+    expect(veryStrong!.strength).toBe("very_strong");
+  });
+
+  it("amount alone outside the week window = weak", () => {
+    const s = scoreLineAgainstEmail(
+      line({ merchant: "OBSCURE", descriptor: "OBSCURE" }),
+      email({ fromDomain: "x.io", fromAddress: "a@x.io", subject: "receipt", internalDate: new Date("2026-07-20T10:00:00Z"), hasPdf: false })
+    );
+    expect(s!.signals).toBe(1);
+    expect(s!.strength).toBe("weak");
   });
 });
 

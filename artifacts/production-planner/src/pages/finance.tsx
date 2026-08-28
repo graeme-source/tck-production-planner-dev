@@ -77,6 +77,8 @@ type LinesResponse = {
 type MatchRow = {
   id: number;
   score: number;
+  signals?: number;
+  strength?: "weak" | "medium" | "strong" | "very_strong";
   reasons: string[];
   state: string;
   fromAddress: string | null;
@@ -488,7 +490,16 @@ function SuggestionsBlock({ lineId }: { lineId: number }) {
                 {m.hasPdf ? " · PDF attached" : ""} · {m.reasons.join("; ")}
               </div>
             </div>
-            <Badge variant="outline" className="shrink-0">{m.score}</Badge>
+            <Badge
+              className={`shrink-0 ${
+                m.strength === "very_strong" ? "bg-emerald-600 text-white"
+                : m.strength === "strong" ? "bg-emerald-100 text-emerald-900"
+                : m.strength === "medium" ? "bg-amber-100 text-amber-900"
+                : "bg-neutral-100 text-neutral-600"
+              }`}
+            >
+              {m.strength === "very_strong" ? "Very strong" : m.strength === "strong" ? "Strong" : m.strength === "medium" ? "Medium" : "Weak"}
+            </Badge>
             <Button size="sm" onClick={() => decide.mutate({ id: m.id, action: "confirm" })} disabled={decide.isPending}>
               <CheckCircle2 className="h-4 w-4 mr-1" /> Attach
             </Button>

@@ -349,6 +349,8 @@ router.get("/lines/:id/matches", requireFinanceAccess, async (req: Request, res:
     .select({
       id: finMatchesTable.id,
       score: finMatchesTable.score,
+      signals: finMatchesTable.signals,
+      strength: finMatchesTable.strength,
       reasons: finMatchesTable.reasons,
       state: finMatchesTable.state,
       fromAddress: finEmailIndexTable.fromAddress,

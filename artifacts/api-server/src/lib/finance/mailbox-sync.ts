@@ -4,7 +4,7 @@ import { db, finEmailIndexTable, finLinesTable, finMailboxTable, finMatchesTable
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { openSecret } from "./secret-box";
 import { extractAmounts } from "./amounts";
-import { suggestMatches, type EmailForMatch, type LineForMatch } from "./matching";
+import { suggestMatches, extractRefTokens, type EmailForMatch, type LineForMatch } from "./matching";
 
 // Mailbox sync: scan one.com over IMAP, index invoice-like messages
 // (metadata + extracted amounts ONLY — bodies are parsed transiently and
@@ -189,6 +189,7 @@ async function doSync(options: SyncOptions = {}): Promise<SyncOutcome> {
           for (const m of collected) {
             if (!looksInvoiceLike(m.subject, m.hasPdf, m.sender)) continue;
             let amounts: string[] = [];
+            let refTokens: string[] = [];
             try {
               const dl = await Promise.race([
                 client.download(String(m.uid), undefined, { uid: true }),
@@ -196,12 +197,16 @@ async function doSync(options: SyncOptions = {}): Promise<SyncOutcome> {
               ]);
               if (dl?.content) {
                 const parsed = await simpleParser(dl.content);
-                amounts = extractAmounts(`${m.subject ?? ""}\n${parsed.text ?? ""}`);
+                const text = `${m.subject ?? ""}\n${parsed.text ?? ""}`;
+                amounts = extractAmounts(text);
+                refTokens = extractRefTokens(text);
               } else {
                 amounts = extractAmounts(m.subject ?? "");
+                refTokens = extractRefTokens(m.subject ?? "");
               }
             } catch {
               amounts = extractAmounts(m.subject ?? "");
+              refTokens = extractRefTokens(m.subject ?? "");
             }
 
             await db
@@ -216,6 +221,7 @@ async function doSync(options: SyncOptions = {}): Promise<SyncOutcome> {
                 internalDate: m.internalDate,
                 hasPdf: m.hasPdf,
                 amountsFound: amounts,
+                orderIdsFound: refTokens,
               })
               .onConflictDoNothing({ target: [finEmailIndexTable.folder, finEmailIndexTable.imapUid] });
             indexed++;
@@ -325,16 +331,17 @@ export async function refreshSuggestions(): Promise<number> {
       internalDate: c.internalDate,
       hasPdf: c.hasPdf,
       amountsFound: c.amountsFound,
+      orderIdsFound: c.orderIdsFound ?? [],
     }));
 
     const suggestions = suggestMatches(lineForMatch, emails);
     for (const s of suggestions) {
       await db
         .insert(finMatchesTable)
-        .values({ lineId: l.id, emailIndexId: s.emailIndexId, score: s.score, reasons: s.reasons })
+        .values({ lineId: l.id, emailIndexId: s.emailIndexId, score: s.score, signals: s.signals, strength: s.strength, reasons: s.reasons })
         .onConflictDoUpdate({
           target: [finMatchesTable.lineId, finMatchesTable.emailIndexId],
-          set: { score: s.score, reasons: s.reasons },
+          set: { score: s.score, signals: s.signals, strength: s.strength, reasons: s.reasons },
           setWhere: sql`${finMatchesTable.state} = 'suggested'`,
         });
     }

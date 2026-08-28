@@ -125,6 +125,7 @@ export const finEmailIndexTable = pgTable("fin_email_index", {
   // amounts found in subject/body during the transient scan, as strings to
   // avoid float drift ("48.98"); body itself is discarded.
   amountsFound: jsonb("amounts_found").$type<string[]>().notNull().default([]),
+  orderIdsFound: jsonb("order_ids_found").$type<string[]>().notNull().default([]),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -134,6 +135,11 @@ export const finMatchesTable = pgTable("fin_matches", {
   lineId: integer("line_id").notNull(),
   emailIndexId: integer("email_index_id").notNull(),
   score: integer("score").notNull(), // 0-100
+  // How many of the four signals matched (amount, date window, company
+  // name, reference id) and the tier that count maps to:
+  // 1 weak · 2 medium · 3 strong · 4 very_strong.
+  signals: integer("signals").notNull().default(1),
+  strength: text("strength").notNull().default("weak"),
   reasons: jsonb("reasons").$type<string[]>().notNull().default([]),
   // 'suggested' | 'confirmed' | 'rejected'
   state: text("state").notNull().default("suggested"),
