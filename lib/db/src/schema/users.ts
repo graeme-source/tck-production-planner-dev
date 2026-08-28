@@ -31,6 +31,10 @@ export const usersTable = pgTable("app_users", {
   // Production-planner capability flag: a manager subtype. Gates planning
   // surfaces like the weekly DPT sales suggestion (admins always qualify).
   isProductionPlanner: boolean("is_production_planner").notNull().default(false),
+  // Bookkeeper capability flag: gates the finance/VAT-reconciliation pages
+  // (admins always qualify). Bookkeepers see finance and nothing of kitchen
+  // operations' admin surfaces; kitchen roles don't see finance.
+  isBookkeeper: boolean("is_bookkeeper").notNull().default(false),
 });
 
 export const insertUserSchema = createInsertSchema(usersTable).omit({ id: true, createdAt: true, updatedAt: true });

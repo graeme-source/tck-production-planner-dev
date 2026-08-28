@@ -3064,6 +3064,12 @@ async function startup() {
     const { refreshSystemUpdatesSnapshot } = await import("./routes/system-updates");
     void refreshSystemUpdatesSnapshot();
     setInterval(() => void refreshSystemUpdatesSnapshot(), 3 * 60 * 60_000).unref();
+
+    // Finance / VAT reconciliation — one-time backlog seed (guarded) and the
+    // hourly mailbox sync (no-op until a mailbox is configured in the app).
+    const { seedFinanceBacklogIfNeeded, startFinanceMailboxTimer } = await import("./lib/finance/startup");
+    await seedFinanceBacklogIfNeeded();
+    startFinanceMailboxTimer();
   } catch (err) {
     console.error(
       "Background startup tasks failed:",

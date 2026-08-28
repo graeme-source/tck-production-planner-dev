@@ -72,6 +72,7 @@ import founderFocusRouter from "./founder-focus";
 import todosRouter from "./todos";
 import founderSalesRouter from "./founder-sales";
 import surveysRouter from "./surveys";
+import financeRouter from "./finance";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -168,6 +169,9 @@ router.use("/collections", collectionsRouter);
 router.use("/case-orders", caseOrdersRouter);
 router.use("/stock-control", stockControlRouter);
 router.use("/founder-panels", founderPanelsRouter);
+// Finance / VAT reconciliation — access gated inside the router (admin or
+// isBookkeeper); mailbox settings admin-only at the route layer.
+router.use("/finance", financeRouter);
 // Customer surveys — admin builds/reads them here; the public submission API
 // is a separate unauthenticated router mounted directly in app.ts.
 router.use("/surveys", requireAdmin, surveysRouter);
