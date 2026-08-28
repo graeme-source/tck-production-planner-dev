@@ -16,6 +16,7 @@ export * from "./auth";
 export * from "./ordering";
 export * from "./improvements_and_andon";
 export * from "./checklists";
+export * from "./curiosity";
 export * from "./shopify_fulfilment_tracking";
 export * from "./notifications";
 export * from "./risk_assessments";

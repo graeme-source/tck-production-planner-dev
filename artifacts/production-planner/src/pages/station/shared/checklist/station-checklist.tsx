@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
 import { PersonalTodosStrip } from "@/components/todo-lists";
+import { CuriosityTimeCard } from "@/components/curiosity-time";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
@@ -317,6 +318,10 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
           every day. Per-user, not per-station — a different login on the
           same iPad sees their own list here. */}
       <PersonalTodosStrip />
+
+      {/* Curiosity Time — the daily waste-spotting walk. Renders nothing
+          until the switch in the meeting page's curriculum editor is on. */}
+      <CuriosityTimeCard stationType={stationType} planId={planId} />
 
       {/* Progress header */}
       <div className="bg-card border border-border rounded-xl px-5 py-4">

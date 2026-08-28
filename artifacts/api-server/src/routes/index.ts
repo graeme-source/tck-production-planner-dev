@@ -42,6 +42,7 @@ import andonRouter from "./andon";
 import qrRouter from "./qr";
 import pnlRouter from "./pnl";
 import checklistsRouter from "./checklists";
+import curiosityRouter from "./curiosity";
 import notificationsRouter from "./notifications";
 import employeesRouter from "./employees";
 import riskAssessmentsRouter from "./risk-assessments";
@@ -182,6 +183,9 @@ router.use("/andon", andonRouter);
 router.use("/qr", qrRouter);
 router.use("/pnl", pnlRouter);
 router.use("/checklists", checklistsRouter);
+// Curiosity Time waste-spotting walks — every team member does these from
+// the station checklist; the route file guards its own settings endpoints.
+router.use("/curiosity", curiosityRouter);
 router.use("/notifications", notificationsRouter);
 router.use("/employees", employeesRouter);
 router.use("/risk-assessments", riskAssessmentsRouter);

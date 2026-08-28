@@ -3954,6 +3954,60 @@ function WeeklyReviewToggleCard() {
   );
 }
 
+/** The Curiosity Time switch — the waste-spotting walk on every station
+ *  checklist stays hidden until the team has been taught the eight wastes,
+ *  then one tap here launches it (and one tap pulls it if it isn't
+ *  landing). Off by default; same idiom as the weekly-review switch. */
+function CuriosityTimeToggleCard() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery<{ enabled: boolean }>({
+    queryKey: ["curiosity-settings"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/curiosity/settings`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load setting");
+      return res.json();
+    },
+  });
+  const toggle = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      const res = await fetch(`${BASE}/api/curiosity/settings`, {
+        method: "PATCH", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+    },
+    onSuccess: (_r, enabled) => {
+      queryClient.invalidateQueries({ queryKey: ["curiosity-settings"] });
+      queryClient.invalidateQueries({ queryKey: ["curiosity-walk"] });
+      toast({ title: enabled ? "Curiosity Time is ON" : "Curiosity Time is OFF" });
+    },
+    onError: () => toast({ title: "Couldn't save the setting", variant: "destructive" }),
+  });
+  const enabled = data?.enabled ?? false;
+  return (
+    <div className="border border-border rounded-xl bg-card p-4 flex items-center justify-between gap-3 mt-2">
+      <div className="min-w-0">
+        <p className="font-medium">Curiosity Time</p>
+        <p className="text-xs text-muted-foreground">
+          The waste-spotting walk on every station checklist: walk the area, go through the 8 wastes,
+          photograph what you spot. Keep it off until the team has learned the wastes.
+        </p>
+      </div>
+      <button
+        onClick={() => toggle.mutate(!enabled)}
+        disabled={toggle.isPending || !data}
+        className={cn(
+          "flex-shrink-0 px-4 py-2 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50",
+          enabled ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground border border-border",
+        )}
+      >
+        {enabled ? "On" : "Off"}
+      </button>
+    </div>
+  );
+}
+
 function WeeklyFocusCard() {
   const queryClient = useQueryClient();
   const { data } = useQuery<{
@@ -4071,6 +4125,7 @@ function CurriculumEditor({ onClose }: { onClose: () => void }) {
 
         <WeeklyFocusCard />
         <WeeklyReviewToggleCard />
+        <CuriosityTimeToggleCard />
 
         {isLoading ? (
           <div className="py-12 text-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground inline" /></div>

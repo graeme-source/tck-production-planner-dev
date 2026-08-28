@@ -65,8 +65,11 @@ const SHARED_CHECKLIST_STATIONS: Record<string, string> = {
   prep_meat: "prep",
 };
 
-/** Resolve to the canonical station type for checklist storage */
-function resolveChecklistStation(stationType: string): string {
+/** Resolve to the canonical station type for checklist storage.
+ *  Exported for routes that store per-station-per-plan records alongside the
+ *  checklist (curiosity walks) — they must share this aliasing or building_2
+ *  and the prep sections would each get their own copy. */
+export function resolveChecklistStation(stationType: string): string {
   return SHARED_CHECKLIST_STATIONS[stationType] ?? stationType;
 }
 
