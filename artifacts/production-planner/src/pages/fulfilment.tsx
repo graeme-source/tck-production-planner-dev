@@ -11,6 +11,7 @@ import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import {
   LOCAL_DELIVERY_TAG,
   isLocalDelivery,
+  isCollection,
   isDispatchTagged,
   boxCategoryOf,
   ordersForTagging,
@@ -27,7 +28,7 @@ import {
   RefreshCw, MapPin, SkipForward, RotateCcw, XCircle, Loader2,
   ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter, ArrowUpDown,
   Volume2, VolumeX, AlertTriangle, PackageCheck, Snowflake, CalendarClock,
-  ClipboardCheck, Factory,
+  ClipboardCheck, Factory, ShoppingBag,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -154,6 +155,48 @@ interface ShopifyOrder {
     zip: string;
   } | null;
   line_items: LineItem[];
+  /** Storefront order attributes — carries the collection security code. */
+  note_attributes?: Array<{ name: string; value: string }>;
+}
+
+/** The collection security code the website stores as an order attribute. */
+function collectionCodeOf(order: ShopifyOrder): string | null {
+  const attrs = order.note_attributes ?? [];
+  const hit = attrs.find(a => /code|collect|pickup|security/i.test(a.name));
+  return hit?.value?.trim() || null;
+}
+
+/** Bag label for a collection order: order number, collector, code. Opened
+ *  in a print window — stick it on the brown paper bag, bag in the fridge. */
+function printBagLabel(order: ShopifyOrder) {
+  const collector = order.shipping_address?.name
+    || `${order.customer?.first_name ?? ""} ${order.customer?.last_name ?? ""}`.trim()
+    || "—";
+  const code = collectionCodeOf(order);
+  const w = window.open("", "_blank", "width=420,height=560");
+  if (!w) return;
+  w.document.write(`<!doctype html><html><head><title>Collection ${order.name}</title>
+    <style>
+      body { font-family: -apple-system, sans-serif; margin: 0; padding: 24px; }
+      .label { border: 3px solid #000; border-radius: 12px; padding: 20px; text-align: center; }
+      .kind { font-size: 15px; letter-spacing: 3px; font-weight: 800; }
+      .order { font-size: 44px; font-weight: 900; margin: 10px 0 2px; }
+      .name { font-size: 26px; font-weight: 700; margin: 8px 0; }
+      .code-label { font-size: 12px; letter-spacing: 2px; margin-top: 14px; color: #333; }
+      .code { font-size: 38px; font-weight: 900; letter-spacing: 4px; border: 2px dashed #000; border-radius: 8px; padding: 6px 10px; display: inline-block; margin-top: 4px; }
+      .foot { margin-top: 14px; font-size: 13px; color: #333; }
+      @media print { body { padding: 0; } }
+    </style></head><body>
+    <div class="label">
+      <div class="kind">COLLECTION ORDER</div>
+      <div class="order">${order.name}</div>
+      <div class="name">${collector}</div>
+      ${code ? `<div class="code-label">SECURITY CODE</div><div class="code">${code}</div>` : ""}
+      <div class="foot">Keep refrigerated · Hand over on code${code ? "" : " (no code on order — check ID)"}</div>
+    </div>
+    <script>window.onload = () => { window.print(); };</script>
+    </body></html>`);
+  w.document.close();
 }
 
 interface ShipmentResult {
@@ -1665,7 +1708,7 @@ export default function Fulfilment() {
   // mode proves labels by scanning at the bench instead.
   const labelGateActive = apcMode === "full" && bookedConsignments != null;
   const lacksLabel = (o: ShopifyOrder) =>
-    labelGateActive && !isLocalDelivery(o) && !bookedMap.has(o.id);
+    labelGateActive && !isLocalDelivery(o) && !isCollection(o) && !bookedMap.has(o.id);
   const noLabelOrders = filteredUnfulfilledOrdered.filter(lacksLabel);
   const labelledOrdered = filteredUnfulfilledOrdered.filter(o => !lacksLabel(o));
 
@@ -2035,10 +2078,11 @@ export default function Fulfilment() {
     maybeOpenIcePackGate(order);
     maybeOpenServiceCodeGate(order);
 
-    // Local delivery: the van does the last mile, APC is never involved.
-    // No consignment to look up (reconcile) or book (full) — straight to
-    // item scanning, and completion runs without a tracking number.
-    if (isLocalDelivery(order)) {
+    // Local delivery and collections: APC is never involved — the van does
+    // the last mile, or the customer walks in. No consignment to look up
+    // (reconcile) or book (full) — straight to item scanning, and
+    // completion runs without a tracking number.
+    if (isLocalDelivery(order) || isCollection(order)) {
       setCreatingShipment(false);
       return;
     }
@@ -2070,7 +2114,7 @@ export default function Fulfilment() {
       // unlike "full" mode this books nothing, it's just a read.
       const pos = filteredUnfulfilled.findIndex(o => o.id === order.id);
       const next = filteredUnfulfilled.slice(pos + 1).find(o => !skippedIds.has(o.id));
-      if (next && !isLocalDelivery(next)) preQueueConsignment(next.name);
+      if (next && !isLocalDelivery(next) && !isCollection(next)) preQueueConsignment(next.name);
       return;
     }
 
@@ -2119,7 +2163,7 @@ export default function Fulfilment() {
       if (configStatus?.testMode) {
         const currentPos = filteredUnfulfilled.findIndex(o => o.id === order.id);
         const nextOrder = filteredUnfulfilled.slice(currentPos + 1).find(o => !skippedIds.has(o.id));
-        if (nextOrder && !isLocalDelivery(nextOrder)) preQueueNextOrder(nextOrder.id);
+        if (nextOrder && !isLocalDelivery(nextOrder) && !isCollection(nextOrder)) preQueueNextOrder(nextOrder.id);
       }
     } catch (err: any) {
       setShipmentError(err.message ?? "Failed to create APC shipment");
@@ -2198,9 +2242,10 @@ export default function Fulfilment() {
   const pickedUnits = groupedItems.reduce((sum, g) => sum + Math.min(pickedCounts.get(g._groupKey) ?? 0, g.totalQty), 0);
   const allChecked = totalUnits > 0 && pickedUnits >= totalUnits;
 
-  // Local orders bypass every courier gate — computed once here so the label
-  // gate, completion and auto-complete all agree.
-  const activeIsLocal = !!activeOrder && isLocalDelivery(activeOrder);
+  // Local and collection orders bypass every courier gate — computed once
+  // here so the label gate, completion and auto-complete all agree.
+  const activeIsCollection = !!activeOrder && isCollection(activeOrder);
+  const activeIsLocal = (!!activeOrder && isLocalDelivery(activeOrder)) || activeIsCollection;
 
   // True while the packer still owes us a verified APC label for this order.
   // Only meaningful in reconcile mode, and only once we know which consignment
@@ -3385,9 +3430,30 @@ export default function Fulfilment() {
           </div>
         )}
 
+        {/* Collection: brown paper bag, bag label, fridge. Loud on purpose —
+            a collection packed into an APC box is a mis-ship. */}
+        {activeIsCollection && activeOrder && (
+          <div className="rounded-xl border-2 border-amber-500 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 space-y-2">
+            <div className="flex items-start gap-2 text-sm">
+              <ShoppingBag className="w-5 h-5 text-amber-700 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+              <span className="text-amber-900 dark:text-amber-200 text-base">
+                <strong>COLLECTION ORDER</strong> — pack into a <strong>brown paper bag</strong>, not a box.
+                No APC label. Print the bag label, stick it on, and leave the bag in the fridge until collected.
+              </span>
+            </div>
+            <button
+              onClick={() => printBagLabel(activeOrder)}
+              className="w-full py-3 rounded-xl bg-amber-600 text-white font-bold text-sm flex items-center justify-center gap-2 hover:bg-amber-700"
+            >
+              <Printer className="w-4 h-4" /> Print bag label
+              {collectionCodeOf(activeOrder) ? ` — code ${collectionCodeOf(activeOrder)}` : " (no security code on this order)"}
+            </button>
+          </div>
+        )}
+
         {/* Local delivery: no courier, no label — make that loudly obvious so
             nobody stands at the printer waiting for a label that won't come. */}
-        {activeIsLocal && (
+        {activeIsLocal && !activeIsCollection && (
           <div className="flex items-start gap-2 text-sm rounded-xl border border-teal-300 dark:border-teal-800 bg-teal-50 dark:bg-teal-950/30 px-4 py-3">
             <Truck className="w-4 h-4 text-teal-600 dark:text-teal-400 flex-shrink-0 mt-0.5" />
             <span className="text-teal-800 dark:text-teal-200">
@@ -3974,6 +4040,55 @@ export default function Fulfilment() {
         <IcePackBanner />
         <DessertsReportCard tag={queryTag} />
       </div>
+
+      {/* Collection orders: packed separately in brown paper bags, never
+          APC. Their own loud card so they can't get mixed into the box
+          waves (Graeme, 2026-08-28). */}
+      {(() => {
+        const collectionOrders = allUnfulfilledOrders.filter(o => isCollection(o));
+        if (collectionOrders.length === 0) return null;
+        return (
+          <div className="rounded-xl border-2 border-amber-500 bg-amber-50 dark:bg-amber-950/30 overflow-hidden">
+            <div className="px-4 py-3 border-b border-amber-300 dark:border-amber-800 flex items-center gap-2">
+              <ShoppingBag className="w-5 h-5 text-amber-700 dark:text-amber-400" />
+              <h3 className="font-bold text-amber-900 dark:text-amber-200">
+                Collection orders — brown paper bags, no APC label
+              </h3>
+              <span className="ml-auto text-sm font-semibold text-amber-800 dark:text-amber-300">{collectionOrders.length}</span>
+            </div>
+            <div className="px-4 py-2 text-sm text-amber-900/80 dark:text-amber-200/80">
+              Pack these separately from the courier orders: paper bag, bag label on, fridge until collected.
+            </div>
+            <div className="divide-y divide-amber-200 dark:divide-amber-800">
+              {collectionOrders.map(o => (
+                <div key={o.id} className="flex items-center gap-3 px-4 py-2.5">
+                  <div className="flex-1 min-w-0">
+                    <span className="font-bold">{o.name}</span>
+                    <span className="text-sm text-muted-foreground ml-2 truncate">
+                      {o.shipping_address?.name || `${o.customer?.first_name ?? ""} ${o.customer?.last_name ?? ""}`.trim()}
+                    </span>
+                    {collectionCodeOf(o) && (
+                      <span className="ml-2 text-xs font-mono font-bold bg-amber-200 dark:bg-amber-900 px-1.5 py-0.5 rounded">code {collectionCodeOf(o)}</span>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => printBagLabel(o)}
+                    className="text-sm px-3 py-1.5 rounded-lg border border-amber-400 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 flex items-center gap-1.5 font-medium"
+                  >
+                    <Printer className="w-3.5 h-3.5" /> Bag label
+                  </button>
+                  <button
+                    onClick={() => void startPicking(o)}
+                    className="text-sm px-3 py-1.5 rounded-lg bg-amber-600 text-white hover:bg-amber-700 font-semibold"
+                  >
+                    Pack
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {error && (
         <div className="flex items-center gap-3 p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive">
