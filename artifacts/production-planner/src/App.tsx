@@ -118,6 +118,15 @@ function ProtectedRoute({ component: Component, pageKey }: { component: React.Co
   return <Component />;
 }
 
+// Accountants (isBookkeeper, non-admin) land on Finance — the rest of the
+// planner is production noise to them.
+function HomeRoute() {
+  const { state } = useAuth();
+  const u = state.status === "authenticated" ? (state.user as { role?: string; isBookkeeper?: boolean }) : null;
+  if (u && u.role !== "admin" && u.isBookkeeper) return <Redirect to="/finance" />;
+  return <Dashboard />;
+}
+
 function Router() {
   return (
     <Switch>
@@ -145,7 +154,7 @@ function Router() {
         {() => (
           <Layout>
             <Switch>
-              <Route path="/" component={Dashboard} />
+              <Route path="/" component={HomeRoute} />
               <Route path="/pack-report" component={PackReport} />
               <Route path="/label-live-test" component={LabelLiveTest} />
               <Route path="/inventory" component={Inventory} />

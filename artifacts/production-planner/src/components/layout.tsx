@@ -202,6 +202,7 @@ export function NavLinks({
   search,
   user,
   onNavigate,
+  hideBottomNav = false,
 }: {
   visibleNavItems: NavItem[];
   visibleProductItems: NavItem[];
@@ -210,6 +211,8 @@ export function NavLinks({
   search: string;
   user: { name?: string; role?: string } | null;
   onNavigate?: () => void;
+  /** Accountant (finance-only) users: hide Lean Cave / Settings. */
+  hideBottomNav?: boolean;
 }) {
   const fullPath = location + (search ? search : "");
   const isOnProductPage = PRODUCT_PATHS.includes(location);
@@ -475,7 +478,7 @@ export function NavLinks({
       </nav>
 
       <div className="px-3 pb-2">
-        {bottomNavItems.map((item) => {
+        {(hideBottomNav ? [] : bottomNavItems).map((item) => {
           const isActive = location === item.href;
           return (
             <Link
@@ -550,12 +553,16 @@ export function Layout({ children }: { children: ReactNode }) {
       return item;
     });
 
-  // Finance (VAT reconciliation) — admins and flagged bookkeepers only.
-  // Server-enforced too; this only controls nav visibility.
+  // Finance (VAT reconciliation) — admins and flagged accountants only.
+  // Server-enforced too; this only controls nav visibility. Accountants
+  // (isBookkeeper without admin) get a finance-only sidebar: the production
+  // app is noise to them, and they are noise to it.
   const isBookkeeper = Boolean((user as { isBookkeeper?: boolean } | null)?.isBookkeeper);
+  const accountantOnly = isBookkeeper && userRole !== "admin";
   if (userRole === "admin" || isBookkeeper) {
     visibleNavItems.push({ name: "Finance", href: "/finance", icon: Banknote });
   }
+
 
   const visibleProductItems = productNavItems.filter(item =>
     canAccess(userRole, item.href)
@@ -565,7 +572,11 @@ export function Layout({ children }: { children: ReactNode }) {
     canAccess(userRole, item.href)
   );
 
-  const allNavItems = [...navItems, ...productNavItems, ...inventorySubItems, ...bottomNavItems];
+  const navForUser = accountantOnly ? visibleNavItems.filter(i => i.href === "/finance") : visibleNavItems;
+  const productForUser = accountantOnly ? [] : visibleProductItems;
+  const inventoryForUser = accountantOnly ? [] : visibleInventoryItems;
+
+  const allNavItems = [...navItems, ...productNavItems, ...inventorySubItems, ...bottomNavItems, { name: "Finance", href: "/finance", icon: Banknote }];
   const currentPageName = location === "/locations"
     ? "Bin Locations"
     : location === "/inventory"
@@ -592,9 +603,10 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
 
         <NavLinks
-          visibleNavItems={visibleNavItems}
-          visibleProductItems={visibleProductItems}
-          visibleInventoryItems={visibleInventoryItems}
+          visibleNavItems={navForUser}
+          visibleProductItems={productForUser}
+          visibleInventoryItems={inventoryForUser}
+          hideBottomNav={accountantOnly}
           location={location}
           search={search}
           user={user}
@@ -650,9 +662,10 @@ export function Layout({ children }: { children: ReactNode }) {
               </div>
 
               <NavLinks
-                visibleNavItems={visibleNavItems}
-                visibleProductItems={visibleProductItems}
-                visibleInventoryItems={visibleInventoryItems}
+                visibleNavItems={navForUser}
+                visibleProductItems={productForUser}
+                visibleInventoryItems={inventoryForUser}
+                hideBottomNav={accountantOnly}
                 location={location}
                 search={search}
                 user={user}

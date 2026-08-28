@@ -624,7 +624,12 @@ function AdminPanel() {
         </div>
 
         <div>
-          <div className="text-sm font-medium mb-2">Who can see finance</div>
+          <div className="text-sm font-medium mb-2">Accountants — who can see finance</div>
+          <p className="text-xs text-muted-foreground mb-2">
+            Switched-on users get a finance-only view: this page and nothing of the
+            production app. Admins always see everything. Create new profiles via the
+            normal user invite, then switch them on here.
+          </p>
           <div className="space-y-1">
             {(users.data ?? []).map((u) => (
               <div key={u.id} className="flex items-center justify-between rounded border px-3 py-2">
