@@ -637,6 +637,8 @@ function AdminPanel() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [scanSince, setScanSince] = useState("");
+  const [rangeFrom, setRangeFrom] = useState("");
+  const [rangeTo, setRangeTo] = useState("");
 
   const saveMailbox = useMutation({
     mutationFn: () =>
@@ -663,6 +665,20 @@ function AdminPanel() {
       queryClient.invalidateQueries({ queryKey: ["/api/finance/mailbox"] });
     },
     onError: (e: Error) => toast({ title: "Sync failed to start", description: e.message, variant: "destructive" }),
+  });
+
+  const scanRange = useMutation({
+    mutationFn: () =>
+      jsonFetch(`${BASE}/api/finance/mailbox/scan-range`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from: rangeFrom, ...(rangeTo ? { to: rangeTo } : {}) }),
+      }),
+    onSuccess: () => {
+      toast({ title: "Period scan started", description: "Running in the background — suggestions appear as it indexes that period." });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/mailbox"] });
+    },
+    onError: (e: Error) => toast({ title: "Scan failed to start", description: e.message, variant: "destructive" }),
   });
 
   const toggleAccess = useMutation({
@@ -707,13 +723,24 @@ function AdminPanel() {
               <Input type="date" value={scanSince} onChange={(e) => setScanSince(e.target.value)} />
             </div>
           </div>
-          <div className="flex gap-2 mt-3">
+          <div className="flex gap-2 mt-3 flex-wrap">
             <Button size="sm" onClick={() => saveMailbox.mutate()} disabled={saveMailbox.isPending || !email || !password}>
               {saveMailbox.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Save connection
             </Button>
             <Button size="sm" variant="outline" onClick={() => syncNow.mutate()} disabled={syncNow.isPending || !mailbox.data}>
               {syncNow.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />} Sync now
             </Button>
+          </div>
+          <div className="mt-4 pt-3 border-t">
+            <Label className="text-xs">Scan a specific period (e.g. June, to cover old transactions)</Label>
+            <div className="flex gap-2 mt-1 flex-wrap items-center">
+              <Input type="date" value={rangeFrom} onChange={(e) => setRangeFrom(e.target.value)} className="w-40" />
+              <span className="text-muted-foreground text-sm">to</span>
+              <Input type="date" value={rangeTo} onChange={(e) => setRangeTo(e.target.value)} className="w-40" />
+              <Button size="sm" variant="outline" onClick={() => scanRange.mutate()} disabled={scanRange.isPending || !rangeFrom || !mailbox.data}>
+                {scanRange.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Mail className="h-4 w-4 mr-1" />} Scan this period
+              </Button>
+            </div>
           </div>
         </div>
 

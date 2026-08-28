@@ -494,6 +494,24 @@ router.get("/mailbox", requireAdmin, async (_req: Request, res: Response) => {
   res.json(box ?? null);
 });
 
+const scanRangeSchema = z.object({
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+// One-off ranged scan — reaches back before the configured backfill date
+// without touching the incremental cursor.
+router.post("/mailbox/scan-range", requireAdmin, validate(scanRangeSchema), async (req: Request, res: Response) => {
+  const { from, to } = req.body as z.infer<typeof scanRangeSchema>;
+  runMailboxSync({ rangeFrom: from, rangeTo: to })
+    .then((o) => {
+      if (o.error) console.error("[finance] range scan finished with error:", o.error);
+      else console.log(`[finance] range scan done: scanned ${o.scanned}, indexed ${o.indexed}`);
+    })
+    .catch((err) => console.error("[finance] range scan crashed:", err));
+  res.json({ started: true, from, to: to ?? null });
+});
+
 router.post("/mailbox/sync", requireAdmin, async (_req: Request, res: Response) => {
   // Fire-and-forget: a first backfill can take many minutes, and holding the
   // HTTP request open that long just times out and invites double-clicks.

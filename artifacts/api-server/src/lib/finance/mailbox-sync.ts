@@ -44,7 +44,16 @@ export function looksInvoiceLike(subject: string | undefined, hasPdf: boolean, s
 // watchdog guarantees the lock frees and the failure is visible.
 const SYNC_DEADLINE_MS = 15 * 60_000;
 
-export async function runMailboxSync(): Promise<SyncOutcome> {
+export interface SyncOptions {
+  /** One-off ranged scan (ISO dates, inclusive from / exclusive to): ignores
+   *  and does not advance the UID cursor, so it can reach back before the
+   *  configured backfill date (Graeme, 2026-08-28: "sync a month back in
+   *  June so I can test those early June ones"). */
+  rangeFrom?: string;
+  rangeTo?: string;
+}
+
+export async function runMailboxSync(options: SyncOptions = {}): Promise<SyncOutcome> {
   if (syncRunning) return { scanned: 0, indexed: 0, suggestionsRefreshed: 0, error: "Sync already running" };
   syncRunning = true;
   try {
@@ -60,7 +69,7 @@ export async function runMailboxSync(): Promise<SyncOutcome> {
       }, SYNC_DEADLINE_MS);
       timer.unref?.();
     });
-    const result = await Promise.race([doSync(), deadline]);
+    const result = await Promise.race([doSync(options), deadline]);
     if (timer) clearTimeout(timer);
     return result;
   } finally {
@@ -68,7 +77,7 @@ export async function runMailboxSync(): Promise<SyncOutcome> {
   }
 }
 
-async function doSync(): Promise<SyncOutcome> {
+async function doSync(options: SyncOptions = {}): Promise<SyncOutcome> {
   const [box] = await db.select().from(finMailboxTable).limit(1);
   if (!box) return { scanned: 0, indexed: 0, suggestionsRefreshed: 0, error: "No mailbox configured" };
 
@@ -116,14 +125,21 @@ async function doSync(): Promise<SyncOutcome> {
         const prev = uidState[folder];
         // UIDVALIDITY change voids every cached UID → full rescan of the folder.
         const startUid = prev && prev.uidvalidity === validity ? prev.uidnext : 1;
+        const ranged = Boolean(options.rangeFrom);
 
-        // Bound the initial scan by the backfill horizon.
-        const since = box.scanSince ? new Date(`${box.scanSince}T00:00:00Z`) : undefined;
+        // Bound the initial scan by the backfill horizon — or, for a ranged
+        // scan, by the requested window (cursor untouched).
+        const since = ranged
+          ? new Date(`${options.rangeFrom}T00:00:00Z`)
+          : box.scanSince ? new Date(`${box.scanSince}T00:00:00Z`) : undefined;
+        const before = ranged && options.rangeTo ? new Date(`${options.rangeTo}T00:00:00Z`) : undefined;
         const range = `${startUid}:*`;
-        const search: any = since && startUid === 1 ? { since } : { uid: range };
+        const search: any = ranged
+          ? (before ? { since, before } : { since })
+          : since && startUid === 1 ? { since } : { uid: range };
 
         let maxUid = startUid - 1;
-        for await (const msg of client.fetch(search, { uid: true, envelope: true, bodyStructure: true, internalDate: true }, { uid: startUid > 1 })) {
+        for await (const msg of client.fetch(search, { uid: true, envelope: true, bodyStructure: true, internalDate: true }, { uid: !ranged && startUid > 1 })) {
           scanned++;
           if (msg.uid > maxUid) maxUid = msg.uid;
           const env = msg.envelope;
@@ -161,7 +177,9 @@ async function doSync(): Promise<SyncOutcome> {
           indexed++;
         }
 
-        uidState[folder] = { uidvalidity: validity, uidnext: Math.max(maxUid + 1, Number(mailbox.uidNext ?? 1)) };
+        if (!ranged) {
+          uidState[folder] = { uidvalidity: validity, uidnext: Math.max(maxUid + 1, Number(mailbox.uidNext ?? 1)) };
+        }
       } finally {
         lock.release();
       }
