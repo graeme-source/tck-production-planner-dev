@@ -495,13 +495,16 @@ router.get("/mailbox", requireAdmin, async (_req: Request, res: Response) => {
 });
 
 router.post("/mailbox/sync", requireAdmin, async (_req: Request, res: Response) => {
-  try {
-    const outcome = await runMailboxSync();
-    res.json(outcome);
-  } catch (err: any) {
-    console.error("[finance] sync error:", err);
-    res.status(500).json({ error: err?.message ?? "Sync failed" });
-  }
+  // Fire-and-forget: a first backfill can take many minutes, and holding the
+  // HTTP request open that long just times out and invites double-clicks.
+  // Progress is visible via GET /mailbox (lastSyncAt / lastError).
+  runMailboxSync()
+    .then((o) => {
+      if (o.error) console.error("[finance] sync finished with error:", o.error);
+      else console.log(`[finance] sync done: scanned ${o.scanned}, indexed ${o.indexed}`);
+    })
+    .catch((err) => console.error("[finance] sync crashed:", err));
+  res.json({ started: true });
 });
 
 // ---------------------------------------------------------------------------

@@ -562,13 +562,14 @@ function AdminPanel() {
 
   const syncNow = useMutation({
     mutationFn: () => jsonFetch(`${BASE}/api/finance/mailbox/sync`, { method: "POST" }),
-    onSuccess: (r: any) => {
-      if (r.error) toast({ title: "Sync problem", description: r.error, variant: "destructive" });
-      else toast({ title: "Mailbox synced", description: `Scanned ${r.scanned}, indexed ${r.indexed}, suggestions for ${r.suggestionsRefreshed} lines.` });
+    onSuccess: () => {
+      toast({
+        title: "Sync started",
+        description: "Running in the background — a first backfill can take a while. Check back here; suggestions appear as it indexes.",
+      });
       queryClient.invalidateQueries({ queryKey: ["/api/finance/mailbox"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
     },
-    onError: (e: Error) => toast({ title: "Sync failed", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Sync failed to start", description: e.message, variant: "destructive" }),
   });
 
   const toggleAccess = useMutation({
