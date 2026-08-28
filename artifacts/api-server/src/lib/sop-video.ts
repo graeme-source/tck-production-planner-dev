@@ -1,12 +1,16 @@
 /**
- * "Build SOP from video" pipeline.
+ * "Build SOP from media" pipeline.
  *
- * Takes a video already uploaded to an SOP step (BYTEA in sop_steps),
- * pulls evenly-spaced keyframes with ffmpeg, optionally transcribes the
- * audio (only when OPENAI_API_KEY is set — otherwise the analysis is
- * frames-only), and asks Claude to draft numbered SOP steps. Each drafted
- * step gets a full-quality frame extracted at its most illustrative
- * moment to use as the step photo.
+ * Takes a process video and/or a set of photos, pulls evenly-spaced
+ * keyframes from the video with ffmpeg, shows everything to Claude, and
+ * asks it to draft numbered SOP steps. For each step the AI picks the
+ * best illustration — a moment from the video (extracted as a
+ * full-quality frame) or one of the supplied photos.
+ *
+ * Analysis is visual-only by design: narration/transcription support was
+ * removed 2026-08-28 (Graeme: "we don't need narration — just the video
+ * sliced into effective steps with clear simple instructions"), which
+ * also dropped the OpenAI/Whisper dependency.
  *
  * ffmpeg/ffprobe must be on PATH: installed via Homebrew locally and
  * apt-get in the Dockerfile for Railway. All temp files live in a
@@ -31,16 +35,21 @@ const ANALYSIS_FRAME_WIDTH = 720;
 // higher quality.
 const STEP_PHOTO_WIDTH = 1080;
 
+export interface SuppliedPhoto {
+  buffer: Buffer;
+  mime: string; // image/jpeg | image/png | image/webp
+}
+
 export interface DraftedStep {
   description: string;
-  startSec: number;
-  endSec: number;
-  photoJpeg: Buffer;
+  startSec: number | null; // null when the build had no video
+  endSec: number | null;
+  photo: Buffer;
+  photoMime: string;
 }
 
 export interface BuildResult {
   suggestedTitle: string | null;
-  transcriptUsed: boolean;
   steps: DraftedStep[];
 }
 
@@ -67,36 +76,6 @@ async function extractFrame(videoPath: string, atSec: number, outPath: string, w
   ]);
 }
 
-/** Optional Whisper transcription — only runs when OPENAI_API_KEY is set.
- *  Returns null (never throws) when unavailable or failed: the pipeline
- *  degrades gracefully to frames-only analysis. */
-async function tryTranscribe(videoPath: string, workDir: string): Promise<string | null> {
-  const apiKey = process.env["OPENAI_API_KEY"];
-  if (!apiKey) return null;
-  try {
-    const audioPath = path.join(workDir, "audio.mp3");
-    await execFileAsync("ffmpeg", ["-i", videoPath, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", "-y", audioPath]);
-    const audio = await readFile(audioPath);
-    const form = new FormData();
-    form.append("file", new Blob([new Uint8Array(audio)], { type: "audio/mpeg" }), "audio.mp3");
-    form.append("model", "whisper-1");
-    const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body: form,
-    });
-    if (!res.ok) {
-      console.error("[sop-video] transcription failed:", res.status, await res.text().catch(() => ""));
-      return null;
-    }
-    const json = await res.json() as { text?: string };
-    return typeof json.text === "string" && json.text.trim() ? json.text.trim() : null;
-  } catch (err) {
-    console.error("[sop-video] transcription error (continuing frames-only):", err);
-    return null;
-  }
-}
-
 function fmtTime(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = Math.round(sec % 60);
@@ -105,7 +84,7 @@ function fmtTime(sec: number): string {
 
 const DRAFT_TOOL = {
   name: "draft_sop_steps",
-  description: "Record the drafted SOP steps extracted from the process video.",
+  description: "Record the drafted SOP steps extracted from the process media.",
   input_schema: {
     type: "object" as const,
     properties: {
@@ -116,13 +95,14 @@ const DRAFT_TOOL = {
         items: {
           type: "object",
           properties: {
-            description: { type: "string", description: "Clear imperative instruction for the operator (2-4 sentences max). Include quantities, times, temperatures and equipment when visible or stated. Written for a new starter." },
+            description: { type: "string", description: "Clear imperative instruction for the operator (2-4 sentences max). Include quantities, times, temperatures and equipment when visible. Written for a new starter." },
             safetyNote: { type: ["string", "null"], description: "One short food-safety/HACCP or physical-safety note for this step if relevant (allergens, temps, knives, hot surfaces), else null." },
-            startSec: { type: "number", description: "When this step starts in the video, in seconds." },
-            endSec: { type: "number", description: "When this step ends in the video, in seconds. Must be > startSec." },
-            bestFrameSec: { type: "number", description: "The single timestamp (seconds) that best illustrates this step for a still photo — hands in frame doing the action, not a transition." },
+            startSec: { type: ["number", "null"], description: "When this step starts in the video, in seconds. Null when the step is not shown in the video." },
+            endSec: { type: ["number", "null"], description: "When this step ends in the video, in seconds. Must be > startSec. Null when startSec is null." },
+            bestFrameSec: { type: ["number", "null"], description: "The video timestamp (seconds) that best illustrates this step — hands in frame doing the action, not a transition. Use this OR suppliedPhotoNumber, never both." },
+            suppliedPhotoNumber: { type: ["number", "null"], description: "The 1-based number of the supplied photo that best illustrates this step, when a supplied photo shows it better than any video moment (or no video exists). Use this OR bestFrameSec, never both." },
           },
-          required: ["description", "safetyNote", "startSec", "endSec", "bestFrameSec"],
+          required: ["description", "safetyNote", "startSec", "endSec", "bestFrameSec", "suppliedPhotoNumber"],
         },
       },
     },
@@ -133,64 +113,93 @@ const DRAFT_TOOL = {
 interface RawDraftStep {
   description: string;
   safetyNote: string | null;
-  startSec: number;
-  endSec: number;
-  bestFrameSec: number;
+  startSec: number | null;
+  endSec: number | null;
+  bestFrameSec: number | null;
+  suppliedPhotoNumber: number | null;
 }
 
 /**
- * Run the full pipeline on a video buffer. Returns drafted steps with
- * step photos. Throws with a human-readable message on failure (surfaced
- * directly to the operator by the route).
+ * Run the pipeline on a video and/or supplied photos. At least one input
+ * is required. Returns drafted steps, each with the illustration the AI
+ * chose (an extracted video frame or one of the supplied photos). Throws
+ * with a human-readable message on failure (surfaced to the operator).
  */
-export async function buildSopFromVideo(video: Buffer, videoMime: string): Promise<BuildResult> {
+export async function buildSopFromMedia(
+  video: { buffer: Buffer; mime: string } | null,
+  photos: SuppliedPhoto[],
+): Promise<BuildResult> {
+  if (!video && photos.length === 0) throw new Error("Provide a video or at least one photo");
   const workDir = await mkdtemp(path.join(tmpdir(), "sop-video-"));
   try {
-    const ext = videoMime.includes("webm") ? "webm" : videoMime.includes("quicktime") ? "mov" : videoMime.includes("ogg") ? "ogv" : "mp4";
-    const videoPath = path.join(workDir, `input.${ext}`);
-    await writeFile(videoPath, video);
-
-    const duration = await ffprobeDurationSec(videoPath);
-
-    // Evenly spaced analysis frames, avoiding the very first/last instants
-    // (lens caps, phones being put down).
-    const frameCount = Math.max(MIN_FRAMES, Math.min(MAX_FRAMES, Math.round(duration / 8)));
-    const timestamps: number[] = [];
-    for (let i = 0; i < frameCount; i++) {
-      timestamps.push((duration * (i + 0.5)) / frameCount);
-    }
+    let duration = 0;
+    let videoPath: string | null = null;
     const frames: { atSec: number; jpeg: Buffer }[] = [];
-    for (const [i, t] of timestamps.entries()) {
-      const framePath = path.join(workDir, `frame-${i}.jpg`);
-      await extractFrame(videoPath, t, framePath, ANALYSIS_FRAME_WIDTH, 4);
-      frames.push({ atSec: t, jpeg: await readFile(framePath) });
+
+    if (video) {
+      const ext = video.mime.includes("webm") ? "webm" : video.mime.includes("quicktime") ? "mov" : video.mime.includes("ogg") ? "ogv" : "mp4";
+      videoPath = path.join(workDir, `input.${ext}`);
+      await writeFile(videoPath, video.buffer);
+      duration = await ffprobeDurationSec(videoPath);
+
+      // Evenly spaced analysis frames, avoiding the very first/last instants
+      // (lens caps, phones being put down).
+      const frameCount = Math.max(MIN_FRAMES, Math.min(MAX_FRAMES, Math.round(duration / 8)));
+      for (let i = 0; i < frameCount; i++) {
+        const t = (duration * (i + 0.5)) / frameCount;
+        const framePath = path.join(workDir, `frame-${i}.jpg`);
+        await extractFrame(videoPath, t, framePath, ANALYSIS_FRAME_WIDTH, 4);
+        frames.push({ atSec: t, jpeg: await readFile(framePath) });
+      }
     }
 
-    const transcript = await tryTranscribe(videoPath, workDir);
+    // Supplied photos are shrunk for ANALYSIS only (phone photos are 4-6MB;
+    // Anthropic's limit is 5MB per image and requests grow fast) — the
+    // full-quality original is what lands on the step.
+    const analysisPhotos: Buffer[] = [];
+    for (const [i, ph] of photos.entries()) {
+      const inPath = path.join(workDir, `photo-${i}-in`);
+      const outPath = path.join(workDir, `photo-${i}.jpg`);
+      await writeFile(inPath, ph.buffer);
+      await execFileAsync("ffmpeg", ["-i", inPath, "-vf", `scale='min(${ANALYSIS_FRAME_WIDTH},iw)':-2`, "-frames:v", "1", "-q:v", "4", "-y", outPath]);
+      analysisPhotos.push(await readFile(outPath));
+    }
 
-    // Build the Claude message: timestamped frames, then the transcript
-    // (when available), then the drafting instruction.
+    // Build the Claude message: timestamped video frames, then supplied
+    // photos (numbered so the AI can pick them as step illustrations).
     const content: Array<Record<string, unknown>> = [];
     for (const [i, f] of frames.entries()) {
-      content.push({ type: "text", text: `Frame ${i + 1} of ${frames.length} — at ${fmtTime(f.atSec)} (${f.atSec.toFixed(1)}s):` });
+      content.push({ type: "text", text: `Video frame ${i + 1} of ${frames.length} — at ${fmtTime(f.atSec)} (${f.atSec.toFixed(1)}s):` });
       content.push({
         type: "image",
         source: { type: "base64", media_type: "image/jpeg", data: f.jpeg.toString("base64") },
       });
     }
-    if (transcript) {
-      content.push({ type: "text", text: `Audio transcript of the video (the operator narrating what they are doing):\n\n${transcript}` });
+    for (const [i, jpeg] of analysisPhotos.entries()) {
+      content.push({ type: "text", text: `Supplied photo ${i + 1} of ${analysisPhotos.length} (taken by the team — may show a stage of the process, equipment, or the finished result):` });
+      content.push({
+        type: "image",
+        source: { type: "base64", media_type: "image/jpeg", data: jpeg.toString("base64") },
+      });
     }
+
+    const mediaLine = video && photos.length > 0
+      ? `The video frames above are evenly-spaced stills from a single continuous video (${fmtTime(duration)} long) of a team member performing a kitchen process, followed by ${photos.length} supplied photo(s) of the same process.`
+      : video
+        ? `The frames above are evenly-spaced stills from a single continuous video (${fmtTime(duration)} long) of a team member performing a kitchen process.`
+        : `The ${photos.length} supplied photo(s) above show stages of a kitchen process, in the order they were taken.`;
+
     content.push({
       type: "text",
-      text: `You are drafting a Standard Operating Procedure for The Calzone Kitchen, a UK food production kitchen. The frames above are evenly-spaced stills from a single continuous video (${fmtTime(duration)} long) of a team member performing a kitchen process${transcript ? ", and the audio transcript is included above" : " — there is no usable audio, so work from the frames alone"}.
+      text: `You are drafting a Standard Operating Procedure for The Calzone Kitchen, a UK food production kitchen. ${mediaLine} There is no audio — work from what you can see.
 
-Break the process into clear sequential steps an operator can follow. Guidance:
-- Each step is one distinct action or stage — typically 3-10 steps for a video this length. Do not invent steps you cannot see${transcript ? " or hear" : ""}.
-- Write instructions in the imperative for a new starter ("Spread the base sauce to 1cm from the edge"), including equipment, quantities, times and temperatures when visible${transcript ? " or stated" : ""}.
+Think the process through logically from start to finish, then break it into clear sequential steps an operator can follow. Guidance:
+- Each step is one distinct action or stage — do not invent steps you cannot see.
+- Write instructions in the imperative for a new starter ("Spread the base sauce to 1cm from the edge"), including equipment, quantities, times and temperatures when visible.
 - Note food-safety points where relevant (hand washing, allergen handling, temperatures, knife/hot-surface safety) in the safetyNote field.
-- startSec/endSec bound the step within the video timeline; bestFrameSec picks the most illustrative single moment for the step photo (mid-action, not a transition or blur).
-- If parts of the video are unclear, still create the step but keep the instruction to what is certain — the team will edit the draft afterwards.`,
+- For each step choose the SINGLE best illustration: bestFrameSec for the most illustrative video moment (mid-action, not a transition or blur), OR suppliedPhotoNumber when a supplied photo shows the step better${video ? "" : " (there is no video, so every step must use a suppliedPhotoNumber"}${video ? "." : ")."} Never set both.
+- startSec/endSec bound the step within the video timeline when the step appears in the video; null otherwise.
+- If parts are unclear, still create the step but keep the instruction to what is certain — the team will edit the draft afterwards.`,
     });
 
     const client = getClaudeClient();
@@ -206,35 +215,53 @@ Break the process into clear sequential steps an operator can follow. Guidance:
     const input = toolUse.input as { suggestedTitle?: string | null; steps?: RawDraftStep[] };
     const rawSteps = (input.steps ?? []).filter(s =>
       typeof s.description === "string" && s.description.trim().length > 0 &&
-      Number.isFinite(s.bestFrameSec),
+      (Number.isFinite(s.bestFrameSec) || (s.suppliedPhotoNumber != null && photos[s.suppliedPhotoNumber - 1] != null)),
     );
-    if (rawSteps.length === 0) throw new Error("The AI could not identify any steps in this video");
+    if (rawSteps.length === 0) throw new Error("The AI could not identify any steps in this media");
 
-    // Extract a full-quality photo for each drafted step at its chosen moment.
+    // Resolve each step's illustration: extracted video frame or supplied photo.
     const steps: DraftedStep[] = [];
     for (const [i, s] of rawSteps.entries()) {
-      const at = Math.min(Math.max(s.bestFrameSec, 0), Math.max(0, duration - 0.5));
-      const photoPath = path.join(workDir, `step-${i}.jpg`);
-      await extractFrame(videoPath, at, photoPath, STEP_PHOTO_WIDTH, 2);
+      let photo: Buffer;
+      let photoMime: string;
+      if (s.suppliedPhotoNumber != null && photos[s.suppliedPhotoNumber - 1]) {
+        const chosen = photos[s.suppliedPhotoNumber - 1];
+        photo = chosen.buffer;
+        photoMime = chosen.mime;
+      } else if (videoPath && Number.isFinite(s.bestFrameSec)) {
+        const at = Math.min(Math.max(s.bestFrameSec as number, 0), Math.max(0, duration - 0.5));
+        const photoPath = path.join(workDir, `step-${i}.jpg`);
+        await extractFrame(videoPath, at, photoPath, STEP_PHOTO_WIDTH, 2);
+        photo = await readFile(photoPath);
+        photoMime = "image/jpeg";
+      } else {
+        continue; // no usable illustration — drop rather than invent
+      }
       const description = s.safetyNote && s.safetyNote.trim()
         ? `${s.description.trim()}\n\n⚠ ${s.safetyNote.trim()}`
         : s.description.trim();
       steps.push({
         description,
-        startSec: Number.isFinite(s.startSec) ? s.startSec : 0,
-        endSec: Number.isFinite(s.endSec) ? s.endSec : duration,
-        photoJpeg: await readFile(photoPath),
+        startSec: Number.isFinite(s.startSec) ? (s.startSec as number) : null,
+        endSec: Number.isFinite(s.endSec) ? (s.endSec as number) : null,
+        photo,
+        photoMime,
       });
     }
+    if (steps.length === 0) throw new Error("The AI could not illustrate any steps from this media");
 
     return {
       suggestedTitle: typeof input.suggestedTitle === "string" && input.suggestedTitle.trim() ? input.suggestedTitle.trim() : null,
-      transcriptUsed: transcript != null,
       steps,
     };
   } finally {
     await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+/** Video-only wrapper kept for the per-step "Build SOP from video" button. */
+export async function buildSopFromVideo(video: Buffer, videoMime: string): Promise<BuildResult> {
+  return buildSopFromMedia({ buffer: video, mime: videoMime }, []);
 }
 
 /** Quick availability probe so the route can fail with a clear message

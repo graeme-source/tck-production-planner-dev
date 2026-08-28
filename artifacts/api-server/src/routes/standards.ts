@@ -12,7 +12,7 @@ import { Router, type IRouter, type Request, type Response, type NextFunction } 
 import multer from "multer";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import { buildSopFromVideo, ffmpegAvailable } from "../lib/sop-video";
+import { buildSopFromVideo, buildSopFromMedia, ffmpegAvailable, type SuppliedPhoto } from "../lib/sop-video";
 import { isClaudeConfigured } from "../lib/ai/claude";
 
 const router: IRouter = Router();
@@ -514,10 +514,12 @@ router.post("/:id/steps/:stepId/build-from-video", requireAuth, async (req, res)
     `);
     const createdIds: number[] = [];
     for (const [i, s] of result.steps.entries()) {
-      const timeRef = `(${Math.floor(s.startSec / 60)}:${String(Math.round(s.startSec % 60)).padStart(2, "0")}–${Math.floor(s.endSec / 60)}:${String(Math.round(s.endSec % 60)).padStart(2, "0")} in the video)`;
+      const timeRef = s.startSec != null && s.endSec != null
+        ? `\n\n(${Math.floor(s.startSec / 60)}:${String(Math.round(s.startSec % 60)).padStart(2, "0")}–${Math.floor(s.endSec / 60)}:${String(Math.round(s.endSec % 60)).padStart(2, "0")} in the video)`
+        : "";
       const inserted = await db.execute<{ id: number }>(sql`
         INSERT INTO sop_steps (sop_id, position, description, image_mime, image_data)
-        VALUES (${sopId}, ${step.position + 1 + i}, ${`${s.description}\n\n${timeRef}`}, ${"image/jpeg"}, ${s.photoJpeg})
+        VALUES (${sopId}, ${step.position + 1 + i}, ${`${s.description}${timeRef}`}, ${s.photoMime}, ${s.photo})
         RETURNING id
       `);
       createdIds.push((((inserted.rows ?? inserted) as { id: number }[])[0]).id);
@@ -529,12 +531,115 @@ router.post("/:id/steps/:stepId/build-from-video", requireAuth, async (req, res)
       stepsCreated: n,
       createdStepIds: createdIds,
       suggestedTitle: result.suggestedTitle,
-      transcriptUsed: result.transcriptUsed,
     });
   } catch (err) {
     console.error("[standards] build-from-video failed:", err);
     const msg = err instanceof Error ? err.message : String(err);
     res.status(502).json({ error: `Video analysis failed: ${msg}` });
+  } finally {
+    sopBuildsInFlight.delete(sopId);
+  }
+});
+
+// ── Build from mixed media: one optional video + optional photos ──────────
+// The front door for new SOPs (Graeme, 2026-08-28): film the job and/or
+// supply photos; the AI thinks the process through, drafts the steps, and
+// picks the best illustration for each — a video moment or a supplied photo.
+const mediaBuildUpload = videoUpload.fields([
+  { name: "video", maxCount: 1 },
+  { name: "photos", maxCount: 12 },
+]);
+const BUILD_IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp"];
+
+router.post("/:id/build-from-media", requireAuth, mediaBuildUpload, async (req, res) => {
+  const sopId = Number(req.params.id);
+  if (!Number.isFinite(sopId)) { res.status(400).json({ error: "Invalid id" }); return; }
+  if (!isClaudeConfigured()) {
+    res.status(503).json({ error: "AI drafting requires the Anthropic API key. Ask an admin to set ANTHROPIC_API_KEY." });
+    return;
+  }
+  const files = req.files as Record<string, Express.Multer.File[]> | undefined;
+  const videoFile = files?.["video"]?.[0] ?? null;
+  const photoFiles = files?.["photos"] ?? [];
+  if (!videoFile && photoFiles.length === 0) {
+    res.status(400).json({ error: "Add a video or at least one photo first." });
+    return;
+  }
+  if (videoFile && !["video/mp4", "video/webm", "video/quicktime", "video/ogg"].includes(videoFile.mimetype)) {
+    res.status(400).json({ error: "Unsupported video type. Use MP4/WebM/MOV/OGG." });
+    return;
+  }
+  const badPhoto = photoFiles.find(f => !BUILD_IMAGE_MIMES.includes(f.mimetype));
+  if (badPhoto) {
+    res.status(400).json({ error: `Unsupported photo type ${badPhoto.mimetype}. Use JPEG/PNG/WebP.` });
+    return;
+  }
+  // ffmpeg shrinks supplied photos for analysis too, so it's needed for
+  // every media build, not just video ones.
+  if (!(await ffmpegAvailable())) {
+    res.status(503).json({ error: "ffmpeg is not installed on the server — media analysis unavailable." });
+    return;
+  }
+  if (sopBuildsInFlight.has(sopId)) {
+    res.status(409).json({ error: "A build is already running for this SOP — wait for it to finish." });
+    return;
+  }
+  const sopRows = await db.execute<{ id: number }>(sql`SELECT id FROM standards_sops WHERE id = ${sopId}`);
+  if (((sopRows.rows ?? sopRows) as { id: number }[]).length === 0) {
+    res.status(404).json({ error: "SOP not found" });
+    return;
+  }
+
+  sopBuildsInFlight.add(sopId);
+  try {
+    const photos: SuppliedPhoto[] = photoFiles.map(f => ({ buffer: f.buffer, mime: f.mimetype }));
+    const result = await buildSopFromMedia(
+      videoFile ? { buffer: videoFile.buffer, mime: videoFile.mimetype } : null,
+      photos,
+    );
+
+    // Position: after the current last step. When a video was supplied it
+    // becomes a reference step first, so the clip stays with the SOP.
+    const posRows = await db.execute<{ maxpos: number | null }>(sql`
+      SELECT MAX(position) AS maxpos FROM sop_steps WHERE sop_id = ${sopId}
+    `);
+    let nextPos = ((((posRows.rows ?? posRows) as { maxpos: number | null }[])[0])?.maxpos ?? -1) + 1;
+
+    if (videoFile) {
+      await db.execute(sql`
+        INSERT INTO sop_steps (sop_id, position, description, video_mime, video_data)
+        VALUES (${sopId}, ${nextPos}, ${"Source video — the steps below were drafted from this clip."}, ${videoFile.mimetype}, ${videoFile.buffer})
+      `);
+      nextPos++;
+    }
+
+    const createdIds: number[] = [];
+    for (const s of result.steps) {
+      const timeRef = s.startSec != null && s.endSec != null
+        ? `\n\n(${Math.floor(s.startSec / 60)}:${String(Math.round(s.startSec % 60)).padStart(2, "0")}–${Math.floor(s.endSec / 60)}:${String(Math.round(s.endSec % 60)).padStart(2, "0")} in the video)`
+        : "";
+      const inserted = await db.execute<{ id: number }>(sql`
+        INSERT INTO sop_steps (sop_id, position, description, image_mime, image_data)
+        VALUES (${sopId}, ${nextPos}, ${`${s.description}${timeRef}`}, ${s.photoMime}, ${s.photo})
+        RETURNING id
+      `);
+      createdIds.push((((inserted.rows ?? inserted) as { id: number }[])[0]).id);
+      nextPos++;
+    }
+    // A drafted title fills in for the placeholder, never overwrites a real one.
+    if (result.suggestedTitle) {
+      await db.execute(sql`
+        UPDATE standards_sops SET title = ${result.suggestedTitle}, updated_at = NOW()
+        WHERE id = ${sopId} AND (title = 'Untitled SOP' OR title = '' OR title IS NULL)
+      `);
+    }
+    await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = ${sopId}`);
+
+    res.json({ ok: true, stepsCreated: result.steps.length, createdStepIds: createdIds, suggestedTitle: result.suggestedTitle });
+  } catch (err) {
+    console.error("[standards] build-from-media failed:", err);
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(502).json({ error: `Media analysis failed: ${msg}` });
   } finally {
     sopBuildsInFlight.delete(sopId);
   }

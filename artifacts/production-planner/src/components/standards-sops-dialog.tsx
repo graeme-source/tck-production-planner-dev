@@ -1274,50 +1274,55 @@ function Editor({
     }
   };
 
-  // "Start from a video" — the front door to the AI drafter (Graeme,
-  // 2026-08-28: the build-from-video button was buried behind create SOP →
-  // add empty step → upload video onto it; nobody ever found it). One tap:
-  // create the source step, upload the clip, let the AI draft the steps.
+  // "Start from media" — the front door to the AI drafter (Graeme,
+  // 2026-08-28). Collect one video and/or up to 12 photos; the AI thinks
+  // the process through, drafts the steps, and picks the best illustration
+  // for each — a video moment or one of the supplied photos.
+  const [mediaFiles, setMediaFiles] = useState<File[]>([]);
   const [videoBuildPhase, setVideoBuildPhase] = useState<null | "uploading" | "building">(null);
   const startVideoCameraRef = useRef<HTMLInputElement>(null);
   const startVideoPickRef = useRef<HTMLInputElement>(null);
 
-  const startFromVideo = async (file: File) => {
+  const addMediaFiles = (incoming: File[]) => {
+    setMediaFiles(prev => {
+      const next = [...prev];
+      for (const f of incoming) {
+        const isVideo = f.type.startsWith("video/");
+        if (isVideo && next.some(x => x.type.startsWith("video/"))) {
+          toast({ title: "One video per build", description: "Photos: as many as you like (up to 12). A second video was skipped." });
+          continue;
+        }
+        if (!isVideo && next.filter(x => !x.type.startsWith("video/")).length >= 12) continue;
+        next.push(f);
+      }
+      return next;
+    });
+  };
+
+  const buildFromMedia = async () => {
+    if (mediaFiles.length === 0) return;
     setVideoBuildPhase("uploading");
     try {
-      const stepResp = await fetch(`/api/standards/${sopId}/steps`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description: "Source video — the steps below were drafted from this clip." }),
-      });
-      if (!stepResp.ok) throw new Error(`HTTP ${stepResp.status}`);
-      const newStep: { id: number } = await stepResp.json();
-
       const form = new FormData();
-      form.append("video", file);
-      const upResp = await fetch(`/api/standards/steps/${newStep.id}/video`, {
+      for (const f of mediaFiles) {
+        if (f.type.startsWith("video/")) form.append("video", f);
+        else form.append("photos", f);
+      }
+      setVideoBuildPhase("building");
+      const resp = await fetch(`/api/standards/${sopId}/build-from-media`, {
         method: "POST", credentials: "include", body: form,
       });
-      if (!upResp.ok) throw new Error((await upResp.json().catch(() => ({}))).error || `Upload failed (${upResp.status})`);
-
-      setVideoBuildPhase("building");
-      const buildResp = await fetch(`/api/standards/${sopId}/steps/${newStep.id}/build-from-video`, {
-        method: "POST", credentials: "include",
-      });
-      const build = await buildResp.json().catch(() => ({}));
-      if (!buildResp.ok) throw new Error(build.error || `Build failed (${buildResp.status})`);
-
+      const build = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(build.error || `Build failed (${resp.status})`);
       toast({
-        title: `Drafted ${build.stepsCreated} step${build.stepsCreated === 1 ? "" : "s"} from the video`,
-        description: build.transcriptUsed
-          ? "The AI watched the video and listened to the narration. Read the steps and fix anything it misheard."
-          : "The AI watched the video (voice transcription is not switched on, so narration was not used). Read the steps and edit freely.",
+        title: `Drafted ${build.stepsCreated} step${build.stepsCreated === 1 ? "" : "s"}`,
+        description: "The AI watched the media and wrote the steps — read them and fix anything it got wrong.",
       });
+      setMediaFiles([]);
       fetchDetail();
     } catch (err) {
-      toast({ title: "Couldn't build from the video", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
-      fetchDetail(); // the source step may exist — show it rather than hide it
+      toast({ title: "Couldn't build the SOP", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+      fetchDetail();
     } finally {
       setVideoBuildPhase(null);
     }
@@ -1508,22 +1513,23 @@ function Editor({
                       accept="video/*"
                       capture="environment"
                       className="hidden"
-                      onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void startFromVideo(f); }}
+                      onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) addMediaFiles([f]); }}
                     />
                     <input
                       ref={startVideoPickRef}
                       type="file"
-                      accept="video/*"
+                      accept="image/*,video/*"
+                      multiple
                       className="hidden"
-                      onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void startFromVideo(f); }}
+                      onChange={e => { const fs = Array.from(e.target.files ?? []); e.target.value = ""; if (fs.length) addMediaFiles(fs); }}
                     />
                     {videoBuildPhase ? (
                       <div className="py-4 flex flex-col items-center gap-3 text-muted-foreground">
                         <Loader2 className="w-8 h-8 animate-spin text-violet-500" />
                         <p className="font-semibold text-foreground">
-                          {videoBuildPhase === "uploading" ? "Uploading the video…" : "AI is watching the video… (1–2 minutes)"}
+                          {videoBuildPhase === "uploading" ? "Uploading…" : "AI is working through the process… (1–2 minutes)"}
                         </p>
-                        <p className="text-sm">Steps with photos will appear below when it's done.</p>
+                        <p className="text-sm">Steps with pictures will appear below when it's done.</p>
                       </div>
                     ) : (
                       <>
@@ -1532,8 +1538,8 @@ function Editor({
                           Fastest way: film the job being done
                         </p>
                         <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                          Record someone doing it start to finish — talking through it as they go —
-                          and the AI drafts the steps, each with a photo from the video.
+                          Record the job start to finish, add photos too if you have them — the AI thinks
+                          the process through, drafts the steps, and picks the best picture for each one.
                         </p>
                         <div className="flex flex-col sm:flex-row gap-2 justify-center pt-1">
                           <button
@@ -1546,9 +1552,28 @@ function Editor({
                             onClick={() => startVideoPickRef.current?.click()}
                             className="px-4 py-2.5 rounded-xl border border-violet-300 dark:border-violet-700 text-sm font-semibold text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-900/20 flex items-center justify-center gap-2"
                           >
-                            <Film className="w-4 h-4" /> Use a video from this device
+                            <Film className="w-4 h-4" /> Add videos or photos from device
                           </button>
                         </div>
+                        {mediaFiles.length > 0 && (
+                          <div className="pt-2 space-y-2 text-left max-w-md mx-auto">
+                            {mediaFiles.map((f, i) => (
+                              <div key={`${f.name}-${i}`} className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm">
+                                {f.type.startsWith("video/") ? <Video className="w-4 h-4 text-violet-500 flex-shrink-0" /> : <ImageIcon className="w-4 h-4 text-violet-500 flex-shrink-0" />}
+                                <span className="flex-1 truncate font-medium">{f.name || (f.type.startsWith("video/") ? "Video" : "Photo")}</span>
+                                <button onClick={() => setMediaFiles(cur => cur.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-destructive" aria-label="Remove">
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ))}
+                            <button
+                              onClick={buildFromMedia}
+                              className="w-full px-4 py-3 rounded-xl bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 flex items-center justify-center gap-2"
+                            >
+                              <Sparkles className="w-4 h-4" /> Build the SOP from {mediaFiles.length} file{mediaFiles.length === 1 ? "" : "s"}
+                            </button>
+                          </div>
+                        )}
                         <p className="text-xs text-muted-foreground pt-1">
                           Or tap &ldquo;Add step&rdquo; above to write it by hand.
                         </p>
