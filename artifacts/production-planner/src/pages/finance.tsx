@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import {
   Banknote,
+  Download,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -114,6 +115,7 @@ export default function FinancePage() {
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("outstanding");
   const [search, setSearch] = useState("");
+  const [csvDragOver, setCsvDragOver] = useState(false);
   const [expanded, setExpanded] = useState<number | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -204,7 +206,17 @@ export default function FinancePage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-muted-foreground flex items-center gap-2"><Upload className="h-4 w-4" /> Card statement</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
+          <CardContent
+            className={`space-y-2 rounded-b-xl transition-colors ${csvDragOver ? "bg-primary/10 outline-dashed outline-2 outline-primary" : ""}`}
+            onDragOver={(e) => { e.preventDefault(); setCsvDragOver(true); }}
+            onDragLeave={() => setCsvDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setCsvDragOver(false);
+              const f = Array.from(e.dataTransfer.files).find((x) => x.name.toLowerCase().endsWith(".csv"));
+              if (f) uploadMutation.mutate(f);
+            }}
+          >
             <input
               ref={fileInput}
               type="file"
@@ -220,7 +232,7 @@ export default function FinancePage() {
               {uploadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
               Upload Capital on Tap CSV
             </Button>
-            <p className="text-xs text-muted-foreground">Safe to re-upload overlapping exports — duplicates are ignored.</p>
+            <p className="text-xs text-muted-foreground">Or drop the file anywhere on this card. Safe to re-upload overlapping exports — duplicates are ignored.</p>
           </CardContent>
         </Card>
       </div>
@@ -340,6 +352,8 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const input = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [preview, setPreview] = useState<FinDocMeta | null>(null);
   const upload = useMutation({
     mutationFn: async (file: File) => {
       const form = new FormData();
@@ -354,30 +368,48 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
   });
 
   return (
-    <div>
+    <div
+      className={`rounded-lg transition-colors ${dragOver ? "bg-primary/10 outline-dashed outline-2 outline-primary p-2 -m-2" : ""}`}
+      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragOver(false);
+        for (const f of Array.from(e.dataTransfer.files)) upload.mutate(f);
+      }}
+    >
       <div className="text-sm font-medium mb-2">Documents</div>
-      {docs.length === 0 && <p className="text-sm text-muted-foreground mb-2">None yet.</p>}
+      {docs.length === 0 && (
+        <p className="text-sm text-muted-foreground mb-2">None yet — drop a PDF or photo here, or use Add file.</p>
+      )}
       <div className="flex flex-wrap gap-2">
         {docs.map((d) => (
-          <a
-            key={d.id}
-            href={`${BASE}/api/finance/documents/${d.id}/file`}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-sm hover:bg-accent"
-          >
-            <FileText className="h-4 w-4" />
-            <span className="max-w-[220px] truncate">{d.fileName}</span>
-          </a>
+          <div key={d.id} className="inline-flex items-center rounded border text-sm overflow-hidden">
+            <button
+              onClick={() => setPreview(d)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-accent"
+              title="Preview"
+            >
+              <FileText className="h-4 w-4" />
+              <span className="max-w-[220px] truncate">{d.fileName}</span>
+            </button>
+            <a
+              href={`${BASE}/api/finance/documents/${d.id}/file?download=1`}
+              className="px-2 py-1.5 border-l hover:bg-accent text-muted-foreground"
+              title="Download"
+            >
+              <Download className="h-4 w-4" />
+            </a>
+          </div>
         ))}
         <input
           ref={input}
           type="file"
           accept=".pdf,image/*"
+          multiple
           className="hidden"
           onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) upload.mutate(f);
+            for (const f of Array.from(e.target.files ?? [])) upload.mutate(f);
             e.target.value = "";
           }}
         />
@@ -385,6 +417,38 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
           {upload.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />} Add file
         </Button>
       </div>
+
+      {/* Same-origin iframe preview — never blob: URLs (the CSP frame-src
+          'self' lesson). */}
+      {preview && (
+        <div className="fixed inset-0 z-[150] bg-black/60 flex items-center justify-center p-4" onClick={() => setPreview(null)}>
+          <div className="bg-background rounded-2xl w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 px-4 py-3 border-b">
+              <FileText className="h-4 w-4 shrink-0" />
+              <span className="font-medium truncate flex-1">{preview.fileName}</span>
+              <Button size="sm" variant="outline" asChild>
+                <a href={`${BASE}/api/finance/documents/${preview.id}/file?download=1`}>
+                  <Download className="h-4 w-4 mr-1" /> Download
+                </a>
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setPreview(null)}>
+                <XCircle className="h-4 w-4" />
+              </Button>
+            </div>
+            {preview.fileMime.startsWith("image/") ? (
+              <div className="flex-1 overflow-auto flex items-center justify-center bg-secondary/30 p-4">
+                <img src={`${BASE}/api/finance/documents/${preview.id}/file`} alt={preview.fileName} className="max-w-full max-h-full object-contain" />
+              </div>
+            ) : (
+              <iframe
+                src={`${BASE}/api/finance/documents/${preview.id}/file`}
+                title={preview.fileName}
+                className="flex-1 w-full border-0"
+              />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
