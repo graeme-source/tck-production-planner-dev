@@ -909,6 +909,18 @@ function SopCard({
 // Viewer — full-screen, one step per screen, swipe / arrow navigation.
 // ─────────────────────────────────────────────────────────────────────────
 
+
+/** First sentence of a step, cleaned for the glanceable overview card:
+ *  safety notes, video time refs and URLs are detail, not overview. */
+function summariseStep(description: string): string {
+  let text = (description || "").split("\n")[0].trim();
+  text = text.replace(/\(\d+:\d{2}[–-]\d+:\d{2} in the video\)/g, "").trim();
+  const sentenceEnd = text.search(/[.!?]\s/);
+  if (sentenceEnd > 10) text = text.slice(0, sentenceEnd + 1);
+  if (text.length > 110) text = `${text.slice(0, 107).trimEnd()}…`;
+  return text || "(no description)";
+}
+
 function Viewer({
   sopId,
   onBack,
@@ -946,12 +958,20 @@ function Viewer({
 
   const steps = sop?.steps ?? [];
   const totalSteps = steps.length;
-  const step = steps[stepIndex];
+  // Glanceable overview as a virtual first page (Graeme, 2026-08-28):
+  // trained people who just need the order read one card and leave; swipe
+  // right to enter step 1's detail. Derived live from step text — never
+  // stored, so it can't drift when steps change.
+  const hasOverview = totalSteps >= 2;
+  const pageCount = totalSteps + (hasOverview ? 1 : 0);
+  const onOverview = hasOverview && stepIndex === 0;
+  const step = onOverview ? undefined : steps[stepIndex - (hasOverview ? 1 : 0)];
+  const stepNumber = stepIndex + (hasOverview ? 0 : 1);
   const atFirst = stepIndex === 0;
-  const atLast = stepIndex >= totalSteps - 1;
+  const atLast = stepIndex >= pageCount - 1;
 
   const goPrev = useCallback(() => setStepIndex(i => Math.max(0, i - 1)), []);
-  const goNext = useCallback(() => setStepIndex(i => Math.min(totalSteps - 1, i + 1)), [totalSteps]);
+  const goNext = useCallback(() => setStepIndex(i => Math.min(pageCount - 1, i + 1)), [pageCount]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -991,7 +1011,7 @@ function Viewer({
           <p className="font-display font-bold text-xl truncate">{sop?.title || "Loading…"}</p>
           {totalSteps > 0 && (
             <p className="text-xs text-muted-foreground mt-0.5">
-              Step {stepIndex + 1} of {totalSteps}
+              {onOverview ? `Overview · ${totalSteps} steps` : `Step ${stepNumber} of ${totalSteps}`}
             </p>
           )}
         </div>
@@ -1027,6 +1047,32 @@ function Viewer({
         {!loading && totalSteps === 0 && (
           <div className="flex items-center justify-center w-full text-muted-foreground">
             <p>This SOP has no steps yet.</p>
+          </div>
+        )}
+        {!loading && onOverview && (
+          <div className="flex-1 overflow-y-auto p-6 md:p-10">
+            <div className="max-w-2xl mx-auto">
+              <div className="text-xs uppercase tracking-wider text-muted-foreground font-semibold mb-4">
+                At a glance — swipe for the detail
+              </div>
+              <ol className="space-y-3">
+                {steps.map((st, i) => (
+                  <li key={st.id}>
+                    <button
+                      onClick={() => setStepIndex(i + 1)}
+                      className="w-full flex items-start gap-3 text-left rounded-xl px-3 py-2 hover:bg-secondary/50 transition-colors"
+                    >
+                      <span className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center text-sm mt-0.5">
+                        {i + 1}
+                      </span>
+                      <span className="text-lg md:text-xl font-medium leading-snug">
+                        {summariseStep(st.description)}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </div>
           </div>
         )}
         {!loading && step && (() => {
@@ -1076,7 +1122,7 @@ function Viewer({
                   ) : (
                     <img
                       src={stepImageUrl(step.id)}
-                      alt={`Step ${stepIndex + 1}`}
+                      alt={`Step ${stepNumber}`}
                       className="max-w-full max-h-[60vh] lg:max-h-full object-contain rounded-lg"
                     />
                   )}
@@ -1088,7 +1134,7 @@ function Viewer({
               )}>
                 <div className="max-w-3xl w-full">
                   <div className="text-xs uppercase tracking-wider text-muted-foreground font-semibold mb-3">
-                    Step {stepIndex + 1}
+                    Step {stepNumber}
                   </div>
                   <p className="text-2xl md:text-3xl lg:text-4xl leading-relaxed font-medium whitespace-pre-wrap">
                     {embeddedFromDescription
@@ -1123,7 +1169,7 @@ function Viewer({
 
       {totalSteps > 1 && (
         <div className="px-5 py-3 border-t border-border flex items-center justify-center gap-1.5 flex-shrink-0">
-          {steps.map((_, i) => (
+          {Array.from({ length: pageCount }).map((_, i) => (
             <button
               key={i}
               onClick={() => setStepIndex(i)}
@@ -1297,6 +1343,26 @@ function Editor({
       }
       return next;
     });
+  };
+
+  const [polishing, setPolishing] = useState(false);
+  const polishSteps = async () => {
+    if (!window.confirm("Rewrite every step's text for clarity? The current wording is replaced (you can still edit afterwards).")) return;
+    setPolishing(true);
+    try {
+      const resp = await fetch(`/api/standards/${sopId}/polish`, { method: "POST", credentials: "include" });
+      const body = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+      toast({
+        title: body.polished === 0 ? "Already reads well" : `Polished ${body.polished} step${body.polished === 1 ? "" : "s"}`,
+        description: body.polished === 0 ? "The AI left every step as it was." : "Read them through — the meaning should be identical, just clearer.",
+      });
+      fetchDetail();
+    } catch (err) {
+      toast({ title: "Polish failed", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+    } finally {
+      setPolishing(false);
+    }
   };
 
   const buildFromMedia = async () => {
@@ -1496,14 +1562,27 @@ function Editor({
               </div>
 
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
                   <h3 className="font-semibold text-sm uppercase tracking-wider text-muted-foreground">Steps</h3>
-                  <button
-                    onClick={addStep}
-                    className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90"
-                  >
-                    <Plus className="w-4 h-4" /> Add step
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {sop.steps.length > 0 && (
+                      <button
+                        onClick={polishSteps}
+                        disabled={polishing}
+                        title="AI rewrites every step clear, short and easy to follow — keeps all quantities, times and safety notes"
+                        className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-900/20 disabled:opacity-60"
+                      >
+                        {polishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                        {polishing ? "Polishing…" : "Polish the writing"}
+                      </button>
+                    )}
+                    <button
+                      onClick={addStep}
+                      className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90"
+                    >
+                      <Plus className="w-4 h-4" /> Add step
+                    </button>
+                  </div>
                 </div>
                 {sop.steps.length === 0 && (
                   <div className="border-2 border-dashed border-violet-300 dark:border-violet-800 rounded-xl p-6 space-y-3 text-center">

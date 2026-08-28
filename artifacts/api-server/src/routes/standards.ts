@@ -541,6 +541,97 @@ router.post("/:id/steps/:stepId/build-from-video", requireAuth, async (req, res)
   }
 });
 
+// ── Polish: AI rewrites every step's text for clarity ─────────────────────
+// (Graeme, 2026-08-28): people who aren't confident writers — or writing in
+// a second language — get the message down however they can; the AI rewrites
+// it clear, minimal and imperative without losing the information.
+const POLISH_TOOL = {
+  name: "polish_sop_steps",
+  description: "Record the rewritten SOP step instructions.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      steps: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "number", description: "The step id, unchanged." },
+            description: { type: "string", description: "The rewritten instruction." },
+          },
+          required: ["id", "description"],
+        },
+      },
+    },
+    required: ["steps"],
+  },
+};
+
+router.post("/:id/polish", requireAuth, async (req, res) => {
+  const sopId = Number(req.params.id);
+  if (!Number.isFinite(sopId)) { res.status(400).json({ error: "Invalid id" }); return; }
+  if (!isClaudeConfigured()) {
+    res.status(503).json({ error: "AI polish requires the Anthropic API key. Ask an admin to set ANTHROPIC_API_KEY." });
+    return;
+  }
+  const sopRows = await db.execute<{ title: string }>(sql`SELECT title FROM standards_sops WHERE id = ${sopId}`);
+  const sop = (((sopRows.rows ?? sopRows) as { title: string }[]))[0];
+  if (!sop) { res.status(404).json({ error: "SOP not found" }); return; }
+  const stepRows = await db.execute<{ id: number; description: string }>(sql`
+    SELECT id, description FROM sop_steps WHERE sop_id = ${sopId} ORDER BY position
+  `);
+  const steps = ((stepRows.rows ?? stepRows) as { id: number; description: string }[])
+    .filter(st => (st.description ?? "").trim().length > 0 && !st.description.startsWith("Source video —"));
+  if (steps.length === 0) { res.status(400).json({ error: "No written steps to polish yet." }); return; }
+
+  try {
+    const { getClaudeClient, CLAUDE_MODELS } = await import("../lib/ai/claude");
+    const client = getClaudeClient();
+    const response = await client.messages.create({
+      model: CLAUDE_MODELS.sonnet,
+      max_tokens: 4096,
+      tool_choice: { type: "tool", name: "polish_sop_steps" },
+      tools: [POLISH_TOOL as never],
+      messages: [{
+        role: "user",
+        content: `You are editing the steps of a Standard Operating Procedure ("${sop.title}") for The Calzone Kitchen, a UK food production kitchen. The authors may not be confident writers, and many readers have English as a second language. Rewrite each step so it is as clear, short and easy to follow as possible.
+
+Rules:
+- Imperative voice, present tense, written for a new starter ("Spread the sauce to 1cm from the edge").
+- Keep every piece of operating information: quantities, times, temperatures, equipment, settings. Never invent any.
+- Cut everything else: filler, hedging, repetition, irrelevant asides, jargon that doesn't help.
+- Simple everyday words. Short sentences. As little text as does the job.
+- Keep any line starting with ⚠ (a safety note) — you may tighten its wording but never remove it.
+- Keep any "(m:ss–m:ss in the video)" reference exactly as written.
+- Return every step by its id. If a step is already perfect, return it unchanged.
+
+The steps:
+
+${steps.map(st => `[id ${st.id}]\n${st.description}`).join("\n\n")}`,
+      }],
+    });
+    const toolUse = response.content.find(b => b.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") throw new Error("The AI did not return rewritten steps — try again");
+    const input = toolUse.input as { steps?: { id: number; description: string }[] };
+    const byId = new Map(steps.map(st => [st.id, st]));
+    let updated = 0;
+    for (const r of input.steps ?? []) {
+      const original = byId.get(r.id);
+      if (!original || typeof r.description !== "string" || !r.description.trim()) continue;
+      if (r.description.trim() === original.description.trim()) continue;
+      await db.execute(sql`
+        UPDATE sop_steps SET description = ${r.description.trim()}, updated_at = NOW() WHERE id = ${r.id} AND sop_id = ${sopId}
+      `);
+      updated++;
+    }
+    await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = ${sopId}`);
+    res.json({ ok: true, polished: updated, unchanged: steps.length - updated });
+  } catch (err) {
+    console.error("[standards] polish failed:", err);
+    res.status(502).json({ error: `Polish failed: ${err instanceof Error ? err.message : String(err)}` });
+  }
+});
+
 // ── Build from mixed media: one optional video + optional photos ──────────
 // The front door for new SOPs (Graeme, 2026-08-28): film the job and/or
 // supply photos; the AI thinks the process through, drafts the steps, and
