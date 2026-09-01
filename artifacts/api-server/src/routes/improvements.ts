@@ -1,5 +1,4 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import multer from "multer";
 import {
   db, improvementSubmissionsTable, improvementCommentsTable, usersTable,
   stageOf, STAGE_LABEL, canMarkDone, markDoneBlocker, canReview,
@@ -13,14 +12,16 @@ import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/cl
 import { shortlistDuplicates } from "../lib/improvement-similarity";
 import { intArrayLiteral } from "../lib/int-array-literal";
 import { stitchBeforeAfter } from "../lib/improvement-media";
+import { shouldAutoStitch } from "../lib/before-after-stitch";
 import { ffmpegAvailable } from "../lib/sop-video";
+import { singleFileUpload } from "../middleware/upload";
 
 const router: IRouter = Router();
 
 // One file per upload. 100MB cap covers short demo clips; images are checked
 // against a tighter 10MB limit after the fact. Stored in Postgres as bytea
 // (same approach as SOP step media) so no object storage is needed.
-const mediaUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+const mediaUpload = singleFileUpload("file", 100);
 const IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const VIDEO_MIMES = ["video/mp4", "video/webm", "video/quicktime", "video/ogg"];
 
@@ -447,44 +448,57 @@ Pick the single closest subject. If nothing fits well, return null rather than f
  * two halves. Re-running replaces the previous one rather than piling copies
  * up: the halves change as people re-shoot them.
  */
+type StitchOutcome =
+  | { ok: true; attachmentId: number | undefined; bytes: number }
+  | { ok: false; status: number; error: string };
+
+/** The stitch itself — shared by the manual route below and the automatic
+ *  trigger in the attachment upload, so both produce identical clips. */
+async function stitchImprovementClip(id: number): Promise<StitchOutcome> {
+  if (!(await ffmpegAvailable())) {
+    return { ok: false, status: 503, error: "Video joining isn't available on this server." };
+  }
+
+  // The most recent of each half — someone who re-shoots the after means
+  // the newest one, not the first.
+  const rows = toRows<{ id: number; kind: string; phase: string | null; data: Buffer }>(await db.execute(sql`
+    SELECT DISTINCT ON (phase) id, kind, phase, data
+      FROM improvement_attachments
+     WHERE improvement_id = ${id} AND phase IN ('before', 'after')
+     ORDER BY phase, id DESC
+  `));
+  const before = rows.find(r => r.phase === "before");
+  const after = rows.find(r => r.phase === "after");
+  if (!before || !after) {
+    return { ok: false, status: 409, error: "Needs both a before and an after before they can be joined." };
+  }
+
+  const stitched = await stitchBeforeAfter([
+    { data: Buffer.isBuffer(before.data) ? before.data : Buffer.from(before.data), kind: before.kind, label: "Before" },
+    { data: Buffer.isBuffer(after.data) ? after.data : Buffer.from(after.data), kind: after.kind, label: "After" },
+  ]);
+
+  await db.execute(sql`DELETE FROM improvement_attachments WHERE improvement_id = ${id} AND phase = 'stitched'`);
+  const created = toRows<{ id: number }>(await db.execute(sql`
+    INSERT INTO improvement_attachments (improvement_id, kind, mime, data, file_name, phase)
+    VALUES (${id}, 'video', 'video/mp4', ${stitched}, 'before-after.mp4', 'stitched')
+    RETURNING id
+  `));
+
+  return { ok: true, attachmentId: created[0]?.id, bytes: stitched.length };
+}
+
 router.post("/:id/stitch", async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
   try {
-    if (!(await ffmpegAvailable())) {
-      res.status(503).json({ error: "Video joining isn't available on this server." });
+    const outcome = await stitchImprovementClip(id);
+    if (!outcome.ok) {
+      res.status(outcome.status).json({ error: outcome.error });
       return;
     }
-
-    // The most recent of each half — someone who re-shoots the after means
-    // the newest one, not the first.
-    const rows = toRows<{ id: number; kind: string; phase: string | null; data: Buffer }>(await db.execute(sql`
-      SELECT DISTINCT ON (phase) id, kind, phase, data
-        FROM improvement_attachments
-       WHERE improvement_id = ${id} AND phase IN ('before', 'after')
-       ORDER BY phase, id DESC
-    `));
-    const before = rows.find(r => r.phase === "before");
-    const after = rows.find(r => r.phase === "after");
-    if (!before || !after) {
-      res.status(409).json({ error: "Needs both a before and an after before they can be joined." });
-      return;
-    }
-
-    const stitched = await stitchBeforeAfter([
-      { data: Buffer.isBuffer(before.data) ? before.data : Buffer.from(before.data), kind: before.kind, label: "Before" },
-      { data: Buffer.isBuffer(after.data) ? after.data : Buffer.from(after.data), kind: after.kind, label: "After" },
-    ]);
-
-    await db.execute(sql`DELETE FROM improvement_attachments WHERE improvement_id = ${id} AND phase = 'stitched'`);
-    const created = toRows<{ id: number }>(await db.execute(sql`
-      INSERT INTO improvement_attachments (improvement_id, kind, mime, data, file_name, phase)
-      VALUES (${id}, 'video', 'video/mp4', ${stitched}, 'before-after.mp4', 'stitched')
-      RETURNING id
-    `));
-
-    res.json({ ok: true, attachmentId: created[0]?.id, bytes: stitched.length });
+    res.json({ ok: true, attachmentId: outcome.attachmentId, bytes: outcome.bytes });
   } catch (err) {
     console.error("[Improvements] stitch failed:", err);
     res.status(500).json({ error: "Couldn't join those two clips together." });
@@ -731,7 +745,7 @@ router.get("/:id/attachments", async (req: Request, res: Response) => {
 });
 
 // Upload a photo or video to an improvement.
-router.post("/:id/attachments", mediaUpload.single("file"), async (req: Request, res: Response) => {
+router.post("/:id/attachments", mediaUpload, async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   if (!req.file) { res.status(400).json({ error: "No file uploaded" }); return; }
@@ -756,6 +770,26 @@ router.post("/:id/attachments", mediaUpload.single("file"), async (req: Request,
     VALUES (${id}, ${isImage ? "image" : "video"}, ${mime}, ${req.file.buffer}, ${req.file.originalname ?? null}, ${phase})
     RETURNING id
   `));
+
+  // An upload that completes a before/after pair with a video in it
+  // re-stitches the joined clip in the background — the feed leads with the
+  // stitched clip, so it should exist without anyone hunting for the button
+  // (Graeme, 2026-09-01: his card showed only the after half).
+  if (phase) {
+    const halves = toRows<{ kind: string; phase: string | null }>(await db.execute(sql`
+      SELECT DISTINCT ON (phase) kind, phase
+        FROM improvement_attachments
+       WHERE improvement_id = ${id} AND phase IN ('before', 'after')
+       ORDER BY phase, id DESC
+    `));
+    if (shouldAutoStitch(halves)) {
+      stitchImprovementClip(id).then(
+        outcome => { if (!outcome.ok) console.warn(`[Improvements] auto-stitch skipped for ${id}: ${outcome.error}`); },
+        err => console.error(`[Improvements] auto-stitch failed for ${id}:`, err),
+      );
+    }
+  }
+
   res.status(201).json({ id: rows[0]?.id, kind: isImage ? "image" : "video", mime, phase });
 });
 

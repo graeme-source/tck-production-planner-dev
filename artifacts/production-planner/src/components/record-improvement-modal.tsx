@@ -19,6 +19,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Lightbulb, CheckCircle2, Camera, Loader2, X, ArrowRight, ListChecks, ThumbsUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { summariseUploadFailures, type UploadAttempt } from "@/lib/upload-failures";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -114,19 +115,33 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Couldn't save it");
       const improvement = await res.json();
 
+      // Every upload's answer is checked — a failed one used to vanish
+      // without a word, silently losing the clip (that's how improvement 33
+      // lost its "before" video, 2026-08-27).
+      const attempts: UploadAttempt[] = [];
+      let afterUploaded = false;
       for (const [phase, file] of [["before", beforeFile.current], ["after", afterFile.current]] as const) {
         if (!file) continue;
         const form = new FormData();
         form.append("file", file);
         form.append("phase", phase);
-        await fetch(`${BASE}/api/improvements/${improvement.id}/attachments`, {
+        const up = await fetch(`${BASE}/api/improvements/${improvement.id}/attachments`, {
           method: "POST", credentials: "include", body: form,
+        }).catch(() => null);
+        const ok = Boolean(up?.ok);
+        if (phase === "after") afterUploaded = ok;
+        attempts.push({
+          label: `your ${phase.toUpperCase()} ${file.type.startsWith("video/") ? "video" : "photo"}`,
+          ok,
+          error: !ok && up ? ((await up.json().catch(() => ({}))) as { error?: string }).error : undefined,
         });
       }
+      const uploadFailure = summariseUploadFailures(attempts, "it in the feed");
 
       // Something you've already done, with an after shot, is finished work —
-      // send it for sign-off rather than making them find it again.
-      if (!isIdea && afterFile.current) {
+      // send it for sign-off rather than making them find it again. Not when
+      // the after failed to land: sign-off needs the evidence to exist.
+      if (!isIdea && afterFile.current && afterUploaded) {
         await fetch(`${BASE}/api/improvements/${improvement.id}/done`, {
           method: "POST", credentials: "include",
         });
@@ -134,12 +149,20 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
 
       queryClient.invalidateQueries({ queryKey: ["improvements"] });
       queryClient.invalidateQueries({ queryKey: ["improvement-scoreboard"] });
-      toast({
-        title: isIdea ? "Idea logged" : "Improvement logged",
-        description: isIdea
-          ? "Come back to it when it's done and add the after photo."
-          : afterFile.current ? "A manager will sign it off." : "Add a photo to it so it can be signed off.",
-      });
+      if (uploadFailure) {
+        toast({
+          title: isIdea ? "Idea logged — but a file was lost" : "Improvement logged — but a file was lost",
+          description: uploadFailure,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: isIdea ? "Idea logged" : "Improvement logged",
+          description: isIdea
+            ? "Come back to it when it's done and add the after photo."
+            : afterFile.current ? "A manager will sign it off." : "Add a photo to it so it can be signed off.",
+        });
+      }
       close();
     } catch (e) {
       toast({ title: "Couldn't save it", description: (e as Error).message, variant: "destructive" });

@@ -20,6 +20,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Factory, Tablet, ShieldAlert, Camera, Image as ImageIcon, Loader2, X, ArrowRight, Lightbulb, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { summariseUploadFailures, type UploadAttempt } from "@/lib/upload-failures";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -77,30 +78,53 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
       // Everything attaches to the issue itself — that's the report's
       // evidence. When it's also logged as an improvement, the first shot
       // doubles as the improvement's "before" so both views are complete.
+      // Every upload's answer is checked — a failed one used to vanish
+      // without a word (same silent loss that cost improvement 33 its
+      // "before" video, 2026-08-27).
+      const attempts: UploadAttempt[] = [];
       for (const [i, file] of files.entries()) {
         const form = new FormData();
         form.append("file", file);
-        await fetch(`${BASE}/api/andon/${issue.id}/attachments`, {
+        const up = await fetch(`${BASE}/api/andon/${issue.id}/attachments`, {
           method: "POST", credentials: "include", body: form,
+        }).catch(() => null);
+        attempts.push({
+          label: files.length === 1 ? "your photo" : `photo ${i + 1}`,
+          ok: Boolean(up?.ok),
+          error: up && !up.ok ? ((await up.json().catch(() => ({}))) as { error?: string }).error : undefined,
         });
         if (i === 0 && improvementId) {
           const impForm = new FormData();
           impForm.append("file", file);
           impForm.append("phase", "before");
-          await fetch(`${BASE}/api/improvements/${improvementId}/attachments`, {
+          const impUp = await fetch(`${BASE}/api/improvements/${improvementId}/attachments`, {
             method: "POST", credentials: "include", body: impForm,
+          }).catch(() => null);
+          attempts.push({
+            label: "the improvement's BEFORE shot",
+            ok: Boolean(impUp?.ok),
+            error: impUp && !impUp.ok ? ((await impUp.json().catch(() => ({}))) as { error?: string }).error : undefined,
           });
         }
       }
+      const uploadFailure = summariseUploadFailures(attempts, "the report");
 
       queryClient.invalidateQueries({ queryKey: ["andon"] });
       queryClient.invalidateQueries({ queryKey: ["improvements"] });
-      toast({
-        title: isSafety ? "Safety issue reported" : "Issue reported",
-        description: improvementId
-          ? "It's also logged as an improvement to work on."
-          : area === "system" ? "Sent to whoever looks after the app." : "Sent to the team.",
-      });
+      if (uploadFailure) {
+        toast({
+          title: isSafety ? "Safety issue reported — but a photo was lost" : "Reported — but a photo was lost",
+          description: uploadFailure,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: isSafety ? "Safety issue reported" : "Issue reported",
+          description: improvementId
+            ? "It's also logged as an improvement to work on."
+            : area === "system" ? "Sent to whoever looks after the app." : "Sent to the team.",
+        });
+      }
       close();
     } catch (e) {
       toast({ title: "Couldn't report it", description: (e as Error).message, variant: "destructive" });

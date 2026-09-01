@@ -149,3 +149,16 @@ export function buildStitchArgs({ segments, outputPath, fontFile }: StitchOption
 
   return args;
 }
+
+/**
+ * Whether a fresh attachment upload should re-stitch the improvement's clip
+ * automatically: both halves present, and at least one of them a video. An
+ * all-photo pair stays as the feed's side-by-side images — a video half
+ * means only a joined clip can tell the whole story in one play.
+ */
+export function shouldAutoStitch(halves: Array<{ kind: string; phase: string | null }>): boolean {
+  const before = halves.find(h => h.phase === "before");
+  const after = halves.find(h => h.phase === "after");
+  if (!before || !after) return false;
+  return before.kind === "video" || after.kind === "video";
+}

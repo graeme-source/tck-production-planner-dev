@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildStitchArgs, STILL_SECONDS, type StitchSegment } from "./before-after-stitch";
+import { buildStitchArgs, shouldAutoStitch, STILL_SECONDS, type StitchSegment } from "./before-after-stitch";
 
 const photo: StitchSegment = { path: "/tmp/before.jpg", label: "Before", isVideo: false, hasAudio: false };
 const videoWithSound: StitchSegment = { path: "/tmp/after.mp4", label: "After", isVideo: true, hasAudio: true };
@@ -110,5 +110,29 @@ describe("buildStitchArgs", () => {
 
   it("streams from the first byte rather than waiting for the whole file", () => {
     expect(argsFor([photo, videoWithSound])).toContain("+faststart");
+  });
+});
+
+describe("shouldAutoStitch", () => {
+  const vid = (phase: string) => ({ kind: "video", phase });
+  const img = (phase: string) => ({ kind: "image", phase });
+
+  it("stitches when both halves exist and one is a video", () => {
+    expect(shouldAutoStitch([vid("before"), img("after")])).toBe(true);
+    expect(shouldAutoStitch([img("before"), vid("after")])).toBe(true);
+    expect(shouldAutoStitch([vid("before"), vid("after")])).toBe(true);
+  });
+
+  it("leaves an all-photo pair to the feed's side-by-side images", () => {
+    expect(shouldAutoStitch([img("before"), img("after")])).toBe(false);
+  });
+
+  // Regression for the missing-before case (improvement 33, 2026-08-27):
+  // half a pair must never trigger a stitch, whatever else is attached.
+  it("never stitches half a pair", () => {
+    expect(shouldAutoStitch([vid("after")])).toBe(false);
+    expect(shouldAutoStitch([vid("before")])).toBe(false);
+    expect(shouldAutoStitch([])).toBe(false);
+    expect(shouldAutoStitch([{ kind: "video", phase: null }, vid("after")])).toBe(false);
   });
 });

@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import multer from "multer";
+import { singleFileUpload } from "../middleware/upload";
 import { db, andonIssuesTable, andonCommentsTable, usersTable, notificationsTable, improvementSubmissionsTable } from "@workspace/db";
 import { eq, isNull, desc, asc, and, SQL, sql } from "drizzle-orm";
 import type { AndonIssue } from "@workspace/db";
@@ -387,11 +387,11 @@ router.post("/:id/tag-improvement", async (req: Request, res: Response) => {
 // Issue reports carry what the reporter can see — a photo of the problem,
 // a screenshot of the app misbehaving, a short clip (Graeme, 2026-08-28).
 
-const mediaUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+const mediaUpload = singleFileUpload("file", 100);
 const IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const VIDEO_MIMES = ["video/mp4", "video/webm", "video/quicktime", "video/ogg"];
 
-router.post("/:id/attachments", mediaUpload.single("file"), async (req: Request, res: Response) => {
+router.post("/:id/attachments", mediaUpload, async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   if (!req.file) { res.status(400).json({ error: "No file uploaded" }); return; }

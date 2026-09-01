@@ -37,6 +37,22 @@ async function findFont(): Promise<string | null> {
   return null;
 }
 
+// Some ffmpeg builds lack the drawtext filter entirely (homebrew on a Mac,
+// notably), which aborts the whole render even with a valid font. Probed
+// once and cached: no drawtext → captions are skipped, same posture as a
+// missing font.
+let drawtextSupport: boolean | null = null;
+async function drawtextAvailable(): Promise<boolean> {
+  if (drawtextSupport !== null) return drawtextSupport;
+  try {
+    const { stdout } = await execFileAsync("ffmpeg", ["-hide_banner", "-filters"], { maxBuffer: 4 * 1024 * 1024 });
+    drawtextSupport = stdout.includes("drawtext");
+  } catch {
+    drawtextSupport = false;
+  }
+  return drawtextSupport;
+}
+
 /** Does this file actually carry an audio track? Mapping audio that isn't
  *  there aborts the whole render, so this is asked rather than assumed. */
 export async function hasAudioTrack(filePath: string): Promise<boolean> {
@@ -107,7 +123,7 @@ export async function stitchBeforeAfter(inputs: StitchInput[]): Promise<Buffer> 
     }
 
     const outputPath = path.join(workDir, "before-after.mp4");
-    const args = buildStitchArgs({ segments, outputPath, fontFile: await findFont() });
+    const args = buildStitchArgs({ segments, outputPath, fontFile: (await drawtextAvailable()) ? await findFont() : null });
 
     // Generous but finite: a couple of short clips should take seconds, and
     // a hung ffmpeg must not hold a request open forever.
