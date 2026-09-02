@@ -22,7 +22,9 @@ import { eq, and, or, gt, asc, desc, gte, lte, sql, isNull, inArray } from "driz
 import * as z from "zod";
 import { londonDateString, londonStartOfDay, londonEndOfDay } from "../lib/london-time";
 import { LOCATION_DEFS } from "../lib/storage-location-defs";
-import { computeClosingFridgeActions } from "../lib/fridge-expiry";
+import { computeClosingFridgeActions, addCalendarDays } from "../lib/fridge-expiry";
+import { loadMinShelfDaysRules, minShelfDaysFor } from "../lib/min-shelf-days";
+import { productionDateFromJulianBatch } from "../lib/julian-batch";
 import { adjustFridgeStock, addRecipeFreezerStock } from "../lib/fridge-stock";
 import { resolveRecipeIngredients } from "../lib/ingredient-resolver";
 
@@ -1001,12 +1003,16 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
       recipe_id: number;
       recipe_name: string;
       quantity: string;
+      category: string | null;
+      shelf_life_days: number | null;
       shopify_sku: string | null;
     }>(sql`
       SELECT
         se.recipe_id AS recipe_id,
         r.name       AS recipe_name,
         se.quantity  AS quantity,
+        r.category   AS category,
+        r.shelf_life_days AS shelf_life_days,
         (
           SELECT m.shopify_sku
           FROM recipe_shopify_mappings m
@@ -1026,10 +1032,12 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
       recipeId: r.recipe_id,
       recipeName: r.recipe_name,
       quantity: r.quantity,
+      category: r.category,
+      shelfLifeDays: r.shelf_life_days,
     }));
 
     // Deduplicate by recipeId (stock_entries may have multiple rows per recipe)
-    const fridgeRecipes = new Map<number, { recipeName: string; qty: number }>();
+    const fridgeRecipes = new Map<number, { recipeName: string; qty: number; category: string | null; shelfLifeDays: number | null }>();
     for (const row of fridgeStock) {
       if (!row.recipeId) continue;
       const existing = fridgeRecipes.get(row.recipeId);
@@ -1037,6 +1045,8 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
         fridgeRecipes.set(row.recipeId, {
           recipeName: row.recipeName ?? `Recipe #${row.recipeId}`,
           qty: Number(row.quantity),
+          category: row.category ?? null,
+          shelfLifeDays: row.shelfLifeDays != null ? Number(row.shelfLifeDays) : null,
         });
       }
     }
@@ -1125,14 +1135,28 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
       });
     }
 
+    // Shelf-life rule context, so the widget can verify dispatchability the
+    // moment a batch number is chosen: dispatch today + overnight delivery
+    // means the earliest acceptable use-by is today + 1 + minDays for the
+    // recipe's category (Graeme, 2026-09-02; rules in lib/min-shelf-days).
+    const minShelfRules = await loadMinShelfDaysRules();
+    const todayLondon = londonDateString();
+
     const result = fridgeRecipeIds.map(recipeId => {
       const recipe = fridgeRecipes.get(recipeId)!;
       const suggested = oldestBatch.get(recipeId);
       const recorded = recordMap.get(recipeId);
+      const shelfLifeDays = recipe.shelfLifeDays != null && recipe.shelfLifeDays > 0 ? recipe.shelfLifeDays : null;
+      const earliestOkUseBy = addCalendarDays(todayLondon, 1 + minShelfDaysFor(recipe.category, minShelfRules));
       return {
         recipeId,
         recipeName: recipe.recipeName,
         fridgeQty: recipe.qty,
+        category: recipe.category,
+        // null = shelf life not set on the recipe; the widget can't verify
+        // and says so rather than guessing.
+        shelfLifeDays,
+        earliestOkUseBy,
         // First-pack suggestion = oldest batch in the fridge (FIFO) — but
         // only when it's one of the plausible recent numbers; the batch
         // table drifts, and a stale suggestion is worse than none.
@@ -1263,12 +1287,35 @@ router.post("/packing-batch-record", async (req: Request, res: Response) => {
   const userId = (req.session as any)?.userId ?? null;
   try {
     if (which === "first") {
+      // Verify dispatchability as the number is recorded (Graeme,
+      // 2026-09-02): batch number → made-on date, + the recipe's shelf life
+      // → use-by; dispatch today + overnight delivery needs use-by ≥
+      // today + 1 + minDays for the category. Verdict is stored for the
+      // HACCP trail and returned so the widget can warn on the spot.
+      // null verdict = can't verify (no shelf life set / unparseable batch).
+      const [recipe] = await db
+        .select({ category: recipesTable.category, shelfLifeDays: recipesTable.shelfLifeDays })
+        .from(recipesTable)
+        .where(eq(recipesTable.id, recipeId));
+      let useByDate: string | null = null;
+      let shelfLifeOk: boolean | null = null;
+      let earliestOkUseBy: string | null = null;
+      const prodDate = productionDateFromJulianBatch(batchNumber);
+      if (recipe && recipe.shelfLifeDays != null && Number(recipe.shelfLifeDays) > 0 && prodDate) {
+        const rules = await loadMinShelfDaysRules();
+        useByDate = addCalendarDays(prodDate, Number(recipe.shelfLifeDays));
+        earliestOkUseBy = addCalendarDays(londonDateString(), 1 + minShelfDaysFor(recipe.category ?? null, rules));
+        shelfLifeOk = useByDate >= earliestOkUseBy;
+      }
       await db.execute(sql`
-        INSERT INTO packing_batch_records (plan_id, recipe_id, first_batch_number, first_user_id, first_recorded_at)
-        VALUES (${planId}, ${recipeId}, ${batchNumber}, ${userId}, NOW())
+        INSERT INTO packing_batch_records (plan_id, recipe_id, first_batch_number, first_user_id, first_recorded_at, first_use_by_date, first_shelf_life_ok)
+        VALUES (${planId}, ${recipeId}, ${batchNumber}, ${userId}, NOW(), ${useByDate}, ${shelfLifeOk})
         ON CONFLICT (plan_id, recipe_id)
-        DO UPDATE SET first_batch_number = ${batchNumber}, first_user_id = ${userId}, first_recorded_at = NOW()
+        DO UPDATE SET first_batch_number = ${batchNumber}, first_user_id = ${userId}, first_recorded_at = NOW(),
+                      first_use_by_date = ${useByDate}, first_shelf_life_ok = ${shelfLifeOk}
       `);
+      res.json({ ok: true, verdict: { useByDate, earliestOkUseBy, shelfLifeOk } });
+      return;
     } else {
       await db.execute(sql`
         INSERT INTO packing_batch_records (plan_id, recipe_id, last_batch_number, last_user_id, last_recorded_at)

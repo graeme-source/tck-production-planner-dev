@@ -19,6 +19,7 @@
 import { sql, and, eq, gt } from "drizzle-orm";
 import { db, recipesTable, stockEntriesTable, fridgeStockBatchesTable } from "@workspace/db";
 import { productionDateFromJulianBatch } from "./julian-batch";
+import { loadMinShelfDaysRules, minShelfDaysFor } from "./min-shelf-days";
 
 export interface ClosingFridgeBatch {
   batchNumber: number;
@@ -40,14 +41,12 @@ export interface ClosingFridgeAction {
   batches: ClosingFridgeBatch[];
 }
 
-function addCalendarDays(dateStr: string, days: number): string {
+/** Noon-UTC calendar-day arithmetic — exported for the packing opening
+ *  check, which shares this expiry maths. */
+export function addCalendarDays(dateStr: string, days: number): string {
   const d = new Date(`${dateStr}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
-}
-
-function minShelfDaysAtCustomer(category: string | null): number {
-  return (category ?? "").toLowerCase() === "macaroni cheese" ? 2 : 3;
 }
 
 /**
@@ -57,6 +56,7 @@ function minShelfDaysAtCustomer(category: string | null): number {
  * chilled and need freezing / moving to Wonky stock.
  */
 export async function computeClosingFridgeActions(asOfDispatchDate: string): Promise<ClosingFridgeAction[]> {
+  const minShelfRules = await loadMinShelfDaysRules();
   const recipeRows = await db
     .select({
       id: recipesTable.id,
@@ -118,7 +118,7 @@ export async function computeClosingFridgeActions(asOfDispatchDate: string): Pro
       remaining -= take;
     }
     layers.reverse();
-    const minDays = minShelfDaysAtCustomer(info.category ?? null);
+    const minDays = minShelfDaysFor(info.category ?? null, minShelfRules);
     let actionPacks = 0;
     const batches: ClosingFridgeBatch[] = [];
     for (const layer of layers) {

@@ -13,7 +13,8 @@ import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { useAuth } from "@/contexts/auth-context";
 import { useStationChecklist, useDynamicData, type ChecklistItem } from "./use-station-checklist";
-import { ChecklistAdminPanel } from "./checklist-admin-panel";
+import { batchDispatchVerdict } from "@/lib/julian-batch";
+import { ChecklistAdminPanel, DispatchShelfRulesCard } from "./checklist-admin-panel";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -421,7 +422,12 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
 
       {/* Admin panel */}
       {adminMode && (
-        <ChecklistAdminPanel stationType={stationType} onClose={() => { setAdminMode(false); refetch(); }} />
+        <>
+          <ChecklistAdminPanel stationType={stationType} onClose={() => { setAdminMode(false); refetch(); }} />
+          {/* Packing only: the min-days-at-customer numbers behind the
+              opening batch check's shelf-life verdicts. */}
+          <DispatchShelfRulesCard stationType={stationType} />
+        </>
       )}
 
       {/* Two-panel layout */}
@@ -798,6 +804,18 @@ interface PackBatchRow {
   recordedLastBatchNumber: number | null;
   firstRecordedAt: string | null;
   lastRecordedAt: string | null;
+  // Shelf-life rule context (2026-09-02): the recipe's shelf life and the
+  // earliest use-by acceptable for dispatching today (today + overnight
+  // delivery + the category's min days at customer). null shelfLifeDays =
+  // shelf life not set on the recipe, verdicts can't be computed.
+  category?: string | null;
+  shelfLifeDays?: number | null;
+  earliestOkUseBy?: string | null;
+}
+
+/** "2026-09-06" → "Sun 6 Sep" — the way a use-by reads off a label. */
+function shortDate(iso: string): string {
+  return new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 }
 
 /**
@@ -836,6 +854,16 @@ function PackBatchNumbers({ data, planId, kind }: { data: unknown[]; planId: num
         body: JSON.stringify({ planId, recipeId, batchNumber, kind }),
       });
       if (!res.ok) throw new Error("Failed to save");
+      // The server recomputes the shelf-life verdict on record; a failing
+      // batch gets an immediate loud toast on top of the red block below.
+      const body = await res.json().catch(() => null) as { verdict?: { shelfLifeOk: boolean | null } } | null;
+      if (body?.verdict?.shelfLifeOk === false) {
+        toast({
+          title: "Not enough shelf life",
+          description: "Recorded — but this batch can't be dispatched today. Set it aside and tell a manager.",
+          variant: "destructive",
+        });
+      }
       setRecordedLocal(r => ({ ...r, [recipeId]: batchNumber }));
       setManualFor(null);
       setManualValue("");
@@ -890,26 +918,41 @@ function PackBatchNumbers({ data, planId, kind }: { data: unknown[]; planId: num
               </p>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {candidates.map(n => (
-                <button
-                  key={n}
-                  onClick={() => saveBatch(item.recipeId, n)}
-                  disabled={saving[item.recipeId]}
-                  className={cn(
-                    "px-3 py-2 rounded-lg border font-mono font-bold text-sm tabular-nums transition-colors disabled:opacity-50",
-                    current === n
-                      ? "bg-primary text-primary-foreground border-primary"
-                      : !isLast && n === item.suggestedBatchNumber
-                        ? "border-primary/60 bg-primary/10 text-primary hover:bg-primary/20"
-                        : "border-border bg-background hover:border-primary hover:text-primary",
-                  )}
-                >
-                  #{n}
-                  {!isLast && n === item.suggestedBatchNumber && (
-                    <span className="ml-1 text-[10px] font-sans font-semibold uppercase">fifo</span>
-                  )}
-                </button>
-              ))}
+              {candidates.map(n => {
+                // Shelf-life verdict shown on the chip itself, so a too-old
+                // batch reads as a warning BEFORE it's tapped (2026-09-02).
+                const verdict = !isLast ? batchDispatchVerdict(n, item.shelfLifeDays, item.earliestOkUseBy) : null;
+                const tooOld = verdict !== null && !verdict.ok;
+                return (
+                  <button
+                    key={n}
+                    onClick={() => saveBatch(item.recipeId, n)}
+                    disabled={saving[item.recipeId]}
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg border font-mono font-bold text-sm tabular-nums transition-colors disabled:opacity-50 flex flex-col items-center",
+                      current === n
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : tooOld
+                          ? "border-destructive/60 bg-destructive/10 text-destructive hover:bg-destructive/20"
+                          : !isLast && n === item.suggestedBatchNumber
+                            ? "border-primary/60 bg-primary/10 text-primary hover:bg-primary/20"
+                            : "border-border bg-background hover:border-primary hover:text-primary",
+                    )}
+                  >
+                    <span>
+                      #{n}
+                      {!isLast && !tooOld && n === item.suggestedBatchNumber && (
+                        <span className="ml-1 text-[10px] font-sans font-semibold uppercase">fifo</span>
+                      )}
+                    </span>
+                    {verdict && (
+                      <span className={cn("text-[10px] font-sans leading-tight", tooOld ? "font-bold" : "text-muted-foreground")}>
+                        {tooOld ? "too old" : `use-by ${shortDate(verdict.useByDate)}`}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
               <button
                 onClick={() => { setManualFor(m => m === item.recipeId ? null : item.recipeId); setManualValue(""); }}
                 disabled={saving[item.recipeId]}
@@ -944,25 +987,70 @@ function PackBatchNumbers({ data, planId, kind }: { data: unknown[]; planId: num
         );
       })}
 
+      {/* The escalation block (2026-09-02): a recorded first batch whose
+          use-by fails today's dispatch rule is a stop-the-line moment, not a
+          footnote — name the batch, the dates, and what to do. */}
+      {!isLast && (() => {
+        const bad = done
+          .map(item => ({ item, n: recordedNumber(item)!, verdict: batchDispatchVerdict(recordedNumber(item)!, item.shelfLifeDays, item.earliestOkUseBy) }))
+          .filter(b => b.verdict !== null && !b.verdict.ok);
+        if (bad.length === 0) return null;
+        return (
+          <div className="rounded-xl border-2 border-destructive bg-destructive/10 p-3.5 space-y-2">
+            <p className="text-sm font-bold text-destructive flex items-center gap-1.5">
+              <AlertTriangle className="w-4 h-4" /> Do not dispatch — not enough shelf life
+            </p>
+            {bad.map(({ item, n, verdict }) => (
+              <p key={item.recipeId} className="text-sm text-destructive">
+                <span className="font-semibold">{item.recipeName}</span> #{n} — use-by {shortDate(verdict!.useByDate)},
+                needs {shortDate(item.earliestOkUseBy!)} or later to go out today.
+              </p>
+            ))}
+            <p className="text-sm font-semibold text-destructive">
+              Set these packs aside and tell a manager before packing anything from this batch.
+            </p>
+          </div>
+        );
+      })()}
+
       {done.length > 0 && (
         <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 p-3 space-y-1">
           <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
             <CheckCircle2 className="w-3.5 h-3.5" /> Recorded
           </p>
-          {done.map(item => (
-            <div key={item.recipeId} className="flex items-center justify-between gap-2 text-sm">
-              <span className="truncate">{item.recipeName}</span>
-              <span className="flex items-center gap-2 shrink-0">
-                <span className="font-mono font-bold tabular-nums">#{recordedNumber(item)}</span>
-                <button
-                  onClick={() => setChanging(item.recipeId)}
-                  className="text-[11px] text-muted-foreground hover:text-primary underline-offset-2 hover:underline"
-                >
-                  change
-                </button>
-              </span>
-            </div>
-          ))}
+          {done.map(item => {
+            const n = recordedNumber(item)!;
+            const verdict = !isLast ? batchDispatchVerdict(n, item.shelfLifeDays, item.earliestOkUseBy) : null;
+            return (
+              <div key={item.recipeId} className="flex items-center justify-between gap-2 text-sm">
+                <span className="truncate">{item.recipeName}</span>
+                <span className="flex items-center gap-2 shrink-0">
+                  {verdict && (
+                    <span className={cn(
+                      "text-[11px] font-semibold px-1.5 py-0.5 rounded",
+                      verdict.ok
+                        ? "text-emerald-700 dark:text-emerald-400"
+                        : "bg-destructive text-destructive-foreground",
+                    )}>
+                      {verdict.ok ? `use-by ${shortDate(verdict.useByDate)} ✓` : "TOO OLD"}
+                    </span>
+                  )}
+                  {!isLast && !verdict && item.shelfLifeDays == null && (
+                    <span className="text-[11px] text-amber-600 dark:text-amber-400" title="Set a shelf life on the recipe to check this">
+                      no shelf life set
+                    </span>
+                  )}
+                  <span className="font-mono font-bold tabular-nums">#{n}</span>
+                  <button
+                    onClick={() => setChanging(item.recipeId)}
+                    className="text-[11px] text-muted-foreground hover:text-primary underline-offset-2 hover:underline"
+                  >
+                    change
+                  </button>
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

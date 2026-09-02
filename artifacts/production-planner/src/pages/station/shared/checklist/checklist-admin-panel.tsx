@@ -548,3 +548,142 @@ function SortableTemplateRow({
     </div>
   );
 }
+
+// ─── Dispatch shelf-life rules (packing only) ────────────────────────
+//
+// The rule behind the opening first-batch check's verdicts: a pack
+// dispatched today arrives tomorrow (APC overnight) and must still have at
+// least this many days of shelf life on arrival. Stored as one JSON
+// app_settings key (min_shelf_days_at_customer) read by the packing check,
+// the closing fridge check and the planning screens alike; the settings
+// page is frozen by the charter, so the editor lives here, next to the
+// checklist it governs. Admin-only (the app-settings write already is).
+
+interface ShelfRules {
+  default: number;
+  byCategory: Record<string, number>;
+}
+
+const SHELF_RULES_KEY = "min_shelf_days_at_customer";
+const BUILT_IN_SHELF_RULES: ShelfRules = { default: 3, byCategory: { "macaroni cheese": 2 } };
+
+function parseShelfRules(raw: string | undefined): ShelfRules {
+  if (!raw) return BUILT_IN_SHELF_RULES;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Number.isInteger(Number(parsed?.default))) return BUILT_IN_SHELF_RULES;
+    const byCategory: Record<string, number> = {};
+    for (const [k, v] of Object.entries((parsed.byCategory ?? {}) as Record<string, unknown>)) {
+      if (k.trim() && Number.isInteger(Number(v))) byCategory[k.trim().toLowerCase()] = Number(v);
+    }
+    return { default: Number(parsed.default), byCategory };
+  } catch {
+    return BUILT_IN_SHELF_RULES;
+  }
+}
+
+export function DispatchShelfRulesCard({ stationType }: { stationType: string }) {
+  const { state: authState } = useAuth();
+  const isAdmin = authState.status === "authenticated" && authState.user.role === "admin";
+  const [categories, setCategories] = useState<string[]>([]);
+  const [defaultDays, setDefaultDays] = useState<string>("");
+  const [byCategory, setByCategory] = useState<Record<string, string>>({});
+  const [loaded, setLoaded] = useState(false);
+  const [runSave, saveBusy] = useGuardedAction();
+
+  useEffect(() => {
+    if (!isAdmin || stationType !== "packing") return;
+    (async () => {
+      try {
+        const [settingsRes, catsRes] = await Promise.all([
+          fetch(`${BASE}/api/app-settings/`, { credentials: "include" }),
+          fetch(`${BASE}/api/category-defaults`, { credentials: "include" }),
+        ]);
+        const settings = settingsRes.ok ? await settingsRes.json() as Record<string, string> : {};
+        const cats = catsRes.ok ? (await catsRes.json() as Array<{ category: string }>).map(c => c.category) : [];
+        const rules = parseShelfRules(settings[SHELF_RULES_KEY]);
+        // Every known category gets a row; ones with an override show it.
+        const catSet = [...new Set([...cats, ...Object.keys(rules.byCategory)])];
+        setCategories(catSet);
+        setDefaultDays(String(rules.default));
+        setByCategory(Object.fromEntries(catSet.map(c => {
+          const override = rules.byCategory[c.toLowerCase()];
+          return [c, override != null ? String(override) : ""];
+        })));
+        setLoaded(true);
+      } catch { /* card just doesn't render inputs */ }
+    })();
+  }, [isAdmin, stationType]);
+
+  if (!isAdmin || stationType !== "packing" || !loaded) return null;
+
+  const save = () => {
+    const def = parseInt(defaultDays, 10);
+    if (!Number.isInteger(def) || def < 0 || def > 30) {
+      toast({ title: "Default days must be 0–30", variant: "destructive" });
+      return;
+    }
+    const overrides: Record<string, number> = {};
+    for (const [cat, val] of Object.entries(byCategory)) {
+      if (val.trim() === "") continue;
+      const n = parseInt(val, 10);
+      if (!Number.isInteger(n) || n < 0 || n > 30) {
+        toast({ title: `"${cat}" days must be 0–30 (or blank for the default)`, variant: "destructive" });
+        return;
+      }
+      overrides[cat.toLowerCase()] = n;
+    }
+    runSave(async (signal) => {
+      await guardedFetch(`${BASE}/api/app-settings/${SHELF_RULES_KEY}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: JSON.stringify({ default: def, byCategory: overrides }) }),
+        signal,
+      });
+      toast({ title: "Dispatch shelf-life rules saved", description: "The opening batch check uses them immediately." });
+    });
+  };
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-5 space-y-3">
+      <div>
+        <h3 className="font-semibold text-sm">Dispatch shelf-life rules</h3>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          A pack dispatched today arrives tomorrow, and must still have at least this many days of
+          shelf life left on arrival. The opening first-batch check warns against these numbers.
+        </p>
+      </div>
+      <div className="flex items-center gap-3">
+        <label className="text-sm font-medium flex-1">All products (default)</label>
+        <input
+          type="number" min={0} max={30}
+          value={defaultDays}
+          onChange={e => setDefaultDays(e.target.value)}
+          className="w-20 px-2 py-1.5 text-sm text-center border border-border rounded-lg bg-background tabular-nums"
+        />
+        <span className="text-xs text-muted-foreground w-8">days</span>
+      </div>
+      {categories.map(cat => (
+        <div key={cat} className="flex items-center gap-3">
+          <label className="text-sm flex-1 capitalize">{cat}</label>
+          <input
+            type="number" min={0} max={30}
+            value={byCategory[cat] ?? ""}
+            onChange={e => setByCategory(prev => ({ ...prev, [cat]: e.target.value }))}
+            placeholder={defaultDays}
+            className="w-20 px-2 py-1.5 text-sm text-center border border-border rounded-lg bg-background tabular-nums placeholder:text-muted-foreground/50"
+          />
+          <span className="text-xs text-muted-foreground w-8">days</span>
+        </div>
+      ))}
+      <button
+        onClick={save}
+        disabled={saveBusy}
+        className="w-full h-10 rounded-lg bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2"
+      >
+        {saveBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+        Save rules
+      </button>
+    </div>
+  );
+}

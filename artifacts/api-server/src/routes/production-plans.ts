@@ -14,6 +14,7 @@ import { getFactoryNumberCoreMenuOnly, getShopifyFreezerSyncEnabled } from "../l
 import { logFridgeStockChange, type FridgeChangeSource } from "../lib/fridge-stock-log";
 import { londonDateString, londonStartOfDay } from "../lib/london-time";
 import { productionDateFromJulianBatch } from "../lib/julian-batch";
+import { loadMinShelfDaysRules, minShelfDaysFor } from "../lib/min-shelf-days";
 import { getStandardBreakConfig, computeBatchesPerHour } from "../lib/batches-per-hour";
 import { computeDaySchedule, parseClock, formatClock, DEFAULT_START_TIME, DEFAULT_CHANGEOVER_SECONDS, DEFAULT_BUILDERS } from "@workspace/production-schedule";
 // Type-only import — purely compile-time, no runtime cost. The actual
@@ -264,13 +265,8 @@ export function addCalendarDays(dateStr: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Chilled products must reach the customer with a minimum shelf life left:
- *  calzones 3 days, mac cheese 2 (Graeme, 2026-08-08). Delivered day D with
- *  use-by E requires E ≥ D + minDays, so the last valid delivery for a batch
- *  is E − minDays and (APC overnight) the last valid dispatch is E − minDays − 1. */
-export function minShelfDaysAtCustomer(category: string | null): number {
-  return (category ?? "").toLowerCase() === "macaroni cheese" ? 2 : 3;
-}
+// The min-days-at-customer dispatch rule lives in lib/min-shelf-days.ts —
+// one configurable home instead of the two hard-coded copies it used to be.
 
 export function getPreviousDispatchDay(fromDate: string, skip: Set<string>): string {
   const d = new Date(`${fromDate}T12:00:00Z`);
@@ -832,6 +828,7 @@ export async function calculatePlanData(planDate: string) {
   // day-before dispatch consumes the oldest batches first, exactly like the
   // fulfilment path, so only what's left after it can expire.
   type ExpiringBatch = { batchNumber: number; packs: number; useByDate: string; lastDispatchDate: string; lastDeliveryDate: string };
+  const minShelfRules = await loadMinShelfDaysRules();
   const planAheadForExpiry = dispatchDates[0] > londonDateString();
   const firstForwardDispatch = dispatchDates[1];
   function computeExpiring(recipeId: number, dispatch1Qty: number): { expiringPacks: number; batches: ExpiringBatch[] } {
@@ -853,7 +850,7 @@ export async function calculatePlanData(planDate: string) {
       remaining -= take;
     }
     layers.reverse(); // oldest first, for FIFO d1 consumption below
-    const minDays = minShelfDaysAtCustomer(recipeShelfInfo.get(recipeId)?.category ?? null);
+    const minDays = minShelfDaysFor(recipeShelfInfo.get(recipeId)?.category ?? null, minShelfRules);
     let toConsume = planAheadForExpiry ? Math.max(0, dispatch1Qty) : 0;
     let expiringPacks = 0;
     const batches: ExpiringBatch[] = [];

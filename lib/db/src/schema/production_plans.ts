@@ -327,6 +327,11 @@ export const packingBatchRecordsTable = pgTable("packing_batch_records", {
   lastUserId: integer("last_user_id").references(() => usersTable.id, { onDelete: "set null" }),
   firstRecordedAt: timestamp("first_recorded_at"),
   lastRecordedAt: timestamp("last_recorded_at"),
+  // Shelf-life verdict stamped when the first batch is recorded (migration
+  // 0070): the use-by computed from the batch number, and whether it met
+  // the min-days-at-customer dispatch rule that morning. HACCP trail.
+  firstUseByDate: date("first_use_by_date"),
+  firstShelfLifeOk: boolean("first_shelf_life_ok"),
 }, (table) => [
   unique("uq_packing_batch_record").on(table.planId, table.recipeId),
 ]);
