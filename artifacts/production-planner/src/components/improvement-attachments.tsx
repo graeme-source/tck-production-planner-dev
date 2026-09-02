@@ -136,13 +136,17 @@ export function ImprovementAttachments({
                   <img src={attachmentUrl(a.id)} alt="" className={`${thumbSize} rounded-lg object-cover border border-border`} loading="lazy" />
                 </button>
               )}
+              {/* Always visible — it was hover-only, which on an iPad means
+                  it doesn't exist (Graeme, 2026-09-02: couldn't remove a
+                  photo at all). */}
               {editable && (
                 <button
                   onClick={() => remove(a.id)}
-                  className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1.5 shadow-md active:scale-95 transition-transform"
                   title="Remove"
+                  aria-label="Remove this photo or video"
                 >
-                  <Trash2 className="w-3 h-3" />
+                  <Trash2 className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>

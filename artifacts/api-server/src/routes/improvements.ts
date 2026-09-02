@@ -4,7 +4,7 @@ import {
   notificationsTable,
   stageOf, STAGE_LABEL, canMarkDone, markDoneBlocker, canReview,
 } from "@workspace/db";
-import { eq, desc, asc, sql } from "drizzle-orm";
+import { eq, desc, asc, sql, inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { ImprovementSubmission } from "@workspace/db";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -17,6 +17,7 @@ import { shouldAutoStitch } from "../lib/before-after-stitch";
 import { ffmpegAvailable } from "../lib/sop-video";
 import { singleFileUpload } from "../middleware/upload";
 import { sendPushToUsers } from "../services/push";
+import { FOUNDER_EMAILS } from "./lean-reviews";
 
 const router: IRouter = Router();
 
@@ -170,6 +171,27 @@ async function celebrateImprovement(improvementId: number, title: string, byUser
   });
 }
 
+/** The quiet review queue (Graeme, 2026-09-02): a finished improvement
+ *  drops a task onto the founder's green to-do list instead of being
+ *  approved in front of the room. One open task per improvement; closed
+ *  automatically when the review happens, wherever it happens. */
+async function queueReviewTodo(improvementId: number, title: string) {
+  const founders = await db.select({ id: usersTable.id }).from(usersTable).where(inArray(usersTable.email, [...FOUNDER_EMAILS]));
+  for (const f of founders) {
+    await db.execute(sql`
+      INSERT INTO todo_tasks (assignee_id, created_by, created_by_name, title, notes, url, priority, status, improvement_id)
+      SELECT ${f.id}, NULL, 'Improvement review', ${"Review improvement: " + title},
+             'Open it, check the before and after, and approve it — or send it back with a note.',
+             '/improvements', 'normal', 'open', ${improvementId}
+      WHERE NOT EXISTS (
+        SELECT 1 FROM todo_tasks
+        WHERE assignee_id = ${f.id} AND improvement_id = ${improvementId}
+          AND created_by_name = 'Improvement review' AND status = 'open'
+      )
+    `);
+  }
+}
+
 router.post("/:id/done", async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
@@ -212,6 +234,11 @@ router.post("/:id/done", async (req: Request, res: Response) => {
         console.error("[Improvements] celebration notify failed:", err),
       );
     }
+    // Every completion (first or re-done after a send-back) queues the
+    // founder's quiet review task.
+    queueReviewTodo(id, updated!.title).catch(err =>
+      console.error("[Improvements] review-todo failed:", err),
+    );
 
     res.json(decorate(updated!, mediaCount, await viewerOf(req)));
   } catch (err) {
@@ -243,6 +270,14 @@ router.post("/:id/review", async (req: Request, res: Response) => {
       res.status(409).json({ error: "This one isn't waiting for approval." });
       return;
     }
+
+    // The quiet review task is done the moment a review happens — approved
+    // or sent back alike. Scoped to this feature's own tasks so a to-do
+    // that merely LINKS to an improvement is left alone.
+    db.execute(sql`
+      UPDATE todo_tasks SET status = 'done', completed_at = NOW(), updated_at = NOW()
+      WHERE improvement_id = ${id} AND created_by_name = 'Improvement review' AND status = 'open'
+    `).catch(err => console.error("[Improvements] review-todo close failed:", err));
 
     let reviewerName: string | null = null;
     if (viewer.id) {
@@ -847,7 +882,31 @@ router.delete("/attachments/:attId", async (req: Request, res: Response) => {
   if (role !== "admin" && role !== "manager") { res.status(403).json({ error: "Manager or admin access required" }); return; }
   const attId = parseInt(String(req.params.attId), 10);
   if (isNaN(attId)) { res.status(400).json({ error: "Invalid id" }); return; }
-  await db.execute(sql`DELETE FROM improvement_attachments WHERE id = ${attId}`);
+  const deleted = toRows<{ improvement_id: number; phase: string | null }>(await db.execute(sql`
+    DELETE FROM improvement_attachments WHERE id = ${attId}
+    RETURNING improvement_id, phase
+  `));
+
+  // Removing a before/after half leaves the joined clip telling a stale
+  // story — rebuild it from what's left, or drop it when a half is gone.
+  const removed = deleted[0];
+  if (removed && (removed.phase === "before" || removed.phase === "after")) {
+    const halves = toRows<{ kind: string; phase: string | null }>(await db.execute(sql`
+      SELECT DISTINCT ON (phase) kind, phase
+        FROM improvement_attachments
+       WHERE improvement_id = ${removed.improvement_id} AND phase IN ('before', 'after')
+       ORDER BY phase, id DESC
+    `));
+    if (shouldAutoStitch(halves)) {
+      stitchImprovementClip(removed.improvement_id).then(
+        outcome => { if (!outcome.ok) console.warn(`[Improvements] re-stitch after delete skipped for ${removed.improvement_id}: ${outcome.error}`); },
+        err => console.error(`[Improvements] re-stitch after delete failed for ${removed.improvement_id}:`, err),
+      );
+    } else {
+      await db.execute(sql`DELETE FROM improvement_attachments WHERE improvement_id = ${removed.improvement_id} AND phase = 'stitched'`);
+    }
+  }
+
   res.json({ ok: true });
 });
 

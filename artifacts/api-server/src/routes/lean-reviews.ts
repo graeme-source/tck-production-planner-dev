@@ -97,7 +97,8 @@ async function currentWeekContext(userId: number): Promise<{
 // completing it counts as their review for that week. Founder is matched
 // by email, same pattern as the founder pages; the local test account is
 // included so the flow is testable off-live (no such user exists on live).
-const FOUNDER_EMAILS = new Set([
+/** Exported for the improvements review queue — the same person owns both. */
+export const FOUNDER_EMAILS = new Set([
   "graeme@thecalzonekitchen.co.uk",
   "claude-test@thecalzonekitchen.co.uk",
 ]);
