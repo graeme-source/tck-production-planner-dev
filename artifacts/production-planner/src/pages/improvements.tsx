@@ -79,6 +79,16 @@ type Improvement = {
 
 type ScoreRow = { userId: number | null; name: string; count: number; signedOff: number; lastAt: string | null };
 
+/** A done improvement's chip carries the doer's name — "To do" on finished
+ *  work read as nonsense (Graeme, 2026-09-02). */
+function stageChipText(item: Pick<Improvement, "stage" | "stageLabel" | "creditedToName" | "submittedByName">): string {
+  const who = item.creditedToName || item.submittedByName;
+  if (!who) return item.stageLabel;
+  if (item.stage === "waiting") return `Done — ${who}`;
+  if (item.stage === "approved") return `${who} ✓`;
+  return item.stageLabel;
+}
+
 const STAGE_STYLE: Record<Stage, string> = {
   todo: "bg-secondary text-foreground",
   waiting: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
@@ -218,7 +228,7 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
       <div className="flex items-start justify-between gap-3">
         <p className="text-xl font-bold leading-snug break-words flex-1">{item.title}</p>
         <span className={cn("text-xs px-2.5 py-1 rounded-lg font-bold whitespace-nowrap", STAGE_STYLE[item.stage])}>
-          {item.stageLabel}
+          {stageChipText(item)}
         </span>
       </div>
       <div className="flex items-center gap-3 mt-2 text-base text-muted-foreground flex-wrap">
@@ -421,7 +431,7 @@ function ImprovementDetail({ id, onBack, isManager }: {
 
       <div>
         <span className={cn("text-sm px-3 py-1.5 rounded-lg font-bold inline-block mb-3", STAGE_STYLE[item.stage])}>
-          {item.stageLabel}
+          {stageChipText(item)}
         </span>
         <h1 className="text-3xl font-bold leading-snug break-words">{item.title}</h1>
         {item.description && item.description !== item.title && (
