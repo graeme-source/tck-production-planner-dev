@@ -30,11 +30,18 @@ export function ImageCropDialog({ file, onCancel, onCropped }: {
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const frameRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
 
-  // Load the picked file into an <img> we can draw from later.
+  // Load the picked file into an <img> we can draw from later. The error
+  // path matters: a photo this browser can't decode — an iPhone HEIC on
+  // anything but Safari, most commonly — used to leave the spinner turning
+  // forever with no way forward (Graeme, 2026-09-02: "the crop feature
+  // wouldn't load, I got stuck"). Now it says so and offers the uncropped
+  // original instead.
   useEffect(() => {
+    setLoadError(false);
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
@@ -43,9 +50,19 @@ export function ImageCropDialog({ file, onCancel, onCropped }: {
       setOffset({ x: 0, y: 0 });
       setZoom(1);
     };
+    img.onerror = () => setLoadError(true);
     img.src = url;
     return () => URL.revokeObjectURL(url);
   }, [file]);
+
+  const useOriginal = useCallback(async () => {
+    setSaving(true);
+    try {
+      await onCropped(file);
+    } finally {
+      setSaving(false);
+    }
+  }, [file, onCropped]);
 
   // The frame is however wide the dialog ends up; its height follows the
   // slide's shape. Measured rather than assumed so the crop matches on any
@@ -120,9 +137,11 @@ export function ImageCropDialog({ file, onCancel, onCropped }: {
           </button>
         </div>
 
-        <p className="text-base text-muted-foreground">
-          Drag the photo to move it. Everything inside the frame is what the team will see.
-        </p>
+        {!loadError && (
+          <p className="text-base text-muted-foreground">
+            Drag the photo to move it. Everything inside the frame is what the team will see.
+          </p>
+        )}
 
         <div
           ref={frameRef}
@@ -146,6 +165,14 @@ export function ImageCropDialog({ file, onCancel, onCropped }: {
                 transform: `translate(calc(-50% + ${offset.x}px), calc(-50% + ${offset.y}px))`,
               }}
             />
+          ) : loadError ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/80 px-8 text-center">
+              <p className="text-lg font-semibold">This photo can't be edited in this browser</p>
+              <p className="text-sm text-white/60">
+                It's likely an iPhone "High Efficiency" (HEIC) photo. You can still use it as it is,
+                or switch the camera to Most Compatible (Settings → Camera → Formats) for next time.
+              </p>
+            </div>
           ) : (
             <div className="absolute inset-0 flex items-center justify-center text-white/60">
               <Loader2 className="w-8 h-8 animate-spin" />
@@ -153,19 +180,21 @@ export function ImageCropDialog({ file, onCancel, onCropped }: {
           )}
         </div>
 
-        <div className="flex items-center gap-3">
-          <ZoomIn className="w-5 h-5 text-muted-foreground flex-shrink-0" />
-          <input
-            type="range"
-            min={1}
-            max={3}
-            step={0.01}
-            value={zoom}
-            onChange={e => setZoom(Number(e.target.value))}
-            className="flex-1 h-3 accent-primary"
-            aria-label="Zoom"
-          />
-        </div>
+        {!loadError && (
+          <div className="flex items-center gap-3">
+            <ZoomIn className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+            <input
+              type="range"
+              min={1}
+              max={3}
+              step={0.01}
+              value={zoom}
+              onChange={e => setZoom(Number(e.target.value))}
+              className="flex-1 h-3 accent-primary"
+              aria-label="Zoom"
+            />
+          </div>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <button
@@ -175,12 +204,12 @@ export function ImageCropDialog({ file, onCancel, onCropped }: {
             Cancel
           </button>
           <button
-            onClick={save}
-            disabled={!image || saving}
+            onClick={loadError ? useOriginal : save}
+            disabled={(!image && !loadError) || saving}
             className="h-16 sm:h-14 rounded-2xl bg-primary text-primary-foreground text-xl sm:text-lg font-bold flex items-center justify-center gap-3 disabled:opacity-50 active:scale-[0.99] transition-all shadow-lg shadow-primary/20 sm:order-2"
           >
             {saving ? <Loader2 className="w-6 h-6 animate-spin" /> : <Check className="w-6 h-6" />}
-            Use this
+            {loadError ? "Use the photo as it is" : "Use this"}
           </button>
         </div>
       </div>
