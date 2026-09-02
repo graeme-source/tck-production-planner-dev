@@ -2903,30 +2903,15 @@ function NewSopsSlide({ data, slide }: { data: DashboardData; slide: MeetingSlid
   );
 }
 
+/** The merged Improvements slide (Graeme, 2026-09-02): the finished-work
+ *  feed with its before/after clips leads — celebration first — and the
+ *  Improvements Required idea list sits below it. No Complete button: an
+ *  item leaves Required by being done properly in the Improvement Centre
+ *  (marked done with before/after media), never by a tap here. */
 function StrugglesSlide({ data, onRefresh, slide }: { data: DashboardData; onRefresh: () => void; slide: MeetingSlide }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [completingId, setCompletingId] = useState<number | null>(null);
-  const markComplete = async (id: number) => {
-    setCompletingId(id);
-    try {
-      const res = await fetch(`${BASE}/api/improvements/${id}`, {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ progressStatus: "complete" }),
-      });
-      if (res.status === 403) { toast({ title: "Manager or admin login needed to mark complete", variant: "destructive" }); return; }
-      if (!res.ok) throw new Error("Failed");
-      onRefresh();
-      toast({ title: "Marked complete" });
-    } catch {
-      toast({ title: "Failed to mark complete", variant: "destructive" });
-    } finally {
-      setCompletingId(null);
-    }
-  };
   const submit = async () => {
     if (!title.trim() || !description.trim()) return;
     setSubmitting(true);
@@ -2949,28 +2934,23 @@ function StrugglesSlide({ data, onRefresh, slide }: { data: DashboardData; onRef
   };
   return (
     <div>
-      <SectionTitle>{slide.title || "Improvements Required"}</SectionTitle>
-      <SectionLead>What's getting in the way? No blame — just name it. We'll action it from the kaizen board.</SectionLead>
+      <SectionTitle>{slide.title || "Improvements"}</SectionTitle>
+      <SectionLead>What we&apos;ve made better — and what&apos;s next. Play the clips, then scroll for what needs doing.</SectionLead>
+
+      <div className="mb-6">
+        <ImprovementsFeedList limit={6} />
+      </div>
+
       {data.struggles.length > 0 && (
         <div className="glass-panel rounded-2xl overflow-hidden mb-6">
-          <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground px-6 py-3 border-b border-border/50">Open improvements</p>
+          <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground px-6 py-3 border-b border-border/50">Improvements required</p>
           {data.struggles.map(s => (
-            <div key={s.id} className="px-6 py-4 border-b border-border/50 last:border-0 flex items-start gap-4">
-              <div className="flex-1 min-w-0">
-                <p className="text-2xl font-semibold leading-tight">{s.title}</p>
-                <p className="text-lg text-muted-foreground mt-1 leading-snug">{s.description}</p>
-                {s.assignedToName && (
-                  <p className="text-base text-muted-foreground mt-1">Assigned to <span className="font-semibold text-foreground">{s.assignedToName}</span></p>
-                )}
-              </div>
-              <button
-                onClick={() => markComplete(s.id)}
-                disabled={completingId === s.id}
-                className="shrink-0 mt-1 flex items-center gap-2 px-4 py-2.5 rounded-xl border border-green-300 dark:border-green-700 text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/20 text-base font-semibold hover:bg-green-100 dark:hover:bg-green-900/40 disabled:opacity-50 transition-colors"
-              >
-                {completingId === s.id ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
-                Complete
-              </button>
+            <div key={s.id} className="px-6 py-4 border-b border-border/50 last:border-0">
+              <p className="text-2xl font-semibold leading-tight">{s.title}</p>
+              <p className="text-lg text-muted-foreground mt-1 leading-snug">{s.description}</p>
+              {s.assignedToName && (
+                <p className="text-base text-muted-foreground mt-1">Assigned to <span className="font-semibold text-foreground">{s.assignedToName}</span></p>
+              )}
             </div>
           ))}
         </div>
@@ -3014,8 +2994,10 @@ interface MeetingFeedImprovement {
   media?: Array<{ id: number; kind: "image" | "video"; phase: "before" | "after" | "stitched" | null }>;
 }
 
-function RecentImprovementsSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
-  void data;
+/** The finished-work feed, shared by the merged Improvements slide and the
+ *  standalone Recent Improvements slide kind: last few improvements done or
+ *  awaiting sign-off, media playable in place. */
+function ImprovementsFeedList({ limit }: { limit: number }) {
   const { data: all = [], isLoading } = useQuery<MeetingFeedImprovement[]>({
     queryKey: ["meeting-improvement-feed"],
     queryFn: async () => {
@@ -3026,41 +3008,52 @@ function RecentImprovementsSlide({ data, slide }: { data: DashboardData; slide: 
     staleTime: 5 * 60 * 1000,
     retry: 1,
   });
-  const items = all.filter(i => i.stage === "approved" || i.stage === "waiting").slice(0, 10);
+  const items = all.filter(i => i.stage === "approved" || i.stage === "waiting").slice(0, limit);
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-10 text-muted-foreground">
+        <Loader2 className="w-8 h-8 animate-spin" />
+      </div>
+    );
+  }
+  if (items.length === 0) {
+    return (
+      <div className="glass-panel rounded-2xl p-8 text-3xl text-muted-foreground italic text-center">
+        No improvements completed recently — log one and it&apos;ll be celebrated here.
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-4">
+      {items.map(imp => {
+        const who = imp.creditedToName || imp.submittedByName;
+        return (
+          <div key={imp.id} className="glass-panel rounded-2xl px-6 py-5">
+            <div className="flex items-start gap-4">
+              <CheckCircle2 className="w-7 h-7 text-green-500 shrink-0 mt-1" />
+              <div className="flex-1 min-w-0">
+                <p className="text-2xl font-semibold leading-snug">{imp.title}</p>
+                <p className="text-lg text-muted-foreground mt-0.5">
+                  {who ? `By ${who}` : "Team effort"}
+                  {imp.description && imp.description !== imp.title ? ` — ${imp.description}` : ""}
+                </p>
+              </div>
+            </div>
+            <ImprovementFeedMedia media={imp.media} large />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function RecentImprovementsSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
+  void data;
   return (
     <div>
       <SectionTitle>{slide.title || "Recent Improvements"}</SectionTitle>
       <SectionLead>What&apos;s been made better — scroll through and play the clips.</SectionLead>
-      {isLoading ? (
-        <div className="flex items-center justify-center py-10 text-muted-foreground">
-          <Loader2 className="w-8 h-8 animate-spin" />
-        </div>
-      ) : items.length === 0 ? (
-        <div className="glass-panel rounded-2xl p-8 text-3xl text-muted-foreground italic text-center">
-          No improvements completed recently — log one and it&apos;ll be celebrated here.
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {items.map(imp => {
-            const who = imp.creditedToName || imp.submittedByName;
-            return (
-              <div key={imp.id} className="glass-panel rounded-2xl px-6 py-5">
-                <div className="flex items-start gap-4">
-                  <CheckCircle2 className="w-7 h-7 text-green-500 shrink-0 mt-1" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-2xl font-semibold leading-snug">{imp.title}</p>
-                    <p className="text-lg text-muted-foreground mt-0.5">
-                      {who ? `By ${who}` : "Team effort"}
-                      {imp.description && imp.description !== imp.title ? ` — ${imp.description}` : ""}
-                    </p>
-                  </div>
-                </div>
-                <ImprovementFeedMedia media={imp.media} large />
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <ImprovementsFeedList limit={10} />
     </div>
   );
 }
@@ -3431,7 +3424,7 @@ const SLIDE_KIND_CATALOG: Array<{ kind: SlideKind; label: string; description: s
   { kind: "safety_issues",       label: "Safety Issues",        description: "Open andons + log new" },
   { kind: "system_updates",      label: "System Updates",       description: "Auto-pulls recent commits to the planner" },
   { kind: "new_sops",            label: "New & Updated SOPs",   description: "SOPs touched in last 7 days" },
-  { kind: "struggles",           label: "Improvements Required",            description: "Open improvements + log new" },
+  { kind: "struggles",           label: "Improvements",                     description: "Recent improvements feed + what needs doing" },
   { kind: "recent_improvements", label: "Recent Improvements",  description: "Recently completed improvements + photos/videos" },
   { kind: "lesson",              label: "Lean Lesson",          description: "Today's principle + example" },
   { kind: "gratitude",           label: "Gratitude",            description: "Capture shout-outs" },

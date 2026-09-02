@@ -2389,10 +2389,9 @@ async function runStartupMigrations() {
         ('bag_orders', 6, 'Bag Orders'),
         ('yesterday_kpis', 8, 'Yesterday''s Numbers'),
         ('new_sops', 9, 'New & Updated SOPs'),
-        ('struggles', 10, 'Improvements Required'),
-        ('recent_improvements', 11, 'Recent Improvements'),
-        ('lesson', 12, 'Today''s Lean Lesson'),
-        ('gratitude', 13, 'Gratitude')
+        ('struggles', 10, 'Improvements'),
+        ('lesson', 11, 'Today''s Lean Lesson'),
+        ('gratitude', 12, 'Gratitude')
       ) AS m(kind, new_pos, new_title)
       WHERE ts.kind = m.kind
         AND ts.template_id IN (SELECT id FROM meeting_templates WHERE is_default = true)
@@ -2400,7 +2399,7 @@ async function runStartupMigrations() {
     await db.execute(sql`
       UPDATE meeting_slides ms
       SET order_position = m.new_pos,
-          title = CASE WHEN ms.title IN ('Special Prep','Local Delivery','Struggles') THEN m.new_title ELSE ms.title END
+          title = CASE WHEN ms.title IN ('Special Prep','Local Delivery','Struggles','Improvements Required') THEN m.new_title ELSE ms.title END
       FROM (VALUES
         ('station_assignments'::text, 0, 'Who''s On Today'::text),
         ('stretches', 1, 'Stretches'),
@@ -2411,10 +2410,9 @@ async function runStartupMigrations() {
         ('bag_orders', 6, 'Bag Orders'),
         ('yesterday_kpis', 8, 'Yesterday''s Numbers'),
         ('new_sops', 9, 'New & Updated SOPs'),
-        ('struggles', 10, 'Improvements Required'),
-        ('recent_improvements', 11, 'Recent Improvements'),
-        ('lesson', 12, 'Today''s Lean Lesson'),
-        ('gratitude', 13, 'Gratitude')
+        ('struggles', 10, 'Improvements'),
+        ('lesson', 11, 'Today''s Lean Lesson'),
+        ('gratitude', 12, 'Gratitude')
       ) AS m(kind, new_pos, new_title)
       WHERE ms.kind = m.kind
     `);
@@ -2448,6 +2446,21 @@ async function runStartupMigrations() {
               WHERE ms.meeting_id = mm.id AND ms.kind = 'recent_improvements'
             );
           INSERT INTO _migrations_done (key) VALUES ('add_recent_improvements_slide_v1');
+        END IF;
+      END $$;
+    `);
+    // Same-day refinement (Graeme, 2026-09-02 pm): the feed moved INSIDE the
+    // Improvements slide (celebration on top, Required below), so the
+    // standalone Recent Improvements slide comes back out of every deck.
+    // Guarded like its add above; an admin can still re-add the kind from
+    // the slide catalog if a feed-only slide is ever wanted.
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'merge_improvements_slides_v1') THEN
+          DELETE FROM template_slides WHERE kind = 'recent_improvements';
+          DELETE FROM meeting_slides WHERE kind = 'recent_improvements';
+          INSERT INTO _migrations_done (key) VALUES ('merge_improvements_slides_v1');
         END IF;
       END $$;
     `);
