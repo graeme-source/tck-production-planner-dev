@@ -515,8 +515,10 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       .orderBy(desc(andonIssuesTable.createdAt))
       .limit(10);
 
-    // ── Improvements required (open improvements — ideas + struggles are
-    //    now one concept; two-status model means open = not complete) ───
+    // ── Improvements required — the IDEAS list only (Graeme, 2026-09-02:
+    //    "just the improvement idea logs"). Work that's already been done
+    //    and is waiting for a sign-off belongs on the Recent Improvements
+    //    slide's story, not in the to-do pile the meeting looks at. ─────
     const improvementsRequired = await db
       .select({
         id: improvementSubmissionsTable.id,
@@ -526,7 +528,7 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
         createdAt: improvementSubmissionsTable.createdAt,
       })
       .from(improvementSubmissionsTable)
-      .where(notInArray(improvementSubmissionsTable.progressStatus, ["complete"]))
+      .where(notInArray(improvementSubmissionsTable.progressStatus, ["complete", "awaiting_approval"]))
       .orderBy(desc(improvementSubmissionsTable.createdAt))
       .limit(10);
 

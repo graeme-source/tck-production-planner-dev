@@ -16,6 +16,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import type React from "react";
 import { ImageCropDialog } from "@/components/image-crop-dialog";
+import { ImprovementFeedMedia } from "@/components/improvement-feed-media";
 import { useLocation, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -36,7 +37,6 @@ import { packDayName, packDayNameCap } from "@/lib/pack-day";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
-import { ImprovementAttachments } from "@/components/improvement-attachments";
 import { LessonDiagram, DIAGRAM_OPTIONS } from "@/components/lesson-diagrams";
 import { MarkdownBlock, YouTubeEmbed } from "@/components/lesson-media";
 
@@ -2970,39 +2970,66 @@ function StrugglesSlide({ data, onRefresh, slide }: { data: DashboardData; onRef
   );
 }
 
+/** What the meeting scrolls through to celebrate finished work — the same
+ *  feed as the Improvement Centre, media inline and playable on the slide:
+ *  the stitched BEFORE→AFTER clip when it exists, the photo pair otherwise
+ *  (Graeme, 2026-09-02). Includes work done and awaiting sign-off — it's
+ *  the celebration that matters in the meeting, not the paperwork. */
+interface MeetingFeedImprovement {
+  id: number;
+  title: string;
+  description: string;
+  stage: "todo" | "waiting" | "approved" | "sent_back";
+  submittedByName: string | null;
+  creditedToName: string | null;
+  media?: Array<{ id: number; kind: "image" | "video"; phase: "before" | "after" | "stitched" | null }>;
+}
+
 function RecentImprovementsSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
-  const [openId, setOpenId] = useState<number | null>(null);
-  const items = data.recentImprovements ?? [];
+  void data;
+  const { data: all = [], isLoading } = useQuery<MeetingFeedImprovement[]>({
+    queryKey: ["meeting-improvement-feed"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/improvements`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load improvements");
+      return res.json();
+    },
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
+  const items = all.filter(i => i.stage === "approved" || i.stage === "waiting").slice(0, 10);
   return (
     <div>
       <SectionTitle>{slide.title || "Recent Improvements"}</SectionTitle>
-      <SectionLead>What we&apos;ve shipped — tap one to see the photos &amp; videos.</SectionLead>
-      {items.length === 0 ? (
+      <SectionLead>What&apos;s been made better — scroll through and play the clips.</SectionLead>
+      {isLoading ? (
+        <div className="flex items-center justify-center py-10 text-muted-foreground">
+          <Loader2 className="w-8 h-8 animate-spin" />
+        </div>
+      ) : items.length === 0 ? (
         <div className="glass-panel rounded-2xl p-8 text-3xl text-muted-foreground italic text-center">
-          No improvements completed recently.
+          No improvements completed recently — log one and it&apos;ll be celebrated here.
         </div>
       ) : (
-        <div className="space-y-3">
-          {items.map(imp => (
-            <div key={imp.id} className="glass-panel rounded-2xl overflow-hidden">
-              <button
-                onClick={() => setOpenId(o => (o === imp.id ? null : imp.id))}
-                className="w-full text-left px-6 py-4 flex items-start gap-4"
-              >
-                <CheckCircle2 className="w-7 h-7 text-green-500 shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-2xl font-semibold leading-snug">{imp.title}</p>
-                  {imp.description && <p className="text-lg text-muted-foreground mt-1 line-clamp-2">{imp.description}</p>}
+        <div className="space-y-4">
+          {items.map(imp => {
+            const who = imp.creditedToName || imp.submittedByName;
+            return (
+              <div key={imp.id} className="glass-panel rounded-2xl px-6 py-5">
+                <div className="flex items-start gap-4">
+                  <CheckCircle2 className="w-7 h-7 text-green-500 shrink-0 mt-1" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-2xl font-semibold leading-snug">{imp.title}</p>
+                    <p className="text-lg text-muted-foreground mt-0.5">
+                      {who ? `By ${who}` : "Team effort"}
+                      {imp.description && imp.description !== imp.title ? ` — ${imp.description}` : ""}
+                    </p>
+                  </div>
                 </div>
-                <ChevronRight className={cn("w-6 h-6 text-muted-foreground transition-transform mt-1", openId === imp.id && "rotate-90")} />
-              </button>
-              {openId === imp.id && (
-                <div className="px-6 pb-5 pt-1">
-                  <ImprovementAttachments improvementId={imp.id} thumbSize="w-40 h-40" />
-                </div>
-              )}
-            </div>
-          ))}
+                <ImprovementFeedMedia media={imp.media} large />
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

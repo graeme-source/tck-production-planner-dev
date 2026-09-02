@@ -26,6 +26,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { ImprovementsTab } from "@/pages/reports";
 import { ImprovementAttachments } from "@/components/improvement-attachments";
 import { cn } from "@/lib/utils";
+import { ImprovementFeedMedia } from "@/components/improvement-feed-media";
 import { toast } from "@/hooks/use-toast";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -72,63 +73,9 @@ type Improvement = {
   media?: Array<{ id: number; kind: "image" | "video"; phase: "before" | "after" | "stitched" | null }>;
 };
 
-const mediaUrl = (id: number) => `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/improvements/attachments/${id}`;
-
-/** Inline feed media: the stitched before/after clip IS the story when it
- *  exists; otherwise a before/after image pair sits side by side, videos
- *  play in place, and anything past three tiles collapses to "+N". */
-function FeedMedia({ media, onOpen }: { media: Improvement["media"]; onOpen: () => void }) {
-  const items = media ?? [];
-  if (items.length === 0) return null;
-
-  const stitched = items.find(m => m.kind === "video" && m.phase === "stitched");
-  const shown = stitched ? [stitched] : items.slice(0, 3);
-  const hidden = stitched ? 0 : items.length - shown.length;
-
-  const before = !stitched ? shown.find(m => m.kind === "image" && (m.phase === "before" || m.phase === null)) : undefined;
-  const after = !stitched ? shown.find(m => m.kind === "image" && m.phase === "after") : undefined;
-  const pair = before && after;
-  const rest = pair ? shown.filter(m => m !== before && m !== after) : shown;
-
-  const img = (m: NonNullable<Improvement["media"]>[number], label?: string) => (
-    <button key={m.id} onClick={onOpen} className="relative block w-full overflow-hidden rounded-xl">
-      <img src={mediaUrl(m.id)} alt={label ?? "Improvement photo"} loading="lazy" className="w-full max-h-80 object-cover" />
-      {label && (
-        <span className="absolute top-2 left-2 text-[11px] font-bold px-2 py-0.5 rounded-full bg-black/60 text-white uppercase tracking-wide">{label}</span>
-      )}
-    </button>
-  );
-  const vid = (m: NonNullable<Improvement["media"]>[number], label?: string) => (
-    <div key={m.id} className="relative w-full overflow-hidden rounded-xl bg-black">
-      <video src={mediaUrl(m.id)} controls playsInline preload="metadata" className="w-full max-h-96" />
-      {label && (
-        <span className="absolute top-2 left-2 text-[11px] font-bold px-2 py-0.5 rounded-full bg-black/60 text-white uppercase tracking-wide pointer-events-none">{label}</span>
-      )}
-    </div>
-  );
-
-  return (
-    <div className="mt-3 space-y-2">
-      {stitched && vid(stitched, "Before → After")}
-      {pair && (
-        <div className="grid grid-cols-2 gap-2">
-          {img(before!, "Before")}
-          {img(after!, "After")}
-        </div>
-      )}
-      {rest.filter(m => !stitched).map(m =>
-        m.kind === "video"
-          ? vid(m, m.phase === "before" ? "Before" : m.phase === "after" ? "After" : undefined)
-          : img(m, m.phase === "before" ? "Before" : m.phase === "after" ? "After" : undefined)
-      )}
-      {hidden > 0 && (
-        <button onClick={onOpen} className="w-full py-2 rounded-xl bg-secondary text-sm font-semibold text-muted-foreground hover:bg-secondary/70">
-          +{hidden} more photo{hidden === 1 ? "" : "s"} — open to see all
-        </button>
-      )}
-    </div>
-  );
-}
+// Feed media rendering lives in components/improvement-feed-media.tsx —
+// shared with the meeting's Recent Improvements slide so both tell the
+// story the same way (stitched clip first, before/after pair otherwise).
 
 type ScoreRow = { userId: number | null; name: string; count: number; signedOff: number; lastAt: string | null };
 
@@ -294,7 +241,7 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
         )}
       </div>
       </button>
-      <FeedMedia media={item.media} onOpen={onOpen} />
+      <ImprovementFeedMedia media={item.media} onOpen={onOpen} />
     </div>
   );
 }

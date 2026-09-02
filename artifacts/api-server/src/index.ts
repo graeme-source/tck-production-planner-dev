@@ -2390,8 +2390,9 @@ async function runStartupMigrations() {
         ('yesterday_kpis', 8, 'Yesterday''s Numbers'),
         ('new_sops', 9, 'New & Updated SOPs'),
         ('struggles', 10, 'Improvements Required'),
-        ('lesson', 11, 'Today''s Lean Lesson'),
-        ('gratitude', 12, 'Gratitude')
+        ('recent_improvements', 11, 'Recent Improvements'),
+        ('lesson', 12, 'Today''s Lean Lesson'),
+        ('gratitude', 13, 'Gratitude')
       ) AS m(kind, new_pos, new_title)
       WHERE ts.kind = m.kind
         AND ts.template_id IN (SELECT id FROM meeting_templates WHERE is_default = true)
@@ -2411,10 +2412,44 @@ async function runStartupMigrations() {
         ('yesterday_kpis', 8, 'Yesterday''s Numbers'),
         ('new_sops', 9, 'New & Updated SOPs'),
         ('struggles', 10, 'Improvements Required'),
-        ('lesson', 11, 'Today''s Lean Lesson'),
-        ('gratitude', 12, 'Gratitude')
+        ('recent_improvements', 11, 'Recent Improvements'),
+        ('lesson', 12, 'Today''s Lean Lesson'),
+        ('gratitude', 13, 'Gratitude')
       ) AS m(kind, new_pos, new_title)
       WHERE ms.kind = m.kind
+    `);
+    // Recent Improvements joins the default deck right after Improvements
+    // Required (Graeme, 2026-09-02): Required is now just the idea logs, and
+    // this slide is the celebration — the improvement feed with its stitched
+    // before/after clips playable on screen. Guarded one-shot, same pattern
+    // as the System Updates re-add: if the team pulls it via the template
+    // editor, later deploys won't resurrect it. (The lesson/gratitude shift
+    // to 12/13 lives in the position maps above.)
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'add_recent_improvements_slide_v1') THEN
+          INSERT INTO template_slides (template_id, kind, title, order_position)
+          SELECT mt.id, 'recent_improvements', 'Recent Improvements', 11
+          FROM meeting_templates mt
+          WHERE mt.is_default = true
+            AND NOT EXISTS (
+              SELECT 1 FROM template_slides ts
+              WHERE ts.template_id = mt.id AND ts.kind = 'recent_improvements'
+            );
+          -- Meetings already prepared but not yet held pick the slide up too.
+          INSERT INTO meeting_slides (meeting_id, kind, title, order_position)
+          SELECT mm.id, 'recent_improvements', 'Recent Improvements', 11
+          FROM morning_meetings mm
+          WHERE mm.ended_at IS NULL
+            AND EXISTS (SELECT 1 FROM meeting_slides ms WHERE ms.meeting_id = mm.id)
+            AND NOT EXISTS (
+              SELECT 1 FROM meeting_slides ms
+              WHERE ms.meeting_id = mm.id AND ms.kind = 'recent_improvements'
+            );
+          INSERT INTO _migrations_done (key) VALUES ('add_recent_improvements_slide_v1');
+        END IF;
+      END $$;
     `);
 
     // Retire the standalone "Short on the Pack" slide — its stock data is
