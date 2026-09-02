@@ -1,6 +1,7 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import {
   db, improvementSubmissionsTable, improvementCommentsTable, usersTable,
+  notificationsTable,
   stageOf, STAGE_LABEL, canMarkDone, markDoneBlocker, canReview,
 } from "@workspace/db";
 import { eq, desc, asc, sql } from "drizzle-orm";
@@ -15,6 +16,7 @@ import { stitchBeforeAfter } from "../lib/improvement-media";
 import { shouldAutoStitch } from "../lib/before-after-stitch";
 import { ffmpegAvailable } from "../lib/sop-video";
 import { singleFileUpload } from "../middleware/upload";
+import { sendPushToUsers } from "../services/push";
 
 const router: IRouter = Router();
 
@@ -145,6 +147,29 @@ router.get("/", async (req: Request, res: Response) => {
 // POST /:id/done — "I've done this." The team's main action, and the point
 // where the media rule bites: no photo or video, no improvement. Anyone can
 // mark their own work done; a manager still has to approve it.
+/** The celebration: a finished improvement tells the whole team — a bell
+ *  notification for everyone (the celebration popup and the badge both feed
+ *  off it) and a phone push to every opted-in device. The WhatsApp-group
+ *  buzz, in the app (Graeme, 2026-09-02). Fire-and-forget: a notification
+ *  hiccup must never fail the person's "I've done this". */
+async function celebrateImprovement(improvementId: number, title: string, byUserId: number | null, byName: string | null) {
+  const message = byName
+    ? `Great news — ${byName} made an improvement: ${title}`
+    : `Great news — an improvement just landed: ${title}`;
+  const users = await db.select({ id: usersTable.id }).from(usersTable);
+  const recipients = users.map(u => u.id).filter(id => id !== byUserId);
+  if (recipients.length === 0) return;
+  await db.insert(notificationsTable).values(
+    recipients.map(userId => ({ userId, type: "improvement", message, improvementId })),
+  );
+  await sendPushToUsers(recipients, {
+    title: "Great news 🎉",
+    body: byName ? `${byName} made an improvement: ${title}` : `An improvement just landed: ${title}`,
+    url: "/improvements",
+    tag: `improvement-${improvementId}`,
+  });
+}
+
 router.post("/:id/done", async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
@@ -179,6 +204,14 @@ router.post("/:id/done", async (req: Request, res: Response) => {
       })
       .where(eq(improvementSubmissionsTable.id, id))
       .returning();
+
+    // Celebrate only a FIRST completion — a send-back being re-done
+    // shouldn't ping the whole team twice.
+    if (row.progressStatus === "submitted_for_review") {
+      celebrateImprovement(id, updated!.title, userId, updated!.creditedToName ?? userName).catch(err =>
+        console.error("[Improvements] celebration notify failed:", err),
+      );
+    }
 
     res.json(decorate(updated!, mediaCount, await viewerOf(req)));
   } catch (err) {

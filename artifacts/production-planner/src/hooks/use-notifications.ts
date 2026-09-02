@@ -8,6 +8,7 @@ export interface AppNotification {
   type: string;
   message: string;
   andonIssueId: number | null;
+  improvementId: number | null;
   read: boolean;
   createdAt: string;
 }

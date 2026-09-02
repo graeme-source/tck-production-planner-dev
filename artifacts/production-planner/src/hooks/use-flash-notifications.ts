@@ -45,6 +45,9 @@ export function useFlashNotifications() {
   const active = useMemo(
     () => list.filter(n =>
       !n.read
+      // Improvement celebrations get the big popup (improvement-celebration
+      // .tsx), not a small banner — showing both would double-announce.
+      && n.type !== "improvement"
       && !flashedIds.has(n.id)
       && now - new Date(n.createdAt).getTime() < FLASH_MAX_AGE_MS,
     ),

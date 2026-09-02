@@ -47,6 +47,7 @@ import { NotificationBell } from "@/components/notification-bell";
 import { CurrentUserBadge } from "@/components/current-user-badge";
 import { LeanWeeklyStrip } from "@/components/lean-weekly-review";
 import { NotificationFlash } from "@/components/notification-flash";
+import { ImprovementCelebration } from "@/components/improvement-celebration";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assistant";
 import { TodoSheet, TodoInterstitial, useMyOpenTodoCount } from "@/components/todo-lists";
@@ -709,6 +710,9 @@ export function Layout({ children }: { children: ReactNode }) {
 
       <StandardsSopsDialog open={sopsOpen} onClose={() => setSopsOpen(false)} currentStationType={null} />
       <NotificationFlash />
+      {/* The big positive popup when a teammate finishes an improvement —
+          flash banners handle everything else. */}
+      <ImprovementCelebration />
 
       {/* Caz is available to every logged-in user. The founder additionally
           gets recipe-design + memory powers; staff get a read-only look-up

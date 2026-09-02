@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { Bell, CheckCheck, MessageSquare, ShieldCheck, CircleCheck } from "lucide-react";
+import { Bell, CheckCheck, MessageSquare, ShieldCheck, CircleCheck, PartyPopper } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useNotifications, type AppNotification } from "@/hooks/use-notifications";
@@ -10,6 +10,7 @@ const TYPE_ICONS: Record<string, typeof MessageSquare> = {
   comment: MessageSquare,
   acknowledged: ShieldCheck,
   resolved: CircleCheck,
+  improvement: PartyPopper,
 };
 
 function NotificationItem({ n, onNavigate }: { n: AppNotification; onNavigate: (n: AppNotification) => void }) {
@@ -58,6 +59,8 @@ export function NotificationBell() {
     setOpen(false);
     if (n.andonIssueId) {
       navigate(`/reports?tab=issues&issueId=${n.andonIssueId}`);
+    } else if (n.improvementId) {
+      navigate("/improvements");
     }
   }
 
