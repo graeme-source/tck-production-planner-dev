@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
+import { barcodeMatches } from "@/lib/barcode-match";
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
 import { IcePackBadge, IcePackBanner } from "@/components/ice-pack-callout";
@@ -50,6 +51,9 @@ interface LineItem {
   barcode: string | null;
   imageUrl: string | null;
   recipeColor: string | null;
+  /** Shopify: false for digital items (Calzone Club membership, gift
+   *  cards). Nothing physical to scan, so they never enter the pick list. */
+  requires_shipping?: boolean;
 }
 
 // Box categories, the dispatch tag and the tagging scope all live in
@@ -2297,6 +2301,11 @@ export default function Fulfilment() {
   {
     const map = new Map<string, GroupedItem>();
     for (const li of sortedLineItems) {
+      // Digital items (Calzone Club membership, gift cards) have nothing to
+      // scan and no barcode — a row for one can never be ticked and blocks
+      // the whole order's completion (live, #133536, 2026-09-02). They are
+      // not part of the physical pack, so they don't enter the pick list.
+      if (li.requires_shipping === false) continue;
       const key = li.variant_id != null ? `v${li.variant_id}` : (li.sku || `__nosku_${li.id}`);
       const existing = map.get(key);
       if (existing) {
@@ -2386,8 +2395,11 @@ export default function Fulfilment() {
     // Barcode is the primary match — scanners send a numeric GTIN/EAN that
     // never appears in SKU or title. Fall back to SKU and title so picking
     // still works when barcodes aren't synced or a packer types manually.
+    // barcodeMatches strips leading zeros off all-numeric codes: our sauces
+    // carry 12-digit UPC-A, and a scanner normalising to EAN-13 sends them
+    // with a leading zero — that's still the same product.
     const match =
-      remaining.find(g => g.barcode && g.barcode.toLowerCase() === input) ??
+      remaining.find(g => barcodeMatches(input, g.barcode)) ??
       remaining.find(g =>
         g.sku?.toLowerCase() === input ||
         g.title?.toLowerCase().includes(input)
