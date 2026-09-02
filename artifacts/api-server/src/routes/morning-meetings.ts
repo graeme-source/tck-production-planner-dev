@@ -363,6 +363,26 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       .where(eq(productionPlansTable.planDate, today))
       .limit(1);
     let todayPlanItems: Array<{ recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null; eightPackBagCount: number }> = [];
+    // ── The day in two big numbers for the opening slide (Graeme,
+    //    2026-09-02): batches being made today (calzones and mac cheese
+    //    split, per the house rule) and orders being packed. Orders going
+    //    out today are tagged with TOMORROW's delivery date (APC is
+    //    overnight); same-day collections carry today's date plus a
+    //    Collection tag. Cancelled orders don't count.
+    const tomorrowIso = (() => {
+      const d = new Date(`${today}T12:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + 1);
+      return d.toISOString().slice(0, 10);
+    })();
+    const ordersToPackRows = await db.execute<{ n: string }>(sql`
+      SELECT COUNT(*) AS n FROM shopify_orders_cache
+      WHERE payload->>'cancelled_at' IS NULL
+        AND (
+          payload->>'tags' LIKE ${"%" + tomorrowIso + "%"}
+          OR (payload->>'tags' LIKE ${"%" + today + "%"} AND payload->>'tags' ILIKE '%collection%')
+        )
+    `);
+    const ordersToPack = Number((ordersToPackRows.rows ?? [])[0]?.n ?? 0);
     if (todayPlan) {
       todayPlanItems = await db
         .select({
@@ -381,6 +401,15 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
           productionPlanItemsTable.orderPosition,
         );
     }
+    // "Calzone batches" means the calzone category, not merely non-mac —
+    // a dessert batch (cinnamon buns, brownies) is neither and counts in
+    // neither number.
+    const catOf = (category: string | null) => (category ?? "").toLowerCase();
+    const dayNumbers = {
+      calzoneBatches: todayPlanItems.filter(i => catOf(i.recipeCategory).includes("calzone")).reduce((s, i) => s + (i.batchesTarget ?? 0), 0),
+      macCheeseBatches: todayPlanItems.filter(i => catOf(i.recipeCategory) === "macaroni cheese").reduce((s, i) => s + (i.batchesTarget ?? 0), 0),
+      ordersToPack,
+    };
 
     // ── Yesterday's KPIs (wonky / builder rate / packing rate) ──────
     const [yesterdayPlan] = await db
@@ -669,6 +698,7 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
         packingBatchesPerHour,
         batchesTarget: yesterdayBatchesTotal,
       },
+      dayNumbers,
       tomorrow,
       tomorrowNonCoreItems,
       todayDeliveries,

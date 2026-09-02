@@ -57,6 +57,8 @@ export interface MeetingSlide {
 }
 
 export interface DashboardData {
+  /** The day in two big numbers for the opening slide (2026-09-02). */
+  dayNumbers?: { calzoneBatches: number; macCheeseBatches: number; ordersToPack: number };
   today: string;
   yesterday: string;
   /** The next PACK day, not the next calendar day: calendar tomorrow Mon–Thu,
@@ -1613,7 +1615,31 @@ interface StationAssignmentsData {
   extras: StationAssignmentPerson[];
 }
 
-function StationAssignmentsSlide({ trialWelcome }: { trialWelcome?: string | null }) {
+type DayNumbers = { calzoneBatches: number; macCheeseBatches: number; ordersToPack: number };
+
+/** The day's two headline numbers, front and centre before any names are
+ *  read (Graeme, 2026-09-02: "really easy to see at the start of the day").
+ *  Calzone and mac cheese batches stay split, per the house rule. */
+function DayNumbersRow({ dayNumbers }: { dayNumbers: DayNumbers | null }) {
+  if (!dayNumbers) return null;
+  return (
+    <div className="flex items-stretch justify-center gap-4">
+      <div className="glass-panel rounded-2xl px-10 py-4 text-center">
+        <p className="text-6xl sm:text-7xl font-display font-bold tabular-nums leading-none">{dayNumbers.calzoneBatches}</p>
+        <p className="text-base sm:text-lg font-semibold text-muted-foreground mt-2">calzone batches today</p>
+        {dayNumbers.macCheeseBatches > 0 && (
+          <p className="text-sm font-medium text-muted-foreground">+ {dayNumbers.macCheeseBatches} mac cheese</p>
+        )}
+      </div>
+      <div className="glass-panel rounded-2xl px-10 py-4 text-center">
+        <p className="text-6xl sm:text-7xl font-display font-bold tabular-nums leading-none">{dayNumbers.ordersToPack}</p>
+        <p className="text-base sm:text-lg font-semibold text-muted-foreground mt-2">orders to pack</p>
+      </div>
+    </div>
+  );
+}
+
+function StationAssignmentsSlide({ trialWelcome, dayNumbers }: { trialWelcome?: string | null; dayNumbers?: DayNumbers | null }) {
   const { data, isLoading } = useQuery<StationAssignmentsData>({
     queryKey: ["station-assignments-today"],
     queryFn: async () => {
@@ -1634,7 +1660,8 @@ function StationAssignmentsSlide({ trialWelcome }: { trialWelcome?: string | nul
   }
   if (!data || !data.available) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 gap-2 text-center">
+      <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+        <DayNumbersRow dayNumbers={dayNumbers ?? null} />
         <AlertCircle className="w-10 h-10 text-amber-500" />
         <p className="text-lg font-semibold">Rota unavailable</p>
         <p className="text-muted-foreground">{data?.reason ?? "Could not reach Planday."} Check the printed rota.</p>
@@ -1672,6 +1699,8 @@ function StationAssignmentsSlide({ trialWelcome }: { trialWelcome?: string | nul
           </p>
         </div>
       )}
+
+      <DayNumbersRow dayNumbers={dayNumbers ?? null} />
 
       {/* Clocked-in tally, so lateness registers before anyone reads a name. */}
       <div className="flex items-center justify-center gap-3 text-sm">
@@ -1780,7 +1809,7 @@ function SlideBodyInner({ slide, data, onRefresh, isPreviewing, subIndex, report
     case "special_prep": return <SpecialPrepSlide data={data} slide={slide} />;
     case "stretches": return <StretchesPanel />;
     case "yesterday_kpis": return <YesterdayKpisSlide data={data} slide={slide} />;
-    case "station_assignments": return <StationAssignmentsSlide trialWelcome={data.meeting?.trialWelcome ?? null} />;
+    case "station_assignments": return <StationAssignmentsSlide trialWelcome={data.meeting?.trialWelcome ?? null} dayNumbers={data.dayNumbers ?? null} />;
     case "order_of_production": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} stickyTotals />;
     case "local_delivery": return <LocalDeliverySlide data={data} slide={slide} />;
     case "bag_orders": return <BagOrdersSlide data={data} slide={slide} />;
