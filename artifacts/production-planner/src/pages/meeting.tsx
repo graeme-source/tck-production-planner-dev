@@ -24,7 +24,7 @@ import {
   ArrowLeft, ArrowRight, ChevronLeft, ChevronRight, X, Play, Eye,
   Sparkles, ChefHat, Truck, ShoppingBag, AlertCircle, FileText, MessageCircle,
   HeartHandshake, Activity, BookOpen, Award, Loader2, ClipboardCheck, Sun,
-  CheckCircle2, Heart, Settings, Edit3, Calendar, GripVertical, Plus, Trash2, Save, ThumbsUp,
+  CheckCircle2, Heart, Settings, Edit3, Calendar, GripVertical, Plus, Trash2, Save,
   Shuffle, Camera, Image as ImageIcon, Info, Users, AlertTriangle,
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -2991,9 +2991,6 @@ interface MeetingFeedImprovement {
   stage: "todo" | "waiting" | "approved" | "sent_back";
   submittedByName: string | null;
   creditedToName: string | null;
-  /** Server-decided: true only for a manager/admin viewer on an item
-   *  awaiting approval — the meeting is where the daily yes happens. */
-  canReview?: boolean;
   media?: Array<{ id: number; kind: "image" | "video"; phase: "before" | "after" | "stitched" | null }>;
 }
 
@@ -3001,23 +2998,6 @@ interface MeetingFeedImprovement {
  *  standalone Recent Improvements slide kind: last few improvements done or
  *  awaiting sign-off, media playable in place. */
 function ImprovementsFeedList({ limit }: { limit: number }) {
-  const queryClient = useQueryClient();
-  const approve = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await fetch(`${BASE}/api/improvements/${id}/review`, {
-        method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ approve: true }),
-      });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Couldn't approve it");
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["meeting-improvement-feed"] });
-      queryClient.invalidateQueries({ queryKey: ["improvements"] });
-      toast({ title: "Approved — it counts ✓" });
-    },
-    onError: (e: Error) => toast({ title: "Couldn't approve it", description: e.message, variant: "destructive" }),
-  });
   const { data: all = [], isLoading } = useQuery<MeetingFeedImprovement[]>({
     queryKey: ["meeting-improvement-feed"],
     queryFn: async () => {
@@ -3058,25 +3038,6 @@ function ImprovementsFeedList({ limit }: { limit: number }) {
                   {imp.description && imp.description !== imp.title ? ` — ${imp.description}` : ""}
                 </p>
               </div>
-              {/* The daily yes, said in front of the room (Graeme, 2026-09-02).
-                  canReview is decided server-side: manager/admin viewer, item
-                  awaiting approval. Send-back (with a note) stays in the
-                  Improvement Centre — a public no deserves a typed reason. */}
-              {imp.canReview && (
-                <button
-                  onClick={() => approve.mutate(imp.id)}
-                  disabled={approve.isPending}
-                  className="shrink-0 mt-1 flex items-center gap-2 px-5 py-3 rounded-xl bg-primary text-primary-foreground text-lg font-bold hover:opacity-90 disabled:opacity-50 active:scale-[0.98] transition-all"
-                >
-                  {approve.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <ThumbsUp className="w-5 h-5" />}
-                  Approve
-                </button>
-              )}
-              {imp.stage === "waiting" && !imp.canReview && (
-                <span className="shrink-0 mt-2 text-sm font-semibold px-3 py-1.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400">
-                  Awaiting approval
-                </span>
-              )}
             </div>
             <ImprovementFeedMedia media={imp.media} large />
           </div>
