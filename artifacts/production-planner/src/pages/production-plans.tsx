@@ -5184,9 +5184,21 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   // keep working. calzone* / macPacks* are exposed for display splits.
   const totalBatchesTarget = plan.items?.reduce((s, it) => s + (it.batchesTarget ?? 0), 0) ?? 0;
   const totalBatchesComplete = plan.items?.reduce((s, it) => s + (it.batchesComplete ?? 0), 0) ?? 0;
-  const calzoneBatchesTarget = plan.items?.filter(it => (it as any).recipeCategory !== "Macaroni Cheese")
+  // Fried chicken is counted in BAGS and never touches the calzone line, so
+  // it is excluded from every calzone figure below rather than quietly
+  // inflating them — batches, packs, and the station progress denominators
+  // alike. Mac cheese was already split out this way; chicken needs it more,
+  // because a bag is not a pack and one batch row is one bag.
+  const isChicken = (it: unknown) => (it as { recipeCategory?: string }).recipeCategory === FRIED_CHICKEN_CATEGORY;
+  const isCalzone = (it: unknown) =>
+    (it as { recipeCategory?: string }).recipeCategory !== "Macaroni Cheese" && !isChicken(it);
+  const calzoneBatchesTarget = plan.items?.filter(isCalzone)
     .reduce((s, it) => s + (it.batchesTarget ?? 0), 0) ?? 0;
-  const calzoneBatchesComplete = plan.items?.filter(it => (it as any).recipeCategory !== "Macaroni Cheese")
+  const calzoneBatchesComplete = plan.items?.filter(isCalzone)
+    .reduce((s, it) => s + (it.batchesComplete ?? 0), 0) ?? 0;
+  const chickenBagsTarget = plan.items?.filter(isChicken)
+    .reduce((s, it) => s + (it.batchesTarget ?? 0), 0) ?? 0;
+  const chickenBagsComplete = plan.items?.filter(isChicken)
     .reduce((s, it) => s + (it.batchesComplete ?? 0), 0) ?? 0;
   const macPacksTarget = plan.items?.filter(it => (it as any).recipeCategory === "Macaroni Cheese")
     .reduce((s, it) => s + (it.batchesTarget ?? 0), 0) ?? 0;
@@ -5203,7 +5215,8 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
       packs: it.batchesTarget ?? 0,
       made: it.batchesComplete ?? 0,
     }));
-  const totalPacks = plan.items?.reduce((s, it) => s + (it.batchesTarget ?? 0) * (it.portionsPerBatch ?? 10) / ((it as PlanItemApi).packSize ?? 2), 0) ?? 0;
+  const totalPacks = plan.items?.filter(it => !isChicken(it))
+    .reduce((s, it) => s + (it.batchesTarget ?? 0) * (it.portionsPerBatch ?? 10) / ((it as PlanItemApi).packSize ?? 2), 0) ?? 0;
   const progress = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
 
   // Per-station completion counts aggregated from all plan items.
@@ -5223,8 +5236,11 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
     list.reduce((s, it) => s + batchToPacks(it, it.batchesTarget ?? 0), 0);
   const packsDoneAt = (list: any[], stationKey: string) =>
     list.reduce((s, it) => s + batchToPacks(it, (it.stationCompletions as Record<string, number> | undefined)?.[stationKey] ?? 0), 0);
-  const totalPacksTarget = packsTargetFor(plan.items ?? []);
-  const nextPacksTarget = packsTargetFor(nextItems);
+  // Chicken bags are not packs and never reach mixing, building, the ovens or
+  // wrapping — counting them here would drag every one of those progress bars
+  // down against work that was never theirs to do.
+  const totalPacksTarget = packsTargetFor((plan.items ?? []).filter(it => !isChicken(it)));
+  const nextPacksTarget = packsTargetFor(nextItems.filter(it => !isChicken(it)));
 
   const stationProgress: Record<string, { done: number; target: number }> = {};
   {
@@ -5244,6 +5260,10 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
           done: packsDoneAt(macItems, "macaroni_cheese"),
           target: packsTargetFor(macItems),
         };
+      } else if (s.key === "fried_chicken") {
+        // Counted in bags against the run's target, not in packs — one batch
+        // completion row at this station is one bag.
+        stationProgress[s.key] = { done: chickenBagsComplete, target: chickenBagsTarget };
       } else if (s.key === "packing") {
         const totalOrders = dispatchProgress?.totalOrders ?? 0;
         const totalFulfilled = dispatchProgress?.totalFulfilled ?? 0;
@@ -5585,6 +5605,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
             <span className="text-xs text-muted-foreground">
               {plan.items?.length ?? 0} recipes · {calzoneBatchesTarget} batches
               {macPacksTarget > 0 && <> + {macPacksTarget} mac packs</>}
+              {chickenBagsTarget > 0 && <> + {chickenBagsTarget} chicken bags</>}
               {" · "}{totalPacks.toLocaleString()} packs
             </span>
             {canEditPlan && plan.status !== "complete" && (
@@ -6376,12 +6397,16 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
                 items?: Array<{ id: number; recipeId: number; recipeName: string; recipeColor: string | null; recipeCategory?: string | null; batchesTarget: number; orderPosition: number }>
               }).items ?? [];
               // Same split as the plan header: batches means CALZONE batches
-              // (mac cheese counts in packs, never mixed into the number).
+              // (mac cheese counts in packs and chicken in bags — neither is
+              // ever mixed into the number).
               const listCalzoneBatches = planItems
-                .filter(it => it.recipeCategory !== "Macaroni Cheese")
+                .filter(it => it.recipeCategory !== "Macaroni Cheese" && it.recipeCategory !== FRIED_CHICKEN_CATEGORY)
                 .reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
               const listMacPacks = planItems
                 .filter(it => it.recipeCategory === "Macaroni Cheese")
+                .reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
+              const listChickenBags = planItems
+                .filter(it => it.recipeCategory === FRIED_CHICKEN_CATEGORY)
                 .reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
 
               return (
@@ -6410,6 +6435,7 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
                             {plan.itemCount} recipe{plan.itemCount !== 1 ? "s" : ""}
                             {listCalzoneBatches > 0 && ` · ${listCalzoneBatches} batches`}
                             {listMacPacks > 0 && ` + ${listMacPacks} mac packs`}
+                            {listChickenBags > 0 && ` + ${listChickenBags} chicken bags`}
                           </span>
                         )}
                         {plan.notes && (
