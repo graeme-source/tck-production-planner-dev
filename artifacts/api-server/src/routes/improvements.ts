@@ -9,6 +9,7 @@ import { z } from "zod";
 import type { ImprovementSubmission } from "@workspace/db";
 import type Anthropic from "@anthropic-ai/sdk";
 import { validate } from "../middleware/validate";
+import { requireAdmin } from "../middleware/roles";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 import { shortlistDuplicates } from "../lib/improvement-similarity";
 import { intArrayLiteral } from "../lib/int-array-literal";
@@ -720,17 +721,47 @@ router.patch("/:id", async (req: Request, res: Response) => {
   }
 });
 
-router.delete("/:id", async (req: Request, res: Response) => {
-  const role = req.session.userRole;
-  if (role !== "admin") {
-    res.status(403).json({ error: "Admin access required" });
-    return;
-  }
-
+/** Delete an improvement outright.
+ *
+ *  Admin only, and a hard delete — the same shape as the other destructive
+ *  endpoints here (see middleware/roles.ts, added 2026-08-20). What goes with
+ *  it, by the foreign keys in schema/improvements_and_andon.ts:
+ *
+ *    improvement_votes       CASCADE — the votes go
+ *    improvement_comments    CASCADE — the comments go
+ *    improvement_attachments CASCADE — the photos and videos go, bytes and all
+ *    andon_issues            SET NULL — a reported issue that was raised into
+ *                            this improvement SURVIVES; it just stops being
+ *                            linked to one
+ *
+ *  None of that is recoverable in the app, so what was deleted is written to
+ *  the log before it goes: on 2026-07-08 a deleted record had to be rebuilt
+ *  from a database backup, and the log is what tells you which one and when.
+ *  Requested by Graeme (2026-09-03) for suggestions that stop being relevant —
+ *  his example was one where the problem had been designed out entirely.
+ */
+router.delete("/:id", requireAdmin, async (req: Request, res: Response) => {
   try {
     const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) {
       res.status(400).json({ error: "Invalid id" });
+      return;
+    }
+
+    // Read it first so the log can say what was destroyed, not just that
+    // something with this id was.
+    const [before] = await db
+      .select({
+        id: improvementSubmissionsTable.id,
+        title: improvementSubmissionsTable.title,
+        submittedByName: improvementSubmissionsTable.submittedByName,
+        progressStatus: improvementSubmissionsTable.progressStatus,
+      })
+      .from(improvementSubmissionsTable)
+      .where(eq(improvementSubmissionsTable.id, id));
+
+    if (!before) {
+      res.status(404).json({ error: "Not found" });
       return;
     }
 
@@ -744,7 +775,13 @@ router.delete("/:id", async (req: Request, res: Response) => {
       return;
     }
 
-    res.status(204).send();
+    console.log(
+      `[Improvements] DELETED #${before.id} "${before.title}" ` +
+      `(logged by ${before.submittedByName ?? "unknown"}, status ${before.progressStatus}) ` +
+      `by user ${req.session.userId ?? "unknown"}`,
+    );
+
+    res.json({ id: before.id, title: before.title });
   } catch (err) {
     console.error("Error deleting improvement submission:", err);
     res.status(500).json({ error: "Failed to delete improvement submission" });

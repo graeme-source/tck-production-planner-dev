@@ -19,7 +19,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Loader2, Camera, CheckCircle2, Clock, ThumbsUp, RotateCcw,
-  Trophy, ChevronLeft, X, AlertCircle, Settings2, Clapperboard,
+  Trophy, ChevronLeft, X, AlertCircle, Settings2, Clapperboard, Trash2,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/contexts/auth-context";
@@ -117,6 +117,7 @@ export default function Improvements() {
         id={openId}
         onBack={() => setOpenId(null)}
         isManager={isManager}
+        isAdmin={userRole === "admin"}
       />
     );
   }
@@ -362,12 +363,16 @@ function LogImprovement({ onDone, onCancel }: { onDone: (id: number) => void; on
 
 // ─── One improvement ──────────────────────────────────────────────────────────
 
-function ImprovementDetail({ id, onBack, isManager }: {
-  id: number; onBack: () => void; isManager: boolean;
+function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
+  id: number; onBack: () => void; isManager: boolean; isAdmin: boolean;
 }) {
   const queryClient = useQueryClient();
   const [sendBackNote, setSendBackNote] = useState("");
   const [sendingBack, setSendingBack] = useState(false);
+  // Delete asks first, in place, the same two-step shape as "send back"
+  // above — no separate dialog to learn, and no single tap that destroys
+  // someone's photos.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const { data: items = [], isLoading } = useQuery<Improvement[]>({
     queryKey: ["improvements"],
@@ -399,6 +404,21 @@ function ImprovementDetail({ id, onBack, isManager }: {
       toast({ title: "Sent for approval", description: "A manager will check it and sign it off." });
     },
     onError: (e: Error) => toast({ title: "Not yet", description: e.message, variant: "destructive" }),
+  });
+
+  // Deleting takes the improvement, its photos and videos, its comments and
+  // its votes. Nothing in the app brings them back, so the button is
+  // admin-only and asks first (Graeme, 2026-09-03 — a suggestion whose
+  // problem had been designed out entirely, so it was never going to happen).
+  const remove = useMutation({
+    mutationFn: () => api<{ id: number; title: string }>(`/improvements/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["improvements"] });
+      queryClient.invalidateQueries({ queryKey: ["improvement-scoreboard"] });
+      toast({ title: "Deleted", description: "It's gone from the board." });
+      onBack();
+    },
+    onError: (e: Error) => toast({ title: "Couldn't delete it", description: e.message, variant: "destructive" }),
   });
 
   const review = useMutation({
@@ -593,6 +613,59 @@ function ImprovementDetail({ id, onBack, isManager }: {
                   className="h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50"
                 >
                   <X className="w-5 h-5" /> Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Delete — last on the page, quiet until asked for. Some suggestions
+          stop being relevant: the problem gets designed out, or the same
+          thing gets logged twice. Admin only, and never a single tap. */}
+      {isAdmin && (
+        <div className="pt-6 mt-2 border-t-2 border-border">
+          {!confirmingDelete ? (
+            <button
+              onClick={() => setConfirmingDelete(true)}
+              className="h-14 px-5 rounded-2xl border-2 border-destructive/40 text-destructive text-lg font-bold flex items-center justify-center gap-2 hover:bg-destructive/10 transition-colors"
+            >
+              <Trash2 className="w-5 h-5" /> Delete this improvement
+            </button>
+          ) : (
+            <div className="rounded-2xl border-2 border-destructive bg-destructive/5 p-4 space-y-3">
+              <p className="text-lg font-bold text-destructive">Delete "{item.title}"?</p>
+              <p className="text-base">
+                The improvement goes, and so do
+                {item.mediaCount > 0
+                  ? ` its ${item.mediaCount} ${item.mediaCount === 1 ? "photo or video" : "photos and videos"},`
+                  : " any photos or videos,"}
+                {" "}its comments and its votes. Nothing here can bring them back.
+              </p>
+              {item.stage === "approved" && (
+                <p className="text-base font-semibold">
+                  It's approved, so it stops counting towards
+                  {item.creditedToName ? ` ${item.creditedToName}'s` : " anyone's"} total.
+                </p>
+              )}
+              <p className="text-sm text-muted-foreground">
+                If it came from a reported issue, that issue stays — it just
+                stops being linked to an improvement.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <button
+                  onClick={() => remove.mutate()}
+                  disabled={remove.isPending}
+                  className="h-14 rounded-2xl bg-destructive text-destructive-foreground text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {remove.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Trash2 className="w-5 h-5" />} Yes, delete it
+                </button>
+                <button
+                  onClick={() => setConfirmingDelete(false)}
+                  disabled={remove.isPending}
+                  className="h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 disabled:opacity-50"
+                >
+                  <X className="w-5 h-5" /> Keep it
                 </button>
               </div>
             </div>
