@@ -31,6 +31,9 @@ import {
 } from "lucide-react";
 import { AddRecipeToPlanDialog } from "@/components/add-recipe-to-plan-dialog";
 import { AddDoughToPlanDialog } from "@/components/add-dough-to-plan-dialog";
+import { AddFriedChickenDialog } from "@/components/fried-chicken/add-fried-chicken-dialog";
+import { FriedChickenPrepSheetDialog } from "@/components/fried-chicken/prep-sheet";
+import { FRIED_CHICKEN_CATEGORY } from "@/pages/station/shared/constants";
 import { toast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, addDays, parseISO, isWeekend, isToday, startOfWeek, isSameDay, formatDistanceToNow } from "date-fns";
@@ -5098,6 +5101,8 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const [itemsTableUnlocked, setItemsTableUnlocked] = useState(false);
   const [addRecipeOpen, setAddRecipeOpen] = useState(false);
   const [addDoughOpen, setAddDoughOpen] = useState(false);
+  const [addChickenOpen, setAddChickenOpen] = useState(false);
+  const [chickenPrepOpen, setChickenPrepOpen] = useState(false);
   const itemsEditable = canEditPlan && itemsTableUnlocked;
   const [, navigate] = useLocation();
   const { data: stationActivity } = useGetStationActivity(planId, {
@@ -5187,6 +5192,17 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
     .reduce((s, it) => s + (it.batchesTarget ?? 0), 0) ?? 0;
   const macPacksComplete = plan.items?.filter(it => (it as any).recipeCategory === "Macaroni Cheese")
     .reduce((s, it) => s + (it.batchesComplete ?? 0), 0) ?? 0;
+  // Fried chicken already on this plan. Passed to the planning dialog so
+  // re-opening it edits the run rather than suggesting a fresh one over the
+  // top, and carries what has already been fried so nothing can be planned
+  // below it.
+  const chickenOnPlan = (plan.items ?? [])
+    .filter(it => (it as any).recipeCategory === FRIED_CHICKEN_CATEGORY)
+    .map(it => ({
+      recipeId: it.recipeId,
+      packs: it.batchesTarget ?? 0,
+      made: it.batchesComplete ?? 0,
+    }));
   const totalPacks = plan.items?.reduce((s, it) => s + (it.batchesTarget ?? 0) * (it.portionsPerBatch ?? 10) / ((it as PlanItemApi).packSize ?? 2), 0) ?? 0;
   const progress = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
 
@@ -5589,6 +5605,42 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                 <Plus className="w-3.5 h-3.5" /> Add dough
               </button>
             )}
+            {canEditPlan && plan.status !== "complete" && (
+              <button
+                onClick={() => setAddChickenOpen(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:bg-secondary/50 transition-colors"
+                title="Plan this day's fried chicken run"
+              >
+                <Drumstick className="w-3.5 h-3.5" />
+                {chickenOnPlan.length > 0 ? "Fried chicken" : "Add fried chicken"}
+              </button>
+            )}
+            {/* The prep sheet is for the day BEFORE, so it stays reachable
+                even on a finished plan — someone prepping tonight opens
+                tomorrow's plan to get the pull list. */}
+            {chickenOnPlan.length > 0 && (
+              <button
+                onClick={() => setChickenPrepOpen(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:bg-secondary/50 transition-colors"
+                title="What to pull and defrost for this chicken run"
+              >
+                <ClipboardList className="w-3.5 h-3.5" /> Chicken prep
+              </button>
+            )}
+            {canEditPlan && (
+              <AddFriedChickenDialog
+                planId={plan.id}
+                open={addChickenOpen}
+                onClose={() => setAddChickenOpen(false)}
+                existing={chickenOnPlan}
+                onSaved={refetch}
+              />
+            )}
+            <FriedChickenPrepSheetDialog
+              planId={plan.id}
+              open={chickenPrepOpen}
+              onClose={() => setChickenPrepOpen(false)}
+            />
             {canEditPlan && (
               <AddDoughToPlanDialog
                 planId={plan.id}
