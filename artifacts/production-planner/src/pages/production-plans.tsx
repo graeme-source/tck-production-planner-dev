@@ -24,7 +24,7 @@ import {
   CalendarDays, Calendar, Plus, Trash2, ChevronLeft, ChevronRight,
   BarChart2, CheckCircle2,
   Loader2, RefreshCw, Info, Package, ClipboardList, ExternalLink,
-  Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef, UtensilsCrossed,
+  Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef, UtensilsCrossed, Drumstick,
   ArrowRight, GripVertical, AlertTriangle, AlertCircle, BookmarkCheck, ShoppingCart,
   FlaskConical, Printer, X, ChevronDown, ChevronUp, PoundSterling, ShieldCheck, RotateCcw,
   Menu, MoreHorizontal, Lock, Unlock, SlidersHorizontal, Users,
@@ -4692,6 +4692,7 @@ function RawMaterialsManifest({ planId, planName, onClose }: RawMaterialsManifes
 const STATION_BUTTONS = [
   { key: "dough_prep", label: "Dough Prep", icon: Layers, color: "text-amber-600 bg-amber-50 dark:bg-amber-900/20" },
   { key: "macaroni_cheese", label: "Mac Cheese", icon: UtensilsCrossed, color: "text-yellow-600 bg-yellow-50 dark:bg-yellow-900/20" },
+  { key: "fried_chicken", label: "Fried Chicken", icon: Drumstick, color: "text-orange-600 bg-orange-50 dark:bg-orange-900/20" },
   { key: "dough_sheeting", label: "Sheeting", icon: Layers, color: "text-amber-500 bg-amber-50 dark:bg-amber-900/20" },
   { key: "prep", label: "Prep", icon: Salad, color: "text-green-500 bg-green-50 dark:bg-green-900/20" },
   { key: "mixing", label: "Mixing & Cooking", icon: Waves, color: "text-blue-500 bg-blue-50 dark:bg-blue-900/20" },

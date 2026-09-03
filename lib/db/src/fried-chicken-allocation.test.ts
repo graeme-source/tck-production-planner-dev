@@ -16,7 +16,7 @@ const variants = (stock: Record<string, number>): VariantAllocationInput[] =>
   (Object.keys(STRIP) as Array<keyof typeof STRIP>).map(k => ({
     key: k,
     dptShare: DPT[k]!,
-    stripKgPerPack: STRIP[k],
+    kgPerPack: STRIP[k],
     stockPacks: stock[k] ?? 0,
   }));
 
@@ -44,7 +44,7 @@ describe("dptSharesFromSales", () => {
 describe("allocation", () => {
   it("never spends more strips than it was given", () => {
     const r = allocateFriedChickenPacks(variants({ bm400: 51, bm1k: 29, k500: 12, k12: 23 }), 62.553);
-    expect(r.stripKgUsed).toBeLessThanOrEqual(62.553);
+    expect(r.kgUsed).toBeLessThanOrEqual(62.553);
   });
 
   // The real case, from the day of Graeme's spreadsheet: korean 500g was on
@@ -96,9 +96,9 @@ describe("allocation", () => {
       { bm400: 0, bm1k: 0, k500: 0, k12: 0 },
     ]) {
       const r = allocateFriedChickenPacks(variants(stock), 62.553);
-      expect(r.stripKgUsed + r.stripKgSpare).toBeCloseTo(62.553, 2);
+      expect(r.kgUsed + r.kgSpare).toBeCloseTo(62.553, 2);
       // Whatever is left could not have bought another bag of anything.
-      expect(r.stripKgSpare).toBeLessThan(Math.max(...Object.values(STRIP)));
+      expect(r.kgSpare).toBeLessThan(Math.max(...Object.values(STRIP)));
     }
   });
 
@@ -119,7 +119,7 @@ describe("allocation", () => {
 
   it("will happily make a single big bag — there is no minimum", () => {
     const r = allocateFriedChickenPacks(
-      [{ key: "k12", dptShare: 1, stripKgPerPack: 0.8024, stockPacks: 0 }], 0.9);
+      [{ key: "k12", dptShare: 1, kgPerPack: 0.8024, stockPacks: 0 }], 0.9);
     expect(packsOf(r).k12).toBe(1);
   });
 
@@ -127,7 +127,7 @@ describe("allocation", () => {
     expect(allocateFriedChickenPacks(variants({}), 0).totalPacks).toBe(0);
     expect(allocateFriedChickenPacks([], 50).totalPacks).toBe(0);
     const odd = allocateFriedChickenPacks(
-      [{ key: "x", dptShare: 1, stripKgPerPack: 0, stockPacks: 0 }], 50);
+      [{ key: "x", dptShare: 1, kgPerPack: 0, stockPacks: 0 }], 50);
     expect(odd.totalPacks).toBe(0);
   });
 

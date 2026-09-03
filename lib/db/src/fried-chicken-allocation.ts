@@ -25,8 +25,11 @@ export interface VariantAllocationInput {
   /** Target share of stock, in packs. Shares are normalised, so they need
    *  not sum to exactly 1. */
   dptShare: number;
-  /** Strips consumed by one bag of this variant, in kg. From the recipe. */
-  stripKgPerPack: number;
+  /** What one bag of this variant costs out of the run's budget, in kg.
+   *  Resolved from the recipe — raw chicken per pack — so nothing here has
+   *  to know about strips. The old sheet counted strips; the recipes already
+   *  hold the weights, so we don't need to (Graeme, 2026-09-03). */
+  kgPerPack: number;
   /** What Shopify says is on the shelf right now. */
   stockPacks: number;
 }
@@ -35,8 +38,8 @@ export interface VariantAllocation {
   key: string;
   /** Bags to make. */
   packs: number;
-  /** Strips those bags consume, kg. */
-  stripKg: number;
+  /** What those bags cost out of the budget, kg. */
+  kg: number;
   /** Where this variant's stock lands once they're made. */
   stockAfter: number;
 }
@@ -44,11 +47,11 @@ export interface VariantAllocation {
 export interface AllocationResult {
   variants: VariantAllocation[];
   totalPacks: number;
-  /** Strips actually spent — at or just under what was available. */
-  stripKgUsed: number;
+  /** Actually spent — at or just under the budget. */
+  kgUsed: number;
   /** Left unspent because every variant reached its target. A signal the
    *  run is bigger than the shelf needs. */
-  stripKgSpare: number;
+  kgSpare: number;
 }
 
 /** Shortfall against a hypothetical post-production total of `totalStock`. */
@@ -66,15 +69,15 @@ function shortfalls(
 
 export function allocateFriedChickenPacks(
   variants: readonly VariantAllocationInput[],
-  availableStripKg: number,
+  availableKg: number,
 ): AllocationResult {
-  const usable = variants.filter(v => v.stripKgPerPack > 0 && v.dptShare > 0);
-  if (usable.length === 0 || !(availableStripKg > 0)) {
+  const usable = variants.filter(v => v.kgPerPack > 0 && v.dptShare > 0);
+  if (usable.length === 0 || !(availableKg > 0)) {
     return {
-      variants: variants.map(v => ({ key: v.key, packs: 0, stripKg: 0, stockAfter: v.stockPacks })),
+      variants: variants.map(v => ({ key: v.key, packs: 0, kg: 0, stockAfter: v.stockPacks })),
       totalPacks: 0,
-      stripKgUsed: 0,
-      stripKgSpare: Math.max(0, availableStripKg),
+      kgUsed: 0,
+      kgSpare: Math.max(0, availableKg),
     };
   }
 
@@ -84,7 +87,7 @@ export function allocateFriedChickenPacks(
 
   const spend = (totalStock: number) => {
     const short = shortfalls(usable, shareOf, totalStock);
-    return usable.reduce((kg, v) => kg + (short.get(v.key) ?? 0) * v.stripKgPerPack, 0);
+    return usable.reduce((kg, v) => kg + (short.get(v.key) ?? 0) * v.kgPerPack, 0);
   };
 
   // Raise the post-production total until the top-ups exactly consume the
@@ -99,11 +102,11 @@ export function allocateFriedChickenPacks(
   // a 62 kg run.
   let lo = 0;
   let hi = Math.max(1, stockNow + 1);
-  while (spend(hi) < availableStripKg && hi < stockNow + 1e7) hi *= 2;
-  const capped = spend(hi) < availableStripKg;   // every variant satisfied
+  while (spend(hi) < availableKg && hi < stockNow + 1e7) hi *= 2;
+  const capped = spend(hi) < availableKg;   // every variant satisfied
   for (let i = 0; i < 200 && !capped; i++) {
     const mid = (lo + hi) / 2;
-    if (spend(mid) < availableStripKg) lo = mid; else hi = mid;
+    if (spend(mid) < availableKg) lo = mid; else hi = mid;
   }
 
   const raw = shortfalls(usable, shareOf, capped ? hi : lo);
@@ -116,7 +119,7 @@ export function allocateFriedChickenPacks(
   for (const v of usable) {
     const n = Math.floor(raw.get(v.key) ?? 0);
     packs.set(v.key, n);
-    used += n * v.stripKgPerPack;
+    used += n * v.kgPerPack;
   }
   const byRemainder = [...usable].sort((a, b) =>
     ((raw.get(b.key) ?? 0) % 1) - ((raw.get(a.key) ?? 0) % 1));
@@ -126,23 +129,23 @@ export function allocateFriedChickenPacks(
     for (const v of byRemainder) {
       const wanted = raw.get(v.key) ?? 0;
       if ((packs.get(v.key) ?? 0) >= Math.ceil(wanted)) continue;
-      if (used + v.stripKgPerPack > availableStripKg + 1e-9) continue;
+      if (used + v.kgPerPack > availableKg + 1e-9) continue;
       packs.set(v.key, (packs.get(v.key) ?? 0) + 1);
-      used += v.stripKgPerPack;
+      used += v.kgPerPack;
       progress = true;
     }
   }
 
   const out: VariantAllocation[] = variants.map(v => {
     const n = packs.get(v.key) ?? 0;
-    return { key: v.key, packs: n, stripKg: n * v.stripKgPerPack, stockAfter: v.stockPacks + n };
+    return { key: v.key, packs: n, kg: n * v.kgPerPack, stockAfter: v.stockPacks + n };
   });
 
   return {
     variants: out,
     totalPacks: out.reduce((n, v) => n + v.packs, 0),
-    stripKgUsed: Math.round(used * 1000) / 1000,
-    stripKgSpare: Math.round(Math.max(0, availableStripKg - used) * 1000) / 1000,
+    kgUsed: Math.round(used * 1000) / 1000,
+    kgSpare: Math.round(Math.max(0, availableKg - used) * 1000) / 1000,
   };
 }
 
