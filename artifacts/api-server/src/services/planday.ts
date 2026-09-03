@@ -258,6 +258,11 @@ export interface PlandayEmployee {
   firstName: string;
   lastName: string;
   email?: string | null;
+  /** Employment start, "YYYY-MM-DD". Planday is where employment actually
+   *  begins, so it is the source for probation dates rather than anything
+   *  re-keyed into this app (Graeme, 2026-09-03). Absent for anyone whose
+   *  Planday record has no hire date set. */
+  hiredDate?: string | null;
 }
 
 export interface PlandayShift {
@@ -331,7 +336,7 @@ export async function getPlandayEmployees(): Promise<PlandayEmployee[]> {
     const token = await getAccessToken();
     if (!token) return [];
     return fetchAllPages<PlandayEmployee>(
-      `/hr/v1.0/employees?includeFields=firstName,lastName,email`,
+      `/hr/v1.0/employees?includeFields=firstName,lastName,email,hiredDate`,
       token,
     );
   }, c => { cachedEmployees = c; });

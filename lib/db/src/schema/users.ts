@@ -35,6 +35,11 @@ export const usersTable = pgTable("app_users", {
   // (admins always qualify). Bookkeepers see finance and nothing of kitchen
   // operations' admin surfaces; kitchen roles don't see finance.
   isBookkeeper: boolean("is_bookkeeper").notNull().default(false),
+  // Probation length in months (migration 0071). Three months historically,
+  // six for anyone joining from 2026-09-03, and it can differ per person —
+  // NULL means "use the probation_default_months setting". The start date it
+  // counts from lives in Planday, not here.
+  probationMonths: integer("probation_months"),
 });
 
 export const insertUserSchema = createInsertSchema(usersTable).omit({ id: true, createdAt: true, updatedAt: true });

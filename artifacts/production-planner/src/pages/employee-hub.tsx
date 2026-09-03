@@ -16,7 +16,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
-import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt, Camera, Upload, X, FileText, ScrollText, ChevronRight, ListTodo } from "lucide-react";
+import { EmployeeReviewsSection } from "@/components/employee-reviews";
+import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt, Camera, Upload, X, FileText, ScrollText, ChevronRight, ListTodo, ClipboardList } from "lucide-react";
 import { TodoSheet, useMyOpenTodoCount } from "@/components/todo-lists";
 import { jsPDF } from "jspdf";
 import { toast } from "@/hooks/use-toast";
@@ -1165,17 +1166,21 @@ function PoliciesList() {
   );
 }
 
-type HubSection = "todos" | "mileage" | "expenses" | "policies" | "improvements" | "issues" | "sops";
+type HubSection = "todos" | "reviews" | "mileage" | "expenses" | "policies" | "improvements" | "issues" | "sops";
 
 export default function EmployeeHub() {
   const [active, setActive] = useState<HubSection>("todos");
   const { state } = useAuth();
   const userId = state.status === "authenticated" ? state.user.id : null;
+  // Managers write records for anyone; everyone else sees only their own.
+  const isManager = state.status === "authenticated"
+    && (state.user.role === "admin" || state.user.role === "manager");
   const [todosOpen, setTodosOpen] = useState(false);
   const openTodoCount = useMyOpenTodoCount();
 
   const sections: { key: HubSection; label: string; icon: typeof Car }[] = [
     { key: "todos", label: "My To-dos", icon: ListTodo },
+    { key: "reviews", label: "Reviews & Record", icon: ClipboardList },
     { key: "mileage", label: "Mileage Claim", icon: Car },
     { key: "expenses", label: "Expense Claim", icon: Receipt },
     { key: "policies", label: "Policies", icon: ScrollText },
@@ -1232,6 +1237,18 @@ export default function EmployeeHub() {
                 </button>
               </div>
               <TodoSheet open={todosOpen} onClose={() => setTodosOpen(false)} />
+            </>
+          )}
+          {active === "reviews" && (
+            <>
+              <div className="mb-4 pb-4 border-b border-border">
+                <h2 className="text-lg font-semibold">Reviews &amp; Record</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Reviews, probation meetings and the running record of your time here — feedback
+                  given, and what was agreed. Managers write it; you see what has been shared with you.
+                </p>
+              </div>
+              <EmployeeReviewsSection isManager={isManager} />
             </>
           )}
           {active === "mileage" && (

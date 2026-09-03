@@ -3097,6 +3097,14 @@ async function startup() {
     const { startStockGatePoller } = await import("./lib/stock-gating");
     startStockGatePoller();
 
+    // Probation reminders — a to-do for the scheduling manager three weeks
+    // before someone's probation review falls due, from their Planday start
+    // date. Self-gates: does nothing until probation_scheduler_user_id is
+    // set, and only ever nudges for people who started on or after the
+    // go-live date, so existing staff aren't re-litigated.
+    const { startProbationPrompts } = await import("./lib/probation-prompts");
+    startProbationPrompts();
+
     // Shopify orders mirror — pre-warm coverage back to the 1st of last
     // month so the first founder Numbers/P&L load after a deploy reads
     // Postgres instead of paying the one-off backfill crawl.
