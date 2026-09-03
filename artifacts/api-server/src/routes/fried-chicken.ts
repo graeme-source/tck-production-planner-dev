@@ -183,6 +183,67 @@ router.get("/suggestion", async (req: Request, res: Response) => {
   }
 });
 
+// GET /fried-chicken/next-run?after=YYYY-MM-DD — the next plan that actually
+// carries fried chicken.
+//
+// Chicken prep happens the day BEFORE the run, so whoever is prepping is
+// standing on one plan and needs the numbers off another. Rather than make
+// every screen walk the plan list looking for chicken, the question is asked
+// once here: what is the next run, and is today its prep day?
+router.get("/next-run", async (req: Request, res: Response) => {
+  try {
+    const after = typeof req.query.after === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.after)
+      ? req.query.after
+      : null;
+    if (!after) { res.status(400).json({ error: "after=YYYY-MM-DD is required" }); return; }
+
+    const daysBefore = Number(await setting("fried_chicken_prep_days_before", "1"));
+
+    // The next plan on or after `after` with at least one fried chicken item
+    // still targeted. "On or after" rather than strictly after, because the
+    // prep-day question is asked from the prep day itself.
+    const [row] = await db
+      .select({
+        id: productionPlansTable.id,
+        name: productionPlansTable.name,
+        planDate: productionPlansTable.planDate,
+        packs: sql<number>`SUM(${productionPlanItemsTable.batchesTarget})::int`,
+      })
+      .from(productionPlansTable)
+      .innerJoin(productionPlanItemsTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
+      .innerJoin(recipesTable, eq(recipesTable.id, productionPlanItemsTable.recipeId))
+      .where(and(
+        sql`${productionPlansTable.planDate} >= ${after}::date`,
+        eq(recipesTable.category, FRIED_CHICKEN_CATEGORY),
+      ))
+      .groupBy(productionPlansTable.id, productionPlansTable.name, productionPlansTable.planDate)
+      .having(sql`SUM(${productionPlanItemsTable.batchesTarget}) > 0`)
+      .orderBy(productionPlansTable.planDate)
+      .limit(1);
+
+    if (!row) { res.json({ found: false }); return; }
+
+    // The prep day for that run, from the same setting the plan page uses.
+    const prepDate = new Date(`${row.planDate}T12:00:00Z`);
+    prepDate.setUTCDate(prepDate.getUTCDate() - (Number.isFinite(daysBefore) ? daysBefore : 1));
+    const prepDateStr = prepDate.toISOString().slice(0, 10);
+
+    res.json({
+      found: true,
+      planId: row.id,
+      planName: row.name,
+      planDate: row.planDate,
+      prepDate: prepDateStr,
+      packs: Number(row.packs) || 0,
+      isPrepDay: prepDateStr === after,
+      isRunDay: row.planDate === after,
+    });
+  } catch (err) {
+    console.error("[fried-chicken] next-run failed:", err);
+    res.status(500).json({ error: "Couldn't find the next chicken run" });
+  }
+});
+
 // POST /fried-chicken/plans/:planId/items — put the chosen bags on a plan.
 // Treated as the desired final state for fried chicken on this plan, the same
 // way adding mac cheese works, so it doubles as the edit path.
@@ -278,6 +339,12 @@ router.get("/plans/:planId/prep", async (req: Request, res: Response) => {
   const planId = Number(req.params.planId);
   if (!Number.isInteger(planId)) { res.status(400).json({ error: "Invalid plan id" }); return; }
   try {
+    const [plan] = await db
+      .select({ name: productionPlansTable.name, planDate: productionPlansTable.planDate })
+      .from(productionPlansTable)
+      .where(eq(productionPlansTable.id, planId));
+    if (!plan) { res.status(404).json({ error: "Plan not found" }); return; }
+
     const items = await db
       .select({
         id: productionPlanItemsTable.id,
@@ -320,6 +387,12 @@ router.get("/plans/:planId/prep", async (req: Request, res: Response) => {
     const oilPerKg = Number(await setting("fried_chicken_oil_kg_per_kg", "0.457")) || 0.457;
     res.json({
       planId,
+      planName: plan.name,
+      planDate: plan.planDate,
+      bags: items
+        .filter(i => (Number(i.batchesTarget) || 0) > 0)
+        .map(i => ({ recipeName: i.recipeName ?? `Recipe ${i.recipeId}`, packs: Number(i.batchesTarget) || 0 }))
+        .sort((a, b) => b.packs - a.packs),
       packs: items.reduce((n, i) => n + (Number(i.batchesTarget) || 0), 0),
       rawMeatKg: Math.round(rawMeatKg * 1000) / 1000,
       // Not an ingredient — this is what has to be in the fryers to cook
