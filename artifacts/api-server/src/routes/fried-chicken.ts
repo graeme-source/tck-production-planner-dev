@@ -417,14 +417,54 @@ router.get("/plans/:planId/prep", async (req: Request, res: Response) => {
 // deliberately explicit: a dry run by default, and it reports every variant's
 // before and after so the first real one can be checked against Shopify's own
 // inventory history.
-const SubmitBody = z.object({ confirm: z.boolean().optional() });
+//
+// It ADDS the counted bags, so running it twice on the same day silently
+// doubles the shelf — the sort of mistake that is only found days later when
+// a customer orders something that isn't there. A confirmed run is therefore
+// recorded, and a second one is refused unless it is explicitly forced. The
+// guard lives here rather than in the screen because there is more than one
+// way to reach the endpoint.
+const SubmitBody = z.object({
+  confirm: z.boolean().optional(),
+  /** Send again even though this plan's stock has already gone. For the case
+   *  where the first run half-failed and the rest is genuinely still owed. */
+  force: z.boolean().optional(),
+});
+
+interface PriorSubmission { at: string; by: number | null; bags: number }
+
+function submissionKey(planId: number): string {
+  return `fried_chicken_stock_submitted_${planId}`;
+}
+
+async function priorSubmission(planId: number): Promise<PriorSubmission | null> {
+  const [row] = await db.select().from(appSettingsTable).where(eq(appSettingsTable.key, submissionKey(planId)));
+  if (!row?.value) return null;
+  try {
+    const parsed = JSON.parse(row.value) as PriorSubmission;
+    return typeof parsed?.at === "string" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
 router.post("/plans/:planId/submit-stock", requireManagerOrAdmin, validate(SubmitBody), async (req: Request, res: Response) => {
   const planId = Number(req.params.planId);
   if (!Number.isInteger(planId)) { res.status(400).json({ error: "Invalid plan id" }); return; }
-  const confirm = (req.body as z.infer<typeof SubmitBody>).confirm === true;
+  const body = req.body as z.infer<typeof SubmitBody>;
+  const confirm = body.confirm === true;
+  const force = body.force === true;
 
   try {
+    const already = await priorSubmission(planId);
+    if (confirm && already && !force) {
+      res.status(409).json({
+        error: "This plan's counted bags have already gone to Shopify",
+        alreadySubmitted: already,
+      });
+      return;
+    }
+
     const items = await db
       .select({
         recipeId: productionPlanItemsTable.recipeId,
@@ -458,7 +498,7 @@ router.post("/plans/:planId/submit-stock", requireManagerOrAdmin, validate(Submi
       }));
 
     if (!confirm) {
-      res.json({ dryRun: true, planId, adjustments: plan });
+      res.json({ dryRun: true, planId, adjustments: plan, alreadySubmitted: already });
       return;
     }
 
@@ -475,7 +515,25 @@ router.post("/plans/:planId/submit-stock", requireManagerOrAdmin, validate(Submi
         console.error(`[fried-chicken] Shopify adjust failed for ${row.recipeName}:`, err);
       }
     }
-    res.json({ dryRun: false, planId, adjustments: plan });
+    // Record the run only if something actually landed. A submission where
+    // every line failed has changed nothing outside the building, so blocking
+    // the retry would strand the day's stock.
+    const bagsSent = plan.reduce((n, r) => n + (r.result === "added" ? r.made : 0), 0);
+    if (bagsSent > 0) {
+      const record: PriorSubmission = {
+        at: new Date().toISOString(),
+        by: req.session.userId ?? null,
+        bags: bagsSent,
+      };
+      await db.insert(appSettingsTable)
+        .values({ key: submissionKey(planId), value: JSON.stringify(record) })
+        .onConflictDoUpdate({
+          target: appSettingsTable.key,
+          set: { value: JSON.stringify(record), updatedAt: new Date() },
+        });
+    }
+
+    res.json({ dryRun: false, planId, adjustments: plan, bagsSent, resent: force && already !== null });
   } catch (err) {
     console.error("[fried-chicken] submit stock failed:", err);
     res.status(500).json({ error: "Couldn't submit stock" });
