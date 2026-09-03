@@ -79,9 +79,6 @@ interface BookResult {
   /** The failure is something to correct on the order itself and try again,
    *  rather than a coverage refusal or a problem at our end. */
   dataFixable?: boolean;
-  /** This retry booked without APC confirming it held no consignment already
-   *  — their lookup was unreachable. The one path that can duplicate. */
-  duplicateCheckSkipped?: boolean;
 }
 
 interface BookResponse {
@@ -630,11 +627,6 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
                     {r.status === "failed" && r.dataFixable && (
                       <span className="block text-xs text-muted-foreground mt-0.5">
                         Correct this on the order in Shopify, then press Retry.
-                      </span>
-                    )}
-                    {r.duplicateCheckSkipped && (
-                      <span className="block text-xs text-amber-700 dark:text-amber-400 font-medium">
-                        APC couldn't be asked whether it already held a label for this order — check for a duplicate.
                       </span>
                     )}
                   </span>

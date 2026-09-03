@@ -1944,11 +1944,6 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
       /** The failure is something to correct on the order and try again,
        *  rather than a coverage refusal or a problem at our end. */
       dataFixable?: boolean;
-      /** Retry only: APC could not be asked whether it already holds a
-       *  consignment for this order, so this booking went ahead on our own
-       *  ledger alone. Surfaced because it is the one path that can raise a
-       *  duplicate. */
-      duplicateCheckSkipped?: boolean;
     }> = [];
 
     for (const order of orders) {
@@ -1989,7 +1984,6 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
       // A first run doesn't pay for this — it would be one extra lookup per
       // order across a 150-order batch. A retry is by definition a second
       // attempt, so it is exactly where the lookup earns its keep.
-      let duplicateCheckSkipped = false;
       if (isRetry) {
         try {
           // Only a consignment we have NEVER seen counts: one we recorded and
@@ -2014,11 +2008,19 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
             continue;
           }
         } catch (lookupErr) {
-          // A lookup outage must not strand an order with no label — but say
-          // so on the row, because this is the one booking that went ahead
-          // without the authoritative duplicate check.
-          duplicateCheckSkipped = true;
-          console.warn(`[Fulfilment] retry duplicate-check lookup failed for ${order.name}:`, lookupErr instanceof Error ? lookupErr.message : lookupErr);
+          // APC unreachable: REFUSE the retry rather than book blind
+          // (Graeme's call, 2026-09-03). Booking anyway risks a second real
+          // consignment APC will invoice for, and a duplicate is harder to
+          // undo than a label raised a few minutes later. The order keeps its
+          // Retry button, so this costs a wait, not a labelless order.
+          const why = lookupErr instanceof Error ? lookupErr.message : String(lookupErr);
+          console.warn(`[Fulfilment] retry refused for ${order.name} — duplicate check unavailable:`, why);
+          results.push({
+            orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id),
+            status: "failed",
+            reason: "Not booked: APC couldn't be asked whether it already holds a label for this order. Nothing was created — try again shortly.",
+          });
+          continue;
         }
       }
 
@@ -2077,7 +2079,6 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
           orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "booked",
           waybill: result.consignmentNumber, serviceCode, reference,
           ...(recordError ? { recordError } : {}),
-          ...(duplicateCheckSkipped ? { duplicateCheckSkipped } : {}),
         });
       } catch (bookErr) {
         const msg = bookErr instanceof Error ? bookErr.message : String(bookErr);

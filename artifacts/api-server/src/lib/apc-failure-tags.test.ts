@@ -95,3 +95,24 @@ describe("isDataFixableFailure", () => {
     }
   });
 });
+
+describe("the retry-refused message", () => {
+  // When APC's lookup is unreachable we refuse the retry rather than book
+  // blind (Graeme, 2026-09-03). That refusal is OUR message, not the
+  // courier's, and it must not be mistaken for either of the two things
+  // these classifiers act on.
+  const REFUSED =
+    "Not booked: APC couldn't be asked whether it already holds a label for this order. Nothing was created — try again shortly.";
+
+  it("is not offered as something to fix on the order in Shopify", () => {
+    // There is nothing wrong with the order; APC is simply unreachable.
+    expect(isDataFixableFailure(REFUSED)).toBe(false);
+  });
+
+  it("is never treated as a coverage refusal", () => {
+    // This one matters: a coverage verdict marks the order apc-no-service in
+    // Shopify, which would brand a perfectly deliverable address undeliverable
+    // because a lookup timed out.
+    expect(isNoServiceFailure(REFUSED)).toBe(false);
+  });
+});
