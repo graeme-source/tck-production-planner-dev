@@ -31,7 +31,6 @@ import Dispatches from "@/pages/dispatches";
 import CaseOrders from "@/pages/case-orders";
 import Suppliers from "@/pages/suppliers";
 import FinancePage from "@/pages/finance";
-import AccessPage from "@/pages/access";
 import Supplies from "@/pages/supplies";
 import Settings from "@/pages/settings";
 import LeanCave from "@/pages/lean-cave";
@@ -180,7 +179,6 @@ function Router() {
               <Route path="/case-orders" component={CaseOrders} />
               <Route path="/suppliers" component={Suppliers} />
               <Route path="/finance" component={FinancePage} />
-              <Route path="/access" component={AccessPage} />
               <Route path="/supplies">{() => <Redirect to="/inventory?tab=supplies" />}</Route>
               <Route path="/orders" component={Orders} />
               <Route path="/fulfilment">{() => <ProtectedRoute component={Fulfilment} pageKey="/fulfilment" />}</Route>

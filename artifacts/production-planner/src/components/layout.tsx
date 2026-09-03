@@ -92,8 +92,11 @@ export const productNavItems: NavItem[] = [
 
 export const bottomNavItems: NavItem[] = [
   { name: "Lean Cave", href: "/lean-cave", icon: Lightbulb },
-  // Access is filtered to admins where the bottom nav renders.
-  { name: "Access", href: "/access", icon: KeyRound },
+  // "Access" used to sit here, above Settings, holding per-person feature
+  // grants — while Settings already had a "Team & Access" tab holding users,
+  // roles and page access. Two entries called Access, and you had to know
+  // which held what. Feature grants moved into that tab (Graeme,
+  // 2026-09-03); see components/feature-grants-section.tsx.
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
@@ -481,7 +484,7 @@ export function NavLinks({
       </nav>
 
       <div className="px-3 pb-2">
-        {(hideBottomNav ? [] : bottomNavItems.filter(i => i.href !== "/access" || user?.role === "admin")).map((item) => {
+        {(hideBottomNav ? [] : bottomNavItems).map((item) => {
           const isActive = location === item.href;
           return (
             <Link

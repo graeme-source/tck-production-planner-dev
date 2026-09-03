@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
-import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -14,14 +13,19 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { GraduationCap, KeyRound, Loader2, ShieldCheck } from "lucide-react";
-import { Redirect } from "wouter";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-// Access — per-user feature grants with an optional SOP-training gate.
-// Graeme's design (28 Aug): cherry-pick features per person; a global switch
-// (default OFF) additionally requires sign-off on the feature's training SOP
-// before a grant unlocks. Admin-only page.
+// Feature grants — cherry-pick features per person, with an optional
+// SOP-training gate. Graeme's design (28 Aug): a global switch (default OFF)
+// additionally requires sign-off on the feature's training SOP before a grant
+// unlocks.
+//
+// This was its own "Access" page in the left-hand nav, sitting above Settings
+// — while Settings already had a "Team & Access" tab holding users, roles and
+// page access. Two places called Access, and you had to know which one held
+// what (Graeme, 2026-09-03). It now lives in that tab with the rest, and the
+// separate page is gone. Rendered admin-only by its caller.
 
 type Feature = { key: string; name: string; description: string | null; requiredSopId: number | null };
 type Grant = { id: number; featureKey: string; userId: number };
@@ -43,7 +47,7 @@ async function jsonFetch(url: string, init?: RequestInit) {
   return body;
 }
 
-export default function AccessPage() {
+export function FeatureGrantsSection() {
   const { state } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -95,16 +99,19 @@ export default function AccessPage() {
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
-  if (state.status === "authenticated" && state.user.role !== "admin") return <Redirect to="/" />;
-
   const data = query.data;
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Access — feature grants"
-        description="Cherry-pick features for individual people, whatever their role. Optionally require training sign-off before a grant unlocks."
-      />
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-base font-semibold flex items-center gap-2">
+          <KeyRound className="w-4 h-4 text-primary" /> Feature Grants
+        </h2>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          Cherry-pick features for individual people, whatever their role. Optionally require
+          training sign-off before a grant unlocks.
+        </p>
+      </div>
 
       <Card>
         <CardHeader className="pb-3">

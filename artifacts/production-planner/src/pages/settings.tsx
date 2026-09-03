@@ -6,6 +6,7 @@ import { useAppMutations } from "@/hooks/use-mutations";
 import { usePagePermissions, useSavePagePermissions } from "@/hooks/use-page-permissions";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
+import { FeatureGrantsSection } from "@/components/feature-grants-section";
 import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
 import {
   Plus, Trash2, Edit2, Loader2, Users, ShieldCheck, Eye, Wrench,
@@ -689,6 +690,7 @@ const SETTINGS_SEARCH_INDEX: { tab: SettingsSection; title: string; keywords: st
   { tab: "profile", title: "Quick-Sign PIN", keywords: "pin quick sign 4 digit lock switch user" },
   { tab: "team", title: "Team & Access", keywords: "users invite employee roles admin manager viewer deactivate accounts staff" },
   { tab: "team", title: "Page Access Control", keywords: "permissions pages who can see access role gate" },
+  { tab: "team", title: "Feature Grants", keywords: "access feature grants cherry pick unlock sop training gate apc per person" },
   { tab: "team", title: "Broadcast notification", keywords: "announce message everyone notify team push" },
   { tab: "production", title: "Admin Date Override", keywords: "pretend date testing simulate today" },
   { tab: "production", title: "Non-dispatch days", keywords: "bank holiday shutdown closed no dispatch dates christmas" },
@@ -1038,6 +1040,10 @@ function TeamAccessContent({
 
       {/* Access Control — admin only */}
       {user?.role === "admin" && <AccessControlSection />}
+
+      {/* Feature grants — was its own "Access" page in the nav until
+          2026-09-03; two places called Access was one too many. */}
+      {user?.role === "admin" && <FeatureGrantsSection />}
 
       {/* Broadcast Notification — admin only */}
       {user?.role === "admin" && <BroadcastNotificationSection />}
