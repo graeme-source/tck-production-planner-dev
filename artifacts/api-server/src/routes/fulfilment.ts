@@ -12,7 +12,7 @@ import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
 import { declaredParcelWeightKg, isLargeBox } from "../lib/parcel-weight";
 import { APC_NO_SERVICE_TAG, isNoServiceFailure } from "../lib/apc-failure-tags";
 import { settledOrders } from "../lib/order-age";
-import { isDispatchTagged } from "../lib/dispatch-tag";
+import { isDispatchTagged, isCollectionOrder, isPartOfDespatchWave } from "../lib/dispatch-tag";
 import { sql } from "drizzle-orm";
 
 const router = Router();
@@ -355,7 +355,12 @@ const DATE_TAG_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 router.get("/dispatch-tags", requireFulfilmentAccess, async (_req: Request, res: Response) => {
   try {
-    const orders = await getRecentUnfulfilledOrders(30);
+    // Day cards count the courier wave only. A collection tagged for the 4th
+    // is worked on the 4th, not on the 3rd with that date's despatch, so
+    // including it showed the packers orders they were not packing that day
+    // (Graeme, 2026-09-03). Collections surface on the packing screen's own
+    // collection card, which reads TODAY's tag.
+    const orders = (await getRecentUnfulfilledOrders(30)).filter(o => isPartOfDespatchWave(o.tags));
 
     const groups = new Map<string, { orderCount: number; totalItems: number; totalWeightG: number }>();
 
@@ -1663,7 +1668,10 @@ router.post("/tag-dispatch-bulk", requireFulfilmentAccess, async (req: Request, 
   try {
     const orders = await getOrdersByTag(tag);
     const unfulfilled = orders.filter(o => o.fulfillment_status !== "fulfilled");
-    const untagged = unfulfilled.filter(o => !isDispatchTagged(o.tags));
+    // A collection is never approved for despatch — it is bagged and handed
+    // over at the unit. Excluded here as well as in the count so that a
+    // "tag everything" call can't stamp one by accident.
+    const untagged = unfulfilled.filter(o => !isDispatchTagged(o.tags) && isPartOfDespatchWave(o.tags));
 
     // Even when ids are supplied, only ever tag orders that are genuinely
     // untagged and unfulfilled *within this date tag* — a stale or hand-crafted
@@ -1747,19 +1755,22 @@ async function buildPreflight(tag: string, dispatchDate: Date) {
   const unfulfilled = settledOrders(await getOrdersByTag(tag)).filter(o =>
     o.fulfillment_status !== "fulfilled",
   );
-  const orders = unfulfilled.filter(o => isDispatchTagged(o.tags));
+  // Collections are handled on their own collection day, not by the despatch
+  // wave that shares their date tag — so they are neither booked nor chased
+  // for approval here. Kept aside rather than dropped: they still get their
+  // own "never APC" line so the operator can see they were accounted for.
+  const collectionOrders = unfulfilled.filter(o => isCollectionOrder(o.tags));
+  const waveOrders = unfulfilled.filter(o => isPartOfDespatchWave(o.tags));
+  const orders = waveOrders.filter(o => isDispatchTagged(o.tags));
 
   const ready: PreflightOrder[] = [];
   const needsReview: PreflightOrder[] = [];
   const blocked: PreflightOrder[] = [];
   const alreadyBooked: PreflightOrder[] = [];
   const localDeliveries: PreflightOrder[] = [];
-  const collections: PreflightOrder[] = [];
-  // Untagged orders are NOT bookable — tagging is step one and a label must
-  // never run ahead of it. They used to be filtered away silently, which
-  // read as "that's the whole day"; now they're reported so the operator
-  // can see what still needs approving (Graeme, 2026-08-29).
-  const notTagged: PreflightOrder[] = unfulfilled.filter(o => !isDispatchTagged(o.tags)).map(order => ({
+
+  /** The plain row shape, for the buckets that need no address work. */
+  const basicRow = (order: (typeof unfulfilled)[number], problems: string[]): PreflightOrder => ({
     orderId: order.id,
     orderName: order.name,
     customerName: order.shipping_address?.name
@@ -1768,9 +1779,24 @@ async function buildPreflight(tag: string, dispatchDate: Date) {
     boxCategory: "other",
     weightKg: Math.round((order.total_weight ?? 0) / 100) / 10,
     existingWaybill: null,
-    problems: ["Not tagged for dispatch — tag it first"],
+    problems,
     reviews: [],
-  }));
+  });
+
+  // Collections are listed whether or not they carry the dispatch tag — they
+  // never do, and that is correct. Before this they fell through to
+  // "not tagged" and were reported as an error on a day nobody was even
+  // collecting them (Graeme, 2026-09-03).
+  const collections: PreflightOrder[] = collectionOrders.map(order => basicRow(order, []));
+
+  // Untagged orders are NOT bookable — tagging is step one and a label must
+  // never run ahead of it. They used to be filtered away silently, which
+  // read as "that's the whole day"; now they're reported so the operator
+  // can see what still needs approving (Graeme, 2026-08-29). Collections are
+  // excluded: they are not part of this wave and are never tagged.
+  const notTagged: PreflightOrder[] = waveOrders
+    .filter(o => !isDispatchTagged(o.tags))
+    .map(order => basicRow(order, ["Not tagged for dispatch — tag it first"]));
 
   for (const order of orders) {
     const tags = order.tags.split(",").map(t => t.trim().toLowerCase());
@@ -1795,12 +1821,9 @@ async function buildPreflight(tag: string, dispatchDate: Date) {
       reviews: [],
     };
 
-    // Collections are picked up from the unit in a brown paper bag — they
-    // must never get a consignment (Graeme, 2026-08-28).
-    if (tags.includes("collections") || tags.includes("collection")) {
-      collections.push(row);
-      continue;
-    }
+    // Collections were split out before this loop — they are picked up from
+    // the unit in a brown paper bag and must never get a consignment
+    // (Graeme, 2026-08-28).
     // Local deliveries go on the van — they must never get a consignment.
     if (tags.includes("local-delivery")) {
       localDeliveries.push(row);
@@ -2348,8 +2371,7 @@ router.post("/orders/:id/complete", requireFulfilmentAccess, async (req: Request
     // Collections and local deliveries never have a consignment: the bag
     // stays in the fridge / the box goes on the van.
     localDelivery = tagsLower.includes("local-delivery")
-      || tagsLower.includes("collections")
-      || tagsLower.includes("collection");
+      || isCollectionOrder(order?.tags);
     if (!localDelivery) {
       res.status(400).json({ error: `consignmentNumber is required when apc_mode is "${apcMode}"` });
       return;
@@ -2999,7 +3021,13 @@ router.get("/dispatch-progress", async (req: Request, res: Response) => {
   }
 
   try {
-    const allOrders = await getOrdersByTag(tag);
+    // Collections are excluded from every number here. This is the packing
+    // station's progress readout and the fulfilment header's count, and it
+    // measures ONE thing: the courier wave for this delivery date, packed the
+    // day before. A collection carrying the same date tag is handed over on
+    // the date itself, so counting it here put orders nobody was packing
+    // today into today's totals (Graeme, 2026-09-03).
+    const allOrders = (await getOrdersByTag(tag)).filter(o => isPartOfDespatchWave(o.tags));
 
     const categories = {
       smallBox: { total: 0, fulfilled: 0 },
