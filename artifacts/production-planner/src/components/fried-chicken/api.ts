@@ -96,17 +96,31 @@ export interface StockAdjustment {
   newQuantity?: number;
 }
 
+export interface PriorSubmission {
+  at: string;
+  by: number | null;
+  bags: number;
+}
+
 export interface SubmitStockResult {
   dryRun: boolean;
   planId: number;
   adjustments: StockAdjustment[];
+  /** Set on a dry run when this plan's stock has already gone once. */
+  alreadySubmitted?: PriorSubmission | null;
+  /** Bags that actually landed in Shopify on a confirmed run. */
+  bagsSent?: number;
+  resent?: boolean;
 }
 
-export function submitFriedChickenStock(planId: number, confirm: boolean) {
+export function submitFriedChickenStock(
+  planId: number,
+  opts: { confirm: boolean; force?: boolean },
+) {
   return friedChickenFetch<SubmitStockResult>(`/plans/${planId}/submit-stock`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ confirm }),
+    body: JSON.stringify({ confirm: opts.confirm, force: opts.force === true }),
   });
 }
 

@@ -21,10 +21,13 @@ import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import { getGetProductionPlanQueryKey } from "@workspace/api-client-react";
-import { Drumstick, Loader2, Minus, Plus, Check, AlertTriangle } from "lucide-react";
+import { Drumstick, Loader2, Minus, Plus, Check, AlertTriangle, ClipboardList, CalendarDays } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { isFriedChicken, type StationPlanItem } from "../shared/constants";
+import { FriedChickenPrepSheet } from "@/components/fried-chicken/prep-sheet";
+import { FriedChickenSubmitStock } from "@/components/fried-chicken/submit-stock";
+import { useNextFriedChickenRun } from "@/components/fried-chicken/api";
 
 const STATION = "fried_chicken";
 
@@ -120,9 +123,67 @@ function BagRow({ item, planId, disabled }: {
   );
 }
 
+function runDateLabel(iso: string): string {
+  const d = new Date(`${iso}T12:00:00Z`);
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+}
+
+/** What this station shows when there is no chicken to fry today.
+ *
+ *  Prep runs the day BEFORE the run, so an empty station is usually not an
+ *  empty day — it is a prep day. Rather than a dead end, it points at the
+ *  next run and shows its pull list. */
+function NoRunToday({ planDate }: { planDate: string }) {
+  const { data, isLoading } = useNextFriedChickenRun(planDate);
+
+  if (isLoading) {
+    return (
+      <div className="max-w-3xl mx-auto flex items-center justify-center py-16 text-muted-foreground">
+        <Loader2 className="w-6 h-6 animate-spin mr-2" /> Looking for the next run…
+      </div>
+    );
+  }
+
+  if (!data?.found) {
+    return (
+      <div className="max-w-3xl mx-auto py-16 text-center space-y-3">
+        <Drumstick className="w-14 h-14 mx-auto text-muted-foreground opacity-50" />
+        <p className="text-2xl font-bold">No fried chicken planned</p>
+        <p className="text-lg text-muted-foreground">
+          Plan a run from the production plan — “Add fried chicken”.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-3xl mx-auto pb-24 space-y-5">
+      <div className="rounded-2xl border-2 border-border bg-card p-5 flex items-start gap-4">
+        <CalendarDays className="w-8 h-8 text-orange-600 shrink-0" />
+        <div>
+          <p className="text-2xl font-bold">
+            {data.isPrepDay ? "Today is prep day" : "Nothing to fry today"}
+          </p>
+          <p className="text-lg text-muted-foreground mt-1">
+            The next run is {runDateLabel(data.planDate)} — {data.packs} bags.
+            {data.isPrepDay ? " Here's what to pull for it." : ""}
+          </p>
+        </div>
+      </div>
+      <FriedChickenPrepSheet planId={data.planId} />
+    </div>
+  );
+}
+
+type StationTab = "count" | "prep";
+
 export function FriedChickenStation({ plan, isOnBreak = false }: {
   plan: ProductionPlanDetail; isOnBreak?: boolean;
 }) {
+  const [tab, setTab] = useState<StationTab>("count");
+
   const items = useMemo(
     () => ((plan.items ?? []) as StationPlanItem[])
       .filter(it => isFriedChicken(it as { recipeCategory?: string | null }))
@@ -133,52 +194,71 @@ export function FriedChickenStation({ plan, isOnBreak = false }: {
   const target = items.reduce((n, it) => n + (Number(it.batchesTarget) || 0), 0);
   const made = items.reduce((n, it) => n + (Number(it.batchesComplete) || 0), 0);
 
-  if (items.length === 0) {
-    return (
-      <div className="max-w-3xl mx-auto py-16 text-center space-y-3">
-        <Drumstick className="w-14 h-14 mx-auto text-muted-foreground opacity-50" />
-        <p className="text-2xl font-bold">No fried chicken on this plan</p>
-        <p className="text-lg text-muted-foreground">
-          Add it from the production plan, the same way mac cheese gets added.
-        </p>
-      </div>
-    );
-  }
+  if (items.length === 0) return <NoRunToday planDate={plan.planDate} />;
 
   return (
     <div className="max-w-3xl mx-auto pb-24 space-y-5">
-      <div className="rounded-2xl border-2 border-border bg-card p-5">
-        <p className="text-base uppercase tracking-widest font-bold text-muted-foreground">Counted so far</p>
-        <p className="text-5xl font-bold tabular-nums mt-1">
-          {made} <span className="text-2xl font-medium text-muted-foreground">of {target} bags</span>
-        </p>
-        <p className="text-base text-muted-foreground mt-2">
-          The target is a guide. Count what you actually make — that's what goes to Shopify tonight.
-        </p>
-      </div>
-
-      {/* Korean first: the sauce is made first thing and used until it's gone,
-          and whatever chicken is left becomes buttermilk. */}
-      <div className="space-y-3">
-        {items.map(it => (
-          <BagRow key={it.id} item={it} planId={plan.id} disabled={isOnBreak} />
+      {/* Count and prep are both read at this station: the count sheet on the
+          run day, the pull list the day before. Same screen, two tabs, so
+          nobody has to know which plan holds which. */}
+      <div className="flex items-center gap-1 p-1 bg-secondary/40 rounded-2xl w-fit">
+        {([["count", "Count sheet", Drumstick], ["prep", "Prep", ClipboardList]] as const).map(([key, label, Icon]) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2.5 rounded-xl text-base font-semibold transition-colors",
+              tab === key ? "bg-card shadow-sm" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Icon className="w-5 h-5" />
+            {label}
+          </button>
         ))}
       </div>
 
-      <div className="rounded-2xl border-2 border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 p-4 flex items-start gap-3">
-        <AlertTriangle className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
-        <p className="text-base">
-          Stock only reaches Shopify when you complete the closing check
-          <span className="font-bold"> “Submit today's counted bags to Shopify stock”</span>.
-          It sends the {made} counted above — not the target.
-        </p>
-      </div>
+      {tab === "prep" ? (
+        <FriedChickenPrepSheet planId={plan.id} />
+      ) : (
+        <>
+          <div className="rounded-2xl border-2 border-border bg-card p-5">
+            <p className="text-base uppercase tracking-widest font-bold text-muted-foreground">Counted so far</p>
+            <p className="text-5xl font-bold tabular-nums mt-1">
+              {made} <span className="text-2xl font-medium text-muted-foreground">of {target} bags</span>
+            </p>
+            <p className="text-base text-muted-foreground mt-2">
+              The target is a guide. Count what you actually make — that's what goes to Shopify tonight.
+            </p>
+          </div>
 
-      {made > 0 && made === target && (
-        <div className="rounded-2xl bg-emerald-500/10 p-5 text-center">
-          <Check className="w-9 h-9 mx-auto text-emerald-500 mb-2" />
-          <p className="text-xl font-bold">Every bag on target</p>
-        </div>
+          {/* Korean first: the sauce is made first thing and used until it's gone,
+              and whatever chicken is left becomes buttermilk. */}
+          <div className="space-y-3">
+            {items.map(it => (
+              <BagRow key={it.id} item={it} planId={plan.id} disabled={isOnBreak} />
+            ))}
+          </div>
+
+          {made > 0 && made === target && (
+            <div className="rounded-2xl bg-emerald-500/10 p-5 text-center">
+              <Check className="w-9 h-9 mx-auto text-emerald-500 mb-2" />
+              <p className="text-xl font-bold">Every bag on target</p>
+            </div>
+          )}
+
+          <div className="pt-2 space-y-3">
+            <div className="rounded-2xl border-2 border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 p-4 flex items-start gap-3">
+              <AlertTriangle className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
+              <p className="text-base">
+                Stock moves on the count, not the target. Sending puts the
+                <span className="font-bold"> {made} </span>
+                counted above onto the shelf — then tick the closing check
+                <span className="font-bold"> “Submit today's counted bags to Shopify stock”</span>.
+              </p>
+            </div>
+            <FriedChickenSubmitStock planId={plan.id} countedBags={made} />
+          </div>
+        </>
       )}
     </div>
   );
