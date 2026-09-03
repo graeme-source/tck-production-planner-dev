@@ -330,7 +330,10 @@ export function AddFriedChickenDialog({
 
           <FriedChickenRunSettings settings={settings} />
 
-          <div className="flex justify-end gap-3 pt-1">
+          {/* Stuck to the bottom of the dialog. With four variants and the
+              settings open, the save button otherwise sits below the fold on
+              an iPad and the run looks unsaveable. */}
+          <div className="sticky bottom-0 -mx-6 px-6 py-3 bg-card border-t border-border flex justify-end gap-3">
             <button
               type="button"
               onClick={onClose}
