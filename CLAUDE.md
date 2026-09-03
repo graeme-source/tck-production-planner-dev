@@ -38,3 +38,22 @@ Read this first, every session.
 - Fix causes, not symptoms; check for existing logic before writing new logic.
 - Destructive/outward-facing actions (deletes, Shopify writes, emails, deploys)
   need explicit approval from Graeme.
+
+## You may not be the only session in this folder
+
+Graeme sends several jobs at once from the production area, and they can land
+as separate sessions sharing ONE working tree and ONE branch. On 2026-09-03 two
+sessions edited this folder at the same time, and only luck kept their work in
+different files.
+
+- Run `git status` before you start and again before you commit. Uncommitted
+  changes you did not make mean another session is live right now.
+- **Stage by name, never `git add -A` / `git add .` / `git commit -a`.** Commit
+  only the files you wrote. Sweeping up someone else's half-built feature makes
+  it impossible to revert either one on its own.
+- Don't commit at the same moment as another session — a shared git index will
+  jam. If a commit fails on `index.lock`, wait and retry rather than deleting
+  the lock.
+- Never revert, stash or "clean up" changes you don't recognise. Tell Graeme.
+- Say so in your summary when you see another session's work in the tree; he
+  can't see `git status` from the factory floor.
