@@ -1,4 +1,4 @@
-import { Construction, Waves, Flame, Gift, Box, Salad, Layers, UtensilsCrossed } from "lucide-react";
+import { Construction, Waves, Flame, Gift, Box, Salad, Layers, UtensilsCrossed, Drumstick } from "lucide-react";
 import type { ProductionPlanItem } from "@workspace/api-client-react";
 
 /**
@@ -21,6 +21,11 @@ export type StationPlanItem = ProductionPlanItem & {
 };
 
 export const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
+export const FRIED_CHICKEN_CATEGORY = "Fried Chicken";
+
+export function isFriedChicken(item: { recipeCategory?: string | null }): boolean {
+  return item.recipeCategory === FRIED_CHICKEN_CATEGORY;
+}
 
 export function isMacCheese(item: { recipeCategory?: string | null }): boolean {
   return item.recipeCategory === MAC_CHEESE_CATEGORY;
@@ -43,6 +48,10 @@ export function compareItemsForDisplay(
 export const STATIONS = [
   { key: "dough_prep", label: "Dough Prep", short: "Dough Prep", icon: Layers, color: "text-amber-600" },
   { key: "macaroni_cheese", label: "Macaroni Cheese", short: "Mac Cheese", icon: UtensilsCrossed, color: "text-yellow-600" },
+  // Fried chicken runs separately from the calzone line and on its own days,
+  // so it is a station in its own right rather than part of main prep
+  // (Graeme, 2026-09-03).
+  { key: "fried_chicken", label: "Fried Chicken", short: "Fried Chicken", icon: Drumstick, color: "text-orange-600" },
   { key: "dough_sheeting", label: "Dough Sheeting", short: "Sheeting", icon: Layers, color: "text-amber-500" },
   { key: "prep", label: "Prep", short: "Prep", icon: Salad, color: "text-green-500" },
   { key: "mixing", label: "Mixing & Cooking", short: "Mixing", icon: Waves, color: "text-blue-500" },
