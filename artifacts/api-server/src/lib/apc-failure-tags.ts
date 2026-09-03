@@ -39,3 +39,25 @@ export function isNoServiceFailure(message: string | null | undefined): boolean 
   if (m.includes("authentication") || m.includes("credential") || m.includes("100019")) return false;
   return m.includes("no services available");
 }
+
+/**
+ * Is this failure something the operator can go and FIX on the order, then
+ * retry — rather than something about coverage or about us?
+ *
+ *   yes — "CREATION FAILED — Delivery City: Enter a value less than 32
+ *         characters long" (Graeme shortened the city and retried)
+ *   yes — our own "Missing address or postcode"
+ *   NO  — no-service refusals: the data is fine, the route isn't
+ *   NO  — authentication and transport errors: nothing on the order to fix
+ *
+ * Only used to decide whether to show "fix it in Shopify, then Retry"
+ * alongside the courier's own wording, so a wrong answer costs a line of
+ * text, never a booking.
+ */
+export function isDataFixableFailure(message: string | null | undefined): boolean {
+  const m = (message ?? "").toLowerCase();
+  if (!m) return false;
+  if (isNoServiceFailure(m)) return false;
+  if (m.includes("authentication") || m.includes("credential") || m.includes("100019")) return false;
+  return m.includes("creation failed") || m.includes("missing address or postcode");
+}

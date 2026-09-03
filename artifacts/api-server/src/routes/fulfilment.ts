@@ -10,7 +10,7 @@ import { sendEmail } from "../lib/email";
 import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService, lookupOrderByReference, lookupOrdersByReference, lookupOrderByWaybill, parseApcBarcode, waybillCore, apcTrackingUrl, type ApcOrderLookup } from "../services/apc";
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
 import { declaredParcelWeightKg, isLargeBox } from "../lib/parcel-weight";
-import { APC_NO_SERVICE_TAG, isNoServiceFailure } from "../lib/apc-failure-tags";
+import { APC_NO_SERVICE_TAG, isNoServiceFailure, isDataFixableFailure } from "../lib/apc-failure-tags";
 import { settledOrders } from "../lib/order-age";
 import { isDispatchTagged, isCollectionOrder, isPartOfDespatchWave } from "../lib/dispatch-tag";
 import { sql } from "drizzle-orm";
@@ -1897,11 +1897,15 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
     // pickServiceCode's choice — e.g. Isle of Wight postcodes take ND but
     // not the Lightweight small-box code (2026-08-26).
     serviceCodeOverride: z.string().min(1).max(20).optional(),
+    // A second attempt at an order that already went through one booking run
+    // — see the duplicate check below. Set by the Retry buttons on the batch
+    // report, never by a first run.
+    retry: z.boolean().optional(),
   }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "tag and orderIds[] are required" }); return; }
   if (!isApcConfigured()) { res.status(503).json({ error: "APC credentials not configured." }); return; }
 
-  const { tag, orderIds, serviceCodeOverride } = parsed.data;
+  const { tag, orderIds, serviceCodeOverride, retry: isRetry = false } = parsed.data;
   const dispatchDate = parsed.data.dispatchDate ? new Date(parsed.data.dispatchDate) : new Date(tag);
   const bookedBy = await resolveUserName(req);
 
@@ -1937,6 +1941,14 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
        *  failure smells like a service-availability rejection) the standard
        *  same-day code to offer as a one-tap retry. */
       usedServiceCode?: string; suggestedRetryCode?: string;
+      /** The failure is something to correct on the order and try again,
+       *  rather than a coverage refusal or a problem at our end. */
+      dataFixable?: boolean;
+      /** Retry only: APC could not be asked whether it already holds a
+       *  consignment for this order, so this booking went ahead on our own
+       *  ledger alone. Surfaced because it is the one path that can raise a
+       *  duplicate. */
+      duplicateCheckSkipped?: boolean;
     }> = [];
 
     for (const order of orders) {
@@ -1963,8 +1975,51 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
         continue;
       }
       if (!order.shipping_address?.address1 || !order.shipping_address?.zip) {
-        results.push({ orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "failed", reason: "Missing address or postcode" });
+        results.push({ orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "failed", reason: "Missing address or postcode", dataFixable: true });
         continue;
+      }
+
+      // ── Retry only: ask APC itself before booking again ──────────────────
+      // A "failed" row means one of two very different things. Usually APC
+      // rejected the request and nothing exists — the Delivery City case,
+      // safe to retry. But a booking can also succeed at APC and fall over
+      // before we record the number, and that consignment is real and
+      // invoiced. Our ledger (checked above) cannot see it; only APC can.
+      //
+      // A first run doesn't pay for this — it would be one extra lookup per
+      // order across a 150-order batch. A retry is by definition a second
+      // attempt, so it is exactly where the lookup earns its keep.
+      let duplicateCheckSkipped = false;
+      if (isRetry) {
+        try {
+          // Only a consignment we have NEVER seen counts: one we recorded and
+          // then cancelled must not be resurrected, and APC cannot tell us it
+          // is cancelled.
+          const known = await knownWaybillsFor(order.id);
+          const held = (await lookupOrdersByReference(order.name, apiBase))
+            .find(c => c.waybill && !known.has(c.waybill));
+          if (held?.waybill) {
+            console.log(`[Fulfilment] APC already holds ${held.waybill} for ${order.name} — reusing, not re-booking`);
+            await db.execute(sql`
+              INSERT INTO apc_consignments (waybill, reference, booking_reference, shopify_order_id, shopify_order_name, consignee_postcode, dispatch_tag)
+              VALUES (${held.waybill}, ${order.name}, ${order.name}, ${order.id}, ${order.name}, ${order.shipping_address.zip}, ${tag})
+              ON CONFLICT DO NOTHING
+            `);
+            results.push({
+              orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id),
+              status: "skipped",
+              reason: "APC already held a consignment for this order — reused, not re-booked",
+              waybill: held.waybill,
+            });
+            continue;
+          }
+        } catch (lookupErr) {
+          // A lookup outage must not strand an order with no label — but say
+          // so on the row, because this is the one booking that went ahead
+          // without the authoritative duplicate check.
+          duplicateCheckSkipped = true;
+          console.warn(`[Fulfilment] retry duplicate-check lookup failed for ${order.name}:`, lookupErr instanceof Error ? lookupErr.message : lookupErr);
+        }
       }
 
       const serviceCode: string = serviceCodeOverride ?? pickServiceCode(order, { smallWeekday, largeWeekday, smallFriday, largeFriday }, weightThresholdG, dispatchDate);
@@ -2022,6 +2077,7 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
           orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "booked",
           waybill: result.consignmentNumber, serviceCode, reference,
           ...(recordError ? { recordError } : {}),
+          ...(duplicateCheckSkipped ? { duplicateCheckSkipped } : {}),
         });
       } catch (bookErr) {
         const msg = bookErr instanceof Error ? bookErr.message : String(bookErr);
@@ -2059,6 +2115,7 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
           usedServiceCode: serviceCode,
           ...(suggestedRetryCode ? { suggestedRetryCode } : {}),
           ...(taggedNoService ? { taggedNoService } : {}),
+          ...(isDataFixableFailure(msg) ? { dataFixable: true } : {}),
         });
       }
     }
