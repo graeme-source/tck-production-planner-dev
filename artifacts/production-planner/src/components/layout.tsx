@@ -45,6 +45,7 @@ import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/user-avatar";
 import { NotificationBell } from "@/components/notification-bell";
 import { CurrentUserBadge } from "@/components/current-user-badge";
+import { useUnseenImprovementCount } from "@/hooks/use-unseen-improvements";
 import { LeanWeeklyStrip } from "@/components/lean-weekly-review";
 import { NotificationFlash } from "@/components/notification-flash";
 import { ImprovementCelebration } from "@/components/improvement-celebration";
@@ -221,6 +222,7 @@ export function NavLinks({
   hideBottomNav?: boolean;
 }) {
   const fullPath = location + (search ? search : "");
+  const unseenImprovements = useUnseenImprovementCount();
   const isOnProductPage = PRODUCT_PATHS.includes(location);
   const isOnDispatchPage = DISPATCH_PATHS.includes(location);
   const isOnInventoryPage = isInventoryRoute(location);
@@ -335,7 +337,22 @@ export function NavLinks({
             transition={{ type: "spring", stiffness: 300, damping: 30 }}
           />
         )}
-        <item.icon className={cn("w-4 h-4 flex-shrink-0 relative z-10", isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+        {/* How many improvements this person has never opened. Sits ON the
+            icon rather than in the row: inline, it consumed just enough
+            width to squeeze "Improvements" down to "Improveme…". Absent
+            entirely at zero — a badge that is always there stops meaning
+            anything (Graeme, 2026-09-03). */}
+        <span className="relative z-10 flex-shrink-0">
+          <item.icon className={cn("w-4 h-4", isActive ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+          {item.href === "/improvements" && unseenImprovements > 0 && (
+            <span
+              className="absolute -top-1.5 -right-2 min-w-[1rem] px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold tabular-nums text-center leading-4 shadow-sm"
+              title={`${unseenImprovements} improvement${unseenImprovements === 1 ? "" : "s"} you haven't looked at yet`}
+            >
+              {unseenImprovements > 99 ? "99+" : unseenImprovements}
+            </span>
+          )}
+        </span>
         <span className="relative z-10 truncate">{item.name}</span>
       </Link>
     );

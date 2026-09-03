@@ -145,3 +145,18 @@ export type ImprovementComment = typeof improvementCommentsTable.$inferSelect;
 export type AndonComment = typeof andonCommentsTable.$inferSelect;
 export type InsertImprovementSubmission = z.infer<typeof insertImprovementSubmissionSchema>;
 export type InsertAndonIssue = z.infer<typeof insertAndonIssueSchema>;
+
+// Who has opened which improvement. Absence of a row means "not seen yet",
+// so a newly logged improvement is unseen by everyone without having to
+// write a row per person up front. Drives the count badge on the
+// Improvements nav item (migration 0072).
+export const improvementViewsTable = pgTable("improvement_views", {
+  id: serial("id").primaryKey(),
+  improvementId: integer("improvement_id").notNull().references(() => improvementSubmissionsTable.id, { onDelete: "cascade" }),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  viewedAt: timestamp("viewed_at").notNull().defaultNow(),
+}, (table) => [
+  unique("uq_improvement_view").on(table.improvementId, table.userId),
+]);
+
+export type ImprovementView = typeof improvementViewsTable.$inferSelect;

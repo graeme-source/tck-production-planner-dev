@@ -15,7 +15,7 @@
 // The manager's table lives behind a toggle at the bottom, out of the way of
 // the people who just want to log what they did.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Loader2, Camera, CheckCircle2, Clock, ThumbsUp, RotateCcw,
@@ -28,6 +28,7 @@ import { ImprovementAttachments } from "@/components/improvement-attachments";
 import { cn } from "@/lib/utils";
 import { ImprovementFeedMedia } from "@/components/improvement-feed-media";
 import { toast } from "@/hooks/use-toast";
+import { useMarkImprovementSeen } from "@/hooks/use-unseen-improvements";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -423,6 +424,11 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
   const { state } = useAuth();
   const currentUserId = state.status === "authenticated" ? state.user.id : null;
   const [sendBackNote, setSendBackNote] = useState("");
+
+  // Opening one counts as having looked at it, and takes it off the nav
+  // badge. Fires once per improvement opened; the server ignores repeats.
+  const markSeen = useMarkImprovementSeen();
+  useEffect(() => { void markSeen(id); }, [id]);
   const [sendingBack, setSendingBack] = useState(false);
   // Delete asks first, in place, the same two-step shape as "send back"
   // above — no separate dialog to learn, and no single tap that destroys

@@ -87,6 +87,57 @@ async function viewerOf(req: Request): Promise<{ id?: number; isManager: boolean
   return { id, isManager: role === "admin" || role === "manager" };
 }
 
+/** How many improvements this person has never opened.
+ *
+ *  Drives the badge on the Improvements nav item — a standing nudge to go and
+ *  look at what the team has been logging (Graeme, 2026-09-03). Your own are
+ *  excluded: you don't need reminding to look at something you wrote.
+ *
+ *  Everything that existed when this shipped was marked seen by the
+ *  migration, so the badge starts at zero and only ever counts what is
+ *  genuinely new.
+ */
+router.get("/unseen-count", async (req: Request, res: Response) => {
+  const userId = req.session.userId;
+  if (!userId) { res.json({ count: 0 }); return; }
+  try {
+    const rows = await db.execute<{ count: number }>(sql`
+      SELECT COUNT(*)::int AS count
+      FROM improvement_submissions i
+      WHERE (i.submitted_by IS DISTINCT FROM ${userId})
+        AND NOT EXISTS (
+          SELECT 1 FROM improvement_views v
+          WHERE v.improvement_id = i.id AND v.user_id = ${userId}
+        )
+    `);
+    res.json({ count: rows.rows[0]?.count ?? 0 });
+  } catch (err) {
+    // A badge is a nicety; never let it break the page it sits on.
+    console.warn("[Improvements] unseen-count failed:", err instanceof Error ? err.message : err);
+    res.json({ count: 0 });
+  }
+});
+
+/** Mark one improvement as opened by this person. Idempotent — opening the
+ *  same one twice is not an error, it just keeps the first timestamp. */
+router.post("/:id/seen", async (req: Request, res: Response) => {
+  const userId = req.session.userId;
+  if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  try {
+    await db.execute(sql`
+      INSERT INTO improvement_views (improvement_id, user_id)
+      VALUES (${id}, ${userId})
+      ON CONFLICT (improvement_id, user_id) DO NOTHING
+    `);
+    res.status(204).send();
+  } catch (err) {
+    console.warn("[Improvements] mark seen failed:", err instanceof Error ? err.message : err);
+    res.status(204).send();
+  }
+});
+
 router.get("/", async (req: Request, res: Response) => {
   try {
     const rows = await db
