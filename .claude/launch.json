@@ -4,7 +4,10 @@
     {
       "name": "api",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH pnpm run dev"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH pnpm run dev"
+      ],
       "cwd": "artifacts/api-server",
       "port": 3000,
       "autoPort": true
@@ -12,7 +15,10 @@
     {
       "name": "api-hotfix",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH pnpm run dev"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH pnpm run dev"
+      ],
       "cwd": ".claude/worktrees/mac-cheese-split/artifacts/api-server",
       "port": 3000,
       "autoPort": true
@@ -20,7 +26,10 @@
     {
       "name": "frontend",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5273 --strictPort"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5273 --strictPort"
+      ],
       "cwd": "artifacts/production-planner",
       "port": 5273,
       "autoPort": true
@@ -28,27 +37,39 @@
     {
       "name": "frontend-preview",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5274 --strictPort"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5274 --strictPort"
+      ],
       "cwd": "artifacts/production-planner",
       "port": 5274
     },
     {
       "name": "survey-mock",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "python3 '/private/tmp/claude-501/-Users-graemecarter-Dev-Projects-tck-production-planner-main/8f1c1d6f-0890-4c13-94b8-2409b52f87c7/scratchpad/mock_api.py'"],
+      "runtimeArgs": [
+        "-lc",
+        "python3 '/private/tmp/claude-501/-Users-graemecarter-Dev-Projects-tck-production-planner-main/8f1c1d6f-0890-4c13-94b8-2409b52f87c7/scratchpad/mock_api.py'"
+      ],
       "port": 8902
     },
     {
       "name": "frontend-preview-2",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5280 --strictPort"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5280 --strictPort"
+      ],
       "cwd": "artifacts/production-planner",
       "port": 5280
     },
     {
       "name": "api-pwreset",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5282 PORT=59685 pnpm run dev"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5282 PORT=59685 pnpm run dev"
+      ],
       "cwd": "artifacts/api-server",
       "port": 59685,
       "autoPort": true
@@ -56,14 +77,20 @@
     {
       "name": "frontend-pwreset",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59685 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5282 --strictPort"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59685 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5282 --strictPort"
+      ],
       "cwd": "artifacts/production-planner",
       "port": 5282
     },
     {
       "name": "api-batchfix",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5283 PORT=59690 pnpm run dev"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5283 PORT=59690 pnpm run dev"
+      ],
       "cwd": "artifacts/api-server",
       "port": 59690,
       "autoPort": true
@@ -71,14 +98,20 @@
     {
       "name": "frontend-batchfix",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59690 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5283 --strictPort"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59690 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5283 --strictPort"
+      ],
       "cwd": "artifacts/production-planner",
       "port": 5283
     },
     {
       "name": "api-livemail",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5284 PORT=59695 pnpm run dev"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5284 PORT=59695 pnpm run dev"
+      ],
       "cwd": "artifacts/api-server",
       "port": 59695,
       "autoPort": true
@@ -86,14 +119,20 @@
     {
       "name": "frontend-livemail",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59695 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5284 --strictPort"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59695 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5284 --strictPort"
+      ],
       "cwd": "artifacts/production-planner",
       "port": 5284
     },
     {
       "name": "api-allergens",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5285 PORT=59700 pnpm run dev"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5285 PORT=59700 pnpm run dev"
+      ],
       "cwd": "artifacts/api-server",
       "port": 59700,
       "autoPort": true
@@ -101,14 +140,20 @@
     {
       "name": "frontend-allergens",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59700 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5285 --strictPort"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59700 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5285 --strictPort"
+      ],
       "cwd": "artifacts/production-planner",
       "port": 5285
     },
     {
       "name": "api-labelproxy",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5286 PORT=59705 pnpm run dev"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5286 PORT=59705 pnpm run dev"
+      ],
       "cwd": "artifacts/api-server",
       "port": 59705,
       "autoPort": true
@@ -116,14 +161,20 @@
     {
       "name": "frontend-labelproxy",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59705 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5286 --strictPort"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59705 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5286 --strictPort"
+      ],
       "cwd": "artifacts/production-planner",
       "port": 5286
     },
     {
       "name": "api-samedough",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5287 PORT=59710 pnpm run dev"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5287 PORT=59710 pnpm run dev"
+      ],
       "cwd": "artifacts/api-server",
       "port": 59710,
       "autoPort": true
@@ -131,14 +182,20 @@
     {
       "name": "frontend-samedough",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59710 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5287 --strictPort"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59710 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5287 --strictPort"
+      ],
       "cwd": "artifacts/production-planner",
       "port": 5287
     },
     {
       "name": "api-curiosity",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5288 PORT=59715 pnpm run dev"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5288 PORT=59715 pnpm run dev"
+      ],
       "cwd": "artifacts/api-server",
       "port": 59715,
       "autoPort": true
@@ -146,14 +203,20 @@
     {
       "name": "frontend-curiosity",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59715 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5288 --strictPort"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59715 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5288 --strictPort"
+      ],
       "cwd": "artifacts/production-planner",
       "port": 5288
     },
     {
       "name": "api-sopcreate",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5289 PORT=59720 pnpm run dev"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5289 PORT=59720 pnpm run dev"
+      ],
       "cwd": "artifacts/api-server",
       "port": 59720,
       "autoPort": true
@@ -161,16 +224,43 @@
     {
       "name": "frontend-sopcreate",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59720 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5289 --strictPort"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59720 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5289 --strictPort"
+      ],
       "cwd": "artifacts/production-planner",
       "port": 5289
     },
     {
       "name": "frontend-preview-3",
       "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["-lc", "PATH=/opt/homebrew/bin:$PATH pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5281 --strictPort"],
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5281 --strictPort"
+      ],
       "cwd": "artifacts/production-planner",
       "port": 5281
+    },
+    {
+      "name": "api-improvedelete",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5290 PORT=59725 pnpm run dev"
+      ],
+      "cwd": "artifacts/api-server",
+      "port": 59725,
+      "autoPort": true
+    },
+    {
+      "name": "frontend-improvedelete",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59725 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5290 --strictPort"
+      ],
+      "cwd": "artifacts/production-planner",
+      "port": 5290
     }
   ]
 }
