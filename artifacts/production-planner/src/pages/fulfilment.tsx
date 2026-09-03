@@ -28,7 +28,7 @@ import {
   RefreshCw, MapPin, SkipForward, RotateCcw, XCircle, Loader2,
   ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter, ArrowUpDown,
   Volume2, VolumeX, AlertTriangle, PackageCheck, Snowflake, CalendarClock,
-  ClipboardCheck, Factory, ShoppingBag,
+  ClipboardCheck, Factory, ShoppingBag, Refrigerator,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -3976,6 +3976,17 @@ export default function Fulfilment() {
         }} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
           <ArrowLeft className="w-5 h-5" />
           <span className="sr-only">Back</span>
+        </button>
+        {/* Daily factory-number check — the old packing station carried this
+            before it was folded into this screen (Graeme, 2026-09-03). Jumps
+            to stock control so the fridge count is verified each morning. */}
+        <button
+          onClick={() => navigate("/stock-control")}
+          className="flex items-center gap-1.5 text-sm font-medium text-foreground bg-secondary hover:bg-secondary/80 border border-border rounded-lg px-3 py-2 transition-colors ml-auto"
+          title="Verify production-fridge stock — updates the Factory Number"
+        >
+          <Refrigerator className="w-4 h-4 text-indigo-500" />
+          Check Factory Number
         </button>
       </div>
 
