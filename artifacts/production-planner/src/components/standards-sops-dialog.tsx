@@ -10,6 +10,7 @@ import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { STATIONS } from "@/pages/station/shared/constants";
 import { youtubeEmbedSrc, currentOrigin } from "@/lib/youtube-embed";
+import { rankSops } from "@/lib/sop-search";
 
 interface SopSummary {
   id: number;
@@ -346,6 +347,7 @@ export function StandardsSopsDialog({
   onClose,
   currentStationType,
   initialSopId,
+  initialEditSopId,
 }: {
   open: boolean;
   onClose: () => void;
@@ -354,15 +356,23 @@ export function StandardsSopsDialog({
    *  instead of the library list. Used from the morning meeting's
    *  "New & Updated SOPs" slide to deep-link into a specific SOP. */
   initialSopId?: number;
+  /** When set, the dialog opens straight into the EDITOR for this SOP.
+   *  Used by the SOP chips after creating an SOP in place, so writing the
+   *  steps is one tap from the station screen. */
+  initialEditSopId?: number;
 }) {
   type View = { kind: "library" } | { kind: "viewer"; sopId: number } | { kind: "editor"; sopId: number };
   const [view, setView] = useState<View>({ kind: "library" });
 
   useEffect(() => {
     if (open) {
-      setView(initialSopId ? { kind: "viewer", sopId: initialSopId } : { kind: "library" });
+      setView(
+        initialEditSopId ? { kind: "editor", sopId: initialEditSopId }
+          : initialSopId ? { kind: "viewer", sopId: initialSopId }
+          : { kind: "library" },
+      );
     }
-  }, [open, initialSopId]);
+  }, [open, initialSopId, initialEditSopId]);
 
   return (
     <AnimatePresence>
@@ -515,7 +525,28 @@ function Library({
 
   useEffect(() => { fetchList(); }, [fetchList]);
 
+  // Naming comes first. This used to create an SOP called "Untitled SOP"
+  // and jump into the editor, so anyone who backed out — or got called away
+  // mid-shift — left a nameless stub in the library and in every attach
+  // picker. One field up front costs a second and stops that for good.
+  const [namingNew, setNamingNew] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
+  const newTitleRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (namingNew) newTitleRef.current?.focus();
+  }, [namingNew]);
+
+  // Anything already in the library that this name might duplicate.
+  const newTitleClashes = useMemo(() => {
+    if (!namingNew || !newTitle.trim()) return [];
+    const ranked = rankSops(newTitle, items ?? [], { matchLimit: 3, similarLimit: 3 });
+    return [...ranked.matches, ...ranked.similar].slice(0, 3);
+  }, [namingNew, newTitle, items]);
+
   const handleCreate = async () => {
+    const title = newTitle.trim();
+    if (!title) return;
     setCreating(true);
     try {
       const resp = await fetch("/api/standards", {
@@ -523,12 +554,13 @@ function Library({
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: "Untitled SOP",
+          title,
           stations: currentStationType ? [currentStationType] : [],
         }),
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data: { id: number } = await resp.json();
+      setNamingNew(false);
       onEditSop(data.id);
     } catch (err) {
       toast({ title: "Failed to create SOP", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
@@ -559,7 +591,7 @@ function Library({
         <div className="flex items-center gap-2">
           {canEdit && (
             <button
-              onClick={handleCreate}
+              onClick={() => { setNewTitle(""); setNamingNew(v => !v); }}
               disabled={creating}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 disabled:opacity-60"
             >
@@ -576,6 +608,55 @@ function Library({
           )}
         </div>
       </div>
+
+      {canEdit && namingNew && (
+        <div className="px-5 py-3 border-b border-border bg-primary/5 flex-shrink-0 space-y-2">
+          <label className="block text-xs font-semibold text-muted-foreground">Name the new SOP</label>
+          <div className="flex gap-2">
+            <input
+              ref={newTitleRef}
+              value={newTitle}
+              onChange={e => setNewTitle(e.target.value)}
+              placeholder="What is this SOP called?"
+              enterKeyHint="done"
+              onKeyDown={e => {
+                if (e.key === "Enter" && newTitle.trim() && !creating) { e.preventDefault(); handleCreate(); }
+                if (e.key === "Escape") setNamingNew(false);
+              }}
+              className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-border bg-background text-sm"
+            />
+            <button
+              onClick={handleCreate}
+              disabled={!newTitle.trim() || creating}
+              className="px-4 min-h-[44px] rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 disabled:opacity-50"
+            >
+              Create
+            </button>
+            <button
+              onClick={() => setNamingNew(false)}
+              className="px-3 min-h-[44px] rounded-lg border border-border text-sm font-medium hover:bg-secondary"
+            >
+              Cancel
+            </button>
+          </div>
+          {newTitleClashes.length > 0 && (
+            <div className="rounded-lg bg-amber-50 dark:bg-amber-950/40 p-2 space-y-1">
+              <p className="text-[11px] font-semibold text-amber-900 dark:text-amber-200">
+                These already exist — open one instead?
+              </p>
+              {newTitleClashes.map(c => (
+                <button
+                  key={c.id}
+                  onClick={() => { setNamingNew(false); onOpenSop(c.id); }}
+                  className="block w-full text-left text-xs truncate px-2 py-1.5 rounded-md hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                >
+                  {c.title}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
         {(() => {
           // Build the full list of station options (always includes the 10

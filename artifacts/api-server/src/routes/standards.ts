@@ -10,8 +10,10 @@
 
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import multer from "multer";
+import { z } from "zod";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import { validate } from "../middleware/validate";
 import { buildSopFromVideo, buildSopFromMedia, ffmpegAvailable, type SuppliedPhoto } from "../lib/sop-video";
 import { isClaudeConfigured } from "../lib/ai/claude";
 
@@ -176,7 +178,18 @@ function parseTagList(raw: unknown): string[] {
 }
 
 // Create empty SOP.
-router.post("/", requireAuth, async (req, res) => {
+//
+// The title is required. It used to be optional, and the only caller sent
+// the literal "Untitled SOP", so every abandoned create left a nameless
+// stub cluttering the library and every attach picker. Both create flows
+// now name the SOP before it exists; this makes that the rule.
+const createSopSchema = z.object({
+  title: z.string().trim().min(1, "An SOP needs a name").max(300),
+  stations: z.array(z.string()).optional(),
+  tags: z.array(z.string()).optional(),
+});
+
+router.post("/", requireAuth, validate(createSopSchema), async (req, res) => {
   try {
     const title = String(req.body?.title ?? "").trim();
     const stationsRaw = req.body?.stations;
@@ -753,19 +766,24 @@ const parseIdsParam = (raw: unknown): number[] =>
     .map(s => parseInt(s.trim()))
     .filter(n => Number.isInteger(n) && n > 0);
 
-// GET /links/for-checklist?ids=1,2,3 → { [templateId]: [{linkId,sopId,title}] }
+// Every link payload carries the SOP's step count so the chip can tell a
+// written SOP from one that was created in place and still needs writing —
+// a "Show me how" button that opens nothing is worse than no button.
+const STEP_COUNT_SQL = sql`(SELECT COUNT(*)::int FROM sop_steps st WHERE st.sop_id = s.id) AS step_count`;
+
+// GET /links/for-checklist?ids=1,2,3 → { [templateId]: [{linkId,sopId,title,stepCount}] }
 router.get("/links/for-checklist", requireAuth, async (req, res) => {
   const ids = parseIdsParam(req.query.ids);
   if (ids.length === 0) { res.json({}); return; }
-  const rows = await db.execute<{ link_id: number; target_a: number; sop_id: number; title: string }>(sql`
-    SELECT l.id AS link_id, l.target_a, l.sop_id, s.title
+  const rows = await db.execute<{ link_id: number; target_a: number; sop_id: number; title: string; step_count: number }>(sql`
+    SELECT l.id AS link_id, l.target_a, l.sop_id, s.title, ${STEP_COUNT_SQL}
     FROM sop_links l JOIN standards_sops s ON s.id = l.sop_id
     WHERE l.target_type = 'checklist_template' AND l.target_a = ANY(${`{${ids.join(",")}}`}::int[])
     ORDER BY s.title
   `);
-  const out: Record<number, Array<{ linkId: number; sopId: number; title: string }>> = {};
+  const out: Record<number, Array<{ linkId: number; sopId: number; title: string; stepCount: number }>> = {};
   for (const r of rows.rows ?? []) {
-    (out[r.target_a] ??= []).push({ linkId: r.link_id, sopId: r.sop_id, title: r.title });
+    (out[r.target_a] ??= []).push({ linkId: r.link_id, sopId: r.sop_id, title: r.title, stepCount: Number(r.step_count) || 0 });
   }
   res.json(out);
 });
@@ -779,10 +797,10 @@ router.get("/links/for-ingredients", requireAuth, async (req, res) => {
   if (ids.length === 0) { res.json({}); return; }
   const rows = await db.execute<{
     link_id: number; target_type: string; target_a: number; target_b: number | null;
-    sop_id: number; title: string; recipe_name: string | null;
+    sop_id: number; title: string; recipe_name: string | null; step_count: number;
   }>(sql`
     SELECT l.id AS link_id, l.target_type, l.target_a, l.target_b, l.sop_id, s.title,
-           r.name AS recipe_name
+           r.name AS recipe_name, ${STEP_COUNT_SQL}
     FROM sop_links l
     JOIN standards_sops s ON s.id = l.sop_id
     LEFT JOIN recipes r ON l.target_type = 'recipe_ingredient' AND r.id = l.target_a
@@ -791,7 +809,7 @@ router.get("/links/for-ingredients", requireAuth, async (req, res) => {
     ORDER BY s.title
   `);
   const out: Record<number, Array<{
-    linkId: number; sopId: number; title: string;
+    linkId: number; sopId: number; title: string; stepCount: number;
     scope: "ingredient" | "recipe"; recipeId: number | null; recipeName: string | null;
   }>> = {};
   for (const r of rows.rows ?? []) {
@@ -800,6 +818,7 @@ router.get("/links/for-ingredients", requireAuth, async (req, res) => {
       linkId: r.link_id,
       sopId: r.sop_id,
       title: r.title,
+      stepCount: Number(r.step_count) || 0,
       scope: r.target_type === "ingredient" ? "ingredient" : "recipe",
       recipeId: r.target_type === "recipe_ingredient" ? r.target_a : null,
       recipeName: r.recipe_name,
@@ -817,15 +836,15 @@ router.get("/links/for-ingredients", requireAuth, async (req, res) => {
 router.get("/links/for-recipes", requireAuth, async (req, res) => {
   const ids = parseIdsParam(req.query.ids);
   if (ids.length === 0) { res.json({}); return; }
-  const rows = await db.execute<{ link_id: number; target_a: number; sop_id: number; title: string }>(sql`
-    SELECT l.id AS link_id, l.target_a, l.sop_id, s.title
+  const rows = await db.execute<{ link_id: number; target_a: number; sop_id: number; title: string; step_count: number }>(sql`
+    SELECT l.id AS link_id, l.target_a, l.sop_id, s.title, ${STEP_COUNT_SQL}
     FROM sop_links l JOIN standards_sops s ON s.id = l.sop_id
     WHERE l.target_type = 'recipe' AND l.target_a = ANY(${`{${ids.join(",")}}`}::int[])
     ORDER BY s.title
   `);
-  const out: Record<number, Array<{ linkId: number; sopId: number; title: string }>> = {};
+  const out: Record<number, Array<{ linkId: number; sopId: number; title: string; stepCount: number }>> = {};
   for (const r of rows.rows ?? []) {
-    (out[r.target_a] ??= []).push({ linkId: r.link_id, sopId: r.sop_id, title: r.title });
+    (out[r.target_a] ??= []).push({ linkId: r.link_id, sopId: r.sop_id, title: r.title, stepCount: Number(r.step_count) || 0 });
   }
   res.json(out);
 });
@@ -839,15 +858,15 @@ router.get("/links/for-recipes", requireAuth, async (req, res) => {
 router.get("/links/for-sub-recipes", requireAuth, async (req, res) => {
   const ids = parseIdsParam(req.query.ids);
   if (ids.length === 0) { res.json({}); return; }
-  const rows = await db.execute<{ link_id: number; target_a: number; sop_id: number; title: string }>(sql`
-    SELECT l.id AS link_id, l.target_a, l.sop_id, s.title
+  const rows = await db.execute<{ link_id: number; target_a: number; sop_id: number; title: string; step_count: number }>(sql`
+    SELECT l.id AS link_id, l.target_a, l.sop_id, s.title, ${STEP_COUNT_SQL}
     FROM sop_links l JOIN standards_sops s ON s.id = l.sop_id
     WHERE l.target_type = 'sub_recipe' AND l.target_a = ANY(${`{${ids.join(",")}}`}::int[])
     ORDER BY s.title
   `);
-  const out: Record<number, Array<{ linkId: number; sopId: number; title: string }>> = {};
+  const out: Record<number, Array<{ linkId: number; sopId: number; title: string; stepCount: number }>> = {};
   for (const r of rows.rows ?? []) {
-    (out[r.target_a] ??= []).push({ linkId: r.link_id, sopId: r.sop_id, title: r.title });
+    (out[r.target_a] ??= []).push({ linkId: r.link_id, sopId: r.sop_id, title: r.title, stepCount: Number(r.step_count) || 0 });
   }
   res.json(out);
 });
@@ -861,13 +880,15 @@ router.get("/links/for-sub-recipes", requireAuth, async (req, res) => {
 router.get("/links/for-station", requireAuth, async (req, res) => {
   const station = String(req.query.station ?? "").trim();
   if (!station || station.length > 64) { res.json([]); return; }
-  const rows = await db.execute<{ link_id: number; sop_id: number; title: string }>(sql`
-    SELECT l.id AS link_id, l.sop_id, s.title
+  const rows = await db.execute<{ link_id: number; sop_id: number; title: string; step_count: number }>(sql`
+    SELECT l.id AS link_id, l.sop_id, s.title, ${STEP_COUNT_SQL}
     FROM sop_links l JOIN standards_sops s ON s.id = l.sop_id
     WHERE l.target_type = 'station' AND l.target_text = ${station}
     ORDER BY s.title
   `);
-  res.json((rows.rows ?? []).map(r => ({ linkId: r.link_id, sopId: r.sop_id, title: r.title })));
+  res.json((rows.rows ?? []).map(r => ({
+    linkId: r.link_id, sopId: r.sop_id, title: r.title, stepCount: Number(r.step_count) || 0,
+  })));
 });
 
 const LINK_TYPES = new Set(["checklist_template", "ingredient", "recipe_ingredient", "recipe", "sub_recipe", "station"]);

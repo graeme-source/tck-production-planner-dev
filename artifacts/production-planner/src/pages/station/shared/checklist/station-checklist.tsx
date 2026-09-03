@@ -610,7 +610,15 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                     <SopChips
                       links={sopLinksByItem?.[selectedItem.id] ?? []}
                       onOpen={sopViewer.open}
-                      attach={{ targetType: "checklist_template", a: selectedItem.id, label: selectedItem.title }}
+                      attach={{
+                        targetType: "checklist_template",
+                        a: selectedItem.id,
+                        label: selectedItem.title,
+                        // A new SOP made here is almost always called after
+                        // the check itself, and belongs to this station.
+                        subject: selectedItem.title,
+                        station: stationType,
+                      }}
                       queryKeysToInvalidate={[sopLinksKey]}
                     />
                   </div>

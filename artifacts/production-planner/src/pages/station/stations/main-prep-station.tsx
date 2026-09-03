@@ -1029,7 +1029,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                                 links={sopLinksByIngredient?.[ing.ingredientId] ?? []}
                                 onOpen={sopViewer.open}
                                 attach={[
-                                  { targetType: "ingredient", a: ing.ingredientId, label: "Everywhere" },
+                                  { targetType: "ingredient", a: ing.ingredientId, label: "Everywhere", subject: ing.ingredientName },
                                   ...[...new Map(ing.recipes.map(r => [r.recipeId, r.recipeName])).entries()].map(([recipeId, recipeName]) => ({
                                     targetType: "recipe_ingredient" as const,
                                     a: recipeId,

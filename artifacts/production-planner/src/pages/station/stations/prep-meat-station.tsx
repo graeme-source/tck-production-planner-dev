@@ -580,7 +580,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                         links={(sopLinksByIngredient?.[ing.ingredientId] ?? []).filter(l => l.scope === "ingredient" || l.recipeId === selected.recipeId)}
                         onOpen={sopViewer.open}
                         attach={[
-                          { targetType: "ingredient", a: ing.ingredientId, label: "Everywhere" },
+                          { targetType: "ingredient", a: ing.ingredientId, label: "Everywhere", subject: ing.ingredientName },
                           { targetType: "recipe_ingredient", a: selected.recipeId, b: ing.ingredientId, label: `Only ${selected.recipeName}` },
                         ]}
                         queryKeysToInvalidate={[sopIngredientsKey]}
