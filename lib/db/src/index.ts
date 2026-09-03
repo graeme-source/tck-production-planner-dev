@@ -32,3 +32,4 @@ export * from "./schema";
 export * from "./improvement-stage";
 export * from "./employee-review-visibility";
 export * from "./probation";
+export * from "./fried-chicken-allocation";
