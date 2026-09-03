@@ -28,7 +28,7 @@ import {
   RefreshCw, MapPin, SkipForward, RotateCcw, XCircle, Loader2,
   ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter, ArrowUpDown,
   Volume2, VolumeX, AlertTriangle, PackageCheck, Snowflake, CalendarClock,
-  ClipboardCheck, Factory, ShoppingBag,
+  ClipboardCheck, Factory, ShoppingBag, Refrigerator,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -1170,124 +1170,6 @@ function FailuresModal({
   );
 }
 
-interface DispatchAuditRow {
-  orderId: number;
-  orderName: string;
-  customerName: string | null;
-  cancelledAt: string | null;
-  shopifyFulfillmentStatus: string | null;
-  fulfilledByApp: boolean;
-  factoryAdjusted: boolean;
-  status: "ok" | "needs_decrement" | "needs_fulfilment" | "untouched" | "shopify_only";
-}
-
-interface DispatchAuditResponse {
-  tag: string;
-  summary: { total: number; ok: number; needsFulfilment: number; needsDecrement: number; shopifyOnly: number; untouched: number };
-  orders: DispatchAuditRow[];
-}
-
-// End-of-dispatch audit modal — calls /api/fulfilment/dispatch-audit which
-// cross-checks each order in the current dispatch tag against Shopify's
-// fulfillment_status and the two completion tags. Lets the operator close
-// out a packing session knowing exactly what (if anything) needs follow-up.
-function AuditModal({ tag, onClose, adminBase }: { tag: string; onClose: () => void; adminBase?: string }) {
-  const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["dispatch-audit", tag],
-    queryFn: async (): Promise<DispatchAuditResponse> => {
-      const res = await fetch(`${BASE}/api/fulfilment/dispatch-audit?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
-      if (!res.ok) throw new Error((await res.json()).error ?? "Audit failed");
-      return res.json();
-    },
-    staleTime: 10_000,
-  });
-
-  const STATUS_LABEL: Record<DispatchAuditRow["status"], { label: string; color: string }> = {
-    ok: { label: "Fully complete", color: "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-200" },
-    needs_decrement: { label: "Stock not decremented", color: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200" },
-    needs_fulfilment: { label: "Not fulfilled", color: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200" },
-    shopify_only: { label: "Fulfilled outside app", color: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200" },
-    untouched: { label: "Untouched", color: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200" },
-  };
-
-  const problemRows = (data?.orders ?? []).filter(o => o.status !== "ok");
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-card border border-border rounded-2xl max-w-3xl w-full max-h-[85vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
-        <div className="p-5 border-b border-border flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold">End-of-dispatch audit</h2>
-            <p className="text-sm text-muted-foreground mt-0.5">Tag: <span className="font-mono">{tag}</span></p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => refetch()} className="p-2 text-muted-foreground hover:text-foreground rounded-lg hover:bg-secondary/50" title="Refresh">
-              <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
-            </button>
-            <button onClick={onClose} className="p-2 text-muted-foreground hover:text-foreground rounded-lg hover:bg-secondary/50">
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-        <div className="overflow-y-auto p-4 space-y-4">
-          {isLoading && (
-            <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
-          )}
-          {error && (
-            <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive text-sm">{(error as Error).message}</div>
-          )}
-          {data && (
-            <>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                <SummaryTile label="Total" value={data.summary.total} color="bg-secondary" />
-                <SummaryTile label="OK" value={data.summary.ok} color="bg-green-100 dark:bg-green-900/40" />
-                <SummaryTile label="Not fulfilled" value={data.summary.needsFulfilment} color="bg-red-100 dark:bg-red-900/40" />
-                <SummaryTile label="Stock missed" value={data.summary.needsDecrement} color="bg-amber-100 dark:bg-amber-900/40" />
-                <SummaryTile label="Outside app" value={data.summary.shopifyOnly} color="bg-blue-100 dark:bg-blue-900/40" />
-              </div>
-
-              {problemRows.length === 0 ? (
-                <div className="p-4 bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-xl text-sm text-green-700 dark:text-green-300 text-center">
-                  Everything on this dispatch tag is fully complete — Shopify shipped + stock decremented.
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <p className="text-sm font-medium text-muted-foreground">Needs attention ({problemRows.length})</p>
-                  {problemRows.map(o => (
-                    <div key={o.orderId} className="p-3 bg-secondary/20 border border-border rounded-xl flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="font-semibold">
-                          <OrderNumber orderId={o.orderId} name={o.orderName} adminBase={adminBase} />
-                          <span className="font-normal text-muted-foreground"> — {o.customerName ?? "(no name)"}</span>
-                        </p>
-                        <div className="flex items-center gap-2 mt-1 flex-wrap text-xs">
-                          <span className={`px-2 py-0.5 rounded ${STATUS_LABEL[o.status].color} font-medium`}>{STATUS_LABEL[o.status].label}</span>
-                          <span className="text-muted-foreground">Shopify: {o.shopifyFulfillmentStatus ?? "unfulfilled"}</span>
-                          <span className="text-muted-foreground">App-fulfilled: {o.fulfilledByApp ? "✓" : "✗"}</span>
-                          <span className="text-muted-foreground">Stock-decremented: {o.factoryAdjusted ? "✓" : "✗"}</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SummaryTile({ label, value, color }: { label: string; value: number; color: string }) {
-  return (
-    <div className={`p-3 rounded-xl ${color}`}>
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="text-2xl font-bold leading-tight">{value}</p>
-    </div>
-  );
-}
-
 export default function Fulfilment() {
   const tagsRefresh = useRefreshSpin();
   const ordersRefresh = useRefreshSpin();
@@ -1356,7 +1238,6 @@ export default function Fulfilment() {
   const [completionFailures, setCompletionFailures] = useState<CompletionFailure[]>([]);
   const [pendingCompletions, setPendingCompletions] = useState(0);
   const [showFailuresModal, setShowFailuresModal] = useState(false);
-  const [showAuditModal, setShowAuditModal] = useState(false);
   // Per-row scanned count, keyed by the grouped item's `_groupKey` (variant
   // id when present). Lets us collapse duplicate line items into a single row
   // with an `×N` badge, then track scan progress within that row.
@@ -4096,6 +3977,17 @@ export default function Fulfilment() {
           <ArrowLeft className="w-5 h-5" />
           <span className="sr-only">Back</span>
         </button>
+        {/* Daily factory-number check — the old packing station carried this
+            before it was folded into this screen (Graeme, 2026-09-03). Jumps
+            to stock control so the fridge count is verified each morning. */}
+        <button
+          onClick={() => navigate("/stock-control")}
+          className="flex items-center gap-1.5 text-sm font-medium text-foreground bg-secondary hover:bg-secondary/80 border border-border rounded-lg px-3 py-2 transition-colors ml-auto"
+          title="Verify production-fridge stock — updates the Factory Number"
+        >
+          <Refrigerator className="w-4 h-4 text-indigo-500" />
+          Check Factory Number
+        </button>
       </div>
 
       {stationPlanId && (
@@ -4159,22 +4051,6 @@ export default function Fulfilment() {
               {completionFailures.length} order{completionFailures.length === 1 ? "" : "s"} failed — review
             </button>
           )}
-          <button
-            onClick={() => setShowAuditModal(true)}
-            className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg text-sm text-muted-foreground hover:bg-secondary/50 ml-auto"
-          >
-            Run end-of-dispatch audit
-          </button>
-        </div>
-      )}
-      {pendingCompletions === 0 && completionFailures.length === 0 && (
-        <div className="flex justify-end">
-          <button
-            onClick={() => setShowAuditModal(true)}
-            className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg text-sm text-muted-foreground hover:bg-secondary/50"
-          >
-            Run end-of-dispatch audit
-          </button>
         </div>
       )}
 
@@ -4185,9 +4061,6 @@ export default function Fulfilment() {
           onDismiss={(orderId) => setCompletionFailures(prev => prev.filter(f => f.orderId !== orderId))}
           onClose={() => setShowFailuresModal(false)}
         />
-      )}
-      {showAuditModal && (
-        <AuditModal tag={queryTag} onClose={() => setShowAuditModal(false)} adminBase={configStatus?.shopifyAdminOrderBase} />
       )}
 
       {/* One summary for the day. Gate warnings live behind a button here:
