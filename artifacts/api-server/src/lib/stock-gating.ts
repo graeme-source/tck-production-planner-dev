@@ -191,6 +191,10 @@ function zapietDateBlocked(cal: { minDate?: string; disabled?: unknown[] }, date
   );
 }
 
+/** How long Shopify → Zapiet gets before the first check is even attempted.
+ *  A minute was not enough and produced false failures. */
+const VERIFY_FIRST_CHECK_MS = 5 * 60_000;
+
 /** Check through Zapiet's own calendar API that tomorrow is gone for this
  *  product. Returns a verify_status + note. */
 async function verifyTomorrowBlocked(
@@ -374,10 +378,19 @@ export async function runStockGateCycle(trigger: "timer" | "manual"): Promise<St
     }
 
     // Verify holds tagged on a previous cycle: has Zapiet actually pulled
-    // tomorrow? (Give Shopify→Zapiet a minute before judging.)
+    // tomorrow?
+    //
+    // This used to run ONCE, a minute after the tag went on, and only for a
+    // hold that had never been checked. Shopify → Zapiet is not that quick, so
+    // a slow handover was recorded as "failed" and then never looked at again
+    // — a permanent red "a hold isn't blocking" on a gate that was working
+    // (Graeme, 2026-09-03). Now a failure is re-checked on every cycle and
+    // clears itself the moment Zapiet catches up, and the first check waits
+    // long enough that ordinary propagation never gets called a failure.
     const pending = activeHolds.filter(h =>
-      h.verifyStatus === null && !h.dryRun && h.shopifyVariantId && h.productGid
-      && Date.now() - h.heldAt.getTime() > 60_000,
+      (h.verifyStatus === null || h.verifyStatus === "failed")
+      && !h.dryRun && h.shopifyVariantId && h.productGid
+      && Date.now() - h.heldAt.getTime() > VERIFY_FIRST_CHECK_MS,
     );
     for (const h of pending) {
       try {
@@ -386,7 +399,12 @@ export async function runStockGateCycle(trigger: "timer" | "manual"): Promise<St
         await db.update(stockGateHoldsTable)
           .set({ verifyStatus: v.status, verifyNote: v.note })
           .where(eq(stockGateHoldsTable.id, h.id));
-        if (v.status === "failed") console.error(`[stock-gate] VERIFY FAILED ${h.recipeName}: ${v.note}`);
+        if (v.status === "failed") {
+          // Warn, not error: this is retried next cycle and usually clears.
+          console.warn(`[stock-gate] not blocking yet for ${h.recipeName} (will re-check): ${v.note}`);
+        } else if (h.verifyStatus === "failed") {
+          console.log(`[stock-gate] ${h.recipeName} now ${v.status} — earlier failure cleared`);
+        }
       } catch (err) {
         console.error(`[stock-gate] verify errored for ${h.recipeName}:`, err);
       }

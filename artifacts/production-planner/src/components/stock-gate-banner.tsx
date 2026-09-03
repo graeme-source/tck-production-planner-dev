@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { ShieldAlert, Loader2, ArrowRight, CheckCircle2, AlertTriangle, FlaskConical } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { holdVerifyState, anyHoldNotBlocking } from "@/lib/stock-gate-verify";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
@@ -37,19 +38,23 @@ function fmtTime(iso: string): string {
 }
 
 function VerifyBadge({ hold }: { hold: Hold }) {
-  if (hold.dryRun) {
-    return <span className="inline-flex items-center gap-1 text-xs text-sky-700 dark:text-sky-400"><FlaskConical className="w-3 h-3" /> dry run</span>;
+  switch (holdVerifyState(hold)) {
+    case "dry-run":
+      return <span className="inline-flex items-center gap-1 text-xs text-sky-700 dark:text-sky-400"><FlaskConical className="w-3 h-3" /> dry run</span>;
+    case "confirmed":
+      return <span className="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="w-3 h-3" /> Zapiet confirmed</span>;
+    // Tagged, not showing as blocked yet, still well inside the handover
+    // window. Said plainly and quietly — it is not a problem, and it clears
+    // itself when the next check passes.
+    case "settling":
+      return <span className="text-xs text-muted-foreground" title={hold.verifyNote ?? undefined}>waiting for Zapiet…</span>;
+    case "not-blocking":
+      return <span className="inline-flex items-center gap-1 text-xs text-red-700 dark:text-red-400" title={hold.verifyNote ?? undefined}><AlertTriangle className="w-3 h-3" /> NOT blocking — check Zapiet rule</span>;
+    case "unchecked":
+      return <span className="text-xs text-muted-foreground" title={hold.verifyNote ?? undefined}>check skipped</span>;
+    default:
+      return <span className="text-xs text-muted-foreground">verifying…</span>;
   }
-  if (hold.verifyStatus === "verified") {
-    return <span className="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="w-3 h-3" /> Zapiet confirmed</span>;
-  }
-  if (hold.verifyStatus === "failed") {
-    return <span className="inline-flex items-center gap-1 text-xs text-red-700 dark:text-red-400" title={hold.verifyNote ?? undefined}><AlertTriangle className="w-3 h-3" /> NOT blocking — check Zapiet rule</span>;
-  }
-  if (hold.verifyStatus === "skipped") {
-    return <span className="text-xs text-muted-foreground" title={hold.verifyNote ?? undefined}>check skipped</span>;
-  }
-  return <span className="text-xs text-muted-foreground">verifying…</span>;
 }
 
 export function StockGateBanner({ userRole }: { userRole?: string }) {
@@ -90,7 +95,11 @@ export function StockGateBanner({ userRole }: { userRole?: string }) {
 
   const count = data.activeHolds.length;
   const allDry = data.activeHolds.every(h => h.dryRun);
-  const anyFailed = data.activeHolds.some(h => !h.dryRun && h.verifyStatus === "failed");
+  // Red only for a hold that is STILL not blocking well after its tag went
+  // on. A check that failed moments after tagging is Shopify → Zapiet taking
+  // its time, not a hole in the gate, and it used to sit red forever because
+  // it was never re-checked (Graeme, 2026-09-03).
+  const anyFailed = anyHoldNotBlocking(data.activeHolds);
 
   async function releaseHold(hold: Hold) {
     setBusy(hold.id);
