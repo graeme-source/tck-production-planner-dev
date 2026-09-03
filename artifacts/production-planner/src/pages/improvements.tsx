@@ -19,7 +19,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Loader2, Camera, CheckCircle2, Clock, ThumbsUp, RotateCcw,
-  Trophy, ChevronLeft, X, AlertCircle, Settings2, Clapperboard, Trash2,
+  Trophy, ChevronLeft, X, AlertCircle, Settings2, Clapperboard, Trash2, ArrowBigUp, HandHelping,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/contexts/auth-context";
@@ -60,6 +60,10 @@ type Improvement = {
   markDoneBlocker: string | null;
   canReview: boolean;
   submittedByName: string | null;
+  /** Whose list it is on. Null means nobody's — it sits in "Up for grabs"
+   *  until someone picks it up. */
+  assignedTo: number | null;
+  assignedToName: string | null;
   creditedToName: string | null;
   approvedByName: string | null;
   reviewNote: string | null;
@@ -219,6 +223,52 @@ function Section({ title, icon, children, empty }: {
   );
 }
 
+/** Backing an idea someone else raised.
+ *
+ *  Deliberately NOT a thumbs-up: a like says "nice one", and this is a vote
+ *  that decides what gets done. It reads as a vote — an upward arrow, a live
+ *  count, and wording that says what pressing it means (Graeme, 2026-09-03).
+ *
+ *  Lives on the feed card as well as inside the improvement, because having
+ *  to open something to say "this affects me too" is enough friction that
+ *  people don't bother — and the count is the whole signal we're collecting.
+ */
+function VoteButton({ item, variant }: { item: Improvement; variant: "feed" | "detail" }) {
+  const queryClient = useQueryClient();
+  const vote = useMutation({
+    mutationFn: () => api(`/improvements/${item.id}/vote`, { method: "POST" }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["improvements"] }),
+    onError: (e: Error) => toast({ title: "Couldn't save your vote", description: e.message, variant: "destructive" }),
+  });
+
+  const label = item.votedByMe
+    ? (item.voteCount > 1 ? `You and ${item.voteCount - 1} more want this` : "You want this done")
+    : item.voteCount > 0
+      ? `${item.voteCount} ${item.voteCount === 1 ? "person wants" : "people want"} this — add your vote`
+      : "This affects me too — add my vote";
+
+  return (
+    <button
+      onClick={e => { e.stopPropagation(); vote.mutate(); }}
+      disabled={vote.isPending}
+      aria-pressed={item.votedByMe}
+      title={item.votedByMe ? "Tap to take your vote back" : "Vote for this improvement to be carried out"}
+      className={cn(
+        "rounded-2xl border-2 font-bold flex items-center justify-center gap-2.5 transition-colors disabled:opacity-50",
+        variant === "detail" ? "w-full h-16 text-xl" : "w-full h-14 text-lg",
+        item.votedByMe
+          ? "border-primary bg-primary/10 text-primary"
+          : "border-border hover:bg-secondary/50",
+      )}
+    >
+      {vote.isPending
+        ? <Loader2 className={variant === "detail" ? "w-6 h-6 animate-spin" : "w-5 h-5 animate-spin"} />
+        : <ArrowBigUp className={cn(variant === "detail" ? "w-7 h-7" : "w-6 h-6", item.votedByMe && "fill-current")} />}
+      {label}
+    </button>
+  );
+}
+
 function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
   // A feed post, not a button: the header and metadata open the item, but
   // videos play right here in the feed — nesting a player inside a button
@@ -236,11 +286,6 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
         {item.mediaCount > 0 && (
           <span className="flex items-center gap-1.5"><Camera className="w-4 h-4" /> {item.mediaCount}</span>
         )}
-        {item.voteCount > 0 && (
-          <span className="flex items-center gap-1.5 font-semibold text-foreground">
-            <ThumbsUp className="w-4 h-4" /> {item.voteCount}
-          </span>
-        )}
         {item.creditedToName && <span>{item.creditedToName}</span>}
         {item.subjectTitle && (
           <span className="text-sm px-2 py-0.5 rounded-lg bg-secondary font-semibold">
@@ -253,6 +298,14 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
       </div>
       </button>
       <ImprovementFeedMedia media={item.media} onOpen={onOpen} />
+      {/* Voting from the feed itself — outside the open-it button, so a tap
+          here backs the idea instead of navigating away. Only while it is
+          still to do: once it is done, voting on it means nothing. */}
+      {item.stage === "todo" && (
+        <div className="mt-3">
+          <VoteButton item={item} variant="feed" />
+        </div>
+      )}
     </div>
   );
 }
@@ -367,12 +420,33 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
   id: number; onBack: () => void; isManager: boolean; isAdmin: boolean;
 }) {
   const queryClient = useQueryClient();
+  const { state } = useAuth();
+  const currentUserId = state.status === "authenticated" ? state.user.id : null;
   const [sendBackNote, setSendBackNote] = useState("");
   const [sendingBack, setSendingBack] = useState(false);
   // Delete asks first, in place, the same two-step shape as "send back"
   // above — no separate dialog to learn, and no single tap that destroys
   // someone's photos.
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  // Moving an idea off someone's list and back to the pile. An improvement
+  // logged by whoever raised it starts on THEIR list, which is right most of
+  // the time — but some are logged and never picked up, and they sat on
+  // Graeme's list with no way to hand them back (2026-09-03).
+  const reassign = useMutation({
+    mutationFn: (assignedTo: number | null) =>
+      api(`/improvements/${id}`, { method: "PATCH", body: JSON.stringify({ assignedTo }) }),
+    onSuccess: (_r, assignedTo) => {
+      refresh();
+      toast({
+        title: assignedTo === null ? "Up for grabs" : "On your list",
+        description: assignedTo === null
+          ? "Anyone can pick this one up now."
+          : "It'll show under Yours.",
+      });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't move it", description: e.message, variant: "destructive" }),
+  });
 
   const { data: items = [], isLoading } = useQuery<Improvement[]>({
     queryKey: ["improvements"],
@@ -461,7 +535,39 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
           Logged by {item.submittedByName ?? "someone"}
           {item.creditedToName && item.creditedToName !== item.submittedByName && ` · credited to ${item.creditedToName}`}
         </p>
+        {/* Whose job it is now — the thing the board is actually sorted by,
+            and it was nowhere on this screen. */}
+        <p className="text-base font-semibold mt-1">
+          {item.assignedToName
+            ? `On ${item.assignedToName}'s list`
+            : "Up for grabs — nobody has picked this up"}
+        </p>
       </div>
+
+      {/* Hand it back, or take it on. Managers only, matching the endpoint. */}
+      {isManager && item.stage !== "approved" && (
+        item.assignedTo != null ? (
+          <button
+            onClick={() => reassign.mutate(null)}
+            disabled={reassign.isPending}
+            className="w-full h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 transition-colors disabled:opacity-50"
+          >
+            {reassign.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <HandHelping className="w-5 h-5" />}
+            Move to Up for grabs
+          </button>
+        ) : (
+          currentUserId != null && (
+            <button
+              onClick={() => reassign.mutate(currentUserId)}
+              disabled={reassign.isPending}
+              className="w-full h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 transition-colors disabled:opacity-50"
+            >
+              {reassign.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <HandHelping className="w-5 h-5" />}
+              Put it on my list
+            </button>
+          )
+        )
+      )}
 
       {item.stage === "sent_back" && item.reviewNote && (
         <div className="rounded-2xl border-2 border-destructive/40 bg-destructive/5 p-4">
@@ -534,25 +640,7 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
 
       {/* Backing an idea someone else raised. Only while it's still to do —
           once it's done, voting on it means nothing. */}
-      {item.stage === "todo" && (
-        <button
-          onClick={() => vote.mutate()}
-          disabled={vote.isPending}
-          className={cn(
-            "w-full h-16 rounded-2xl border-2 text-xl font-bold flex items-center justify-center gap-3 transition-colors disabled:opacity-50",
-            item.votedByMe
-              ? "border-primary bg-primary/10 text-primary"
-              : "border-border hover:bg-secondary/50",
-          )}
-        >
-          {vote.isPending ? <Loader2 className="w-6 h-6 animate-spin" /> : <ThumbsUp className="w-6 h-6" />}
-          {item.votedByMe
-            ? `You're one of ${item.voteCount} — tap to take it back`
-            : item.voteCount > 0
-              ? `${item.voteCount} ${item.voteCount === 1 ? "person wants" : "people want"} this — add your vote`
-              : "This affects me too"}
-        </button>
-      )}
+      {item.stage === "todo" && <VoteButton item={item} variant="detail" />}
 
       {item.stage === "waiting" && !item.canReview && (
         <div className="rounded-2xl bg-amber-500/10 p-5 text-center">
