@@ -279,12 +279,22 @@ router.post("/plans/:planId/items", requireManagerOrAdmin, validate(ItemsBody), 
       }
     }
 
+    // EVERY fried chicken line already on this plan, not only the ones the
+    // body mentions. Scoping this to the submitted recipes meant a variant
+    // dropped from the list was never loaded, so the removal loop below could
+    // never see it and nothing was ever removed — the endpoint documented
+    // itself as the edit path while only ever being the add path.
     const existing = await db
-      .select({ id: productionPlanItemsTable.id, recipeId: productionPlanItemsTable.recipeId, batchesComplete: productionPlanItemsTable.batchesComplete })
+      .select({
+        id: productionPlanItemsTable.id,
+        recipeId: productionPlanItemsTable.recipeId,
+        batchesComplete: productionPlanItemsTable.batchesComplete,
+      })
       .from(productionPlanItemsTable)
+      .innerJoin(recipesTable, eq(recipesTable.id, productionPlanItemsTable.recipeId))
       .where(and(
         eq(productionPlanItemsTable.planId, planId),
-        inArray(productionPlanItemsTable.recipeId, recipes.map(r => r.id)),
+        eq(recipesTable.category, FRIED_CHICKEN_CATEGORY),
       ));
     const existingByRecipe = new Map(existing.map(e => [e.recipeId, e]));
 
@@ -295,42 +305,131 @@ router.post("/plans/:planId/items", requireManagerOrAdmin, validate(ItemsBody), 
       .where(eq(productionPlanItemsTable.planId, planId));
     maxPos = Number(posRow?.n ?? 0);
 
+    // Zero bags means "not on the plan" — the planner took it off, and a line
+    // sitting at a target of zero would still show up at the station asking to
+    // be counted. So a submitted zero is a removal, same as leaving it out.
+    const wanted = new Map(body.items.map(i => [i.recipeId, Math.max(0, i.packs)]));
+
     const kept: number[] = [];
-    for (const it of body.items) {
-      const r = byId.get(it.recipeId)!;
-      const prior = existingByRecipe.get(it.recipeId);
-      if (prior) {
+    const blocked: number[] = [];
+
+    for (const e of existing) {
+      const packs = wanted.get(e.recipeId) ?? 0;
+      const made = Number(e.batchesComplete) || 0;
+      if (packs > 0) {
         await db.update(productionPlanItemsTable)
-          .set({ batchesTarget: it.packs })
-          .where(eq(productionPlanItemsTable.id, prior.id));
-        kept.push(prior.id);
-      } else if (it.packs > 0) {
-        const [row] = await db.insert(productionPlanItemsTable).values({
-          planId,
-          recipeId: it.recipeId,
-          batchesTarget: it.packs,
-          // One bag is one unit of production here — the recipes are written
-          // per pack, so a batch IS a pack. portions-per-batch lives on the
-          // recipe, not the plan item.
-          orderPosition: ++maxPos,
-        }).returning({ id: productionPlanItemsTable.id });
-        if (row) kept.push(row.id);
+          .set({ batchesTarget: packs })
+          .where(eq(productionPlanItemsTable.id, e.id));
+        kept.push(e.id);
+        continue;
       }
+      // Never delete something somebody has already fried, and leave its
+      // target alone rather than zeroing what the count sheet reads against.
+      if (made > 0) { blocked.push(e.id); kept.push(e.id); continue; }
+      await db.delete(productionPlanItemsTable).where(eq(productionPlanItemsTable.id, e.id));
     }
 
-    // Anything dropped from the list goes, unless it has work against it —
-    // never delete something somebody has already fried.
-    const blocked: number[] = [];
-    for (const e of existing) {
-      if (kept.includes(e.id)) continue;
-      if ((Number(e.batchesComplete) || 0) > 0) { blocked.push(e.id); continue; }
-      await db.delete(productionPlanItemsTable).where(eq(productionPlanItemsTable.id, e.id));
+    for (const it of body.items) {
+      if (it.packs <= 0 || existingByRecipe.has(it.recipeId)) continue;
+      const [row] = await db.insert(productionPlanItemsTable).values({
+        planId,
+        recipeId: it.recipeId,
+        batchesTarget: it.packs,
+        // One bag is one unit of production here — the recipes are written
+        // per pack, so a batch IS a pack. portions-per-batch lives on the
+        // recipe, not the plan item.
+        orderPosition: ++maxPos,
+      }).returning({ id: productionPlanItemsTable.id });
+      if (row) kept.push(row.id);
     }
 
     res.json({ ok: true, planId, itemsKept: kept.length, notRemoved: blocked });
   } catch (err) {
     console.error("[fried-chicken] add items failed:", err);
     res.status(500).json({ error: "Couldn't add fried chicken to the plan" });
+  }
+});
+
+// POST /fried-chicken/plans/:planId/count — one more bag, or one fewer.
+//
+// The calzone line counts through /production-plans/:id/batch-completions,
+// which moves batches_complete only at the WRAPPING station: a calzone is not
+// "made" until it has been through the ovens and wrapped. Fried chicken has no
+// such pipeline — a bag comes off the fryer, gets weighed and sealed, and it
+// exists. Counting it here rather than bending the calzone rule keeps both
+// truthful, and the charter closes routes/production-plans.ts to new code
+// anyway.
+//
+// A batch_completions row still goes in alongside, so the station shows who
+// has been working it, the same as everywhere else.
+const CountBody = z.object({
+  planItemId: z.number().int(),
+  delta: z.union([z.literal(1), z.literal(-1)]),
+});
+
+router.post("/plans/:planId/count", validate(CountBody), async (req: Request, res: Response) => {
+  const planId = Number(req.params.planId);
+  if (!Number.isInteger(planId)) { res.status(400).json({ error: "Invalid plan id" }); return; }
+  const { planItemId, delta } = req.body as z.infer<typeof CountBody>;
+
+  try {
+    const [item] = await db
+      .select({
+        id: productionPlanItemsTable.id,
+        made: productionPlanItemsTable.batchesComplete,
+        category: recipesTable.category,
+      })
+      .from(productionPlanItemsTable)
+      .leftJoin(recipesTable, eq(recipesTable.id, productionPlanItemsTable.recipeId))
+      .where(and(
+        eq(productionPlanItemsTable.id, planItemId),
+        eq(productionPlanItemsTable.planId, planId),
+      ));
+
+    if (!item) { res.status(400).json({ error: "That line isn't on this plan" }); return; }
+    if (item.category !== FRIED_CHICKEN_CATEGORY) {
+      res.status(400).json({ error: "That line isn't fried chicken" });
+      return;
+    }
+
+    const before = Number(item.made) || 0;
+    if (delta === -1 && before === 0) { res.json({ made: 0 }); return; }
+
+    // Floor at zero in SQL as well as here — two people counting on two
+    // iPads is the normal case at this station.
+    const [row] = await db.execute<{ batches_complete: number }>(sql`
+      UPDATE production_plan_items
+      SET batches_complete = GREATEST(0, batches_complete + ${delta}),
+          status = 'in-progress'
+      WHERE id = ${planItemId}
+      RETURNING batches_complete
+    `).then(r => r.rows ?? []);
+
+    const userId = req.session.userId ?? null;
+    if (delta === 1) {
+      await db.execute(sql`
+        INSERT INTO batch_completions (plan_item_id, station_type, user_id, completed_at)
+        VALUES (${planItemId}, 'fried_chicken', ${userId}, NOW())
+      `);
+    } else {
+      // Take back this person's own most recent bag, not somebody else's.
+      await db.execute(sql`
+        DELETE FROM batch_completions
+        WHERE id = (
+          SELECT id FROM batch_completions
+          WHERE plan_item_id = ${planItemId}
+            AND station_type = 'fried_chicken'
+            AND (${userId}::int IS NULL OR user_id = ${userId})
+          ORDER BY completed_at DESC
+          LIMIT 1
+        )
+      `);
+    }
+
+    res.json({ made: Number(row?.batches_complete ?? Math.max(0, before + delta)) });
+  } catch (err) {
+    console.error("[fried-chicken] count failed:", err);
+    res.status(500).json({ error: "Couldn't record that bag" });
   }
 });
 

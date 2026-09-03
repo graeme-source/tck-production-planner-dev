@@ -27,9 +27,7 @@ import { toast } from "@/hooks/use-toast";
 import { isFriedChicken, type StationPlanItem } from "../shared/constants";
 import { FriedChickenPrepSheet } from "@/components/fried-chicken/prep-sheet";
 import { FriedChickenSubmitStock } from "@/components/fried-chicken/submit-stock";
-import { useNextFriedChickenRun } from "@/components/fried-chicken/api";
-
-const STATION = "fried_chicken";
+import { useNextFriedChickenRun, friedChickenFetch } from "@/components/fried-chicken/api";
 
 /** Korean is made first — the sauce is made first thing and used until gone,
  *  and whatever is left over becomes buttermilk. The sheet is read in that
@@ -58,23 +56,14 @@ function BagRow({ item, planId, disabled }: {
     if (by === -1 && made === 0) return;
     setBusy(true);
     try {
-      const url = by === 1
-        ? `/api/production-plans/${planId}/batch-completions`
-        : `/api/production-plans/${planId}/batch-completions/last`;
-      const res = await fetch(url, {
-        method: by === 1 ? "POST" : "DELETE",
-        credentials: "include",
+      // The station's own counter, not the calzone line's. A bag off the
+      // fryer is made; a calzone isn't made until it's wrapped, which is the
+      // rule /production-plans/:id/batch-completions enforces.
+      await friedChickenFetch(`/plans/${planId}/count`, {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          by === 1
-            ? { planItemId: item.id, stationType: STATION, partialPacks: 1, completedAt: new Date().toISOString() }
-            : { planItemId: item.id, stationType: STATION },
-        ),
+        body: JSON.stringify({ planItemId: item.id, delta: by }),
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.error ?? "Couldn't record that bag");
-      }
       await queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(planId) });
     } catch (e) {
       toast({ title: "Not counted", description: e instanceof Error ? e.message : "Try again", variant: "destructive" });
