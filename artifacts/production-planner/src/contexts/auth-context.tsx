@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { shouldResetCachesOnIdentityChange } from "@/lib/session-identity";
+import { shouldPromptForSensitivePin } from "@/lib/sensitive-pin";
 import { addDeviceUserId } from "@/lib/device-users";
 import { toast } from "@/hooks/use-toast";
 import { idleTimeoutMs, type IdleTimeoutSettings } from "@/lib/idle-timeout";
@@ -40,7 +41,7 @@ type AuthContextValue = {
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   /** Prompt for PIN if the sensitive-unlock window has expired. Idempotent — safe to call on every mount. */
-  requireSensitivePin: () => void;
+  requireSensitivePin: (opts?: { includeAdmins?: boolean }) => void;
 };
 
 // How long a PIN entry grants access to sensitive pages before re-prompting.
@@ -494,13 +495,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // (shouldn't happen: PIN setup is enforced at login).
   // Admins are exempt from the sensitive-page PIN gate entirely — they can
   // move freely between analytics and other sensitive pages without re-entry.
-  const requireSensitivePin = useCallback(() => {
+  // includeAdmins: pages holding people-data (the Employee Hub's reviews and
+  // recorded feedback) prompt EVERYONE — an admin's left-behind iPad is the
+  // one with every employee's records on it. The default keeps the admin
+  // exemption for analytics-style pages. Rule + tests: lib/sensitive-pin.ts.
+  const requireSensitivePin = useCallback((opts?: { includeAdmins?: boolean }) => {
     if (state.status !== "authenticated") return;
-    if (state.user.role === "admin") return;
     if (pinLocked) return; // already prompting
-    const age = Date.now() - sensitiveUnlockedAtRef.current;
-    if (age < SENSITIVE_UNLOCK_TTL_MS) return;
-    setPinLocked(true);
+    const prompt = shouldPromptForSensitivePin({
+      role: state.user.role,
+      includeAdmins: opts?.includeAdmins ?? false,
+      msSinceUnlock: Date.now() - sensitiveUnlockedAtRef.current,
+      ttlMs: SENSITIVE_UNLOCK_TTL_MS,
+    });
+    if (prompt) setPinLocked(true);
   }, [state, pinLocked]);
 
   // Manually lock the station — clears pinVerifiedAt server-side and locally.
