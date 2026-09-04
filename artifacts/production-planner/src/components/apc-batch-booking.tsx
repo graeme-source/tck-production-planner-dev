@@ -79,6 +79,9 @@ interface BookResult {
   /** The failure is something to correct on the order itself and try again,
    *  rather than a coverage refusal or a problem at our end. */
   dataFixable?: boolean;
+  /** What APC's POSTINFO postcode sheet says this postcode can take — the
+   *  spreadsheet check, done server-side, that drives the reschedule call. */
+  postcodeCheck?: string;
 }
 
 interface BookResponse {
@@ -92,12 +95,31 @@ interface BookResponse {
 
 type Tone = "ready" | "review" | "blocked" | "done";
 
-function OrderLine({ o, tone, selectable, checked, onToggle }: {
-  o: PreflightOrder; tone: Tone; selectable?: boolean; checked?: boolean; onToggle?: () => void;
+function OrderLine({ o, tone, adminBase, selectable, checked, onToggle }: {
+  o: PreflightOrder; tone: Tone; adminBase?: string; selectable?: boolean; checked?: boolean; onToggle?: () => void;
 }) {
   const body = (
     <>
-      <span className="font-semibold w-[4.5rem] shrink-0">{o.orderName}</span>
+      {/* The order number is the way into Shopify, on this stage as much as
+          on the report: the orders flagged here are the ones whose shipping
+          address has to be opened and corrected BEFORE booking. It was a
+          link only after booking, so a fix meant hunting the order by hand
+          (Graeme, 2026-09-04). stopPropagation keeps the tap off the row's
+          tick — the label would otherwise toggle the checkbox too. */}
+      {adminBase ? (
+        <a
+          href={`${adminBase}${o.orderId}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={e => e.stopPropagation()}
+          className="font-semibold w-[4.5rem] shrink-0 text-primary hover:underline"
+          title={`Open ${o.orderName} in Shopify`}
+        >
+          {o.orderName}
+        </a>
+      ) : (
+        <span className="font-semibold w-[4.5rem] shrink-0">{o.orderName}</span>
+      )}
       <span className="flex-1 min-w-0">
         <span className="text-muted-foreground">{o.customerName}</span>
         {(o.problems.length > 0 || o.reviews.length > 0) && (
@@ -131,8 +153,8 @@ function OrderLine({ o, tone, selectable, checked, onToggle }: {
   );
 }
 
-function Section({ title, count, tone, orders, defaultOpen = false, selectable, selected, onToggle }: {
-  title: string; count: number; tone: Tone; orders: PreflightOrder[]; defaultOpen?: boolean;
+function Section({ title, count, tone, orders, adminBase, defaultOpen = false, selectable, selected, onToggle }: {
+  title: string; count: number; tone: Tone; orders: PreflightOrder[]; adminBase?: string; defaultOpen?: boolean;
   selectable?: boolean; selected?: Set<number>; onToggle?: (id: number) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -163,6 +185,7 @@ function Section({ title, count, tone, orders, defaultOpen = false, selectable, 
               key={o.orderId}
               o={o}
               tone={tone}
+              adminBase={adminBase}
               selectable={selectable}
               checked={selected?.has(o.orderId)}
               onToggle={() => onToggle?.(o.orderId)}
@@ -174,8 +197,11 @@ function Section({ title, count, tone, orders, defaultOpen = false, selectable, 
   );
 }
 
-export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
+export function ApcBatchBookingDialog({ tag, adminBase, onClose, onBooked }: {
   tag: string;
+  /** Shopify admin `/admin/orders/` prefix, from the config status. Handed in
+   *  rather than built here so the store domain stays server-side. */
+  adminBase?: string;
   onClose: () => void;
   onBooked: () => void;
 }) {
@@ -468,15 +494,15 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
               </div>
             )}
 
-            <Section title="Ready to book" count={preflight.counts.ready} tone="ready" orders={preflight.ready} defaultOpen
+            <Section title="Ready to book" count={preflight.counts.ready} tone="ready" orders={preflight.ready} adminBase={adminBase} defaultOpen
               selectable selected={selected} onToggle={toggle} />
-            <Section title="Needs a look before booking" count={preflight.counts.needsReview} tone="review" orders={preflight.needsReview} defaultOpen
+            <Section title="Needs a look before booking" count={preflight.counts.needsReview} tone="review" orders={preflight.needsReview} adminBase={adminBase} defaultOpen
               selectable selected={selected} onToggle={toggle} />
-            <Section title="Can't be booked — fix in Shopify first" count={preflight.counts.blocked} tone="blocked" orders={preflight.blocked} defaultOpen />
-            <Section title="Not tagged for dispatch — tag before booking" count={preflight.counts.notTagged ?? 0} tone="blocked" orders={preflight.notTagged ?? []} />
-            <Section title="Already booked" count={preflight.counts.alreadyBooked} tone="done" orders={preflight.alreadyBooked} />
-            <Section title="Local delivery — no label needed" count={preflight.counts.localDeliveries} tone="done" orders={preflight.localDeliveries} />
-            <Section title="Collection — brown paper bag, never APC" count={preflight.counts.collections ?? 0} tone="done" orders={preflight.collections ?? []} />
+            <Section title="Can't be booked — fix in Shopify first" count={preflight.counts.blocked} tone="blocked" orders={preflight.blocked} adminBase={adminBase} defaultOpen />
+            <Section title="Not tagged for dispatch — tag before booking" count={preflight.counts.notTagged ?? 0} tone="blocked" orders={preflight.notTagged ?? []} adminBase={adminBase} />
+            <Section title="Already booked" count={preflight.counts.alreadyBooked} tone="done" orders={preflight.alreadyBooked} adminBase={adminBase} />
+            <Section title="Local delivery — no label needed" count={preflight.counts.localDeliveries} tone="done" orders={preflight.localDeliveries} adminBase={adminBase} />
+            <Section title="Collection — brown paper bag, never APC" count={preflight.counts.collections ?? 0} tone="done" orders={preflight.collections ?? []} adminBase={adminBase} />
 
             {preflight.counts.needsReview > 0 && (
               <p className="text-xs text-amber-700 dark:text-amber-400">
@@ -619,6 +645,14 @@ export function ApcBatchBookingDialog({ tag, onClose, onBooked }: {
                     {r.recordError && <span className="block text-xs text-red-600 font-semibold">NOT SAVED LOCALLY — write this number down</span>}
                     {r.taggedNoService && (
                       <span className="block text-xs text-muted-foreground">Tagged <code className="font-mono">apc-no-service</code> in Shopify</span>
+                    )}
+                    {/* The spreadsheet lookup Graeme used to do by hand
+                        before deciding whether to reschedule — what APC's
+                        own postcode sheet says this address can take. */}
+                    {r.postcodeCheck && (
+                      <span className="block text-xs text-blue-800 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/30 rounded px-1.5 py-1 mt-1">
+                        {r.postcodeCheck}
+                      </span>
                     )}
                     {/* APC's own wording is left exactly as it came — it is
                         the authoritative text. This only says what to DO
