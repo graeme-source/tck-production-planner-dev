@@ -25,8 +25,10 @@ import { Drumstick, Loader2, Minus, Plus, Check, AlertTriangle, ClipboardList, C
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { isFriedChicken, type StationPlanItem } from "../shared/constants";
+import { useAuth } from "@/contexts/auth-context";
 import { FriedChickenPrepSheet } from "@/components/fried-chicken/prep-sheet";
 import { FriedChickenSubmitStock } from "@/components/fried-chicken/submit-stock";
+import { AddFriedChickenDialog } from "@/components/fried-chicken/add-fried-chicken-dialog";
 import { useNextFriedChickenRun, friedChickenFetch } from "@/components/fried-chicken/api";
 
 /** Korean is made first — the sauce is made first thing and used until gone,
@@ -119,13 +121,59 @@ function runDateLabel(iso: string): string {
     : d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
 }
 
+/** Plan this day's run, from the station.
+ *
+ *  The station is where somebody stands when they wonder about fried chicken,
+ *  so it is where the run gets planned. Telling them to go and find a button
+ *  on another screen was a dead end (Graeme, 2026-09-04) — he was standing
+ *  here asking exactly this and the screen sent him away. */
+function PlanTheRunButton({ plan, label }: { plan: ProductionPlanDetail; label: string }) {
+  const [open, setOpen] = useState(false);
+  const queryClient = useQueryClient();
+  const { state } = useAuth();
+  const role = state.status === "authenticated" ? state.user.role : undefined;
+  if (role !== "admin" && role !== "manager") return null;
+
+  const existing = (plan.items ?? [])
+    .filter(it => isFriedChicken(it as { recipeCategory?: string | null }))
+    .map(it => ({
+      recipeId: it.recipeId,
+      packs: it.batchesTarget ?? 0,
+      made: it.batchesComplete ?? 0,
+    }));
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="inline-flex items-center gap-2.5 px-6 py-4 rounded-2xl bg-primary text-primary-foreground text-lg font-semibold hover:opacity-90 active:scale-[0.98] transition-all"
+      >
+        <Plus className="w-6 h-6" />
+        {label}
+      </button>
+      <AddFriedChickenDialog
+        planId={plan.id}
+        open={open}
+        onClose={() => setOpen(false)}
+        existing={existing}
+        // Without this the count sheet keeps showing the empty state until
+        // the plan's own poll comes round — you'd save a run and appear to
+        // have done nothing.
+        onSaved={() => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) })}
+      />
+    </>
+  );
+}
+
 /** What this station shows when there is no chicken to fry today.
  *
  *  Prep runs the day BEFORE the run, so an empty station is usually not an
  *  empty day — it is a prep day. Rather than a dead end, it points at the
- *  next run and shows its pull list. */
-function NoRunToday({ planDate }: { planDate: string }) {
-  const { data, isLoading } = useNextFriedChickenRun(planDate);
+ *  next run and shows its pull list. Either way there is a way to plan this
+ *  day's run without leaving the station. */
+function NoRunToday({ plan }: { plan: ProductionPlanDetail }) {
+  const { data, isLoading } = useNextFriedChickenRun(plan.planDate);
 
   if (isLoading) {
     return (
@@ -137,21 +185,22 @@ function NoRunToday({ planDate }: { planDate: string }) {
 
   if (!data?.found) {
     return (
-      <div className="max-w-3xl mx-auto py-16 text-center space-y-3">
+      <div className="max-w-3xl mx-auto py-16 text-center space-y-4">
         <Drumstick className="w-14 h-14 mx-auto text-muted-foreground opacity-50" />
         <p className="text-2xl font-bold">No fried chicken planned</p>
         <p className="text-lg text-muted-foreground">
-          Plan a run from the production plan — “Add fried chicken”.
+          Say how many kilos of raw chicken the run is and it'll work out the bags.
         </p>
+        <PlanTheRunButton plan={plan} label="Plan this day's run" />
       </div>
     );
   }
 
   return (
     <div className="max-w-3xl mx-auto pb-24 space-y-5">
-      <div className="rounded-2xl border-2 border-border bg-card p-5 flex items-start gap-4">
+      <div className="rounded-2xl border-2 border-border bg-card p-5 flex items-start gap-4 flex-wrap">
         <CalendarDays className="w-8 h-8 text-orange-600 shrink-0" />
-        <div>
+        <div className="flex-1 min-w-[16rem]">
           <p className="text-2xl font-bold">
             {data.isPrepDay ? "Today is prep day" : "Nothing to fry today"}
           </p>
@@ -160,6 +209,9 @@ function NoRunToday({ planDate }: { planDate: string }) {
             {data.isPrepDay ? " Here's what to pull for it." : ""}
           </p>
         </div>
+        {/* A run is still plannable for TODAY even though another one is
+            coming — chicken days move. */}
+        <PlanTheRunButton plan={plan} label="Plan a run for today" />
       </div>
       <FriedChickenPrepSheet planId={data.planId} />
     </div>
@@ -183,7 +235,7 @@ export function FriedChickenStation({ plan, isOnBreak = false }: {
   const target = items.reduce((n, it) => n + (Number(it.batchesTarget) || 0), 0);
   const made = items.reduce((n, it) => n + (Number(it.batchesComplete) || 0), 0);
 
-  if (items.length === 0) return <NoRunToday planDate={plan.planDate} />;
+  if (items.length === 0) return <NoRunToday plan={plan} />;
 
   return (
     <div className="max-w-3xl mx-auto pb-24 space-y-5">
@@ -210,14 +262,19 @@ export function FriedChickenStation({ plan, isOnBreak = false }: {
         <FriedChickenPrepSheet planId={plan.id} />
       ) : (
         <>
-          <div className="rounded-2xl border-2 border-border bg-card p-5">
-            <p className="text-base uppercase tracking-widest font-bold text-muted-foreground">Counted so far</p>
-            <p className="text-5xl font-bold tabular-nums mt-1">
-              {made} <span className="text-2xl font-medium text-muted-foreground">of {target} bags</span>
-            </p>
-            <p className="text-base text-muted-foreground mt-2">
-              The target is a guide. Count what you actually make — that's what goes to Shopify tonight.
-            </p>
+          <div className="rounded-2xl border-2 border-border bg-card p-5 flex items-start gap-4 flex-wrap">
+            <div className="flex-1 min-w-[16rem]">
+              <p className="text-base uppercase tracking-widest font-bold text-muted-foreground">Counted so far</p>
+              <p className="text-5xl font-bold tabular-nums mt-1">
+                {made} <span className="text-2xl font-medium text-muted-foreground">of {target} bags</span>
+              </p>
+              <p className="text-base text-muted-foreground mt-2">
+                The target is a guide. Count what you actually make — that's what goes to Shopify tonight.
+              </p>
+            </div>
+            {/* Changing the run mid-morning is normal — a sauce is out, or an
+                order lands. It shouldn't mean going back to the plan page. */}
+            <PlanTheRunButton plan={plan} label="Change the run" />
           </div>
 
           {/* Korean first: the sauce is made first thing and used until it's gone,
