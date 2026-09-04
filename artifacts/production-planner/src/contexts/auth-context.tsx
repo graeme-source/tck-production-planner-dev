@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef, ty
 import { addDeviceUserId } from "@/lib/device-users";
 import { toast } from "@/hooks/use-toast";
 import { idleTimeoutMs, type IdleTimeoutSettings } from "@/lib/idle-timeout";
+import { londonDay, crossedLondonMidnight } from "@/lib/day-rollover";
 
 export type AuthUser = {
   id: number;
@@ -73,6 +74,37 @@ function readStoredActivity(): number {
     if (Number.isFinite(v) && v > 0 && v <= Date.now()) return v;
   } catch { /* private mode */ }
   return 0;
+}
+
+// ── Next-morning dashboard bounce ─────────────────────────────────────
+// People opened a station the next day and landed on YESTERDAY'S production
+// page: the browser restores the URL it was on, and every resume path (PIN
+// unlock, fresh login, restored session) carried on in place (Graeme,
+// 2026-09-04). There is no stored "last location" to wipe at midnight —
+// instead, the moment someone comes back on a NEW London day, they start on
+// the dashboard.
+//
+// Two snapshots taken synchronously at bundle load, BEFORE any tap can
+// overwrite the stored activity timestamp (the first touch of the morning
+// persists immediately, so reading later would always say "today"):
+//  - RESUMED_FROM_PREVIOUS_DAY: this page load is the first since a
+//    previous working day → bounce as soon as the session authenticates.
+//  - PAGE_LOADED_DAY: lets login/unlock detect a tab that has physically
+//    lived across midnight without reloading (screen left on overnight).
+const PAGE_LOADED_DAY = londonDay(Date.now());
+const RESUMED_FROM_PREVIOUS_DAY = crossedLondonMidnight(readStoredActivity(), Date.now());
+function crossedMidnightSinceLoad(): boolean {
+  return londonDay(Date.now()) !== PAGE_LOADED_DAY;
+}
+/** Full navigation to the dashboard, same shape as the 10pm cutover: the
+ *  cache-buster refetches index.html, so the morning also picks up the
+ *  latest bundle. No-op when already home (or still logging in). */
+function bounceToDashboard() {
+  const path = window.location.pathname;
+  if (path === "/" || path.startsWith("/login")) return;
+  const url = new URL("/", window.location.origin);
+  url.searchParams.set("v", Date.now().toString());
+  window.location.assign(url.toString());
 }
 
 // Once a PIN lock has actually been APPLIED on this device, it must survive
@@ -298,6 +330,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (bootIdleCheckedRef.current) return;
     if (state.status !== "authenticated") return;
     bootIdleCheckedRef.current = true;
+    // First page load of a new working day → start on the dashboard, not
+    // wherever yesterday finished. Runs even when the PIN overlay is up:
+    // the applied lock survives the navigation, so the pad simply reappears
+    // over the dashboard and unlocking lands somewhere current.
+    if (RESUMED_FROM_PREVIOUS_DAY) {
+      bounceToDashboard();
+      return;
+    }
     if (pinLocked) return;
     const idleMs = Date.now() - getLastActivity();
     if (idleMs >= currentIdleTimeoutMs()) {
@@ -397,6 +437,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setPinLocked(false);
         clearPinLockApplied();
         sensitiveUnlockedAtRef.current = Date.now();
+        // A tab that has sat on the login screen across midnight is still
+        // parked on yesterday's URL underneath — send it home.
+        if (crossedMidnightSinceLoad()) bounceToDashboard();
         return { user };
       }
       const data = await res.json().catch(() => ({}));
@@ -422,6 +465,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setPinLocked(false);
         clearPinLockApplied();
         sensitiveUnlockedAtRef.current = Date.now();
+        if (crossedMidnightSinceLoad()) bounceToDashboard();
         return {};
       }
       const data = await res.json().catch(() => ({}));
@@ -453,6 +497,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setPinLocked(false);
         clearPinLockApplied();
         sensitiveUnlockedAtRef.current = Date.now();
+        // Screen left on overnight: the page never reloaded, so the boot
+        // check can't see the new day — but the tab itself knows it was
+        // loaded yesterday. Unlocking on a new day starts on the dashboard.
+        if (crossedMidnightSinceLoad()) bounceToDashboard();
         return {};
       }
       const data = await res.json().catch(() => ({}));
