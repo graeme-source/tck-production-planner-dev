@@ -3073,6 +3073,10 @@ async function startup() {
     await seedRiskAssessmentsIfNeeded();
     const { seedLeanLessonsIfNeeded } = await import("./lib/seed-lean-lessons");
     await seedLeanLessonsIfNeeded();
+    // One-time: improvements finished with a photo but never "sent for
+    // approval" back when that was a separate tap (see the lib's comment).
+    const { backfillAutoSubmittedImprovements } = await import("./lib/improvement-backfill");
+    await backfillAutoSubmittedImprovements();
     startBackupScheduler();
     // DISABLED 2026-04-17 — the 5-minute fulfilment poller was not
     // reliably decrementing fridge stock and contributed to Railway

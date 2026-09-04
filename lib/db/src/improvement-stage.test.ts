@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  stageOf, STAGE_LABEL, canMarkDone, markDoneBlocker, canReview, countsForCredit,
+  stageOf, STAGE_LABEL, canMarkDone, markDoneBlocker, canReview, countsForCredit, shouldAutoSubmit, isCompletionMedia,
 } from "./improvement-stage";
 
 describe("stageOf", () => {
@@ -77,5 +77,51 @@ describe("countsForCredit", () => {
   it("does not count the legacy 'approved' status, which was never checked", () => {
     // Dead value from the old workflow — it never meant a manager approved it.
     expect(countsForCredit("approved")).toBe(false);
+  });
+});
+
+describe("shouldAutoSubmit", () => {
+  it("submits a to-do improvement the moment the after photo lands", () => {
+    expect(shouldAutoSubmit("submitted_for_review", "after", 1)).toBe(true);
+  });
+
+  it("counts unlabelled media — it predates the before/after split", () => {
+    expect(shouldAutoSubmit("submitted_for_review", null, 1)).toBe(true);
+  });
+
+  it("leaves a logged idea alone when only the before photo is in", () => {
+    // Otherwise every idea someone photographs lands in the approval queue
+    // the second it's raised, and the To-do board empties.
+    expect(shouldAutoSubmit("submitted_for_review", "before", 1)).toBe(false);
+  });
+
+  it("does nothing until there's a photo at all", () => {
+    expect(shouldAutoSubmit("submitted_for_review", "after", 0)).toBe(false);
+  });
+
+  it("treats the dead July-2026 statuses as to-do too", () => {
+    expect(shouldAutoSubmit("acknowledged", "after", 1)).toBe(true);
+    expect(shouldAutoSubmit("in_development", "after", 1)).toBe(true);
+  });
+
+  it("never re-submits something already waiting or approved", () => {
+    expect(shouldAutoSubmit("awaiting_approval", "after", 3)).toBe(false);
+    expect(shouldAutoSubmit("complete", "after", 3)).toBe(false);
+  });
+
+  it("leaves a sent-back one to the person — the note may ask for more", () => {
+    expect(shouldAutoSubmit("rejected", "after", 2)).toBe(false);
+  });
+});
+
+describe("isCompletionMedia", () => {
+  it("is the after shot, or an unlabelled one", () => {
+    expect(isCompletionMedia("after")).toBe(true);
+    expect(isCompletionMedia(null)).toBe(true);
+    expect(isCompletionMedia(undefined)).toBe(true);
+  });
+
+  it("is never the before shot", () => {
+    expect(isCompletionMedia("before")).toBe(false);
   });
 });

@@ -11,7 +11,7 @@
  * email to the accountant. No DB writes — the source of truth is the
  * PDF in their email trail.
  */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import { useAuth } from "@/contexts/auth-context";
@@ -1170,8 +1170,16 @@ type HubSection = "todos" | "reviews" | "mileage" | "expenses" | "policies" | "i
 
 export default function EmployeeHub() {
   const [active, setActive] = useState<HubSection>("todos");
-  const { state } = useAuth();
+  const { state, requireSensitivePin } = useAuth();
   const userId = state.status === "authenticated" ? state.user.id : null;
+
+  // PIN re-entry on entering the hub — reviews and recorded feedback live
+  // here, and the scenario is a logged-in iPad left on a counter. Admins are
+  // NOT exempt (unlike Settings/Reports): an admin's iPad is the one holding
+  // everyone's records. Same 5-minute unlock window as the other guards.
+  useEffect(() => {
+    if (state.status === "authenticated") requireSensitivePin({ includeAdmins: true });
+  }, [state.status, requireSensitivePin]);
   // Managers write records for anyone; everyone else sees only their own.
   const isManager = state.status === "authenticated"
     && (state.user.role === "admin" || state.user.role === "manager");

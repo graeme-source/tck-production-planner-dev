@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { useListUsers, useListCategoryDefaults, useListDptSettings, useListTimingStandards, useListRecipes, useListIngredients } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { usePagePermissions, useSavePagePermissions } from "@/hooks/use-page-permissions";
+import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { FeatureGrantsSection } from "@/components/feature-grants-section";
@@ -668,6 +669,20 @@ function PinSection() {
 
 type SettingsSection = "profile" | "team" | "production" | "packing" | "storage" | "sops" | "features" | "sensors";
 
+/** Shown where an area of Settings is one this person hasn't been given. */
+function NoAccessToArea({ what }: { what: string }) {
+  return (
+    <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
+      <Lock className="w-8 h-8 mx-auto mb-3 opacity-50" />
+      <p className="font-medium">You don't have access to this</p>
+      <p className="text-sm mt-1">
+        An admin can give you {what} in Settings → Team &amp; Access → Feature grants,
+        without changing your role.
+      </p>
+    </div>
+  );
+}
+
 const NAV_ITEMS: { id: SettingsSection; label: string; icon: typeof User }[] = [
   { id: "profile", label: "My Profile", icon: User },
   { id: "team", label: "Team & Access", icon: Users },
@@ -738,6 +753,7 @@ function TeamAccessContent({
   user: { role: string } | null;
 }) {
   const { createUser, updateUser, deleteUser } = useAppMutations();
+  const { canSection } = useFeatureAccess();
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<AppUser | null>(null);
   const [viewingUser, setViewingUser] = useState<AppUser | null>(null);
@@ -1038,7 +1054,10 @@ function TeamAccessContent({
         )}
       </div>
 
-      {/* Access Control — admin only */}
+      {/* Deciding who gets in stays admin-only, even for someone granted
+          Team & Access: this section sets every page's access level and the
+          next one hands out the grants themselves, so granting either would
+          be a back door to admin. The rest of this tab opens up normally. */}
       {user?.role === "admin" && <AccessControlSection />}
 
       {/* Feature grants — was its own "Access" page in the nav until
@@ -1046,7 +1065,7 @@ function TeamAccessContent({
       {user?.role === "admin" && <FeatureGrantsSection />}
 
       {/* Broadcast Notification — admin only */}
-      {user?.role === "admin" && <BroadcastNotificationSection />}
+      {canSection("team") && <BroadcastNotificationSection />}
     </div>
   );
 }
@@ -1462,6 +1481,11 @@ export default function Settings() {
   const { data: users, isLoading } = useListUsers();
   const { state, requireSensitivePin } = useAuth();
   const user = state.status === "authenticated" ? state.user : null;
+  // Access to a Settings area is the role's general level OR a grant handed
+  // to this person (Graeme, 2026-09-04) — it used to be `role === "admin"` in
+  // ~30 places, which meant the only way to let someone map the temperature
+  // sensors was to make them an admin.
+  const { canSection } = useFeatureAccess();
   const search = useSearch();
   const [, navigate] = useLocation();
 
@@ -1576,7 +1600,9 @@ export default function Settings() {
             )}
           </div>
           <ul className="flex md:block gap-1 overflow-x-auto md:overflow-visible pb-2 -mb-2 md:pb-0 md:mb-0 md:space-y-1">
-            {NAV_ITEMS.map((item) => {
+            {/* Only the areas this person can actually open — a tab that
+                always says "you don't have access" is just noise. */}
+            {NAV_ITEMS.filter(item => canSection(item.id)).map((item) => {
               const Icon = item.icon;
               const active = activeSection === item.id;
               return (
@@ -1619,28 +1645,28 @@ export default function Settings() {
 
           {activeSection === "production" && (
             <div className="space-y-8">
-              {user?.role === "admin" && <AdminDateOverrideSection />}
-              {user?.role === "admin" && <NonDispatchDatesSection />}
-              {user?.role === "admin" && <TimedRemindersSection />}
-              {user?.role === "admin" && <StationIdleTimeoutSection />}
-              {user?.role === "admin" && <PrepDoughScheduleSection />}
+              {canSection("production") && <AdminDateOverrideSection />}
+              {canSection("production") && <NonDispatchDatesSection />}
+              {canSection("production") && <TimedRemindersSection />}
+              {canSection("production") && <StationIdleTimeoutSection />}
+              {canSection("production") && <PrepDoughScheduleSection />}
               <div ref={dptRef}>
-                {(user?.role === "admin" || user?.role === "manager") && <DptSettingsSection />}
-                {(user?.role === "admin" || user?.role === "manager") && <MacCheeseSettingsSection />}
+                {canSection("production") && <DptSettingsSection />}
+                {canSection("production") && <MacCheeseSettingsSection />}
               </div>
-              {user?.role === "admin" && <FactoryNumberSection />}
-              {user?.role === "admin" && <ShopifyFreezerSyncSection />}
-              {user?.role === "admin" && <StockGateSection />}
-              {(user?.role === "admin" || user?.role === "manager") && <BuildingTimerSection />}
-              {user?.role === "admin" && <TimingStandardsSection />}
-              {user?.role === "admin" && <MixerCapacitySection />}
-              {user?.role === "admin" && <ProductionExtrasSection />}
-              {user?.role === "admin" && <WeightChillSettingsSection />}
-              {user?.role === "admin" && <OvenDefaultsSection />}
-              {user?.role === "admin" && <ExtraTomatoBaseSection />}
-              {user?.role === "admin" && <PastaCookingSection />}
-              {user?.role === "admin" && <BreakDefaultsSection />}
-              {user?.role === "admin" && <ScheduleDefaultsSection />}
+              {canSection("production") && <FactoryNumberSection />}
+              {canSection("production") && <ShopifyFreezerSyncSection />}
+              {canSection("production") && <StockGateSection />}
+              {canSection("production") && <BuildingTimerSection />}
+              {canSection("production") && <TimingStandardsSection />}
+              {canSection("production") && <MixerCapacitySection />}
+              {canSection("production") && <ProductionExtrasSection />}
+              {canSection("production") && <WeightChillSettingsSection />}
+              {canSection("production") && <OvenDefaultsSection />}
+              {canSection("production") && <ExtraTomatoBaseSection />}
+              {canSection("production") && <PastaCookingSection />}
+              {canSection("production") && <BreakDefaultsSection />}
+              {canSection("production") && <ScheduleDefaultsSection />}
             </div>
           )}
 
@@ -1649,48 +1675,40 @@ export default function Settings() {
               (Graeme, 2026-08-23). */}
           {activeSection === "packing" && (
             <div className="space-y-8">
-              {user?.role === "admin" && <PackingChecksSection />}
-              {user?.role === "admin" && <FulfilmentManualTickSection />}
-              {user?.role === "admin" && <FulfilmentSpeakNameSection />}
-              {user?.role === "admin" && <IcePackSettingsSection />}
-              {user?.role === "admin" && <ApcServiceCodesSection />}
+              {canSection("packing") && <PackingChecksSection />}
+              {canSection("packing") && <FulfilmentManualTickSection />}
+              {canSection("packing") && <FulfilmentSpeakNameSection />}
+              {canSection("packing") && <IcePackSettingsSection />}
+              {canSection("packing") && <ApcServiceCodesSection />}
             </div>
           )}
 
           {activeSection === "sensors" && (
-            user?.role === "admin" ? (
+            canSection("sensors") ? (
               <GoveeSensorsSection currentUserId={user?.id ?? null} />
             ) : (
-              <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
-                <Lock className="w-8 h-8 mx-auto mb-3 opacity-50" />
-                <p className="font-medium">Admin access required</p>
-                <p className="text-sm mt-1">Only admins can manage temperature sensors.</p>
-              </div>
+              <NoAccessToArea what="temperature sensors" />
             )
           )}
 
-          {activeSection === "features" && user?.role === "admin" && (
-            <div className="space-y-8">
-              <FeaturesSection />
-              <DashboardBannerRolesSection />
-              <EightPackBannerRolesSection />
-              <SystemUpdatesSection />
-            </div>
-          )}
-
-          {activeSection === "features" && user?.role !== "admin" && (
-            <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
-              <Lock className="w-8 h-8 mx-auto mb-3 opacity-50" />
-              <p className="font-medium">Admin access required</p>
-              <p className="text-sm mt-1">Only admins can manage feature flags.</p>
-            </div>
+          {activeSection === "features" && (
+            canSection("features") ? (
+              <div className="space-y-8">
+                <FeaturesSection />
+                {canSection("features") && <DashboardBannerRolesSection />}
+                {canSection("features") && <EightPackBannerRolesSection />}
+                {canSection("features") && <SystemUpdatesSection />}
+              </div>
+            ) : (
+              <NoAccessToArea what="feature flags" />
+            )
           )}
 
           {activeSection === "storage" && (
             <div className="space-y-8">
               <CategoryDefaultsSection />
-              {user?.role === "admin" && <StorageLocationsSection />}
-              {user?.role === "admin" && <IngredientStorageAssignmentsSection />}
+              {canSection("storage") && <StorageLocationsSection />}
+              {canSection("storage") && <IngredientStorageAssignmentsSection />}
             </div>
           )}
 
@@ -1700,19 +1718,6 @@ export default function Settings() {
             </div>
           )}
 
-          {activeSection === "features" && user?.role === "admin" && (
-            <div className="space-y-8">
-              <FeaturesSection />
-            </div>
-          )}
-
-          {activeSection === "features" && user?.role !== "admin" && (
-            <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
-              <Lock className="w-8 h-8 mx-auto mb-3 opacity-50" />
-              <p className="font-medium">Admin access required</p>
-              <p className="text-sm mt-1">Only admins can manage feature flags.</p>
-            </div>
-          )}
         </div>
       </div>
     </div>

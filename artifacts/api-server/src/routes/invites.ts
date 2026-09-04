@@ -7,6 +7,7 @@ import { z } from "zod";
 import { validate } from "../middleware/validate";
 import { sendEmail, inviteEmailHtml, inviteEmailText, resetEmailHtml, resetEmailText } from "../lib/email";
 import { passwordPolicySchema } from "../lib/password-policy";
+import { requireFeature } from "../lib/feature-access";
 
 const router: IRouter = Router();
 
@@ -24,13 +25,10 @@ function generateToken(): string {
 
 const passwordSchema = passwordPolicySchema;
 
-function requireAdmin(req: any, res: any, next: any) {
-  if (!req.session?.userId || req.session?.userRole !== "admin") {
-    res.status(403).json({ error: "Admin access required" });
-    return;
-  }
-  next();
-}
+// Admins, plus anyone handed Team & Access in Settings → Team & Access.
+// It was admin-or-nothing, so opening one area to one person meant
+// promoting them (Graeme, 2026-09-04).
+const requireAdmin = requireFeature("settings.team");
 
 // --- INVITES ---
 

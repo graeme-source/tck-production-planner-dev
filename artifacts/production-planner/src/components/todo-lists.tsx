@@ -156,9 +156,15 @@ function isOverdue(task: TodoTask): boolean {
 
 /** Open-task count for the current user — feeds button badges. */
 export function useMyOpenTodoCount(): number {
+  const { state } = useAuth();
+  const meId = state.status === "authenticated" ? state.user.id : null;
   const { data } = useQuery({
-    queryKey: ["todos", "mine"],
+    // Keyed by user id (like every "mine" query here): the station PCs are
+    // shared, and a cache entry keyed the same for everyone briefly shows the
+    // previous person's data after a PIN switch — see lib/session-identity.ts.
+    queryKey: ["todos", "mine", meId],
     queryFn: () => fetchList("mine"),
+    enabled: meId !== null,
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
   });
@@ -322,7 +328,8 @@ function TodoList({ meId, canManage, viewUserId, onSwitchUser, onOpenTask, onCre
 }) {
   const isMine = viewUserId === meId;
   const { data, isLoading, error } = useQuery({
-    queryKey: isMine ? ["todos", "mine"] : ["todos", "user", viewUserId],
+    // Both branches carry the user id — see the note in useMyOpenTodoCount.
+    queryKey: isMine ? ["todos", "mine", meId] : ["todos", "user", viewUserId],
     queryFn: () => fetchList(isMine ? "mine" : viewUserId),
     staleTime: 15_000,
   });
@@ -979,7 +986,10 @@ export function PersonalTodosStrip() {
   const [sheet, setSheet] = useState<{ open: boolean; taskId: number | null }>({ open: false, taskId: null });
 
   const { data } = useQuery({
-    queryKey: ["todos", "mine"],
+    // Keyed by user id: this strip sits on the shared station screens, where
+    // people swap in by PIN all day — a shared cache entry is exactly how
+    // Lorna's to-dos rendered under Major's name (2026-09-04).
+    queryKey: ["todos", "mine", me?.id],
     queryFn: () => fetchList("mine"),
     enabled: !!me,
     staleTime: 60_000,
@@ -1068,7 +1078,8 @@ export function TodoInterstitial() {
   const qc = useQueryClient();
 
   const { data: pending } = useQuery({
-    queryKey: ["todos", "unacknowledged"],
+    // Keyed by user id — see the note in useMyOpenTodoCount.
+    queryKey: ["todos", "unacknowledged", meId],
     queryFn: fetchUnacknowledged,
     enabled: loggedIn,
     refetchInterval: 60_000,

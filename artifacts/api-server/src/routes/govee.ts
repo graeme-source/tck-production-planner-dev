@@ -29,20 +29,15 @@ import {
 } from "../services/push";
 import { getGoveeSettings, setGoveeSettings, type GoveeSettings } from "../lib/govee-settings";
 import { cacheReading } from "../lib/govee-cache";
+import { requireFeature } from "../lib/feature-access";
 
 const router: IRouter = Router();
 
-async function adminOnly(req: Request, res: Response, next: NextFunction) {
-  if (req.session.userRole === "admin") { next(); return; }
-  if (req.session.userId && !req.session.userRole) {
-    const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
-    if (user) {
-      req.session.userRole = user.role as "admin" | "manager" | "viewer";
-      if (user.role === "admin") { next(); return; }
-    }
-  }
-  res.status(403).json({ error: "Admin access required" });
-}
+// Admins, plus anyone handed the Temperature Sensors area in Settings →
+// Team & Access. It used to be admin-or-nothing, which meant asking someone
+// to map the fridge sensors required making them an admin first
+// (Graeme, 2026-09-04).
+const adminOnly = requireFeature("settings.sensors");
 
 // ── Helpers ─────────────────────────────────────────────────────────
 

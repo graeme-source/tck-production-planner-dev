@@ -6,6 +6,8 @@ import { RecordIssueModal } from "@/components/record-issue-modal";
 import { PullKanbanModal } from "@/components/pull-kanban-modal";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
+import { useFeatureAccess } from "@/hooks/use-feature-access";
+import { FEATURE_REGISTRY } from "@workspace/feature-registry";
 import { usePageHeaderValue } from "@/contexts/page-header-context";
 import { 
   LayoutDashboard, 
@@ -538,6 +540,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const { state, logout, lockStation } = useAuth();
   const user = state.status === "authenticated" ? state.user : null;
   const { canAccess } = usePagePermissions();
+  const { can } = useFeatureAccess();
   const [mobileOpen, setMobileOpen] = useState(false);
   // Collapsible sidebar on tablet/desktop too — the hamburger in the top bar
   // is always visible, so getting it back is one obvious tap. Choice sticks
@@ -595,10 +598,18 @@ export function Layout({ children }: { children: ReactNode }) {
     canAccess(userRole, item.href)
   );
 
-  // Feature grants surface their page for users whose role hides it.
-  const userFeatures = (user as { features?: string[] } | null)?.features ?? [];
-  if (userFeatures.includes("apc_label_printing") && userRole !== "admin" && !visibleNavItems.some(i => i.href === "/fulfilment")) {
-    visibleNavItems.push({ name: "Order Packing Live", href: "/fulfilment", icon: ScanLine });
+  // Feature grants surface their page for people whose role hides it. This
+  // was one hard-coded `if` for APC label printing, so every later grant
+  // needed another one; it now walks the registry, and the nav entry (name
+  // and icon) is reused from the sidebar's own lists rather than restated.
+  const everyNavEntry = [...navItems, ...productNavItems, ...inventorySubItems, ...bottomNavItems];
+  for (const feature of FEATURE_REGISTRY) {
+    if (feature.kind !== "page" || !feature.page) continue;
+    if (!can(feature.key)) continue;
+    if (canAccess(userRole, feature.page)) continue;   // already there via role
+    if (visibleNavItems.some(i => i.href === feature.page)) continue;
+    const entry = everyNavEntry.find(i => i.href === feature.page);
+    if (entry) visibleNavItems.push(entry);
   }
 
   const navForUser = accountantOnly ? visibleNavItems.filter(i => i.href === "/finance") : visibleNavItems;

@@ -73,6 +73,40 @@ export function markDoneBlocker(status: string, attachmentCount: number): string
   return null;
 }
 
+/**
+ * Is this photo/video the FINISHED state of the job?
+ *
+ * An "after" shot is the fix. A "before" shot is the problem — logging an
+ * idea starts with one, and the work may be days away. Media with no phase
+ * predates the before/after split (migration 0060) and was always uploaded
+ * as evidence of something done, so it counts.
+ */
+export function isCompletionMedia(phase: string | null | undefined): boolean {
+  return phase === "after" || phase == null;
+}
+
+/**
+ * Does attaching this media finish the job on its own?
+ *
+ * A title and one photo IS the submission (Graeme, 2026-09-04). People were
+ * adding the after photo and walking away — not realising a separate "send
+ * for approval" tap was still needed. Lorna believed her ice shelf was done
+ * while it sat in "to do" for a day.
+ *
+ * Two things it deliberately does NOT do:
+ *  - a "before" photo never submits: logging an idea starts with one, and
+ *    auto-submitting would empty the To-do board into the approval queue;
+ *  - a sent-back improvement still goes when the person says it's ready —
+ *    the manager's note may ask for more than another photo.
+ */
+export function shouldAutoSubmit(
+  status: string,
+  phase: string | null | undefined,
+  attachmentCount: number,
+): boolean {
+  return stageOf(status) === "todo" && attachmentCount > 0 && isCompletionMedia(phase);
+}
+
 /** Only a manager, and only on something actually waiting. */
 export function canReview(status: string): boolean {
   return stageOf(status) === "waiting";

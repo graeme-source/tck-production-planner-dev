@@ -11,20 +11,14 @@ import {
   runStockGateCycle,
   releaseHold,
 } from "../lib/stock-gating";
+import { requireFeature } from "../lib/feature-access";
 
 const router: IRouter = Router();
 
-async function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  if (req.session.userRole === "admin") { next(); return; }
-  if (req.session.userId && !req.session.userRole) {
-    const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
-    if (user) {
-      req.session.userRole = user.role as "admin" | "manager" | "viewer";
-      if (user.role === "admin") { next(); return; }
-    }
-  }
-  res.status(403).json({ error: "Admin access required" });
-}
+// Admins, plus anyone handed Production settings in Settings → Team & Access.
+// It was admin-or-nothing, so opening one area to one person meant
+// promoting them (Graeme, 2026-09-04).
+const requireAdmin = requireFeature("settings.production");
 
 // GET /api/stock-gating/status — settings, active holds, recent history, last run.
 router.get("/status", async (_req, res) => {

@@ -1,13 +1,14 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db, notificationsTable, usersTable } from "@workspace/db";
 import { eq, and, desc, count } from "drizzle-orm";
+import { requireFeature } from "../lib/feature-access";
 
 const router = Router();
 
-function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  if (req.session.userRole === "admin") { next(); return; }
-  res.status(403).json({ error: "Admin access required" });
-}
+// Admins, plus anyone handed Team & Access in Settings → Team & Access.
+// It was admin-or-nothing, so opening one area to one person meant
+// promoting them (Graeme, 2026-09-04).
+const requireAdmin = requireFeature("settings.team");
 
 // GET /api/notifications — current user's notifications (newest first)
 router.get("/", async (req: Request, res: Response) => {

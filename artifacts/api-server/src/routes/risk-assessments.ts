@@ -9,6 +9,7 @@ import {
 } from "@workspace/db";
 import { eq, and, isNull, sql, asc, desc, gte, lte, inArray, ne } from "drizzle-orm";
 import { londonDateString } from "../lib/london-time";
+import { requireFeature } from "../lib/feature-access";
 
 const router: IRouter = Router();
 
@@ -45,10 +46,10 @@ const documentMetaColumns = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  if (req.session.userRole === "admin") { next(); return; }
-  res.status(403).json({ error: "Admin access required" });
-}
+// Admins, plus anyone handed Standards & SOPs in Settings → Team & Access.
+// It was admin-or-nothing, so opening one area to one person meant
+// promoting them (Graeme, 2026-09-04).
+const requireAdmin = requireFeature("settings.sops");
 
 const RECURRENCE_DAYS: Record<string, number> = {
   weekly: 7,

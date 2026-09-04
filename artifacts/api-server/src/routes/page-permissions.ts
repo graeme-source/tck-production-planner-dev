@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { db, pagePermissionsTable } from "@workspace/db";
+import { requireAdmin } from "../middleware/roles";
 
 const router: IRouter = Router();
 
@@ -54,8 +55,13 @@ router.get("/", async (_req, res) => {
 
 // PUT /api/page-permissions
 // Body: [{ pageKey, minRole }]
-// Only admins may call this (checked in middleware below)
-router.put("/", async (req, res) => {
+//
+// Admin only, and it really is guarded now. The comment here used to say the
+// check was "in middleware below" — there wasn't any, and the router is
+// mounted bare in routes/index.ts, so any logged-in person could rewrite
+// every page's minimum role and let themselves in anywhere (found while
+// building feature grants, 2026-09-04). Deciding who gets in is an admin job.
+router.put("/", requireAdmin, async (req, res) => {
   const updates: { pageKey: string; minRole: string }[] = req.body;
   if (!Array.isArray(updates)) {
     res.status(400).json({ error: "Expected an array" });
