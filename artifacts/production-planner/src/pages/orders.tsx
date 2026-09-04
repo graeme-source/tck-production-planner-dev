@@ -42,10 +42,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   nextBusinessDay,
-  calcExpectedDeliveryDate,
   formatDeliveryDate,
   toISODate,
 } from "@workspace/business-days";
+import { resolveDeliveryDate } from "@/lib/order-delivery";
 import { packNoun } from "@/pages/station/shared/prep-helpers";
 import { toast } from "@/hooks/use-toast";
 
@@ -361,7 +361,7 @@ export default function Orders() {
   const [viewFilter, setViewFilter] = useState<"pending" | "placed">("pending");
   const [expandedSuppliers, setExpandedSuppliers] = useState<Set<number>>(new Set());
   const [editableLines, setEditableLines] = useState<Record<number, EditableLine[]>>({});
-  const [confirmDialog, setConfirmDialog] = useState<{ supplierId: number; supplierName: string; deliveryDate: string } | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ supplierId: number; supplierName: string; deliveryDate: string; deliveryDateISO: string } | null>(null);
   const [deliveryDates, setDeliveryDates] = useState<Record<number, Date>>({});
 
   const [kanbanSearchOpen, setKanbanSearchOpen] = useState(false);
@@ -1382,26 +1382,8 @@ export default function Orders() {
     queryClient.invalidateQueries({ queryKey: ["order-calculate", selectedPlanId] });
   }, [queryClient, selectedPlanId]);
 
-  const getDeliveryDateForSupplier = useCallback((supplierId: number, leadTimeDays?: number, cutoffTime?: string): Date => {
-    if (deliveryDates[supplierId]) return deliveryDates[supplierId];
-    return calcExpectedDeliveryDate(leadTimeDays, cutoffTime);
-  }, [deliveryDates]);
-
   const suppliers = calculated?.suppliers ?? [];
 
-  const handlePlaceOrder = (supplierId: number, supplierName: string, leadTimeDays?: number, cutoffTime?: string) => {
-    const date = getDeliveryDateForSupplier(supplierId, leadTimeDays, cutoffTime);
-    setConfirmDialog({ supplierId, supplierName, deliveryDate: formatDeliveryDate(date) });
-  };
-
-  const confirmPlaceOrder = () => {
-    if (!confirmDialog) return;
-    const lines = editableLines[confirmDialog.supplierId] || [];
-    const supplier = suppliers.find(s => s.supplier.id === confirmDialog.supplierId);
-    const date = getDeliveryDateForSupplier(confirmDialog.supplierId, supplier?.supplier.leadTimeDays, supplier?.supplier.cutoffTime);
-    const deliveryDateStr = toISODate(date);
-    placeMutation.mutate({ supplierId: confirmDialog.supplierId, lines, deliveryDate: deliveryDateStr });
-  };
   const placedForPlan = placedOrders.filter(o => o.status === "placed" && o.planId === selectedPlanId);
   const placedSupplierIds = new Set(placedForPlan.map(o => o.supplierId));
   // Suppliers whose placed order has been "reopened" via a kanban/manual add
@@ -1432,6 +1414,33 @@ export default function Orders() {
       };
     });
   const allPendingSuppliers = [...dptPendingSuppliersAll, ...kanbanOnlyPendingAll];
+
+  // ONE resolver for the delivery date, reading every pending card plus the
+  // supplier directory. Everything on screen and the date actually sent on
+  // placing come from here, so they can't disagree.
+  const getDeliveryDateForSupplier = (supplierId: number): Date =>
+    resolveDeliveryDate(supplierId, allPendingSuppliers, supplierDirectory, deliveryDates);
+
+  const handlePlaceOrder = (supplierId: number, supplierName: string) => {
+    const date = getDeliveryDateForSupplier(supplierId);
+    setConfirmDialog({
+      supplierId,
+      supplierName,
+      deliveryDate: formatDeliveryDate(date),
+      deliveryDateISO: toISODate(date),
+    });
+  };
+
+  const confirmPlaceOrder = () => {
+    if (!confirmDialog) return;
+    const lines = editableLines[confirmDialog.supplierId] || [];
+    // Send exactly the date the operator was shown — never re-derive it here.
+    placeMutation.mutate({
+      supplierId: confirmDialog.supplierId,
+      lines,
+      deliveryDate: confirmDialog.deliveryDateISO,
+    });
+  };
   // Operator-dismissed cards drop out of the pending list but stay tracked so
   // a "Show N dismissed" link can restore them. Reopened POs always render
   // even if dismissed — that flow is the user explicitly editing.
@@ -1810,7 +1819,7 @@ export default function Orders() {
         // address up and send rather than being stuck (supplies-only
         // suppliers were the usual victims). WhatsApp-to-number still needs
         // the number saved.
-        const orderDeliveryText = formatDeliveryDate(getDeliveryDateForSupplier(so.supplier.id, so.supplier.leadTimeDays, so.supplier.cutoffTime));
+        const orderDeliveryText = formatDeliveryDate(getDeliveryDateForSupplier(so.supplier.id));
         const emailHref = orderableLines.length > 0
           ? buildOrderMailto(so.supplier.name, so.supplier.email ?? "", orderableLines, orderDeliveryText)
           : null;
@@ -1856,7 +1865,7 @@ export default function Orders() {
                   </p>
                   <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
                     <Truck className="w-3 h-3 inline shrink-0" />
-                    Est. delivery: {formatDeliveryDate(getDeliveryDateForSupplier(so.supplier.id, so.supplier.leadTimeDays, so.supplier.cutoffTime))}
+                    Est. delivery: {formatDeliveryDate(getDeliveryDateForSupplier(so.supplier.id))}
                   </p>
                   {/* An open PO past its edit cutoff can't take these items —
                       say so plainly, or the team thinks the system forgot
@@ -2115,7 +2124,7 @@ export default function Orders() {
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => {
-                        const current = getDeliveryDateForSupplier(so.supplier.id, so.supplier.leadTimeDays, so.supplier.cutoffTime);
+                        const current = getDeliveryDateForSupplier(so.supplier.id);
                         const prev = nextBusinessDay(current, -1);
                         const today = new Date();
                         today.setHours(0, 0, 0, 0);
@@ -2130,7 +2139,7 @@ export default function Orders() {
                     </button>
                     <input
                       type="date"
-                      value={toISODate(getDeliveryDateForSupplier(so.supplier.id, so.supplier.leadTimeDays, so.supplier.cutoffTime))}
+                      value={toISODate(getDeliveryDateForSupplier(so.supplier.id))}
                       min={toISODate(new Date())}
                       onChange={(e) => {
                         const val = e.target.value;
@@ -2150,7 +2159,7 @@ export default function Orders() {
                     />
                     <button
                       onClick={() => {
-                        const current = getDeliveryDateForSupplier(so.supplier.id, so.supplier.leadTimeDays, so.supplier.cutoffTime);
+                        const current = getDeliveryDateForSupplier(so.supplier.id);
                         const nxt = nextBusinessDay(current, 1);
                         setDeliveryDates(d => ({ ...d, [so.supplier.id]: nxt }));
                       }}
@@ -2161,7 +2170,7 @@ export default function Orders() {
                     </button>
                   </div>
                   <span className="text-xs text-muted-foreground">
-                    {formatDeliveryDate(getDeliveryDateForSupplier(so.supplier.id, so.supplier.leadTimeDays, so.supplier.cutoffTime))}
+                    {formatDeliveryDate(getDeliveryDateForSupplier(so.supplier.id))}
                   </span>
                 </div>
 
@@ -2243,7 +2252,7 @@ export default function Orders() {
                       </a>
                     )}
                     <button
-                      onClick={() => handlePlaceOrder(so.supplier.id, so.supplier.name, so.supplier.leadTimeDays, so.supplier.cutoffTime)}
+                      onClick={() => handlePlaceOrder(so.supplier.id, so.supplier.name)}
                       disabled={!allChecked || placeMutation.isPending}
                       className={cn(
                         "px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2",
