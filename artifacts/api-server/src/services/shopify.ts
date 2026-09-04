@@ -359,6 +359,11 @@ export interface ShopifyProduct {
     sku: string;
     price: string;
     inventory_quantity: number;
+    /** "shopify" when Shopify tracks this variant's stock; null when it
+     *  doesn't (the packing screen treats untracked as "nothing checked
+     *  this"). Always returned by the REST API; declared here so the
+     *  fridge-availability stock check can read it. */
+    inventory_management: string | null;
     barcode: string | null;
     image_id: number | null;
   }>;

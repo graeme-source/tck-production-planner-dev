@@ -45,6 +45,11 @@ interface LineItem {
   variant_title: string | null;
   quantity: number;
   variant_id: number | null;
+  /** Straight off the Shopify line item (the server spreads the whole item).
+   *  Only read to recognise non-stock lines: £0 AND 0 g is a paper insert,
+   *  not a product. */
+  price?: string;
+  grams?: number;
   sku: string;
   location: SkuLocation | null;
   barcode: string | null;
@@ -639,6 +644,14 @@ interface FridgeAvailability {
   outOfScopeVariants?: Record<string, string>;
   /** 8-pack bags wrapped TODAY per recipe — the pool bag orders gate on. */
   bagStock?: Array<{ recipeId: number; bags: number }>;
+  /** variantId → Shopify inventory level, for variants Shopify itself
+   *  tracks (oversell denied). An accepted order line on one of these is
+   *  already stock-checked — by Shopify, not the fridge. */
+  shopifyTracked?: Record<string, number>;
+  /** lower-cased Shopify product title → recipeId, for resolving "8 Pack
+   *  Bag" variant lines to their recipe's bag pool (eight_pack_variant_id
+   *  was never populated — same title convention as wholesale-bags). */
+  bagRecipeByTitle?: Record<string, number>;
   specialRecipeId: number | null;
 }
 
@@ -1734,16 +1747,44 @@ export default function Fulfilment() {
           packsPer = 1;
           pool = "packs";
         }
+        // 8-pack bag lines resolve by PRODUCT TITLE — the bag is a variant
+        // of the same Shopify product as the mapped 2-pack, and
+        // eight_pack_variant_id was never populated (same convention as the
+        // wholesale-bags queue). These gate on TODAY's wrapped bags.
+        if (recipeId == null
+            && (li.variant_title ?? "").toLowerCase().includes("8 pack bag")) {
+          const bagRecipe = fridgeAvailability.bagRecipeByTitle?.[li.title.trim().toLowerCase()];
+          if (bagRecipe != null) {
+            recipeId = bagRecipe;
+            packsPer = 1;
+            pool = "bags";
+          }
+        }
         if (recipeId == null) {
-          // Can't be checked — never gates, but say so out loud, and say WHY:
-          // either the variant has no mapping at all, or it's mapped to a
-          // recipe the fridge doesn't count (not core-menu / fridge-product).
+          // The fridge can't check this line — but Shopify may already have.
+          // Everything TCK sells that isn't wrapped into the production
+          // fridge (fried chicken in the freezer, dessert packs, third-party
+          // sauces, F2F lines) is inventory-tracked on Shopify with
+          // overselling denied, so the accepted order IS the stock check.
+          // Those lines are checked, not "unchecked" (Graeme, 2026-09-04).
+          if (li.variant_id != null
+              && fridgeAvailability.shopifyTracked?.[String(li.variant_id)] != null) {
+            continue;
+          }
+          // £0 and 0 g is a paper insert riding along with the order (e.g.
+          // "Order Insert (first time customers)") — there is no stock to
+          // check. Structural, not name-based, per the charter.
+          if (Number(li.price ?? "0") === 0 && (li.grams ?? 0) === 0) {
+            continue;
+          }
+          // NOTHING checked this line — no fridge mapping AND Shopify isn't
+          // tracking it. Say so out loud, and say WHY, naming the fix.
           const outOfScopeName = li.variant_id != null
             ? fridgeAvailability.outOfScopeVariants?.[String(li.variant_id)]
             : undefined;
           uncheckedTitles.add(outOfScopeName
-            ? `${li.title} — ${outOfScopeName} isn't flagged core menu / fridge product`
-            : `${li.title} — no recipe mapping`);
+            ? `${li.title} — ${outOfScopeName} isn't flagged core menu / fridge product, and Shopify isn't tracking its stock`
+            : `${li.title} — no recipe mapping, and Shopify isn't tracking its stock`);
           uncheckedOrderIds.add(o.id);
           continue;
         }
@@ -4720,10 +4761,11 @@ export default function Fulfilment() {
                 <AlertTriangle className="w-4 h-4" /> The fridge gate can't check these products
               </p>
               <p className="text-xs text-amber-800/80 dark:text-amber-200/80 mt-0.5">
-                Orders containing them are never held back. Each line says why: either the
-                variant has no recipe mapping, or its recipe isn't flagged <em>Core menu</em> /
-                <em> Fridge product</em>, which is what gives the fridge a live count. Fix that
-                on the recipe and it comes under the gate.
+                Orders containing them are never held back. A product is stock-checked either
+                by the fridge (a mapped recipe flagged <em>Core menu</em> / <em>Fridge product</em>)
+                or by Shopify itself (inventory tracking on, overselling denied). These lines
+                have neither. Fix: turn on inventory tracking for it in Shopify, or map its
+                recipe and flag it, and it disappears from here.
               </p>
               <div className="flex flex-wrap gap-1.5 mt-1.5">
                 {[...fridgeAllocation.uncheckedTitles].map(t => (
