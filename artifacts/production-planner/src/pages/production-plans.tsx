@@ -30,6 +30,7 @@ import {
   Menu, MoreHorizontal, Lock, Unlock, SlidersHorizontal, Users,
 } from "lucide-react";
 import { AddRecipeToPlanDialog } from "@/components/add-recipe-to-plan-dialog";
+import { useFriedChickenPrepDays } from "@/components/fried-chicken/api";
 import { AddDoughToPlanDialog } from "@/components/add-dough-to-plan-dialog";
 import { AddFriedChickenDialog } from "@/components/fried-chicken/add-fried-chicken-dialog";
 import { FriedChickenPrepSheetDialog } from "@/components/fried-chicken/prep-sheet";
@@ -6101,10 +6102,35 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
     return map;
   }, [plans, datesWithOwnPlan]);
 
+  // Fried chicken prep days, same idea as dough but the offset is a
+  // fried-chicken setting, so the dates come from its own endpoint rather
+  // than the plan rows (and the charter bars new code in the plans route).
+  const fcRange = useMemo(() => {
+    const dates = (plans ?? []).map(pl => pl.planDate).sort();
+    if (dates.length === 0) return null;
+    const from = new Date(`${dates[0]}T12:00:00Z`);
+    from.setUTCDate(from.getUTCDate() - 7);
+    return { from: from.toISOString().slice(0, 10), to: dates[dates.length - 1]! };
+  }, [plans]);
+  const { data: fcPrepDays } = useFriedChickenPrepDays(fcRange?.from ?? null, fcRange?.to ?? null);
+  const friedChickenWorkByDate = useMemo(() => {
+    const map: Record<string, { planId: number; planName: string; planDate: string; packs: number }[]> = {};
+    for (const r of fcPrepDays ?? []) {
+      // Same suppression rule as dough: a day with its own plan carries the
+      // prep on that plan's Prep tab, so no synthetic card.
+      if (r.prepDate === r.planDate) continue;
+      if (datesWithOwnPlan.has(r.prepDate)) continue;
+      if (!map[r.prepDate]) map[r.prepDate] = [];
+      map[r.prepDate]!.push(r);
+    }
+    return map;
+  }, [fcPrepDays, datesWithOwnPlan]);
+
   const selectedDateKey = format(selectedDate, "yyyy-MM-dd");
   const selectedDayPlans = plansByDate[selectedDateKey] ?? [];
   const selectedPrepWork = prepWorkByDate[selectedDateKey] ?? [];
   const selectedDoughWork = doughWorkByDate[selectedDateKey] ?? [];
+  const selectedFriedChickenWork = friedChickenWorkByDate[selectedDateKey] ?? [];
 
   const openDayWithoutProduction = (kind: "day" | "mac") => {
     // Same-day duplicate guard as the create dialog: allowed, but never by
@@ -6201,6 +6227,7 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
             const dayPlans = plansByDate[dateKey] ?? [];
             const dayPrepWork = prepWorkByDate[dateKey] ?? [];
             const dayDoughWork = doughWorkByDate[dateKey] ?? [];
+            const dayFriedChickenWork = friedChickenWorkByDate[dateKey] ?? [];
             const today = isToday(day);
             const selected = isSameDay(day, selectedDate);
             const isComplete = dayPlans.length > 0 && dayPlans.every(p => p.status === "complete");
@@ -6210,7 +6237,7 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
             // work but no production of their own (e.g. Saturday dough day
             // for Monday production). Means a no-production day still
             // visibly has work on it.
-            const hasOffsiteWork = (dayPrepWork.length > 0 || dayDoughWork.length > 0) && !hasPlan;
+            const hasOffsiteWork = (dayPrepWork.length > 0 || dayDoughWork.length > 0 || dayFriedChickenWork.length > 0) && !hasPlan;
 
             return (
               <button
@@ -6292,7 +6319,7 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
             production plan. Surfaces e.g. "Prep on Sat for Mon production"
             so the team can open the prep station directly even when this
             specific day has no production of its own. */}
-        {(selectedPrepWork.length > 0 || selectedDoughWork.length > 0) && (
+        {(selectedPrepWork.length > 0 || selectedDoughWork.length > 0 || selectedFriedChickenWork.length > 0) && (
           <div className="grid gap-2">
             {selectedPrepWork.map(p => (
               <button
@@ -6312,6 +6339,26 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
                   </p>
                 </div>
                 <ArrowRight className="w-4 h-4 text-violet-700 dark:text-violet-300 flex-shrink-0" />
+              </button>
+            ))}
+            {selectedFriedChickenWork.map(p => (
+              <button
+                key={`fc-${p.planId}`}
+                onClick={() => navigate(`/plans/${p.planId}/station/fried_chicken?view=prep&fcshow=1`)}
+                className="text-left rounded-xl px-4 py-3 border border-orange-300/60 dark:border-orange-700/60 bg-orange-50 dark:bg-orange-950/20 hover:bg-orange-100 dark:hover:bg-orange-950/30 transition-colors flex items-center gap-3"
+              >
+                <div className="w-8 h-8 rounded-lg bg-orange-500/10 flex items-center justify-center flex-shrink-0">
+                  <Drumstick className="w-4 h-4 text-orange-700 dark:text-orange-300" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-orange-800 dark:text-orange-200">
+                    Fried Chicken prep day for {p.planName}
+                  </p>
+                  <p className="text-xs text-orange-700/80 dark:text-orange-300/80">
+                    Run on {format(parseISO(p.planDate), "EEE d MMM")} · {p.packs} bags · open the prep sheet
+                  </p>
+                </div>
+                <ArrowRight className="w-4 h-4 text-orange-700 dark:text-orange-300 flex-shrink-0" />
               </button>
             ))}
             {selectedDoughWork.map(p => (
@@ -6340,9 +6387,9 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
         {selectedDayPlans.length === 0 ? (
           <div className={cn(
             "rounded-2xl border border-dashed border-border bg-card flex flex-col items-center justify-center text-muted-foreground",
-            selectedPrepWork.length === 0 && selectedDoughWork.length === 0 ? "py-14" : "py-8",
+            selectedPrepWork.length === 0 && selectedDoughWork.length === 0 && selectedFriedChickenWork.length === 0 ? "py-14" : "py-8",
           )}>
-            {selectedPrepWork.length === 0 && selectedDoughWork.length === 0 && (
+            {selectedPrepWork.length === 0 && selectedDoughWork.length === 0 && selectedFriedChickenWork.length === 0 && (
               <CalendarDays className="w-10 h-10 mb-3 opacity-20" />
             )}
             <p className="text-sm font-medium">No production plan for this day</p>

@@ -20,6 +20,10 @@ export interface SuggestionVariant {
   soldLast30: number;
   dptPercent: number;
   kgPerPack: number;
+  /** What one bag is made of, by sub-recipe. Shown next to the raw-chicken
+   *  figure so a bag that costs less chicken than a smaller one can be
+   *  understood rather than doubted (Graeme, 2026-09-04). */
+  makeUp?: Array<{ name: string; kg: number }>;
   /** What the allocator would make. */
   packs: number;
   stockAfter: number;
@@ -68,6 +72,18 @@ export function mergeSuggestionWithPlan(
   });
 }
 
+/** The edit-set that puts every row back on the suggestion — the "plan it
+ *  again from the raw chicken" gesture. Expressed as explicit edits rather
+ *  than clearing them, because a row already saved on the plan baselines to
+ *  its SAVED packs, not the suggestion (mergeSuggestionWithPlan above), so
+ *  clearing edits alone cannot get back to the suggested run. Bags already
+ *  fried stay counted: the floor is what's made. */
+export function editsForSuggestion(
+  rows: readonly Pick<PlanRow, "recipeId" | "suggested" | "made">[],
+): Record<number, number> {
+  return Object.fromEntries(rows.map(r => [r.recipeId, Math.max(r.made, r.suggested)]));
+}
+
 export interface RunTotals {
   packs: number;
   /** Raw chicken the planned bags cost. */
@@ -80,15 +96,25 @@ export interface RunTotals {
   /** Oil to have on site for the chicken actually planned, not for the
    *  nominal run size. */
   oilKg: number;
+  /** Packed weight out at this mix. Raw in and packed out are the mass
+   *  balance of the run — the old paper sheet assumed raw ≈ packed, this is
+   *  worked out from the recipes, and only showing both makes the difference
+   *  arguable with instead of invisible (Graeme, 2026-09-04). Zero when the
+   *  make-up isn't loaded. */
+  packedKg: number;
 }
 
 export function runTotals(
-  rows: readonly Pick<PlanRow, "planned" | "kgPerPack">[],
+  rows: readonly Pick<PlanRow, "planned" | "kgPerPack" | "makeUp">[],
   rawKg: number,
   oilKgPerKg: number,
 ): RunTotals {
   const packs = rows.reduce((n, r) => n + Math.max(0, r.planned), 0);
   const kgUsed = rows.reduce((n, r) => n + Math.max(0, r.planned) * Math.max(0, r.kgPerPack), 0);
+  const packedKg = rows.reduce(
+    (n, r) => n + Math.max(0, r.planned) * (r.makeUp ?? []).reduce((m, c) => m + Math.max(0, c.kg), 0),
+    0,
+  );
   const budget = Math.max(0, rawKg);
   return {
     packs,
@@ -96,6 +122,7 @@ export function runTotals(
     kgSpare: round(Math.max(0, budget - kgUsed), 3),
     kgOver: round(Math.max(0, kgUsed - budget), 3),
     oilKg: round(kgUsed * Math.max(0, oilKgPerKg), 1),
+    packedKg: round(packedKg, 1),
   };
 }
 

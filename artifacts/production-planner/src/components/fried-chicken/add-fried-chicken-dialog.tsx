@@ -23,10 +23,11 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { formatQuantity } from "./format";
 import { useFriedChickenSuggestion, saveFriedChickenItems } from "./api";
 import { useFriedChickenSettings, settingNumber, FriedChickenRunSettings } from "./run-settings";
 import {
-  mergeSuggestionWithPlan, runTotals, daysCoverAfter,
+  mergeSuggestionWithPlan, runTotals, daysCoverAfter, editsForSuggestion,
   type PlanRow, type PlannedBag,
 } from "./plan-rows";
 
@@ -58,11 +59,21 @@ function BagCard({ row, windowDays, onChange, onReset }: {
       <div className="flex items-baseline gap-3 flex-wrap">
         <span className="text-xl font-bold leading-snug flex-1 min-w-0">{row.name}</span>
         {row.kgPerPack > 0 ? (
-          <span className="text-sm text-muted-foreground tabular-nums">{row.kgPerPack} kg a bag</span>
+          <span className="text-sm text-muted-foreground tabular-nums">{row.kgPerPack} kg raw a bag</span>
         ) : (
           <span className="text-sm font-semibold text-amber-600">no raw meat in the recipe</span>
         )}
       </div>
+
+      {/* What the bag is actually made of. Without this, a Korean 500g bag
+          costing less raw chicken than a Buttermilk 400g one reads as a bug —
+          it isn't, a third of the bag is sauce, but you can't tell from the
+          raw figure alone (Graeme, 2026-09-04). */}
+      {(row.makeUp?.length ?? 0) > 0 && (
+        <p className="text-sm text-muted-foreground -mt-1">
+          {row.makeUp!.map(m => `${formatQuantity(m.kg, "kg")} ${m.name.toLowerCase()}`).join(" + ")}
+        </p>
+      )}
 
       <div className="flex items-center gap-3">
         <button
@@ -181,6 +192,18 @@ export function AddFriedChickenDialog({
     setEdits(prev => ({ ...prev, [recipeId]: next }));
   };
 
+  // Put the whole run back on the suggestion for the current raw kg. Needed
+  // because a saved plan's rows baseline to their SAVED packs, so after
+  // hand-editing (or reopening an old plan) there was no way back to "what
+  // does 75 kg actually buy" short of resetting every row (Graeme,
+  // 2026-09-04 — he'd edited to match the paper plan and the header still
+  // said 75 kg while the bags no longer spent it).
+  const resetAllToSuggestion = () => {
+    setEditBasis(debouncedKg);
+    setEdits(editsForSuggestion(rows));
+  };
+  const anyOffSuggestion = rows.some(r => r.planned !== Math.max(r.made, r.suggested));
+
   const resetRow = (recipeId: number) => {
     setEdits(prev => {
       const next = { ...prev };
@@ -246,6 +269,15 @@ export function AddFriedChickenDialog({
                 />
                 <span className="absolute right-4 top-1/2 -translate-y-1/2 text-lg font-medium text-muted-foreground pointer-events-none">kg</span>
               </div>
+              {anyOffSuggestion && (
+                <button
+                  type="button"
+                  onClick={resetAllToSuggestion}
+                  className="mt-2 flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline"
+                >
+                  <RotateCcw className="w-4 h-4" /> Replan from {rawKg} kg
+                </button>
+              )}
             </div>
             <div className="flex-1 min-w-[12rem] space-y-1">
               <p className="text-3xl font-bold tabular-nums leading-none">
@@ -259,6 +291,11 @@ export function AddFriedChickenDialog({
                     ? <span> · {totals.kgSpare} kg spare</span>
                     : null}
               </p>
+              {totals.packedKg > 0 && (
+                <p className="text-sm text-muted-foreground tabular-nums">
+                  ≈ {totals.packedKg} kg packed weight out
+                </p>
+              )}
               <p className="text-sm text-muted-foreground flex items-center gap-1.5">
                 <Droplets className="w-4 h-4" /> {totals.oilKg} kg of oil on site
               </p>
