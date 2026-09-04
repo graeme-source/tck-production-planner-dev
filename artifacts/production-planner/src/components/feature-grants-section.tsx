@@ -214,6 +214,12 @@ export function FeatureGrantsSection() {
             </div>
           </div>
 
+          <p className="text-sm text-muted-foreground rounded-xl bg-secondary/40 px-3 py-2">
+            Ticked = {person.name.split(" ")[0]} can use it. Locked ticks come with their{" "}
+            <span className="capitalize">{person.role}</span> access and are always on — nothing on
+            this screen takes access away. The switches you can move are extras just for them.
+          </p>
+
           <div className="relative max-w-sm">
             <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
             <input
@@ -242,7 +248,7 @@ export function FeatureGrantsSection() {
                           {f.retired && <Badge variant="outline" className="text-muted-foreground">retired</Badge>}
                           {viaRole && (
                             <Badge variant="outline" className="text-muted-foreground">
-                              <Lock className="h-3 w-3 mr-1" />already theirs, via {f.baselineRole}
+                              <Lock className="h-3 w-3 mr-1" />from their {f.baselineRole} access — always on
                             </Badge>
                           )}
                           {grant && f.requiredSopId !== null && (
@@ -263,9 +269,14 @@ export function FeatureGrantsSection() {
                         )}
                       </div>
                       <Switch
-                        checked={!!grant}
-                        // A grant on top of what the role already gives is a no-op, and
-                        // switching it on would read as if it were doing something.
+                        // Ticked = they can use it, from EITHER source. Showing
+                        // role-covered features as off read as lost access
+                        // (Graeme, 2026-09-04) — but nothing was ever off: the
+                        // role's general level keeps applying underneath.
+                        checked={!!grant || viaRole}
+                        // Role-given access can't be switched off here — grants
+                        // only add. The lever for that is the page's access
+                        // level or the person's role, and the badge says so.
                         disabled={grantMutation.isPending || (viaRole && !grant)}
                         onCheckedChange={(v) => grantMutation.mutate({ key: f.key, userId: person.id, grant: v })}
                       />
