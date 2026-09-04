@@ -12,8 +12,9 @@
  * promise in writing.
  */
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Loader2, AlertTriangle, CalendarClock, Mail, Tag, CheckCircle2, X, ExternalLink } from "lucide-react";
+import { Loader2, AlertTriangle, CalendarClock, Mail, Tag, CheckCircle2, X, ExternalLink, Truck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 
@@ -31,6 +32,12 @@ interface ReschedulePreview {
   deliveryAttribute: { before: string | null; after: string; preserved: string[] };
   email: { to: string | null; subject: string; body: string };
   warnings: string[];
+  /** What APC's POSTINFO postcode sheet says this postcode can take —
+   *  the manual spreadsheet check, now done by the server. */
+  postcodeCheck?: {
+    summary: string;
+    service: { nextDay: boolean; saturdayDelivery: boolean; transitDays: number | null; matchedOn: string } | null;
+  } | null;
 }
 
 export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, onClose, onDone }: {
@@ -90,7 +97,14 @@ export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, 
     onError: (e: Error) => toast({ title: "Reschedule failed", description: e.message, variant: "destructive" }),
   });
 
-  return (
+  // Portalled to <body>. This opens on top of the APC booking dialog, whose
+  // Radix content is itself portalled to the end of <body> — so rendering
+  // here in the page tree left it painting UNDERNEATH the dialog that opened
+  // it, whatever z-index it carried: an ancestor on the packing page makes
+  // its own stacking context, and z-[120] only ranks inside that. As a body
+  // sibling mounted after the Radix portal, z-[120] beats the dialog's z-50
+  // for real (Graeme, 2026-09-04).
+  return createPortal(
     // pointer-events-auto is load-bearing: this renders over a MODAL Radix
     // dialog, and Radix puts pointer-events:none on the whole body while one
     // is open (its own content wins them back inside its portal). Without
@@ -150,6 +164,23 @@ export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, 
                   <span className="text-amber-900 dark:text-amber-200">{w}</span>
                 </div>
               ))}
+
+              {/* What APC's own postcode sheet says this address can take —
+                  the manual spreadsheet check that used to precede every
+                  reschedule decision, shown even when the news is good.
+                  Blue when the sheet was found and read; amber when the
+                  postcode isn't in it at all. */}
+              {preview.postcodeCheck && (
+                <div className={cn(
+                  "rounded-lg border px-3 py-2 text-sm flex items-start gap-2",
+                  preview.postcodeCheck.service
+                    ? "border-blue-300 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30 text-blue-900 dark:text-blue-200"
+                    : "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200",
+                )}>
+                  <Truck className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <span>{preview.postcodeCheck.summary}</span>
+                </div>
+              )}
 
               {/* New date. Defaults to the next deliverable day; the operator
                   can override for a customer who has asked for something else. */}
@@ -260,6 +291,7 @@ export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, 
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
