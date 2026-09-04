@@ -1,4 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { shouldResetCachesOnIdentityChange } from "@/lib/session-identity";
 import { addDeviceUserId } from "@/lib/device-users";
 import { toast } from "@/hooks/use-toast";
 import { idleTimeoutMs, type IdleTimeoutSettings } from "@/lib/idle-timeout";
@@ -96,6 +98,24 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: "loading" });
+  const queryClient = useQueryClient();
+
+  // The station PCs are shared — people swap in and out by PIN all day.
+  // Cached queries are keyed the same for everyone, so when a DIFFERENT
+  // person signs in (or someone signs out) the previous person's data must
+  // go: without this, Lorna's to-dos rendered under Major's name on the
+  // packing screen until the next scheduled refetch (2026-09-04). The rule
+  // for when to wipe lives in lib/session-identity.ts with its tests; the
+  // same person re-verifying the daily PIN lock keeps their cache.
+  const previousUserIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (state.status === "loading") return;
+    const nextUserId = state.status === "authenticated" ? state.user.id : null;
+    if (shouldResetCachesOnIdentityChange(previousUserIdRef.current, nextUserId)) {
+      queryClient.clear();
+    }
+    previousUserIdRef.current = nextUserId;
+  }, [state, queryClient]);
 
   // Load the per-station idle allowances once. Until they arrive the shipped
   // defaults apply, so a slow or failed fetch can never make a screen lock
