@@ -31,6 +31,7 @@ import * as z from "zod";
 import { validate } from "../middleware/validate";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { resolveRecipeIngredients } from "../lib/ingredient-resolver";
+import { sectionTotalKg } from "../lib/prep-sections";
 import { getProducts, adjustInventoryLevel } from "../services/shopify";
 
 const router: IRouter = Router();
@@ -56,6 +57,28 @@ async function rawMeatKgPerPack(recipeId: number, portionsPerBatch: number): Pro
     kg += r.unit === "kg" ? q : r.unit === "g" ? q / 1000 : 0;
   }
   return kg;
+}
+
+/** What one bag is made of, by sub-recipe, straight off the recipe.
+ *
+ *  Exists because the raw-chicken figure alone hid a real disagreement
+ *  (Graeme, 2026-09-04): a Korean 500g bag costs LESS raw chicken than a
+ *  Buttermilk 400g one, which looks impossible until you can see that a third
+ *  of the Korean bag is sauce. The number was right and untrustworthy at the
+ *  same time. Showing the make-up next to it is what makes it checkable.
+ *
+ *  No names in here — whatever a recipe is built from is what gets shown. */
+async function bagMakeUp(recipeId: number): Promise<Array<{ name: string; kg: number }>> {
+  const rows = await db.execute<{ name: string; quantity: string }>(sql`
+    SELECT s.name, rsr.quantity
+    FROM recipe_sub_recipes rsr
+    JOIN sub_recipes s ON s.id = rsr.sub_recipe_id
+    WHERE rsr.recipe_id = ${recipeId}
+    ORDER BY rsr.quantity DESC
+  `);
+  return (rows.rows ?? [])
+    .map(r => ({ name: r.name, kg: Math.round((Number(r.quantity) || 0) * 1000) / 1000 }))
+    .filter(r => r.kg > 0);
 }
 
 interface FriedChickenVariant {
@@ -165,21 +188,79 @@ router.get("/suggestion", async (req: Request, res: Response) => {
       // sales, and one with no raw meat can't cost anything.
       unmapped: variants.filter(v => !v.variantId).map(v => v.name),
       noMeat: variants.filter(v => v.kgPerPack <= 0).map(v => v.name),
-      variants: variants.map(v => ({
+      variants: await Promise.all(variants.map(async v => ({
         recipeId: v.recipeId,
         name: v.name,
         stockPacks: v.stockPacks,
         soldLast30: v.soldLast30,
         dptPercent: Math.round(v.dptShare * 1000) / 10,
         kgPerPack: Math.round(v.kgPerPack * 1000) / 1000,
+        makeUp: await bagMakeUp(v.recipeId),
         packs: packsOf.get(String(v.recipeId))?.packs ?? 0,
         stockAfter: packsOf.get(String(v.recipeId))?.stockAfter ?? v.stockPacks,
         daysCoverNow: v.soldLast30 > 0 ? Math.round(v.stockPacks / (v.soldLast30 / 30) * 10) / 10 : null,
-      })),
+      }))),
     });
   } catch (err) {
     console.error("[fried-chicken] suggestion failed:", err);
     res.status(500).json({ error: "Couldn't work out a suggestion" });
+  }
+});
+
+// GET /fried-chicken/prep-days?from=YYYY-MM-DD&to=YYYY-MM-DD — every run whose
+// PREP day falls in the range, for the production-plans calendar.
+//
+// The calendar shows "Dough day for …" cards on days that have no plan of
+// their own; fried chicken prep needs the same card (Graeme, 2026-09-04) so
+// the Sunday person finds both jobs on the Sunday screen. Dough gets its
+// dates off the plan rows; this lives here because the chicken offset is a
+// fried-chicken setting and the charter bars new code in
+// routes/production-plans.ts.
+router.get("/prep-days", async (req: Request, res: Response) => {
+  const ok = (v: unknown) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const from = ok(req.query.from) ? String(req.query.from) : null;
+  const to = ok(req.query.to) ? String(req.query.to) : null;
+  if (!from || !to) { res.status(400).json({ error: "from and to (YYYY-MM-DD) are required" }); return; }
+  try {
+    const daysBefore = Number(await setting("fried_chicken_prep_days_before", "1"));
+    const offset = Number.isFinite(daysBefore) ? daysBefore : 1;
+
+    const rows = await db
+      .select({
+        id: productionPlansTable.id,
+        name: productionPlansTable.name,
+        planDate: productionPlansTable.planDate,
+        packs: sql<number>`SUM(${productionPlanItemsTable.batchesTarget})::int`,
+      })
+      .from(productionPlansTable)
+      .innerJoin(productionPlanItemsTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
+      .innerJoin(recipesTable, eq(recipesTable.id, productionPlanItemsTable.recipeId))
+      .where(and(
+        // Runs whose prep date (planDate − offset) can land inside [from, to].
+        sql`${productionPlansTable.planDate} >= ${from}::date`,
+        sql`${productionPlansTable.planDate} <= ${to}::date + ${offset}::int`,
+        eq(recipesTable.category, FRIED_CHICKEN_CATEGORY),
+      ))
+      .groupBy(productionPlansTable.id, productionPlansTable.name, productionPlansTable.planDate)
+      .having(sql`SUM(${productionPlanItemsTable.batchesTarget}) > 0`)
+      .orderBy(productionPlansTable.planDate);
+
+    const out = rows.map(r => {
+      const prep = new Date(`${r.planDate}T12:00:00Z`);
+      prep.setUTCDate(prep.getUTCDate() - offset);
+      return {
+        planId: r.id,
+        planName: r.name,
+        planDate: r.planDate,
+        prepDate: prep.toISOString().slice(0, 10),
+        packs: Number(r.packs) || 0,
+      };
+    }).filter(r => r.prepDate >= from && r.prepDate <= to);
+
+    res.json(out);
+  } catch (err) {
+    console.error("[fried-chicken] prep-days failed:", err);
+    res.status(500).json({ error: "Couldn't list prep days" });
   }
 });
 
@@ -228,12 +309,24 @@ router.get("/next-run", async (req: Request, res: Response) => {
     prepDate.setUTCDate(prepDate.getUTCDate() - (Number.isFinite(daysBefore) ? daysBefore : 1));
     const prepDateStr = prepDate.toISOString().slice(0, 10);
 
+    // The plan that sits ON the prep day, if one exists — so the run day's
+    // Prep tab can link straight to it. Prep is shown on the prep day's
+    // plan, not the run's (Graeme, 2026-09-04): whoever preps on Sunday
+    // shouldn't have to know to open Monday.
+    const [prepPlan] = await db
+      .select({ id: productionPlansTable.id })
+      .from(productionPlansTable)
+      .where(sql`${productionPlansTable.planDate} = ${prepDateStr}::date`)
+      .orderBy(productionPlansTable.id)
+      .limit(1);
+
     res.json({
       found: true,
       planId: row.id,
       planName: row.name,
       planDate: row.planDate,
       prepDate: prepDateStr,
+      prepPlanId: prepPlan?.id ?? null,
       packs: Number(row.packs) || 0,
       isPrepDay: prepDateStr === after,
       isRunDay: row.planDate === after,
@@ -433,6 +526,192 @@ router.post("/plans/:planId/count", validate(CountBody), async (req: Request, re
   }
 });
 
+/* ── The prep sheet, grouped the way the job is actually done ──────────────
+ *
+ * The flat "everything the run needs" list was correct and useless: eleven
+ * ingredients in descending quantity order, with no hint that six of them are
+ * two mixes you make up in advance (Graeme, 2026-09-04).
+ *
+ * Grouping comes from two places, both already in the data:
+ *
+ *   • prep_group on a composition row — a display label saying "show these
+ *     together under this heading". Used for the breading tub and the
+ *     buttermilk marinade, which are real mixes but deliberately NOT
+ *     sub-recipes: making them sub-recipes would mean maintaining a yield and
+ *     a quantity in every recipe above them, for a grouping that only ever
+ *     affects how this sheet reads.
+ *
+ *   • a sub-recipe with no prep_group on its rows becomes its own section,
+ *     named after itself — that's the Korean sauce, and anything like it
+ *     added later needs no code change.
+ *
+ * A sub-recipe nested INSIDE a group (the Marinade Spice Mix inside the
+ * buttermilk marinade) stays one line with its own total, and carries its
+ * ingredients as children so it can be opened up — it's mixed in bulk and
+ * drawn down on, so the total is what you need and the breakdown is what you
+ * need only when you're making more of it.
+ */
+interface PrepLeaf { name: string; unit: string; qty: number; children?: PrepLeaf[] }
+interface PrepSection {
+  key: string;
+  title: string;
+  order: number;
+  unit: string;
+  totalQty: number;
+  items: PrepLeaf[];
+}
+
+interface CompositionRow {
+  kind: "ingredient" | "sub_recipe";
+  refId: number;
+  name: string;
+  unit: string;
+  quantity: number;
+  prepGroup: string | null;
+  prepGroupOrder: number | null;
+}
+
+async function subRecipeComposition(subRecipeId: number): Promise<{ yieldVal: number; rows: CompositionRow[] }> {
+  const meta = await db.execute<{ yield: string }>(sql`
+    SELECT yield FROM sub_recipes WHERE id = ${subRecipeId} LIMIT 1
+  `);
+  const yieldVal = Number(meta.rows?.[0]?.yield ?? 0);
+
+  const ing = await db.execute<{
+    ingredient_id: number; name: string; unit: string; quantity: string;
+    prep_group: string | null; prep_group_order: number | null;
+  }>(sql`
+    SELECT sri.ingredient_id, i.name, i.unit, sri.quantity,
+           sri.prep_group, sri.prep_group_order
+    FROM sub_recipe_ingredients sri
+    JOIN ingredients i ON i.id = sri.ingredient_id
+    WHERE sri.sub_recipe_id = ${subRecipeId}
+      AND COALESCE(sri.hide_from_prep, false) = false
+  `);
+
+  const nested = await db.execute<{
+    component_sub_recipe_id: number; name: string; quantity: string;
+    prep_group: string | null; prep_group_order: number | null;
+  }>(sql`
+    SELECT ssr.component_sub_recipe_id, s.name, ssr.quantity,
+           ssr.prep_group, ssr.prep_group_order
+    FROM sub_recipe_sub_recipes ssr
+    JOIN sub_recipes s ON s.id = ssr.component_sub_recipe_id
+    WHERE ssr.sub_recipe_id = ${subRecipeId}
+  `);
+
+  return {
+    yieldVal,
+    rows: [
+      ...(ing.rows ?? []).map(r => ({
+        kind: "ingredient" as const,
+        refId: Number(r.ingredient_id),
+        name: r.name,
+        unit: r.unit ?? "g",
+        quantity: Number(r.quantity) || 0,
+        prepGroup: r.prep_group,
+        prepGroupOrder: r.prep_group_order,
+      })),
+      ...(nested.rows ?? []).map(r => ({
+        kind: "sub_recipe" as const,
+        refId: Number(r.component_sub_recipe_id),
+        name: r.name,
+        // A sub-recipe's own total is expressed in whatever its ingredients
+        // are; kg is the only unit any of these mixes use.
+        unit: "kg",
+        quantity: Number(r.quantity) || 0,
+        prepGroup: r.prep_group,
+        prepGroupOrder: r.prep_group_order,
+      })),
+    ],
+  };
+}
+
+/** Flatten a sub-recipe to leaf ingredients — the expandable breakdown under
+ *  a mix that is made in bulk. */
+async function subRecipeLeaves(subRecipeId: number, scale: number, seen: Set<number>): Promise<PrepLeaf[]> {
+  if (seen.has(subRecipeId)) return [];
+  const { yieldVal, rows } = await subRecipeComposition(subRecipeId);
+  if (!yieldVal) return [];
+  const eff = scale / yieldVal;
+  seen.add(subRecipeId);
+  const out: PrepLeaf[] = [];
+  for (const r of rows) {
+    if (r.kind === "ingredient") {
+      out.push({ name: r.name, unit: r.unit, qty: r.quantity * eff });
+    } else {
+      out.push(...await subRecipeLeaves(r.refId, r.quantity * eff, seen));
+    }
+  }
+  seen.delete(subRecipeId);
+  return out;
+}
+
+/** Walk one sub-recipe, adding to the section map. A sub-recipe whose rows
+ *  carry no prep_group becomes a section in its own right. */
+async function collectSections(
+  subRecipeId: number,
+  scale: number,
+  sections: Map<string, PrepSection>,
+  fallbackTitle: string,
+  fallbackOrder: number,
+  seen: Set<number>,
+): Promise<void> {
+  if (seen.has(subRecipeId)) return;
+  const { yieldVal, rows } = await subRecipeComposition(subRecipeId);
+  if (!yieldVal) return;
+  const eff = scale / yieldVal;
+  const anyGrouped = rows.some(r => r.prepGroup);
+  seen.add(subRecipeId);
+
+  for (const r of rows) {
+    const qty = r.quantity * eff;
+    if (qty <= 0) continue;
+
+    // Ungrouped nested sub-recipe inside an otherwise ungrouped parent: it is
+    // its own job (the Korean sauce), so give it its own section.
+    if (r.kind === "sub_recipe" && !r.prepGroup && !anyGrouped) {
+      await collectSections(r.refId, qty, sections, r.name, fallbackOrder + 1, seen);
+      continue;
+    }
+
+    const title = r.prepGroup ?? fallbackTitle;
+    const order = r.prepGroup ? (r.prepGroupOrder ?? 99) : fallbackOrder;
+    const key = title.toLowerCase();
+    let section = sections.get(key);
+    if (!section) {
+      section = { key, title, order, unit: "kg", totalQty: 0, items: [] };
+      sections.set(key, section);
+    }
+
+    const leaf: PrepLeaf = { name: r.name, unit: r.kind === "sub_recipe" ? "kg" : r.unit, qty };
+    if (r.kind === "sub_recipe") {
+      leaf.children = await subRecipeLeaves(r.refId, qty, new Set(seen));
+    }
+
+    const existing = section.items.find(i => i.name === leaf.name);
+    if (existing) {
+      existing.qty += leaf.qty;
+      if (leaf.children) {
+        for (const c of leaf.children) {
+          const ec = existing.children?.find(x => x.name === c.name);
+          if (ec) ec.qty += c.qty;
+          else (existing.children ??= []).push(c);
+        }
+      }
+    } else {
+      section.items.push(leaf);
+    }
+  }
+
+  seen.delete(subRecipeId);
+
+  // A section's total is the sum of its lines — that's the tub or the bottle.
+  for (const s of sections.values()) {
+    s.totalQty = sectionTotalKg(s.items);
+  }
+}
+
 // GET /fried-chicken/plans/:planId/prep — everything the prep day needs.
 router.get("/plans/:planId/prep", async (req: Request, res: Response) => {
   const planId = Number(req.params.planId);
@@ -483,8 +762,54 @@ router.get("/plans/:planId/prep", async (req: Request, res: Response) => {
       }
     }
 
+    // The same run again, but grouped into the steps the job is done in.
+    const sectionMap = new Map<string, PrepSection>();
+    for (const it of items) {
+      if (!it.recipeId) continue;
+      const packs = Number(it.batchesTarget) || 0;
+      if (packs <= 0) continue;
+      const links = await db.execute<{ sub_recipe_id: number; quantity: string; name: string }>(sql`
+        SELECT rsr.sub_recipe_id, rsr.quantity, s.name
+        FROM recipe_sub_recipes rsr
+        JOIN sub_recipes s ON s.id = rsr.sub_recipe_id
+        WHERE rsr.recipe_id = ${it.recipeId}
+      `);
+      for (const l of links.rows ?? []) {
+        const scale = (Number(l.quantity) || 0) * (Number(it.portionsPerBatch) || 1) * packs;
+        if (scale <= 0) continue;
+        await collectSections(Number(l.sub_recipe_id), scale, sectionMap, l.name, 10, new Set());
+      }
+    }
+
+    const ticked = await db.execute<{ step_key: string }>(sql`
+      SELECT step_key FROM fried_chicken_prep_ticks WHERE plan_id = ${planId}
+    `);
+    const tickedKeys = new Set((ticked.rows ?? []).map(r => r.step_key));
+
+    const round3 = (n: number) => Math.round(n * 1000) / 1000;
+    const sections = [...sectionMap.values()]
+      .sort((a, b) => a.order - b.order || a.title.localeCompare(b.title))
+      .map(s => ({
+        key: s.key,
+        title: s.title,
+        totalQty: round3(s.totalQty),
+        unit: "kg",
+        done: tickedKeys.has(s.key),
+        items: s.items
+          .sort((a, b) => b.qty - a.qty)
+          .map(i => ({
+            name: i.name,
+            qty: round3(i.qty),
+            unit: i.unit,
+            children: i.children?.length
+              ? i.children.sort((a, b) => b.qty - a.qty).map(c => ({ name: c.name, qty: round3(c.qty), unit: c.unit }))
+              : undefined,
+          })),
+      }));
+
     const oilPerKg = Number(await setting("fried_chicken_oil_kg_per_kg", "0.457")) || 0.457;
     res.json({
+      sections,
       planId,
       planName: plan.name,
       planDate: plan.planDate,
@@ -506,6 +831,39 @@ router.get("/plans/:planId/prep", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("[fried-chicken] prep failed:", err);
     res.status(500).json({ error: "Couldn't work out the prep" });
+  }
+});
+
+// POST /fried-chicken/plans/:planId/prep-tick — tick a prep step off, or put
+// it back. Ticking is per plan and per step, not per person: two people prep
+// together off one sheet, the same way they count together off one count sheet.
+const PrepTickBody = z.object({
+  stepKey: z.string().min(1).max(200),
+  done: z.boolean(),
+});
+
+router.post("/plans/:planId/prep-tick", validate(PrepTickBody), async (req: Request, res: Response) => {
+  const planId = Number(req.params.planId);
+  if (!Number.isInteger(planId)) { res.status(400).json({ error: "Invalid plan id" }); return; }
+  const { stepKey, done } = req.body as z.infer<typeof PrepTickBody>;
+  const userId = (req as any).user?.id ?? null;
+
+  try {
+    if (done) {
+      await db.execute(sql`
+        INSERT INTO fried_chicken_prep_ticks (plan_id, step_key, completed_by)
+        VALUES (${planId}, ${stepKey}, ${userId})
+        ON CONFLICT (plan_id, step_key) DO NOTHING
+      `);
+    } else {
+      await db.execute(sql`
+        DELETE FROM fried_chicken_prep_ticks WHERE plan_id = ${planId} AND step_key = ${stepKey}
+      `);
+    }
+    res.json({ stepKey, done });
+  } catch (err) {
+    console.error("[fried-chicken] prep tick failed:", err);
+    res.status(500).json({ error: "Couldn't save that tick" });
   }
 });
 
@@ -545,6 +903,46 @@ async function priorSubmission(planId: number): Promise<PriorSubmission | null> 
   } catch {
     return null;
   }
+}
+
+/** What the count sheet says right now, without going through the submit
+ *  endpoint's dry run.
+ *
+ *  Exists for the closing check "Submit today's counted bags to Shopify
+ *  stock", which sends the stock from the check itself rather than sending
+ *  whoever is closing off to another screen (Graeme, 2026-09-04). The check
+ *  needs the counted figure to show before it can offer the button, and a
+ *  dry run is the wrong tool for that — it is a POST, it is manager-only,
+ *  and it 400s on a plan with no chicken, which is the normal case for the
+ *  other five days of the week.
+ *
+ *  Returns null when this plan has no fried chicken on it at all — the check
+ *  then renders nothing and stays an ordinary tick-box.
+ */
+export async function friedChickenSubmissionState(planId: number): Promise<{
+  countedBags: number;
+  targetBags: number;
+  alreadySubmitted: PriorSubmission | null;
+} | null> {
+  const items = await db
+    .select({
+      made: productionPlanItemsTable.batchesComplete,
+      target: productionPlanItemsTable.batchesTarget,
+    })
+    .from(productionPlanItemsTable)
+    .leftJoin(recipesTable, eq(recipesTable.id, productionPlanItemsTable.recipeId))
+    .where(and(
+      eq(productionPlanItemsTable.planId, planId),
+      eq(recipesTable.category, FRIED_CHICKEN_CATEGORY),
+    ));
+
+  if (items.length === 0) return null;
+
+  return {
+    countedBags: items.reduce((n, i) => n + (Number(i.made) || 0), 0),
+    targetBags: items.reduce((n, i) => n + (Number(i.target) || 0), 0),
+    alreadySubmitted: await priorSubmission(planId),
+  };
 }
 
 router.post("/plans/:planId/submit-stock", requireManagerOrAdmin, validate(SubmitBody), async (req: Request, res: Response) => {

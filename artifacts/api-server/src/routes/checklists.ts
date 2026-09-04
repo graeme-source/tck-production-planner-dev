@@ -879,6 +879,24 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
     return;
   }
 
+  // The closing check "Submit today's counted bags to Shopify stock" does the
+  // sending itself, so it needs to know what the count sheet says and whether
+  // the stock has already gone (Graeme, 2026-09-04). The send stays a POST to
+  // the fried chicken router — this only supplies what the check displays
+  // before you press it.
+  if (type === "fried_chicken_stock_submission") {
+    try {
+      const { friedChickenSubmissionState } = await import("./fried-chicken");
+      const state = await friedChickenSubmissionState(planId);
+      // No chicken on this plan → no rows → the check stays a plain tick-box.
+      res.json(state ? [state] : []);
+    } catch (err: any) {
+      console.error("[checklist] fried_chicken_stock_submission error:", err.message);
+      res.json([]);
+    }
+    return;
+  }
+
   if (type === "desserts_report") {
     // Always use tomorrow's date for delivery tag (dispatch is always for next day).
     // "Tomorrow" is measured in London — Railway runs UTC so a plain
