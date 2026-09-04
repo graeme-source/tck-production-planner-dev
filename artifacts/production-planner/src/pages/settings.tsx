@@ -1054,12 +1054,15 @@ function TeamAccessContent({
         )}
       </div>
 
-      {/* Access Control — admin only */}
-      {canSection("team") && <AccessControlSection />}
+      {/* Deciding who gets in stays admin-only, even for someone granted
+          Team & Access: this section sets every page's access level and the
+          next one hands out the grants themselves, so granting either would
+          be a back door to admin. The rest of this tab opens up normally. */}
+      {user?.role === "admin" && <AccessControlSection />}
 
       {/* Feature grants — was its own "Access" page in the nav until
           2026-09-03; two places called Access was one too many. */}
-      {canSection("team") && <FeatureGrantsSection />}
+      {user?.role === "admin" && <FeatureGrantsSection />}
 
       {/* Broadcast Notification — admin only */}
       {canSection("team") && <BroadcastNotificationSection />}

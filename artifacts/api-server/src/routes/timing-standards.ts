@@ -3,14 +3,12 @@ import { db, timingStandardsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
 import { validate } from "../middleware/validate";
+import { requireFeature } from "../lib/feature-access";
 
-function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  if ((req.session as { userRole?: string }).userRole !== "admin") {
-    res.status(403).json({ error: "Admin access required" });
-    return;
-  }
-  next();
-}
+// Admins, plus anyone handed Production settings in Settings → Team & Access.
+// It was admin-or-nothing, so opening one area to one person meant
+// promoting them (Graeme, 2026-09-04).
+const requireAdmin = requireFeature("settings.production");
 
 const router: IRouter = Router();
 
