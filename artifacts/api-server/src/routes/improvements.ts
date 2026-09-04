@@ -2,7 +2,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import {
   db, improvementSubmissionsTable, improvementCommentsTable, usersTable,
   notificationsTable,
-  stageOf, STAGE_LABEL, canMarkDone, markDoneBlocker, canReview,
+  stageOf, STAGE_LABEL, canMarkDone, markDoneBlocker, canReview, shouldAutoSubmit,
 } from "@workspace/db";
 import { eq, desc, asc, sql, inArray } from "drizzle-orm";
 import { z } from "zod";
@@ -18,7 +18,7 @@ import { shouldAutoStitch } from "../lib/before-after-stitch";
 import { ffmpegAvailable } from "../lib/sop-video";
 import { singleFileUpload } from "../middleware/upload";
 import { sendPushToUsers } from "../services/push";
-import { FOUNDER_EMAILS } from "./lean-reviews";
+import { queueReviewTodo } from "../lib/improvement-review-todo";
 
 const router: IRouter = Router();
 
@@ -227,21 +227,54 @@ async function celebrateImprovement(improvementId: number, title: string, byUser
  *  drops a task onto the founder's green to-do list instead of being
  *  approved in front of the room. One open task per improvement; closed
  *  automatically when the review happens, wherever it happens. */
-async function queueReviewTodo(improvementId: number, title: string) {
-  const founders = await db.select({ id: usersTable.id }).from(usersTable).where(inArray(usersTable.email, [...FOUNDER_EMAILS]));
-  for (const f of founders) {
-    await db.execute(sql`
-      INSERT INTO todo_tasks (assignee_id, created_by, created_by_name, title, notes, url, priority, status, improvement_id)
-      SELECT ${f.id}, NULL, 'Improvement review', ${"Review improvement: " + title},
-             'Open it, check the before and after, and approve it — or send it back with a note.',
-             '/improvements', 'normal', 'open', ${improvementId}
-      WHERE NOT EXISTS (
-        SELECT 1 FROM todo_tasks
-        WHERE assignee_id = ${f.id} AND improvement_id = ${improvementId}
-          AND created_by_name = 'Improvement review' AND status = 'open'
-      )
-    `);
+/**
+ * Move an improvement to "waiting for a manager" and set everything that
+ * goes with it — credit, the celebration, the founder's review task.
+ *
+ * Two callers: the person tapping "I've done this", and the photo upload
+ * that completes a to-do improvement on its own (see shouldAutoSubmit).
+ * Both must do the same thing, or an auto-submitted one arrives with no
+ * credit and no review task.
+ */
+async function submitForApproval(
+  row: ImprovementSubmission,
+  userId: number | null,
+  opts: { celebrate: boolean } = { celebrate: true },
+): Promise<ImprovementSubmission> {
+  let userName: string | null = null;
+  if (userId) {
+    const [user] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId));
+    userName = user?.name ?? null;
   }
+
+  const [updated] = await db.update(improvementSubmissionsTable)
+    .set({
+      progressStatus: "awaiting_approval",
+      doneAt: new Date(),
+      // Whoever says they did it gets the credit, unless it's already set.
+      creditedTo: row.creditedTo ?? userId,
+      creditedToName: row.creditedToName ?? userName,
+      // Clear any previous send-back note; this is a fresh attempt.
+      reviewNote: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(improvementSubmissionsTable.id, row.id))
+    .returning();
+
+  // Celebrate only a FIRST completion — a send-back being re-done
+  // shouldn't ping the whole team twice.
+  if (opts.celebrate && row.progressStatus === "submitted_for_review") {
+    celebrateImprovement(row.id, updated!.title, userId, updated!.creditedToName ?? userName).catch(err =>
+      console.error("[Improvements] celebration notify failed:", err),
+    );
+  }
+  // Every completion (first or re-done after a send-back) queues the
+  // founder's quiet review task.
+  queueReviewTodo(row.id, updated!.title).catch(err =>
+    console.error("[Improvements] review-todo failed:", err),
+  );
+
+  return updated!;
 }
 
 router.post("/:id/done", async (req: Request, res: Response) => {
@@ -258,41 +291,8 @@ router.post("/:id/done", async (req: Request, res: Response) => {
       return;
     }
 
-    const userId = req.session.userId ?? null;
-    let userName: string | null = null;
-    if (userId) {
-      const [user] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId));
-      userName = user?.name ?? null;
-    }
-
-    const [updated] = await db.update(improvementSubmissionsTable)
-      .set({
-        progressStatus: "awaiting_approval",
-        doneAt: new Date(),
-        // Whoever says they did it gets the credit, unless it's already set.
-        creditedTo: row.creditedTo ?? userId,
-        creditedToName: row.creditedToName ?? userName,
-        // Clear any previous send-back note; this is a fresh attempt.
-        reviewNote: null,
-        updatedAt: new Date(),
-      })
-      .where(eq(improvementSubmissionsTable.id, id))
-      .returning();
-
-    // Celebrate only a FIRST completion — a send-back being re-done
-    // shouldn't ping the whole team twice.
-    if (row.progressStatus === "submitted_for_review") {
-      celebrateImprovement(id, updated!.title, userId, updated!.creditedToName ?? userName).catch(err =>
-        console.error("[Improvements] celebration notify failed:", err),
-      );
-    }
-    // Every completion (first or re-done after a send-back) queues the
-    // founder's quiet review task.
-    queueReviewTodo(id, updated!.title).catch(err =>
-      console.error("[Improvements] review-todo failed:", err),
-    );
-
-    res.json(decorate(updated!, mediaCount, await viewerOf(req)));
+    const updated = await submitForApproval(row, req.session.userId ?? null);
+    res.json(decorate(updated, mediaCount, await viewerOf(req)));
   } catch (err) {
     console.error("Error marking improvement done:", err);
     res.status(500).json({ error: "Failed to mark it as done" });
@@ -916,8 +916,8 @@ router.post("/:id/attachments", mediaUpload, async (req: Request, res: Response)
     res.status(400).json({ error: "Image too large (max 10MB)." });
     return;
   }
-  const exists = toRows<{ id: number }>(await db.execute(sql`SELECT id FROM improvement_submissions WHERE id = ${id}`));
-  if (exists.length === 0) { res.status(404).json({ error: "Improvement not found" }); return; }
+  const [improvement] = await db.select().from(improvementSubmissionsTable).where(eq(improvementSubmissionsTable.id, id));
+  if (!improvement) { res.status(404).json({ error: "Improvement not found" }); return; }
   // "before" = what it looked like when the problem was spotted, "after" =
   // once it was fixed. Anything else is just a photo (migration 0060).
   const phase = req.body?.phase === "before" || req.body?.phase === "after" ? req.body.phase : null;
@@ -946,7 +946,23 @@ router.post("/:id/attachments", mediaUpload, async (req: Request, res: Response)
     }
   }
 
-  res.status(201).json({ id: rows[0]?.id, kind: isImage ? "image" : "video", mime, phase });
+  // A title and the after photo IS the submission (Graeme, 2026-09-04).
+  // People were adding the photo and walking away, leaving it in "to do"
+  // while they believed it was done — Lorna's ice shelf sat there for a day.
+  // The upload that takes it over the line sends it for approval itself.
+  let autoSubmitted = false;
+  const mediaCount = (await attachmentCounts([id])).get(id) ?? 0;
+  if (shouldAutoSubmit(improvement.progressStatus, phase, mediaCount)) {
+    try {
+      await submitForApproval(improvement, req.session.userId ?? null);
+      autoSubmitted = true;
+    } catch (err) {
+      // The photo is saved either way — never fail an upload over this.
+      console.error(`[Improvements] auto-submit failed for ${id}:`, err);
+    }
+  }
+
+  res.status(201).json({ id: rows[0]?.id, kind: isImage ? "image" : "video", mime, phase, autoSubmitted });
 });
 
 // Stream the bytes of a single attachment.

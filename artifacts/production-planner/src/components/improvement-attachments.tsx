@@ -23,10 +23,15 @@ export function ImprovementAttachments({
   editable = false,
   thumbSize = "w-24 h-24",
   phase,
+  onChanged,
 }: {
   improvementId: number;
   editable?: boolean;
   thumbSize?: string;
+  /** Fired after an upload or a removal. The improvement's own state can
+   *  change as a side effect — a photo on a to-do improvement sends it for
+   *  approval — so the screen around this has to reload, not just the grid. */
+  onChanged?: () => void;
   /** Show (and upload into) only one side of a before/after pair, or the
    *  joined clip. Omit to show everything, which is what the older callers
    *  still want. */
@@ -68,6 +73,7 @@ export function ImprovementAttachments({
         alert(d.error ?? "Upload failed");
       }
       await load();
+      onChanged?.();
     } finally {
       setUploading(false);
     }
@@ -76,7 +82,8 @@ export function ImprovementAttachments({
   const remove = async (id: number) => {
     if (!confirm("Remove this attachment?")) return;
     await fetch(`${BASE}/api/improvements/attachments/${id}`, { method: "DELETE", credentials: "include" });
-    load();
+    await load();
+    onChanged?.();
   };
 
   const pick = (accept: string, capture?: boolean, maxBytes?: number) => (

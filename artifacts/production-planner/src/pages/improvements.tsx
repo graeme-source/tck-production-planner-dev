@@ -602,11 +602,11 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <p className="text-base font-bold mb-2">Before</p>
-            <ImprovementAttachments improvementId={id} editable phase="before" thumbSize="w-24 h-24" />
+            <ImprovementAttachments improvementId={id} editable phase="before" thumbSize="w-24 h-24" onChanged={refresh} />
           </div>
           <div>
             <p className="text-base font-bold mb-2">After</p>
-            <ImprovementAttachments improvementId={id} editable phase="after" thumbSize="w-24 h-24" />
+            <ImprovementAttachments improvementId={id} editable phase="after" thumbSize="w-24 h-24" onChanged={refresh} />
           </div>
         </div>
 
@@ -627,8 +627,24 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
         </div>
       </div>
 
-      {/* The one action the person needs. */}
-      {item.stage !== "approved" && item.stage !== "waiting" && (
+      {/* Nothing to tap on a fresh one. The after photo IS the submission
+          (Graeme, 2026-09-04) — the upload sends it for approval on its own,
+          so all this needs to do is say so. People were adding the photo,
+          walking away, and believing they were done. */}
+      {item.stage === "todo" && (
+        <div className="rounded-2xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/20 p-5 text-center">
+          <Camera className="w-8 h-8 mx-auto text-amber-500 mb-2" />
+          <p className="text-xl font-bold">Done it? Add the after photo</p>
+          <p className="text-base text-muted-foreground mt-1">
+            That's all it takes — the after picture sends this straight to a manager to
+            check. There's nothing else to press.
+          </p>
+        </div>
+      )}
+
+      {/* A sent-back one goes back when the person says it's ready: the
+          manager's note may ask for more than another photo. */}
+      {item.stage === "sent_back" && (
         <div>
           <button
             onClick={() => markDone.mutate()}
@@ -636,7 +652,7 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
             className="w-full h-16 rounded-2xl bg-primary text-primary-foreground text-xl font-bold flex items-center justify-center gap-3 disabled:opacity-50 active:scale-[0.99] transition-all shadow-lg shadow-primary/20"
           >
             {markDone.isPending ? <Loader2 className="w-6 h-6 animate-spin" /> : <CheckCircle2 className="w-6 h-6" />}
-            I've done this — send for approval
+            I've sorted it — send it back for approval
           </button>
           {item.markDoneBlocker && (
             <p className="text-base text-amber-600 font-semibold mt-2 text-center">{item.markDoneBlocker}</p>
