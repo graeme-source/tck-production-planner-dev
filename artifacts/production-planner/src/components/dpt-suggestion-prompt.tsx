@@ -50,7 +50,7 @@ async function fetchSuggestion(preview: boolean): Promise<SuggestionResponse | n
 }
 
 export function DptSuggestionPrompt({ previewMode = false, onClose }: { previewMode?: boolean; onClose?: () => void } = {}) {
-  const { state } = useAuth();
+  const { state, pinLocked } = useAuth();
   const role = state.status === "authenticated" ? state.user.role : null;
   const isPlanner = state.status === "authenticated"
     ? Boolean((state.user as { isProductionPlanner?: boolean }).isProductionPlanner)
@@ -103,6 +103,11 @@ export function DptSuggestionPrompt({ previewMode = false, onClose }: { previewM
       void queryClient.invalidateQueries({ queryKey: ["dpt-suggestion-due"] });
     },
   });
+
+  // Never open on top of the PIN lock: this dialog auto-opening behind the
+  // lock screen disabled the PIN pad (2026-09-04). It renders again the
+  // moment the PIN goes in, so nothing is lost — it just waits its turn.
+  if (pinLocked) return null;
 
   // Preview (on-demand) shows whenever there are rows; the scheduled prompt
   // only when the weekly check is actually due.
