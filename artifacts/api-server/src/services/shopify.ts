@@ -1046,6 +1046,8 @@ export interface ShopifyOrderForReschedule {
   email: string | null;
   customerFirstName: string | null;
   shippingName: string | null;
+  /** Delivery postcode — what the APC POSTINFO service check keys on. */
+  shippingPostcode: string | null;
   noteAttributes: ShopifyNoteAttribute[];
 }
 
@@ -1066,7 +1068,7 @@ export async function getOrderForReschedule(orderId: number): Promise<ShopifyOrd
         id: number; name: string; tags: string;
         email?: string | null; contact_email?: string | null;
         customer?: { first_name?: string | null } | null;
-        shipping_address?: { name?: string | null } | null;
+        shipping_address?: { name?: string | null; zip?: string | null } | null;
         note_attributes?: ShopifyNoteAttribute[] | null;
       };
     };
@@ -1079,6 +1081,7 @@ export async function getOrderForReschedule(orderId: number): Promise<ShopifyOrd
       email: o.email ?? o.contact_email ?? null,
       customerFirstName: o.customer?.first_name ?? null,
       shippingName: o.shipping_address?.name ?? null,
+      shippingPostcode: o.shipping_address?.zip ?? null,
       noteAttributes: o.note_attributes ?? [],
     };
   } catch (err) {

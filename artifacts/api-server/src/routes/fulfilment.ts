@@ -2,6 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db, skuLocationsTable, skuBarcodesTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable, apcConsignmentsTable, pagePermissionsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
+import { postcodeServiceFor } from "../services/apc-postinfo";
 import { removeTagFromOrder, shopifyAdminOrderUrl, shopifyAdminOrderBase, getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
 import { nextAvailableDeliveryDate, rescheduleTags, withDeliveryDate, rescheduleEmailText, rescheduleEmailHtml, friendlyDate, firstNameOf, toZapietDate } from "../lib/order-reschedule";
 import { validate } from "../middleware/validate";
@@ -1475,6 +1476,23 @@ router.get("/orders/:orderId/reschedule-preview", requireManagerForCourierAction
     if (!plan.tagChange.removed.includes(fromDate)) warnings.push(`The order is not tagged ${fromDate} — its delivery date may already have been changed.`);
     if (!plan.attrChange.changed) warnings.push("Zapiet's Delivery-Date already matches the new date.");
 
+    // What APC's POSTINFO sheet says this postcode can actually take — the
+    // check Graeme did by hand on the desktop spreadsheet before every
+    // reschedule decision (2026-09-04). Shown on the dialog, and turned into
+    // a hard warning when the chosen date lands on a day the sheet rules out.
+    const postcodeCheck = postcodeServiceFor(plan.order.shippingPostcode);
+    if (postcodeCheck?.service) {
+      // getUTCDay is safe here: toDate is a plain YYYY-MM-DD, parsed as UTC
+      // midnight, and the weekday of a date label doesn't shift with DST.
+      const isSaturday = new Date(`${toDate}T00:00:00Z`).getUTCDay() === 6;
+      if (isSaturday && !postcodeCheck.service.saturdayDelivery) {
+        warnings.push(`${toDate} is a Saturday, and APC's postcode sheet lists NO Saturday delivery for ${postcodeCheck.service.matchedOn}. Pick a weekday.`);
+      }
+      if (!postcodeCheck.service.nextDay && postcodeCheck.service.transitDays) {
+        warnings.push(`No next-day service for ${postcodeCheck.service.matchedOn} — APC quote ${postcodeCheck.service.transitDays} days in transit, so the parcel must leave ${postcodeCheck.service.transitDays} days before this date.`);
+      }
+    }
+
     res.json({
       orderId,
       orderName: plan.order.name,
@@ -1492,6 +1510,9 @@ router.get("/orders/:orderId/reschedule-preview", requireManagerForCourierAction
       },
       email: plan.email,
       warnings,
+      // Full answer, shown even when nothing is wrong: "checked, and this
+      // postcode DOES have Saturday service" is a decision-maker too.
+      postcodeCheck,
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1944,6 +1965,10 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
       /** The failure is something to correct on the order and try again,
        *  rather than a coverage refusal or a problem at our end. */
       dataFixable?: boolean;
+      /** What APC's POSTINFO postcode sheet says this postcode can take —
+       *  the manual spreadsheet check, done automatically on failure so the
+       *  reschedule decision can be made from the report. */
+      postcodeCheck?: string;
     }> = [];
 
     for (const order of orders) {
@@ -2110,10 +2135,17 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
           if (serviceCode === smallWeekday && largeWeekday !== smallWeekday) suggestedRetryCode = largeWeekday;
           else if (serviceCode === smallFriday && largeFriday !== smallFriday) suggestedRetryCode = largeFriday;
         }
+        // The manual step this failure used to trigger: open APC's POSTINFO
+        // spreadsheet and look the postcode up before deciding what to do.
+        // Done here instead, so the answer sits under the failure itself
+        // (Graeme, 2026-09-04). Local table only — no network, can't throw.
+        const postcodeCheck = postcodeServiceFor(sa.zip)?.summary;
+
         results.push({
           orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id),
           status: "failed", reason: msg,
           usedServiceCode: serviceCode,
+          ...(postcodeCheck ? { postcodeCheck } : {}),
           ...(suggestedRetryCode ? { suggestedRetryCode } : {}),
           ...(taggedNoService ? { taggedNoService } : {}),
           ...(isDataFixableFailure(msg) ? { dataFixable: true } : {}),
