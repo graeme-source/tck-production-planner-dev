@@ -1100,10 +1100,14 @@ function DispatchSummary({
             onClick={onOpenUnchecked}
             aria-expanded={uncheckedOpen}
             className="px-4 py-2.5 rounded-xl text-base font-semibold border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 hover:bg-amber-100 transition-colors flex items-center gap-2"
-            title="Products the fridge gate can't stock-check"
+            title="Products the fridge gate can't stock-check — tap to see which, and why"
           >
             <AlertTriangle className="w-5 h-5" />
-            {uncheckedCount} not stock-checked
+            {/* Named in full: the bare "N not stock-checked" read as a
+                problem with the ORDERS and nobody could tell what it meant
+                or what to do about it (Graeme, 2026-09-04). It's the fridge
+                gate saying which products it is blind to. */}
+            Fridge gate can&apos;t check {uncheckedCount} product{uncheckedCount === 1 ? "" : "s"}
           </button>
         </div>
       )}
@@ -4365,6 +4369,7 @@ export default function Fulfilment() {
             {showBatchBooking && (
               <ApcBatchBookingDialog
                 tag={queryTag}
+                adminBase={configStatus?.shopifyAdminOrderBase}
                 onClose={() => setShowBatchBooking(false)}
                 onBooked={() => { void refetchBooked(); void refetch(); }}
               />
@@ -4591,9 +4596,9 @@ export default function Fulfilment() {
                     {fridgeGate && fridgeAllocation.uncheckedOrderIds.has(order.id) && (
                       <span
                         className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-medium flex items-center gap-1"
-                        title="This order contains a product with no recipe mapping — the fridge gate could not check its stock"
+                        title="This order contains a product the fridge gate can't check (no recipe mapping, or not flagged core menu / fridge product) — it will never be held back for fridge stock"
                       >
-                        <AlertTriangle className="w-2.5 h-2.5" /> Stock not checked
+                        <AlertTriangle className="w-2.5 h-2.5" /> Fridge gate can&apos;t check an item
                       </span>
                     )}
                     {/* Booking failures used to be visible only inside the
