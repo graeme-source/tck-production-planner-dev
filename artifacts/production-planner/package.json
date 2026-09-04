@@ -52,6 +52,7 @@
     "@workspace/allergens": "workspace:*",
     "@workspace/api-client-react": "workspace:*",
     "@workspace/business-days": "workspace:*",
+    "@workspace/feature-registry": "workspace:*",
     "@workspace/production-schedule": "workspace:*",
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",

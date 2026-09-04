@@ -17,6 +17,9 @@ import {
   isSopGateEnforced,
   userTrainedOnSop,
 } from "../lib/feature-access";
+import { ensureFeaturesSynced } from "../lib/feature-sync";
+import { FEATURE_REGISTRY, featureByKey } from "@workspace/feature-registry";
+import { getPageMinRoles } from "../lib/page-access";
 
 // Feature grants: admin cherry-picks features per user, optionally gated on
 // an SOP training sign-off (global switch, default OFF — see feature-access).
@@ -33,6 +36,9 @@ router.get("/mine", async (req: Request, res: Response) => {
 
 router.get("/", requireAdmin, async (_req: Request, res: Response) => {
   try {
+    // The registry is the library; make sure the database has caught up
+    // before anyone tries to grant something added in this deploy.
+    await ensureFeaturesSynced();
     const features = await db.select().from(appFeaturesTable);
     const grants = await db.select().from(featureGrantsTable);
     const users = await db
@@ -55,7 +61,33 @@ router.get("/", requireAdmin, async (_req: Request, res: Response) => {
         feature?.requiredSopId != null ? await userTrainedOnSop(g.userId, feature.requiredSopId) : true;
     }
 
-    res.json({ features, grants, users, sops, gateEnforced, trainingByGrant });
+    // Decorate each row with what the registry knows — the area it belongs
+    // to, what it unlocks, and the role that already gets it without a grant
+    // (a page's baseline comes from the access-level selector). A row with no
+    // registry entry is retired: nothing in the code checks it any more, so
+    // say so rather than showing a toggle that grants nothing.
+    const pageMinRoles = await getPageMinRoles();
+    const decorated = features.map((f) => {
+      const def = featureByKey(f.key);
+      if (!def) {
+        return { ...f, area: "Retired", kind: "retired", target: null, baselineRole: null, retired: true };
+      }
+      return {
+        ...f,
+        name: def.name,
+        description: def.description,
+        area: def.area,
+        kind: def.kind,
+        target: def.page ?? def.section ?? null,
+        baselineRole: def.kind === "page" && def.page ? pageMinRoles.get(def.page) : def.minRole,
+        retired: false,
+      };
+    });
+    // Registry order, with anything retired last.
+    const order = new Map(FEATURE_REGISTRY.map((f, i) => [f.key, i]));
+    decorated.sort((a, b) => (order.get(a.key) ?? 9999) - (order.get(b.key) ?? 9999));
+
+    res.json({ features: decorated, grants, users, sops, gateEnforced, trainingByGrant });
   } catch (err) {
     console.error("[features] list error:", err);
     res.status(500).json({ error: "Failed to load features" });
@@ -94,6 +126,8 @@ router.patch("/:key", requireAdmin, validate(featurePatchSchema), async (req: Re
 router.put("/:key/grants/:userId", requireAdmin, async (req: Request, res: Response) => {
   const userId = Number(req.params.userId);
   const featureKey = String(req.params.key);
+  // A feature added to the registry in this deploy may not have its row yet.
+  await ensureFeaturesSynced();
   const [feature] = await db.select().from(appFeaturesTable).where(eq(appFeaturesTable.key, featureKey));
   if (!feature) { res.status(404).json({ error: "Feature not found" }); return; }
   await db

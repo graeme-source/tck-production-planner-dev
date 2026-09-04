@@ -5,6 +5,8 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
+import { useFeatureAccess } from "@/hooks/use-feature-access";
+import { featureForPage } from "@workspace/feature-registry";
 import { Layout } from "@/components/layout";
 import { PinSetupModal } from "@/components/pin-setup-modal";
 import { AppErrorBoundary } from "@/components/error-boundary";
@@ -110,18 +112,16 @@ const queryClient = new QueryClient({
 
 const PUBLIC_PATHS = ["/accept-invite", "/forgot-password", "/reset-password"];
 
-// Pages a per-user feature grant can unlock even when the role check fails
-// (see the server's feature-access lib — this only mirrors it for routing).
-const PAGE_FEATURES: Record<string, string> = { "/fulfilment": "apc_label_printing" };
-
 function ProtectedRoute({ component: Component, pageKey }: { component: React.ComponentType; pageKey: string }) {
   const { state } = useAuth();
   const { canAccess } = usePagePermissions();
+  const { can } = useFeatureAccess();
   const role = state.status === "authenticated" ? state.user.role : "viewer";
-  const features = state.status === "authenticated" ? (state.user.features ?? []) : [];
-  const featureKey = PAGE_FEATURES[pageKey];
-  const viaFeature = featureKey !== undefined && features.includes(featureKey);
-  if (!canAccess(role, pageKey) && !viaFeature) return <Redirect to="/" />;
+  // Role first (the general level), then a grant for this one page. The
+  // page → feature map used to be hand-written here AND on the server; it now
+  // comes off the registry, so a new page is one entry, not two edits.
+  const feature = featureForPage(pageKey);
+  if (!canAccess(role, pageKey) && !(feature && can(feature.key))) return <Redirect to="/" />;
   return <Component />;
 }
 

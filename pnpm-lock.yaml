@@ -120,6 +120,9 @@ importers:
       '@workspace/db':
         specifier: workspace:*
         version: link:../../lib/db
+      '@workspace/feature-registry':
+        specifier: workspace:*
+        version: link:../../lib/feature-registry
       '@workspace/production-schedule':
         specifier: workspace:*
         version: link:../../lib/production-schedule
@@ -566,6 +569,9 @@ importers:
       '@workspace/business-days':
         specifier: workspace:*
         version: link:../../lib/business-days
+      '@workspace/feature-registry':
+        specifier: workspace:*
+        version: link:../../lib/feature-registry
       '@workspace/production-schedule':
         specifier: workspace:*
         version: link:../../lib/production-schedule
@@ -688,6 +694,8 @@ importers:
       drizzle-kit:
         specifier: ^0.31.9
         version: 0.31.10
+
+  lib/feature-registry: {}
 
   lib/production-schedule: {}
 

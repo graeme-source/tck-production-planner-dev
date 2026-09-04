@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { Badge } from "@/components/ui/badge";
@@ -5,29 +6,40 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { GraduationCap, KeyRound, Loader2, ShieldCheck } from "lucide-react";
+import { roleMeets, type Role } from "@workspace/feature-registry";
+import {
+  ChevronLeft, GraduationCap, KeyRound, Loader2, Lock, Search, ShieldCheck, User as UserIcon,
+} from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-// Feature grants — cherry-pick features per person, with an optional
-// SOP-training gate. Graeme's design (28 Aug): a global switch (default OFF)
-// additionally requires sign-off on the feature's training SOP before a grant
-// unlocks.
+// Feature grants — hand one person one part of the app, whatever their role.
 //
-// This was its own "Access" page in the left-hand nav, sitting above Settings
-// — while Settings already had a "Team & Access" tab holding users, roles and
-// page access. Two places called Access, and you had to know which one held
-// what (Graeme, 2026-09-03). It now lives in that tab with the rest, and the
-// separate page is gone. Rendered admin-only by its caller.
+// Rebuilt person-first on 2026-09-04. It used to be one card per feature with
+// a switch for every person inside it, which worked while there was a single
+// feature (APC label printing) and falls apart at twenty-six: to answer "what
+// can Lorna get to?" you had to read every card. Now you pick the person, and
+// their whole access sits on one screen — what their role already gives them,
+// and what you've handed them on top.
+//
+// Grants only ever ADD. The role is the general level everyone comes in on;
+// this tops individuals up. Nothing here takes access away, so there's never a
+// second place to look when someone asks why they can't see something.
 
-type Feature = { key: string; name: string; description: string | null; requiredSopId: number | null };
+type Feature = {
+  key: string;
+  name: string;
+  description: string | null;
+  requiredSopId: number | null;
+  area: string;
+  kind: "page" | "settings" | "ability" | "retired";
+  target: string | null;
+  baselineRole: Role | null;
+  retired: boolean;
+};
 type Grant = { id: number; featureKey: string; userId: number };
 type UserRow = { id: number; name: string; email: string; role: string };
 type SopRow = { id: number; title: string };
@@ -51,6 +63,10 @@ export function FeatureGrantsSection() {
   const { state } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  const [personId, setPersonId] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
+  const [showTraining, setShowTraining] = useState(false);
 
   const query = useQuery<AccessData>({
     queryKey: ["/api/features"],
@@ -100,116 +116,239 @@ export function FeatureGrantsSection() {
   });
 
   const data = query.data;
+  const person = data?.users.find(u => u.id === personId) ?? null;
+
+  /** How many extras this person has been handed, for the picker cards. */
+  const grantCount = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const g of data?.grants ?? []) counts.set(g.userId, (counts.get(g.userId) ?? 0) + 1);
+    return counts;
+  }, [data?.grants]);
+
+  const areas = useMemo(() => {
+    const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const matches = (f: Feature) => {
+      if (terms.length === 0) return true;
+      const hay = `${f.name} ${f.description ?? ""} ${f.area} ${f.target ?? ""}`.toLowerCase();
+      return terms.every(t => hay.includes(t));
+    };
+    const order: string[] = [];
+    const groups = new Map<string, Feature[]>();
+    for (const f of data?.features ?? []) {
+      if (!matches(f)) continue;
+      if (!groups.has(f.area)) { groups.set(f.area, []); order.push(f.area); }
+      groups.get(f.area)!.push(f);
+    }
+    return order.map(area => ({ area, features: groups.get(area)! }));
+  }, [data?.features, search]);
 
   return (
     <div className="space-y-4">
       <div>
         <h2 className="text-base font-semibold flex items-center gap-2">
-          <KeyRound className="w-4 h-4 text-primary" /> Feature Grants
+          <KeyRound className="w-4 h-4 text-primary" /> Feature grants
         </h2>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Cherry-pick features for individual people, whatever their role. Optionally require
-          training sign-off before a grant unlocks.
+          Pick a person, then hand them any part of the app — a page, or an area of
+          Settings — without changing their role. Their access level stays the general
+          level they come in on; this only ever adds to it.
         </p>
       </div>
-
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base"><GraduationCap className="h-4 w-4" /> SOP training gate</CardTitle>
-        </CardHeader>
-        <CardContent className="flex items-start gap-4">
-          <Switch
-            checked={data?.gateEnforced ?? false}
-            onCheckedChange={(v) => gateMutation.mutate(v)}
-            disabled={gateMutation.isPending || !data}
-          />
-          <div className="text-sm text-muted-foreground">
-            <p className="text-foreground font-medium mb-1">
-              {data?.gateEnforced ? "ON — training is enforced" : "OFF — grants work immediately"}
-            </p>
-            <p>
-              When on, a granted feature stays locked until the person is signed off on that
-              feature's SOP in a training matrix. Training status is always shown below either
-              way, so you can see what turning this on would do before you do it.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
 
       {query.isLoading && (
         <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
       )}
+      {query.error && (
+        <p className="text-sm text-destructive">Couldn't load access: {(query.error as Error).message}</p>
+      )}
 
-      {data?.features.map((feature) => {
-        const grants = data.grants.filter((g) => g.featureKey === feature.key);
-        return (
-          <Card key={feature.key}>
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base"><KeyRound className="h-4 w-4" /> {feature.name}</CardTitle>
-              {feature.description && <p className="text-sm text-muted-foreground">{feature.description}</p>}
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="max-w-md">
-                <Label className="text-xs">Training SOP required (used when the gate is on)</Label>
-                <Select
-                  value={feature.requiredSopId ? String(feature.requiredSopId) : "none"}
-                  onValueChange={(v) =>
-                    sopMutation.mutate({ key: feature.key, requiredSopId: v === "none" ? null : Number(v) })
-                  }
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">No SOP required</SelectItem>
-                    {data.sops.map((s) => (
-                      <SelectItem key={s.id} value={String(s.id)}>{s.title}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+      {/* ── Pick a person ─────────────────────────────────────────────── */}
+      {data && !person && (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {data.users.filter(u => u.role !== "admin").map(u => {
+            const n = grantCount.get(u.id) ?? 0;
+            return (
+              <button
+                key={u.id}
+                onClick={() => { setPersonId(u.id); setSearch(""); }}
+                className="text-left rounded-2xl border-2 border-border bg-card p-4 hover:border-primary/50 hover:bg-secondary/30 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <UserIcon className="w-5 h-5 text-primary" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-semibold truncate">{u.name}</p>
+                    <p className="text-xs text-muted-foreground capitalize">{u.role}</p>
+                  </div>
+                </div>
+                <p className="text-sm text-muted-foreground mt-3">
+                  {n === 0 ? "Role access only" : `${n} extra${n === 1 ? "" : "s"} on top of their role`}
+                </p>
+              </button>
+            );
+          })}
+          {data.users.filter(u => u.role !== "admin").length === 0 && (
+            <p className="text-sm text-muted-foreground">Everyone active is an admin — there's nothing to grant.</p>
+          )}
+        </div>
+      )}
+
+      {data && !person && (
+        <p className="text-xs text-muted-foreground">Admins aren't listed: they already have everything.</p>
+      )}
+
+      {/* ── One person's access ───────────────────────────────────────── */}
+      {data && person && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              onClick={() => setPersonId(null)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-border text-sm font-medium hover:bg-secondary transition-colors"
+            >
+              <ChevronLeft className="w-4 h-4" /> Everyone
+            </button>
+            <div className="min-w-0">
+              <p className="font-semibold truncate">{person.name}</p>
+              <p className="text-xs text-muted-foreground capitalize">{person.role} — their general access level</p>
+            </div>
+          </div>
+
+          <div className="relative max-w-sm">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search features…"
+              className="w-full pl-8 pr-2.5 py-2 rounded-xl border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+          </div>
+
+          {areas.map(({ area, features }) => (
+            <Card key={area}>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">{area}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-1">
+                {features.map(f => {
+                  const grant = data.grants.find(g => g.featureKey === f.key && g.userId === person.id);
+                  const viaRole = f.baselineRole ? roleMeets(person.role, f.baselineRole) : false;
+                  const trained = grant ? data.trainingByGrant[grant.id] : undefined;
+                  return (
+                    <div key={f.key} className="flex items-start justify-between gap-3 rounded-xl border border-border px-3 py-2.5">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                          {f.name}
+                          {f.retired && <Badge variant="outline" className="text-muted-foreground">retired</Badge>}
+                          {viaRole && (
+                            <Badge variant="outline" className="text-muted-foreground">
+                              <Lock className="h-3 w-3 mr-1" />already theirs, via {f.baselineRole}
+                            </Badge>
+                          )}
+                          {grant && f.requiredSopId !== null && (
+                            trained ? (
+                              <Badge className="bg-emerald-100 text-emerald-900"><ShieldCheck className="h-3 w-3 mr-1" />trained</Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-amber-700 border-amber-300">
+                                {data.gateEnforced ? "locked — awaiting training" : "not yet trained"}
+                              </Badge>
+                            )
+                          )}
+                        </p>
+                        {f.description && <p className="text-xs text-muted-foreground mt-0.5">{f.description}</p>}
+                        {f.retired && (
+                          <p className="text-xs text-amber-700 mt-0.5">
+                            Nothing in the app checks this any more. Switch it off to tidy it away.
+                          </p>
+                        )}
+                      </div>
+                      <Switch
+                        checked={!!grant}
+                        // A grant on top of what the role already gives is a no-op, and
+                        // switching it on would read as if it were doing something.
+                        disabled={grantMutation.isPending || (viaRole && !grant)}
+                        onCheckedChange={(v) => grantMutation.mutate({ key: f.key, userId: person.id, grant: v })}
+                      />
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          ))}
+
+          {areas.length === 0 && (
+            <p className="text-sm text-muted-foreground">Nothing matches "{search.trim()}".</p>
+          )}
+        </div>
+      )}
+
+      {/* ── Training gate + which SOP each feature needs ───────────────── */}
+      {data && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <GraduationCap className="h-4 w-4" /> SOP training gate
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-start gap-4">
+              <Switch
+                checked={data.gateEnforced}
+                onCheckedChange={(v) => gateMutation.mutate(v)}
+                disabled={gateMutation.isPending}
+              />
+              <div className="text-sm text-muted-foreground">
+                <p className="text-foreground font-medium mb-1">
+                  {data.gateEnforced ? "ON — training is enforced" : "OFF — grants work immediately"}
+                </p>
+                <p>
+                  When on, a granted feature stays locked until the person is signed off on
+                  that feature's SOP in a training matrix. Training status is always shown
+                  either way, so you can see what turning this on would do before you do it.
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowTraining(v => !v)}
+              className="text-sm font-medium text-primary hover:underline"
+            >
+              {showTraining ? "Hide" : "Set which SOP each feature needs"}
+            </button>
+
+            {showTraining && (
+              <div className="space-y-2">
                 {data.sops.length === 0 && (
-                  <p className="text-xs text-muted-foreground mt-1">
+                  <p className="text-xs text-muted-foreground">
                     No SOPs in the Documents repository yet — add one there first.
                   </p>
                 )}
+                {data.features.filter(f => !f.retired).map(f => (
+                  <div key={f.key} className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2">
+                    <Label className="text-sm font-normal min-w-0 truncate">{f.name}</Label>
+                    <div className="w-56 flex-shrink-0">
+                      <Select
+                        value={f.requiredSopId ? String(f.requiredSopId) : "none"}
+                        onValueChange={(v) =>
+                          sopMutation.mutate({ key: f.key, requiredSopId: v === "none" ? null : Number(v) })
+                        }
+                      >
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No SOP required</SelectItem>
+                          {data.sops.map(sopRow => (
+                            <SelectItem key={sopRow.id} value={String(sopRow.id)}>{sopRow.title}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                ))}
               </div>
-
-              <div>
-                <Label className="text-xs">Who has this feature</Label>
-                <div className="mt-1 space-y-1">
-                  {data.users
-                    .filter((u) => u.role !== "admin")
-                    .map((u) => {
-                      const grant = grants.find((g) => g.userId === u.id);
-                      const trained = grant ? data.trainingByGrant[grant.id] : undefined;
-                      return (
-                        <div key={u.id} className="flex items-center justify-between rounded border px-3 py-2">
-                          <div className="text-sm flex items-center gap-2 min-w-0">
-                            <span className="truncate">{u.name}</span>
-                            <span className="text-muted-foreground truncate">({u.role})</span>
-                            {grant && feature.requiredSopId !== null && (
-                              trained ? (
-                                <Badge className="bg-emerald-100 text-emerald-900"><ShieldCheck className="h-3 w-3 mr-1" />trained</Badge>
-                              ) : (
-                                <Badge variant="outline" className="text-amber-700 border-amber-300">
-                                  {data.gateEnforced ? "locked — awaiting training" : "not yet trained"}
-                                </Badge>
-                              )
-                            )}
-                          </div>
-                          <Switch
-                            checked={!!grant}
-                            onCheckedChange={(v) => grantMutation.mutate({ key: feature.key, userId: u.id, grant: v })}
-                            disabled={grantMutation.isPending}
-                          />
-                        </div>
-                      );
-                    })}
-                </div>
-                <p className="text-xs text-muted-foreground mt-2">Admins always have every feature.</p>
-              </div>
-            </CardContent>
-          </Card>
-        );
-      })}
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
