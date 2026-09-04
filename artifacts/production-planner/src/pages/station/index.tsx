@@ -19,6 +19,7 @@ import { MainPrepStation } from "./stations/main-prep-station";
 import { PrepBasesStation } from "./stations/prep-bases-station";
 import { PrepMeatStation } from "./stations/prep-meat-station";
 import { MacaroniCheeseStation } from "./stations/macaroni-cheese-station";
+import { FriedChickenStation } from "./stations/fried-chicken-station";
 import type { StationType } from "./shared/constants";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
 
@@ -184,6 +185,8 @@ export default function StationPage() {
         return <PackingRedirect planId={planId} planDate={plan.planDate} />;
       case "macaroni_cheese":
         return <MacaroniCheeseStation plan={plan} isOnBreak={isOnBreak} />;
+      case "fried_chicken":
+        return <FriedChickenStation plan={plan} isOnBreak={isOnBreak} />;
       case "dough_prep":
         return <DoughPrepStation plan={plan} isOnBreak={isOnBreak} />;
       case "dough_sheeting":

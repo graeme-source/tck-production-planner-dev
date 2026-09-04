@@ -24,13 +24,16 @@ import {
   CalendarDays, Calendar, Plus, Trash2, ChevronLeft, ChevronRight,
   BarChart2, CheckCircle2,
   Loader2, RefreshCw, Info, Package, ClipboardList, ExternalLink,
-  Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef, UtensilsCrossed,
+  Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef, UtensilsCrossed, Drumstick,
   ArrowRight, GripVertical, AlertTriangle, AlertCircle, BookmarkCheck, ShoppingCart,
   FlaskConical, Printer, X, ChevronDown, ChevronUp, PoundSterling, ShieldCheck, RotateCcw,
   Menu, MoreHorizontal, Lock, Unlock, SlidersHorizontal, Users,
 } from "lucide-react";
 import { AddRecipeToPlanDialog } from "@/components/add-recipe-to-plan-dialog";
 import { AddDoughToPlanDialog } from "@/components/add-dough-to-plan-dialog";
+import { AddFriedChickenDialog } from "@/components/fried-chicken/add-fried-chicken-dialog";
+import { FriedChickenPrepSheetDialog } from "@/components/fried-chicken/prep-sheet";
+import { FRIED_CHICKEN_CATEGORY } from "@/pages/station/shared/constants";
 import { toast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, addDays, parseISO, isWeekend, isToday, startOfWeek, isSameDay, formatDistanceToNow } from "date-fns";
@@ -4692,6 +4695,7 @@ function RawMaterialsManifest({ planId, planName, onClose }: RawMaterialsManifes
 const STATION_BUTTONS = [
   { key: "dough_prep", label: "Dough Prep", icon: Layers, color: "text-amber-600 bg-amber-50 dark:bg-amber-900/20" },
   { key: "macaroni_cheese", label: "Mac Cheese", icon: UtensilsCrossed, color: "text-yellow-600 bg-yellow-50 dark:bg-yellow-900/20" },
+  { key: "fried_chicken", label: "Fried Chicken", icon: Drumstick, color: "text-orange-600 bg-orange-50 dark:bg-orange-900/20" },
   { key: "dough_sheeting", label: "Sheeting", icon: Layers, color: "text-amber-500 bg-amber-50 dark:bg-amber-900/20" },
   { key: "prep", label: "Prep", icon: Salad, color: "text-green-500 bg-green-50 dark:bg-green-900/20" },
   { key: "mixing", label: "Mixing & Cooking", icon: Waves, color: "text-blue-500 bg-blue-50 dark:bg-blue-900/20" },
@@ -5097,6 +5101,8 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const [itemsTableUnlocked, setItemsTableUnlocked] = useState(false);
   const [addRecipeOpen, setAddRecipeOpen] = useState(false);
   const [addDoughOpen, setAddDoughOpen] = useState(false);
+  const [addChickenOpen, setAddChickenOpen] = useState(false);
+  const [chickenPrepOpen, setChickenPrepOpen] = useState(false);
   const itemsEditable = canEditPlan && itemsTableUnlocked;
   const [, navigate] = useLocation();
   const { data: stationActivity } = useGetStationActivity(planId, {
@@ -5178,15 +5184,39 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   // keep working. calzone* / macPacks* are exposed for display splits.
   const totalBatchesTarget = plan.items?.reduce((s, it) => s + (it.batchesTarget ?? 0), 0) ?? 0;
   const totalBatchesComplete = plan.items?.reduce((s, it) => s + (it.batchesComplete ?? 0), 0) ?? 0;
-  const calzoneBatchesTarget = plan.items?.filter(it => (it as any).recipeCategory !== "Macaroni Cheese")
+  // Fried chicken is counted in BAGS and never touches the calzone line, so
+  // it is excluded from every calzone figure below rather than quietly
+  // inflating them — batches, packs, and the station progress denominators
+  // alike. Mac cheese was already split out this way; chicken needs it more,
+  // because a bag is not a pack and one batch row is one bag.
+  const isChicken = (it: unknown) => (it as { recipeCategory?: string }).recipeCategory === FRIED_CHICKEN_CATEGORY;
+  const isCalzone = (it: unknown) =>
+    (it as { recipeCategory?: string }).recipeCategory !== "Macaroni Cheese" && !isChicken(it);
+  const calzoneBatchesTarget = plan.items?.filter(isCalzone)
     .reduce((s, it) => s + (it.batchesTarget ?? 0), 0) ?? 0;
-  const calzoneBatchesComplete = plan.items?.filter(it => (it as any).recipeCategory !== "Macaroni Cheese")
+  const calzoneBatchesComplete = plan.items?.filter(isCalzone)
+    .reduce((s, it) => s + (it.batchesComplete ?? 0), 0) ?? 0;
+  const chickenBagsTarget = plan.items?.filter(isChicken)
+    .reduce((s, it) => s + (it.batchesTarget ?? 0), 0) ?? 0;
+  const chickenBagsComplete = plan.items?.filter(isChicken)
     .reduce((s, it) => s + (it.batchesComplete ?? 0), 0) ?? 0;
   const macPacksTarget = plan.items?.filter(it => (it as any).recipeCategory === "Macaroni Cheese")
     .reduce((s, it) => s + (it.batchesTarget ?? 0), 0) ?? 0;
   const macPacksComplete = plan.items?.filter(it => (it as any).recipeCategory === "Macaroni Cheese")
     .reduce((s, it) => s + (it.batchesComplete ?? 0), 0) ?? 0;
-  const totalPacks = plan.items?.reduce((s, it) => s + (it.batchesTarget ?? 0) * (it.portionsPerBatch ?? 10) / ((it as PlanItemApi).packSize ?? 2), 0) ?? 0;
+  // Fried chicken already on this plan. Passed to the planning dialog so
+  // re-opening it edits the run rather than suggesting a fresh one over the
+  // top, and carries what has already been fried so nothing can be planned
+  // below it.
+  const chickenOnPlan = (plan.items ?? [])
+    .filter(it => (it as any).recipeCategory === FRIED_CHICKEN_CATEGORY)
+    .map(it => ({
+      recipeId: it.recipeId,
+      packs: it.batchesTarget ?? 0,
+      made: it.batchesComplete ?? 0,
+    }));
+  const totalPacks = plan.items?.filter(it => !isChicken(it))
+    .reduce((s, it) => s + (it.batchesTarget ?? 0) * (it.portionsPerBatch ?? 10) / ((it as PlanItemApi).packSize ?? 2), 0) ?? 0;
   const progress = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
 
   // Per-station completion counts aggregated from all plan items.
@@ -5206,8 +5236,11 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
     list.reduce((s, it) => s + batchToPacks(it, it.batchesTarget ?? 0), 0);
   const packsDoneAt = (list: any[], stationKey: string) =>
     list.reduce((s, it) => s + batchToPacks(it, (it.stationCompletions as Record<string, number> | undefined)?.[stationKey] ?? 0), 0);
-  const totalPacksTarget = packsTargetFor(plan.items ?? []);
-  const nextPacksTarget = packsTargetFor(nextItems);
+  // Chicken bags are not packs and never reach mixing, building, the ovens or
+  // wrapping — counting them here would drag every one of those progress bars
+  // down against work that was never theirs to do.
+  const totalPacksTarget = packsTargetFor((plan.items ?? []).filter(it => !isChicken(it)));
+  const nextPacksTarget = packsTargetFor(nextItems.filter(it => !isChicken(it)));
 
   const stationProgress: Record<string, { done: number; target: number }> = {};
   {
@@ -5227,6 +5260,10 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
           done: packsDoneAt(macItems, "macaroni_cheese"),
           target: packsTargetFor(macItems),
         };
+      } else if (s.key === "fried_chicken") {
+        // Counted in bags against the run's target, not in packs — one batch
+        // completion row at this station is one bag.
+        stationProgress[s.key] = { done: chickenBagsComplete, target: chickenBagsTarget };
       } else if (s.key === "packing") {
         const totalOrders = dispatchProgress?.totalOrders ?? 0;
         const totalFulfilled = dispatchProgress?.totalFulfilled ?? 0;
@@ -5568,6 +5605,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
             <span className="text-xs text-muted-foreground">
               {plan.items?.length ?? 0} recipes · {calzoneBatchesTarget} batches
               {macPacksTarget > 0 && <> + {macPacksTarget} mac packs</>}
+              {chickenBagsTarget > 0 && <> + {chickenBagsTarget} chicken bags</>}
               {" · "}{totalPacks.toLocaleString()} packs
             </span>
             {canEditPlan && plan.status !== "complete" && (
@@ -5588,6 +5626,42 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                 <Plus className="w-3.5 h-3.5" /> Add dough
               </button>
             )}
+            {canEditPlan && plan.status !== "complete" && (
+              <button
+                onClick={() => setAddChickenOpen(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:bg-secondary/50 transition-colors"
+                title="Plan this day's fried chicken run"
+              >
+                <Drumstick className="w-3.5 h-3.5" />
+                {chickenOnPlan.length > 0 ? "Fried chicken" : "Add fried chicken"}
+              </button>
+            )}
+            {/* The prep sheet is for the day BEFORE, so it stays reachable
+                even on a finished plan — someone prepping tonight opens
+                tomorrow's plan to get the pull list. */}
+            {chickenOnPlan.length > 0 && (
+              <button
+                onClick={() => setChickenPrepOpen(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:bg-secondary/50 transition-colors"
+                title="What to pull and defrost for this chicken run"
+              >
+                <ClipboardList className="w-3.5 h-3.5" /> Chicken prep
+              </button>
+            )}
+            {canEditPlan && (
+              <AddFriedChickenDialog
+                planId={plan.id}
+                open={addChickenOpen}
+                onClose={() => setAddChickenOpen(false)}
+                existing={chickenOnPlan}
+                onSaved={refetch}
+              />
+            )}
+            <FriedChickenPrepSheetDialog
+              planId={plan.id}
+              open={chickenPrepOpen}
+              onClose={() => setChickenPrepOpen(false)}
+            />
             {canEditPlan && (
               <AddDoughToPlanDialog
                 planId={plan.id}
@@ -6323,12 +6397,16 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
                 items?: Array<{ id: number; recipeId: number; recipeName: string; recipeColor: string | null; recipeCategory?: string | null; batchesTarget: number; orderPosition: number }>
               }).items ?? [];
               // Same split as the plan header: batches means CALZONE batches
-              // (mac cheese counts in packs, never mixed into the number).
+              // (mac cheese counts in packs and chicken in bags — neither is
+              // ever mixed into the number).
               const listCalzoneBatches = planItems
-                .filter(it => it.recipeCategory !== "Macaroni Cheese")
+                .filter(it => it.recipeCategory !== "Macaroni Cheese" && it.recipeCategory !== FRIED_CHICKEN_CATEGORY)
                 .reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
               const listMacPacks = planItems
                 .filter(it => it.recipeCategory === "Macaroni Cheese")
+                .reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
+              const listChickenBags = planItems
+                .filter(it => it.recipeCategory === FRIED_CHICKEN_CATEGORY)
                 .reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
 
               return (
@@ -6357,6 +6435,7 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
                             {plan.itemCount} recipe{plan.itemCount !== 1 ? "s" : ""}
                             {listCalzoneBatches > 0 && ` · ${listCalzoneBatches} batches`}
                             {listMacPacks > 0 && ` + ${listMacPacks} mac packs`}
+                            {listChickenBags > 0 && ` + ${listChickenBags} chicken bags`}
                           </span>
                         )}
                         {plan.notes && (
