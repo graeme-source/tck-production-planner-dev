@@ -2,11 +2,12 @@ import React, { useState, useMemo, useCallback, useEffect } from "react";
 import { useParams, useLocation } from "wouter";
 import { useGetProductionPlan, getGetProductionPlanQueryKey } from "@workspace/api-client-react";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
-import { Loader2, AlertTriangle, RotateCw, ClipboardCheck, Factory, Lock } from "lucide-react";
+import { Loader2, AlertTriangle, RotateCw, ClipboardCheck, ClipboardList, Factory, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFeatureFlags } from "@/hooks/use-feature-flags";
 import { StationLayout } from "./shared/station-layout";
 import { StationChecklist } from "./shared/checklist/station-checklist";
+import { FriedChickenPrepDay } from "@/components/fried-chicken/prep-sheet";
 import { MixingStation } from "./stations/mixing-station";
 import { BuildingStation } from "./stations/building-station";
 import { OvensStation } from "./stations/ovens-station";
@@ -23,7 +24,9 @@ import { FriedChickenStation } from "./stations/fried-chicken-station";
 import type { StationType } from "./shared/constants";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
 
-type StationView = "production" | "checklist";
+// "prep" is only offered by stations that have a prep sheet of their own
+// (fried chicken). Everywhere else the tab simply isn't rendered.
+type StationView = "production" | "checklist" | "prep";
 
 /** Determine the default view and checklist category based on time of day and plan status */
 function getDefaultView(planStatus?: string): { view: StationView; category: "opening" | "cleaning" | "closing" } {
@@ -122,13 +125,20 @@ export default function StationPage() {
   // fulfilment page's Checklist tab links back here with it.
   const urlView = new URLSearchParams(window.location.search).get("view");
   const [activeView, setActiveView] = useState<StationView>(
-    urlView === "checklist" || urlView === "production"
+    urlView === "checklist" || urlView === "production" || urlView === "prep"
       ? (urlView as StationView)
       : checklistsEnabled ? defaults.view : "production",
   );
 
   // If feature gets toggled off while on checklist view, switch back
   if (!checklistsEnabled && activeView === "checklist") {
+    setActiveView("production");
+  }
+
+  // Fried chicken plans its own prep off its own sheet; every other station
+  // preps through the Prep hub, so the tab would go nowhere.
+  const hasOwnPrepSheet = stationType === "fried_chicken";
+  if (!hasOwnPrepSheet && activeView === "prep") {
     setActiveView("production");
   }
 
@@ -186,7 +196,7 @@ export default function StationPage() {
       case "macaroni_cheese":
         return <MacaroniCheeseStation plan={plan} isOnBreak={isOnBreak} />;
       case "fried_chicken":
-        return <FriedChickenStation plan={plan} isOnBreak={isOnBreak} />;
+        return <FriedChickenStation plan={plan} isOnBreak={isOnBreak} onGoToPrep={() => setActiveView("prep")} />;
       case "dough_prep":
         return <DoughPrepStation plan={plan} isOnBreak={isOnBreak} />;
       case "dough_sheeting":
@@ -221,6 +231,24 @@ export default function StationPage() {
             <ClipboardCheck className="w-4 h-4" />
             Checklist
           </button>
+          {/* Prep sits between the checklist and production because that is
+              the order of the day: check the station, prep for tomorrow's run,
+              then make today's. Only fried chicken has a prep sheet of its
+              own — the calzone line preps through the Prep hub instead. */}
+          {hasOwnPrepSheet && (
+            <button
+              onClick={() => setActiveView("prep")}
+              className={cn(
+                "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors",
+                activeView === "prep"
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <ClipboardList className="w-4 h-4" />
+              Prep
+            </button>
+          )}
           <button
             onClick={() => setActiveView("production")}
             className={cn(
@@ -262,6 +290,8 @@ export default function StationPage() {
               planId={planId}
               defaultCategory={defaults.category}
             />
+          ) : activeView === "prep" && hasOwnPrepSheet ? (
+            plan ? <FriedChickenPrepDay planId={planId} planDate={plan.planDate} /> : null
           ) : (
             stationContent()
           )}

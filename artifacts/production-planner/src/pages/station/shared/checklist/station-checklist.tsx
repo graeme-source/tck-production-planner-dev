@@ -8,6 +8,7 @@ import {
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
 import { PersonalTodosStrip } from "@/components/todo-lists";
 import { CuriosityTimeCard } from "@/components/curiosity-time";
+import { FriedChickenSubmitStock } from "@/components/fried-chicken/submit-stock";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
@@ -1890,6 +1891,44 @@ function DynamicDataDisplay({ type, data, loading, planId }: { type: string; dat
             </div>
           ))}
         </div>
+      </div>
+    );
+  }
+
+  // Sending the day's chicken to Shopify ON the closing check, rather than
+  // sending whoever is closing off to the count tab to find a button
+  // (Graeme, 2026-09-04). Same component as the count tab uses, so there is
+  // one send and one set of guards — including the server's refusal to send
+  // the same day's stock twice.
+  if (type === "fried_chicken_stock_submission") {
+    const fc = data[0] as {
+      countedBags?: number;
+      targetBags?: number;
+      alreadySubmitted?: { at: string; bags: number } | null;
+    } | undefined;
+    // No fried chicken on this plan — the check stays an ordinary tick-box.
+    if (!fc) return null;
+    const counted = fc.countedBags ?? 0;
+    return (
+      <div className="mb-4 space-y-3">
+        <div className="p-4 bg-secondary/30 rounded-xl text-center">
+          <p className="text-4xl font-display font-bold tabular-nums">
+            {counted}
+            <span className="text-lg font-medium text-muted-foreground"> of {fc.targetBags ?? 0} bags</span>
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Counted at the station. This is what goes to Shopify — never the target.
+          </p>
+        </div>
+        {fc.alreadySubmitted && (
+          <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/20 flex items-start gap-2">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+            <p className="text-sm text-emerald-700 dark:text-emerald-300">
+              Already sent — {fc.alreadySubmitted.bags} bags. Tick the check to close the day.
+            </p>
+          </div>
+        )}
+        <FriedChickenSubmitStock planId={planId} countedBags={counted} />
       </div>
     );
   }

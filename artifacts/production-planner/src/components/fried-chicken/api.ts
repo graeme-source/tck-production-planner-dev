@@ -45,6 +45,27 @@ export function useFriedChickenSuggestion(rawKg: number | null, enabled: boolean
   });
 }
 
+/** One line on the sheet. `children` is present on a mix that is made in bulk
+ *  (the Marinade Spice Mix) — the total is what you need, the breakdown is
+ *  what you need only when you're making more of it. */
+export interface PrepItem {
+  name: string;
+  unit: string;
+  qty: number;
+  children?: Array<{ name: string; unit: string; qty: number }>;
+}
+
+/** A step of the job — the chicken, the breading tub, the marinade bottle,
+ *  the oil, the Korean sauce — in the order they're done. */
+export interface PrepSection {
+  key: string;
+  title: string;
+  totalQty: number;
+  unit: string;
+  done: boolean;
+  items: PrepItem[];
+}
+
 export interface PrepSheet {
   planId: number;
   planName: string;
@@ -54,6 +75,7 @@ export interface PrepSheet {
   rawMeatKg: number;
   oilOnSiteKg: number;
   oilKgPerKgChicken: number;
+  sections: PrepSection[];
   ingredients: Array<{ name: string; unit: string; qty: number; category: string | null }>;
 }
 
@@ -65,6 +87,35 @@ export function useFriedChickenPrep(planId: number | null, enabled = true) {
   });
 }
 
+export function setFriedChickenPrepTick(planId: number, stepKey: string, done: boolean) {
+  return friedChickenFetch<{ stepKey: string; done: boolean }>(`/plans/${planId}/prep-tick`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ stepKey, done }),
+  });
+}
+
+/** Runs whose PREP day falls in [from, to] — the production-plans calendar's
+ *  "Fried Chicken prep day for …" cards, mirroring the dough-day ones. */
+export interface FriedChickenPrepDayRow {
+  planId: number;
+  planName: string;
+  planDate: string;
+  prepDate: string;
+  packs: number;
+}
+
+export function useFriedChickenPrepDays(from: string | null, to: string | null) {
+  return useQuery<FriedChickenPrepDayRow[]>({
+    queryKey: ["fried-chicken", "prep-days", from, to],
+    queryFn: () => friedChickenFetch<FriedChickenPrepDayRow[]>(
+      `/prep-days?from=${encodeURIComponent(from!)}&to=${encodeURIComponent(to!)}`,
+    ),
+    enabled: !!from && !!to,
+    staleTime: 60_000,
+  });
+}
+
 export type NextRun =
   | { found: false }
   | {
@@ -73,6 +124,9 @@ export type NextRun =
       planName: string;
       planDate: string;
       prepDate: string;
+      /** The plan sitting ON the prep day, if one exists — prep is shown
+       *  there, not on the run's plan. */
+      prepPlanId: number | null;
       packs: number;
       isPrepDay: boolean;
       isRunDay: boolean;
