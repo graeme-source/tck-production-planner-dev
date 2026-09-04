@@ -5,6 +5,7 @@ import { UpfChip, UpfPercentPill } from "@/components/upf-badge";
 import type { Ingredient, SubRecipeDetail, SubRecipe } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { boldAllergens } from "@workspace/allergens";
+import { toGrams, kgOrNull } from "@workspace/units";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
 import { IngredientCombobox } from "@/components/ingredient-combobox";
@@ -60,12 +61,13 @@ type IngredientOption = Pick<Ingredient, "id" | "name" | "unit" | "processingRat
 };
 type SubRecipeOption = Pick<SubRecipe, "id" | "name" | "yieldUnit">;
 
+// All conversions go through @workspace/units — the hand-rolled versions
+// here each skipped litres, so a 10 L mayonnaise line contributed NOTHING
+// to the derived batch yield (Graeme, 2026-09-04).
 function toKg(value: number | string | null | undefined, unit: string): number | null {
   const n = Number(value);
   if (!isFinite(n)) return null;
-  if (unit === "kg") return n;
-  if (unit === "g") return n / 1000;
-  return null;
+  return kgOrNull(n, unit);
 }
 
 function computeProcessedKg(
@@ -76,9 +78,9 @@ function computeProcessedKg(
   for (const row of rows) {
     const ing = allIngredients.find(i => i.id === Number(row.ingredientId));
     if (!ing || !row.quantity) continue;
-    if (ing.unit === "kg") total += Number(row.quantity);
-    // ml treated as g — matches the server's recalcSubRecipeYield.
-    else if (ing.unit === "g" || ing.unit === "ml") total += Number(row.quantity) / 1000;
+    // Count units ("each", "box") are skipped, matching the server's
+    // recalcSubRecipeYield; weights and volumes (incl. litres) all count.
+    total += kgOrNull(Number(row.quantity), ing.unit) ?? 0;
   }
   return total;
 }
@@ -91,8 +93,7 @@ function computeComponentKg(
   for (const row of rows) {
     const sr = allSubRecipes.find(s => s.id === Number(row.componentSubRecipeId));
     if (!sr || !row.quantity) continue;
-    if (sr.yieldUnit === "kg") total += Number(row.quantity);
-    else if (sr.yieldUnit === "g") total += Number(row.quantity) / 1000;
+    total += kgOrNull(Number(row.quantity), sr.yieldUnit) ?? 0;
   }
   return total;
 }
@@ -117,7 +118,7 @@ function DeclarationPreview({
     .map(r => {
       const ing = allIngredients.find(i => i.id === Number(r.ingredientId));
       if (!ing || !r.quantity) return null;
-      const grams = ing.unit === "kg" ? Number(r.quantity) * 1000 : Number(r.quantity);
+      const grams = toGrams(Number(r.quantity), ing.unit);
       return { ing, grams };
     })
     .filter((x): x is { ing: IngredientOption; grams: number } => x !== null)
@@ -180,9 +181,9 @@ function YieldSanityCheck({
   for (const row of ingredientRows) {
     const ing = allIngredients.find(i => i.id === row.ingredientId);
     if (!ing) continue;
-    if (ing.unit === "kg") cookedKg += Number(row.quantity);
-    else if (ing.unit === "g") cookedKg += Number(row.quantity) / 1000;
-    else { allWeight = false; continue; }
+    const kg = kgOrNull(Number(row.quantity), ing.unit);
+    if (kg === null) { allWeight = false; continue; }
+    cookedKg += kg;
   }
 
   const componentKg = computeComponentKg(componentRows, allSubRecipes);
@@ -229,12 +230,10 @@ function YieldComparison({
   let expectedKg = 0;
   let canCompare = storedYieldKg !== null;
   for (const i of detail.ingredients) {
-    if (i.unit === "kg") expectedKg += i.quantity;
-    else if (i.unit === "g") expectedKg += i.quantity / 1000;
+    expectedKg += kgOrNull(i.quantity, i.unit) ?? 0;
   }
   for (const c of (detail.subRecipeComponents ?? [])) {
-    if (c.componentYieldUnit === "kg") expectedKg += c.quantity;
-    else if (c.componentYieldUnit === "g") expectedKg += c.quantity / 1000;
+    expectedKg += kgOrNull(c.quantity, c.componentYieldUnit) ?? 0;
   }
 
   const diffPct = (canCompare && expectedKg > 0)

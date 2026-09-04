@@ -23,14 +23,9 @@ import {
   subRecipeIngredientsTable,
   subRecipeSubRecipesTable,
 } from "@workspace/db";
+import { toGrams } from "@workspace/units";
 
-function toGrams(qty: number, unit: string): number {
-  const u = unit.toLowerCase().trim();
-  if (u === "kg") return qty * 1000;
-  if (u === "l" || u === "litre" || u === "litres" || u === "liter" || u === "liters") return qty * 1000;
-  if (u === "ml") return qty;
-  return qty;
-}
+
 
 export interface UpfContributor {
   ingredientId: number;

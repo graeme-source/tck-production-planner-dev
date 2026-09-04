@@ -10,7 +10,7 @@ import { computeSubRecipeCosts } from "../lib/sub-recipe-costs";
 import { generateQrCode } from "../lib/qr-code";
 import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
 import { londonDateString } from "../lib/london-time";
-import { toGrams } from "../lib/units";
+import { toGrams } from "@workspace/units";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import * as z from "zod";
 
@@ -1266,7 +1266,7 @@ router.get("/:id/ingredient-deck", async (req, res) => {
       .from(recipeSubRecipesTable)
       .where(eq(recipeSubRecipesTable.recipeId, recipeId));
 
-    // Unit conversion lives in ../lib/units (shared with the nutritionals
+    // Unit conversion lives in @workspace/units (shared with the nutritionals
     // gatherer) so the deck and the nutrition panel can never disagree.
 
     type FlatSubIng = {

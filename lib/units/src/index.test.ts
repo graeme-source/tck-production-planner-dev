@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cookedToRaw, toGrams } from "./units";
+import { cookedToRaw, toGrams, gramsOrNull, kgOrNull, isWeighable } from "./index";
 
 // Regression guard for the ordering-buffer bug: dpt-ingredient-requirements
 // computed cooked = raw × ratio while orders.ts computed raw = cooked ÷ ratio,
@@ -44,5 +44,37 @@ describe("toGrams", () => {
 
   it("is case- and whitespace-insensitive", () => {
     expect(toGrams(1, " KG ")).toBe(1000);
+  });
+});
+
+// Regression guard for the sub-recipe yield bug: three hand-rolled copies of
+// this conversion disagreed about litres — the sub-recipe form skipped "l"
+// rows (10 L of mayonnaise contributed NOTHING to the derived batch yield),
+// the recipe form counted 10 L as 10 g, the server as 10 kg.
+describe("gramsOrNull / kgOrNull", () => {
+  it("converts weights and volumes like toGrams", () => {
+    expect(gramsOrNull(10, "l")).toBe(10000);
+    expect(kgOrNull(10, "l")).toBe(10);
+    expect(kgOrNull(536, "g")).toBeCloseTo(0.536);
+    expect(gramsOrNull(2, "kg")).toBe(2000);
+    expect(gramsOrNull(250, "ml")).toBe(250);
+  });
+
+  it("returns null for count units so totals can skip them, not miscount them", () => {
+    expect(gramsOrNull(23, "each")).toBeNull();
+    expect(gramsOrNull(6, "box")).toBeNull();
+    expect(kgOrNull(4, "roll")).toBeNull();
+    expect(kgOrNull(15, "pieces")).toBeNull();
+  });
+
+  it("treats a missing unit as grams, matching historical rows", () => {
+    expect(gramsOrNull(3, null)).toBe(3);
+  });
+});
+
+describe("isWeighable", () => {
+  it("is true for weights and volumes, false for counts", () => {
+    for (const u of ["g", "kg", "ml", "l", "Litres", "mg"]) expect(isWeighable(u)).toBe(true);
+    for (const u of ["each", "pieces", "box", "roll", "pcs"]) expect(isWeighable(u)).toBe(false);
   });
 });

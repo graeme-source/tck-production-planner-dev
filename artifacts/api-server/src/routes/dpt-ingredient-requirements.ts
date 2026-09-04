@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { db, dptSettingsTable, dptIngredientRequirementsTable, recipesTable, appSettingsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { resolveRecipeIngredients, aggregateIngredients } from "../lib/ingredient-resolver";
-import { cookedToRaw } from "../lib/units";
+import { cookedToRaw } from "@workspace/units";
 
 const router: IRouter = Router();
 

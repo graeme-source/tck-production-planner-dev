@@ -123,6 +123,9 @@ importers:
       '@workspace/production-schedule':
         specifier: workspace:*
         version: link:../../lib/production-schedule
+      '@workspace/units':
+        specifier: workspace:*
+        version: link:../../lib/units
       bcryptjs:
         specifier: ^3.0.3
         version: 3.0.3
@@ -430,6 +433,9 @@ importers:
       '@dnd-kit/utilities':
         specifier: ^3.2.2
         version: 3.2.2(react@19.1.0)
+      '@workspace/units':
+        specifier: workspace:*
+        version: link:../../lib/units
       html5-qrcode:
         specifier: ^2.3.8
         version: 2.3.8
@@ -690,6 +696,8 @@ importers:
         version: 0.31.10
 
   lib/production-schedule: {}
+
+  lib/units: {}
 
   scripts:
     dependencies:

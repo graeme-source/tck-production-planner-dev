@@ -5,6 +5,7 @@ import { CreateSubRecipeBody, UpdateSubRecipeBody } from "@workspace/api-zod";
 import { validate } from "../middleware/validate";
 import { computeSubRecipeCosts, getCyclicIds, wouldCreateCycle } from "../lib/sub-recipe-costs";
 import { generateQrCode } from "../lib/qr-code";
+import { kgOrNull } from "@workspace/units";
 
 const router: IRouter = Router();
 
@@ -24,10 +25,13 @@ function parseYieldPercent(raw: unknown): number | null {
  * silently inflated every scaled-up ingredient by 1.5×. Now every save
  * re-derives it — total component weight × (yieldPercent ?? 100)/100 —
  * so the only way a yield differs from the recipe is a deliberate,
- * visible percentage. Units: ingredient g/ml → kg (all current data is
- * kg/g/ml and every yield_unit is kg); component sub-recipe quantities are
- * already kg. If the components weigh nothing (data still being typed in),
- * the stored yield is left alone rather than zeroed.
+ * visible percentage. Units go through @workspace/units (g/ml/kg/l →
+ * kg; litres at density 1); count units ("each", "box") are SKIPPED, not
+ * absorbed — this used to treat anything unrecognised as kg, which would
+ * have made 23 "each" of something weigh 23 kg. Component sub-recipe
+ * quantities are already kg (every yield_unit is kg). If the components
+ * weigh nothing (data still being typed in), the stored yield is left
+ * alone rather than zeroed.
  */
 async function recalcSubRecipeYield(subRecipeId: number): Promise<number | null> {
   const ingRows = await db
@@ -41,10 +45,7 @@ async function recalcSubRecipeYield(subRecipeId: number): Promise<number | null>
     .where(eq(subRecipeSubRecipesTable.subRecipeId, subRecipeId));
 
   const totalKg =
-    ingRows.reduce((s, r) => {
-      const q = Number(r.quantity) || 0;
-      return s + (r.unit === "g" || r.unit === "ml" ? q / 1000 : q);
-    }, 0) +
+    ingRows.reduce((s, r) => s + (kgOrNull(Number(r.quantity) || 0, r.unit) ?? 0), 0) +
     compRows.reduce((s, r) => s + (Number(r.quantity) || 0), 0);
 
   if (totalKg <= 0) return null;

@@ -1,5 +1,6 @@
 import { formatBatches } from "../shared/format-batches";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { toGrams } from "@workspace/units";
 import {
   useListSubRecipes,
   useGetSubRecipe,
@@ -106,8 +107,9 @@ function ScaledIngredientChecklist({
             <div className="text-right flex-shrink-0">
               {item.packWeight && item.packWeight > 0 && (() => {
                 const scaledQty = item.qty * batches;
-                // Convert to same unit as packWeight (g) for comparison
-                const scaledG = item.unit === "kg" ? scaledQty * 1000 : scaledQty;
+                // Convert to same unit as packWeight (g) for comparison —
+                // via @workspace/units so litre lines aren't read as grams.
+                const scaledG = toGrams(scaledQty, item.unit);
                 const packs = Math.ceil(scaledG / item.packWeight);
                 return (
                   <span className={cn("text-sm tabular-nums block", isDone ? "text-emerald-600/70 dark:text-emerald-400/70" : "text-muted-foreground")}>

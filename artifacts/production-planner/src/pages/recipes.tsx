@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from "react";
+import { toGrams } from "@workspace/units";
 import { Link } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { useListRecipes, useListIngredients, useListSubRecipes, useGetRecipe, useListCategoryDefaults, useGetUpfSummary, getGetRecipeQueryKey, getListRecipesQueryKey, getListIngredientsQueryKey, getGetUpfSummaryQueryKey } from "@workspace/api-client-react";
@@ -329,14 +330,15 @@ function RecipeForm({
       const ing = localIngredients.find(i => i.id === Number(row.ingredientId));
       if (!ing) continue;
       const qty = Number(row.quantity) || 0;
-      rawG += ing.unit === "kg" ? qty * 1000 : qty;
+      // @workspace/units handles litres too — this used to count 10 L as 10 g.
+      rawG += toGrams(qty, ing.unit);
     }
     for (const row of watchedSubRecipes ?? []) {
       if (!row) continue;
       const sub = subRecipes.find(s => s.id === Number(row.subRecipeId));
       if (!sub) continue;
       const qty = Number(row.quantity) || 0;
-      rawG += sub.yieldUnit === "kg" ? qty * 1000 : qty;
+      rawG += toGrams(qty, sub.yieldUnit);
     }
     const lossPct = Math.max(0, Math.min(50, Number(watchedCookingLoss ?? 3) || 0));
     const cookedG = rawG * (1 - lossPct / 100);
