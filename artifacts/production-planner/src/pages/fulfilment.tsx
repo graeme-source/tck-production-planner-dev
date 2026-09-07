@@ -1027,6 +1027,38 @@ function paceBand(oph: number): { tile: string; label: string } {
   return { tile: "bg-sky-600 text-white", label: "Spot a 5s saving?" };
 }
 
+/** Always-on pace strip for the mid-pick screens (picking, label booking,
+ *  order complete). The old conditional chip vanished whenever the pace was
+ *  still null, so the packer lost the KPI exactly while packing — this strip
+ *  never disappears: no data yet reads "warming up…" instead of nothing
+ *  (Graeme, 2026-09-07). Same paceBand colours as the day summary tile. */
+function PickingPaceStrip({ packed, total, oph }: {
+  packed: number | null;
+  total: number | null;
+  oph: number | null;
+}) {
+  const band = oph != null ? paceBand(oph) : null;
+  return (
+    <div className="flex items-center gap-3 flex-wrap">
+      <span className="text-2xl font-extrabold tabular-nums leading-none">
+        {packed ?? "—"}<span className="text-muted-foreground font-bold text-lg">/{total ?? "—"}</span>
+        <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wide ml-1.5">packed</span>
+      </span>
+      <span
+        className={cn(
+          "px-4 py-2 rounded-xl font-bold flex items-baseline gap-2",
+          band ? band.tile : "bg-secondary text-muted-foreground",
+        )}
+        aria-label={oph != null ? `Packing pace ${oph.toFixed(1)} orders per hour` : "Packing pace not available yet"}
+      >
+        <span className="text-xl tabular-nums leading-none">{oph != null ? oph.toFixed(1) : "—"}</span>
+        <span className="text-xs uppercase tracking-wider opacity-90">orders/hr</span>
+        <span className="text-sm leading-tight">{band ? band.label : "warming up…"}</span>
+      </span>
+    </div>
+  );
+}
+
 /**
  * ONE summary block for the dispatch day: packed count, progress (overall and
  * by box size), live pace, and a button for the thing that is NOT the packer's
@@ -1505,9 +1537,11 @@ export default function Fulfilment() {
   })();
   const { data: packingPace, refetch: refetchPace } = useQuery({
     queryKey: ["fulfilment-packing-pace", dispatchDayStr],
-    // List view too — the pace should be in sight while processing and
-    // tagging, not only mid-pick (Graeme, 2026-08-25).
-    enabled: !!dispatchDayStr && (view === "picking" || view === "list"),
+    // Every working view — the pace strip now rides along on picking,
+    // label booking and order-complete screens too, so keep it fresh on
+    // all of them; only the retired dates landing skips it
+    // (Graeme, 2026-09-07).
+    enabled: !!dispatchDayStr && view !== "dates",
     refetchInterval: 60_000,
     queryFn: async () => {
       const res = await fetch(`${BASE}/api/reports/packing-speed?from=${dispatchDayStr}&to=${dispatchDayStr}`, { credentials: "include" });
@@ -2740,6 +2774,11 @@ export default function Fulfilment() {
     return (
       <div className="space-y-4">
         <PageHeader title={activeOrder.name} description={customerName} />
+        <PickingPaceStrip
+          packed={progress?.totalFulfilled ?? null}
+          total={progress?.totalOrders ?? null}
+          oph={packingPace?.ordersPerHour ?? null}
+        />
         {showTestModeBanner && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
         {reconcileMode && <ReconcileModeBanner />}
 
@@ -2965,6 +3004,13 @@ export default function Fulfilment() {
         {showTestModeBanner && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
         {reconcileMode && <ReconcileModeBanner />}
         <PageHeader title="Order Packing Live" description={apcEnabled ? "APC order scanning and label printing." : "Scan orders into the box — couriers booked manually."} />
+        {/* The KPI rides along between orders too — completing an order is
+            the natural moment to glance at the pace. */}
+        <PickingPaceStrip
+          packed={progress?.totalFulfilled ?? null}
+          total={progress?.totalOrders ?? null}
+          oph={packingPace?.ordersPerHour ?? null}
+        />
         <div className="glass-panel p-8 rounded-2xl border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 text-center">
           <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto mb-4" />
           <h2 className="text-2xl font-bold text-green-800 dark:text-green-200 mb-1">Order Complete!</h2>
@@ -3014,24 +3060,14 @@ export default function Fulfilment() {
           title={activeOrder.name}
           description={activeOrder.shipping_address?.name ?? `${activeOrder.customer?.first_name} ${activeOrder.customer?.last_name}`}
         />
-        {/* Compact pace line while picking — the full summary belongs on the
-            list view; here the order in hand is the point. */}
-        {(progress || packingPace) && (
-          <div className="flex items-center gap-3 flex-wrap text-base">
-            <span className="font-bold tabular-nums">
-              {progress?.totalFulfilled ?? "—"}<span className="text-muted-foreground">/{progress?.totalOrders ?? "—"}</span>
-              <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wide ml-1.5">packed</span>
-            </span>
-            {packingPace?.ordersPerHour != null && (() => {
-              const band = paceBand(packingPace.ordersPerHour);
-              return (
-                <span className={cn("px-3 py-1 rounded-full text-sm font-bold", band.tile)}>
-                  {packingPace.ordersPerHour.toFixed(1)} orders/hr · {band.label}
-                </span>
-              );
-            })()}
-          </div>
-        )}
+        {/* Pace stays in sight mid-pick — the full summary belongs on the
+            list view; here the order in hand is the point, with the KPI
+            alongside it. */}
+        <PickingPaceStrip
+          packed={progress?.totalFulfilled ?? null}
+          total={progress?.totalOrders ?? null}
+          oph={packingPace?.ordersPerHour ?? null}
+        />
         {pendingPickOrder && (
           <ShopifyConfirmDialog
             title={`Ship order ${pendingPickOrder.name}?`}
