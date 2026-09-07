@@ -29,6 +29,7 @@ import { cn } from "@/lib/utils";
 import { ImprovementFeedMedia } from "@/components/improvement-feed-media";
 import { toast } from "@/hooks/use-toast";
 import { useMarkImprovementSeen } from "@/hooks/use-unseen-improvements";
+import { scrollAppToTop } from "@/lib/scroll";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -320,6 +321,8 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
  * press a second button.
  */
 function LogImprovement({ onDone, onCancel }: { onDone: (id: number) => void; onCancel: () => void }) {
+  // Same-page swap, same rule as the detail view: start at the top.
+  useEffect(() => { scrollAppToTop(); }, []);
   const queryClient = useQueryClient();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -429,6 +432,11 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
   // badge. Fires once per improvement opened; the server ignores repeats.
   const markSeen = useMarkImprovementSeen();
   useEffect(() => { void markSeen(id); }, [id]);
+
+  // The detail swaps in on the SAME page, so the container kept the feed's
+  // scroll position — an improvement opened half-way down and scrolling up
+  // hit pull-to-refresh (Graeme, 2026-09-07). Start every one at the top.
+  useEffect(() => { scrollAppToTop(); }, [id]);
   const [sendingBack, setSendingBack] = useState(false);
   // Delete asks first, in place, the same two-step shape as "send back"
   // above — no separate dialog to learn, and no single tap that destroys

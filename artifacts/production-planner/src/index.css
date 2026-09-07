@@ -170,6 +170,12 @@ html.dev-env.dark {
   * {
     @apply border-border;
   }
+  html, body {
+    /* No pull-to-refresh: a stray upward drag mid-shift reloaded the page
+       and dumped whoever was inside an improvement/modal back at the start
+       (Graeme, 2026-09-07). Refresh stays available from the top bar. */
+    overscroll-behavior-y: none;
+  }
   body {
     @apply font-sans antialiased bg-background text-foreground selection:bg-primary/20 selection:text-primary;
     background-image: radial-gradient(circle at 100% 0%, hsla(var(--primary) / 0.03) 0%, transparent 40%),

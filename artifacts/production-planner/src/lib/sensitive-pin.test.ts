@@ -29,4 +29,15 @@ describe("shouldPromptForSensitivePin", () => {
   it("prompts a viewer who has never unlocked (msSinceUnlock = forever)", () => {
     expect(shouldPromptForSensitivePin({ role: "viewer", includeAdmins: false, msSinceUnlock: Number.MAX_SAFE_INTEGER, ttlMs: TTL })).toBe(true);
   });
+
+  it("fresh ignores the unlock window — entering the hub always asks", () => {
+    // Graeme, 2026-09-07: leaving the Employee Hub and coming straight back
+    // must ask again, however recent the last PIN entry was.
+    expect(shouldPromptForSensitivePin({ role: "viewer", includeAdmins: true, msSinceUnlock: 0, ttlMs: TTL, fresh: true })).toBe(true);
+    expect(shouldPromptForSensitivePin({ role: "admin", includeAdmins: true, msSinceUnlock: 0, ttlMs: TTL, fresh: true })).toBe(true);
+  });
+
+  it("fresh still respects the admin exemption when includeAdmins is false", () => {
+    expect(shouldPromptForSensitivePin({ role: "admin", includeAdmins: false, msSinceUnlock: 0, ttlMs: TTL, fresh: true })).toBe(false);
+  });
 });

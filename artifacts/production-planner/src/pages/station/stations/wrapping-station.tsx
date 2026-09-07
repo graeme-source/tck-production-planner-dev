@@ -14,6 +14,7 @@ import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import { BreakTracker } from "../shared/break-tracker";
 import { PaceKpiStrip, type PaceBands } from "../shared/pace-kpi-strip";
+import { useModalScrollKeeper } from "@/hooks/use-modal-scroll";
 import { getStationCount, getAvailableFromPrev, compareItemsForDisplay, type StationPlanItem } from "../shared/constants";
 import { netTwoPacks as computeNetTwoPacks, effectiveBatchesTarget } from "../shared/recipe-completion";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
@@ -127,6 +128,9 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   // to brush before sealing. Tracked in-memory so it resets per page load,
   // dismissed per item via the modal's Complete button.
   const [garlicReminderItem, setGarlicReminderItem] = useState<ProductionPlanItem | null>(null);
+  // Keep the queue where the wrapper left it while the garlic reminder
+  // overlay is up (Graeme, 2026-09-07 — the station modal scroll bug).
+  useModalScrollKeeper(garlicReminderItem != null);
   const dismissedGarlicReminders = useRef<Set<number>>(new Set());
   const addingRef = useRef(false);
   const [expandedItemId, setExpandedItemId] = useState<number | null>(null);

@@ -11,7 +11,7 @@
  * email to the accountant. No DB writes — the source of truth is the
  * PDF in their email trail.
  */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import { useAuth } from "@/contexts/auth-context";
@@ -1174,12 +1174,19 @@ export default function EmployeeHub() {
   const { state, requireSensitivePin } = useAuth();
   const userId = state.status === "authenticated" ? state.user.id : null;
 
-  // PIN re-entry on entering the hub — reviews and recorded feedback live
-  // here, and the scenario is a logged-in iPad left on a counter. Admins are
-  // NOT exempt (unlike Settings/Reports): an admin's iPad is the one holding
-  // everyone's records. Same 5-minute unlock window as the other guards.
+  // PIN re-entry on EVERY entry to the hub — contracts, reviews and recorded
+  // feedback live here, and the scenario is a logged-in iPad left on a
+  // counter. Admins are NOT exempt (an admin's iPad is the one holding
+  // everyone's records), and `fresh` ignores the recent-unlock window:
+  // leaving and coming straight back still asks (Graeme, 2026-09-07).
+  // Once per mount — section moves inside the hub never re-ask, and asking
+  // again after each unlock would loop the prompt forever.
+  const pinAskedRef = useRef(false);
   useEffect(() => {
-    if (state.status === "authenticated") requireSensitivePin({ includeAdmins: true });
+    if (state.status === "authenticated" && !pinAskedRef.current) {
+      pinAskedRef.current = true;
+      requireSensitivePin({ includeAdmins: true, fresh: true });
+    }
   }, [state.status, requireSensitivePin]);
   // Managers write records for anyone; everyone else sees only their own.
   const isManager = state.status === "authenticated"

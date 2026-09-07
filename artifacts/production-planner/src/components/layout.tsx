@@ -537,6 +537,13 @@ export function NavLinks({
 export function Layout({ children }: { children: ReactNode }) {
   const [location] = useLocation();
   const search = useSearch();
+  // Every page change starts at the top — the container otherwise keeps the
+  // previous page's scroll position, which is how an improvement opened
+  // half-way down the screen (Graeme, 2026-09-07).
+  const mainScrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    mainScrollRef.current?.scrollTo({ top: 0 });
+  }, [location]);
   const { state, logout, lockStation } = useAuth();
   const user = state.status === "authenticated" ? state.user : null;
   const { canAccess } = usePagePermissions();
@@ -723,7 +730,11 @@ export function Layout({ children }: { children: ReactNode }) {
       {/* ── Main content ────────────────────────────────────────────────── */}
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
         <TopBar onMenu={handleMenuButton} fallbackTitle={currentPageName} onOpenSops={() => setSopsOpen(true)} />
-        <div className="flex-1 overflow-y-auto p-4 md:p-8 pb-[200px] relative">
+        {/* THE app scroll container for sidebar pages. The id is load-bearing:
+            lib/scroll.ts and the modal scroll-keeper target it. overscroll-
+            contain stops a top-of-page drag chaining into the browser's
+            pull-to-refresh (which reloaded mid-shift — Graeme, 2026-09-07). */}
+        <div id="app-main-scroll" ref={mainScrollRef} className="flex-1 overflow-y-auto overscroll-contain p-4 md:p-8 pb-[200px] relative">
           {/* Weekly lean lesson reminder — every main page, until completed */}
           <div className="mb-4 empty:hidden">
             <LeanWeeklyStrip />

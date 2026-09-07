@@ -42,7 +42,7 @@ type AuthContextValue = {
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   /** Prompt for PIN if the sensitive-unlock window has expired. Idempotent — safe to call on every mount. */
-  requireSensitivePin: (opts?: { includeAdmins?: boolean }) => void;
+  requireSensitivePin: (opts?: { includeAdmins?: boolean; fresh?: boolean }) => void;
 };
 
 // How long a PIN entry grants access to sensitive pages before re-prompting.
@@ -547,7 +547,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // recorded feedback) prompt EVERYONE — an admin's left-behind iPad is the
   // one with every employee's records on it. The default keeps the admin
   // exemption for analytics-style pages. Rule + tests: lib/sensitive-pin.ts.
-  const requireSensitivePin = useCallback((opts?: { includeAdmins?: boolean }) => {
+  const requireSensitivePin = useCallback((opts?: { includeAdmins?: boolean; fresh?: boolean }) => {
     if (state.status !== "authenticated") return;
     if (pinLocked) return; // already prompting
     const prompt = shouldPromptForSensitivePin({
@@ -555,6 +555,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       includeAdmins: opts?.includeAdmins ?? false,
       msSinceUnlock: Date.now() - sensitiveUnlockedAtRef.current,
       ttlMs: SENSITIVE_UNLOCK_TTL_MS,
+      fresh: opts?.fresh ?? false,
     });
     if (prompt) setPinLocked(true);
   }, [state, pinLocked]);

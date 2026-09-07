@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { CheckCircle2 } from "lucide-react";
+import { useModalScrollKeeper } from "@/hooks/use-modal-scroll";
 
 interface ShopifyProduct {
   name: string;
@@ -35,6 +36,10 @@ export function ShopifyConfirmDialog({
   onSkip,
   onCancel,
 }: ShopifyConfirmDialogProps) {
+  // Whatever scrolling happens while this overlay is up (keyboard, taps),
+  // the page underneath is put back where it was on close — the station
+  // "different recipe after the modal" bug (Graeme, 2026-09-07).
+  useModalScrollKeeper();
   // Rendered into <body>, NOT where it is written. Every caller sits inside a
   // .glass-panel, and backdrop-blur creates a stacking context — which trapped
   // this z-50 overlay inside its own panel, so the panel BELOW painted over

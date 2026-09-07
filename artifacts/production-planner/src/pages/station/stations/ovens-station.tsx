@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { BreakTracker } from "../shared/break-tracker";
+import { useModalScrollKeeper, useNoScrollAutoFocus } from "@/hooks/use-modal-scroll";
 import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay, type StationPlanItem } from "../shared/constants";
 import { effectiveBatchesTarget, netTwoPacks as computeNetTwoPacks, packsTargetForItem, packsDoneForItem, packsPerBatch } from "../shared/recipe-completion";
 import { RECIPE_RACK_COLOURS, WonkyColour, ChillerRackItem, ChillerRackVisual } from "./dough-sheeting-station";
@@ -73,6 +74,12 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
   const [weighingItem, setWeighingItem] = useState<ProductionPlanItem | null>(null);
   const [weightInput, setWeightInput] = useState("");
   const [submittingWeight, setSubmittingWeight] = useState(false);
+  // The weight modal used to leave the operator on a different recipe after
+  // every single batch: focusing its input scrolled the page behind the
+  // overlay, and closing kept that position (Graeme, 2026-09-07). Keep the
+  // page pinned, and focus the input without scrolling anything.
+  useModalScrollKeeper(weighingItem != null);
+  const weightInputRef = useNoScrollAutoFocus<HTMLInputElement>(weighingItem != null);
   const [chillingRecipeId, setChillingRecipeId] = useState<number | null>(null);
   // Earliest post-cheese sauce temperature on this plan — the chill-start
   // anchor for mac cheese recipes, which skip the oven weight-log flow.
@@ -541,7 +548,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                 min={100}
                 max={2000}
                 step={1}
-                autoFocus
+                ref={weightInputRef}
                 value={weightInput}
                 onChange={(e) => setWeightInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && weighingValid && !submittingWeight) submitWeighedBatch(); }}

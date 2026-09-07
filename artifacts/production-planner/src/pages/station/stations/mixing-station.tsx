@@ -63,6 +63,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { BreakTracker } from "../shared/break-tracker";
+import { useModalScrollKeeper, useNoScrollAutoFocus } from "@/hooks/use-modal-scroll";
 import { getStationCount, isMacCheese } from "../shared/constants";
 import type { PrepRecipeDetail, PrepMarinadeDetail, PrepIngredientDetail } from "./prep-hub";
 
@@ -160,6 +161,11 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
   } | null>(null);
   const [tempValue, setTempValue] = useState("");
   const [tempSaving, setTempSaving] = useState(false);
+  // Keep the page where it was while the temp dialog is up, and focus its
+  // input without scrolling the page behind the overlay — the ovens weight
+  // modal bug, same cure (Graeme, 2026-09-07).
+  useModalScrollKeeper(tempPrompt != null);
+  const tempInputRef = useNoScrollAutoFocus<HTMLInputElement>(tempPrompt != null);
   // Edit state for the summary table at the bottom of the cooking tab —
   // operators correcting a wrong time or temperature after the fact.
   const [editRow, setEditRow] = useState<{
@@ -992,7 +998,7 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                 value={tempValue}
                 onChange={e => setTempValue(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter") submitTemp(); }}
-                autoFocus
+                ref={tempInputRef}
                 className="flex-1 border border-border rounded-lg px-3 py-2.5 text-lg font-semibold tabular-nums bg-background focus:outline-none focus:ring-2 focus:ring-primary"
               />
               <span className="text-xl font-bold text-muted-foreground">°C</span>

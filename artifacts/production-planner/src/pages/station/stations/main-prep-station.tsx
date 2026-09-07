@@ -1,4 +1,5 @@
 import { formatBatches } from "../shared/format-batches";
+import { useModalScrollKeeper, useNoScrollAutoFocus } from "@/hooks/use-modal-scroll";
 import React from "react";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -1510,6 +1511,11 @@ function ForceStockCheckModal({
 }) {
   const canSave = value !== "" && !isNaN(Number(value)) && !saving;
   const unitLabel = unitOverride ?? ingredient.unit;
+  // This component IS the modal: pin the page behind it for its lifetime and
+  // focus the input without scrolling — the ovens weight-modal bug, same
+  // cure (Graeme, 2026-09-07).
+  useModalScrollKeeper();
+  const inputRef = useNoScrollAutoFocus<HTMLInputElement>(true);
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4">
       <div className="bg-card border-2 border-blue-500 rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
@@ -1545,7 +1551,7 @@ function ForceStockCheckModal({
               step="any"
               min="0"
               inputMode="decimal"
-              autoFocus
+              ref={inputRef}
               value={value}
               onChange={e => onChange(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter" && canSave) onSave(); }}
