@@ -8,7 +8,7 @@
  * every other page is a side-trip you can always step straight back from.
  */
 import { Link, useLocation } from "wouter";
-import { Calendar, LineChart, Calculator, Megaphone } from "lucide-react";
+import { Calendar, LineChart, Calculator, Megaphone, FileSignature } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const TABS = [
@@ -16,6 +16,7 @@ const TABS = [
   { href: "/founder/numbers", label: "Numbers", icon: LineChart },
   { href: "/founder/pnl", label: "P&L", icon: Calculator },
   { href: "/founder/sales", label: "Sales & Marketing", icon: Megaphone },
+  { href: "/founder/contracts", label: "Contracts", icon: FileSignature },
 ] as const;
 
 export function FounderNav() {

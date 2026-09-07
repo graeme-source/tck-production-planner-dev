@@ -38,3 +38,4 @@ export * from "./shopify_orders_cache";
 export * from "./stock_gating";
 export * from "./finance";
 export * from "./features";
+export * from "./contracts";

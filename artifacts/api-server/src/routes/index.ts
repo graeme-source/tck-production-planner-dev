@@ -77,6 +77,7 @@ import founderSalesRouter from "./founder-sales";
 import surveysRouter from "./surveys";
 import financeRouter from "./finance";
 import featuresRouter from "./features";
+import contractsRouter from "./contracts";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -182,6 +183,9 @@ router.use("/features", featuresRouter);
 // is a separate unauthenticated router mounted directly in app.ts.
 router.use("/surveys", requireAdmin, surveysRouter);
 router.use("/founder-focus", founderFocusRouter);
+// Employment contracts: founder-only surfaces guard themselves per-route
+// inside the router; /mine and /:id are owner-scoped there too.
+router.use("/contracts", contractsRouter);
 router.use("/founder-sales", founderSalesRouter);
 router.use("/improvements", improvementsRouter);
 router.use("/andon", andonRouter);

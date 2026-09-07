@@ -17,7 +17,8 @@ import { useForm, useFieldArray, Controller } from "react-hook-form";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { EmployeeReviewsSection } from "@/components/employee-reviews";
-import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt, Camera, Upload, X, FileText, ScrollText, ChevronRight, ListTodo, ClipboardList } from "lucide-react";
+import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt, Camera, Upload, X, FileText, ScrollText, ChevronRight, ListTodo, ClipboardList, FileSignature } from "lucide-react";
+import { MyContractSection } from "@/components/my-contract";
 import { TodoSheet, useMyOpenTodoCount } from "@/components/todo-lists";
 import { jsPDF } from "jspdf";
 import { toast } from "@/hooks/use-toast";
@@ -1166,7 +1167,7 @@ function PoliciesList() {
   );
 }
 
-type HubSection = "todos" | "reviews" | "mileage" | "expenses" | "policies" | "improvements" | "issues" | "sops";
+type HubSection = "todos" | "reviews" | "contract" | "mileage" | "expenses" | "policies" | "improvements" | "issues" | "sops";
 
 export default function EmployeeHub() {
   const [active, setActive] = useState<HubSection>("todos");
@@ -1189,6 +1190,7 @@ export default function EmployeeHub() {
   const sections: { key: HubSection; label: string; icon: typeof Car }[] = [
     { key: "todos", label: "My To-dos", icon: ListTodo },
     { key: "reviews", label: "Reviews & Record", icon: ClipboardList },
+    { key: "contract", label: "My Contract", icon: FileSignature },
     { key: "mileage", label: "Mileage Claim", icon: Car },
     { key: "expenses", label: "Expense Claim", icon: Receipt },
     { key: "policies", label: "Policies", icon: ScrollText },
@@ -1245,6 +1247,17 @@ export default function EmployeeHub() {
                 </button>
               </div>
               <TodoSheet open={todosOpen} onClose={() => setTodosOpen(false)} />
+            </>
+          )}
+          {active === "contract" && (
+            <>
+              <div className="mb-4 pb-4 border-b border-border">
+                <h2 className="text-lg font-semibold">My Contract</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Your employment contract — read it, print it, and acknowledge it. Only you and Graeme can see it.
+                </p>
+              </div>
+              <MyContractSection />
             </>
           )}
           {active === "reviews" && (
