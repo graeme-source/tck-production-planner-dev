@@ -284,6 +284,27 @@
       "port": 5289
     },
     {
+      "name": "api-kpivis",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5292 PORT=59735 pnpm run dev"
+      ],
+      "cwd": "artifacts/api-server",
+      "port": 59735,
+      "autoPort": true
+    },
+    {
+      "name": "frontend-kpivis",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59735 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5292 --strictPort"
+      ],
+      "cwd": "artifacts/production-planner",
+      "port": 5292
+    },
+    {
       "name": "api-apclinks",
       "runtimeExecutable": "/bin/bash",
       "runtimeArgs": [
