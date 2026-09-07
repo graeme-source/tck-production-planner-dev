@@ -79,7 +79,11 @@ export interface StarterGateStatus {
 /** What the first-login gate still wants from this person. */
 export async function starterGateStatus(userId: number): Promise<StarterGateStatus> {
   const [details, signedForms, contracts] = await Promise.all([
-    db.select({ submittedAt: onboardingSubmissionsTable.submittedAt })
+    db.select({
+      submittedAt: onboardingSubmissionsTable.submittedAt,
+      emergencyContactName: onboardingSubmissionsTable.emergencyContactName,
+      emergencyContactPhone: onboardingSubmissionsTable.emergencyContactPhone,
+    })
       .from(onboardingSubmissionsTable)
       .where(eq(onboardingSubmissionsTable.userId, userId)),
     db.select({ formType: starterFormSubmissionsTable.formType, signedAt: starterFormSubmissionsTable.signedAt })
@@ -91,7 +95,12 @@ export async function starterGateStatus(userId: number): Promise<StarterGateStat
   ]);
   const signedTypes = new Set(signedForms.filter(f => f.signedAt != null).map(f => f.formType));
   const forms = STARTER_FORM_TYPES.map(t => ({ type: t, title: STARTER_FORMS[t].title, signed: signedTypes.has(t) }));
-  const detailsSubmitted = details[0]?.submittedAt != null;
+  // Submitted AND the emergency contact is actually there — the write path
+  // enforces it now, but rows written before it did must not read as done
+  // (Graeme, 2026-09-07).
+  const d = details[0];
+  const detailsSubmitted = d?.submittedAt != null
+    && !!d.emergencyContactName?.trim() && !!d.emergencyContactPhone?.trim();
   const contractIssued = contracts.length > 0;
   const contractSigned = contracts.some(c => c.acknowledgedAt != null);
   // The newest contract governs the first day (re-issues supersede).

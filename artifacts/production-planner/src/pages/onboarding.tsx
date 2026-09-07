@@ -101,21 +101,32 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
 
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, [k]: e.target.value }));
 
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  // Everything on this form is required — the emergency contact especially
+  // (Graeme, 2026-09-07). The server refuses blanks too; this just saves a
+  // round trip and enables/disables the button honestly.
+  const detailsComplete = Object.values(form).every(v => v.trim() !== "");
+
   const submit = async () => {
     setSaving(true);
+    setSubmitError(null);
     try {
       const res = await fetch(`${BASE}/api/onboarding/me`, {
         method: "PUT", credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error ?? "Couldn't save — try again");
+      }
       await refreshGate();
       // Always on to the paperwork step — the app itself only opens when
       // the founder grants access on their first day.
       setPhase("paperwork");
       setSaving(false);
-    } catch {
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : "Couldn't save — try again");
       setSaving(false);
     }
   };
@@ -171,6 +182,30 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
                 <span className={`text-base ${c.done ? "text-muted-foreground line-through" : "font-medium"}`}>{c.label}</span>
               </div>
             ))}
+          </div>
+
+          {/* The saved details, visible and editable — a ticked step you
+              can't see or fix isn't a record (Graeme, 2026-09-07). */}
+          <div className="bg-card border border-border rounded-2xl p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 space-y-1">
+                <h2 className="text-base font-semibold flex items-center gap-2"><Heart className="w-4 h-4 text-primary" /> Your contact &amp; emergency details</h2>
+                <p className="text-sm"><span className="text-muted-foreground">Mobile:</span> {form.phone || "—"}</p>
+                <p className="text-sm"><span className="text-muted-foreground">Address:</span> {form.address || "—"}</p>
+                <p className="text-sm">
+                  <span className="text-muted-foreground">Emergency contact:</span>{" "}
+                  {form.emergencyContactName
+                    ? `${form.emergencyContactName} (${form.emergencyContactRelationship || "—"}) · ${form.emergencyContactPhone || "—"}`
+                    : "— not filled in yet"}
+                </p>
+              </div>
+              <button
+                onClick={() => setPhase("details")}
+                className="flex-shrink-0 px-4 h-10 rounded-xl border border-border text-sm font-semibold hover:bg-secondary/50"
+              >
+                Edit
+              </button>
+            </div>
           </div>
 
           <section className="space-y-3">
@@ -240,11 +275,11 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
               <section className="space-y-3">
                 <h2 className="text-sm font-semibold flex items-center gap-2"><Phone className="w-4 h-4 text-primary" /> Your contact details</h2>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Mobile number</label>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Mobile number <span className="text-destructive">*</span></label>
                   <input value={form.phone} onChange={set("phone")} inputMode="tel" placeholder="07…" className={inputCls} />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block flex items-center gap-1"><MapPin className="w-3 h-3" /> Home address</label>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block flex items-center gap-1"><MapPin className="w-3 h-3" /> Home address <span className="text-destructive">*</span></label>
                   <input value={form.address} onChange={set("address")} placeholder="Street, town, postcode" className={inputCls} />
                 </div>
               </section>
@@ -253,16 +288,16 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
               <section className="space-y-3">
                 <h2 className="text-sm font-semibold flex items-center gap-2"><Heart className="w-4 h-4 text-primary" /> Emergency contact</h2>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Name</label>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Name <span className="text-destructive">*</span></label>
                   <input value={form.emergencyContactName} onChange={set("emergencyContactName")} placeholder="Full name" className={inputCls} />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Phone</label>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Phone <span className="text-destructive">*</span></label>
                     <input value={form.emergencyContactPhone} onChange={set("emergencyContactPhone")} inputMode="tel" placeholder="Phone" className={inputCls} />
                   </div>
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Relationship</label>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Relationship <span className="text-destructive">*</span></label>
                     <input value={form.emergencyContactRelationship} onChange={set("emergencyContactRelationship")} placeholder="e.g. Partner" className={inputCls} />
                   </div>
                 </div>
@@ -284,13 +319,16 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
                 </p>
               </section>
 
+              {submitError && (
+                <p className="text-sm text-destructive font-medium">{submitError}</p>
+              )}
               <button
                 onClick={submit}
-                disabled={saving}
+                disabled={saving || !detailsComplete}
                 className="w-full py-2.5 bg-primary text-primary-foreground rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                {saving ? "Saving…" : "Save & continue"}
+                {saving ? "Saving…" : detailsComplete ? "Save & continue" : "Fill in every field to continue"}
               </button>
             </>
           )}

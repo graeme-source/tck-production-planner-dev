@@ -78,7 +78,7 @@ router.get("/me/gate", async (req: Request, res: Response) => {
   }
 });
 
-// PUT /me — upsert text fields and mark onboarding complete.
+// PUT /me — upsert text fields and mark the details step done.
 router.put("/me", async (req: Request, res: Response) => {
   try {
     const userId = req.session.userId!;
@@ -90,6 +90,20 @@ router.put("/me", async (req: Request, res: Response) => {
       emergencyContactPhone: str(req.body?.emergencyContactPhone),
       emergencyContactRelationship: str(req.body?.emergencyContactRelationship),
     };
+
+    // Emergency contact details are the point of this form — a blank submit
+    // used to tick the step anyway (Graeme, 2026-09-07). Enforced HERE, not
+    // just in the UI. Documents stay optional.
+    const missing: string[] = [];
+    if (!values.phone) missing.push("your mobile number");
+    if (!values.address) missing.push("your home address");
+    if (!values.emergencyContactName) missing.push("emergency contact name");
+    if (!values.emergencyContactPhone) missing.push("emergency contact phone");
+    if (!values.emergencyContactRelationship) missing.push("emergency contact relationship");
+    if (missing.length > 0) {
+      res.status(400).json({ error: `Still needed: ${missing.join(", ")}` });
+      return;
+    }
 
     await db
       .insert(onboardingSubmissionsTable)
