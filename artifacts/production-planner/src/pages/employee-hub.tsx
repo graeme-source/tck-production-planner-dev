@@ -1254,7 +1254,7 @@ export default function EmployeeHub() {
               <div className="mb-4 pb-4 border-b border-border">
                 <h2 className="text-lg font-semibold">My Contract</h2>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Your employment contract — read it, print it, and acknowledge it. Only you and Graeme can see it.
+                  Your employment contract — read it, print it, and sign it with your initials. Only you and Graeme can see it.
                 </p>
               </div>
               <MyContractSection />

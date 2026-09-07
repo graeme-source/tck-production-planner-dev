@@ -16,7 +16,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { FounderNav } from "@/components/founder-nav";
 import { toast } from "@/hooks/use-toast";
-import { printContract } from "@/components/contract-print";
+import { printContract, CONTRACT_LOGO_URL } from "@/components/contract-print";
 import {
   Check, ChevronRight, FileSignature, Loader2, Pencil, Printer, Send, Trash2, X, AlertTriangle,
 } from "lucide-react";
@@ -49,6 +49,7 @@ interface IssuedRow {
   issueDate: string;
   issuedAt: string;
   acknowledgedAt: string | null;
+  signedInitials: string | null;
 }
 
 async function jsonOrThrow(res: Response) {
@@ -94,7 +95,10 @@ function ContractDialog({ contractId, onClose }: { contractId: number; onClose: 
           {isLoading ? (
             <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
           ) : (
-            <pre className="whitespace-pre-wrap font-serif text-[15px] leading-relaxed">{data?.body}</pre>
+            <>
+              <img src={CONTRACT_LOGO_URL} alt="The Calzone Kitchen" className="h-14 mx-auto mb-6 dark:invert" />
+              <pre className="whitespace-pre-wrap font-serif text-[15px] leading-relaxed">{data?.body}</pre>
+            </>
           )}
         </div>
       </div>
@@ -200,6 +204,7 @@ function NewContractCard({ template, people, meId }: { template: Template; peopl
               </button>
             </div>
             <div className="overflow-y-auto p-6 border-b border-border">
+              <img src={CONTRACT_LOGO_URL} alt="The Calzone Kitchen" className="h-14 mx-auto mb-6 dark:invert" />
               <pre className="whitespace-pre-wrap font-serif text-[15px] leading-relaxed">{preview.body}</pre>
             </div>
             <div className="p-4 flex gap-3 justify-end">
@@ -264,17 +269,17 @@ function IssuedCard({ meId }: { meId: number }) {
                 </button>
                 {row.acknowledgedAt ? (
                   <span className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
-                    <Check className="w-3.5 h-3.5" /> Acknowledged
+                    <Check className="w-3.5 h-3.5" /> Signed{row.signedInitials ? ` (${row.signedInitials})` : ""}
                   </span>
                 ) : (
                   <>
                     <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
-                      Awaiting acknowledgement
+                      Awaiting signature
                     </span>
                     <button
                       onClick={() => setWithdrawing(row)}
                       className="p-2 text-muted-foreground hover:text-destructive rounded-lg hover:bg-destructive/10"
-                      title="Withdraw this contract (only possible before it's acknowledged)"
+                      title="Withdraw this contract (only possible before it's signed)"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>

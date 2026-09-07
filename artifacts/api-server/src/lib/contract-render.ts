@@ -40,6 +40,51 @@ export function contractDate(iso: string): string {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 }
 
+export const SIGNATURE_MARKER = "ELECTRONIC SIGNATURE RECORD";
+
+/**
+ * Write the employee's signature into the contract body (Graeme,
+ * 2026-09-07): their typed initials go onto the employee signature line
+ * where the standard ".........." pattern exists, and a delimited
+ * electronic-signature record is appended either way, so the stored body IS
+ * the signed record. Throws if the body already carries a signature —
+ * signing happens once.
+ */
+export function applySignature(body: string, sig: { employeeName: string; initials: string; signedOn: string }): string {
+  const initials = sig.initials.trim();
+  if (!initials) throw new Error("Initials are required to sign");
+  if (body.includes(SIGNATURE_MARKER)) throw new Error("This contract is already signed");
+
+  // Fill the dotted signature + date lines that follow the employee's
+  // "Signed by <name>" line, when the template kept that standard shape.
+  // Templates that dropped the shape still get the appended record below.
+  const lines = body.split("\n");
+  const signedByIdx = lines.map((l, i) => ({ l, i }))
+    .filter(({ l }) => l.trim().startsWith("Signed by") && l.includes(sig.employeeName))
+    .map(({ i }) => i)
+    .pop();
+  if (signedByIdx != null) {
+    const dotted = /^\s*\.{5,}\s*$/;
+    const dottedDate = /^(\s*Date:\s*)\.{5,}\s*$/;
+    for (let i = signedByIdx + 1; i < Math.min(lines.length, signedByIdx + 8); i++) {
+      if (dotted.test(lines[i])) { lines[i] = initials; break; }
+    }
+    for (let i = signedByIdx + 1; i < Math.min(lines.length, signedByIdx + 10); i++) {
+      const m = dottedDate.exec(lines[i]);
+      if (m) { lines[i] = `${m[1]}${sig.signedOn}`; break; }
+    }
+  }
+
+  return lines.join("\n") + `
+
+--------------------------------------------------------
+${SIGNATURE_MARKER}
+Signed by: ${sig.employeeName}
+Initials entered: ${initials}
+Signed on: ${sig.signedOn}
+Recorded in the TCK Production Planner from the employee's own signed-in account.`;
+}
+
 export function renderContract(body: string, fields: Record<ContractField, string>): string {
   const blank = CONTRACT_FIELDS.filter(f => !fields[f] || fields[f].trim() === "");
   if (blank.length > 0) {

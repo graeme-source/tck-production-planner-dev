@@ -21,7 +21,7 @@ import { desc, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import * as z from "zod";
 import { validate } from "../middleware/validate";
-import { renderContract, contractDate, templatePlaceholders, CONTRACT_FIELDS } from "../lib/contract-render";
+import { renderContract, contractDate, templatePlaceholders, applySignature, CONTRACT_FIELDS } from "../lib/contract-render";
 
 const router: IRouter = Router();
 
@@ -127,6 +127,7 @@ router.get("/issued", requireFounder, async (_req: Request, res: Response) => {
       issueDate: employmentContractsTable.issueDate,
       issuedAt: employmentContractsTable.issuedAt,
       acknowledgedAt: employmentContractsTable.acknowledgedAt,
+      signedInitials: employmentContractsTable.signedInitials,
     })
     .from(employmentContractsTable)
     .orderBy(desc(employmentContractsTable.issuedAt));
@@ -203,7 +204,7 @@ router.post("/generate", requireFounder, validate(GenerateBody), async (req: Req
     issuedBy: req.session.userId ?? null,
   }).returning();
 
-  await notify(input.userId, "Your employment contract is ready in your Employee Hub — please read and acknowledge it.");
+  await notify(input.userId, "Your employment contract is ready in your Employee Hub — please read and sign it.");
   res.json(row);
 });
 
@@ -215,7 +216,7 @@ router.delete("/:id", requireFounder, async (req: Request, res: Response) => {
   const [row] = await db.select().from(employmentContractsTable).where(eq(employmentContractsTable.id, id));
   if (!row) { res.status(404).json({ error: "No such contract" }); return; }
   if (row.acknowledgedAt) {
-    res.status(400).json({ error: "This contract has been acknowledged by the employee — it is a record now and can't be withdrawn" });
+    res.status(400).json({ error: "This contract has been signed by the employee — it is a record now and can't be withdrawn" });
     return;
   }
   await db.delete(employmentContractsTable).where(eq(employmentContractsTable.id, id));
@@ -252,19 +253,39 @@ router.get("/:id", async (req: Request, res: Response) => {
   res.json(row);
 });
 
-// Only the person the contract belongs to can acknowledge — not the founder,
-// not an admin. The stamp means "the employee has read this", so nobody else
-// may make it.
-router.post("/:id/acknowledge", async (req: Request, res: Response) => {
+// Only the person the contract belongs to can sign — not the founder, not
+// an admin. Their typed initials are written INTO the stored body (employee
+// signature line + an appended electronic-signature record), so the body is
+// the signed document from that moment on.
+const SignBody = z.object({
+  initials: z.string().trim().min(2, "At least two characters").max(12),
+});
+
+router.post("/:id/sign", validate(SignBody), async (req: Request, res: Response) => {
   const userId = requireSession(req, res);
   if (userId == null) return;
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid contract id" }); return; }
+  const { initials } = req.body as z.infer<typeof SignBody>;
+
   const [row] = await db.select().from(employmentContractsTable).where(eq(employmentContractsTable.id, id));
   if (!row || row.userId !== userId) { res.status(404).json({ error: "No such contract" }); return; }
   if (row.acknowledgedAt) { res.json(row); return; }
+
+  const signedAt = new Date();
+  const signedOn = signedAt.toLocaleString("en-GB", {
+    day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London",
+  });
+  let signedBody: string;
+  try {
+    signedBody = applySignature(row.body, { employeeName: row.employeeName, initials, signedOn });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : "Could not sign" });
+    return;
+  }
+
   const [updated] = await db.update(employmentContractsTable)
-    .set({ acknowledgedAt: new Date() })
+    .set({ acknowledgedAt: signedAt, signedInitials: initials.trim(), body: signedBody })
     .where(eq(employmentContractsTable.id, id))
     .returning();
   res.json(updated);

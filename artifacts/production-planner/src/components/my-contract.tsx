@@ -13,8 +13,8 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { toast } from "@/hooks/use-toast";
-import { printContract } from "@/components/contract-print";
-import { Check, ChevronRight, FileSignature, Loader2, Printer, X } from "lucide-react";
+import { printContract, CONTRACT_LOGO_URL } from "@/components/contract-print";
+import { Check, ChevronRight, FileSignature, Loader2, PenLine, Printer, X } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -26,6 +26,7 @@ interface MyContract {
   issueDate: string;
   issuedAt: string;
   acknowledgedAt: string | null;
+  signedInitials: string | null;
 }
 
 async function jsonOrThrow(res: Response) {
@@ -37,17 +38,19 @@ async function jsonOrThrow(res: Response) {
 function ContractSheet({ contract, meId, onClose }: { contract: MyContract; meId: number; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState(false);
+  const [initials, setInitials] = useState("");
 
-  const ackMut = useMutation({
-    mutationFn: () => fetch(`${BASE}/api/contracts/${contract.id}/acknowledge`, {
-      method: "POST", credentials: "include",
+  const signMut = useMutation({
+    mutationFn: () => fetch(`${BASE}/api/contracts/${contract.id}/sign`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ initials: initials.trim() }),
     }).then(jsonOrThrow),
     onSuccess: () => {
       setConfirming(false);
       queryClient.invalidateQueries({ queryKey: ["contracts", "mine", meId] });
-      toast({ title: "Contract acknowledged", description: "Thanks — your acknowledgement has been recorded." });
+      toast({ title: "Contract signed", description: "Thanks — your initials and the date are now on the contract." });
     },
-    onError: (e: Error) => toast({ title: "Not recorded", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Not signed", description: e.message, variant: "destructive" }),
   });
 
   return (
@@ -71,28 +74,41 @@ function ContractSheet({ contract, meId, onClose }: { contract: MyContract; meId
           </div>
         </div>
         <div className="overflow-y-auto p-6 flex-1">
+          <img src={CONTRACT_LOGO_URL} alt="The Calzone Kitchen" className="h-14 mx-auto mb-6 dark:invert" />
           <pre className="whitespace-pre-wrap font-serif text-[15px] leading-relaxed">{contract.body}</pre>
         </div>
         <div className="p-4 border-t border-border">
           {contract.acknowledgedAt ? (
             <p className="flex items-center justify-center gap-2 text-emerald-700 dark:text-emerald-300 font-semibold">
-              <Check className="w-5 h-5" /> Acknowledged on {new Date(contract.acknowledgedAt).toLocaleDateString("en-GB")}
+              <Check className="w-5 h-5" /> Signed {contract.signedInitials ? `(${contract.signedInitials}) ` : ""}on {new Date(contract.acknowledgedAt).toLocaleDateString("en-GB")}
             </p>
           ) : confirming ? (
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <p className="text-sm font-medium">Confirm you have read this contract and agree to it?</p>
-              <div className="flex gap-2">
-                <button onClick={() => setConfirming(false)} className="px-4 h-11 rounded-xl border border-border font-medium hover:bg-secondary/50">
-                  Not yet
-                </button>
-                <button
-                  onClick={() => ackMut.mutate()}
-                  disabled={ackMut.isPending}
-                  className="px-5 h-11 rounded-xl bg-primary text-primary-foreground font-bold flex items-center gap-2 disabled:opacity-50"
-                >
-                  {ackMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                  Yes — I agree
-                </button>
+            <div className="space-y-3">
+              <p className="text-sm font-medium">
+                Type your initials to sign. They'll be written onto the contract with today's date, as your record and ours.
+              </p>
+              <div className="flex items-center gap-3 flex-wrap">
+                <input
+                  value={initials}
+                  onChange={e => setInitials(e.target.value)}
+                  placeholder="e.g. JS"
+                  maxLength={12}
+                  autoFocus
+                  className="w-32 h-12 px-3 rounded-xl border-2 border-primary bg-background text-xl font-bold tracking-widest text-center uppercase focus:outline-none"
+                />
+                <div className="flex gap-2 ml-auto">
+                  <button onClick={() => { setConfirming(false); setInitials(""); }} className="px-4 h-12 rounded-xl border border-border font-medium hover:bg-secondary/50">
+                    Not yet
+                  </button>
+                  <button
+                    onClick={() => signMut.mutate()}
+                    disabled={signMut.isPending || initials.trim().length < 2}
+                    className="px-5 h-12 rounded-xl bg-primary text-primary-foreground font-bold flex items-center gap-2 disabled:opacity-50"
+                  >
+                    {signMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <PenLine className="w-4 h-4" />}
+                    Sign contract
+                  </button>
+                </div>
               </div>
             </div>
           ) : (
@@ -100,7 +116,7 @@ function ContractSheet({ contract, meId, onClose }: { contract: MyContract; meId
               onClick={() => setConfirming(true)}
               className="w-full h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.99] transition-all"
             >
-              <Check className="w-5 h-5" /> I have read and agree to this contract
+              <PenLine className="w-5 h-5" /> I have read this contract — sign it
             </button>
           )}
         </div>
@@ -151,11 +167,11 @@ export function MyContractSection() {
           </span>
           {c.acknowledgedAt ? (
             <span className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
-              <Check className="w-3.5 h-3.5" /> Acknowledged
+              <Check className="w-3.5 h-3.5" /> Signed
             </span>
           ) : (
             <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
-              Please read &amp; acknowledge
+              Please read &amp; sign
             </span>
           )}
           <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />

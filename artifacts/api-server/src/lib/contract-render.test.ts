@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderContract, templatePlaceholders, contractDate, CONTRACT_FIELDS, type ContractField } from "./contract-render";
+import { renderContract, templatePlaceholders, contractDate, applySignature, CONTRACT_FIELDS, type ContractField } from "./contract-render";
 
 const ALL_FIELDS: Record<ContractField, string> = {
   employee_name: "Jane Smith",
@@ -50,6 +50,60 @@ describe("templatePlaceholders", () => {
   });
   it("finds nothing in plain text", () => {
     expect(templatePlaceholders("no tokens { here } {{ UPPER }}")).toEqual([]);
+  });
+});
+
+describe("applySignature", () => {
+  const bodyWithLines = [
+    "…contract text…",
+    "",
+    "Signed by Jane Smith",
+    "",
+    ".......................................................",
+    "",
+    "Date: .......................................................",
+  ].join("\n");
+
+  it("puts the initials on the employee signature line and fills the date", () => {
+    const out = applySignature(bodyWithLines, { employeeName: "Jane Smith", initials: "JS", signedOn: "7 September 2026" });
+    expect(out).toContain("Signed by Jane Smith\n\nJS\n");
+    expect(out).toContain("Date: 7 September 2026");
+    expect(out).toContain("ELECTRONIC SIGNATURE RECORD");
+    expect(out).toContain("Initials entered: JS");
+  });
+
+  it("does not touch the employer's signature line above", () => {
+    const both = [
+      "Signed by Graeme Carter,",
+      "Managing Director (on behalf of The Calzone Kitchen)",
+      "",
+      ".......................................................",
+      "",
+      "Date: 7 September 2026",
+      "",
+      ...bodyWithLines.split("\n"),
+    ].join("\n");
+    const out = applySignature(both, { employeeName: "Jane Smith", initials: "JS", signedOn: "8 September 2026" });
+    // Employer's dotted line (before "Signed by Jane Smith") survives.
+    expect(out.split("Signed by Jane Smith")[0]).toContain(".......");
+    expect(out).toContain("Signed by Jane Smith\n\nJS\n");
+  });
+
+  it("still appends the record when the template lost the dotted lines", () => {
+    const out = applySignature("just text, no signature block", { employeeName: "Jane Smith", initials: "J.S.", signedOn: "7 September 2026" });
+    expect(out).toContain("ELECTRONIC SIGNATURE RECORD");
+    expect(out).toContain("Initials entered: J.S.");
+  });
+
+  it("refuses to sign twice", () => {
+    const once = applySignature(bodyWithLines, { employeeName: "Jane Smith", initials: "JS", signedOn: "7 September 2026" });
+    expect(() => applySignature(once, { employeeName: "Jane Smith", initials: "JS", signedOn: "8 September 2026" }))
+      .toThrow(/already signed/);
+  });
+
+  it("refuses blank initials", () => {
+    expect(() => applySignature(bodyWithLines, { employeeName: "Jane Smith", initials: "   ", signedOn: "7 September 2026" }))
+      .toThrow(/Initials/);
   });
 });
 

@@ -33,9 +33,12 @@ export const employmentContractsTable = pgTable("employment_contracts", {
   issueDate: date("issue_date").notNull(),
   issuedBy: integer("issued_by").references(() => usersTable.id, { onDelete: "set null" }),
   issuedAt: timestamp("issued_at").notNull().defaultNow(),
-  // The employee's in-app "I have read and agree" stamp. Once set, the
-  // contract can no longer be deleted.
+  // The employee's in-app signature: acknowledged_at is the moment they
+  // signed, signed_initials the initials they typed (also written into the
+  // body as the electronic signature record). Once set, the contract can no
+  // longer be deleted.
   acknowledgedAt: timestamp("acknowledged_at"),
+  signedInitials: text("signed_initials"),
 });
 
 export type ContractTemplate = typeof contractTemplatesTable.$inferSelect;
