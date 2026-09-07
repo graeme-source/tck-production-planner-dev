@@ -1,6 +1,6 @@
 import { Router, type IRouter, type Request } from "express";
 import { db, usersTable, userInvitesTable, passwordResetsTable } from "@workspace/db";
-import { eq, and, gt, isNull } from "drizzle-orm";
+import { eq, and, gt, isNull, sql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { z } from "zod";
@@ -150,6 +150,16 @@ router.post("/invites/:token/accept", validate(AcceptInviteBody), async (req: Re
     await db.update(userInvitesTable)
       .set({ acceptedAt: new Date() })
       .where(eq(userInvitesTable.id, invite.id));
+
+    // Contracts issued to this invite's email before the account existed
+    // (migration 0088) become theirs now — waiting in the onboarding flow
+    // at their first login. Unsigned rows only can be unclaimed, so the
+    // signed-row immutability trigger never bites here.
+    await db.execute(sql`
+      UPDATE employment_contracts
+      SET user_id = ${user.id}, invite_email = NULL
+      WHERE invite_email = ${invite.email} AND user_id IS NULL
+    `).catch(err => console.error("[invites] contract claim failed:", err));
 
     req.session!.userId = user.id;
     req.session!.userRole = user.role as "admin" | "manager" | "viewer";

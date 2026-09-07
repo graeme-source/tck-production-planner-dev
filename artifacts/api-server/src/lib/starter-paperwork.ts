@@ -70,11 +70,9 @@ export interface StarterGateStatus {
   firstDayReached: boolean;
   /** All the paperwork a starter can do from home is done. */
   paperworkComplete: boolean;
-  /** May the gate lift? Paperwork done AND their first day has arrived
-   *  (Graeme, 2026-09-07): everything else in the app stays shut until the
-   *  contract's start date, however early the paperwork was finished. With
-   *  no contract issued there is no known first day, so paperwork alone
-   *  opens the gate rather than locking somebody out indefinitely. */
+  /** Kept for the client: same as paperworkComplete. The gate itself only
+   *  lifts when the founder GRANTS access on the person's first day
+   *  (grantAppAccess below) — never automatically (Graeme, 2026-09-07). */
   complete: boolean;
 }
 
@@ -111,22 +109,22 @@ export async function starterGateStatus(userId: number): Promise<StarterGateStat
     startDate,
     firstDayReached,
     paperworkComplete,
-    complete: paperworkComplete && (!contractIssued || firstDayReached),
+    complete: paperworkComplete,
   };
 }
 
-/** Lift the first-login gate the moment the last piece lands. Only ever
- *  touches users still inside the gate — nobody already onboarded is
- *  re-flagged or re-stamped. */
-export async function maybeCompleteOnboarding(userId: number): Promise<void> {
+/** Open the rest of the app for a new starter. NEVER called automatically:
+ *  finishing the paperwork shows "thanks, that's it for now", and the
+ *  founder grants access when the person walks in on their first day
+ *  (Graeme, 2026-09-07). Only touches accounts still inside the gate. */
+export async function grantAppAccess(userId: number): Promise<boolean> {
   const [user] = await db
-    .select({ required: usersTable.onboardingRequired })
+    .select({ id: usersTable.id })
     .from(usersTable)
     .where(and(eq(usersTable.id, userId), eq(usersTable.onboardingRequired, true), isNull(usersTable.onboardingCompletedAt)));
-  if (!user) return;
-  const gate = await starterGateStatus(userId);
-  if (!gate.complete) return;
+  if (!user) return false;
   await db.update(usersTable)
     .set({ onboardingCompletedAt: new Date(), onboardingRequired: false, updatedAt: new Date() })
     .where(eq(usersTable.id, userId));
+  return true;
 }

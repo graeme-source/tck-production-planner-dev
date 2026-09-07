@@ -25,13 +25,14 @@ import { validate } from "../middleware/validate";
 import { hasHrRecordAccess, requireHrRecordAccess } from "../middleware/hr-access";
 import { renderContract, contractDate, templatePlaceholders, applySignature, CONTRACT_FIELDS } from "../lib/contract-render";
 import { renderContractPdf } from "../pdf/contract-pdf";
-import { maybeTickStarterPaperwork, maybeCompleteOnboarding } from "../lib/starter-paperwork";
+import { maybeTickStarterPaperwork } from "../lib/starter-paperwork";
 
 // Columns for reads that display a contract — everything except the
 // archival PDF bytes, which only ever leave through /:id/signed.pdf.
 const CONTRACT_COLUMNS = {
   id: employmentContractsTable.id,
   userId: employmentContractsTable.userId,
+  inviteEmail: employmentContractsTable.inviteEmail,
   templateId: employmentContractsTable.templateId,
   body: employmentContractsTable.body,
   employeeName: employmentContractsTable.employeeName,
@@ -118,11 +119,24 @@ router.put("/template", requireFounder, validate(TemplateBody), async (req: Requ
 // ── Founder: people picker + issued list ───────────────────────────────────
 
 router.get("/people", requireFounder, async (_req: Request, res: Response) => {
-  const people = await db
-    .select({ id: usersTable.id, name: usersTable.name, email: usersTable.email, isActive: usersTable.isActive })
-    .from(usersTable)
-    .orderBy(usersTable.name);
-  res.json(people.filter(p => p.isActive));
+  const [people, invites] = await Promise.all([
+    db.select({ id: usersTable.id, name: usersTable.name, email: usersTable.email, isActive: usersTable.isActive })
+      .from(usersTable)
+      .orderBy(usersTable.name),
+    // Pending invites: a contract can be issued to them by email BEFORE the
+    // invite is accepted — it's claimed onto the account on acceptance, so
+    // it's waiting at their first login (Graeme, 2026-09-07).
+    db.execute<{ email: string }>(sql`
+      SELECT DISTINCT email FROM user_invites
+      WHERE accepted_at IS NULL AND expires_at > NOW()
+        AND email NOT IN (SELECT email FROM app_users)
+      ORDER BY email
+    `),
+  ]);
+  res.json({
+    users: people.filter(p => p.isActive).map(p => ({ id: p.id, name: p.name, email: p.email })),
+    invited: (invites.rows ?? []).map(r => ({ email: r.email })),
+  });
 });
 
 router.get("/issued", requireFounder, async (_req: Request, res: Response) => {
@@ -150,12 +164,20 @@ router.get("/issued", requireFounder, async (_req: Request, res: Response) => {
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const GenerateBody = z.object({
-  userId: z.number().int(),
+  // Address ONE of: an existing account, or a pending invite's email (with
+  // the employee's name typed by the founder, since no account exists yet).
+  userId: z.number().int().optional(),
+  inviteEmail: z.string().trim().toLowerCase().email().optional(),
+  employeeName: z.string().trim().min(2).max(200).optional(),
   rateOfPay: z.string().min(1).max(50),
   jobTitle: z.string().min(1).max(200),
   weeklyHours: z.string().min(1).max(50),
   startDate: z.string().regex(DATE_RE, "startDate must be YYYY-MM-DD"),
   issueDate: z.string().regex(DATE_RE, "issueDate must be YYYY-MM-DD").optional(),
+}).refine(b => (b.userId == null) !== (b.inviteEmail == null), {
+  message: "Address the contract to either a team member or an invited email, not both",
+}).refine(b => b.inviteEmail == null || (b.employeeName != null && b.employeeName.trim() !== ""), {
+  message: "Type the employee's name when issuing to an invite",
 });
 
 async function renderForUser(input: z.infer<typeof GenerateBody>): Promise<
@@ -165,18 +187,30 @@ async function renderForUser(input: z.infer<typeof GenerateBody>): Promise<
   const [tpl] = await db.select().from(contractTemplatesTable).orderBy(contractTemplatesTable.id).limit(1);
   if (!tpl) return { ok: false, status: 404, error: "No master template — has migration 0082 run?" };
 
-  const [person] = await db
-    .select({ id: usersTable.id, name: usersTable.name, isActive: usersTable.isActive })
-    .from(usersTable)
-    .where(eq(usersTable.id, input.userId));
-  if (!person) return { ok: false, status: 400, error: "No such person" };
-  if (!person.isActive) return { ok: false, status: 400, error: `${person.name} is deactivated — reactivate them before issuing a contract` };
+  let employeeName: string;
+  if (input.userId != null) {
+    const [person] = await db
+      .select({ id: usersTable.id, name: usersTable.name, isActive: usersTable.isActive })
+      .from(usersTable)
+      .where(eq(usersTable.id, input.userId));
+    if (!person) return { ok: false, status: 400, error: "No such person" };
+    if (!person.isActive) return { ok: false, status: 400, error: `${person.name} is deactivated — reactivate them before issuing a contract` };
+    employeeName = person.name;
+  } else {
+    const rows = await db.execute<{ email: string }>(sql`
+      SELECT email FROM user_invites
+      WHERE email = ${input.inviteEmail} AND accepted_at IS NULL AND expires_at > NOW()
+      LIMIT 1
+    `);
+    if (!rows.rows[0]) return { ok: false, status: 400, error: "No open invite for that email — send the invite first" };
+    employeeName = input.employeeName!.trim();
+  }
 
   const issueDate = input.issueDate ?? new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date());
   let body: string;
   try {
     body = renderContract(tpl.body, {
-      employee_name: person.name,
+      employee_name: employeeName,
       issue_date: contractDate(issueDate),
       start_date: contractDate(input.startDate),
       rate_of_pay: input.rateOfPay.trim(),
@@ -186,7 +220,7 @@ async function renderForUser(input: z.infer<typeof GenerateBody>): Promise<
   } catch (err) {
     return { ok: false, status: 400, error: err instanceof Error ? err.message : "Could not render the contract" };
   }
-  return { ok: true, body, employeeName: person.name, issueDate, templateId: tpl.id };
+  return { ok: true, body, employeeName, issueDate, templateId: tpl.id };
 }
 
 // Preview is generation without the write — the founder reads exactly what
@@ -203,7 +237,8 @@ router.post("/generate", requireFounder, validate(GenerateBody), async (req: Req
   if (!out.ok) { res.status(out.status).json({ error: out.error }); return; }
 
   const [row] = await db.insert(employmentContractsTable).values({
-    userId: input.userId,
+    userId: input.userId ?? null,
+    inviteEmail: input.userId != null ? null : input.inviteEmail,
     templateId: out.templateId,
     body: out.body,
     employeeName: out.employeeName,
@@ -215,7 +250,11 @@ router.post("/generate", requireFounder, validate(GenerateBody), async (req: Req
     issuedBy: req.session.userId ?? null,
   }).returning();
 
-  await notify(input.userId, "Your employment contract is ready in your Employee Hub — please read and sign it.");
+  // An invite-addressed contract has nobody to notify yet — it's claimed
+  // and surfaced in their onboarding flow when the invite is accepted.
+  if (input.userId != null) {
+    await notify(input.userId, "Your employment contract is ready in your Employee Hub — please read and sign it.");
+  }
   res.json(row);
 });
 
@@ -361,12 +400,10 @@ router.post("/:id/sign", validate(SignBody), async (req: Request, res: Response)
     .returning(CONTRACT_COLUMNS);
 
   // Signing the contract may finish the starter paperwork — auto-tick the
-  // onboarding matrix and lift the first-login gate if so. Never let either
-  // fail the signature itself.
+  // onboarding matrix if so. The app itself stays gated until the founder
+  // grants access on their first day. Never let the tick fail the signature.
   maybeTickStarterPaperwork(userId).catch(err =>
     console.warn("[Contracts] starter-paperwork tick failed:", err instanceof Error ? err.message : err));
-  await maybeCompleteOnboarding(userId).catch(err =>
-    console.warn("[Contracts] onboarding completion check failed:", err instanceof Error ? err.message : err));
 
   res.json(updated);
 });

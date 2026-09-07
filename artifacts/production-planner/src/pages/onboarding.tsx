@@ -4,7 +4,7 @@
 // `onboardingRequired && !onboardingCompletedAt`.
 
 import { useEffect, useState } from "react";
-import { useLocation } from "wouter";
+import { useAuth } from "@/contexts/auth-context";
 import { Loader2, Phone, MapPin, Heart, FileText, Upload, Check, X, ShieldCheck, ArrowRight } from "lucide-react";
 import { StarterFormsList } from "@/components/starter-forms";
 import { MyContractSection } from "@/components/my-contract";
@@ -42,8 +42,9 @@ function firstDayLabel(iso: string | null): string | null {
     : d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
 }
 
-export default function Onboarding({ onComplete }: { onComplete?: () => void | Promise<void> }) {
-  const [, setLocation] = useLocation();
+// onComplete is legacy: AuthGate re-renders on refreshUser, so the poll gets
+// a granted starter into the app without this ever firing.
+export default function Onboarding(_props: { onComplete?: () => void | Promise<void> }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [documents, setDocuments] = useState<DocMeta[]>([]);
@@ -89,12 +90,14 @@ export default function Onboarding({ onComplete }: { onComplete?: () => void | P
   useEffect(() => { refresh().finally(() => setLoading(false)); }, []);
 
   // While on the paperwork step, keep the checklist fresh — signatures land
-  // from the sheets below and the gate lifts server-side.
+  // from the sheets below. refreshUser too: when the founder grants access
+  // on the first day, this screen flows into the app within a few seconds.
+  const { refreshUser } = useAuth();
   useEffect(() => {
     if (phase !== "paperwork") return;
-    const t = setInterval(() => { void refreshGate(); }, 4000);
+    const t = setInterval(() => { void refreshGate(); void refreshUser(); }, 4000);
     return () => clearInterval(t);
-  }, [phase]);
+  }, [phase, refreshUser]);
 
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, [k]: e.target.value }));
 
@@ -107,12 +110,9 @@ export default function Onboarding({ onComplete }: { onComplete?: () => void | P
         body: JSON.stringify(form),
       });
       if (!res.ok) throw new Error();
-      const g = await refreshGate();
-      if (g?.complete) {
-        if (onComplete) await onComplete();
-        else setLocation("/");
-        return;
-      }
+      await refreshGate();
+      // Always on to the paperwork step — the app itself only opens when
+      // the founder grants access on their first day.
       setPhase("paperwork");
       setSaving(false);
     } catch {
@@ -189,24 +189,27 @@ export default function Onboarding({ onComplete }: { onComplete?: () => void | P
             )}
           </section>
 
-          {gate?.paperworkComplete && !gate.complete ? (
+          {/* No enter button, ever: the founder opens the app in person on
+              their first day (Graeme, 2026-09-07). The poll above lets that
+              grant flow this screen straight into the app. */}
+          {gate?.paperworkComplete ? (
             <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 p-6 text-center space-y-1">
-              <p className="text-xl font-bold">That's everything — brilliant! 🎉</p>
+              <p className="text-xl font-bold">Thanks — that's it for now! 🎉</p>
               <p className="text-base text-muted-foreground">
                 {firstDay
-                  ? `See you on ${firstDay}. The rest of the app unlocks that morning.`
-                  : "The rest of the app unlocks on your first day."}
+                  ? `See you on ${firstDay}. We'll open the rest of the app up for you when you come in.`
+                  : "We'll open the rest of the app up for you when you come in on your first day."}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                You can log back in here any time to read or print anything you've signed.
               </p>
             </div>
           ) : (
-            <button
-              onClick={submit}
-              disabled={saving || !gate?.complete}
-              className="w-full h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2 hover:opacity-90 disabled:opacity-40 transition-all"
-            >
-              {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <ArrowRight className="w-5 h-5" />}
-              {gate?.complete ? "You're all set — enter the app" : "Work through the checklist above to continue"}
-            </button>
+            <div className="rounded-2xl border border-border bg-card p-4 text-center">
+              <p className="text-base text-muted-foreground flex items-center justify-center gap-2">
+                <ArrowRight className="w-4 h-4" /> Work through the checklist above — everything autosaves as you go.
+              </p>
+            </div>
           )}
         </div>
       </div>

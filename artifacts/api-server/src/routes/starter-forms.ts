@@ -23,7 +23,7 @@ import {
   STARTER_FORMS, STARTER_FORM_TYPES, missingRequiredFields, renderStarterFormBody,
   type StarterFormAnswers,
 } from "../lib/starter-forms";
-import { maybeTickStarterPaperwork, maybeCompleteOnboarding } from "../lib/starter-paperwork";
+import { maybeTickStarterPaperwork, grantAppAccess } from "../lib/starter-paperwork";
 import { renderContractPdf } from "../pdf/contract-pdf";
 
 const router: IRouter = Router();
@@ -153,12 +153,10 @@ router.post("/mine/:formType/sign", validate(SignBody), async (req: Request, res
         .returning({ id: starterFormSubmissionsTable.id, signedAt: starterFormSubmissionsTable.signedAt });
 
   // The last signature may complete the starter paperwork — tick the
-  // onboarding matrix and lift the first-login gate. Awaited so the client's
-  // next refreshUser() sees the lifted gate; never fails the signing.
+  // onboarding matrix. The app stays gated until the founder grants access
+  // on their first day; never let the tick fail the signing.
   maybeTickStarterPaperwork(userId).catch(err =>
     console.warn("[StarterForms] starter-paperwork tick failed:", err instanceof Error ? err.message : err));
-  await maybeCompleteOnboarding(userId).catch(err =>
-    console.warn("[StarterForms] onboarding completion check failed:", err instanceof Error ? err.message : err));
 
   res.json(row);
 });
@@ -214,7 +212,13 @@ router.get("/submission/:id/signed.pdf", async (req: Request, res: Response) => 
 
 router.get("/overview", requireHrRecordAccess, async (_req: Request, res: Response) => {
   const [people, submissions] = await Promise.all([
-    db.select({ id: usersTable.id, name: usersTable.name, isActive: usersTable.isActive }).from(usersTable).orderBy(usersTable.name),
+    db.select({
+      id: usersTable.id,
+      name: usersTable.name,
+      isActive: usersTable.isActive,
+      onboardingRequired: usersTable.onboardingRequired,
+      onboardingCompletedAt: usersTable.onboardingCompletedAt,
+    }).from(usersTable).orderBy(usersTable.name),
     db.select({
       id: starterFormSubmissionsTable.id,
       userId: starterFormSubmissionsTable.userId,
@@ -228,9 +232,24 @@ router.get("/overview", requireHrRecordAccess, async (_req: Request, res: Respon
     people: people.filter(p => p.isActive).map(p => ({
       id: p.id,
       name: p.name,
+      // Still inside the first-login gate — the founder opens the app for
+      // them on their first day with the Grant access button.
+      gated: p.onboardingRequired === true && p.onboardingCompletedAt == null,
       forms: submissions.filter(s => s.userId === p.id).map(({ userId: _u, ...s }) => s),
     })),
   });
+});
+
+// POST /grant-access — the founder's first-day handshake: opens the rest of
+// the app for a gated new starter. Deliberately manual (Graeme, 2026-09-07):
+// finishing the paperwork never opens the app by itself.
+const GrantBody = z.object({ userId: z.number().int() });
+
+router.post("/grant-access", requireHrRecordAccess, validate(GrantBody), async (req: Request, res: Response) => {
+  const { userId } = req.body as z.infer<typeof GrantBody>;
+  const granted = await grantAppAccess(userId);
+  if (!granted) { res.status(400).json({ error: "That person isn't waiting on the onboarding gate" }); return; }
+  res.json({ ok: true });
 });
 
 export default router;

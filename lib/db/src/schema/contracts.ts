@@ -28,7 +28,11 @@ export const contractTemplatesTable = pgTable("contract_templates", {
 
 export const employmentContractsTable = pgTable("employment_contracts", {
   id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  // Nullable since migration 0088: a contract can be addressed to a pending
+  // invite's email instead, and is claimed onto the account when the invite
+  // is accepted. One of userId / inviteEmail is always set (DB CHECK).
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "cascade" }),
+  inviteEmail: text("invite_email"),
   templateId: integer("template_id").references(() => contractTemplatesTable.id, { onDelete: "set null" }),
   // The filled contract text — a snapshot: template edits never reach back
   // into an issued contract.

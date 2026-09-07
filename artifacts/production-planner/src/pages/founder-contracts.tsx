@@ -37,11 +37,17 @@ interface Template {
   knownFields: string[];
 }
 
-interface Person { id: number; name: string; email: string }
+interface PeopleResponse {
+  users: { id: number; name: string; email: string }[];
+  /** Open invites with no account yet — a contract issued here is claimed
+   *  onto the account the moment the invite is accepted. */
+  invited: { email: string }[];
+}
 
 interface IssuedRow {
   id: number;
-  userId: number;
+  userId: number | null;
+  inviteEmail: string | null;
   employeeName: string;
   jobTitle: string;
   rateOfPay: string;
@@ -117,17 +123,25 @@ function ContractDialog({ contractId, onClose }: { contractId: number; onClose: 
 
 // ── New contract ───────────────────────────────────────────────────────────
 
-function NewContractCard({ template, people, meId }: { template: Template; people: Person[]; meId: number }) {
+function NewContractCard({ template, people, meId }: { template: Template; people: PeopleResponse; meId: number }) {
   const queryClient = useQueryClient();
-  const [userId, setUserId] = useState<number | "">("");
+  // "u:12" for a team member, "i:person@email" for a pending invite.
+  const [who, setWho] = useState<string>("");
+  const [employeeName, setEmployeeName] = useState("");
   const [rateOfPay, setRateOfPay] = useState("");
   const [jobTitle, setJobTitle] = useState(template.defaultJobTitle);
   const [weeklyHours, setWeeklyHours] = useState(template.defaultWeeklyHours);
   const [startDate, setStartDate] = useState(todayIso());
   const [preview, setPreview] = useState<{ body: string; employeeName: string } | null>(null);
 
-  const fields = userId !== "" && rateOfPay.trim() && jobTitle.trim() && weeklyHours.trim() && startDate
-    ? { userId: Number(userId), rateOfPay: rateOfPay.trim(), jobTitle: jobTitle.trim(), weeklyHours: weeklyHours.trim(), startDate }
+  const isInvite = who.startsWith("i:");
+  const addressing = who === "" ? null
+    : isInvite
+      ? (employeeName.trim().length >= 2 ? { inviteEmail: who.slice(2), employeeName: employeeName.trim() } : null)
+      : { userId: Number(who.slice(2)) };
+
+  const fields = addressing && rateOfPay.trim() && jobTitle.trim() && weeklyHours.trim() && startDate
+    ? { ...addressing, rateOfPay: rateOfPay.trim(), jobTitle: jobTitle.trim(), weeklyHours: weeklyHours.trim(), startDate }
     : null;
 
   const previewMut = useMutation({
@@ -146,11 +160,16 @@ function NewContractCard({ template, people, meId }: { template: Template; peopl
     }).then(jsonOrThrow),
     onSuccess: (row: IssuedRow) => {
       setPreview(null);
-      setUserId(""); setRateOfPay("");
+      setWho(""); setEmployeeName(""); setRateOfPay("");
       setJobTitle(template.defaultJobTitle); setWeeklyHours(template.defaultWeeklyHours);
       setStartDate(todayIso());
       queryClient.invalidateQueries({ queryKey: ["contracts", "issued", meId] });
-      toast({ title: `Contract issued to ${row.employeeName}`, description: "It's now in their Employee Hub, and they've been notified." });
+      toast({
+        title: `Contract issued to ${row.employeeName}`,
+        description: row.inviteEmail
+          ? "It'll be waiting in their onboarding the moment they accept their invite."
+          : "It's now in their Employee Hub, and they've been notified.",
+      });
     },
     onError: (e: Error) => toast({ title: "Not issued", description: e.message, variant: "destructive" }),
   });
@@ -166,11 +185,27 @@ function NewContractCard({ template, people, meId }: { template: Template; peopl
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <label className="space-y-1.5 sm:col-span-2">
           <span className="text-sm font-medium">Employee</span>
-          <select value={userId} onChange={e => setUserId(e.target.value === "" ? "" : Number(e.target.value))} className={inputCls}>
-            <option value="">Choose a team member…</option>
-            {people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          <select value={who} onChange={e => setWho(e.target.value)} className={inputCls}>
+            <option value="">Choose a team member or invite…</option>
+            <optgroup label="Team">
+              {people.users.map(p => <option key={p.id} value={`u:${p.id}`}>{p.name}</option>)}
+            </optgroup>
+            {people.invited.length > 0 && (
+              <optgroup label="Invited — not joined yet">
+                {people.invited.map(i => <option key={i.email} value={`i:${i.email}`}>{i.email}</option>)}
+              </optgroup>
+            )}
           </select>
         </label>
+        {isInvite && (
+          <label className="space-y-1.5 sm:col-span-2">
+            <span className="text-sm font-medium">Employee's full name (goes on the contract)</span>
+            <input value={employeeName} onChange={e => setEmployeeName(e.target.value)} placeholder="e.g. Jane Smith" className={inputCls} />
+            <span className="block text-xs text-muted-foreground">
+              They haven't made their account yet — the contract waits for them and attaches the moment they accept the invite.
+            </span>
+          </label>
+        )}
         <label className="space-y-1.5">
           <span className="text-sm font-medium">Rate of pay (per hour)</span>
           <input value={rateOfPay} onChange={e => setRateOfPay(e.target.value)} placeholder="e.g. £12.50" className={inputCls} />
@@ -275,6 +310,12 @@ function IssuedCard({ meId }: { meId: number }) {
                     {row.jobTitle} · {row.rateOfPay}/hr · starts {row.startDate} · issued {row.issueDate}
                   </span>
                 </button>
+                {row.inviteEmail && (
+                  <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300"
+                        title={`Waiting for ${row.inviteEmail} to accept their invite`}>
+                    Invited — joins soon
+                  </span>
+                )}
                 {row.acknowledgedAt ? (
                   <span className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
                     <Check className="w-3.5 h-3.5" /> Signed{row.signedInitials ? ` (${row.signedInitials})` : ""}
@@ -334,7 +375,7 @@ function IssuedCard({ meId }: { meId: number }) {
 
 interface FormsOverview {
   formTypes: { type: string; title: string }[];
-  people: { id: number; name: string; forms: { id: number; formType: string; signedAt: string | null; updatedAt: string }[] }[];
+  people: { id: number; name: string; gated: boolean; forms: { id: number; formType: string; signedAt: string | null; updatedAt: string }[] }[];
 }
 
 function SubmissionDialog({ submissionId, onClose }: { submissionId: number; onClose: () => void }) {
@@ -380,15 +421,31 @@ function SubmissionDialog({ submissionId, onClose }: { submissionId: number; onC
 }
 
 function StarterFormsOverviewCard({ meId }: { meId: number }) {
+  const queryClient = useQueryClient();
   const [viewing, setViewing] = useState<number | null>(null);
   const { data, isLoading } = useQuery<FormsOverview>({
     queryKey: ["starter-forms", "overview", meId],
     queryFn: () => fetch(`${BASE}/api/starter-forms/overview`, { credentials: "include" }).then(jsonOrThrow),
   });
 
-  // Only people who have at least started something — the whole team listed
-  // with empty rows would bury the newcomers this card exists for.
-  const rows = (data?.people ?? []).filter(p => p.forms.length > 0);
+  // Their first-day handshake: opens the rest of the app for a gated
+  // starter — deliberately manual, done when they're in the building.
+  const grant = useMutation({
+    mutationFn: (userId: number) => fetch(`${BASE}/api/starter-forms/grant-access`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId }),
+    }).then(jsonOrThrow),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["starter-forms", "overview", meId] });
+      toast({ title: "Access granted", description: "Their screen opens into the full app within a few seconds." });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't grant access", description: e.message, variant: "destructive" }),
+  });
+
+  // People who have started something, plus anyone still behind the
+  // first-login gate — the whole team with empty rows would bury the
+  // newcomers this card exists for.
+  const rows = (data?.people ?? []).filter(p => p.forms.length > 0 || p.gated);
 
   return (
     <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
@@ -405,7 +462,24 @@ function StarterFormsOverviewCard({ meId }: { meId: number }) {
         <ul className="divide-y divide-border border border-border rounded-xl overflow-hidden">
           {rows.map(p => (
             <li key={p.id} className="bg-card px-4 py-3">
-              <p className="font-semibold text-base mb-1.5">{p.name}</p>
+              <div className="flex items-center gap-3 flex-wrap mb-1.5">
+                <p className="font-semibold text-base">{p.name}</p>
+                {p.gated && (
+                  <>
+                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                      Onboarding only
+                    </span>
+                    <button
+                      onClick={() => grant.mutate(p.id)}
+                      disabled={grant.isPending}
+                      className="ml-auto px-4 h-10 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:opacity-90 disabled:opacity-50"
+                      title="Their first-day handshake — opens the rest of the app for them"
+                    >
+                      {grant.isPending ? "Opening…" : "Grant app access"}
+                    </button>
+                  </>
+                )}
+              </div>
               <div className="flex gap-2 flex-wrap">
                 {(data?.formTypes ?? []).map(ft => {
                   const sub = p.forms.find(f => f.formType === ft.type);
@@ -539,7 +613,7 @@ export default function FounderContracts() {
     queryFn: () => fetch(`${BASE}/api/contracts/template`, { credentials: "include" }).then(jsonOrThrow),
     enabled: isFounder,
   });
-  const { data: people } = useQuery<Person[]>({
+  const { data: people } = useQuery<PeopleResponse>({
     queryKey: ["contracts", "people", meId],
     queryFn: () => fetch(`${BASE}/api/contracts/people`, { credentials: "include" }).then(jsonOrThrow),
     enabled: isFounder,
@@ -564,7 +638,7 @@ export default function FounderContracts() {
       )}
       {template && meId != null && (
         <>
-          <NewContractCard template={template} people={people ?? []} meId={meId} />
+          <NewContractCard template={template} people={people ?? { users: [], invited: [] }} meId={meId} />
           <IssuedCard meId={meId} />
           <StarterFormsOverviewCard meId={meId} />
           {/* No key on purpose: while the founder types, local state is the

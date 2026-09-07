@@ -7,7 +7,7 @@ import { Router, type IRouter, type Request, type Response, type NextFunction } 
 import multer from "multer";
 import { db, usersTable, onboardingSubmissionsTable, onboardingDocumentsTable } from "@workspace/db";
 import { eq, and, asc } from "drizzle-orm";
-import { tickPreArrivalDetails, maybeCompleteOnboarding, starterGateStatus } from "../lib/starter-paperwork";
+import { tickPreArrivalDetails, starterGateStatus } from "../lib/starter-paperwork";
 
 const router: IRouter = Router();
 
@@ -99,14 +99,12 @@ router.put("/me", async (req: Request, res: Response) => {
         set: { ...values, submittedAt: new Date(), updatedAt: new Date() },
       });
 
-    // Details alone no longer finish onboarding (Graeme, 2026-09-07): the
-    // first-login gate also wants the three starter forms signed, and the
-    // contract when one has been issued. maybeCompleteOnboarding lifts the
-    // gate the moment the last piece lands, whichever piece that is; the
-    // emergency-contact matrix column ticks itself here.
+    // Details alone don't finish onboarding: the gate also wants the starter
+    // forms and contract signed, and even then it lifts only when the
+    // founder grants access on the person's first day (Graeme, 2026-09-07).
+    // The emergency-contact matrix column ticks itself here.
     tickPreArrivalDetails(userId).catch(err =>
       console.warn("[onboarding] pre-arrival tick failed:", err instanceof Error ? err.message : err));
-    await maybeCompleteOnboarding(userId);
 
     res.json(await loadOnboarding(userId));
   } catch (err) {
