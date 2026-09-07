@@ -19,7 +19,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Loader2, Camera, CheckCircle2, Clock, ThumbsUp, RotateCcw,
-  Trophy, ChevronLeft, X, AlertCircle, Settings2, Clapperboard, Trash2, ArrowBigUp, HandHelping,
+  Trophy, ChevronLeft, X, AlertCircle, Settings2, Clapperboard, Trash2, ArrowBigUp, HandHelping, BookOpen,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/contexts/auth-context";
@@ -30,6 +30,7 @@ import { ImprovementFeedMedia } from "@/components/improvement-feed-media";
 import { toast } from "@/hooks/use-toast";
 import { useMarkImprovementSeen } from "@/hooks/use-unseen-improvements";
 import { scrollAppToTop } from "@/lib/scroll";
+import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -526,6 +527,18 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["improvements"] });
 
+  // "Create SOP from this improvement" — the server copies title, text and
+  // media in as draft steps; the editor opens on the result for the tidy.
+  const [sopEditorId, setSopEditorId] = useState<number | null>(null);
+  const createSop = useMutation({
+    mutationFn: () => api<{ sopId: number }>(`/improvements/${id}/create-sop`, { method: "POST" }),
+    onSuccess: (r) => {
+      setSopEditorId(r.sopId);
+      toast({ title: "SOP drafted", description: "The photos and text are in as steps — tidy it up and tag it where it belongs." });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't create the SOP", description: e.message, variant: "destructive" }),
+  });
+
   const stitch = useMutation({
     mutationFn: () => api<{ bytes: number }>(`/improvements/${id}/stitch`, { method: "POST" }),
     onSuccess: () => {
@@ -792,6 +805,29 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
             </div>
           )}
         </div>
+      )}
+
+      {/* Some improvements ARE a how-to (Graeme, 2026-09-07): one tap turns
+          this one into an SOP — title, description and every photo/video
+          become the draft steps, and the editor opens for the quick tidy.
+          Attach it where it belongs with the usual SOP chips afterwards. */}
+      {isManager && (
+        <div className="pt-4 border-t border-border">
+          <button
+            onClick={() => createSop.mutate()}
+            disabled={createSop.isPending}
+            className="w-full h-14 rounded-2xl border-2 border-primary text-primary text-lg font-bold flex items-center justify-center gap-2 hover:bg-primary/5 disabled:opacity-50 transition-colors"
+          >
+            {createSop.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <BookOpen className="w-5 h-5" />}
+            Create SOP from this improvement
+          </button>
+          <p className="text-sm text-muted-foreground mt-1.5 text-center">
+            Copies the photos and text in as draft steps, then opens the SOP editor to tidy and tag.
+          </p>
+        </div>
+      )}
+      {sopEditorId != null && (
+        <StandardsSopsDialog open onClose={() => setSopEditorId(null)} initialEditSopId={sopEditorId} />
       )}
 
       {/* Delete — last on the page, quiet until asked for. Some suggestions

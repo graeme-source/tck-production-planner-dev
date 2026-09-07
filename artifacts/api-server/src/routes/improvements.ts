@@ -338,6 +338,59 @@ router.put("/settings", async (req: Request, res: Response) => {
   }
 });
 
+// POST /:id/create-sop — turn an improvement into the basis of an SOP
+// (Graeme, 2026-09-07): some improvements ARE a how-to, photos and all. The
+// new SOP takes the improvement's title, its description as step one, and
+// every photo/video as a step (before-phase first), filed under the
+// improvement's station so the library filter finds it. The client opens
+// the SOP editor on it straight away for the quick tidy-and-tag.
+router.post("/:id/create-sop", async (req: Request, res: Response) => {
+  const viewer = await viewerOf(req);
+  if (!viewer.isManager) { res.status(403).json({ error: "Manager or admin access required" }); return; }
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  try {
+    const [row] = await db.select().from(improvementSubmissionsTable).where(eq(improvementSubmissionsTable.id, id));
+    if (!row) { res.status(404).json({ error: "Not found" }); return; }
+
+    const created = await db.execute<{ id: number }>(sql`
+      INSERT INTO standards_sops (title, stations, tags, author_id)
+      VALUES (${row.title}, CASE WHEN ${row.station}::text IS NULL THEN '{}'::text[] ELSE ARRAY[${row.station}]::text[] END,
+              '{}'::text[], ${req.session.userId ?? null})
+      RETURNING id
+    `);
+    const sopId = (created.rows ?? [])[0]?.id;
+    if (!sopId) throw new Error("SOP insert returned no id");
+
+    const description = (row.description ?? "").trim();
+    if (description) {
+      await db.execute(sql`
+        INSERT INTO sop_steps (sop_id, position, description)
+        VALUES (${sopId}, 1, ${description})
+      `);
+    }
+    // Media copies straight across in SQL — the bytes never leave Postgres.
+    // Before-phase first so the steps read in the order the work happened.
+    await db.execute(sql`
+      INSERT INTO sop_steps (sop_id, position, description, image_mime, image_data, video_mime, video_data)
+      SELECT ${sopId},
+             ${description ? 1 : 0} + ROW_NUMBER() OVER (ORDER BY CASE WHEN phase = 'before' THEN 0 ELSE 1 END, id),
+             CASE WHEN phase = 'before' THEN 'Before' WHEN phase = 'after' THEN 'After' ELSE '' END,
+             CASE WHEN mime LIKE 'image/%' THEN mime END,
+             CASE WHEN mime LIKE 'image/%' THEN data END,
+             CASE WHEN mime LIKE 'video/%' THEN mime END,
+             CASE WHEN mime LIKE 'video/%' THEN data END
+      FROM improvement_attachments
+      WHERE improvement_id = ${id} AND (mime LIKE 'image/%' OR mime LIKE 'video/%')
+    `);
+
+    res.status(201).json({ sopId });
+  } catch (err) {
+    console.error("[Improvements] create-sop failed:", err);
+    res.status(500).json({ error: "Couldn't create the SOP from this improvement" });
+  }
+});
+
 router.post("/:id/done", async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
