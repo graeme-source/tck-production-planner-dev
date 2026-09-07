@@ -640,7 +640,7 @@ export function SubRecipeMakeFlow({
                       <SopChips
                         links={sopLinksBySubRecipe?.[sr.subRecipeId] ?? []}
                         onOpen={onOpenSop}
-                        attach={{ targetType: "sub_recipe", a: sr.subRecipeId, label: sr.subRecipeName }}
+                        attach={{ targetType: "sub_recipe", a: sr.subRecipeId, text: "prep_bases", label: sr.subRecipeName, station: "prep_bases" }}
                         queryKeysToInvalidate={sopQueryKey ? [sopQueryKey] : []}
                       />
                     </div>
@@ -779,7 +779,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
   const { data: sopLinksByIngredient } = useQuery<Record<number, Array<SopLink & { scope: "ingredient" | "recipe"; recipeId: number | null }>>>({
     queryKey: sopLinksKey,
     queryFn: async () => {
-      const res = await fetch(`/api/standards/links/for-ingredients?ids=${sopIngredientIds.join(",")}`, { credentials: "include" });
+      const res = await fetch(`/api/standards/links/for-ingredients?ids=${sopIngredientIds.join(",")}&station=prep_bases`, { credentials: "include" });
       return res.ok ? res.json() : {};
     },
     enabled: sopIngredientIds.length > 0,
@@ -792,7 +792,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
   const { data: sopLinksBySubRecipe } = useQuery<Record<number, SopLink[]>>({
     queryKey: subRecipeSopKey,
     queryFn: async () => {
-      const res = await fetch(`/api/standards/links/for-sub-recipes?ids=${subRecipeSopIds.join(",")}`, { credentials: "include" });
+      const res = await fetch(`/api/standards/links/for-sub-recipes?ids=${subRecipeSopIds.join(",")}&station=prep_bases`, { credentials: "include" });
       return res.ok ? res.json() : {};
     },
     enabled: subRecipeSopIds.length > 0,
@@ -1256,9 +1256,9 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                         links={sopLinksByIngredient?.[ing.ingredientId] ?? []}
                         onOpen={sopViewer.open}
                         attach={[
-                          { targetType: "ingredient", a: ing.ingredientId, label: "Everywhere", subject: ing.ingredientName },
+                          { targetType: "ingredient", a: ing.ingredientId, text: "prep_bases", label: "Everywhere", subject: ing.ingredientName },
                           ...[...new Map(ing.recipes.map(r => [r.recipeId, r.recipeName])).entries()].map(([recipeId, recipeName]) => ({
-                            targetType: "recipe_ingredient" as const, a: recipeId, b: ing.ingredientId, label: `Only ${recipeName}`,
+                            targetType: "recipe_ingredient" as const, a: recipeId, b: ing.ingredientId, text: "prep_bases", label: `Only ${recipeName}`,
                           })),
                         ]}
                         queryKeysToInvalidate={[sopLinksKey]}

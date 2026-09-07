@@ -484,7 +484,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
     queryKey: sopLinksKey,
     enabled: sopIngredientIds.length > 0,
     queryFn: async () => {
-      const res = await fetch(`/api/standards/links/for-ingredients?ids=${sopIngredientIds.join(",")}`, { credentials: "include" });
+      const res = await fetch(`/api/standards/links/for-ingredients?ids=${sopIngredientIds.join(",")}&station=main_prep`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load SOP links");
       return res.json();
     },
@@ -1030,11 +1030,12 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                                 links={sopLinksByIngredient?.[ing.ingredientId] ?? []}
                                 onOpen={sopViewer.open}
                                 attach={[
-                                  { targetType: "ingredient", a: ing.ingredientId, label: "Everywhere", subject: ing.ingredientName },
+                                  { targetType: "ingredient", a: ing.ingredientId, text: "main_prep", label: "Everywhere", subject: ing.ingredientName },
                                   ...[...new Map(ing.recipes.map(r => [r.recipeId, r.recipeName])).entries()].map(([recipeId, recipeName]) => ({
                                     targetType: "recipe_ingredient" as const,
                                     a: recipeId,
                                     b: ing.ingredientId,
+                                    text: "main_prep",
                                     label: `Only ${recipeName}`,
                                   })),
                                 ]}

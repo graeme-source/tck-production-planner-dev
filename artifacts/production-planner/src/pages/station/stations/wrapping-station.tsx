@@ -149,7 +149,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
     queryKey: sopLinksKey,
     enabled: recipeIds.length > 0,
     queryFn: async () => {
-      const res = await fetch(`/api/standards/links/for-recipes?ids=${recipeIds.join(",")}`, { credentials: "include" });
+      const res = await fetch(`/api/standards/links/for-recipes?ids=${recipeIds.join(",")}&station=wrapping`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load SOP links");
       return res.json();
     },
@@ -1004,7 +1004,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                           <SopChips
                             links={sopLinksByRecipe?.[item.recipeId] ?? []}
                             onOpen={sopViewer.open}
-                            attach={{ targetType: "recipe", a: item.recipeId, label: item.recipeName ?? "this recipe" }}
+                            attach={{ targetType: "recipe", a: item.recipeId, text: "wrapping", label: item.recipeName ?? "this recipe", station: "wrapping" }}
                             queryKeysToInvalidate={[sopLinksKey]}
                           />
                         </div>

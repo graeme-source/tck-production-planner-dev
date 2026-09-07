@@ -73,7 +73,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   const { data: sopLinksByRecipe } = useQuery<Record<number, SopLink[]>>({
     queryKey: sopRecipesKey,
     queryFn: async () => {
-      const res = await fetch(`/api/standards/links/for-recipes?ids=${sopRecipeIds.join(",")}`, { credentials: "include" });
+      const res = await fetch(`/api/standards/links/for-recipes?ids=${sopRecipeIds.join(",")}&station=prep_meat`, { credentials: "include" });
       return res.ok ? res.json() : {};
     },
     enabled: sopRecipeIds.length > 0,
@@ -83,7 +83,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   const { data: sopLinksByIngredient } = useQuery<Record<number, Array<SopLink & { scope: "ingredient" | "recipe"; recipeId: number | null }>>>({
     queryKey: sopIngredientsKey,
     queryFn: async () => {
-      const res = await fetch(`/api/standards/links/for-ingredients?ids=${sopIngredientIds.join(",")}`, { credentials: "include" });
+      const res = await fetch(`/api/standards/links/for-ingredients?ids=${sopIngredientIds.join(",")}&station=prep_meat`, { credentials: "include" });
       return res.ok ? res.json() : {};
     },
     enabled: sopIngredientIds.length > 0,
@@ -438,7 +438,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                 <SopChips
                   links={sopLinksByRecipe?.[selected.recipeId] ?? []}
                   onOpen={sopViewer.open}
-                  attach={{ targetType: "recipe", a: selected.recipeId, label: selected.recipeName }}
+                  attach={{ targetType: "recipe", a: selected.recipeId, text: "prep_meat", label: selected.recipeName, station: "prep_meat" }}
                   queryKeysToInvalidate={[sopRecipesKey]}
                 />
               </div>
@@ -580,8 +580,8 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                         links={(sopLinksByIngredient?.[ing.ingredientId] ?? []).filter(l => l.scope === "ingredient" || l.recipeId === selected.recipeId)}
                         onOpen={sopViewer.open}
                         attach={[
-                          { targetType: "ingredient", a: ing.ingredientId, label: "Everywhere", subject: ing.ingredientName },
-                          { targetType: "recipe_ingredient", a: selected.recipeId, b: ing.ingredientId, label: `Only ${selected.recipeName}` },
+                          { targetType: "ingredient", a: ing.ingredientId, text: "prep_meat", label: "Everywhere", subject: ing.ingredientName },
+                          { targetType: "recipe_ingredient", a: selected.recipeId, b: ing.ingredientId, text: "prep_meat", label: `Only ${selected.recipeName}` },
                         ]}
                         queryKeysToInvalidate={[sopIngredientsKey]}
                       />

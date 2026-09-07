@@ -795,6 +795,7 @@ router.get("/links/for-checklist", requireAuth, async (req, res) => {
 router.get("/links/for-ingredients", requireAuth, async (req, res) => {
   const ids = parseIdsParam(req.query.ids);
   if (ids.length === 0) { res.json({}); return; }
+  const station = parseStationParam(req.query.station);
   const rows = await db.execute<{
     link_id: number; target_type: string; target_a: number; target_b: number | null;
     sop_id: number; title: string; recipe_name: string | null; step_count: number;
@@ -804,8 +805,8 @@ router.get("/links/for-ingredients", requireAuth, async (req, res) => {
     FROM sop_links l
     JOIN standards_sops s ON s.id = l.sop_id
     LEFT JOIN recipes r ON l.target_type = 'recipe_ingredient' AND r.id = l.target_a
-    WHERE (l.target_type = 'ingredient' AND l.target_a = ANY(${`{${ids.join(",")}}`}::int[]))
-       OR (l.target_type = 'recipe_ingredient' AND l.target_b = ANY(${`{${ids.join(",")}}`}::int[]))
+    WHERE ((l.target_type = 'ingredient' AND l.target_a = ANY(${`{${ids.join(",")}}`}::int[]))
+       OR (l.target_type = 'recipe_ingredient' AND l.target_b = ANY(${`{${ids.join(",")}}`}::int[])))${surfaceScopeSql(station)}
     ORDER BY s.title
   `);
   const out: Record<number, Array<{
@@ -827,19 +828,33 @@ router.get("/links/for-ingredients", requireAuth, async (req, res) => {
   res.json(out);
 });
 
-// GET /links/for-recipes?ids=1,2 → { [recipeId]: [{linkId,sopId,title}] }
+// Surface scoping (Graeme, 2026-09-07): a link's target_text can carry the
+// station it belongs to — "pork at the building station" and "pork at prep"
+// are different places and can carry different SOPs. A link with NO scope
+// is global (the old behaviour, kept for existing links and for SOPs that
+// genuinely apply everywhere). Surfaces pass ?station=… and receive their
+// own links plus the global ones; without the param everything comes back.
+const surfaceScopeSql = (station: string | null) =>
+  station ? sql` AND (l.target_text IS NULL OR l.target_text = ${station})` : sql``;
+
+const parseStationParam = (raw: unknown): string | null => {
+  const s = String(raw ?? "").trim();
+  return s && s.length <= 64 ? s : null;
+};
+
+// GET /links/for-recipes?ids=1,2&station=wrapping → { [recipeId]: [{linkId,sopId,title}] }
 //
-// Recipe-level SOPs: the process for making THIS recipe, wherever that recipe
-// shows up. First consumer is the wrapping station (the cream cheese icing
-// step on Cinnamon Buns), but nothing here is station-specific — the ovens,
-// building and dough screens can hang chips off the same links.
+// Recipe-level SOPs: the process for making THIS recipe. With a station
+// param, only that surface's links (plus unscoped ones) come back — an SOP
+// attached to the pork on the prep screen stays off the wrapping screen.
 router.get("/links/for-recipes", requireAuth, async (req, res) => {
   const ids = parseIdsParam(req.query.ids);
   if (ids.length === 0) { res.json({}); return; }
+  const station = parseStationParam(req.query.station);
   const rows = await db.execute<{ link_id: number; target_a: number; sop_id: number; title: string; step_count: number }>(sql`
     SELECT l.id AS link_id, l.target_a, l.sop_id, s.title, ${STEP_COUNT_SQL}
     FROM sop_links l JOIN standards_sops s ON s.id = l.sop_id
-    WHERE l.target_type = 'recipe' AND l.target_a = ANY(${`{${ids.join(",")}}`}::int[])
+    WHERE l.target_type = 'recipe' AND l.target_a = ANY(${`{${ids.join(",")}}`}::int[])${surfaceScopeSql(station)}
     ORDER BY s.title
   `);
   const out: Record<number, Array<{ linkId: number; sopId: number; title: string; stepCount: number }>> = {};
@@ -858,10 +873,11 @@ router.get("/links/for-recipes", requireAuth, async (req, res) => {
 router.get("/links/for-sub-recipes", requireAuth, async (req, res) => {
   const ids = parseIdsParam(req.query.ids);
   if (ids.length === 0) { res.json({}); return; }
+  const station = parseStationParam(req.query.station);
   const rows = await db.execute<{ link_id: number; target_a: number; sop_id: number; title: string; step_count: number }>(sql`
     SELECT l.id AS link_id, l.target_a, l.sop_id, s.title, ${STEP_COUNT_SQL}
     FROM sop_links l JOIN standards_sops s ON s.id = l.sop_id
-    WHERE l.target_type = 'sub_recipe' AND l.target_a = ANY(${`{${ids.join(",")}}`}::int[])
+    WHERE l.target_type = 'sub_recipe' AND l.target_a = ANY(${`{${ids.join(",")}}`}::int[])${surfaceScopeSql(station)}
     ORDER BY s.title
   `);
   const out: Record<number, Array<{ linkId: number; sopId: number; title: string; stepCount: number }>> = {};

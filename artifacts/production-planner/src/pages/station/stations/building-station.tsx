@@ -563,7 +563,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   const { data: sopLinksByRecipe } = useQuery<Record<number, SopLink[]>>({
     queryKey: sopRecipesKey,
     queryFn: async () => {
-      const res = await fetch(`/api/standards/links/for-recipes?ids=${sopRecipeIds.join(",")}`, { credentials: "include" });
+      const res = await fetch(`/api/standards/links/for-recipes?ids=${sopRecipeIds.join(",")}&station=building`, { credentials: "include" });
       return res.ok ? res.json() : {};
     },
     enabled: sopRecipeIds.length > 0,
@@ -1498,7 +1498,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                       <SopChips
                         links={sopLinksByRecipe?.[item.recipeId] ?? []}
                         onOpen={sopViewer.open}
-                        attach={{ targetType: "recipe", a: item.recipeId, label: item.recipeName ?? `Recipe #${item.recipeId}` }}
+                        attach={{ targetType: "recipe", a: item.recipeId, text: "building", label: item.recipeName ?? `Recipe #${item.recipeId}`, station: "building_1" }}
                         queryKeysToInvalidate={[sopRecipesKey]}
                       />
                     )}
