@@ -34,6 +34,10 @@ export const trainingMatrixItemsTable = pgTable("training_matrix_items", {
   // week's in-app lesson review auto-ticks this item (migration 0055).
   // Plain integer (no FK helper import) — the DB carries the constraint.
   principleId: integer("principle_id"),
+  // Self-filling columns (migration 0086): 'starter_paperwork' ticks when
+  // the contract and all starter forms are signed; 'pre_arrival_details'
+  // when the pre-arrival onboarding form is submitted.
+  autoSource: text("auto_source"),
   sortOrder: integer("sort_order").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

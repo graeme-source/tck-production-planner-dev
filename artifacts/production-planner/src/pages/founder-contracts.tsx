@@ -330,6 +330,114 @@ function IssuedCard({ meId }: { meId: number }) {
   );
 }
 
+// ── Starter forms overview ─────────────────────────────────────────────────
+
+interface FormsOverview {
+  formTypes: { type: string; title: string }[];
+  people: { id: number; name: string; forms: { id: number; formType: string; signedAt: string | null; updatedAt: string }[] }[];
+}
+
+function SubmissionDialog({ submissionId, onClose }: { submissionId: number; onClose: () => void }) {
+  const { state } = useAuth();
+  const meId = state.status === "authenticated" ? state.user.id : null;
+  const { data, isLoading } = useQuery<{ id: number; body: string | null; signedAt: string | null; formType: string }>({
+    queryKey: ["starter-forms", "one", submissionId, meId],
+    queryFn: () => fetch(`${BASE}/api/starter-forms/submission/${submissionId}`, { credentials: "include" }).then(jsonOrThrow),
+    enabled: meId !== null,
+  });
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-card border border-border rounded-2xl max-w-3xl w-full max-h-[88vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="p-4 border-b border-border flex items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold">Signed starter form</h2>
+          <div className="flex items-center gap-2">
+            {data?.signedAt && (
+              <a
+                href={`${BASE}/api/starter-forms/submission/${data.id}/signed.pdf`}
+                target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/50"
+              >
+                <FileDown className="w-4 h-4" /> Signed PDF
+              </a>
+            )}
+            <button onClick={onClose} className="p-2 text-muted-foreground hover:text-foreground rounded-lg hover:bg-secondary/50">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+        <div className="overflow-y-auto p-4 sm:p-6 bg-secondary/30">
+          {isLoading ? (
+            <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+          ) : data?.body ? (
+            <ContractPaper body={data.body} />
+          ) : (
+            <p className="text-sm text-muted-foreground p-4">This form is still a draft — nothing signed yet.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StarterFormsOverviewCard({ meId }: { meId: number }) {
+  const [viewing, setViewing] = useState<number | null>(null);
+  const { data, isLoading } = useQuery<FormsOverview>({
+    queryKey: ["starter-forms", "overview", meId],
+    queryFn: () => fetch(`${BASE}/api/starter-forms/overview`, { credentials: "include" }).then(jsonOrThrow),
+  });
+
+  // Only people who have at least started something — the whole team listed
+  // with empty rows would bury the newcomers this card exists for.
+  const rows = (data?.people ?? []).filter(p => p.forms.length > 0);
+
+  return (
+    <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+      <h2 className="text-lg font-semibold">Starter forms</h2>
+      <p className="text-sm text-muted-foreground">
+        HMRC starter checklist, payroll details and health questionnaire — filled and signed by new starters from
+        their hub (and the first-login onboarding flow). Tap a signed form to read it.
+      </p>
+      {isLoading ? (
+        <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-muted-foreground py-2">Nobody has started their forms yet.</p>
+      ) : (
+        <ul className="divide-y divide-border border border-border rounded-xl overflow-hidden">
+          {rows.map(p => (
+            <li key={p.id} className="bg-card px-4 py-3">
+              <p className="font-semibold text-base mb-1.5">{p.name}</p>
+              <div className="flex gap-2 flex-wrap">
+                {(data?.formTypes ?? []).map(ft => {
+                  const sub = p.forms.find(f => f.formType === ft.type);
+                  const signed = sub?.signedAt != null;
+                  return (
+                    <button
+                      key={ft.type}
+                      disabled={!sub}
+                      onClick={() => sub && setViewing(sub.id)}
+                      className={cn(
+                        "text-xs font-semibold px-2.5 py-1.5 rounded-full border transition-colors",
+                        signed
+                          ? "bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-300 dark:border-emerald-800 hover:opacity-80"
+                          : sub
+                            ? "bg-sky-100 text-sky-800 border-sky-200 dark:bg-sky-900/40 dark:text-sky-300 dark:border-sky-800"
+                            : "bg-secondary text-muted-foreground border-border",
+                      )}
+                    >
+                      {ft.title}: {signed ? "Signed ✓" : sub ? "Draft" : "Not started"}
+                    </button>
+                  );
+                })}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {viewing != null && <SubmissionDialog submissionId={viewing} onClose={() => setViewing(null)} />}
+    </div>
+  );
+}
+
 // ── Master template editor ─────────────────────────────────────────────────
 
 function TemplateCard({ template, meId }: { template: Template; meId: number }) {
@@ -444,8 +552,8 @@ export default function FounderContracts() {
     <div className="space-y-6 max-w-4xl">
       <FounderNav />
       <PageHeader
-        title="Contracts"
-        description="Your master employment contract and every contract you've issued. Generated contracts go straight to that person's Employee Hub — visible to them and you only."
+        title="Contracts & Starter Forms"
+        description="Your master employment contract, every contract you've issued, and each starter's signed forms. All of it goes person-to-person — visible to them and you only."
       />
       {tplLoading && <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}
       {tplError != null && (
@@ -458,6 +566,7 @@ export default function FounderContracts() {
         <>
           <NewContractCard template={template} people={people ?? []} meId={meId} />
           <IssuedCard meId={meId} />
+          <StarterFormsOverviewCard meId={meId} />
           {/* No key on purpose: while the founder types, local state is the
               source of truth — a refetch after autosave must not remount the
               editor and eat the cursor. */}

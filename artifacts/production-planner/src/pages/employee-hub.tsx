@@ -19,6 +19,7 @@ import { PageHeader } from "@/components/page-header";
 import { EmployeeReviewsSection } from "@/components/employee-reviews";
 import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt, Camera, Upload, X, FileText, ScrollText, ChevronRight, ListTodo, ClipboardList, FileSignature } from "lucide-react";
 import { MyContractSection } from "@/components/my-contract";
+import { StarterFormsList } from "@/components/starter-forms";
 import { TodoSheet, useMyOpenTodoCount } from "@/components/todo-lists";
 import { jsPDF } from "jspdf";
 import { toast } from "@/hooks/use-toast";
@@ -1167,7 +1168,7 @@ function PoliciesList() {
   );
 }
 
-type HubSection = "todos" | "reviews" | "contract" | "mileage" | "expenses" | "policies" | "improvements" | "issues" | "sops";
+type HubSection = "todos" | "reviews" | "contract" | "starterforms" | "mileage" | "expenses" | "policies" | "improvements" | "issues" | "sops";
 
 export default function EmployeeHub() {
   const [active, setActive] = useState<HubSection>("todos");
@@ -1198,6 +1199,7 @@ export default function EmployeeHub() {
     { key: "todos", label: "My To-dos", icon: ListTodo },
     { key: "reviews", label: "Reviews & Record", icon: ClipboardList },
     { key: "contract", label: "My Contract", icon: FileSignature },
+    { key: "starterforms", label: "Starter Forms", icon: ClipboardList },
     { key: "mileage", label: "Mileage Claim", icon: Car },
     { key: "expenses", label: "Expense Claim", icon: Receipt },
     { key: "policies", label: "Policies", icon: ScrollText },
@@ -1265,6 +1267,18 @@ export default function EmployeeHub() {
                 </p>
               </div>
               <MyContractSection />
+            </>
+          )}
+          {active === "starterforms" && (
+            <>
+              <div className="mb-4 pb-4 border-b border-border">
+                <h2 className="text-lg font-semibold">Starter Forms</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Your HMRC starter checklist, payroll details and health questionnaire — fill in, sign with your initials,
+                  and they're stored as permanent records. Only you and Graeme can see them.
+                </p>
+              </div>
+              <StarterFormsList />
             </>
           )}
           {active === "reviews" && (

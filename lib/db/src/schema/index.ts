@@ -39,3 +39,4 @@ export * from "./stock_gating";
 export * from "./finance";
 export * from "./features";
 export * from "./contracts";
+export * from "./starter_forms";

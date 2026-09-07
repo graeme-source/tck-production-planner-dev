@@ -7,6 +7,7 @@ import { Router, type IRouter, type Request, type Response, type NextFunction } 
 import multer from "multer";
 import { db, usersTable, onboardingSubmissionsTable, onboardingDocumentsTable } from "@workspace/db";
 import { eq, and, asc } from "drizzle-orm";
+import { tickPreArrivalDetails, maybeCompleteOnboarding, starterGateStatus } from "../lib/starter-paperwork";
 
 const router: IRouter = Router();
 
@@ -66,6 +67,17 @@ router.get("/me", async (req: Request, res: Response) => {
   }
 });
 
+// GET /me/gate — what the first-login gate still wants from this person.
+router.get("/me/gate", async (req: Request, res: Response) => {
+  try {
+    const userId = req.session.userId!;
+    res.json(await starterGateStatus(userId));
+  } catch (err) {
+    console.error("[onboarding] gate status failed:", err);
+    res.status(500).json({ error: "Failed to load onboarding status" });
+  }
+});
+
 // PUT /me — upsert text fields and mark onboarding complete.
 router.put("/me", async (req: Request, res: Response) => {
   try {
@@ -87,9 +99,14 @@ router.put("/me", async (req: Request, res: Response) => {
         set: { ...values, submittedAt: new Date(), updatedAt: new Date() },
       });
 
-    await db.update(usersTable)
-      .set({ onboardingCompletedAt: new Date(), onboardingRequired: false, updatedAt: new Date() })
-      .where(eq(usersTable.id, userId));
+    // Details alone no longer finish onboarding (Graeme, 2026-09-07): the
+    // first-login gate also wants the three starter forms signed, and the
+    // contract when one has been issued. maybeCompleteOnboarding lifts the
+    // gate the moment the last piece lands, whichever piece that is; the
+    // emergency-contact matrix column ticks itself here.
+    tickPreArrivalDetails(userId).catch(err =>
+      console.warn("[onboarding] pre-arrival tick failed:", err instanceof Error ? err.message : err));
+    await maybeCompleteOnboarding(userId);
 
     res.json(await loadOnboarding(userId));
   } catch (err) {

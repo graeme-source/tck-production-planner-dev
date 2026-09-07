@@ -204,9 +204,18 @@ router.put("/items/:itemId", async (req: Request, res: Response) => {
     if (sopId != null && !Number.isInteger(sopId)) { res.status(400).json({ error: "Invalid sopId" }); return; }
     const label = String(req.body?.label ?? "").trim();
     if (!label) { res.status(400).json({ error: "label is required" }); return; }
+    // Self-filling columns (migration 0086): which in-app completion ticks
+    // this column automatically. Only the known sources are accepted.
+    const AUTO_SOURCES = ["starter_paperwork", "pre_arrival_details"];
+    const rawAuto = req.body?.autoSource;
+    const autoSource = rawAuto != null && rawAuto !== "" ? String(rawAuto) : null;
+    if (autoSource != null && !AUTO_SOURCES.includes(autoSource)) {
+      res.status(400).json({ error: "Invalid autoSource" });
+      return;
+    }
     const [row] = await db
       .update(trainingMatrixItemsTable)
-      .set({ label, sopId })
+      .set({ label, sopId, autoSource })
       .where(eq(trainingMatrixItemsTable.id, itemId))
       .returning();
     if (!row) { res.status(404).json({ error: "Item not found" }); return; }

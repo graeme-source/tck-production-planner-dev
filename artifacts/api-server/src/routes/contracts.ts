@@ -15,15 +15,17 @@
  * contract; the founder gate is the ACCOUNT (same rule as founder-focus),
  * not the role.
  */
-import { Router, type IRouter, type NextFunction, type Request, type Response } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import path from "node:path";
 import { db, contractTemplatesTable, employmentContractsTable, usersTable } from "@workspace/db";
 import { desc, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import * as z from "zod";
 import { validate } from "../middleware/validate";
+import { hasHrRecordAccess, requireHrRecordAccess } from "../middleware/hr-access";
 import { renderContract, contractDate, templatePlaceholders, applySignature, CONTRACT_FIELDS } from "../lib/contract-render";
 import { renderContractPdf } from "../pdf/contract-pdf";
+import { maybeTickStarterPaperwork, maybeCompleteOnboarding } from "../lib/starter-paperwork";
 
 // Columns for reads that display a contract — everything except the
 // archival PDF bytes, which only ever leave through /:id/signed.pdf.
@@ -46,22 +48,10 @@ const CONTRACT_COLUMNS = {
 
 const router: IRouter = Router();
 
-// Same founder gate as founder-focus/founder-panels: contracts carry pay,
-// so role checks aren't enough — the account itself must be the founder's.
-const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
-
-async function isFounder(req: Request): Promise<boolean> {
-  const userId = req.session.userId;
-  if (!userId) return false;
-  const rows = await db.execute<{ email: string }>(sql`SELECT email FROM app_users WHERE id = ${userId} LIMIT 1`);
-  return rows.rows[0]?.email === FOUNDER_EMAIL;
-}
-
-async function requireFounder(req: Request, res: Response, next: NextFunction) {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  if (!(await isFounder(req))) { res.status(403).json({ error: "Founder only" }); return; }
-  next();
-}
+// The HR-records gate (middleware/hr-access.ts): the founder's account
+// today, plus the finance director when they join — one list, one place.
+const isFounder = hasHrRecordAccess;
+const requireFounder = requireHrRecordAccess;
 
 function requireSession(req: Request, res: Response): number | null {
   const userId = req.session.userId;
@@ -369,6 +359,15 @@ router.post("/:id/sign", validate(SignBody), async (req: Request, res: Response)
     .set({ acknowledgedAt: signedAt, signedInitials: initials.trim(), body: signedBody, ...(signedPdf ? { signedPdf } : {}) })
     .where(eq(employmentContractsTable.id, id))
     .returning(CONTRACT_COLUMNS);
+
+  // Signing the contract may finish the starter paperwork — auto-tick the
+  // onboarding matrix and lift the first-login gate if so. Never let either
+  // fail the signature itself.
+  maybeTickStarterPaperwork(userId).catch(err =>
+    console.warn("[Contracts] starter-paperwork tick failed:", err instanceof Error ? err.message : err));
+  await maybeCompleteOnboarding(userId).catch(err =>
+    console.warn("[Contracts] onboarding completion check failed:", err instanceof Error ? err.message : err));
+
   res.json(updated);
 });
 

@@ -5,7 +5,9 @@
 
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
-import { Loader2, Phone, MapPin, Heart, FileText, Upload, Check, X, ShieldCheck } from "lucide-react";
+import { Loader2, Phone, MapPin, Heart, FileText, Upload, Check, X, ShieldCheck, ArrowRight } from "lucide-react";
+import { StarterFormsList } from "@/components/starter-forms";
+import { MyContractSection } from "@/components/my-contract";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -13,6 +15,7 @@ type DocMeta = { id: number; kind: string; fileName: string | null; fileSizeByte
 type Submission = {
   phone: string | null; address: string | null;
   emergencyContactName: string | null; emergencyContactPhone: string | null; emergencyContactRelationship: string | null;
+  submittedAt: string | null;
 } | null;
 
 const DOC_SLOTS: { kind: string; label: string; hint: string }[] = [
@@ -20,15 +23,38 @@ const DOC_SLOTS: { kind: string; label: string; hint: string }[] = [
   { kind: "food_hygiene", label: "Food Hygiene certificate", hint: "If you already have one" },
 ];
 
+interface GateStatus {
+  detailsSubmitted: boolean;
+  forms: { type: string; title: string; signed: boolean }[];
+  contractIssued: boolean;
+  contractSigned: boolean;
+  complete: boolean;
+}
+
 export default function Onboarding({ onComplete }: { onComplete?: () => void | Promise<void> }) {
   const [, setLocation] = useLocation();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [documents, setDocuments] = useState<DocMeta[]>([]);
+  // Two phases (Graeme, 2026-09-07): pre-arrival details first, then the
+  // paperwork — three starter forms plus the contract when one is issued.
+  // The app stays gated until the server says everything is signed.
+  const [phase, setPhase] = useState<"details" | "paperwork">("details");
+  const [gate, setGate] = useState<GateStatus | null>(null);
   const [form, setForm] = useState({
     phone: "", address: "",
     emergencyContactName: "", emergencyContactPhone: "", emergencyContactRelationship: "",
   });
+
+  const refreshGate = async () => {
+    const res = await fetch(`${BASE}/api/onboarding/me/gate`, { credentials: "include" });
+    if (res.ok) {
+      const g: GateStatus = await res.json();
+      setGate(g);
+      return g;
+    }
+    return null;
+  };
 
   const refresh = async () => {
     const res = await fetch(`${BASE}/api/onboarding/me`, { credentials: "include" });
@@ -42,12 +68,22 @@ export default function Onboarding({ onComplete }: { onComplete?: () => void | P
           emergencyContactPhone: s.emergencyContactPhone ?? "",
           emergencyContactRelationship: s.emergencyContactRelationship ?? "",
         });
+        if (s.submittedAt) setPhase("paperwork");
       }
       setDocuments(data.documents ?? []);
     }
+    await refreshGate();
   };
 
   useEffect(() => { refresh().finally(() => setLoading(false)); }, []);
+
+  // While on the paperwork step, keep the checklist fresh — signatures land
+  // from the sheets below and the gate lifts server-side.
+  useEffect(() => {
+    if (phase !== "paperwork") return;
+    const t = setInterval(() => { void refreshGate(); }, 4000);
+    return () => clearInterval(t);
+  }, [phase]);
 
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, [k]: e.target.value }));
 
@@ -60,14 +96,69 @@ export default function Onboarding({ onComplete }: { onComplete?: () => void | P
         body: JSON.stringify(form),
       });
       if (!res.ok) throw new Error();
-      if (onComplete) await onComplete();
-      else setLocation("/");
+      const g = await refreshGate();
+      if (g?.complete) {
+        if (onComplete) await onComplete();
+        else setLocation("/");
+        return;
+      }
+      setPhase("paperwork");
+      setSaving(false);
     } catch {
       setSaving(false);
     }
   };
 
   const inputCls = "w-full px-3 py-2.5 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30";
+
+  if (phase === "paperwork" && !loading) {
+    const formsDone = (gate?.forms ?? []).filter(f => f.signed).length;
+    const formsTotal = (gate?.forms ?? []).length || 3;
+    return (
+      <div className="min-h-screen bg-background flex justify-center p-4">
+        <div className="w-full max-w-2xl my-8 space-y-6">
+          <div className="flex flex-col items-center gap-2">
+            <img src={`${BASE}/tck-logo-dark.png`} alt="TCK" className="h-16 w-auto object-contain dark:invert" />
+            <span className="text-xs text-muted-foreground tracking-widest uppercase font-medium">Production Planner</span>
+          </div>
+
+          <div className="bg-card border border-border rounded-2xl p-6 shadow-sm space-y-2">
+            <h1 className="text-xl font-semibold">Your starter paperwork</h1>
+            <p className="text-sm text-muted-foreground">
+              Before the app opens, fill in and sign these — {formsDone} of {formsTotal} forms signed
+              {gate?.contractIssued ? (gate.contractSigned ? ", contract signed" : ", contract still to sign") : ""}.
+              Everything autosaves; you can come back to a draft any time. Only you and Graeme can see what you enter.
+            </p>
+          </div>
+
+          <section className="space-y-3">
+            <h2 className="text-base font-semibold">1 · Starter forms</h2>
+            <StarterFormsList />
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-base font-semibold">2 · Your employment contract</h2>
+            {gate?.contractIssued ? (
+              <MyContractSection />
+            ) : (
+              <p className="text-sm text-muted-foreground bg-card border border-border rounded-2xl p-4">
+                Your contract hasn't been issued yet — it will appear in your Employee Hub under My Contract, and this step doesn't hold you up.
+              </p>
+            )}
+          </section>
+
+          <button
+            onClick={submit}
+            disabled={saving || !gate?.complete}
+            className="w-full h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2 hover:opacity-90 disabled:opacity-40 transition-all"
+          >
+            {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <ArrowRight className="w-5 h-5" />}
+            {gate?.complete ? "All signed — enter the app" : "Sign everything above to continue"}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">

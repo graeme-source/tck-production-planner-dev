@@ -701,6 +701,7 @@ function AddItemDialog({ matrixId, onClose, onDone }: { matrixId: number; onClos
 function EditItemDialog({ item, onClose, onDone }: { item: Item; onClose: () => void; onDone: () => void }) {
   const [label, setLabel] = useState(item.label);
   const [sopId, setSopId] = useState<string>(item.sopId != null ? String(item.sopId) : "");
+  const [autoSource, setAutoSource] = useState<string>((item as Item & { autoSource?: string | null }).autoSource ?? "");
 
   const { data: sops } = useQuery({
     queryKey: ["training", "sops"],
@@ -713,7 +714,7 @@ function EditItemDialog({ item, onClose, onDone }: { item: Item; onClose: () => 
   const updateItem = useMutation({
     mutationFn: () => api<Item>(`/training/items/${item.id}`, {
       method: "PUT",
-      body: JSON.stringify({ label: label.trim(), sopId: sopId ? Number(sopId) : null }),
+      body: JSON.stringify({ label: label.trim(), sopId: sopId ? Number(sopId) : null, autoSource: autoSource || null }),
     }),
     onSuccess: () => { onDone(); onClose(); toast({ title: "Item updated" }); },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -739,6 +740,17 @@ function EditItemDialog({ item, onClose, onDone }: { item: Item; onClose: () => 
             >
               <option value="">No SOP (custom item)</option>
               {sops?.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium mb-1 block">Ticks itself when…</label>
+            <select
+              value={autoSource} onChange={(e) => setAutoSource(e.target.value)}
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
+              <option value="">Never — ticked by hand</option>
+              <option value="starter_paperwork">Starter paperwork done (contract + all starter forms signed in-app)</option>
+              <option value="pre_arrival_details">Pre-arrival details submitted (contact + emergency info)</option>
             </select>
           </div>
           <button
