@@ -4,8 +4,16 @@
 // routes/contracts.ts: template + issued list are founder-only, a contract
 // body is readable by its owner and the founder, nobody else.
 
-import { pgTable, serial, text, integer, timestamp, date } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, date, customType } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
+
+// Postgres `bytea` — stored / returned as Buffer (same pattern as
+// risk_assessments and onboarding documents).
+const bytea = customType<{ data: Buffer; notNull: false; default: false }>({
+  dataType() {
+    return "bytea";
+  },
+});
 
 export const contractTemplatesTable = pgTable("contract_templates", {
   id: serial("id").primaryKey(),
@@ -39,6 +47,10 @@ export const employmentContractsTable = pgTable("employment_contracts", {
   // longer be deleted.
   acknowledgedAt: timestamp("acknowledged_at"),
   signedInitials: text("signed_initials"),
+  // The archival hard copy, generated at signing (migration 0085). DB
+  // triggers make signed rows undeletable and immutable; a NULL pdf may be
+  // backfilled once since it derives from the frozen body.
+  signedPdf: bytea("signed_pdf"),
 });
 
 export type ContractTemplate = typeof contractTemplatesTable.$inferSelect;

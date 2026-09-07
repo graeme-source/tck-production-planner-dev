@@ -16,9 +16,10 @@ import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { FounderNav } from "@/components/founder-nav";
 import { toast } from "@/hooks/use-toast";
-import { printContract, CONTRACT_LOGO_URL } from "@/components/contract-print";
+import { printContract } from "@/components/contract-print";
+import { ContractPaper } from "@/components/contract-view";
 import {
-  Check, ChevronRight, FileSignature, Loader2, Pencil, Printer, Send, Trash2, X, AlertTriangle,
+  Check, ChevronRight, FileDown, FileSignature, Loader2, Pencil, Printer, Send, Trash2, X, AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -78,12 +79,23 @@ function ContractDialog({ contractId, onClose }: { contractId: number; onClose: 
         <div className="p-4 border-b border-border flex items-center justify-between gap-3">
           <h2 className="text-lg font-semibold truncate">{data ? `Contract — ${data.employeeName}` : "Contract"}</h2>
           <div className="flex items-center gap-2">
+            {data?.acknowledgedAt && (
+              <a
+                href={`${BASE}/api/contracts/${data.id}/signed.pdf`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/50"
+                title="The archival copy saved when they signed"
+              >
+                <FileDown className="w-4 h-4" /> Signed PDF
+              </a>
+            )}
             {data && (
               <button
                 onClick={() => printContract(`Employment contract — ${data.employeeName}`, data.body)}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/50"
               >
-                <Printer className="w-4 h-4" /> Print / PDF
+                <Printer className="w-4 h-4" /> Print
               </button>
             )}
             <button onClick={onClose} className="p-2 text-muted-foreground hover:text-foreground rounded-lg hover:bg-secondary/50">
@@ -91,15 +103,12 @@ function ContractDialog({ contractId, onClose }: { contractId: number; onClose: 
             </button>
           </div>
         </div>
-        <div className="overflow-y-auto p-6">
+        <div className="overflow-y-auto p-4 sm:p-6 bg-secondary/30">
           {isLoading ? (
             <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
-          ) : (
-            <>
-              <img src={CONTRACT_LOGO_URL} alt="The Calzone Kitchen" className="h-14 mx-auto mb-6 dark:invert" />
-              <pre className="whitespace-pre-wrap font-serif text-[15px] leading-relaxed">{data?.body}</pre>
-            </>
-          )}
+          ) : data ? (
+            <ContractPaper body={data.body} />
+          ) : null}
         </div>
       </div>
     </div>
@@ -203,9 +212,8 @@ function NewContractCard({ template, people, meId }: { template: Template; peopl
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="overflow-y-auto p-6 border-b border-border">
-              <img src={CONTRACT_LOGO_URL} alt="The Calzone Kitchen" className="h-14 mx-auto mb-6 dark:invert" />
-              <pre className="whitespace-pre-wrap font-serif text-[15px] leading-relaxed">{preview.body}</pre>
+            <div className="overflow-y-auto p-4 sm:p-6 border-b border-border bg-secondary/30">
+              <ContractPaper body={preview.body} />
             </div>
             <div className="p-4 flex gap-3 justify-end">
               <button onClick={() => setPreview(null)} className="px-5 h-12 rounded-xl border border-border font-medium hover:bg-secondary/50">
@@ -380,6 +388,8 @@ function TemplateCard({ template, meId }: { template: Template; meId: number }) 
           <code key={p} className="inline-block bg-secondary/70 rounded px-1.5 py-0.5 text-xs mr-1 mb-1">{`{{${p}}}`}</code>
         ))}
         Removing or misspelling one stops generation with an error rather than issuing a half-filled contract.
+        {" "}<code className="inline-block bg-secondary/70 rounded px-1.5 py-0.5 text-xs mr-1">[[founder_signature]]</code>
+        marks where your handwritten signature is drawn on the employer signature line.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <label className="space-y-1.5">

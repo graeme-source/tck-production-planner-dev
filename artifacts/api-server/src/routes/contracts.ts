@@ -16,12 +16,33 @@
  * not the role.
  */
 import { Router, type IRouter, type NextFunction, type Request, type Response } from "express";
+import path from "node:path";
 import { db, contractTemplatesTable, employmentContractsTable, usersTable } from "@workspace/db";
 import { desc, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import * as z from "zod";
 import { validate } from "../middleware/validate";
 import { renderContract, contractDate, templatePlaceholders, applySignature, CONTRACT_FIELDS } from "../lib/contract-render";
+import { renderContractPdf } from "../pdf/contract-pdf";
+
+// Columns for reads that display a contract — everything except the
+// archival PDF bytes, which only ever leave through /:id/signed.pdf.
+const CONTRACT_COLUMNS = {
+  id: employmentContractsTable.id,
+  userId: employmentContractsTable.userId,
+  templateId: employmentContractsTable.templateId,
+  body: employmentContractsTable.body,
+  employeeName: employmentContractsTable.employeeName,
+  jobTitle: employmentContractsTable.jobTitle,
+  rateOfPay: employmentContractsTable.rateOfPay,
+  weeklyHours: employmentContractsTable.weeklyHours,
+  startDate: employmentContractsTable.startDate,
+  issueDate: employmentContractsTable.issueDate,
+  issuedBy: employmentContractsTable.issuedBy,
+  issuedAt: employmentContractsTable.issuedAt,
+  acknowledgedAt: employmentContractsTable.acknowledgedAt,
+  signedInitials: employmentContractsTable.signedInitials,
+} as const;
 
 const router: IRouter = Router();
 
@@ -225,17 +246,67 @@ router.delete("/:id", requireFounder, async (req: Request, res: Response) => {
 
 // ── Employee: my contracts ─────────────────────────────────────────────────
 
+// The founder's handwritten signature, rendered onto the employer signature
+// line. Served to signed-in users only — deliberately NOT a public frontend
+// asset, so the signature image can't be fetched anonymously. Read lazily
+// and served from memory (res.sendFile's send() stack 404'd on this
+// worktree path, and 19KB doesn't need streaming anyway).
+const FOUNDER_SIGNATURE_FILE = path.resolve(import.meta.dirname, "../data/founder-signature.png");
+let founderSignatureBytes: Buffer | null = null;
+
+router.get("/founder-signature.png", async (req: Request, res: Response) => {
+  if (requireSession(req, res) == null) return;
+  try {
+    if (!founderSignatureBytes) {
+      const { readFile } = await import("node:fs/promises");
+      founderSignatureBytes = await readFile(FOUNDER_SIGNATURE_FILE);
+    }
+  } catch (err) {
+    console.error("[Contracts] founder signature image unreadable:", err);
+    res.status(404).json({ error: "Signature image not available" });
+    return;
+  }
+  res.setHeader("Content-Type", "image/png");
+  res.setHeader("Cache-Control", "private, max-age=3600");
+  res.send(founderSignatureBytes);
+});
+
 // Deliberately takes NO user parameter: the session is the only selector, so
 // there is no request shape that can ask for someone else's contract.
 router.get("/mine", async (req: Request, res: Response) => {
   const userId = requireSession(req, res);
   if (userId == null) return;
   const rows = await db
-    .select()
+    .select(CONTRACT_COLUMNS)
     .from(employmentContractsTable)
     .where(eq(employmentContractsTable.userId, userId))
     .orderBy(desc(employmentContractsTable.issuedAt));
   res.json(rows);
+});
+
+// The archival hard copy. Owner or founder only; regenerated and backfilled
+// from the frozen body if a signed row is somehow missing its PDF (the DB
+// trigger allows exactly that one write).
+router.get("/:id/signed.pdf", async (req: Request, res: Response) => {
+  const userId = requireSession(req, res);
+  if (userId == null) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid contract id" }); return; }
+  const [row] = await db.select().from(employmentContractsTable).where(eq(employmentContractsTable.id, id));
+  if (!row || (row.userId !== userId && !(await isFounder(req)))) {
+    res.status(404).json({ error: "No such contract" });
+    return;
+  }
+  if (!row.acknowledgedAt) { res.status(400).json({ error: "This contract hasn't been signed yet" }); return; }
+
+  let pdf = row.signedPdf;
+  if (!pdf) {
+    pdf = await renderContractPdf(row.body);
+    await db.update(employmentContractsTable).set({ signedPdf: pdf }).where(eq(employmentContractsTable.id, id));
+  }
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `inline; filename="TCK-contract-${row.employeeName.replace(/[^A-Za-z0-9]+/g, "-")}-${row.issueDate}.pdf"`);
+  res.send(pdf);
 });
 
 router.get("/:id", async (req: Request, res: Response) => {
@@ -243,7 +314,7 @@ router.get("/:id", async (req: Request, res: Response) => {
   if (userId == null) return;
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid contract id" }); return; }
-  const [row] = await db.select().from(employmentContractsTable).where(eq(employmentContractsTable.id, id));
+  const [row] = await db.select(CONTRACT_COLUMNS).from(employmentContractsTable).where(eq(employmentContractsTable.id, id));
   // Same response whether the contract doesn't exist or isn't yours — a 403
   // here would confirm to a guesser that the id exists.
   if (!row || (row.userId !== userId && !(await isFounder(req)))) {
@@ -284,10 +355,20 @@ router.post("/:id/sign", validate(SignBody), async (req: Request, res: Response)
     return;
   }
 
+  // The archival hard copy, frozen at the moment of signing. A PDF failure
+  // must not lose the signature itself — the PDF is deterministic from the
+  // signed body, and /:id/signed.pdf backfills it on first download.
+  let signedPdf: Buffer | null = null;
+  try {
+    signedPdf = await renderContractPdf(signedBody);
+  } catch (err) {
+    console.error("[Contracts] signed-PDF render failed (will backfill on download):", err);
+  }
+
   const [updated] = await db.update(employmentContractsTable)
-    .set({ acknowledgedAt: signedAt, signedInitials: initials.trim(), body: signedBody })
+    .set({ acknowledgedAt: signedAt, signedInitials: initials.trim(), body: signedBody, ...(signedPdf ? { signedPdf } : {}) })
     .where(eq(employmentContractsTable.id, id))
-    .returning();
+    .returning(CONTRACT_COLUMNS);
   res.json(updated);
 });
 

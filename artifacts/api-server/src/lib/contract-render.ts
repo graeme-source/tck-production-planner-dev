@@ -42,6 +42,21 @@ export function contractDate(iso: string): string {
 
 export const SIGNATURE_MARKER = "ELECTRONIC SIGNATURE RECORD";
 
+/** Where the founder's handwritten signature image renders in the body.
+ *  Double brackets so the {{placeholder}} machinery ignores it; bodies
+ *  without it still render as plain text. Mirrored client-side in
+ *  components/contract-print.ts. */
+export const FOUNDER_SIGNATURE_MARKER = "[[founder_signature]]";
+
+/** A section heading is a whole line of capitals ("JOB TITLE", "HOURS OF
+ *  WORK") — bolded wherever the contract renders. Letters required, any
+ *  lowercase or digit disqualifies (keeps postcodes and clause text plain).
+ *  Mirrored client-side in components/contract-print.ts. */
+export function isContractHeading(line: string): boolean {
+  const t = line.trim();
+  return t.length >= 3 && /[A-Z]/.test(t) && !/[a-z0-9]/.test(t);
+}
+
 /**
  * Write the employee's signature into the contract body (Graeme,
  * 2026-09-07): their typed initials go onto the employee signature line

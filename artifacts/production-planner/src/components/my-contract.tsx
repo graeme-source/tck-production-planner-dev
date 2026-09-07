@@ -13,8 +13,10 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { toast } from "@/hooks/use-toast";
-import { printContract, CONTRACT_LOGO_URL } from "@/components/contract-print";
-import { Check, ChevronRight, FileSignature, Loader2, PenLine, Printer, X } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { printContract } from "@/components/contract-print";
+import { ContractPaper } from "@/components/contract-view";
+import { Check, ChevronRight, FileDown, FileSignature, Loader2, PenLine, Printer, X } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -62,20 +64,30 @@ function ContractSheet({ contract, meId, onClose }: { contract: MyContract; meId
             <p className="text-sm text-muted-foreground">Issued {contract.issueDate} · starts {contract.startDate}</p>
           </div>
           <div className="flex items-center gap-2">
+            {contract.acknowledgedAt && (
+              <a
+                href={`${BASE}/api/contracts/${contract.id}/signed.pdf`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/50"
+                title="The archival copy saved when you signed"
+              >
+                <FileDown className="w-4 h-4" /> Signed PDF
+              </a>
+            )}
             <button
               onClick={() => printContract("My employment contract", contract.body)}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/50"
             >
-              <Printer className="w-4 h-4" /> Print / PDF
+              <Printer className="w-4 h-4" /> Print
             </button>
             <button onClick={onClose} className="p-2 text-muted-foreground hover:text-foreground rounded-lg hover:bg-secondary/50">
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
-        <div className="overflow-y-auto p-6 flex-1">
-          <img src={CONTRACT_LOGO_URL} alt="The Calzone Kitchen" className="h-14 mx-auto mb-6 dark:invert" />
-          <pre className="whitespace-pre-wrap font-serif text-[15px] leading-relaxed">{contract.body}</pre>
+        <div className="overflow-y-auto p-4 sm:p-6 flex-1 bg-secondary/30">
+          <ContractPaper body={contract.body} />
         </div>
         <div className="p-4 border-t border-border">
           {contract.acknowledgedAt ? (
@@ -154,7 +166,7 @@ export function MyContractSection() {
 
   return (
     <div className="space-y-3">
-      {contracts.map(c => (
+      {contracts.map((c, idx) => (
         <button
           key={c.id}
           onClick={() => setOpenId(c.id)}
@@ -162,7 +174,19 @@ export function MyContractSection() {
         >
           <FileSignature className="w-8 h-8 text-primary flex-shrink-0" />
           <span className="flex-1 min-w-0">
-            <span className="block font-semibold text-base">{c.jobTitle}</span>
+            <span className="block font-semibold text-base">
+              {c.jobTitle}
+              {/* Newest first from the server: the top row is the version in
+                  force; everything under it is the permanent history. */}
+              {contracts.length > 1 && (
+                <span className={cn(
+                  "ml-2 text-[11px] font-semibold px-2 py-0.5 rounded-full align-middle",
+                  idx === 0 ? "bg-primary/10 text-primary" : "bg-secondary text-muted-foreground",
+                )}>
+                  {idx === 0 ? "Current" : "Previous version"}
+                </span>
+              )}
+            </span>
             <span className="block text-sm text-muted-foreground">Issued {c.issueDate} · starts {c.startDate}</span>
           </span>
           {c.acknowledgedAt ? (

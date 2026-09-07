@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { renderContract, templatePlaceholders, contractDate, applySignature, CONTRACT_FIELDS, type ContractField } from "./contract-render";
+import {
+  renderContract, templatePlaceholders, contractDate, applySignature, isContractHeading,
+  CONTRACT_FIELDS, FOUNDER_SIGNATURE_MARKER, type ContractField,
+} from "./contract-render";
 
 const ALL_FIELDS: Record<ContractField, string> = {
   employee_name: "Jane Smith",
@@ -41,6 +44,33 @@ describe("renderContract", () => {
     expect([...CONTRACT_FIELDS].sort()).toEqual([
       "employee_name", "issue_date", "job_title", "rate_of_pay", "start_date", "weekly_hours",
     ]);
+  });
+});
+
+describe("founder signature marker", () => {
+  it("passes through renderContract untouched", () => {
+    const out = renderContract(`Director\n\n${FOUNDER_SIGNATURE_MARKER}\n\nDate: {{issue_date}}`, ALL_FIELDS);
+    expect(out).toContain(FOUNDER_SIGNATURE_MARKER);
+    expect(out).toContain("Date: 7 September 2026");
+  });
+
+  it("survives the employee signing", () => {
+    const body = `${FOUNDER_SIGNATURE_MARKER}\n\nSigned by Jane Smith\n\n.......\n`;
+    const out = applySignature(body, { employeeName: "Jane Smith", initials: "JS", signedOn: "7 September 2026" });
+    expect(out).toContain(FOUNDER_SIGNATURE_MARKER);
+  });
+});
+
+describe("isContractHeading", () => {
+  it("bolds all-caps section lines", () => {
+    for (const l of ["JOB TITLE", "HOURS OF WORK", "CAPABILITY/DISCIPLINARY APPEAL PROCEDURE", "THE CALZONE KITCHEN", "ELECTRONIC SIGNATURE RECORD"]) {
+      expect(isContractHeading(l)).toBe(true);
+    }
+  });
+  it("leaves addresses, clauses, dotted lines and postcodes plain", () => {
+    for (const l of ["MK17 0EL", "3 Wood End", "Nash", "0-6 months service - SSP", "..............", "", "On: 7 September 2026"]) {
+      expect(isContractHeading(l)).toBe(false);
+    }
   });
 });
 
