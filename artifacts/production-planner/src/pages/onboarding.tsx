@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/auth-context";
-import { Loader2, Phone, MapPin, Heart, FileText, Upload, Check, X, ShieldCheck, ArrowRight } from "lucide-react";
+import { Loader2, Phone, MapPin, Heart, FileText, Upload, Check, X, ShieldCheck, ArrowRight, LogOut } from "lucide-react";
 import { StarterFormsList } from "@/components/starter-forms";
 import { MyContractSection } from "@/components/my-contract";
 
@@ -92,7 +92,18 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
   // While on the paperwork step, keep the checklist fresh — signatures land
   // from the sheets below. refreshUser too: when the founder grants access
   // on the first day, this screen flows into the app within a few seconds.
-  const { refreshUser } = useAuth();
+  // logout: gated users never see the app shell's sidebar, so this screen
+  // carries its own log out (Graeme, 2026-09-07).
+  const { refreshUser, logout } = useAuth();
+
+  const logoutButton = (
+    <button
+      onClick={() => void logout()}
+      className="absolute top-4 right-4 flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors"
+    >
+      <LogOut className="w-4 h-4" /> Log out
+    </button>
+  );
   useEffect(() => {
     if (phase !== "paperwork") return;
     const t = setInterval(() => { void refreshGate(); void refreshUser(); }, 4000);
@@ -145,7 +156,8 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
     ];
     const doneCount = checklist.filter(c => c.done).length;
     return (
-      <div className="min-h-screen bg-background flex justify-center p-4">
+      <div className="min-h-screen bg-background flex justify-center p-4 relative">
+        {logoutButton}
         <div className="w-full max-w-2xl my-8 space-y-6">
           <div className="flex flex-col items-center gap-2">
             <img src={`${BASE}/tck-logo-dark.png`} alt="TCK" className="h-16 w-auto object-contain dark:invert" />
@@ -252,7 +264,8 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
   }
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+    <div className="min-h-screen bg-background flex items-center justify-center p-4 relative">
+      {logoutButton}
       <div className="w-full max-w-md my-8">
         <div className="flex flex-col items-center gap-2 mb-6">
           <img src={`${BASE}/tck-logo-dark.png`} alt="TCK" className="h-16 w-auto object-contain" />
