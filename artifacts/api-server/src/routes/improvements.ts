@@ -76,7 +76,7 @@ function decorate(
   };
 }
 
-async function viewerOf(req: Request): Promise<{ id?: number; isManager: boolean }> {
+async function viewerOf(req: Request): Promise<{ id?: number; isManager: boolean; isAdmin: boolean }> {
   const id = req.session.userId ?? undefined;
   let role: string | undefined = req.session.userRole;
   if (id && !role) {
@@ -84,7 +84,7 @@ async function viewerOf(req: Request): Promise<{ id?: number; isManager: boolean
     role = user?.role;
     if (role === "admin" || role === "manager" || role === "viewer") req.session.userRole = role;
   }
-  return { id, isManager: role === "admin" || role === "manager" };
+  return { id, isManager: role === "admin" || role === "manager", isAdmin: role === "admin" };
 }
 
 /** How many improvements this person has never opened.
@@ -227,9 +227,24 @@ async function celebrateImprovement(improvementId: number, title: string, byUser
  *  drops a task onto the founder's green to-do list instead of being
  *  approved in front of the room. One open task per improvement; closed
  *  automatically when the review happens, wherever it happens. */
+/** Is the manager-approval step on? OFF by default (Graeme, 2026-09-07):
+ *  the team gets used to logging improvements the simplest way first, and
+ *  a finished improvement goes straight into the feed as complete. The
+ *  admin toggle on /improvements brings the review step back. */
+const APPROVAL_SETTING_KEY = "improvement_approval_required";
+
+async function approvalRequired(): Promise<boolean> {
+  const result = await db.execute<{ value: string }>(
+    sql`SELECT value FROM app_settings WHERE key = ${APPROVAL_SETTING_KEY} LIMIT 1`,
+  );
+  return result.rows[0]?.value === "true";
+}
+
 /**
- * Move an improvement to "waiting for a manager" and set everything that
- * goes with it — credit, the celebration, the founder's review task.
+ * Complete an improvement and set everything that goes with it — credit,
+ * the celebration, and (only when the approval step is on) the "waiting
+ * for a manager" status plus the founder's review task. With approval off
+ * it lands in the feed as complete straight away.
  *
  * Two callers: the person tapping "I've done this", and the photo upload
  * that completes a to-do improvement on its own (see shouldAutoSubmit).
@@ -246,11 +261,16 @@ async function submitForApproval(
     const [user] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId));
     userName = user?.name ?? null;
   }
+  const needsReview = await approvalRequired();
 
   const [updated] = await db.update(improvementSubmissionsTable)
     .set({
-      progressStatus: "awaiting_approval",
+      progressStatus: needsReview ? "awaiting_approval" : "complete",
       doneAt: new Date(),
+      // With no review step, completion IS the sign-off — approved_at drives
+      // the scoreboard, and nobody's name goes on an approval that didn't
+      // happen (approved_by stays empty).
+      ...(needsReview ? {} : { approvedAt: new Date() }),
       // Whoever says they did it gets the credit, unless it's already set.
       creditedTo: row.creditedTo ?? userId,
       creditedToName: row.creditedToName ?? userName,
@@ -268,14 +288,55 @@ async function submitForApproval(
       console.error("[Improvements] celebration notify failed:", err),
     );
   }
-  // Every completion (first or re-done after a send-back) queues the
-  // founder's quiet review task.
-  queueReviewTodo(row.id, updated!.title).catch(err =>
-    console.error("[Improvements] review-todo failed:", err),
-  );
+  // With the approval step on, every completion (first or re-done after a
+  // send-back) queues the founder's quiet review task.
+  if (needsReview) {
+    queueReviewTodo(row.id, updated!.title).catch(err =>
+      console.error("[Improvements] review-todo failed:", err),
+    );
+  }
 
   return updated!;
 }
+
+// ── The approval toggle ────────────────────────────────────────────────────
+
+// Everyone may read it (the feed's wording adapts); only an admin flips it.
+router.get("/settings", async (_req: Request, res: Response) => {
+  res.json({ approvalRequired: await approvalRequired() });
+});
+
+router.put("/settings", async (req: Request, res: Response) => {
+  const viewer = await viewerOf(req);
+  if (!viewer.isAdmin) { res.status(403).json({ error: "Admin access required" }); return; }
+  const on = req.body?.approvalRequired === true;
+  try {
+    await db.execute(sql`
+      INSERT INTO app_settings (key, value, updated_at) VALUES (${APPROVAL_SETTING_KEY}, ${on ? "true" : "false"}, NOW())
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+    `);
+
+    // Turning approval OFF empties the queue: whatever was waiting goes into
+    // the feed as complete now, and the pending review to-dos close — the
+    // point of the switch is that nothing sits waiting on anybody.
+    let released = 0;
+    if (!on) {
+      const drained = await db.update(improvementSubmissionsTable)
+        .set({ progressStatus: "complete", approvedAt: new Date(), updatedAt: new Date() })
+        .where(eq(improvementSubmissionsTable.progressStatus, "awaiting_approval"))
+        .returning({ id: improvementSubmissionsTable.id });
+      released = drained.length;
+      await db.execute(sql`
+        UPDATE todo_tasks SET status = 'done', completed_at = NOW(), updated_at = NOW()
+        WHERE created_by_name = 'Improvement review' AND status = 'open'
+      `);
+    }
+    res.json({ approvalRequired: on, released });
+  } catch (err) {
+    console.error("[Improvements] settings update failed:", err);
+    res.status(500).json({ error: "Failed to update the setting" });
+  }
+});
 
 router.post("/:id/done", async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);

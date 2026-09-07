@@ -111,10 +111,40 @@ export default function Improvements() {
   const [logging, setLogging] = useState(false);
   const [openId, setOpenId] = useState<number | null>(null);
   const [showAdmin, setShowAdmin] = useState(false);
+  const queryClient = useQueryClient();
 
   const { data: items = [], isLoading } = useQuery<Improvement[]>({
     queryKey: ["improvements"],
     queryFn: () => api<Improvement[]>("/improvements"),
+  });
+
+  // The approval step is a setting, OFF by default (Graeme, 2026-09-07):
+  // with it off, a finished improvement goes straight into the feed and the
+  // page copy stops promising a sign-off that isn't coming.
+  const { data: settings } = useQuery<{ approvalRequired: boolean }>({
+    queryKey: ["improvements", "settings"],
+    queryFn: () => api<{ approvalRequired: boolean }>("/improvements/settings"),
+    staleTime: 60_000,
+  });
+  const approvalOn = settings?.approvalRequired ?? false;
+
+  const toggleApproval = useMutation({
+    mutationFn: (on: boolean) => api<{ approvalRequired: boolean; released: number }>("/improvements/settings", {
+      method: "PUT", body: JSON.stringify({ approvalRequired: on }),
+    }),
+    onSuccess: (r) => {
+      queryClient.invalidateQueries({ queryKey: ["improvements"] });
+      queryClient.invalidateQueries({ queryKey: ["improvements", "settings"] });
+      toast({
+        title: r.approvalRequired ? "Approval step on" : "Approval step off",
+        description: r.approvalRequired
+          ? "Finished improvements now wait for a manager's check."
+          : r.released > 0
+            ? `Finished improvements go straight into the feed — and ${r.released} waiting one${r.released === 1 ? "" : "s"} just went in.`
+            : "Finished improvements go straight into the feed.",
+      });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't change it", description: e.message, variant: "destructive" }),
   });
 
   if (openId != null) {
@@ -141,7 +171,9 @@ export default function Improvements() {
     <div className="max-w-3xl mx-auto pb-24 space-y-6">
       <PageHeader
         title="Improvements"
-        description="Made something better? Log it, show it, get it signed off."
+        description={approvalOn
+          ? "Made something better? Log it, show it, get it signed off."
+          : "Made something better? Log it, show it — it goes straight into the feed."}
       />
 
       <button
@@ -174,7 +206,7 @@ export default function Improvements() {
           )}
 
           {approved.length > 0 && (
-            <Section title="Recently approved" icon={<CheckCircle2 className="w-5 h-5 text-emerald-500" />}>
+            <Section title={approvalOn ? "Recently approved" : "Recent improvements"} icon={<CheckCircle2 className="w-5 h-5 text-emerald-500" />}>
               {approved.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
             </Section>
           )}
@@ -192,8 +224,32 @@ export default function Improvements() {
         </>
       )}
 
-      {isManager && (
+      {userRole === "admin" && (
         <div className="pt-4 border-t border-border">
+          <div className="bg-card border border-border rounded-2xl p-4 mb-3 flex items-center justify-between gap-4 flex-wrap">
+            <div className="min-w-0">
+              <p className="font-semibold text-base">Approval step</p>
+              <p className="text-sm text-muted-foreground">
+                {approvalOn
+                  ? "On — finished improvements wait for a manager's check before joining the feed."
+                  : "Off — finished improvements go straight into the feed. Turn on later if the checks are worth the extra step."}
+              </p>
+            </div>
+            <button
+              onClick={() => toggleApproval.mutate(!approvalOn)}
+              disabled={toggleApproval.isPending}
+              className={cn(
+                "px-5 h-11 rounded-xl font-bold border-2 transition-colors disabled:opacity-50 flex-shrink-0",
+                approvalOn ? "border-border hover:bg-secondary/50" : "border-primary text-primary hover:bg-primary/5",
+              )}
+            >
+              {toggleApproval.isPending ? "Saving…" : approvalOn ? "Turn off" : "Turn on"}
+            </button>
+          </div>
+        </div>
+      )}
+      {isManager && (
+        <div className={userRole === "admin" ? "" : "pt-4 border-t border-border"}>
           <button
             onClick={() => setShowAdmin(s => !s)}
             className="w-full h-12 rounded-2xl border-2 border-border text-base font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 transition-colors text-muted-foreground"
