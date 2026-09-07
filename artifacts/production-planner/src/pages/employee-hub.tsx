@@ -1170,8 +1170,16 @@ function PoliciesList() {
 
 type HubSection = "todos" | "reviews" | "contract" | "starterforms" | "mileage" | "expenses" | "policies" | "improvements" | "issues" | "sops";
 
+const HUB_SECTIONS: HubSection[] = ["todos", "reviews", "contract", "starterforms", "mileage", "expenses", "policies", "improvements", "issues", "sops"];
+
 export default function EmployeeHub() {
-  const [active, setActive] = useState<HubSection>("todos");
+  // Deep link from the notification bell: /hub?section=contract lands on
+  // that section directly (Graeme, 2026-09-07).
+  const initialSection = ((): HubSection => {
+    const raw = new URLSearchParams(window.location.search).get("section");
+    return raw != null && (HUB_SECTIONS as string[]).includes(raw) ? (raw as HubSection) : "todos";
+  })();
+  const [active, setActive] = useState<HubSection>(initialSection);
   const { state, requireSensitivePin } = useAuth();
   const userId = state.status === "authenticated" ? state.user.id : null;
 

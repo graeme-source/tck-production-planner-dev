@@ -16,6 +16,7 @@
 // the people who just want to log what they did.
 
 import { useEffect, useState } from "react";
+import { useSearch } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Loader2, Camera, CheckCircle2, Clock, ThumbsUp, RotateCcw,
@@ -113,6 +114,15 @@ export default function Improvements() {
   const [openId, setOpenId] = useState<number | null>(null);
   const [showAdmin, setShowAdmin] = useState(false);
   const queryClient = useQueryClient();
+
+  // Deep link from the notification bell: /improvements?open=123 lands on
+  // that improvement's detail, not the top of the feed (Graeme, 2026-09-07).
+  const search = useSearch();
+  useEffect(() => {
+    const raw = new URLSearchParams(search).get("open");
+    const id = raw != null ? parseInt(raw, 10) : NaN;
+    if (Number.isInteger(id)) setOpenId(id);
+  }, [search]);
 
   const { data: items = [], isLoading } = useQuery<Improvement[]>({
     queryKey: ["improvements"],

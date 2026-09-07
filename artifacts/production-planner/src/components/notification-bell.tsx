@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { Bell, CheckCheck, MessageSquare, ShieldCheck, CircleCheck, PartyPopper } from "lucide-react";
+import { Bell, CheckCheck, MessageSquare, ShieldCheck, CircleCheck, PartyPopper, ListTodo, FileSignature } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useNotifications, type AppNotification } from "@/hooks/use-notifications";
@@ -11,6 +11,8 @@ const TYPE_ICONS: Record<string, typeof MessageSquare> = {
   acknowledged: ShieldCheck,
   resolved: CircleCheck,
   improvement: PartyPopper,
+  todo: ListTodo,
+  contract: FileSignature,
 };
 
 function NotificationItem({ n, onNavigate }: { n: AppNotification; onNavigate: (n: AppNotification) => void }) {
@@ -54,13 +56,20 @@ export function NotificationBell() {
     if (isOpen) fetchNotifications();
   }
 
+  // Every notification lands somewhere useful (Graeme, 2026-09-07): the
+  // exact improvement, the issue, the to-do list, the contract — a bell
+  // entry that goes nowhere isn't a tool.
   function handleNavigate(n: AppNotification) {
     if (!n.read) markRead.mutate(n.id);
     setOpen(false);
     if (n.andonIssueId) {
       navigate(`/reports?tab=issues&issueId=${n.andonIssueId}`);
     } else if (n.improvementId) {
-      navigate("/improvements");
+      navigate(`/improvements?open=${n.improvementId}`);
+    } else if (n.type === "todo") {
+      navigate("/hub?section=todos");
+    } else if (n.type === "contract") {
+      navigate("/hub?section=contract");
     }
   }
 
