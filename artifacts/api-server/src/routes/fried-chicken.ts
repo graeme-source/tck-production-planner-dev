@@ -455,15 +455,21 @@ router.post("/plans/:planId/items", requireManagerOrAdmin, validate(ItemsBody), 
 //
 // A batch_completions row still goes in alongside, so the station shows who
 // has been working it, the same as everywhere else.
+// Either a tap (+1/−1) or a typed absolute count — the team often packs a
+// whole run (120 bags) and enters it in one go rather than tapping per bag
+// (Graeme, 2026-09-07). Exactly one of the two must be present.
 const CountBody = z.object({
   planItemId: z.number().int(),
-  delta: z.union([z.literal(1), z.literal(-1)]),
+  delta: z.union([z.literal(1), z.literal(-1)]).optional(),
+  count: z.number().int().min(0).max(10_000).optional(),
+}).refine(b => (b.delta == null) !== (b.count == null), {
+  message: "Send either delta or count, not both",
 });
 
 router.post("/plans/:planId/count", validate(CountBody), async (req: Request, res: Response) => {
   const planId = Number(req.params.planId);
   if (!Number.isInteger(planId)) { res.status(400).json({ error: "Invalid plan id" }); return; }
-  const { planItemId, delta } = req.body as z.infer<typeof CountBody>;
+  const { planItemId, delta, count } = req.body as z.infer<typeof CountBody>;
 
   try {
     const [item] = await db
@@ -487,24 +493,31 @@ router.post("/plans/:planId/count", validate(CountBody), async (req: Request, re
 
     const before = Number(item.made) || 0;
     if (delta === -1 && before === 0) { res.json({ made: 0 }); return; }
+    if (count != null && count === before) { res.json({ made: before }); return; }
 
     // Floor at zero in SQL as well as here — two people counting on two
-    // iPads is the normal case at this station.
+    // iPads is the normal case at this station. A typed count is the sheet
+    // total and simply replaces what's there.
     const [row] = await db.execute<{ batches_complete: number }>(sql`
       UPDATE production_plan_items
-      SET batches_complete = GREATEST(0, batches_complete + ${delta}),
+      SET batches_complete = ${count != null ? sql`${count}` : sql`GREATEST(0, batches_complete + ${delta})`},
           status = 'in-progress'
       WHERE id = ${planItemId}
       RETURNING batches_complete
     `).then(r => r.rows ?? []);
 
     const userId = req.session.userId ?? null;
-    if (delta === 1) {
+    const after = Number(row?.batches_complete ?? (count != null ? count : Math.max(0, before + delta!)));
+    const diff = after - before;
+    if (diff > 0) {
+      // One completion row per bag, same as tapping + that many times, so
+      // "who's been working it" and the count stay in step.
       await db.execute(sql`
         INSERT INTO batch_completions (plan_item_id, station_type, user_id, completed_at)
-        VALUES (${planItemId}, 'fried_chicken', ${userId}, NOW())
+        SELECT ${planItemId}, 'fried_chicken', ${userId}, NOW()
+        FROM generate_series(1, ${diff})
       `);
-    } else {
+    } else if (delta === -1) {
       // Take back this person's own most recent bag, not somebody else's.
       await db.execute(sql`
         DELETE FROM batch_completions
@@ -517,9 +530,23 @@ router.post("/plans/:planId/count", validate(CountBody), async (req: Request, re
           LIMIT 1
         )
       `);
+    } else if (diff < 0) {
+      // A typed count lowering the total is a sheet correction — it is
+      // authoritative, so trim the most recent rows regardless of who
+      // tapped them.
+      await db.execute(sql`
+        DELETE FROM batch_completions
+        WHERE id IN (
+          SELECT id FROM batch_completions
+          WHERE plan_item_id = ${planItemId}
+            AND station_type = 'fried_chicken'
+          ORDER BY completed_at DESC
+          LIMIT ${-diff}
+        )
+      `);
     }
 
-    res.json({ made: Number(row?.batches_complete ?? Math.max(0, before + delta)) });
+    res.json({ made: after });
   } catch (err) {
     console.error("[fried-chicken] count failed:", err);
     res.status(500).json({ error: "Couldn't record that bag" });

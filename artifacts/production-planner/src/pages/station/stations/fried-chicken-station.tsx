@@ -47,15 +47,22 @@ function BagRow({ item, planId, disabled }: {
 }) {
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
+  // Tap the big number to type a total — the team often packs a whole run
+  // (120 bags) and enters it in one go rather than tapping + per bag
+  // (Graeme, 2026-09-07).
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [justSaved, setJustSaved] = useState(false);
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => () => { if (savedTimer.current) clearTimeout(savedTimer.current); }, []);
 
   const target = Number(item.batchesTarget) || 0;
   const made = Number(item.batchesComplete) || 0;
   const short = made < target;
   const over = made > target;
 
-  async function change(by: 1 | -1) {
-    if (busy || disabled) return;
-    if (by === -1 && made === 0) return;
+  async function send(body: { delta: 1 | -1 } | { count: number }) {
     setBusy(true);
     try {
       // The station's own counter, not the calzone line's. A bag off the
@@ -64,14 +71,38 @@ function BagRow({ item, planId, disabled }: {
       await friedChickenFetch(`/plans/${planId}/count`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planItemId: item.id, delta: by }),
+        body: JSON.stringify({ planItemId: item.id, ...body }),
       });
       await queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(planId) });
+      setJustSaved(true);
+      if (savedTimer.current) clearTimeout(savedTimer.current);
+      savedTimer.current = setTimeout(() => setJustSaved(false), 2000);
     } catch (e) {
       toast({ title: "Not counted", description: e instanceof Error ? e.message : "Try again", variant: "destructive" });
     } finally {
       setBusy(false);
     }
+  }
+
+  async function change(by: 1 | -1) {
+    if (busy || disabled) return;
+    if (by === -1 && made === 0) return;
+    await send({ delta: by });
+  }
+
+  function startEditing() {
+    if (busy || disabled) return;
+    setDraft(String(made));
+    setEditing(true);
+    // Select the current value so typing replaces it outright.
+    setTimeout(() => { inputRef.current?.focus(); inputRef.current?.select(); }, 0);
+  }
+
+  async function commitDraft() {
+    setEditing(false);
+    const n = Number.parseInt(draft, 10);
+    if (!Number.isInteger(n) || n < 0 || n > 10_000 || n === made) return;
+    await send({ count: n });
   }
 
   return (
@@ -95,9 +126,42 @@ function BagRow({ item, planId, disabled }: {
         </button>
 
         <div className="flex-1 text-center">
-          <div className="text-5xl font-bold tabular-nums leading-none">{made}</div>
+          {editing ? (
+            <input
+              ref={inputRef}
+              type="number"
+              inputMode="numeric"
+              min={0}
+              max={10000}
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              onBlur={commitDraft}
+              onKeyDown={e => {
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                if (e.key === "Escape") { setDraft(String(made)); setEditing(false); }
+              }}
+              aria-label={`Type the total ${item.recipeName} bags counted`}
+              className="w-32 max-w-full text-5xl font-bold tabular-nums leading-none text-center bg-secondary/50 border-2 border-primary rounded-xl py-1 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+            />
+          ) : (
+            <button
+              onClick={startEditing}
+              disabled={disabled || busy}
+              aria-label={`Edit ${item.recipeName} count — tap to type the total`}
+              className="inline-flex items-start gap-1.5 rounded-xl px-3 py-1 hover:bg-secondary/50 active:bg-secondary transition-colors disabled:opacity-60"
+            >
+              <span className="text-5xl font-bold tabular-nums leading-none">{made}</span>
+              <Pencil className="w-4 h-4 text-muted-foreground/60 mt-1" />
+            </button>
+          )}
           <div className="text-base text-muted-foreground mt-1">
-            {made === target ? "on target" : short ? `${target - made} to go` : `${made - target} over`}
+            {busy ? (
+              <span className="inline-flex items-center gap-1.5"><Loader2 className="w-4 h-4 animate-spin" /> Saving…</span>
+            ) : justSaved ? (
+              <span className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400"><Check className="w-4 h-4" /> Saved</span>
+            ) : (
+              made === target ? "on target" : short ? `${target - made} to go` : `${made - target} over`
+            )}
           </div>
         </div>
 
