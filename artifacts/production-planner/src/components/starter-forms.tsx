@@ -372,30 +372,43 @@ export function StarterFormsList() {
         const sub = subFor(def.type);
         const signed = sub?.signedAt != null;
         const started = sub != null && !signed && Object.keys(sub.answers ?? {}).length > 0;
+        // Status on top, the action as its own full-width strip: the old
+        // one-line layout pushed "sign" off the edge of a wide screen
+        // (Graeme, 2026-09-07).
         return (
           <button
             key={def.type}
             onClick={() => setOpenType(def.type)}
-            className="w-full text-left bg-card border border-border rounded-2xl p-4 flex items-center gap-4 hover:bg-secondary/30 transition-colors"
+            className="w-full text-left bg-card border border-border rounded-2xl p-4 hover:bg-secondary/30 transition-colors"
           >
-            <ClipboardList className="w-8 h-8 text-primary flex-shrink-0" />
-            <span className="flex-1 min-w-0">
-              <span className="block font-semibold text-base">{def.title}</span>
-              <span className="block text-sm text-muted-foreground truncate">{def.description}</span>
+            <span className="flex items-start gap-3">
+              <ClipboardList className="w-7 h-7 text-primary flex-shrink-0 mt-0.5" />
+              <span className="flex-1 min-w-0">
+                <span className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold text-base">{def.title}</span>
+                  {signed ? (
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
+                      <Check className="w-3.5 h-3.5" /> Signed
+                    </span>
+                  ) : (
+                    <span className={cn(
+                      "text-xs font-semibold px-2.5 py-0.5 rounded-full",
+                      started ? "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300" : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+                    )}>
+                      {started ? "Draft saved" : "To do"}
+                    </span>
+                  )}
+                </span>
+                <span className="block text-sm text-muted-foreground mt-0.5">{def.description}</span>
+              </span>
             </span>
-            {signed ? (
-              <span className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
-                <Check className="w-3.5 h-3.5" /> Signed
-              </span>
-            ) : (
-              <span className={cn(
-                "text-xs font-semibold px-2.5 py-1 rounded-full",
-                started ? "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300" : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-              )}>
-                {started ? "Draft — carry on" : "Please fill in & sign"}
-              </span>
-            )}
-            <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+            <span className={cn(
+              "mt-3 h-12 rounded-xl font-bold text-base flex items-center justify-center gap-2",
+              signed ? "bg-secondary text-foreground" : "bg-primary text-primary-foreground",
+            )}>
+              {signed ? "View signed form" : started ? "Carry on — then sign" : "Fill in & sign"}
+              <ChevronRight className="w-4 h-4" />
+            </span>
           </button>
         );
       })}

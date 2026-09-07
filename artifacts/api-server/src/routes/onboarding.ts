@@ -17,7 +17,7 @@ const upload = multer({
   limits: { fileSize: 15 * 1024 * 1024 },
 });
 
-const DOC_KINDS = ["right_to_work", "food_hygiene", "other"] as const;
+const DOC_KINDS = ["right_to_work", "food_hygiene", "p45", "other"] as const;
 
 async function isManagerOrAdmin(req: Request): Promise<boolean> {
   if (req.session.userRole === "admin" || req.session.userRole === "manager") return true;

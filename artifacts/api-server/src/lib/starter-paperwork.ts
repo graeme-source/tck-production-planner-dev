@@ -65,10 +65,16 @@ export interface StarterGateStatus {
   forms: { type: string; title: string; signed: boolean }[];
   contractIssued: boolean;
   contractSigned: boolean;
-  /** Everything a first login must finish before the app opens: details +
-   *  all three forms signed + the contract signed IF one has been issued.
-   *  A missing contract never locks somebody out — issuing it is the
-   *  founder's move, not theirs; it waits in their hub instead. */
+  /** The contract's start date — the person's first day. */
+  startDate: string | null;
+  firstDayReached: boolean;
+  /** All the paperwork a starter can do from home is done. */
+  paperworkComplete: boolean;
+  /** May the gate lift? Paperwork done AND their first day has arrived
+   *  (Graeme, 2026-09-07): everything else in the app stays shut until the
+   *  contract's start date, however early the paperwork was finished. With
+   *  no contract issued there is no known first day, so paperwork alone
+   *  opens the gate rather than locking somebody out indefinitely. */
   complete: boolean;
 }
 
@@ -81,7 +87,7 @@ export async function starterGateStatus(userId: number): Promise<StarterGateStat
     db.select({ formType: starterFormSubmissionsTable.formType, signedAt: starterFormSubmissionsTable.signedAt })
       .from(starterFormSubmissionsTable)
       .where(eq(starterFormSubmissionsTable.userId, userId)),
-    db.select({ id: employmentContractsTable.id, acknowledgedAt: employmentContractsTable.acknowledgedAt })
+    db.select({ id: employmentContractsTable.id, acknowledgedAt: employmentContractsTable.acknowledgedAt, startDate: employmentContractsTable.startDate })
       .from(employmentContractsTable)
       .where(eq(employmentContractsTable.userId, userId)),
   ]);
@@ -90,12 +96,22 @@ export async function starterGateStatus(userId: number): Promise<StarterGateStat
   const detailsSubmitted = details[0]?.submittedAt != null;
   const contractIssued = contracts.length > 0;
   const contractSigned = contracts.some(c => c.acknowledgedAt != null);
+  // The newest contract governs the first day (re-issues supersede).
+  const startDate = contracts
+    .map(c => String(c.startDate))
+    .sort()
+    .pop() ?? null;
+  const firstDayReached = startDate != null && startDate <= londonDateString();
+  const paperworkComplete = detailsSubmitted && forms.every(f => f.signed) && (!contractIssued || contractSigned);
   return {
     detailsSubmitted,
     forms,
     contractIssued,
     contractSigned,
-    complete: detailsSubmitted && forms.every(f => f.signed) && (!contractIssued || contractSigned),
+    startDate,
+    firstDayReached,
+    paperworkComplete,
+    complete: paperworkComplete && (!contractIssued || firstDayReached),
   };
 }
 

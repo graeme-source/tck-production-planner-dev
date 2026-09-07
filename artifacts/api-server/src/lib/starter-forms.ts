@@ -52,7 +52,7 @@ export const HMRC_STARTER: StarterFormDefinition = {
       fields: [
         { kind: "text", key: "last_name", label: "Last name", required: true },
         { kind: "text", key: "first_names", label: "First names", required: true, help: "Full names — not initials or shortened names (James, not Jim)." },
-        { kind: "radio", key: "sex", label: "What is your sex?", required: true, help: "As shown on your birth certificate or gender recognition certificate.", options: [
+        { kind: "radio", key: "sex", label: "What is your sex? (required for payroll/HMRC reporting)", required: true, help: "Asked only because HMRC requires it for payroll. Answer as shown on your birth certificate or gender recognition certificate.", options: [
           { value: "male", label: "Male" }, { value: "female", label: "Female" },
         ] },
         { kind: "date", key: "date_of_birth", label: "Date of birth", required: true },
@@ -121,7 +121,7 @@ export const PAYROLL_DETAILS: StarterFormDefinition = {
   title: "Personnel Payroll Details",
   description:
     "Strictly private and confidential — how we pay you. Seen only by Graeme and the payroll accountant. " +
-    "If you have a P45 from your last job, hand it in with this.",
+    "If you have a P45 from your last job, upload it with your onboarding documents or hand it in.",
   sections: [
     {
       title: "Your details",
@@ -184,9 +184,9 @@ export const HEALTH_QUESTIONNAIRE: StarterFormDefinition = {
         { kind: "textarea", key: "address", label: "Address (including postcode)", required: true },
         { kind: "text", key: "telephone", label: "Telephone", required: true },
         { kind: "date", key: "date_of_birth", label: "Date of birth", required: true },
-        { kind: "radio", key: "sex", label: "Sex", required: true, options: [
-          { value: "male", label: "Male" }, { value: "female", label: "Female" },
-        ] },
+        // The paper form asked for sex here; dropped 2026-09-07 — a health
+        // screen doesn't need it, and where it IS needed (payroll) the HMRC
+        // form already asks with the reason stated.
       ],
     },
     {

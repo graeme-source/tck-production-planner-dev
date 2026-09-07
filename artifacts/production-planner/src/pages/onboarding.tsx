@@ -21,6 +21,7 @@ type Submission = {
 const DOC_SLOTS: { kind: string; label: string; hint: string }[] = [
   { kind: "right_to_work", label: "Right to work / ID", hint: "Passport, BRP or share code screenshot" },
   { kind: "food_hygiene", label: "Food Hygiene certificate", hint: "If you already have one" },
+  { kind: "p45", label: "P45 from your last job", hint: "Optional — helps payroll get your tax code right" },
 ];
 
 interface GateStatus {
@@ -28,7 +29,17 @@ interface GateStatus {
   forms: { type: string; title: string; signed: boolean }[];
   contractIssued: boolean;
   contractSigned: boolean;
+  startDate: string | null;
+  firstDayReached: boolean;
+  paperworkComplete: boolean;
   complete: boolean;
+}
+
+function firstDayLabel(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(`${iso}T12:00:00`);
+  return Number.isNaN(d.getTime()) ? iso
+    : d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
 }
 
 export default function Onboarding({ onComplete }: { onComplete?: () => void | Promise<void> }) {
@@ -112,8 +123,16 @@ export default function Onboarding({ onComplete }: { onComplete?: () => void | P
   const inputCls = "w-full px-3 py-2.5 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30";
 
   if (phase === "paperwork" && !loading) {
-    const formsDone = (gate?.forms ?? []).filter(f => f.signed).length;
-    const formsTotal = (gate?.forms ?? []).length || 3;
+    const firstDay = firstDayLabel(gate?.startDate ?? null);
+    const checklist: { label: string; done: boolean }[] = [
+      { label: "Your contact & emergency details", done: gate?.detailsSubmitted ?? false },
+      ...(gate?.forms ?? []).map(f => ({ label: f.title, done: f.signed })),
+      {
+        label: gate?.contractIssued ? "Your employment contract" : "Your employment contract (on its way from Graeme)",
+        done: gate?.contractSigned ?? false,
+      },
+    ];
+    const doneCount = checklist.filter(c => c.done).length;
     return (
       <div className="min-h-screen bg-background flex justify-center p-4">
         <div className="w-full max-w-2xl my-8 space-y-6">
@@ -122,13 +141,36 @@ export default function Onboarding({ onComplete }: { onComplete?: () => void | P
             <span className="text-xs text-muted-foreground tracking-widest uppercase font-medium">Production Planner</span>
           </div>
 
-          <div className="bg-card border border-border rounded-2xl p-6 shadow-sm space-y-2">
-            <h1 className="text-xl font-semibold">Your starter paperwork</h1>
-            <p className="text-sm text-muted-foreground">
-              Before the app opens, fill in and sign these — {formsDone} of {formsTotal} forms signed
-              {gate?.contractIssued ? (gate.contractSigned ? ", contract signed" : ", contract still to sign") : ""}.
-              Everything autosaves; you can come back to a draft any time. Only you and Graeme can see what you enter.
+          {/* The welcome — this is somebody's first look inside TCK. */}
+          <div className="bg-card border border-border rounded-2xl p-6 shadow-sm space-y-3">
+            <h1 className="text-2xl font-bold font-display">Welcome to The Calzone Kitchen! 👋</h1>
+            <p className="text-base text-muted-foreground leading-relaxed">
+              We're really glad you're joining us. This app is where the whole team works — plans, checklists,
+              improvements, your own hub. Before your first day there's a bit of paperwork to get out of the way,
+              and you can do all of it right here, from home, whenever suits.
+              Everything autosaves, and what you enter is seen only by you and Graeme.
             </p>
+            {firstDay && (
+              <p className="text-base font-semibold">
+                Your first day is {firstDay} — the rest of the app opens up then.
+              </p>
+            )}
+          </div>
+
+          {/* The checklist — what's done, what's left, at a glance. */}
+          <div className="bg-card border border-border rounded-2xl p-5 space-y-2">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold">Your onboarding checklist</h2>
+              <span className="text-sm font-bold tabular-nums text-muted-foreground">{doneCount}/{checklist.length}</span>
+            </div>
+            {checklist.map(c => (
+              <div key={c.label} className="flex items-center gap-2.5 py-1">
+                <span className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${c.done ? "bg-emerald-500 text-white" : "border-2 border-border"}`}>
+                  {c.done && <Check className="w-4 h-4" />}
+                </span>
+                <span className={`text-base ${c.done ? "text-muted-foreground line-through" : "font-medium"}`}>{c.label}</span>
+              </div>
+            ))}
           </div>
 
           <section className="space-y-3">
@@ -142,19 +184,30 @@ export default function Onboarding({ onComplete }: { onComplete?: () => void | P
               <MyContractSection />
             ) : (
               <p className="text-sm text-muted-foreground bg-card border border-border rounded-2xl p-4">
-                Your contract hasn't been issued yet — it will appear in your Employee Hub under My Contract, and this step doesn't hold you up.
+                Graeme hasn't issued your contract yet — it will appear right here (and in your Employee Hub) the moment he does.
               </p>
             )}
           </section>
 
-          <button
-            onClick={submit}
-            disabled={saving || !gate?.complete}
-            className="w-full h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2 hover:opacity-90 disabled:opacity-40 transition-all"
-          >
-            {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <ArrowRight className="w-5 h-5" />}
-            {gate?.complete ? "All signed — enter the app" : "Sign everything above to continue"}
-          </button>
+          {gate?.paperworkComplete && !gate.complete ? (
+            <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 p-6 text-center space-y-1">
+              <p className="text-xl font-bold">That's everything — brilliant! 🎉</p>
+              <p className="text-base text-muted-foreground">
+                {firstDay
+                  ? `See you on ${firstDay}. The rest of the app unlocks that morning.`
+                  : "The rest of the app unlocks on your first day."}
+              </p>
+            </div>
+          ) : (
+            <button
+              onClick={submit}
+              disabled={saving || !gate?.complete}
+              className="w-full h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2 hover:opacity-90 disabled:opacity-40 transition-all"
+            >
+              {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <ArrowRight className="w-5 h-5" />}
+              {gate?.complete ? "You're all set — enter the app" : "Work through the checklist above to continue"}
+            </button>
+          )}
         </div>
       </div>
     );
