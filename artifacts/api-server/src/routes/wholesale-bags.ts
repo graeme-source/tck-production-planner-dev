@@ -33,6 +33,7 @@ import {
   DESPATCH_CUTOFF,
 } from "../lib/production-cutoff";
 import { getRecentUnfulfilledOrders, getOrderById, addTagsToOrder } from "../services/shopify";
+import { suggestDeliveryDateFromNote } from "../lib/note-delivery-date";
 
 const router: IRouter = Router();
 
@@ -181,19 +182,38 @@ router.get("/queue", async (_req, res) => {
       })
       .map(({ o, kind, lines }) => {
         const existingDateTag = firstDateTag(o.tags);
+        // Customers often ask for a delivery day in the free-text order note
+        // ("deliver Friday please", "for the 12th"). Scan it — relative words
+        // resolve from the day the note was written, not from today — and
+        // propose what it asks for when that's still a feasible delivery day.
+        // The note itself rides along so the human confirming the date can
+        // read exactly what was asked (Graeme, 2026-09-08).
+        const note = (o.note ?? "").trim() || null;
+        const createdDay = o.created_at ? londonDateString(new Date(o.created_at)) : today;
+        const noteSuggestion = suggestDeliveryDateFromNote(note, createdDay, today);
         // A customer-requested date is respected only when it's still feasible
         // from now — otherwise we propose the kind's own default: 8-pack bags
         // get production + 2, tag-only wholesale gets the earliest despatchable
-        // delivery.
+        // delivery. An explicit date tag (Zapiet / earlier processing) always
+        // outranks a date read out of prose.
         const kindEarliest = kind === "wholesale_2pack" ? wholesaleEarliestDelivery : addDays(earliestProductionDate, 1);
         const kindDefault = kind === "wholesale_2pack" ? wholesaleEarliestDelivery : defaultDeliveryDay();
-        const proposedDeliveryDate = existingDateTag && isDeliveryDay(existingDateTag) && existingDateTag >= kindEarliest
+        const feasible = (d: string | null | undefined): d is string =>
+          !!d && isDeliveryDay(d) && d >= kindEarliest;
+        const proposedDeliveryDate = feasible(existingDateTag)
           ? existingDateTag
-          : kindDefault;
+          : feasible(noteSuggestion?.date)
+            ? noteSuggestion!.date
+            : kindDefault;
         const customerName = o.shipping_address?.name
           || (o.customer ? `${o.customer.first_name ?? ""} ${o.customer.last_name ?? ""}`.trim() : "")
           || "";
-        return { orderId: o.id, name: o.name, customerName, tags: o.tags, kind, existingDateTag, proposedDeliveryDate, lines };
+        return {
+          orderId: o.id, name: o.name, customerName, tags: o.tags, kind, existingDateTag, proposedDeliveryDate, lines,
+          note,
+          noteSuggestedDate: noteSuggestion?.date ?? null,
+          noteMatchedText: noteSuggestion?.matched ?? null,
+        };
       })
       .sort((a, b) => (a.name < b.name ? 1 : -1)); // newest order name first
 
