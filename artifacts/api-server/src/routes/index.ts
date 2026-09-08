@@ -60,6 +60,7 @@ import upfRouter from "./upf";
 import formsRouter from "./forms";
 import systemUpdatesRouter from "./system-updates";
 import labelStockRouter from "./label-stock";
+import printJobsRouter from "./print-jobs";
 import icePacksRouter from "./ice-packs";
 import wholesaleBagsRouter from "./wholesale-bags";
 import bundlesRouter from "./bundles";
@@ -217,6 +218,10 @@ router.use("/lean-curriculum", requireAdminOrManager, leanCurriculumRouter);
 router.use("/forms", formsRouter);
 router.use("/system-updates", systemUpdatesRouter);
 router.use("/label-stock", labelStockRouter);
+// Prep-room label printing. Open to all logged-in staff — anyone opening a
+// bag of chicken prints the label; the bridge endpoints inside carry their
+// own token auth.
+router.use("/print-jobs", printJobsRouter);
 router.use("/ice-packs", icePacksRouter);
 router.use("/wholesale-bags", requireAdminOrManager, wholesaleBagsRouter);
 router.use("/bundles", requireAdminOrManager, bundlesRouter);

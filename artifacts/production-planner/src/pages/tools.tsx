@@ -1,6 +1,6 @@
 import { Link } from "wouter";
 import { PageHeader } from "@/components/page-header";
-import { Tag, Wrench } from "lucide-react";
+import { Tag, Wrench, Printer } from "lucide-react";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Tools landing page
@@ -27,6 +27,15 @@ const TOOLS: Tool[] = [
     Icon: Tag,
     iconBg: "bg-blue-50 dark:bg-blue-950/30",
     iconColor: "text-blue-600 dark:text-blue-400",
+  },
+  {
+    href: "/inventory/tools/label-printer",
+    label: "Label Printer",
+    description:
+      "Prep-room TSC label printer — bridge status, test labels, and the printed-label history.",
+    Icon: Printer,
+    iconBg: "bg-emerald-50 dark:bg-emerald-950/30",
+    iconColor: "text-emerald-600 dark:text-emerald-400",
   },
 ];
 
