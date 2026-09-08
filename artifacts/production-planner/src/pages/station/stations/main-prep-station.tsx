@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import {
   ClipboardList, Loader2, CheckCircle2, Package, Plus, Minus, Check, Salad, Pencil, RotateCcw, MoreVertical, Clock3, X as XIcon,
-  BookOpen,
+  BookOpen, FlaskConical,
 } from "lucide-react";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
 import { format, parseISO } from "date-fns";
@@ -20,6 +20,7 @@ import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftB
 import type { NextActivePlan } from "../shared/prep-helpers";
 import { DeferredPrepBanner } from "../shared/deferred-prep-banner";
 import { PrepSubNav } from "./prep-hub";
+import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 
 export interface MainPrepIngredient {
   ingredientId: number;
@@ -150,6 +151,9 @@ export function useMainPrepData(planId: number, station: string = "main_prep") {
 export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const { state: authState } = useAuth();
   const currentUserId = authState.status === "authenticated" ? authState.user.id : null;
+  // A sub-recipe row's "Replenish" button opens the make-flow modal for it
+  // without leaving the prep list (Graeme, 2026-09-08).
+  const [replenishTarget, setReplenishTarget] = useState<ReplenishTarget | null>(null);
   // ?direct=1 means the user navigated here from a calendar prep card for a
   // specific plan — bypass the auto-route to "next active plan" and use the
   // URL plan id as-is. Without this, an explicit click can be redirected past
@@ -710,6 +714,10 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
 
       <PrepSubNav planId={plan.id} current="main_prep" />
 
+      {replenishTarget && (
+        <SubRecipeReplenishModal target={replenishTarget} onClose={() => setReplenishTarget(null)} />
+      )}
+
       {/* Deferred-prep banner — hidden when no items are owed today. Ticking
           from here POSTs to the source plan's prep-completions endpoint, so
           a refetch of this station's data picks up the new completion on
@@ -1002,6 +1010,18 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                             )}>
                               {ing.ingredientName}
                             </h3>
+                            {/* This row IS a sub-recipe (ingredientId = the
+                                sub-recipe id) — offer to make more of it in a
+                                popup, prep list stays put. */}
+                            {ing.isSubRecipe && (
+                              <button
+                                onClick={() => setReplenishTarget({ subRecipeId: ing.ingredientId, name: ing.ingredientName })}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-primary/40 text-primary text-sm font-semibold hover:bg-primary/10 transition-colors"
+                                title={`Replenish ${ing.ingredientName} without leaving this screen`}
+                              >
+                                <FlaskConical className="w-4 h-4" /> Replenish
+                              </button>
+                            )}
                           </div>
                           <p className="text-base text-muted-foreground mt-0.5">
                             <span className="font-semibold text-foreground">{fmtQty(ing.totalQty, ing.unit)}</span>

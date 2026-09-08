@@ -15,6 +15,7 @@ import { BreakTracker } from "../shared/break-tracker";
 import { PrepDateBanner, PrepDraftBanner, toKg, toastDraftBlocked, StockCheckStatusPanel, nativeToPackCount, packsToNative, packNoun, packDescriptor, packsWeightHint, packSizeHint } from "../shared/prep-helpers";
 import { PrepSubNav, usePrepByRecipe } from "./prep-hub";
 import type { PrepRecipeDetail, PrepIngredientDetail } from "./prep-hub";
+import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 
 interface PrepTrayCompletion {
   id: number;
@@ -60,6 +61,9 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   const { toast } = useToast();
   const [selectedRecipeId, setSelectedRecipeId] = useState<number | null>(null);
   const [hideCompleted, setHideCompleted] = useState(false);
+  // A rub/marinade sub-recipe tapped on a meat row — opens the replenish
+  // modal for it so it can be made without leaving this screen.
+  const [replenishTarget, setReplenishTarget] = useState<ReplenishTarget | null>(null);
   const search = useSearch();
   const isDirect = new URLSearchParams(search).get("direct") === "1";
   const { recipes, isLoading, nextPlan, targetPlanId, noFuturePlan } = usePrepByRecipe("prep_meat", plan.id, plan.planDate, isDirect);
@@ -294,6 +298,9 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
 
       <PrepSubNav planId={plan.id} current="prep_meat" />
       {sopViewer.dialog}
+      {replenishTarget && (
+        <SubRecipeReplenishModal target={replenishTarget} onClose={() => setReplenishTarget(null)} />
+      )}
 
       <StockCheckStatusPanel checkDate={nextPlan?.planDate ?? plan.planDate} />
 
@@ -600,7 +607,20 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                         <div key={mi} className="flex items-center justify-between px-4 py-2 border-t border-rose-100 dark:border-rose-900/40 text-sm text-muted-foreground bg-white dark:bg-background/50">
                           <span className="flex items-center gap-2">
                             <span className="text-rose-400">↳</span>
-                            <span>{name}</span>
+                            {/* A sub-recipe rub/marinade is a link: tap to
+                                replenish it right here (Graeme, 2026-09-08).
+                                Dotted underline, not hover-only — iPad. */}
+                            {m.marinadeSubRecipeId != null ? (
+                              <button
+                                onClick={() => setReplenishTarget({ subRecipeId: m.marinadeSubRecipeId!, name })}
+                                className="underline decoration-dotted underline-offset-2 text-primary font-medium hover:decoration-solid text-left"
+                                title={`Replenish ${name} without leaving this screen`}
+                              >
+                                {name}
+                              </button>
+                            ) : (
+                              <span>{name}</span>
+                            )}
                           </span>
                           <div className="text-right">
                             {perTrayG != null ? (
@@ -621,7 +641,20 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                         <div key={`aac-${mi}`} className="flex items-center justify-between px-4 py-2 border-t border-amber-300/60 dark:border-amber-700/60 text-sm bg-amber-50 dark:bg-amber-950/30">
                           <span className="flex items-center gap-2 font-semibold text-amber-800 dark:text-amber-300">
                             <span>✋</span>
-                            <span>{name} — do NOT add today</span>
+                            {m.marinadeSubRecipeId != null ? (
+                              <span>
+                                <button
+                                  onClick={() => setReplenishTarget({ subRecipeId: m.marinadeSubRecipeId!, name })}
+                                  className="underline decoration-dotted underline-offset-2 hover:decoration-solid"
+                                  title={`Replenish ${name} without leaving this screen`}
+                                >
+                                  {name}
+                                </button>
+                                {" — do NOT add today"}
+                              </span>
+                            ) : (
+                              <span>{name} — do NOT add today</span>
+                            )}
                           </span>
                           <span className="text-right text-amber-800/80 dark:text-amber-300/80">
                             goes in at cooking tomorrow · {(m.totalGrams / 1000).toFixed(2)}kg (counted in trays)
