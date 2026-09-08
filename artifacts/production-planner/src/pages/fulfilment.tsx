@@ -28,8 +28,9 @@ import {
   RefreshCw, MapPin, SkipForward, RotateCcw, XCircle, Loader2,
   ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter, ArrowUpDown,
   Volume2, VolumeX, AlertTriangle, PackageCheck, Snowflake, CalendarClock,
-  ClipboardCheck, Factory, ShoppingBag, Refrigerator,
+  ClipboardCheck, Factory, ShoppingBag, Refrigerator, Flame,
 } from "lucide-react";
+import { shouldPromptShrinkWrap, printDialogLikelyShown } from "@/lib/packing-alerts";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -941,7 +942,17 @@ function printLabel(
           settle(false, "The print frame had no document to print. Nothing was sent to the printer.");
           return;
         }
+        const printCalledAt = performance.now();
         iframe.contentWindow.print();
+        // In kiosk mode print() spools and returns within milliseconds. A
+        // call that blocked for over a second means Chrome put its print
+        // dialog up and someone clicked it away — this machine has lost
+        // --kiosk-printing. The page can't suppress the dialog itself, so
+        // tell the bench how to fix the machine instead of leaving them
+        // clicking Print on every label (Graeme, 2026-09-08).
+        if (printDialogLikelyShown(performance.now() - printCalledAt)) {
+          window.dispatchEvent(new CustomEvent("apc-print-dialog-shown"));
+        }
         clearTimeout(fallbackTimer);
         fallbackTimer = setTimeout(() => settle(true), 5_000);
       } catch (err) {
@@ -1055,6 +1066,67 @@ function PickingPaceStrip({ packed, total, oph }: {
         <span className="text-xs uppercase tracking-wider opacity-90">orders/hr</span>
         <span className="text-sm leading-tight">{band ? band.label : "warming up…"}</span>
       </span>
+    </div>
+  );
+}
+
+/** Full-screen acknowledge-to-dismiss prompt: the shrink wrapper takes about
+ *  15 orders' worth of packing to get up to temperature, and the team wraps
+ *  the moment packing runs out — so at 15 orders remaining someone must walk
+ *  over and switch it on NOW or everyone waits on a cold wrapper later. It
+ *  deliberately blocks scanning until acknowledged: the button is the walk. */
+function ShrinkWrapPrompt({ remaining, onAcknowledge }: { remaining: number; onAcknowledge: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+      <div className="bg-card border-2 border-orange-400 dark:border-orange-700 rounded-2xl shadow-2xl w-full max-w-lg p-8 text-center space-y-4">
+        <Flame className="w-16 h-16 text-orange-500 mx-auto" />
+        <h2 className="text-2xl font-extrabold leading-tight">
+          Turn on the shrink wrapper now if it&rsquo;s not already on
+        </h2>
+        <p className="text-base text-muted-foreground">
+          <span className="font-bold text-foreground tabular-nums">{remaining}</span> order{remaining === 1 ? "" : "s"} left to pack —
+          that&rsquo;s about how long the wrapper takes to heat up, so switching it on
+          now means it&rsquo;s warm the moment wrapping starts.
+        </p>
+        <button
+          onClick={onAcknowledge}
+          className="w-full px-8 py-4 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-bold text-lg transition-colors"
+        >
+          It&rsquo;s on — keep packing
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Shown after a label print blocked long enough that Chrome must have put its
+ *  print dialog up: this machine's Chrome is running WITHOUT --kiosk-printing,
+ *  so every label needs a manual click. The app cannot suppress the dialog —
+ *  the fix is relaunching Chrome with the flag, and the classic trap is that
+ *  the flag is silently ignored when any Chrome process is already running. */
+function KioskPrintBanner({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <div className="rounded-xl border-2 border-amber-500 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 flex items-start gap-3">
+      <Printer className="w-5 h-5 text-amber-700 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+      <div className="flex-1 space-y-1.5">
+        <p className="font-semibold text-sm text-amber-900 dark:text-amber-200">
+          Labels need a click to print — silent printing is off on this computer
+        </p>
+        <p className="text-sm text-amber-800 dark:text-amber-300">
+          Chrome showed its print dialogue, which means it was started without the
+          kiosk-printing flag. To fix: <span className="font-medium">close every Chrome window</span> (and
+          quit any Chrome icon in the system tray), then reopen Chrome from the shortcut that includes{" "}
+          <code className="bg-amber-100 dark:bg-amber-900 px-1.5 py-0.5 rounded font-mono text-xs">--kiosk-printing</code>.
+          The flag is ignored if Chrome is still running anywhere when the shortcut is clicked.
+        </p>
+      </div>
+      <button
+        onClick={onDismiss}
+        className="p-1.5 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40 rounded-lg transition-colors"
+        title="Dismiss — it will come back if another print shows the dialogue"
+      >
+        <X className="w-4 h-4" />
+      </button>
     </div>
   );
 }
@@ -1550,6 +1622,45 @@ export default function Fulfilment() {
       return (data.dailyRows?.[0] ?? null) as { ordersPerHour: number | null; count: number } | null;
     },
   });
+
+  // ── Shrink-wrapper warm-up prompt ────────────────────────────────────────
+  // At 15 orders remaining an overlay tells the bench to switch the shrink
+  // wrapper on, so it's up to temperature the moment packing runs out and
+  // wrapping starts. Once per dispatch day, per device; the acknowledgement
+  // lives in localStorage so a mid-wave page reload doesn't re-nag.
+  const [shrinkWrapAcked, setShrinkWrapAcked] = useState(false);
+  useEffect(() => {
+    try { setShrinkWrapAcked(localStorage.getItem(`fulfilment_shrink_wrap_ack_${queryTag}`) === "1"); }
+    catch { setShrinkWrapAcked(false); }
+  }, [queryTag]);
+  function acknowledgeShrinkWrap() {
+    setShrinkWrapAcked(true);
+    try { localStorage.setItem(`fulfilment_shrink_wrap_ack_${queryTag}`, "1"); } catch { /* private mode */ }
+    // The overlay swallowed keyboard focus — put the scanner back to work.
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLInputElement>('input[data-scan-input="true"]')?.focus();
+    });
+  }
+  const remainingToPack = progress ? progress.totalOrders - progress.totalFulfilled : null;
+  const showShrinkWrapPrompt = shouldPromptShrinkWrap({
+    totalOrders: progress?.totalOrders ?? null,
+    totalFulfilled: progress?.totalFulfilled ?? null,
+    view,
+    acknowledged: shrinkWrapAcked,
+  });
+
+  // ── Kiosk-printing watchdog ──────────────────────────────────────────────
+  // printLabel dispatches this event when a print() call blocked long enough
+  // that Chrome must have shown its print dialogue (i.e. --kiosk-printing is
+  // off on this machine). Sticky until dismissed, and dismissal isn't
+  // permanent: the next dialogue-shaped print raises it again, so it can't
+  // be swiped away and forgotten while printing is still manual.
+  const [printDialogSeen, setPrintDialogSeen] = useState(false);
+  useEffect(() => {
+    const onDialogShown = () => setPrintDialogSeen(true);
+    window.addEventListener("apc-print-dialog-shown", onDialogShown);
+    return () => window.removeEventListener("apc-print-dialog-shown", onDialogShown);
+  }, []);
 
   const { data: postcodeValidations, refetch: refetchPostcodes } = useQuery({
     queryKey: ["fulfilment-postcode-validations", queryTag],
@@ -2779,6 +2890,10 @@ export default function Fulfilment() {
           total={progress?.totalOrders ?? null}
           oph={packingPace?.ordersPerHour ?? null}
         />
+        {showShrinkWrapPrompt && remainingToPack != null && (
+          <ShrinkWrapPrompt remaining={remainingToPack} onAcknowledge={acknowledgeShrinkWrap} />
+        )}
+        {printDialogSeen && <KioskPrintBanner onDismiss={() => setPrintDialogSeen(false)} />}
         {showTestModeBanner && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
         {reconcileMode && <ReconcileModeBanner />}
 
@@ -3011,6 +3126,10 @@ export default function Fulfilment() {
           total={progress?.totalOrders ?? null}
           oph={packingPace?.ordersPerHour ?? null}
         />
+        {showShrinkWrapPrompt && remainingToPack != null && (
+          <ShrinkWrapPrompt remaining={remainingToPack} onAcknowledge={acknowledgeShrinkWrap} />
+        )}
+        {printDialogSeen && <KioskPrintBanner onDismiss={() => setPrintDialogSeen(false)} />}
         <div className="glass-panel p-8 rounded-2xl border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 text-center">
           <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto mb-4" />
           <h2 className="text-2xl font-bold text-green-800 dark:text-green-200 mb-1">Order Complete!</h2>
@@ -3068,6 +3187,10 @@ export default function Fulfilment() {
           total={progress?.totalOrders ?? null}
           oph={packingPace?.ordersPerHour ?? null}
         />
+        {showShrinkWrapPrompt && remainingToPack != null && (
+          <ShrinkWrapPrompt remaining={remainingToPack} onAcknowledge={acknowledgeShrinkWrap} />
+        )}
+        {printDialogSeen && <KioskPrintBanner onDismiss={() => setPrintDialogSeen(false)} />}
         {pendingPickOrder && (
           <ShopifyConfirmDialog
             title={`Ship order ${pendingPickOrder.name}?`}
@@ -4002,6 +4125,7 @@ export default function Fulfilment() {
     <div className="space-y-6">
       {showTestModeBanner && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
         {reconcileMode && <ReconcileModeBanner />}
+      {printDialogSeen && <KioskPrintBanner onDismiss={() => setPrintDialogSeen(false)} />}
 
       {/* Live-mode confirmation dialog — appears when operator selects an order */}
       {pendingPickOrder && (
