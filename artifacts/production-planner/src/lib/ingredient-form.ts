@@ -66,6 +66,10 @@ export const ingredientFormSchema = z.object({
   surplusAbsoluteQty: nullableNumber((n) => n.min(0)),
   shelfLifeDays: nullableNumber((n) => n.int().positive()),
   requiresUseByDate: z.boolean().optional(),
+  // Prep-label rules: food-safe days after opening / after defrosting.
+  // Empty = the category default set on the Label Printer tools page.
+  openedLifeDays: nullableNumber((n) => n.int().positive()),
+  defrostLifeDays: nullableNumber((n) => n.int().positive()),
   // Packs per supplier case. When set, the orders page rounds the pack count to
   // order up to the nearest whole case. Empty = order in individual packs.
   caseSizePacks: nullableNumber((n) => n.int().positive()),
@@ -163,6 +167,8 @@ export function emptyIngredientFormDefaults(
     surplusAbsoluteQty: null,
     shelfLifeDays: null,
     requiresUseByDate: false,
+    openedLifeDays: null,
+    defrostLifeDays: null,
     caseSizePacks: null,
     kanbanEnabled: false,
     kanbanQuantity: 0,
@@ -246,6 +252,8 @@ export function ingredientToFormValues(
     surplusAbsoluteQty: num(it.surplusAbsoluteQty),
     shelfLifeDays: num(it.shelfLifeDays),
     requiresUseByDate: bool(it.requiresUseByDate),
+    openedLifeDays: num(it.openedLifeDays),
+    defrostLifeDays: num(it.defrostLifeDays),
     caseSizePacks: num(it.caseSizePacks),
     kanbanEnabled: bool(it.kanbanEnabled),
     kanbanQuantity: num(it.kanbanQuantity) ?? 0,
@@ -314,6 +322,8 @@ export function buildIngredientPayload(data: IngredientFormValues) {
       data.surplusMode === "absolute" ? (data.surplusAbsoluteQty ?? null) : null,
     shelfLifeDays: data.shelfLifeDays ?? null,
     requiresUseByDate: data.requiresUseByDate ?? false,
+    openedLifeDays: data.openedLifeDays ?? null,
+    defrostLifeDays: data.defrostLifeDays ?? null,
     caseSizePacks: data.caseSizePacks ?? null,
     kanbanEnabled: data.kanbanEnabled ?? false,
     kanbanQuantity: data.kanbanQuantity ?? 0,

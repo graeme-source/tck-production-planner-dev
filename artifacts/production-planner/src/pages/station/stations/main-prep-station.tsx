@@ -21,6 +21,7 @@ import type { NextActivePlan } from "../shared/prep-helpers";
 import { DeferredPrepBanner } from "../shared/deferred-prep-banner";
 import { PrepSubNav } from "./prep-hub";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
+import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
 
 export interface MainPrepIngredient {
   ingredientId: number;
@@ -1021,6 +1022,12 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                               >
                                 <FlaskConical className="w-4 h-4" /> Replenish
                               </button>
+                            )}
+                            {/* One-tap opened-ingredient label — for real
+                                ingredients only: a sub-recipe row's id is a
+                                sub-recipe id, not an ingredient id. */}
+                            {!ing.isSubRecipe && (
+                              <PrintIngredientLabelButton ingredientId={ing.ingredientId} itemName={ing.ingredientName} />
                             )}
                           </div>
                           <p className="text-base text-muted-foreground mt-0.5">

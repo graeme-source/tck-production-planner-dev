@@ -21,6 +21,7 @@ import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftB
 import type { NextActivePlan } from "../shared/prep-helpers";
 import { PrepSubNav } from "./prep-hub";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
+import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
 import { useMainPrepData } from "./main-prep-station";
 import type { MainPrepIngredient, LinkedItem } from "./main-prep-station";
 import { NumberInput } from "@/components/ui/number-input";
@@ -1302,7 +1303,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                         {" in: "}{ing.recipes.map(r => r.recipeName).join(", ")}
                       </p>
                     )}
-                    <div className="mt-2">
+                    <div className="mt-2 flex items-start justify-between gap-2">
                       <SopChips
                         links={sopLinksByIngredient?.[ing.ingredientId] ?? []}
                         onOpen={sopViewer.open}
@@ -1314,6 +1315,11 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                         ]}
                         queryKeysToInvalidate={[sopLinksKey]}
                       />
+                      {/* One-tap opened-ingredient label — real ingredients
+                          only; a sub-recipe row's id isn't an ingredient id. */}
+                      {!ing.isSubRecipe && (
+                        <PrintIngredientLabelButton ingredientId={ing.ingredientId} itemName={ing.ingredientName} className="flex-shrink-0" />
+                      )}
                     </div>
                   </div>
                   {status.totalTinCount > 0 && (

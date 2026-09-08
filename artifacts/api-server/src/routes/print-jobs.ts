@@ -25,6 +25,12 @@ import {
   renderTinLabel,
   renderTestLabel,
 } from "../lib/label-tspl";
+import {
+  resolveOpenedLife,
+  parseCategoryDefaults,
+  addDaysIso,
+  LABEL_RULE_SETTINGS_KEY,
+} from "../lib/label-rules";
 
 const router: IRouter = Router();
 
@@ -75,13 +81,48 @@ let lastBridgePollAt: number | null = null;
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "yyyy-mm-dd expected");
 
+// Two ways to describe an ingredient label: the one-tap path sends just an
+// ingredientId and the server resolves everything from the label rules; the
+// explicit path (options sheet, ad-hoc) sends the fields it wants. Explicit
+// fields always win over resolved ones.
 const ingredientFieldsSchema = z.object({
-  itemName: z.string().min(1).max(80),
-  useBy: isoDate,
+  ingredientId: z.number().int().positive().optional(),
+  itemName: z.string().min(1).max(80).optional(),
+  useBy: isoDate.optional(),
   openedOn: isoDate.optional(),
   storageNote: z.string().max(30).nullable().optional(),
   rawMarker: z.boolean().optional(),
-});
+}).refine(
+  d => d.ingredientId != null || (d.itemName != null && d.useBy != null),
+  "Send ingredientId, or itemName + useBy",
+);
+
+/** Resolve the one-tap fields from the ingredient's label rules. */
+async function resolveIngredientFields(f: z.infer<typeof ingredientFieldsSchema>, today: string): Promise<
+  | { ok: true; itemName: string; useBy: string; rawMarker: boolean; ruleDays: number; ruleSource: string }
+  | { ok: false; error: string }
+> {
+  const rows = await db.execute<{ name: string; category: string | null; opened_life_days: number | null }>(sql`
+    SELECT name, category, opened_life_days FROM ingredients WHERE id = ${f.ingredientId}
+  `);
+  const ing = rows.rows[0];
+  if (!ing) return { ok: false, error: "Ingredient not found" };
+  const settingRows = await db.execute<{ value: string }>(sql`
+    SELECT value FROM app_settings WHERE key = ${LABEL_RULE_SETTINGS_KEY}
+  `);
+  const rule = resolveOpenedLife(
+    { openedLifeDays: ing.opened_life_days, category: ing.category },
+    parseCategoryDefaults(settingRows.rows[0]?.value),
+  );
+  return {
+    ok: true,
+    itemName: f.itemName ?? ing.name,
+    useBy: f.useBy ?? addDaysIso(today, rule.days),
+    rawMarker: f.rawMarker ?? ing.category === "raw_meat",
+    ruleDays: rule.days,
+    ruleSource: rule.source,
+  };
+}
 
 const tinFieldsSchema = z.object({
   recipeName: z.string().min(1).max(80),
@@ -114,7 +155,34 @@ router.post("/", requireAuth, validate(createJobSchema), async (req, res) => {
       res.status(400).json({ error: "Validation failed", details: parsed.error.flatten() });
       return;
     }
-    const f = { ...parsed.data, openedOn: parsed.data.openedOn ?? today, initials };
+    let f: Parameters<typeof renderIngredientLabel>[0] & Record<string, unknown>;
+    if (parsed.data.ingredientId != null) {
+      const resolved = await resolveIngredientFields(parsed.data, today);
+      if (!resolved.ok) { res.status(404).json({ error: resolved.error }); return; }
+      f = {
+        itemName: resolved.itemName,
+        useBy: resolved.useBy,
+        openedOn: parsed.data.openedOn ?? today,
+        storageNote: parsed.data.storageNote ?? null,
+        rawMarker: resolved.rawMarker,
+        initials,
+        ingredientId: parsed.data.ingredientId,
+        // Ride the resolution into the audit trail: WHERE the date came
+        // from (own rule / category default / global fallback) matters when
+        // a printed use-by is ever questioned.
+        ruleDays: resolved.ruleDays,
+        ruleSource: resolved.ruleSource,
+      };
+    } else {
+      f = {
+        itemName: parsed.data.itemName!,
+        useBy: parsed.data.useBy!,
+        openedOn: parsed.data.openedOn ?? today,
+        storageNote: parsed.data.storageNote ?? null,
+        rawMarker: parsed.data.rawMarker ?? false,
+        initials,
+      };
+    }
     tspl = renderIngredientLabel(f, copies);
     payload = f;
   } else {
@@ -133,7 +201,11 @@ router.post("/", requireAuth, validate(createJobSchema), async (req, res) => {
     VALUES (${kind}, ${JSON.stringify(payload)}::jsonb, ${tspl}, ${copies}, ${req.session.userId})
     RETURNING id
   `);
-  res.status(201).json({ id: inserted.rows[0]?.id ?? null });
+  // The payload goes back so the one-tap button can toast the computed
+  // use-by, and bridgeOnline so a tap while the printer PC is down warns
+  // instead of pretending.
+  const bridgeOnline = lastBridgePollAt != null && Date.now() - lastBridgePollAt < 60_000;
+  res.status(201).json({ id: inserted.rows[0]?.id ?? null, payload, bridgeOnline });
 });
 
 // ── GET /pending — bridge long-poll ─────────────────────────────────────────

@@ -47,6 +47,12 @@ export const ingredientsTable = pgTable("ingredients", {
   surplusAbsoluteQty: numeric("surplus_absolute_qty", { precision: 12, scale: 4 }),
   shelfLifeDays: integer("shelf_life_days"),
   requiresUseByDate: boolean("requires_use_by_date").notNull().default(false),
+  // Prep-label rules: food-safe days after OPENING (shelfLifeDays stays the
+  // unopened figure) and after DEFROSTING. Null = category default from
+  // app_settings 'label_opened_life_defaults', then the global fallback —
+  // see api-server lib/label-rules.ts.
+  openedLifeDays: integer("opened_life_days"),
+  defrostLifeDays: integer("defrost_life_days"),
   // When true, this ingredient is stock-checked, ordered and received in
   // whole packs (e.g. bottles of milk) rather than its native weight/volume.
   // Recipes and prep always use the native unit. Requires packWeight > 0.

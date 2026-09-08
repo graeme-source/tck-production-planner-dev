@@ -16,6 +16,7 @@ import { PrepDateBanner, PrepDraftBanner, toKg, toastDraftBlocked, StockCheckSta
 import { PrepSubNav, usePrepByRecipe } from "./prep-hub";
 import type { PrepRecipeDetail, PrepIngredientDetail } from "./prep-hub";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
+import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
 
 interface PrepTrayCompletion {
   id: number;
@@ -581,8 +582,10 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                       )}
                     </div>
 
-                    {/* SOPs for this meat — "Show me how" at the point of prep */}
-                    <div className="px-4 py-2 border-t border-rose-100 dark:border-rose-900/40 bg-white dark:bg-background/50">
+                    {/* SOPs for this meat — "Show me how" at the point of
+                        prep — and the one-tap ingredient label: opening the
+                        bag is exactly when the label gets printed. */}
+                    <div className="px-4 py-2 border-t border-rose-100 dark:border-rose-900/40 bg-white dark:bg-background/50 flex items-start justify-between gap-2">
                       <SopChips
                         links={(sopLinksByIngredient?.[ing.ingredientId] ?? []).filter(l => l.scope === "ingredient" || l.recipeId === selected.recipeId)}
                         onOpen={sopViewer.open}
@@ -592,6 +595,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                         ]}
                         queryKeysToInvalidate={[sopIngredientsKey]}
                       />
+                      <PrintIngredientLabelButton ingredientId={ing.ingredientId} itemName={ing.ingredientName} className="flex-shrink-0" />
                     </div>
 
                     {/* Linked ingredient sub-rows. Add-at-cooking items are NOT

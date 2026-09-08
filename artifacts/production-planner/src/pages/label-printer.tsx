@@ -8,12 +8,13 @@
  * label audit trail. The one-tap ingredient/tin buttons on the prep
  * stations come in the next stages; this page is the plumbing check.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { Printer, Loader2, CheckCircle2, AlertTriangle, Wifi, WifiOff } from "lucide-react";
+import { Printer, Loader2, CheckCircle2, AlertTriangle, Wifi, WifiOff, CalendarClock } from "lucide-react";
+import { INGREDIENT_CATEGORIES } from "@/components/ingredient-form-dialog";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -43,6 +44,114 @@ function payloadSummary(job: PrintJobRow): string {
   if (job.kind === "ingredient") return `${p.itemName ?? "?"} · use by ${p.useBy ?? "?"}`;
   if (job.kind === "tin") return `${p.recipeName ?? "?"} · use ${p.intendedUse ?? "?"} · use by ${p.useBy ?? "?"}`;
   return job.kind;
+}
+
+const RULES_KEY = "label_opened_life_defaults";
+// Categories that can sensibly carry an opened-life default — packaging
+// never gets a use-by label.
+const RULE_CATEGORIES = INGREDIENT_CATEGORIES.filter(c => c.value && c.value !== "packaging");
+
+/** Category → opened-life-days defaults. Autosaves ~1s after the last
+ *  change, with the save state visible (charter rule for data entry).
+ *  Ingredient-level overrides in the inventory form beat these; anything
+ *  with neither falls to a deliberately short global default of 2 days. */
+function CategoryDefaultsEditor() {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [loaded, setLoaded] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "dirty" | "saving" | "saved" | "error">("idle");
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    fetch(`${BASE}/api/app-settings/${RULES_KEY}`, { credentials: "include" })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (d?.value) {
+          try {
+            const parsed = JSON.parse(d.value) as Record<string, number>;
+            setValues(Object.fromEntries(Object.entries(parsed).map(([k, v]) => [k, String(v)])));
+          } catch { /* unreadable blob — start clean */ }
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoaded(true));
+  }, []);
+
+  const save = (next: Record<string, string>) => {
+    setSaveState("saving");
+    const blob: Record<string, number> = {};
+    for (const [k, v] of Object.entries(next)) {
+      const n = Number(v);
+      if (v.trim() !== "" && Number.isFinite(n) && n > 0) blob[k] = Math.floor(n);
+    }
+    fetch(`${BASE}/api/app-settings/${RULES_KEY}`, {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: JSON.stringify(blob) }),
+    })
+      .then(r => { if (!r.ok) throw new Error(); setSaveState("saved"); })
+      .catch(() => {
+        setSaveState("error");
+        toast({ title: "Couldn't save the defaults", description: "Changing these needs admin access.", variant: "destructive" });
+      });
+  };
+
+  const onChange = (cat: string, v: string) => {
+    const next = { ...values, [cat]: v };
+    setValues(next);
+    setSaveState("dirty");
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => save(next), 1000);
+  };
+
+  return (
+    <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="font-semibold text-lg flex items-center gap-2"><CalendarClock className="w-5 h-5 text-primary" /> Opened-life defaults by category</h2>
+        <span className={cn(
+          "text-sm font-medium",
+          saveState === "saved" && "text-emerald-600",
+          saveState === "saving" && "text-muted-foreground",
+          saveState === "dirty" && "text-muted-foreground",
+          saveState === "error" && "text-destructive",
+        )}>
+          {saveState === "saving" && "Saving…"}
+          {saveState === "dirty" && "…"}
+          {saveState === "saved" && "Saved ✓"}
+          {saveState === "error" && "Not saved"}
+        </span>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        Days an opened ingredient stays food-safe — this drives the use-by on one-tap prep labels.
+        A number set on the ingredient itself (inventory form) beats these; anything with neither
+        prints a cautious <span className="font-semibold text-foreground">2 days</span>.
+      </p>
+      {!loaded ? (
+        <div className="py-6 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {RULE_CATEGORIES.map(cat => (
+            <label key={cat.value} className="block">
+              <span className="text-sm font-medium block mb-1">{cat.label}</span>
+              <div className="relative">
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  inputMode="numeric"
+                  value={values[cat.value] ?? ""}
+                  onChange={e => onChange(cat.value, e.target.value)}
+                  placeholder="2"
+                  className="w-full px-3 py-2 pr-12 border border-border rounded-lg text-sm bg-background"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-xs pointer-events-none">days</span>
+              </div>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function LabelPrinterPage() {
@@ -138,6 +247,8 @@ export default function LabelPrinterPage() {
           </button>
         </div>
       </div>
+
+      <CategoryDefaultsEditor />
 
       {/* Recent jobs — the start of the label audit trail */}
       <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
