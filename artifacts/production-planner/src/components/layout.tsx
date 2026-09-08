@@ -47,6 +47,7 @@ import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/user-avatar";
 import { NotificationBell } from "@/components/notification-bell";
 import { CurrentUserBadge } from "@/components/current-user-badge";
+import { PageSopButton } from "@/components/page-sop-rail";
 import { useUnseenImprovementCount } from "@/hooks/use-unseen-improvements";
 import { LeanWeeklyStrip } from "@/components/lean-weekly-review";
 import { NotificationFlash } from "@/components/notification-flash";
@@ -952,6 +953,11 @@ function TopBar({ onMenu, fallbackTitle, onOpenSops }: { onMenu: () => void; fal
           {header.description}
         </span>
       )}
+      {/* This page's own SOPs — "Show me how" plus attach — on every screen,
+          keyed by route. fallbackTitle (the nav name) labels it, not the
+          header title: pages like packing retitle per order, and an SOP
+          created here should be named for the PAGE, not order #133647. */}
+      <PageSopButton pageLabel={fallbackTitle} />
       <CurrentUserBadge />
       <button
         onClick={onOpenSops}

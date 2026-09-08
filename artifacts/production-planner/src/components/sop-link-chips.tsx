@@ -39,7 +39,7 @@ export interface SopLink {
 }
 
 export interface SopAttachTarget {
-  targetType: "checklist_template" | "ingredient" | "recipe_ingredient" | "recipe" | "sub_recipe" | "station";
+  targetType: "checklist_template" | "ingredient" | "recipe_ingredient" | "recipe" | "sub_recipe" | "station" | "page";
   a?: number;
   b?: number;
   text?: string;
@@ -218,8 +218,12 @@ export function StationSopRail({ stationType, stationLabel }: { stationType: str
  *
  *  Sizing is for a gloved hand on a 10.2" iPad: full-width create button,
  *  44px primary actions, and no autofocus on the search field so the
- *  keyboard doesn't cover the list before anyone has read it. */
-function SopPicker({ targets, existingSopIds, onDone, onInvalidate, onEditSop }: {
+ *  keyboard doesn't cover the list before anyone has read it.
+ *
+ *  Exported for surfaces that can't host it inline — the top bar's page-SOP
+ *  modal wraps this same picker so attach/create behaves identically
+ *  everywhere. */
+export function SopPicker({ targets, existingSopIds, onDone, onInvalidate, onEditSop }: {
   targets: SopAttachTarget[];
   existingSopIds: Set<number>;
   onDone: () => void;
