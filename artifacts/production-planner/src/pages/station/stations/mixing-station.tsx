@@ -6,7 +6,7 @@ import {
   getGetProductionPlanQueryKey,
 } from "@workspace/api-client-react";
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import {
   ChevronUp, Plus, Minus, Check, CheckCircle2, PlayCircle, Loader2,
@@ -52,6 +52,8 @@ function qtyToGrams(qty: number, unit: string | null): number {
   return qty;
 }
 import { cn } from "@/lib/utils";
+import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
+import { kgOrNull } from "@workspace/units";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import {
@@ -529,6 +531,24 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
   const items = [...(plan.items ?? [])]
     .filter(it => !isMacCheese(it as any))
     .sort((a, b) => a.orderPosition - b.orderPosition);
+
+  // Per-flavour SOPs on this station (Graeme, 2026-09-09): the process for
+  // cooking or mixing THIS recipe hangs off the recipe itself, scoped to
+  // the mixing surface — one fetch for every flavour on the plan.
+  const sopViewer = useSopViewer("mixing");
+  const mixSopRecipeIds = [...new Set([
+    ...cookingRecipes.map(r => r.recipeId),
+    ...items.map(i => i.recipeId).filter((x): x is number => x != null),
+  ])].sort((a, b) => a - b);
+  const mixSopKey = ["sop-links-recipes", "mixing", mixSopRecipeIds.join(",")];
+  const { data: sopLinksByRecipe } = useQuery<Record<number, SopLink[]>>({
+    queryKey: mixSopKey,
+    queryFn: async () => {
+      const res = await fetch(`/api/standards/links/for-recipes?ids=${mixSopRecipeIds.join(",")}&station=mixing`, { credentials: "include" });
+      return res.ok ? res.json() : {};
+    },
+    enabled: mixSopRecipeIds.length > 0,
+  });
 
   // ── Day schedule (timing engine inputs) ─────────────────────────────────────
   // The server supplies per-recipe expected build minutes + meat process times
@@ -1032,6 +1052,7 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
       </div>
     )}
     <div className="space-y-4">
+      {sopViewer.dialog}
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
           <div>
@@ -1156,6 +1177,18 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                           </div>
                         )}
                       </div>
+                    </div>
+
+                    {/* This flavour's own SOPs — the process for cooking THIS
+                        recipe's meat, attachable right here (Graeme,
+                        2026-09-09). Scoped to the mixing surface. */}
+                    <div className="px-4 py-2 border-b border-border bg-white dark:bg-background/50">
+                      <SopChips
+                        links={sopLinksByRecipe?.[recipe.recipeId] ?? []}
+                        onOpen={sopViewer.open}
+                        attach={{ targetType: "recipe", a: recipe.recipeId, text: "mixing", label: recipe.recipeName, subject: recipe.recipeName, station: "mixing" }}
+                        queryKeysToInvalidate={[mixSopKey]}
+                      />
                     </div>
 
                     {/* Add-at-cooking marinades — red until confirmed in,
@@ -1493,6 +1526,9 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                   <MixingOverviewRow
                     key={item.id}
                     item={item}
+                    sopLinks={item.recipeId != null ? (sopLinksByRecipe?.[item.recipeId] ?? []) : []}
+                    onOpenSop={sopViewer.open}
+                    sopQueryKey={mixSopKey}
                     isActive={isActive}
                     isComplete={isComplete}
                     isDraggable={isDraggable}
@@ -1559,9 +1595,14 @@ interface MixingOverviewRowProps {
   /** Predicted timing for this recipe from the day-schedule engine (null when
    *  the recipe has no build time set or the schedule hasn't loaded). */
   sched: ScheduledRecipe | null;
+  /** This flavour's SOPs on the mixing surface + attach wiring (Graeme,
+   *  2026-09-09) — rendered on the expanded card. */
+  sopLinks: SopLink[];
+  onOpenSop: (sopId: number) => void;
+  sopQueryKey: unknown[];
 }
 
-function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFillingItems, tinsComplete, tinsTarget, allTinsDone, progress, mixingCount, target, batchesPerTinEven, isOnBreak, isAdmin, onActivate, onAdd, onRemove, tinPending, filling, checkedIngredients, onToggleIngredient, completing, completeFailed, onAutoComplete, sched }: MixingOverviewRowProps) {
+function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFillingItems, tinsComplete, tinsTarget, allTinsDone, progress, mixingCount, target, batchesPerTinEven, isOnBreak, isAdmin, onActivate, onAdd, onRemove, tinPending, filling, checkedIngredients, onToggleIngredient, completing, completeFailed, onAutoComplete, sched, sopLinks, onOpenSop, sopQueryKey }: MixingOverviewRowProps) {
   const {
     attributes, listeners, setNodeRef,
     transform, transition, isDragging,
@@ -1715,6 +1756,19 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
         </div>
       </div>
 
+      {/* This flavour's own SOPs — the mixing process for THIS tin,
+          attachable right here (Graeme, 2026-09-09). */}
+      {isActive && item.recipeId != null && (
+        <div className="px-4 py-2 border-t border-border/40">
+          <SopChips
+            links={sopLinks}
+            onOpen={onOpenSop}
+            attach={{ targetType: "recipe", a: item.recipeId, text: "mixing", label: item.recipeName ?? "this recipe", subject: item.recipeName ?? undefined, station: "mixing" }}
+            queryKeysToInvalidate={[sopQueryKey]}
+          />
+        </div>
+      )}
+
       {isActive && hasFillingItems && filling && (() => {
         const lineChecks = [
           ...filling.fillingIngredients.map(fi => ({
@@ -1756,6 +1810,14 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
             </div>
           );
         };
+        // Day target in weight: what the builders use per batch, times the
+        // day's batches — the number the person mixing the filling is
+        // actually aiming at (Graeme, 2026-09-09: "12 batches of a 1 kg
+        // filling mix → your target is 12 kg"). Count-unit lines (kgOrNull
+        // = null) are skipped rather than miscounted.
+        const perBatchKg = [...filling.fillingIngredients, ...filling.fillingSubRecipes]
+          .reduce((sum, l) => sum + (kgOrNull(l.qtyPerBatch, l.unit) ?? 0), 0);
+        const dayTargetKg = perBatchKg * target;
         return (
         <div className="border-t border-primary/20 bg-primary/5">
           <div className="px-4 py-2 flex items-center justify-between">
@@ -1769,6 +1831,16 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
               </span>
             )}
           </div>
+          {dayTargetKg > 0 && (
+            <div className="mx-4 mb-2 rounded-lg bg-primary/10 px-3 py-2">
+              <p className="text-base font-bold text-primary tabular-nums">
+                Day target: {dayTargetKg.toFixed(dayTargetKg >= 10 ? 1 : 2)} kg filling
+                <span className="font-normal text-muted-foreground text-sm">
+                  {" "}({perBatchKg.toFixed(3)} kg per batch × {formatBatches(target)} batches)
+                </span>
+              </p>
+            </div>
+          )}
           <div className="px-4 pb-3 space-y-0.5">
             {filling.fillingIngredients.map((fi, idx) => {
               const check = checkByKey.get(`ing-${fi.ingredientId}`);
