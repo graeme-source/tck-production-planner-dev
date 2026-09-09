@@ -113,7 +113,7 @@ interface FillingMixItem {
   tinsTarget: number;
   batchesPerTin: number;
   servingsPerTin: number;
-  fillingIngredients: Array<{ ingredientId: number; name: string | null; unit: string | null; qtyPerBatch: number; qtyPerTin: number; mixingOverage?: number }>;
+  fillingIngredients: Array<{ ingredientId: number; name: string | null; unit: string | null; category?: string | null; qtyPerBatch: number; qtyPerTin: number; mixingOverage?: number }>;
   fillingSubRecipes: Array<{ subRecipeId: number; name: string | null; unit: string | null; qtyPerBatch: number; qtyPerTin: number; mixingOverage?: number }>;
 }
 
@@ -1832,13 +1832,29 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
             )}
           </div>
           {dayTargetKg > 0 && (
-            <div className="mx-4 mb-2 rounded-lg bg-primary/10 px-3 py-2">
+            <div className="mx-4 mb-2 rounded-lg bg-primary/10 px-3 py-2 space-y-0.5">
               <p className="text-base font-bold text-primary tabular-nums">
                 Day target: {dayTargetKg.toFixed(dayTargetKg >= 10 ? 1 : 2)} kg filling
                 <span className="font-normal text-muted-foreground text-sm">
                   {" "}({perBatchKg.toFixed(3)} kg per batch × {formatBatches(target)} batches)
                 </span>
               </p>
+              {/* The meat inside that filling, as its own line: recipe
+                  quantities are cooked-basis, so line × batches IS the
+                  cooked weight that should be coming off the ovens for the
+                  day (Graeme, 2026-09-09). Category-driven, never
+                  name-matched. */}
+              {filling.fillingIngredients
+                .filter(l => l.category === "raw_meat" || l.category === "cooked_meat")
+                .map(l => {
+                  const kg = (kgOrNull(l.qtyPerBatch, l.unit) ?? 0) * target;
+                  if (kg <= 0) return null;
+                  return (
+                    <p key={`meat-${l.ingredientId}`} className="text-sm font-semibold text-rose-700 dark:text-rose-400 tabular-nums">
+                      Cooked {l.name ?? "meat"}: {kg.toFixed(kg >= 10 ? 1 : 2)} kg for the day
+                    </p>
+                  );
+                })}
             </div>
           )}
           <div className="px-4 pb-3 space-y-0.5">

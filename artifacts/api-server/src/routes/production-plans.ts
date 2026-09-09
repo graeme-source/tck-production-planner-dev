@@ -4865,7 +4865,7 @@ router.get("/:id/filling-mix", async (req, res) => {
 
   const fillingIngredients = await db.execute(sql`
     SELECT ri.recipe_id as "recipeId", ri.ingredient_id as "ingredientId",
-           i.name as "ingredientName", i.unit, ri.quantity,
+           i.name as "ingredientName", i.unit, i.category as "category", ri.quantity,
            ri.marinade_for_ingredient_id as "marinadeForIngredientId",
            ri.mixing_overage as "mixingOverage"
     FROM recipe_ingredients ri
@@ -4885,7 +4885,7 @@ router.get("/:id/filling-mix", async (req, res) => {
       AND rs.include_in_filling_mix = true
   `);
 
-  const fiRows = fillingIngredients.rows as Array<{ recipeId: number; ingredientId: number; ingredientName: string; unit: string; quantity: string; marinadeForIngredientId: number | null; mixingOverage: string | null }>;
+  const fiRows = fillingIngredients.rows as Array<{ recipeId: number; ingredientId: number; ingredientName: string; unit: string; category: string | null; quantity: string; marinadeForIngredientId: number | null; mixingOverage: string | null }>;
   const fsRows = fillingSubRecipeRows.rows as Array<{ recipeId: number; subRecipeId: number; subRecipeName: string; unit: string; quantity: string; marinadeForIngredientId: number | null; mixingOverage: string | null }>;
 
   const result = planItems.map(item => {
@@ -4941,6 +4941,9 @@ router.get("/:id/filling-mix", async (req, res) => {
           ingredientId: fi.ingredientId,
           name: fi.ingredientName,
           unit: fi.unit,
+          // Lets the mixing screen call out the day's cooked-meat total
+          // (category raw_meat/cooked_meat) alongside the filling total.
+          category: fi.category ?? null,
           qtyPerBatch: totalQtyPerPortion * ppb,
           qtyPerTin: totalQtyPerPortion * ppb * evenBatchesPerTin + overagePerTin,
           mixingOverage: overage,
