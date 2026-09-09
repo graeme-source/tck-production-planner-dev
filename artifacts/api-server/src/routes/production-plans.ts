@@ -7932,6 +7932,8 @@ router.get("/:id/main-prep", async (req, res) => {
   // These are displayed as sub-rows under the parent ingredient, with per-recipe
   // tin breakdowns matching the parent's tin structure.
   type LinkedItemDetail = {
+    /** Present on rows that are tickable tasks (prep_linked_completions). */
+    key?: string;
     ingredientName: string;
     unit: string;
     totalQty: number;
@@ -8018,12 +8020,14 @@ router.get("/:id/main-prep", async (req, res) => {
       const saltG = Math.round(kg * pastaSaltGPerKg);
       if (!linkedItemsMap[ingId]) linkedItemsMap[ingId] = [];
       linkedItemsMap[ingId].push({
+        key: `pasta_water:${ingId}`,
         ingredientName: `Cooking water (for ${kgRounded} kg)`,
         unit: "L",
         totalQty: waterL,
         recipes: [],
       });
       linkedItemsMap[ingId].push({
+        key: `pasta_salt:${ingId}`,
         ingredientName: `Salt for pasta water (for ${kgRounded} kg)`,
         unit: "g",
         totalQty: saltG,
