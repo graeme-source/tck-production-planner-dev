@@ -39,11 +39,6 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
   const afterFile = useRef<File | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const beforeLibraryRef = useRef<HTMLInputElement>(null);
-  // Camera-roll twin of cameraRef: same routing (idea → before, done →
-  // after), no capture attribute — people often photograph the work in the
-  // moment and record the improvement later from the roll (Graeme,
-  // 2026-09-09).
-  const mainLibraryRef = useRef<HTMLInputElement>(null);
 
   if (!open) return null;
 
@@ -298,26 +293,14 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
               />
             </div>
 
-            {/* Live camera — the before shot for an idea, the after shot for
-                finished work. */}
+            {/* The main shot — the before for an idea, the after for finished
+                work. Deliberately NO capture attribute: forcing the camera
+                open removes iOS's own "Photo Library" option, and the photo
+                is often already on the roll (Graeme, 2026-09-09). Without it
+                Safari shows its chooser — Take Photo / Photo Library — which
+                is both paths from one button. */}
             <input
               ref={cameraRef}
-              type="file"
-              accept="image/*,video/*"
-              capture="environment"
-              className="hidden"
-              onChange={e => {
-                const file = e.target.files?.[0];
-                e.target.value = "";
-                if (!file) return;
-                if (isIdea) { beforeFile.current = file; setBeforeTaken(true); }
-                else { afterFile.current = file; setAfterTaken(true); }
-              }}
-            />
-            {/* The same shot from the camera roll instead of the live
-                camera — for the photo that was taken earlier. */}
-            <input
-              ref={mainLibraryRef}
               type="file"
               accept="image/*,video/*"
               className="hidden"
@@ -376,20 +359,11 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
             >
               {(isIdea ? beforeTaken : afterTaken) ? <CheckCircle2 className="w-6 h-6" /> : <Camera className="w-6 h-6" />}
               {isIdea
-                ? (beforeTaken ? "Before photo ready — tap to retake" : "Take the before photo")
-                : (afterTaken ? "After photo ready — tap to retake" : "Take the after photo")}
+                ? (beforeTaken ? "Before photo ready — tap to change" : "Add the before photo")
+                : (afterTaken ? "After photo ready — tap to change" : "Add the after photo")}
             </button>
-            {/* Already snapped it earlier? The roll works too — taking the
-                photo and recording the improvement are often different
-                moments (Graeme, 2026-09-09). */}
-            <button
-              onClick={() => mainLibraryRef.current?.click()}
-              className="w-full min-h-[44px] -mt-2 text-base font-semibold text-primary hover:underline underline-offset-2"
-            >
-              …or choose from the camera roll
-            </button>
-            <p className="text-sm text-muted-foreground text-center -mt-3">
-              A photo is fine. A short video is even better.
+            <p className="text-sm text-muted-foreground text-center -mt-1">
+              Take it now or pick it from the camera roll. A photo is fine — a short video is even better.
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
