@@ -39,6 +39,11 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
   const afterFile = useRef<File | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const beforeLibraryRef = useRef<HTMLInputElement>(null);
+  // Camera-roll twin of cameraRef: same routing (idea → before, done →
+  // after), no capture attribute — people often photograph the work in the
+  // moment and record the improvement later from the roll (Graeme,
+  // 2026-09-09).
+  const mainLibraryRef = useRef<HTMLInputElement>(null);
 
   if (!open) return null;
 
@@ -309,6 +314,21 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
                 else { afterFile.current = file; setAfterTaken(true); }
               }}
             />
+            {/* The same shot from the camera roll instead of the live
+                camera — for the photo that was taken earlier. */}
+            <input
+              ref={mainLibraryRef}
+              type="file"
+              accept="image/*,video/*"
+              className="hidden"
+              onChange={e => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (!file) return;
+                if (isIdea) { beforeFile.current = file; setBeforeTaken(true); }
+                else { afterFile.current = file; setAfterTaken(true); }
+              }}
+            />
             {/* Done-mode before shot: the moment has passed, so no capture
                 attribute — the camera roll is where that photo lives, if it
                 exists at all (Graeme, 2026-08-28: ask for before FIRST when
@@ -359,7 +379,16 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
                 ? (beforeTaken ? "Before photo ready — tap to retake" : "Take the before photo")
                 : (afterTaken ? "After photo ready — tap to retake" : "Take the after photo")}
             </button>
-            <p className="text-sm text-muted-foreground text-center -mt-1">
+            {/* Already snapped it earlier? The roll works too — taking the
+                photo and recording the improvement are often different
+                moments (Graeme, 2026-09-09). */}
+            <button
+              onClick={() => mainLibraryRef.current?.click()}
+              className="w-full min-h-[44px] -mt-2 text-base font-semibold text-primary hover:underline underline-offset-2"
+            >
+              …or choose from the camera roll
+            </button>
+            <p className="text-sm text-muted-foreground text-center -mt-3">
               A photo is fine. A short video is even better.
             </p>
 
