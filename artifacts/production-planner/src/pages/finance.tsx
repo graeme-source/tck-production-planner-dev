@@ -763,6 +763,31 @@ function AdminPanel() {
     onError: (e: Error) => toast({ title: "Scan failed to start", description: e.message, variant: "destructive" }),
   });
 
+  // Invite an external accountant: viewer role + bookkeeper flag on the
+  // invite itself, so on accepting they land straight in the finance-only
+  // view — no employment contract, no onboarding gate, no lean curriculum
+  // (Graeme, 2026-09-09). Lives here because Settings is charter-frozen
+  // and finance access is managed on this page anyway.
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteFallbackUrl, setInviteFallbackUrl] = useState<string | null>(null);
+  const inviteAccountant = useMutation({
+    mutationFn: async (): Promise<{ emailSent: boolean; inviteUrl?: string }> =>
+      jsonFetch(`${BASE}/api/auth/invites`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: inviteEmail.trim(), role: "viewer", isBookkeeper: true }),
+      }),
+    onSuccess: (r) => {
+      setInviteFallbackUrl(r.emailSent ? null : r.inviteUrl ?? null);
+      toast(r.emailSent
+        ? { title: "Invite sent", description: `${inviteEmail.trim()} has 48 hours to accept — they'll land straight on this page.` }
+        : { title: "Invite created — email didn't send", description: "Copy the link below and send it to them yourself.", variant: "destructive" });
+      setInviteEmail("");
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/access"] });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't create the invite", description: e.message, variant: "destructive" }),
+  });
+
   const toggleAccess = useMutation({
     mutationFn: ({ userId, isBookkeeper }: { userId: number; isBookkeeper: boolean }) =>
       jsonFetch(`${BASE}/api/finance/access/${userId}`, {
@@ -863,10 +888,35 @@ function AdminPanel() {
         <div>
           <div className="text-sm font-medium mb-2">Accountants — who can see finance</div>
           <p className="text-xs text-muted-foreground mb-2">
-            Switched-on users get a finance-only view: this page and nothing of the
-            production app. Admins always see everything. Create new profiles via the
-            normal user invite, then switch them on here.
+            Switched-on users get an accountant view: this page plus Deliveries, and
+            nothing of the production app — no onboarding, contracts or lean lessons.
+            Admins always see everything.
           </p>
+          <div className="flex gap-2 mb-3 flex-wrap items-end">
+            <div className="flex-1 min-w-[220px]">
+              <Label className="text-xs">Invite an accountant by email</Label>
+              <Input
+                type="email"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="accounts@yourbookkeeper.co.uk"
+                autoComplete="off"
+              />
+            </div>
+            <Button
+              size="sm"
+              onClick={() => inviteAccountant.mutate()}
+              disabled={inviteAccountant.isPending || !inviteEmail.trim()}
+            >
+              {inviteAccountant.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Send invite
+            </Button>
+          </div>
+          {inviteFallbackUrl && (
+            <p className="text-xs text-amber-700 dark:text-amber-400 mb-3 break-all">
+              Email failed to send — give them this link instead (valid 48h):{" "}
+              <span className="font-mono">{inviteFallbackUrl}</span>
+            </p>
+          )}
           <div className="space-y-1">
             {(users.data ?? []).map((u) => (
               <div key={u.id} className="flex items-center justify-between rounded border px-3 py-2">

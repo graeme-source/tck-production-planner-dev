@@ -35,10 +35,13 @@ const requireAdmin = requireFeature("settings.team");
 const CreateInviteBody = z.object({
   email: z.string().email(),
   role: z.enum(["admin", "manager", "viewer"]).default("viewer"),
+  // Accountant invite: the accepted account gets the bookkeeper flag and
+  // skips the new-starter machinery (contracts, onboarding gate).
+  isBookkeeper: z.boolean().default(false),
 });
 
 router.post("/invites", requireAdmin, validate(CreateInviteBody), async (req, res) => {
-  const { email, role } = req.body as z.infer<typeof CreateInviteBody>;
+  const { email, role, isBookkeeper } = req.body as z.infer<typeof CreateInviteBody>;
   const adminId = req.session!.userId!;
 
   const [existingUser] = await db.select({ id: usersTable.id })
@@ -57,6 +60,7 @@ router.post("/invites", requireAdmin, validate(CreateInviteBody), async (req, re
     token,
     email: email.toLowerCase().trim(),
     role,
+    isBookkeeper,
     invitedById: adminId,
     expiresAt,
   }).returning();
@@ -140,8 +144,11 @@ router.post("/invites/:token/accept", validate(AcceptInviteBody), async (req: Re
       passwordHash,
       role: invite.role as "admin" | "manager" | "viewer",
       isActive: true,
+      isBookkeeper: invite.isBookkeeper ?? false,
       // Gate the new starter into the pre-arrival onboarding form once.
-      onboardingRequired: true,
+      // NOT for accountants: they're external — no starter form, no first
+      // day, no contract; they land straight on /finance.
+      onboardingRequired: !invite.isBookkeeper,
       // Password chosen here already meets the policy — keep the boot-time
       // forced-reset seed from flagging brand-new accounts.
       passwordChangedAt: new Date(),
@@ -154,12 +161,15 @@ router.post("/invites/:token/accept", validate(AcceptInviteBody), async (req: Re
     // Contracts issued to this invite's email before the account existed
     // (migration 0088) become theirs now — waiting in the onboarding flow
     // at their first login. Unsigned rows only can be unclaimed, so the
-    // signed-row immutability trigger never bites here.
-    await db.execute(sql`
-      UPDATE employment_contracts
-      SET user_id = ${user.id}, invite_email = NULL
-      WHERE invite_email = ${invite.email} AND user_id IS NULL
-    `).catch(err => console.error("[invites] contract claim failed:", err));
+    // signed-row immutability trigger never bites here. Accountants are
+    // external — never claim employment contracts for them.
+    if (!invite.isBookkeeper) {
+      await db.execute(sql`
+        UPDATE employment_contracts
+        SET user_id = ${user.id}, invite_email = NULL
+        WHERE invite_email = ${invite.email} AND user_id IS NULL
+      `).catch(err => console.error("[invites] contract claim failed:", err));
+    }
 
     req.session!.userId = user.id;
     req.session!.userRole = user.role as "admin" | "manager" | "viewer";

@@ -620,7 +620,10 @@ export function Layout({ children }: { children: ReactNode }) {
     if (entry) visibleNavItems.push(entry);
   }
 
-  const navForUser = accountantOnly ? visibleNavItems.filter(i => i.href === "/finance") : visibleNavItems;
+  // Accountants see Finance and Deliveries (they reconcile against what
+  // physically arrived) and nothing else — the production app is noise to
+  // them, and they are noise to it (Graeme, 2026-09-09).
+  const navForUser = accountantOnly ? visibleNavItems.filter(i => i.href === "/finance" || i.href === "/deliveries") : visibleNavItems;
   const productForUser = accountantOnly ? [] : visibleProductItems;
   const inventoryForUser = accountantOnly ? [] : visibleInventoryItems;
 
@@ -736,10 +739,15 @@ export function Layout({ children }: { children: ReactNode }) {
             contain stops a top-of-page drag chaining into the browser's
             pull-to-refresh (which reloaded mid-shift — Graeme, 2026-09-07). */}
         <div id="app-main-scroll" ref={mainScrollRef} className="flex-1 overflow-y-auto overscroll-contain p-4 md:p-8 pb-[200px] relative">
-          {/* Weekly lean lesson reminder — every main page, until completed */}
-          <div className="mb-4 empty:hidden">
-            <LeanWeeklyStrip />
-          </div>
+          {/* Weekly lean lesson reminder — every main page, until completed.
+              Not for accountants: they're external, the lean curriculum and
+              the rest of the team machinery aren't theirs (Graeme,
+              2026-09-09). */}
+          {!accountantOnly && (
+            <div className="mb-4 empty:hidden">
+              <LeanWeeklyStrip />
+            </div>
+          )}
           <motion.div
             key={location}
             initial={{ opacity: 0, y: 10 }}
@@ -754,13 +762,14 @@ export function Layout({ children }: { children: ReactNode }) {
       <StandardsSopsDialog open={sopsOpen} onClose={() => setSopsOpen(false)} currentStationType={null} />
       <NotificationFlash />
       {/* The big positive popup when a teammate finishes an improvement —
-          flash banners handle everything else. */}
-      <ImprovementCelebration />
+          flash banners handle everything else. Not for accountants. */}
+      {!accountantOnly && <ImprovementCelebration />}
 
-      {/* Caz is available to every logged-in user. The founder additionally
-          gets recipe-design + memory powers; staff get a read-only look-up
-          assistant (enforced server-side, not just here). */}
-      <QuickActionsDock />
+      {/* Caz is available to every logged-in TEAM user. The founder
+          additionally gets recipe-design + memory powers; staff get a
+          read-only look-up assistant (enforced server-side, not just
+          here). Accountants get neither the dock nor the to-do machinery. */}
+      {!accountantOnly && <QuickActionsDock />}
       {/* Weekly sales-derived DPT refresh — renders nothing except for
           managers/admins in the week it's due. */}
       <DptSuggestionPrompt />
