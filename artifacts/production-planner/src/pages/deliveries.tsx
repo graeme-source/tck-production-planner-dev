@@ -72,6 +72,9 @@ interface DeliveryOrder {
   createdAt: string;
   lines: POLine[];
   requiresTemperature?: boolean;
+  /** False for suppliers flagged "no invoices" (Amazon etc.) — the invoice
+   *  check is skipped entirely for their deliveries. */
+  requiresInvoice?: boolean;
   hasChilled?: boolean;
   hasFrozen?: boolean;
   deliveryRecord?: DeliveryRecordSummary | null;
@@ -160,11 +163,16 @@ function computeProcessingDots(order: DeliveryOrder): ProcessingDots {
     temperature = chilledOk && frozenOk ? "done" : "pending";
   }
 
-  const invoice: DotStatus = rec?.invoiceFiled ? "done" : "pending";
+  // requiresInvoice === false → supplier never provides one (Amazon etc.):
+  // not pending, not done — simply not part of this delivery's checklist.
+  const invoice: DotStatus = order.requiresInvoice === false
+    ? "na"
+    : rec?.invoiceFiled ? "done" : "pending";
   const kanbanPutAway: DotStatus =
     rec?.kanbansReplaced && rec?.allPutAway ? "done" : "pending";
 
-  const required: DotStatus[] = [received, invoice, kanbanPutAway];
+  const required: DotStatus[] = [received, kanbanPutAway];
+  if (invoice !== "na") required.push(invoice);
   if (temperature !== "na") required.push(temperature);
   const fullyProcessed = required.every((d) => d === "done");
 
@@ -1374,18 +1382,23 @@ export default function Deliveries() {
                       icon={Thermometer}
                       status={dots.temperature}
                     />
-                    <Dot
-                      label="Invoice filed"
-                      icon={FileText}
-                      status={dots.invoice}
-                      disabled={!canReceive || dots.received !== "done" || checksMutation.isPending}
-                      onClick={() => {
-                        checksMutation.mutate({
-                          orderId: order.id,
-                          invoiceFiled: dots.invoice !== "done",
-                        });
-                      }}
-                    />
+                    {/* Hidden entirely for no-invoice suppliers (Amazon
+                        etc., set on the supplier) — a greyed-out button
+                        would still invite taps. */}
+                    {dots.invoice !== "na" && (
+                      <Dot
+                        label="Invoice filed"
+                        icon={FileText}
+                        status={dots.invoice}
+                        disabled={!canReceive || dots.received !== "done" || checksMutation.isPending}
+                        onClick={() => {
+                          checksMutation.mutate({
+                            orderId: order.id,
+                            invoiceFiled: dots.invoice !== "done",
+                          });
+                        }}
+                      />
+                    )}
                     <Dot
                       label="Kanbans & put away"
                       icon={Boxes}

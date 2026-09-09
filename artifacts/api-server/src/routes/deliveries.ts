@@ -88,6 +88,7 @@ router.get("/weekly", async (req, res) => {
       id: purchaseOrdersTable.id,
       supplierId: purchaseOrdersTable.supplierId,
       supplierName: suppliersTable.name,
+      supplierInvoiceNotRequired: suppliersTable.invoiceNotRequired,
       planId: purchaseOrdersTable.planId,
       status: purchaseOrdersTable.status,
       expectedDeliveryDate: purchaseOrdersTable.expectedDeliveryDate,
@@ -207,6 +208,9 @@ router.get("/weekly", async (req, res) => {
       ...o,
       createdAt: o.createdAt.toISOString(),
       lines: orderLines,
+      // Amazon-style suppliers never produce an invoice — the check is
+      // switched off per supplier (Graeme, 2026-09-09).
+      requiresInvoice: !o.supplierInvoiceNotRequired,
       requiresTemperature: hasChilled || hasFrozen,
       hasChilled,
       hasFrozen,

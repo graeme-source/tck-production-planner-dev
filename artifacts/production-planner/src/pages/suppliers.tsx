@@ -28,6 +28,7 @@ const schema = z.object({
   orderDays: z.string().optional(),
   leadTimeDays: z.coerce.number().int().min(0).optional(),
   cutoffTime: z.string().optional(),
+  invoiceNotRequired: z.boolean().optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -41,6 +42,7 @@ type SupplierBody = CreateSupplier & {
   orderDays?: string | null;
   leadTimeDays?: number;
   cutoffTime?: string;
+  invoiceNotRequired?: boolean;
 };
 
 type SupplierItem = {
@@ -57,11 +59,12 @@ type SupplierItem = {
   orderDays?: string | null;
   leadTimeDays?: number;
   cutoffTime?: string;
+  invoiceNotRequired?: boolean;
   createdAt: string;
 };
 
 const defaultValues: FormValues = {
-  name: "", contactName: "", email: "", phone: "", orderingPhone: "", website: "", address: "", notes: "", orderFrequency: "daily", orderDays: "", leadTimeDays: 1, cutoffTime: "17:00",
+  name: "", contactName: "", email: "", phone: "", orderingPhone: "", website: "", address: "", notes: "", orderFrequency: "daily", orderDays: "", leadTimeDays: 1, cutoffTime: "17:00", invoiceNotRequired: false,
 };
 
 function SupplierForm({
@@ -217,6 +220,17 @@ function SupplierForm({
           />
           <p className="text-xs text-muted-foreground mt-1">Orders placed after this time add an extra day.</p>
         </div>
+      </div>
+
+      <div>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" {...register("invoiceNotRequired")} className="w-4 h-4 rounded border-border" />
+          <span className="text-sm font-medium">No invoices from this supplier</span>
+        </label>
+        <p className="text-xs text-muted-foreground mt-1 ml-6">
+          For suppliers like Amazon that never provide an invoice or delivery note —
+          goods-in skips the &ldquo;Invoice filed&rdquo; check on their deliveries.
+        </p>
       </div>
 
       <div>
@@ -446,7 +460,7 @@ export default function Suppliers() {
             isEdit={false}
             isPending={createSupplier.isPending}
             onSubmit={(data) => {
-              const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00" };
+              const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00", invoiceNotRequired: data.invoiceNotRequired ?? false };
               createSupplier.mutate(
                 { data: body },
                 { onSuccess: () => setIsAddOpen(false) }
@@ -477,11 +491,12 @@ export default function Suppliers() {
                 orderDays: editingItem.orderDays ?? "",
                 leadTimeDays: editingItem.leadTimeDays ?? 1,
                 cutoffTime: editingItem.cutoffTime ?? "17:00",
+                invoiceNotRequired: editingItem.invoiceNotRequired ?? false,
               }}
               isEdit
               isPending={updateSupplier.isPending}
               onSubmit={(data) => {
-                const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00" };
+                const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00", invoiceNotRequired: data.invoiceNotRequired ?? false };
                 updateSupplier.mutate(
                   { id: editingItem.id, data: body },
                   { onSuccess: () => setEditingItem(null) }
