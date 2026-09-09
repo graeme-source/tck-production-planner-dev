@@ -20,7 +20,7 @@ import {
 } from "@/lib/dispatch-tagging";
 import { ApcBatchBookingDialog } from "@/components/apc-batch-booking";
 import { RescheduleOrderDialog } from "@/components/reschedule-order-dialog";
-import { useAuth } from "@/contexts/auth-context";
+import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { format, addDays, parseISO } from "date-fns";
 import { useLocation } from "wouter";
 import {
@@ -2082,12 +2082,15 @@ export default function Fulfilment() {
   };
 
   const [showBatchBooking, setShowBatchBooking] = useState(false);
-  // Packing is open to viewers; booking real consignments and rescheduling
-  // customer orders is not. The API enforces this — hiding the button just
-  // saves a packer finding a 403 mid-shift.
-  const { state: authState } = useAuth();
-  const canBookCourier = authState.status === "authenticated"
-    && (authState.user.role === "admin" || authState.user.role === "manager");
+  // Packing is open to viewers; booking real consignments, rescheduling
+  // customer orders and approving the day (tagging) are not. Both are now
+  // grantable abilities (Settings → Team & Access) rather than raw role
+  // checks, so a named person can be handed them without a promotion
+  // (Graeme, 2026-09-09). The API enforces the same keys — hiding the
+  // buttons just saves a packer finding a 403 mid-shift.
+  const { can } = useFeatureAccess();
+  const canBookCourier = can("ability.book_apc_labels");
+  const canTagDispatch = can("ability.tag_dispatch");
   const [bulkTagging, setBulkTagging] = useState(false);
   const [showBulkTagConfirm, setShowBulkTagConfirm] = useState(false);
   const [consignmentAction, setConsignmentAction] = useState<"idle" | "adding-box" | "reprinting" | "cancelling">("idle");
@@ -4317,20 +4320,30 @@ export default function Fulfilment() {
                   >
                     {awaitingPanelOpen ? "Hide orders" : "Show orders"}
                   </button>
-                  <button
-                    // Always reopens at "all orders": narrowing is a one-off
-                    // decision made in the dialog, never a setting that can
-                    // quietly persist into tomorrow's tagging.
-                    onClick={() => { setTagScope("all"); setShowBulkTagConfirm(true); }}
-                    disabled={bulkTagging}
-                    className="flex items-center gap-2 px-5 py-3 bg-orange-600 text-white rounded-xl text-base font-bold hover:bg-orange-700 transition-colors disabled:opacity-50"
-                  >
-                    {bulkTagging ? (
-                      <><Loader2 className="w-5 h-5 animate-spin" /> Tagging…</>
-                    ) : (
-                      <><Tag className="w-5 h-5" /> Tag all {untaggedOrders.length} for dispatch</>
-                    )}
-                  </button>
+                  {canTagDispatch ? (
+                    <button
+                      // Always reopens at "all orders": narrowing is a one-off
+                      // decision made in the dialog, never a setting that can
+                      // quietly persist into tomorrow's tagging.
+                      onClick={() => { setTagScope("all"); setShowBulkTagConfirm(true); }}
+                      disabled={bulkTagging}
+                      className="flex items-center gap-2 px-5 py-3 bg-orange-600 text-white rounded-xl text-base font-bold hover:bg-orange-700 transition-colors disabled:opacity-50"
+                    >
+                      {bulkTagging ? (
+                        <><Loader2 className="w-5 h-5 animate-spin" /> Tagging…</>
+                      ) : (
+                        <><Tag className="w-5 h-5" /> Tag all {untaggedOrders.length} for dispatch</>
+                      )}
+                    </button>
+                  ) : (
+                    // Says WHY there's no button rather than hiding the
+                    // day's approval step from view — and names the exact
+                    // grant an admin needs to flick.
+                    <span className="text-sm font-medium text-orange-800 dark:text-orange-300 max-w-[18rem]">
+                      Tagging needs the &ldquo;Tag orders for dispatch&rdquo; grant —
+                      an admin can add it in Settings → Team &amp; Access.
+                    </span>
+                  )}
                 </div>
               </div>
               {/* Says out loud why this panel is first: booking skips

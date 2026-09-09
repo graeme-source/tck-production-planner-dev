@@ -6,7 +6,7 @@ import { postcodeServiceFor } from "../services/apc-postinfo";
 import { removeTagFromOrder, shopifyAdminOrderUrl, shopifyAdminOrderBase, getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
 import { nextAvailableDeliveryDate, rescheduleTags, withDeliveryDate, rescheduleEmailText, rescheduleEmailHtml, friendlyDate, firstNameOf, toZapietDate } from "../lib/order-reschedule";
 import { validate } from "../middleware/validate";
-import { userHasFeature } from "../lib/feature-access";
+import { userHasFeature, requireFeature } from "../lib/feature-access";
 import { sendEmail } from "../lib/email";
 import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService, lookupOrderByReference, lookupOrdersByReference, lookupOrderByWaybill, parseApcBarcode, waybillCore, apcTrackingUrl, type ApcOrderLookup } from "../services/apc";
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
@@ -60,13 +60,11 @@ const ROLE_RANK: Record<string, number> = { viewer: 0, manager: 1, admin: 2 };
  * (Graeme, 2026-08-21). The page permission stays where it is; these specific
  * endpoints sit above it.
  */
-async function requireManagerForCourierActions(req: Request, res: Response, next: NextFunction) {
-  const role = await resolveRole(req);
-  if (role === "admin" || role === "manager") { next(); return; }
-  res.status(403).json({
-    error: "Booking consignments and rescheduling orders are manager-only. Ask a manager or admin to do this one.",
-  });
-}
+// Courier actions (batch booking, preflight, rescheduling) are manager-and-up
+// by default, but the "Book APC labels" ability grant opens them to a named
+// person without promoting them (Graeme, 2026-09-09) — the whole point of the
+// feature-grants screen. requireFeature = role clears manager OR the grant.
+const requireManagerForCourierActions = requireFeature("ability.book_apc_labels");
 
 // Operational fulfilment endpoints (list orders, verify labels, complete)
 // honour the "/fulfilment" page permission set in Settings → Page Access
@@ -1611,8 +1609,10 @@ router.post("/shipments/:waybill/cancel", requireFulfilmentAccess, async (req: R
 });
 
 // POST /tag-dispatch — find an order by name and add the "dispatch" tag.
-// Used by the Dispatch Tagging page to gate which orders appear in the packing queue.
-router.post("/tag-dispatch", requireFulfilmentAccess, async (req: Request, res: Response) => {
+// Approving orders for dispatch is its own grantable ability now (Graeme,
+// 2026-09-09): manager-and-up by default, or the "Tag orders for dispatch"
+// grant — no longer implied by merely being able to open the packing page.
+router.post("/tag-dispatch", requireFeature("ability.tag_dispatch"), async (req: Request, res: Response) => {
   const { orderName } = req.body as { orderName?: string };
   if (!orderName || typeof orderName !== "string" || !orderName.trim()) {
     res.status(400).json({ error: "orderName is required" });
@@ -1663,7 +1663,7 @@ router.post("/tag-dispatch", requireFulfilmentAccess, async (req: Request, res: 
   }
 });
 
-router.post("/tag-dispatch-bulk", requireFulfilmentAccess, async (req: Request, res: Response) => {
+router.post("/tag-dispatch-bulk", requireFeature("ability.tag_dispatch"), async (req: Request, res: Response) => {
   // `orderIds` is the precise path: the picking screen can filter by multiple
   // box categories, arbitrary order tags and products, and the server cannot
   // re-derive that from a single `category` string. When the client sends the

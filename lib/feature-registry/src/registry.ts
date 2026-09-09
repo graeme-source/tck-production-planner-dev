@@ -35,7 +35,16 @@ export const FEATURE_REGISTRY: FeatureDef[] = [
   // Keeps its original key: two people already hold this grant on live.
   { key: "apc_label_printing", name: "Order Packing Live", description: "The packing screen: scanning, booking and printing APC labels.", area: "Pages", kind: "page", page: "/fulfilment", minRole: "manager" },
   { key: "page.locations", name: "Bin Locations", description: "Where everything lives in the unit.", area: "Pages", kind: "page", page: "/locations", minRole: "admin" },
-  { key: "page.dispatch_tag", name: "Dispatch Tagging", description: "Tagging orders for dispatch.", area: "Pages", kind: "page", page: "/dispatch-tag", minRole: "manager" },
+  // page.dispatch_tag used to sit here — it pointed at /dispatch-tag, a page
+  // that has never existed in this app, so the toggle granted nothing (and is
+  // why "tagging" couldn't be found as a real grant — Graeme, 2026-09-09).
+  // Tagging and booking are ABILITIES on Order Packing Live now, below.
+
+  // ── Abilities on Order Packing Live ──────────────────────────────────────
+  // Both need the Order Packing Live page as well — grant that too for
+  // someone below its access level.
+  { key: "ability.tag_dispatch", name: "Tag orders for dispatch", description: "Approve the day's orders — the Step 1 tagging panel on Order Packing Live.", area: "Order Packing abilities", kind: "ability", minRole: "manager" },
+  { key: "ability.book_apc_labels", name: "Book APC labels", description: "Raise APC consignments and reschedule orders on Order Packing Live.", area: "Order Packing abilities", kind: "ability", minRole: "manager" },
   { key: "page.reports", name: "Reports", description: "Reports and the issue log.", area: "Pages", kind: "page", page: "/reports", minRole: "viewer" },
   { key: "page.kanbans", name: "Kanbans", description: "Kanban cards and the shelf-edge reorder loop.", area: "Pages", kind: "page", page: "/kanbans", minRole: "viewer" },
   { key: "page.product_hub", name: "Product Hub", description: "Product listings, decks and Shopify.", area: "Pages", kind: "page", page: "/product-hub", minRole: "viewer" },
