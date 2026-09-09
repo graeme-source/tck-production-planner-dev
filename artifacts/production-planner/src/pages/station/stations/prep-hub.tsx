@@ -519,7 +519,7 @@ export function PrepHub({ planId, planDate, planName, planStatus, planPrepDate }
             <div className="flex-1 min-w-0">
               <h3 className="font-bold text-lg">Replenish Sub Recipes</h3>
               <p className="text-base text-muted-foreground leading-snug">Ad-hoc spice rubs, dough mixes, and other prepared components — any time</p>
-              <p className="text-sm font-semibold mt-1.5 text-violet-500">Pick a sub-recipe · choose batch count · follow checklist</p>
+              <p className="text-sm font-semibold mt-1.5 text-violet-500">Pick a sub-recipe · choose mix count · follow checklist</p>
             </div>
             <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
           </button>

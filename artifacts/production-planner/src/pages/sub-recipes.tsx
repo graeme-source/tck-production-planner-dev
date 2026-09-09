@@ -211,7 +211,7 @@ function YieldSanityCheck({
         {warning && (
           <p className="text-xs mt-0.5">
             {ratio < 0.5
-              ? "Yield looks low vs inputs — did you mean a larger yield? (e.g. a batch of " + cookedKg.toFixed(1) + " kg)"
+              ? "Yield looks low vs inputs — did you mean a larger yield? (e.g. a mix of " + cookedKg.toFixed(1) + " kg)"
               : "Yield exceeds cooked input weight — please check ingredient quantities or yield value."}
           </p>
         )}
@@ -259,7 +259,7 @@ function YieldComparison({
             </div>
             <div className="flex flex-wrap items-center gap-6 ml-1">
               <div>
-                <span className="text-xs text-muted-foreground block">Total batch cost</span>
+                <span className="text-xs text-muted-foreground block">Total mix cost</span>
                 <span className="font-semibold tabular-nums text-primary">£{totalCost.toFixed(2)}</span>
               </div>
               {costPerUnit !== null && (
@@ -442,7 +442,7 @@ function SubRecipeForm({
         <div className="grid grid-cols-2 gap-4">
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="text-sm font-medium">Batch Yield *</label>
+              <label className="text-sm font-medium">Mix Yield *</label>
               <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary">
                 {effectivePercent < 100 ? `Auto · ${effectivePercent}% of weight` : "Auto · 100% of weight"}
               </span>
@@ -999,7 +999,7 @@ function BatchMultiplierControl({
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-sm font-medium text-muted-foreground">Batches:</span>
+        <span className="text-sm font-medium text-muted-foreground">Mixes:</span>
         {([1, 2, 4] as const).map(m => (
           <button
             key={m}
@@ -1203,7 +1203,7 @@ function ViewSubRecipeDialog({
 
             <div className="flex items-center gap-4 flex-wrap text-sm">
               <div className="bg-secondary/30 rounded-lg px-3 py-1.5">
-                <span className="text-muted-foreground">Yield per batch: </span>
+                <span className="text-muted-foreground">Yield per mix: </span>
                 <span className="font-semibold">{yieldPerBatch} {yieldUnit}</span>
               </div>
               {detail.shelfLifeDays != null && (
@@ -1222,7 +1222,7 @@ function ViewSubRecipeDialog({
             </div>
 
             <div className="border border-border rounded-xl p-4 bg-secondary/10 space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Batch Scale</p>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Mix Scale</p>
               <BatchMultiplierControl
                 multiplier={multiplier}
                 customBatches={customBatches}
@@ -1237,7 +1237,7 @@ function ViewSubRecipeDialog({
 
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                Ingredients {effectiveBatches > 1 ? `× ${effectiveBatches} batches` : "(1 batch)"}
+                Ingredients {effectiveBatches > 1 ? `× ${effectiveBatches} mixes` : "(1 mix)"}
               </p>
               <ScaledIngredientList
                 ingredients={detail.ingredients ?? []}

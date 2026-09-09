@@ -4,7 +4,7 @@
  * Built for the prep stations (Graeme, 2026-09-08): a rub or mix named on a
  * raw-meat row ("Philly beef rub" under diced beef) is now a link, and this
  * modal is where it lands — the standalone Replenish flow jumped straight to
- * that sub-recipe, so the operator picks batches, sees the scaled recipe,
+ * that sub-recipe, so the operator picks mixes, sees the scaled recipe,
  * ticks it off and is back on the prep list in a few taps.
  *
  * The make-flow itself is lazy-imported from prep-bases-station. That is

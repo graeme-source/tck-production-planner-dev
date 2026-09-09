@@ -337,7 +337,7 @@ export function SubRecipeMakeFlow({
           <p className="text-muted-foreground mt-1">
             {state.batches === 0
               ? "Existing stock covered today's requirement — nothing made."
-              : `${state.batches} batch${state.batches !== 1 ? "es" : ""} made · ${(yieldPerBatch * state.batches).toFixed(3)} ${sr?.yieldUnit} ready`}
+              : `${state.batches} mix${state.batches !== 1 ? "es" : ""} made · ${(yieldPerBatch * state.batches).toFixed(3)} ${sr?.yieldUnit} ready`}
           </p>
         </div>
         <div className="flex gap-3">
@@ -364,7 +364,7 @@ export function SubRecipeMakeFlow({
           <div className="flex-1">
             <h3 className="font-bold text-xl">{sr?.subRecipeName}</h3>
             <p className="text-base text-muted-foreground">
-              {state.batches} batch{state.batches !== 1 ? "es" : ""} · Total yield: {(yieldPerBatch * state.batches).toFixed(3)} {sr?.yieldUnit}
+              {state.batches} mix{state.batches !== 1 ? "es" : ""} · Total yield: {(yieldPerBatch * state.batches).toFixed(3)} {sr?.yieldUnit}
             </p>
           </div>
           <div className={cn(
@@ -432,7 +432,7 @@ export function SubRecipeMakeFlow({
               <p className="text-2xl font-bold tabular-nums">{sr.totalRequired.toFixed(3)} <span className="text-base font-medium text-muted-foreground">{sr.yieldUnit}</span></p>
             </div>
             <div className="bg-secondary/30 rounded-xl px-4 py-3">
-              <p className="text-sm text-muted-foreground mb-1">Yield per batch</p>
+              <p className="text-sm text-muted-foreground mb-1">Yield per mix</p>
               <p className="text-2xl font-bold tabular-nums">{yieldPerBatch.toFixed(3)} <span className="text-base font-medium text-muted-foreground">{sr.yieldUnit}</span></p>
             </div>
           </div>
@@ -472,7 +472,7 @@ export function SubRecipeMakeFlow({
                     : "bg-primary/10 border border-primary/30"
                 )}>
                   <div>
-                    <p className="text-base font-medium text-muted-foreground">Batches to make</p>
+                    <p className="text-base font-medium text-muted-foreground">Mixes to make</p>
                     <p className="text-sm text-muted-foreground mt-0.5">⌈{net.toFixed(3)} ÷ {yieldPerBatch.toFixed(3)}⌉ = {batchCount}</p>
                   </div>
                   <span className="text-4xl font-bold tabular-nums text-primary">{batchCount}</span>
@@ -504,7 +504,7 @@ export function SubRecipeMakeFlow({
               className="w-full py-4 rounded-2xl bg-primary text-primary-foreground font-bold text-base hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               <Beaker className="w-5 h-5" />
-              Start Making {batchCount != null && batchCount > 0 ? `${batchCount} Batch${batchCount !== 1 ? "es" : ""}` : ""}
+              Start Making {batchCount != null && batchCount > 0 ? `${batchCount} Mix${batchCount !== 1 ? "es" : ""}` : ""}
             </button>
           )}
         </div>
@@ -521,18 +521,18 @@ export function SubRecipeMakeFlow({
           </button>
           <div>
             <h3 className="font-bold text-xl">{sr.subRecipeName}</h3>
-            <p className="text-base text-muted-foreground">Choose how many batches to make</p>
+            <p className="text-base text-muted-foreground">Choose how many mixes to make</p>
           </div>
         </div>
 
         <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
           <div className="bg-secondary/30 rounded-xl px-4 py-3">
-            <p className="text-sm text-muted-foreground mb-1">Yield per batch</p>
+            <p className="text-sm text-muted-foreground mb-1">Yield per mix</p>
             <p className="text-xl font-bold tabular-nums">{yieldPerBatch.toFixed(3)} {sr.yieldUnit}</p>
           </div>
 
           <div>
-            <p className="text-base font-semibold mb-3">Number of batches</p>
+            <p className="text-base font-semibold mb-3">Number of mixes</p>
             <div className="flex items-center gap-2 flex-wrap">
               {([1, 2, 4] as const).map(m => (
                 <button
@@ -582,7 +582,7 @@ export function SubRecipeMakeFlow({
                 >
                   <Plus className="w-4 h-4" />
                 </button>
-                <span className="text-base text-muted-foreground">batches</span>
+                <span className="text-base text-muted-foreground">mixes</span>
               </div>
             )}
 
@@ -596,7 +596,7 @@ export function SubRecipeMakeFlow({
             className="w-full py-4 rounded-2xl bg-primary text-primary-foreground font-bold text-base hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
           >
             <Beaker className="w-5 h-5" />
-            Start Making {effectiveBatches} Batch{effectiveBatches !== 1 ? "es" : ""}
+            Start Making {effectiveBatches} Mix{effectiveBatches !== 1 ? "es" : ""}
           </button>
         </div>
       </div>
@@ -676,7 +676,7 @@ export function SubRecipeMakeFlow({
                     {isDone
                       ? "✓ Completed today"
                       : <>
-                          {sr.yield.toFixed(3)} {sr.yieldUnit} per batch
+                          {sr.yield.toFixed(3)} {sr.yieldUnit} per mix
                           {mode === "plan" && sr.totalRequired > 0 && ` · ${sr.totalRequired.toFixed(3)} ${sr.yieldUnit} required`}
                         </>}
                   </p>
@@ -694,7 +694,7 @@ export function SubRecipeMakeFlow({
                 {batchsNeeded !== null && !isDone && (
                   <div className="text-right flex-shrink-0">
                     <p className="text-2xl font-bold text-primary tabular-nums">{batchsNeeded}</p>
-                    <p className="text-sm text-muted-foreground">batch{batchsNeeded !== 1 ? "es" : ""}</p>
+                    <p className="text-sm text-muted-foreground">mix{batchsNeeded !== 1 ? "es" : ""}</p>
                   </div>
                 )}
                 <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
@@ -1248,7 +1248,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                   <FlaskConical className="w-5 h-5 text-primary" />
                   <div>
                     <h3 className="font-semibold">Tomato Base — Sub-Recipe Production</h3>
-                    <p className="text-sm text-muted-foreground">Stock check → auto-calculate batches → ingredient checklist</p>
+                    <p className="text-sm text-muted-foreground">Stock check → auto-calculate mixes → ingredient checklist</p>
                   </div>
                 </div>
                 {subRecipesLoading ? (
