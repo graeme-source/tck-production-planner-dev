@@ -4179,7 +4179,13 @@ export default function Fulfilment() {
 
       <div className="flex items-center gap-3">
         <button onClick={() => {
-          // The date-list view is retired — back always means Dispatches.
+          // Back means where you came FROM (Graeme, 2026-09-10 — the old
+          // hard-wired /dispatches dropped people somewhere obscure): the
+          // plan's packing station when a plan brought us here, otherwise
+          // real browser-back, with Dispatches only as the deep-link
+          // fallback when there is no history to go back to.
+          if (stationPlanId) { navigate(`/plans/${stationPlanId}/station/packing`); return; }
+          if (window.history.length > 1) { window.history.back(); return; }
           navigate("/dispatches");
         }} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
           <ArrowLeft className="w-5 h-5" />
