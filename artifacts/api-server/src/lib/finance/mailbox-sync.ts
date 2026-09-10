@@ -367,10 +367,23 @@ export async function refreshSuggestions(): Promise<number> {
 }
 
 /** Download one attachment (or the full message rendered) for a confirmed match. */
+function escapeHtml(v: string): string {
+  return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+export interface FetchedEmailMeta {
+  fromAddress: string | null;
+  fromName: string | null;
+  subject: string | null;
+  /** Plain text + HTML of the message, for supplier-info extraction. */
+  text: string;
+  html: string | null;
+}
+
 export async function fetchAttachmentForMessage(
   folder: string,
   uid: number
-): Promise<{ fileName: string; mime: string; content: Buffer } | null> {
+): Promise<{ fileName: string; mime: string; content: Buffer; emailMeta: FetchedEmailMeta } | null> {
   const [box] = await db.select().from(finMailboxTable).limit(1);
   if (!box) return null;
   const client = new ImapFlow({
@@ -392,6 +405,14 @@ export async function fetchAttachmentForMessage(
       const dl = await client.download(String(uid), undefined, { uid: true });
       if (!dl?.content) return null;
       const parsed = await simpleParser(dl.content);
+      const fromObj = parsed.from?.value?.[0];
+      const emailMeta: FetchedEmailMeta = {
+        fromAddress: fromObj?.address ?? null,
+        fromName: fromObj?.name || null,
+        subject: parsed.subject ?? null,
+        text: parsed.text || (typeof parsed.html === "string" ? parsed.html.replace(/<[^>]+>/g, " ") : ""),
+        html: typeof parsed.html === "string" ? parsed.html : null,
+      };
       const pdf = parsed.attachments.find(
         (a) => a.contentType === "application/pdf" || (a.filename ?? "").toLowerCase().endsWith(".pdf")
       );
@@ -400,16 +421,34 @@ export async function fetchAttachmentForMessage(
           fileName: pdf.filename || "invoice.pdf",
           mime: "application/pdf",
           content: Buffer.from(pdf.content),
+          emailMeta,
         };
       }
-      // No PDF: keep the message text as a .eml-style text file so the
-      // bookkeeper still gets the evidence (HTML-only invoices).
-      const text = parsed.text || parsed.html || "";
-      if (!text) return null;
+      // No PDF: store the message AS IT LOOKED — the original HTML with a
+      // small provenance header, saved as an .html document. It used to be
+      // flattened to plain text, which threw away the branding and layout
+      // that make an order confirmation recognisable (Graeme, 2026-09-10).
+      // Rendered inside the sandboxed same-origin viewer; scripts are dead
+      // there, remote images still load.
+      const safeSubject = (parsed.subject || "email").slice(0, 60);
+      const header = `<div style="font-family:sans-serif;border-bottom:2px solid #ccc;padding:12px 16px;margin-bottom:16px;background:#f8f8f8">
+        <div style="font-weight:bold">${escapeHtml(safeSubject)}</div>
+        <div style="color:#555;font-size:13px">From: ${escapeHtml(fromObj?.name ?? "")} &lt;${escapeHtml(fromObj?.address ?? "")}&gt; · ${parsed.date ? parsed.date.toISOString().slice(0, 10) : ""}</div>
+      </div>`;
+      if (emailMeta.html) {
+        return {
+          fileName: `${safeSubject.replace(/[^\w\s.-]/g, "_")}.html`,
+          mime: "text/html",
+          content: Buffer.from(`<!doctype html><html><body style="margin:0">${header}${emailMeta.html}</body></html>`, "utf8"),
+          emailMeta,
+        };
+      }
+      if (!parsed.text) return null;
       return {
-        fileName: `${(parsed.subject || "email").slice(0, 60).replace(/[^\w\s.-]/g, "_")}.txt`,
-        mime: "text/plain",
-        content: Buffer.from(String(text), "utf8"),
+        fileName: `${safeSubject.replace(/[^\w\s.-]/g, "_")}.html`,
+        mime: "text/html",
+        content: Buffer.from(`<!doctype html><html><body style="margin:0">${header}<pre style="white-space:pre-wrap;font-family:sans-serif;padding:0 16px">${escapeHtml(parsed.text)}</pre></body></html>`, "utf8"),
+        emailMeta,
       };
     } finally {
       lock.release();

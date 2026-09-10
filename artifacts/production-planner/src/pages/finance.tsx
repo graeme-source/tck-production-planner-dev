@@ -49,6 +49,11 @@ type FinLine = {
   vendorId: number | null;
   status: string;
   statusNote: string | null;
+  orderReference: string | null;
+  supplierEmail: string | null;
+  supplierWebsite: string | null;
+  chaseCount: number;
+  lastChasedAt: string | null;
 };
 
 type FinVendor = {
@@ -66,6 +71,16 @@ type FinVendor = {
 };
 
 type FinDocMeta = { id: number; lineId: number; fileName: string; docKind: string; fileMime: string; createdAt: string };
+
+// What a stored document IS — drives whether a line still needs chasing
+// (an order confirmation is evidence you bought it, not a VAT invoice).
+const DOC_KINDS: Array<{ value: string; label: string }> = [
+  { value: "invoice", label: "VAT invoice" },
+  { value: "order_confirmation", label: "Order confirmation" },
+  { value: "receipt", label: "Receipt" },
+  { value: "statement", label: "Statement" },
+  { value: "other", label: "Other" },
+];
 
 type LinesResponse = {
   lines: FinLine[];
@@ -331,6 +346,9 @@ function LineRow({
           </div>
           <Badge className={`${status.tone} shrink-0`}>{status.label}</Badge>
           {docs.length > 0 && <Paperclip className="h-4 w-4 text-emerald-600 shrink-0" />}
+          {line.chaseCount > 0 && line.status !== "done" && (
+            <Badge variant="outline" className="shrink-0 text-amber-700 border-amber-400">chased {line.chaseCount}×</Badge>
+          )}
           {suggestionCount > 0 && line.status !== "done" && (
             <Badge variant="outline" className="shrink-0"><Mail className="h-3 w-3 mr-1" />{suggestionCount}</Badge>
           )}
@@ -340,6 +358,7 @@ function LineRow({
         <CardContent className="border-t pt-4 space-y-4">
           {line.statusNote && <p className="text-sm text-muted-foreground italic">“{line.statusNote}”</p>}
           <DocumentsBlock line={line} docs={docs} />
+          {line.status !== "done" && line.status !== "not_needed" && <SupplierChaseBlock line={line} />}
           {(line.status === "open" || line.status === "identified" || line.status === "matched") && (
             <SuggestionsBlock lineId={line.id} />
           )}
@@ -351,16 +370,169 @@ function LineRow({
   );
 }
 
+/** Supplier contact + order reference (extracted from an attached order
+ *  confirmation, or typed) and the chase-for-VAT-invoice email. The chase
+ *  counter is the point: "have I already emailed them?" is answered by the
+ *  button itself (Graeme, 2026-09-10). */
+function SupplierChaseBlock({ line }: { line: FinLine }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [orderRef, setOrderRef] = useState(line.orderReference ?? "");
+  const [supEmail, setSupEmail] = useState(line.supplierEmail ?? "");
+  const [supSite, setSupSite] = useState(line.supplierWebsite ?? "");
+  const [fieldState, setFieldState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [chaseOpen, setChaseOpen] = useState(false);
+
+  const saveFields = useMutation({
+    mutationFn: () =>
+      jsonFetch(`${BASE}/api/finance/lines/${line.id}/supplier`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderReference: orderRef || null,
+          supplierEmail: supEmail || null,
+          supplierWebsite: supSite || null,
+        }),
+      }),
+    onMutate: () => setFieldState("saving"),
+    onSuccess: () => {
+      setFieldState("saved");
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+    },
+    onError: () => setFieldState("error"),
+  });
+  const dirty =
+    (orderRef || "") !== (line.orderReference ?? "") ||
+    (supEmail || "") !== (line.supplierEmail ?? "") ||
+    (supSite || "") !== (line.supplierWebsite ?? "");
+  const onBlur = () => { if (dirty) saveFields.mutate(); };
+
+  const merchant = line.merchant ?? line.descriptor;
+  const defaultSubject = `VAT invoice request${orderRef ? ` — order ${orderRef}` : ""}`;
+  const defaultMessage =
+    `Hi,\n\nPlease could you send us a VAT invoice for ${orderRef ? `order ${orderRef}` : "our recent order"}` +
+    ` (${merchant}, £${Number(line.amount).toFixed(2)}, ${line.lineDate})?\n\n` +
+    `Please reply to accounts@thecalzonekitchen.co.uk.\n\nThanks,\nThe Calzone Kitchen — Accounts`;
+  const [chaseTo, setChaseTo] = useState("");
+  const [chaseSubject, setChaseSubject] = useState("");
+  const [chaseMessage, setChaseMessage] = useState("");
+  const openChase = () => {
+    setChaseTo(supEmail);
+    setChaseSubject(defaultSubject);
+    setChaseMessage(defaultMessage);
+    setChaseOpen(true);
+  };
+  const chase = useMutation({
+    mutationFn: () =>
+      jsonFetch(`${BASE}/api/finance/lines/${line.id}/chase`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toEmail: chaseTo.trim(), subject: chaseSubject.trim(), message: chaseMessage }),
+      }),
+    onSuccess: () => {
+      toast({ title: "Chase email sent", description: `Sent to ${chaseTo.trim()} — replies go to accounts@, and a copy is in the accounts mailbox.` });
+      setChaseOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+    },
+    onError: (e: Error) => toast({ title: "Chase not sent", description: e.message, variant: "destructive" }),
+  });
+
+  return (
+    <div>
+      <div className="text-sm font-medium mb-2 flex items-center justify-between gap-2">
+        <span>Supplier &amp; order</span>
+        <span className={`text-xs ${fieldState === "error" ? "text-destructive" : fieldState === "saved" ? "text-emerald-600" : "text-muted-foreground"}`}>
+          {fieldState === "saving" && "Saving…"}
+          {fieldState === "saved" && "Saved ✓"}
+          {fieldState === "error" && "Not saved — check the values"}
+        </span>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <div>
+          <Label className="text-xs">Order number</Label>
+          <Input value={orderRef} onChange={(e) => { setOrderRef(e.target.value); setFieldState("idle"); }} onBlur={onBlur} placeholder="e.g. ALX-2214" />
+        </div>
+        <div>
+          <Label className="text-xs">Supplier email</Label>
+          <Input value={supEmail} onChange={(e) => { setSupEmail(e.target.value); setFieldState("idle"); }} onBlur={onBlur} placeholder="sales@supplier.co.uk" />
+        </div>
+        <div>
+          <Label className="text-xs">Website</Label>
+          <Input value={supSite} onChange={(e) => { setSupSite(e.target.value); setFieldState("idle"); }} onBlur={onBlur} placeholder="https://supplier.co.uk" />
+        </div>
+      </div>
+      <div className="flex items-center gap-3 mt-2 flex-wrap">
+        <Button size="sm" onClick={openChase} disabled={!supEmail.trim()}>
+          <Mail className="h-4 w-4 mr-1" /> Chase supplier for VAT invoice
+        </Button>
+        {!supEmail.trim() && <span className="text-xs text-muted-foreground">Needs a supplier email first.</span>}
+        {line.chaseCount > 0 && (
+          <Badge variant="outline" className="text-amber-700 border-amber-400">
+            Chased {line.chaseCount}× — last {line.lastChasedAt ? new Date(line.lastChasedAt).toLocaleDateString("en-GB") : ""}
+          </Badge>
+        )}
+        {supSite && (
+          <a href={supSite} target="_blank" rel="noopener noreferrer" className="text-xs underline text-muted-foreground hover:text-foreground">
+            {supSite.replace(/^https?:\/\//, "")}
+          </a>
+        )}
+      </div>
+
+      {chaseOpen && (
+        <div className="fixed inset-0 z-[150] bg-black/60 flex items-center justify-center p-4" onClick={() => setChaseOpen(false)}>
+          <div className="bg-background rounded-2xl w-full max-w-xl p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="font-semibold">Chase {merchant} for a VAT invoice</div>
+            {line.chaseCount > 0 && (
+              <p className="text-sm text-amber-700 dark:text-amber-400 font-medium">
+                ⚠ Already chased {line.chaseCount}× — last on {line.lastChasedAt ? new Date(line.lastChasedAt).toLocaleDateString("en-GB") : "?"}. Send again?
+              </p>
+            )}
+            <div>
+              <Label className="text-xs">To</Label>
+              <Input value={chaseTo} onChange={(e) => setChaseTo(e.target.value)} />
+            </div>
+            <div>
+              <Label className="text-xs">Subject</Label>
+              <Input value={chaseSubject} onChange={(e) => setChaseSubject(e.target.value)} />
+            </div>
+            <div>
+              <Label className="text-xs">Message</Label>
+              <textarea
+                value={chaseMessage}
+                onChange={(e) => setChaseMessage(e.target.value)}
+                rows={8}
+                className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Sends from The Calzone Kitchen — Accounts; replies and a copy go to accounts@thecalzonekitchen.co.uk.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setChaseOpen(false)}>Cancel</Button>
+              <Button size="sm" onClick={() => chase.mutate()} disabled={chase.isPending || !chaseTo.trim() || !chaseSubject.trim() || !chaseMessage.trim()}>
+                {chase.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Mail className="h-4 w-4 mr-1" />} Send
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const input = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [preview, setPreview] = useState<FinDocMeta | null>(null);
+  // What the next upload IS — asked up front so nobody has to re-tag later.
+  const [uploadKind, setUploadKind] = useState("invoice");
   const upload = useMutation({
     mutationFn: async (file: File) => {
       const form = new FormData();
       form.append("file", file);
+      form.append("docKind", uploadKind);
       return jsonFetch(`${BASE}/api/finance/lines/${line.id}/documents`, { method: "POST", body: form });
     },
     onSuccess: () => {
@@ -368,6 +540,16 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
       queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
     },
     onError: (e: Error) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
+  });
+  const retag = useMutation({
+    mutationFn: ({ id, docKind }: { id: number; docKind: string }) =>
+      jsonFetch(`${BASE}/api/finance/documents/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ docKind }),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] }),
+    onError: (e: Error) => toast({ title: "Couldn't change the type", description: e.message, variant: "destructive" }),
   });
 
   return (
@@ -396,6 +578,14 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
               <FileText className="h-4 w-4" />
               <span className="max-w-[220px] truncate">{d.fileName}</span>
             </button>
+            <select
+              value={d.docKind}
+              onChange={(e) => retag.mutate({ id: d.id, docKind: e.target.value })}
+              className="border-l bg-transparent text-xs px-1.5 py-1.5 text-muted-foreground hover:bg-accent cursor-pointer"
+              title="What this document is"
+            >
+              {DOC_KINDS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
+            </select>
             <a
               href={`${BASE}/api/finance/documents/${d.id}/file?download=1`}
               className="px-2 py-1.5 border-l hover:bg-accent text-muted-foreground"
@@ -416,9 +606,19 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
             e.target.value = "";
           }}
         />
-        <Button size="sm" variant="outline" onClick={() => input.current?.click()} disabled={upload.isPending}>
-          {upload.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />} Add file
-        </Button>
+        <span className="inline-flex items-center gap-1">
+          <select
+            value={uploadKind}
+            onChange={(e) => setUploadKind(e.target.value)}
+            className="h-9 rounded-md border bg-background text-sm px-2"
+            title="What the file you're about to add is"
+          >
+            {DOC_KINDS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
+          </select>
+          <Button size="sm" variant="outline" onClick={() => input.current?.click()} disabled={upload.isPending}>
+            {upload.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />} Add file
+          </Button>
+        </span>
       </div>
 
       {/* Same-origin iframe preview — never blob: URLs (the CSP frame-src

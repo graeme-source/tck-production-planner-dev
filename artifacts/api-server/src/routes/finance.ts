@@ -20,6 +20,8 @@ import { parseCotCsv } from "../lib/finance/cot-csv";
 import { normaliseMerchant } from "../lib/finance/merchant-normalise";
 import { sealSecret } from "../lib/finance/secret-box";
 import { runMailboxSync, refreshSuggestions, fetchAttachmentForMessage, fetchEmailPreview } from "../lib/finance/mailbox-sync";
+import { extractSupplierInfo } from "../lib/finance/extract-supplier-info";
+import { sendEmail } from "../lib/email";
 import { authorizeUrl, exchangeCode, newStateToken, qboConfigured, qboStatus, runQboSync } from "../lib/finance/qbo";
 import { db as dbForQbo, finQboConnectionTable } from "@workspace/db";
 
@@ -317,6 +319,86 @@ router.post("/lines/:id/documents", requireFinanceAccess, upload.single("file"),
   }
 });
 
+// Re-tag a document's kind after the fact (order confirmation vs VAT
+// invoice vs receipt) — the kind drives whether a line still needs chasing.
+const docKindSchema = z.object({ docKind: z.enum(["invoice", "order_confirmation", "receipt", "statement", "other"]) });
+router.patch("/documents/:id", requireFinanceAccess, validate(docKindSchema), async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  const { docKind } = req.body as z.infer<typeof docKindSchema>;
+  const [row] = await db.update(finDocumentsTable).set({ docKind }).where(eq(finDocumentsTable.id, id))
+    .returning({ id: finDocumentsTable.id, docKind: finDocumentsTable.docKind });
+  if (!row) { res.status(404).json({ error: "Document not found" }); return; }
+  res.json(row);
+});
+
+// Supplier contact + order reference on a line — editable by hand; the
+// extractor only ever fills empty fields.
+const supplierPatchSchema = z.object({
+  orderReference: z.string().max(60).nullable().optional(),
+  supplierEmail: z.string().max(200).nullable().optional(),
+  supplierWebsite: z.string().max(300).nullable().optional(),
+});
+router.patch("/lines/:id/supplier", requireFinanceAccess, validate(supplierPatchSchema), async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  const body = req.body as z.infer<typeof supplierPatchSchema>;
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  if (body.orderReference !== undefined) updates["orderReference"] = body.orderReference?.trim() || null;
+  if (body.supplierEmail !== undefined) updates["supplierEmail"] = body.supplierEmail?.trim() || null;
+  if (body.supplierWebsite !== undefined) updates["supplierWebsite"] = body.supplierWebsite?.trim() || null;
+  const [row] = await db.update(finLinesTable).set(updates).where(eq(finLinesTable.id, id))
+    .returning({ id: finLinesTable.id });
+  if (!row) { res.status(404).json({ error: "Line not found" }); return; }
+  res.json({ ok: true });
+});
+
+// Chase the supplier for a VAT invoice. Sends from the accounts identity
+// (via the verified notify. subdomain — the apex isn't verified in Resend),
+// with replies AND a blind copy landing in accounts@thecalzonekitchen.co.uk,
+// so the accounts mailbox holds the whole thread. Every chase is counted on
+// the line — "have I already emailed them?" is answered by the button
+// itself, which is the pain this exists to kill (Graeme, 2026-09-10).
+const ACCOUNTS_MAILBOX = "accounts@thecalzonekitchen.co.uk";
+const chaseSchema = z.object({
+  toEmail: z.string().email(),
+  subject: z.string().min(1).max(200),
+  message: z.string().min(1).max(5000),
+});
+router.post("/lines/:id/chase", requireFinanceAccess, validate(chaseSchema), async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const { toEmail, subject, message } = req.body as z.infer<typeof chaseSchema>;
+    const [line] = await db.select().from(finLinesTable).where(eq(finLinesTable.id, id));
+    if (!line) { res.status(404).json({ error: "Line not found" }); return; }
+
+    const html = `<div style="font-family:sans-serif;max-width:560px;color:#333">${message
+      .split(/\n{2,}/)
+      .map(pa => `<p>${pa.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br/>")}</p>`)
+      .join("")}</div>`;
+    await sendEmail({
+      to: toEmail,
+      subject,
+      html,
+      text: message,
+      fromName: "The Calzone Kitchen — Accounts",
+      fromEmail: "accounts@notify.thecalzonekitchen.co.uk",
+      replyTo: ACCOUNTS_MAILBOX,
+      bcc: [ACCOUNTS_MAILBOX],
+    });
+
+    await db.update(finLinesTable).set({
+      supplierEmail: line.supplierEmail ?? toEmail,
+      chaseCount: (line.chaseCount ?? 0) + 1,
+      lastChasedAt: new Date(),
+      updatedAt: new Date(),
+    }).where(eq(finLinesTable.id, id));
+
+    res.json({ ok: true, chaseCount: (line.chaseCount ?? 0) + 1 });
+  } catch (err) {
+    console.error("[finance] chase email error:", err);
+    res.status(502).json({ error: "The chase email couldn't be sent — nothing was recorded. Try again." });
+  }
+});
+
 router.get("/documents/:id/file", requireFinanceAccess, async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
@@ -405,7 +487,29 @@ router.post("/matches/:id/confirm", requireFinanceAccess, async (req: Request, r
       .set({ status: "matched", updatedAt: new Date() })
       .where(and(eq(finLinesTable.id, match.lineId), inArray(finLinesTable.status, ["open", "identified"])));
 
-    res.json({ documentId: doc.id });
+    // Suggest supplier contact details from the email just attached — order
+    // number, a contactable address, the website — into EMPTY fields only
+    // (never overwrite something a human typed). Suggestions feed the
+    // chase-for-VAT-invoice flow; they never send anything themselves.
+    const info = extractSupplierInfo({
+      text: attachment.emailMeta.text,
+      fromAddress: attachment.emailMeta.fromAddress,
+      fromName: attachment.emailMeta.fromName,
+      subject: attachment.emailMeta.subject,
+    });
+    const [lineNow] = await db.select().from(finLinesTable).where(eq(finLinesTable.id, match.lineId));
+    if (lineNow) {
+      const updates: Record<string, unknown> = {};
+      if (!lineNow.orderReference && info.orderReference) updates["orderReference"] = info.orderReference;
+      if (!lineNow.supplierEmail && info.supplierEmail) updates["supplierEmail"] = info.supplierEmail;
+      if (!lineNow.supplierWebsite && info.supplierWebsite) updates["supplierWebsite"] = info.supplierWebsite;
+      if (Object.keys(updates).length > 0) {
+        updates["updatedAt"] = new Date();
+        await db.update(finLinesTable).set(updates).where(eq(finLinesTable.id, match.lineId));
+      }
+    }
+
+    res.json({ documentId: doc.id, extracted: info });
   } catch (err) {
     console.error("[finance] confirm match error:", err);
     res.status(500).json({ error: "Failed to confirm match" });

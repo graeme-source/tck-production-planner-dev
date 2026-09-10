@@ -21,6 +21,13 @@ export interface EmailPayload {
    *  actually went out — a send that silently fails is indistinguishable
    *  from one that worked, unless a copy lands in a real inbox. Resend only. */
   bcc?: string[];
+  /** Override the sender identity. fromEmail MUST be on a Resend-verified
+   *  domain (only notify.thecalzonekitchen.co.uk today). Setting either
+   *  forces the Resend path — Klaviyo has no reply-to support. */
+  fromName?: string;
+  fromEmail?: string;
+  /** Where replies land (e.g. accounts@thecalzonekitchen.co.uk). Resend only. */
+  replyTo?: string;
 }
 
 const APP_NAME = "TCK Production Planner";
@@ -42,9 +49,10 @@ export async function sendEmail(payload: EmailPayload): Promise<void> {
   const klaviyoKey = process.env["KLAVIYO_API_KEY"];
   const resendKey = process.env["RESEND_API_KEY"];
   const hasAttachments = (payload.attachments?.length ?? 0) > 0;
+  const needsResend = hasAttachments || Boolean(payload.replyTo || payload.fromEmail || payload.fromName);
 
-  // Attachments only flow through Resend — skip Klaviyo when present.
-  if (klaviyoKey && !hasAttachments) {
+  // Attachments and sender/reply-to overrides only flow through Resend.
+  if (klaviyoKey && !needsResend) {
     const res = await fetch("https://a.klaviyo.com/api/emails/", {
       method: "POST",
       headers: {
@@ -81,8 +89,9 @@ export async function sendEmail(payload: EmailPayload): Promise<void> {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: `${APP_NAME} <${FROM_EMAIL}>`,
+        from: `${payload.fromName ?? APP_NAME} <${payload.fromEmail ?? FROM_EMAIL}>`,
         to: [payload.to],
+        ...(payload.replyTo ? { reply_to: [payload.replyTo] } : {}),
         ...(payload.bcc?.length ? { bcc: payload.bcc } : {}),
         subject: payload.subject,
         html: payload.html,
