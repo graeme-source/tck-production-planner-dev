@@ -21,6 +21,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Loader2, Camera, CheckCircle2, Clock, ThumbsUp, RotateCcw,
   Trophy, ChevronLeft, X, AlertCircle, Settings2, Clapperboard, Trash2, ArrowBigUp, HandHelping, BookOpen,
+  Lightbulb, Eye,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/contexts/auth-context";
@@ -79,7 +80,15 @@ type Improvement = {
   /** Attachment metadata for the feed — rendered inline like a social
    *  feed post (Graeme, 2026-08-28). */
   media?: Array<{ id: number; kind: "image" | "video"; phase: "before" | "after" | "stitched" | null }>;
+  /** Has THIS viewer opened it? Powers the To-review tab and NEW markers. */
+  seenByMe?: boolean;
 };
+
+/** An idea is work not yet done; everything past that is an improvement.
+ *  The two words were blurring together on the page (Graeme, 2026-09-10). */
+function isIdea(item: Pick<Improvement, "stage">): boolean {
+  return item.stage === "todo";
+}
 
 // Feed media rendering lives in components/improvement-feed-media.tsx —
 // shared with the meeting's Recent Improvements slide so both tell the
@@ -112,6 +121,10 @@ export default function Improvements() {
 
   const [logging, setLogging] = useState(false);
   const [openId, setOpenId] = useState<number | null>(null);
+  // "review" surfaces what this person hasn't opened yet; the other two
+  // split the feed by what things ARE. Defaults to review when there is
+  // anything to review, decided once when the data first lands.
+  const [tab, setTab] = useState<"review" | "improvements" | "ideas" | null>(null);
   const [showAdmin, setShowAdmin] = useState(false);
   const queryClient = useQueryClient();
 
@@ -162,7 +175,12 @@ export default function Improvements() {
     return (
       <ImprovementDetail
         id={openId}
-        onBack={() => setOpenId(null)}
+        onBack={() => {
+          setOpenId(null);
+          // The detail marked itself seen — refresh so the To-review tab
+          // and NEW markers move on without waiting for a stale cache.
+          queryClient.invalidateQueries({ queryKey: ["improvements"] });
+        }}
         isManager={isManager}
         isAdmin={userRole === "admin"}
       />
@@ -173,10 +191,15 @@ export default function Improvements() {
     return <LogImprovement onDone={id => { setLogging(false); setOpenId(id); }} onCancel={() => setLogging(false)} />;
   }
 
-  const waiting = items.filter(i => i.stage === "waiting");
-  const mine = items.filter(i => i.isMine && i.stage !== "approved");
-  const todo = items.filter(i => i.stage === "todo" && !i.isMine);
-  const approved = items.filter(i => i.stage === "approved").slice(0, 8);
+  // Server order is newest-first; keep every list that way — the feed leads
+  // with the most recent and scrolls back in time (Graeme, 2026-09-10).
+  const byNewest = (a: Improvement, b: Improvement) => b.createdAt.localeCompare(a.createdAt);
+  const waiting = items.filter(i => i.stage === "waiting").sort(byNewest);
+  const mineIdeas = items.filter(i => i.isMine && isIdea(i)).sort(byNewest);
+  const mineActive = items.filter(i => i.isMine && !isIdea(i) && i.stage !== "approved").sort(byNewest);
+  const ideas = items.filter(i => isIdea(i) && !i.isMine).sort(byNewest);
+  const feed = items.filter(i => !isIdea(i)).sort(byNewest).slice(0, 30);
+  const toReview = items.filter(i => !i.seenByMe && !i.isMine).sort(byNewest);
 
   return (
     <div className="max-w-3xl mx-auto pb-24 space-y-6">
@@ -198,28 +221,94 @@ export default function Improvements() {
         <div className="flex items-center justify-center py-16 text-muted-foreground gap-3 text-lg">
           <Loader2 className="w-6 h-6 animate-spin" /> Loading…
         </div>
-      ) : (
+      ) : (() => {
+        // Default tab, decided once the data is in: things to review win.
+        const activeTab = tab ?? (toReview.length > 0 ? "review" : "improvements");
+        return (
         <>
-          {isManager && waiting.length > 0 && (
-            <Section title={`Waiting for you to check (${waiting.length})`} icon={<Clock className="w-5 h-5 text-amber-500" />}>
-              {waiting.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
-            </Section>
+          {/* ── The three views of the same feed ── */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => setTab("review")}
+              className={cn(
+                "flex-1 py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
+                activeTab === "review" ? "border-blue-500 text-blue-600 dark:text-blue-400" : "border-border text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Eye className="w-5 h-5" /> To review
+              {toReview.length > 0 && (
+                <span className="min-w-[22px] h-[22px] px-1.5 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center tabular-nums">
+                  {toReview.length}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setTab("improvements")}
+              className={cn(
+                "flex-1 py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
+                activeTab === "improvements" ? "border-emerald-500 text-emerald-600 dark:text-emerald-400" : "border-border text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <CheckCircle2 className="w-5 h-5" /> Improvements
+            </button>
+            <button
+              onClick={() => setTab("ideas")}
+              className={cn(
+                "flex-1 py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
+                activeTab === "ideas" ? "border-amber-500 text-amber-600 dark:text-amber-400" : "border-border text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Lightbulb className="w-5 h-5" /> Ideas
+            </button>
+          </div>
+
+          {activeTab === "review" && (
+            toReview.length === 0 ? (
+              <div className="rounded-2xl border-2 border-dashed border-border p-10 text-center text-muted-foreground">
+                <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-emerald-500" />
+                <p className="text-lg font-semibold text-foreground">All caught up</p>
+                <p>You've seen everything the team has logged.</p>
+              </div>
+            ) : (
+              <Section title={`New since you last looked (${toReview.length})`} icon={<Eye className="w-5 h-5 text-blue-500" />}>
+                {toReview.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
+              </Section>
+            )
           )}
 
-          <Section title="Yours" icon={<Camera className="w-5 h-5 text-primary" />} empty="Nothing on the go. Log one above.">
-            {mine.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
-          </Section>
-
-          {todo.length > 0 && (
-            <Section title="Up for grabs" icon={<AlertCircle className="w-5 h-5 text-muted-foreground" />}>
-              {todo.slice(0, 10).map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
-            </Section>
+          {activeTab === "improvements" && (
+            <>
+              {isManager && waiting.length > 0 && (
+                <Section title={`Waiting for you to check (${waiting.length})`} icon={<Clock className="w-5 h-5 text-amber-500" />}>
+                  {waiting.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
+                </Section>
+              )}
+              {mineActive.length > 0 && (
+                <Section title="Yours" icon={<Camera className="w-5 h-5 text-primary" />}>
+                  {mineActive.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
+                </Section>
+              )}
+              <Section
+                title={approvalOn ? "Recently approved" : "Recent improvements"}
+                icon={<CheckCircle2 className="w-5 h-5 text-emerald-500" />}
+                empty="No finished improvements yet — the feed starts with the first one."
+              >
+                {feed.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
+              </Section>
+            </>
           )}
 
-          {approved.length > 0 && (
-            <Section title={approvalOn ? "Recently approved" : "Recent improvements"} icon={<CheckCircle2 className="w-5 h-5 text-emerald-500" />}>
-              {approved.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
-            </Section>
+          {activeTab === "ideas" && (
+            <>
+              <Section title="Your ideas" icon={<Lightbulb className="w-5 h-5 text-amber-500" />} empty="Nothing on the go. Log one above.">
+                {mineIdeas.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
+              </Section>
+              {ideas.length > 0 && (
+                <Section title={`Ideas — up for grabs (${ideas.length})`} icon={<HandHelping className="w-5 h-5 text-muted-foreground" />}>
+                  {ideas.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
+                </Section>
+              )}
+            </>
           )}
 
           <Scoreboard />
@@ -233,7 +322,8 @@ export default function Improvements() {
             <Plus className="w-6 h-6" /> Log an improvement
           </button>
         </>
-      )}
+        );
+      })()}
 
       {userRole === "admin" && (
         <div className="pt-4 border-t border-border">
@@ -347,8 +437,24 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
       <button onClick={onOpen} className="w-full text-left">
       <div className="flex items-start justify-between gap-3">
         <p className="text-xl font-bold leading-snug break-words flex-1">{item.title}</p>
-        <span className={cn("text-xs px-2.5 py-1 rounded-lg font-bold whitespace-nowrap", STAGE_STYLE[item.stage])}>
-          {stageChipText(item)}
+        <span className="flex items-center gap-1.5 flex-shrink-0">
+          {/* What this IS: an idea (not done yet) or an improvement (done).
+              The two were indistinguishable at a glance (Graeme, 2026-09-10). */}
+          {isIdea(item) ? (
+            <span className="text-xs px-2.5 py-1 rounded-lg font-bold whitespace-nowrap bg-amber-500/15 text-amber-700 dark:text-amber-400 inline-flex items-center gap-1">
+              <Lightbulb className="w-3.5 h-3.5" /> Idea
+            </span>
+          ) : (
+            <span className="text-xs px-2.5 py-1 rounded-lg font-bold whitespace-nowrap bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Improvement
+            </span>
+          )}
+          <span className={cn("text-xs px-2.5 py-1 rounded-lg font-bold whitespace-nowrap", STAGE_STYLE[item.stage])}>
+            {stageChipText(item)}
+          </span>
+          {!item.seenByMe && !item.isMine && (
+            <span className="text-xs px-2 py-1 rounded-lg font-bold bg-blue-600 text-white" title="You haven't opened this yet">NEW</span>
+          )}
         </span>
       </div>
       <div className="flex items-center gap-3 mt-2 text-base text-muted-foreground flex-wrap">

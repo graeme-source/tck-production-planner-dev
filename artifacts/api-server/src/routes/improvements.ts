@@ -181,6 +181,16 @@ router.get("/", async (req: Request, res: Response) => {
       mediaById.set(Number(m.improvement_id), list);
     }
 
+    // Which of these THIS viewer has opened — powers the "To review" tab
+    // and the NEW markers (Graeme, 2026-09-10: the nav badge said there
+    // were unseen ones, but nothing on the page said which).
+    const seenRows = ids.length === 0 || viewer.id == null ? { rows: [] } : await db.execute<{ improvement_id: number }>(sql`
+      SELECT improvement_id FROM improvement_views
+       WHERE user_id = ${viewer.id}
+         AND improvement_id = ANY(${intArrayLiteral(ids)}::int[])
+    `);
+    const seenIds = new Set((seenRows.rows ?? []).map(r => Number(r.improvement_id)));
+
     res.json(rows.map(r => ({
       ...decorate(
         r,
@@ -190,6 +200,7 @@ router.get("/", async (req: Request, res: Response) => {
         r.subjectId != null ? subjectTitles.get(r.subjectId) ?? null : null,
       ),
       media: mediaById.get(r.id) ?? [],
+      seenByMe: seenIds.has(r.id),
     })));
   } catch (err) {
     console.error("Error fetching improvement submissions:", err);
