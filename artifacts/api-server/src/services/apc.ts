@@ -22,6 +22,7 @@ const APC_TRAINING_PASSWORD = process.env.APC_TRAINING_PASSWORD ?? "";
 const APC_COLLECTION_PHONE = process.env.APC_COLLECTION_PHONE ?? "";
 const APC_COLLECTION_COMPANY = process.env.APC_COLLECTION_COMPANY ?? "";
 const APC_COLLECTION_ADDRESS1 = process.env.APC_COLLECTION_ADDRESS1 ?? "";
+const APC_COLLECTION_ADDRESS2 = process.env.APC_COLLECTION_ADDRESS2 ?? "";
 const APC_COLLECTION_CITY = process.env.APC_COLLECTION_CITY ?? "";
 const APC_COLLECTION_POSTCODE = process.env.APC_COLLECTION_POSTCODE ?? "";
 
@@ -34,6 +35,7 @@ function collectionBlock(): Record<string, unknown> {
     Collection: {
       ...(APC_COLLECTION_COMPANY ? { CompanyName: APC_COLLECTION_COMPANY.slice(0, 35) } : {}),
       ...(APC_COLLECTION_ADDRESS1 ? { AddressLine1: APC_COLLECTION_ADDRESS1 } : {}),
+      ...(APC_COLLECTION_ADDRESS2 ? { AddressLine2: APC_COLLECTION_ADDRESS2 } : {}),
       ...(APC_COLLECTION_CITY ? { City: APC_COLLECTION_CITY } : {}),
       ...(APC_COLLECTION_POSTCODE ? { PostalCode: APC_COLLECTION_POSTCODE } : {}),
       // Always present once the block exists: the new Hypaship validator
