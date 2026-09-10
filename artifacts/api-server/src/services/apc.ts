@@ -13,6 +13,37 @@ const APC_USERNAME = process.env.APC_USERNAME ?? "";
 const APC_PASSWORD = process.env.APC_PASSWORD ?? "";
 const APC_TRAINING_USERNAME = process.env.APC_TRAINING_USERNAME ?? "";
 const APC_TRAINING_PASSWORD = process.env.APC_TRAINING_PASSWORD ?? "";
+// Collection (pickup) contact details, sent explicitly on every order.
+// 2026-09-11: APC started rejecting bookings with "Collection PhoneNumber:
+// Please enter a phone number" — the account-default inheritance that had
+// covered this since day one stopped being enough, killing all 118 of the
+// day's bookings at once. Optional extras cover the case where APC demands
+// the rest of the collection address explicitly too.
+const APC_COLLECTION_PHONE = process.env.APC_COLLECTION_PHONE ?? "";
+const APC_COLLECTION_COMPANY = process.env.APC_COLLECTION_COMPANY ?? "";
+const APC_COLLECTION_ADDRESS1 = process.env.APC_COLLECTION_ADDRESS1 ?? "";
+const APC_COLLECTION_CITY = process.env.APC_COLLECTION_CITY ?? "";
+const APC_COLLECTION_POSTCODE = process.env.APC_COLLECTION_POSTCODE ?? "";
+
+/** The Collection block for order payloads — only present when a phone is
+ *  configured, and only carrying the fields that are set, so behaviour is
+ *  byte-identical to before until APC_COLLECTION_PHONE exists. */
+function collectionBlock(): Record<string, unknown> {
+  if (!APC_COLLECTION_PHONE) return {};
+  return {
+    Collection: {
+      ...(APC_COLLECTION_COMPANY ? { CompanyName: APC_COLLECTION_COMPANY.slice(0, 35) } : {}),
+      ...(APC_COLLECTION_ADDRESS1 ? { AddressLine1: APC_COLLECTION_ADDRESS1 } : {}),
+      ...(APC_COLLECTION_CITY ? { City: APC_COLLECTION_CITY } : {}),
+      ...(APC_COLLECTION_POSTCODE ? { PostalCode: APC_COLLECTION_POSTCODE } : {}),
+      ...(APC_COLLECTION_POSTCODE ? { CountryCode: "GB" } : {}),
+      Contact: {
+        ...(APC_COLLECTION_COMPANY ? { PersonName: APC_COLLECTION_COMPANY.slice(0, 35) } : {}),
+        PhoneNumber: APC_COLLECTION_PHONE,
+      },
+    },
+  };
+}
 
 function isConfigured(): boolean {
   return !!(APC_USERNAME && APC_PASSWORD && APC_ACCOUNT_NUMBER);
@@ -359,6 +390,7 @@ async function placeOrder(req: ApcShipmentRequest): Promise<PlaceOrderResult> {
         CollectionDate: todayDDMMYYYY(req.collectionDate),
         ReadyAt: "09:00",
         ClosedAt: "17:00",
+        ...collectionBlock(),
         ProductCode: req.serviceCode,
         // Keep the "#" — the Shopify order name IS the reference everyone
         // searches Hypaship by, and stripping it produced "-131249", which
@@ -679,6 +711,7 @@ export async function checkPostcodeService(
         CollectionDate: collectionDate,
         ReadyAt: "09:00",
         ClosedAt: "17:00",
+        ...collectionBlock(),
         ProductCode: serviceCode,
         Reference: `VALIDATE-${cleanPostcode.slice(0, 15)}`,
         Delivery: {
