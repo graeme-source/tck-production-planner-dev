@@ -168,10 +168,13 @@ export default function Improvements() {
 
   const [logging, setLogging] = useState(false);
   const [openId, setOpenId] = useState<number | null>(null);
-  // "review" surfaces what this person hasn't opened yet; the other two
-  // split the feed by what things ARE. Defaults to review when there is
-  // anything to review, decided once when the data first lands.
-  const [tab, setTab] = useState<"review" | "improvements" | "ideas" | null>(null);
+  // "review" surfaces what this person hasn't opened yet; otherwise one
+  // combined timeline with Improvements/Ideas as toggleable FILTERS, not
+  // exclusive tabs (Graeme, 2026-09-10). null = auto: review while
+  // anything's unread, the feed once it isn't.
+  const [tab, setTab] = useState<"review" | "feed" | null>(null);
+  const [showImprovements, setShowImprovements] = useState(true);
+  const [showIdeas, setShowIdeas] = useState(true);
   const [showAdmin, setShowAdmin] = useState(false);
   const queryClient = useQueryClient();
 
@@ -192,6 +195,15 @@ export default function Improvements() {
   // The approval step is a setting, OFF by default (Graeme, 2026-09-07):
   // with it off, a finished improvement goes straight into the feed and the
   // page copy stops promising a sign-off that isn't coming.
+  // "Once I've reviewed, it changes to improvements as the standard":
+  // when the unread list drains while the review view is open, hand the
+  // page back to the feed rather than leaving an empty room.
+  useEffect(() => {
+    if (tab === "review" && items.length > 0 && items.filter(i => !i.seenByMe && !i.isMine).length === 0) {
+      setTab("feed");
+    }
+  }, [items, tab]);
+
   const { data: settings } = useQuery<{ approvalRequired: boolean }>({
     queryKey: ["improvements", "settings"],
     queryFn: () => api<{ approvalRequired: boolean }>("/improvements/settings"),
@@ -242,10 +254,6 @@ export default function Improvements() {
   // with the most recent and scrolls back in time (Graeme, 2026-09-10).
   const byNewest = (a: Improvement, b: Improvement) => b.createdAt.localeCompare(a.createdAt);
   const waiting = items.filter(i => i.stage === "waiting").sort(byNewest);
-  const mineIdeas = items.filter(i => i.isMine && isIdea(i)).sort(byNewest);
-  const mineActive = items.filter(i => i.isMine && !isIdea(i) && i.stage !== "approved").sort(byNewest);
-  const ideas = items.filter(i => isIdea(i) && !i.isMine).sort(byNewest);
-  const feed = items.filter(i => !isIdea(i)).sort(byNewest).slice(0, 30);
   const toReview = items.filter(i => !i.seenByMe && !i.isMine).sort(byNewest);
 
   return (
@@ -269,11 +277,32 @@ export default function Improvements() {
           <Loader2 className="w-6 h-6 animate-spin" /> Loading…
         </div>
       ) : (() => {
-        // Default tab, decided once the data is in: things to review win.
-        const activeTab = tab ?? (toReview.length > 0 ? "review" : "improvements");
+        // Review wins while anything's unread; the feed thereafter.
+        const activeTab = tab ?? (toReview.length > 0 ? "review" : "feed");
+        // Filter chips: at least one stays on — a feed of nothing helps no
+        // one. Clicking a chip from review mode jumps to the feed with it.
+        const toggleKind = (kind: "improvements" | "ideas") => {
+          if (activeTab === "review") { setTab("feed"); return; }
+          if (kind === "improvements") {
+            if (showImprovements && !showIdeas) return;
+            setShowImprovements(v => !v);
+          } else {
+            if (showIdeas && !showImprovements) return;
+            setShowIdeas(v => !v);
+          }
+        };
+        const timeline = items
+          .filter(i => (isIdea(i) ? showIdeas : showImprovements))
+          .sort(byNewest)
+          .slice(0, 40);
         return (
         <>
-          {/* ── The three views of the same feed ── */}
+          {/* Leaderboard first — start by seeing the team's tallies
+              (Graeme, 2026-09-10). */}
+          <Scoreboard />
+
+          {/* One timeline, three controls: the review view, and two kind
+              FILTERS that combine rather than exclude. */}
           <div className="flex gap-2">
             <button
               onClick={() => setTab("review")}
@@ -290,26 +319,32 @@ export default function Improvements() {
               )}
             </button>
             <button
-              onClick={() => setTab("improvements")}
+              onClick={() => toggleKind("improvements")}
+              aria-pressed={activeTab !== "review" && showImprovements}
               className={cn(
                 "flex-1 py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
-                activeTab === "improvements" ? "border-emerald-500 text-emerald-600 dark:text-emerald-400" : "border-border text-muted-foreground hover:text-foreground",
+                activeTab !== "review" && showImprovements
+                  ? "border-emerald-500 text-emerald-600 dark:text-emerald-400"
+                  : "border-border text-muted-foreground hover:text-foreground",
               )}
             >
               <CheckCircle2 className="w-5 h-5" /> Improvements
             </button>
             <button
-              onClick={() => setTab("ideas")}
+              onClick={() => toggleKind("ideas")}
+              aria-pressed={activeTab !== "review" && showIdeas}
               className={cn(
                 "flex-1 py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
-                activeTab === "ideas" ? "border-amber-500 text-amber-600 dark:text-amber-400" : "border-border text-muted-foreground hover:text-foreground",
+                activeTab !== "review" && showIdeas
+                  ? "border-amber-500 text-amber-600 dark:text-amber-400"
+                  : "border-border text-muted-foreground hover:text-foreground",
               )}
             >
               <Lightbulb className="w-5 h-5" /> Ideas
             </button>
           </div>
 
-          {activeTab === "review" && (
+          {activeTab === "review" ? (
             toReview.length === 0 ? (
               <div className="rounded-2xl border-2 border-dashed border-border p-10 text-center text-muted-foreground">
                 <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-emerald-500" />
@@ -321,44 +356,22 @@ export default function Improvements() {
                 {toReview.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
               </Section>
             )
-          )}
-
-          {activeTab === "improvements" && (
+          ) : (
             <>
               {isManager && waiting.length > 0 && (
                 <Section title={`Waiting for you to check (${waiting.length})`} icon={<Clock className="w-5 h-5 text-amber-500" />}>
                   {waiting.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
                 </Section>
               )}
-              {mineActive.length > 0 && (
-                <Section title="Yours" icon={<Camera className="w-5 h-5 text-primary" />}>
-                  {mineActive.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
-                </Section>
-              )}
               <Section
-                title={approvalOn ? "Recently approved" : "Recent improvements"}
+                title="Latest"
                 icon={<CheckCircle2 className="w-5 h-5 text-emerald-500" />}
-                empty="No finished improvements yet — the feed starts with the first one."
+                empty="Nothing here yet — the feed starts with the first one logged."
               >
-                {feed.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
+                {timeline.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
               </Section>
             </>
           )}
-
-          {activeTab === "ideas" && (
-            <>
-              <Section title="Your ideas" icon={<Lightbulb className="w-5 h-5 text-amber-500" />} empty="Nothing on the go. Log one above.">
-                {mineIdeas.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
-              </Section>
-              {ideas.length > 0 && (
-                <Section title={`Ideas — up for grabs (${ideas.length})`} icon={<HandHelping className="w-5 h-5 text-muted-foreground" />}>
-                  {ideas.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
-                </Section>
-              )}
-            </>
-          )}
-
-          <Scoreboard />
 
           {/* The feed invites scrolling — meet the reader at the bottom of
               it with the same call to action as the top. */}
@@ -719,6 +732,32 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
     onError: (e: Error) => toast({ title: "Couldn't save your vote", description: e.message, variant: "destructive" }),
   });
 
+  // Who gets the credit — the reporter deserves it even when someone else
+  // (usually Graeme, for app changes) did the fixing (2026-09-10).
+  const { data: creditUsers = [] } = useQuery<Array<{ id: number; name: string }>>({
+    queryKey: ["users-for-credit"],
+    enabled: isManager,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/users`, { credentials: "include" });
+      if (!res.ok) return [];
+      const rows = (await res.json()) as Array<{ id: number; name: string; isActive?: boolean }>;
+      return rows.filter(u => u.isActive !== false).map(u => ({ id: u.id, name: u.name }));
+    },
+  });
+  const changeCredit = useMutation({
+    mutationFn: (userId: number) => api(`/improvements/${id}/credit`, {
+      method: "PATCH", body: JSON.stringify({ userId }),
+    }),
+    onSuccess: () => {
+      refresh();
+      queryClient.invalidateQueries({ queryKey: ["improvements"] });
+      queryClient.invalidateQueries({ queryKey: ["improvement-scoreboard"] });
+      toast({ title: "Credit moved", description: "The feed and the scoreboard now show them." });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't move the credit", description: e.message, variant: "destructive" }),
+  });
+
   const markDone = useMutation({
     mutationFn: () => api(`/improvements/${id}/done`, { method: "POST" }),
     onSuccess: () => {
@@ -815,6 +854,32 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
             </button>
           )
         )
+      )}
+
+      {/* Credit — who this improvement belongs to. Reporter-first: the
+          person who spotted it keeps the credit even when someone else made
+          the technical change. */}
+      {isManager && (
+        <div className="rounded-2xl border-2 border-border bg-card p-4 flex items-center gap-3 flex-wrap">
+          <div className="min-w-0 flex-1">
+            <p className="text-base font-bold">Credited to</p>
+            <p className="text-sm text-muted-foreground">
+              {item.creditedToName ?? item.submittedByName ?? "Nobody yet"} — counts on their scoreboard and shows on the feed.
+            </p>
+          </div>
+          <select
+            value=""
+            onChange={e => {
+              const uid = Number(e.target.value);
+              if (Number.isInteger(uid) && uid > 0) changeCredit.mutate(uid);
+            }}
+            disabled={changeCredit.isPending}
+            className="h-11 rounded-xl border-2 border-border bg-background px-3 text-base font-semibold disabled:opacity-50"
+          >
+            <option value="">{changeCredit.isPending ? "Saving…" : "Give credit to…"}</option>
+            {creditUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+          </select>
+        </div>
       )}
 
       {item.stage === "sent_back" && item.reviewNote && (

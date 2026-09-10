@@ -402,6 +402,33 @@ router.put("/settings", async (req: Request, res: Response) => {
 // (Graeme, 2026-09-07): some improvements ARE a how-to, photos and all. The
 // new SOP takes the improvement's title, its description as step one, and
 // every photo/video as a step (before-phase first), filed under the
+// PATCH /:id/credit — move the credit to whoever actually deserves it.
+// Graeme's case (2026-09-10): someone reports the thing, he makes the
+// technical change, and the improvement should be THEIRS — the report was
+// the valuable part. Manager-only; feeds the scoreboard and the feed's
+// name chips immediately.
+router.patch("/:id/credit", async (req: Request, res: Response) => {
+  const viewer = await viewerOf(req);
+  if (!viewer.isManager) { res.status(403).json({ error: "Manager or admin access required" }); return; }
+  const id = parseInt(String(req.params.id), 10);
+  const userId = parseInt(String(req.body?.userId ?? ""), 10);
+  if (isNaN(id) || isNaN(userId)) { res.status(400).json({ error: "Invalid id" }); return; }
+  try {
+    const [user] = await db.select({ id: usersTable.id, name: usersTable.name })
+      .from(usersTable).where(eq(usersTable.id, userId));
+    if (!user) { res.status(404).json({ error: "No such user" }); return; }
+    const [row] = await db.update(improvementSubmissionsTable)
+      .set({ creditedTo: user.id, creditedToName: user.name, updatedAt: new Date() })
+      .where(eq(improvementSubmissionsTable.id, id))
+      .returning({ id: improvementSubmissionsTable.id, creditedToName: improvementSubmissionsTable.creditedToName });
+    if (!row) { res.status(404).json({ error: "Not found" }); return; }
+    res.json(row);
+  } catch (err) {
+    console.error("[Improvements] credit change failed:", err);
+    res.status(500).json({ error: "Couldn't change the credit" });
+  }
+});
+
 // improvement's station so the library filter finds it. The client opens
 // the SOP editor on it straight away for the quick tidy-and-tag.
 router.post("/:id/create-sop", async (req: Request, res: Response) => {
