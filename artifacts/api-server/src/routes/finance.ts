@@ -462,6 +462,13 @@ router.post("/matches/:id/confirm", requireFinanceAccess, async (req: Request, r
       return;
     }
 
+    // The bookkeeper says what this email IS at attach time (VAT invoice vs
+    // order confirmation etc. — Graeme, 2026-09-10); absent a choice, a PDF
+    // is assumed to be the invoice and a bare email an order confirmation.
+    const DOC_KINDS = new Set(["invoice", "order_confirmation", "receipt", "statement", "other"]);
+    const requestedKind = typeof req.body?.docKind === "string" && DOC_KINDS.has(req.body.docKind)
+      ? req.body.docKind
+      : attachment.mime === "application/pdf" ? "invoice" : "order_confirmation";
     const [doc] = await db
       .insert(finDocumentsTable)
       .values({
@@ -473,7 +480,7 @@ router.post("/matches/:id/confirm", requireFinanceAccess, async (req: Request, r
         sha256: createHash("sha256").update(attachment.content).digest("hex"),
         docSource: attachment.mime === "application/pdf" ? "imap_attachment" : "email_body_render",
         sourceRef: `${emailRow.folder}:${emailRow.imapUid}`,
-        docKind: attachment.mime === "application/pdf" ? "invoice" : "receipt",
+        docKind: requestedKind,
         uploadedBy: req.session.userId ?? null,
       })
       .returning({ id: finDocumentsTable.id });

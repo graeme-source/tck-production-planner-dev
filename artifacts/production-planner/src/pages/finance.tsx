@@ -326,7 +326,17 @@ function LineRow({
   onToggle: () => void;
   onStatus: (status: string, note?: string | null) => void;
 }) {
-  const status = STATUS_LABELS[line.status] ?? STATUS_LABELS.open;
+  // The pill says what we actually HOLD, not just "Document found": a VAT
+  // invoice beats an order confirmation beats the generic label (Graeme,
+  // 2026-09-10).
+  const baseStatus = STATUS_LABELS[line.status] ?? STATUS_LABELS.open;
+  const hasInvoiceDoc = docs.some(d => d.docKind === "invoice");
+  const hasConfirmationDoc = docs.some(d => d.docKind === "order_confirmation");
+  const status = (line.status === "matched" || line.status === "identified") && hasInvoiceDoc
+    ? { label: "Invoice attached", tone: "bg-emerald-100 text-emerald-900" }
+    : (line.status === "matched" || line.status === "identified") && hasConfirmationDoc
+      ? { label: "Order confirmation attached", tone: "bg-sky-100 text-sky-900" }
+      : baseStatus;
   return (
     <Card>
       <button className="w-full text-left" onClick={onToggle}>
@@ -358,10 +368,12 @@ function LineRow({
         <CardContent className="border-t pt-4 space-y-4">
           {line.statusNote && <p className="text-sm text-muted-foreground italic">“{line.statusNote}”</p>}
           <DocumentsBlock line={line} docs={docs} />
-          {line.status !== "done" && line.status !== "not_needed" && <SupplierChaseBlock line={line} />}
+          {line.status !== "done" && line.status !== "not_needed" && <SupplierFieldsBlock line={line} />}
+          {line.status !== "done" && line.status !== "not_needed" && <AddFileControl line={line} />}
           {(line.status === "open" || line.status === "identified" || line.status === "matched") && (
             <SuggestionsBlock lineId={line.id} />
           )}
+          {line.status !== "done" && line.status !== "not_needed" && <ChaseSupplierBlock line={line} />}
           {vendor && <VendorBlock vendor={vendor} />}
           <StatusButtons line={line} onStatus={onStatus} />
         </CardContent>
@@ -370,18 +382,16 @@ function LineRow({
   );
 }
 
-/** Supplier contact + order reference (extracted from an attached order
- *  confirmation, or typed) and the chase-for-VAT-invoice email. The chase
- *  counter is the point: "have I already emailed them?" is answered by the
- *  button itself (Graeme, 2026-09-10). */
-function SupplierChaseBlock({ line }: { line: FinLine }) {
-  const { toast } = useToast();
+/** Supplier contact + order reference — extracted from an attached order
+ *  confirmation or typed by hand. Autosaves on blur with visible state.
+ *  The chase button lives further down the card, below the mailbox
+ *  suggestions (Graeme, 2026-09-10). */
+function SupplierFieldsBlock({ line }: { line: FinLine }) {
   const queryClient = useQueryClient();
   const [orderRef, setOrderRef] = useState(line.orderReference ?? "");
   const [supEmail, setSupEmail] = useState(line.supplierEmail ?? "");
   const [supSite, setSupSite] = useState(line.supplierWebsite ?? "");
   const [fieldState, setFieldState] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [chaseOpen, setChaseOpen] = useState(false);
 
   const saveFields = useMutation({
     mutationFn: () =>
@@ -407,6 +417,98 @@ function SupplierChaseBlock({ line }: { line: FinLine }) {
     (supSite || "") !== (line.supplierWebsite ?? "");
   const onBlur = () => { if (dirty) saveFields.mutate(); };
 
+  return (
+    <div>
+      <div className="text-sm font-medium mb-2 flex items-center justify-between gap-2">
+        <span>Supplier &amp; order</span>
+        <span className={`text-xs ${fieldState === "error" ? "text-destructive" : fieldState === "saved" ? "text-emerald-600" : "text-muted-foreground"}`}>
+          {fieldState === "saving" && "Saving…"}
+          {fieldState === "saved" && "Saved ✓"}
+          {fieldState === "error" && "Not saved — check the values"}
+        </span>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <div>
+          <Label className="text-xs">Order number</Label>
+          <Input value={orderRef} onChange={(e) => { setOrderRef(e.target.value); setFieldState("idle"); }} onBlur={onBlur} placeholder="e.g. ALX-2214" />
+        </div>
+        <div>
+          <Label className="text-xs">Supplier email</Label>
+          <Input value={supEmail} onChange={(e) => { setSupEmail(e.target.value); setFieldState("idle"); }} onBlur={onBlur} placeholder="sales@supplier.co.uk" />
+        </div>
+        <div>
+          <Label className="text-xs">Website</Label>
+          <Input value={supSite} onChange={(e) => { setSupSite(e.target.value); setFieldState("idle"); }} onBlur={onBlur} placeholder="https://supplier.co.uk" />
+        </div>
+      </div>
+      {supSite && (
+        <a href={supSite} target="_blank" rel="noopener noreferrer" className="inline-block mt-1 text-xs underline text-muted-foreground hover:text-foreground">
+          {supSite.replace(/^https?:\/\//, "")}
+        </a>
+      )}
+    </div>
+  );
+}
+
+/** "Add file" with an up-front kind choice — sits with the other ways of
+ *  getting evidence onto the line (just above the mailbox suggestions),
+ *  away from the stored-documents list so the two kind dropdowns can't be
+ *  confused (Graeme, 2026-09-10). */
+function AddFileControl({ line }: { line: FinLine }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const input = useRef<HTMLInputElement>(null);
+  const [uploadKind, setUploadKind] = useState("invoice");
+  const upload = useMutation({
+    mutationFn: async (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("docKind", uploadKind);
+      return jsonFetch(`${BASE}/api/finance/lines/${line.id}/documents`, { method: "POST", body: form });
+    },
+    onSuccess: () => {
+      toast({ title: `${DOC_KINDS.find(k => k.value === uploadKind)?.label ?? "Document"} stored` });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+    },
+    onError: (e: Error) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
+  });
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="text-sm font-medium">Attach from this device:</span>
+      <select
+        value={uploadKind}
+        onChange={(e) => setUploadKind(e.target.value)}
+        className="h-9 rounded-md border bg-background text-sm px-2"
+        title="What the file you're about to add is"
+      >
+        {DOC_KINDS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
+      </select>
+      <input
+        ref={input}
+        type="file"
+        accept=".pdf,image/*"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          for (const f of Array.from(e.target.files ?? [])) upload.mutate(f);
+          e.target.value = "";
+        }}
+      />
+      <Button size="sm" variant="outline" onClick={() => input.current?.click()} disabled={upload.isPending}>
+        {upload.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />} Add file
+      </Button>
+    </div>
+  );
+}
+
+/** The chase-for-VAT-invoice button + history. Reads the supplier email
+ *  from the line (kept fresh by the fields block's autosave). */
+function ChaseSupplierBlock({ line }: { line: FinLine }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [chaseOpen, setChaseOpen] = useState(false);
+  const supEmail = line.supplierEmail ?? "";
+  const orderRef = line.orderReference ?? "";
   const merchant = line.merchant ?? line.descriptor;
   const defaultSubject = `VAT invoice request${orderRef ? ` — order ${orderRef}` : ""}`;
   const defaultMessage =
@@ -438,45 +540,16 @@ function SupplierChaseBlock({ line }: { line: FinLine }) {
   });
 
   return (
-    <div>
-      <div className="text-sm font-medium mb-2 flex items-center justify-between gap-2">
-        <span>Supplier &amp; order</span>
-        <span className={`text-xs ${fieldState === "error" ? "text-destructive" : fieldState === "saved" ? "text-emerald-600" : "text-muted-foreground"}`}>
-          {fieldState === "saving" && "Saving…"}
-          {fieldState === "saved" && "Saved ✓"}
-          {fieldState === "error" && "Not saved — check the values"}
-        </span>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-3">
-        <div>
-          <Label className="text-xs">Order number</Label>
-          <Input value={orderRef} onChange={(e) => { setOrderRef(e.target.value); setFieldState("idle"); }} onBlur={onBlur} placeholder="e.g. ALX-2214" />
-        </div>
-        <div>
-          <Label className="text-xs">Supplier email</Label>
-          <Input value={supEmail} onChange={(e) => { setSupEmail(e.target.value); setFieldState("idle"); }} onBlur={onBlur} placeholder="sales@supplier.co.uk" />
-        </div>
-        <div>
-          <Label className="text-xs">Website</Label>
-          <Input value={supSite} onChange={(e) => { setSupSite(e.target.value); setFieldState("idle"); }} onBlur={onBlur} placeholder="https://supplier.co.uk" />
-        </div>
-      </div>
-      <div className="flex items-center gap-3 mt-2 flex-wrap">
-        <Button size="sm" onClick={openChase} disabled={!supEmail.trim()}>
-          <Mail className="h-4 w-4 mr-1" /> Chase supplier for VAT invoice
-        </Button>
-        {!supEmail.trim() && <span className="text-xs text-muted-foreground">Needs a supplier email first.</span>}
-        {line.chaseCount > 0 && (
-          <Badge variant="outline" className="text-amber-700 border-amber-400">
-            Chased {line.chaseCount}× — last {line.lastChasedAt ? new Date(line.lastChasedAt).toLocaleDateString("en-GB") : ""}
-          </Badge>
-        )}
-        {supSite && (
-          <a href={supSite} target="_blank" rel="noopener noreferrer" className="text-xs underline text-muted-foreground hover:text-foreground">
-            {supSite.replace(/^https?:\/\//, "")}
-          </a>
-        )}
-      </div>
+    <div className="flex items-center gap-3 flex-wrap">
+      <Button size="sm" onClick={openChase} disabled={!supEmail.trim()}>
+        <Mail className="h-4 w-4 mr-1" /> Chase supplier for VAT invoice
+      </Button>
+      {!supEmail.trim() && <span className="text-xs text-muted-foreground">Needs a supplier email first (Supplier &amp; order above).</span>}
+      {line.chaseCount > 0 && (
+        <Badge variant="outline" className="text-amber-700 border-amber-400">
+          Chased {line.chaseCount}× — last {line.lastChasedAt ? new Date(line.lastChasedAt).toLocaleDateString("en-GB") : ""}
+        </Badge>
+      )}
 
       {chaseOpen && (
         <div className="fixed inset-0 z-[150] bg-black/60 flex items-center justify-center p-4" onClick={() => setChaseOpen(false)}>
@@ -523,16 +596,16 @@ function SupplierChaseBlock({ line }: { line: FinLine }) {
 function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const input = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [preview, setPreview] = useState<FinDocMeta | null>(null);
-  // What the next upload IS — asked up front so nobody has to re-tag later.
-  const [uploadKind, setUploadKind] = useState("invoice");
+  // Drag-drop assumes the dropped file is the invoice (the overwhelmingly
+  // common case) — the per-document selector re-tags in one tap. Choosing a
+  // kind up front lives on the Add file control further down the card.
   const upload = useMutation({
     mutationFn: async (file: File) => {
       const form = new FormData();
       form.append("file", file);
-      form.append("docKind", uploadKind);
+      form.append("docKind", "invoice");
       return jsonFetch(`${BASE}/api/finance/lines/${line.id}/documents`, { method: "POST", body: form });
     },
     onSuccess: () => {
@@ -565,7 +638,7 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
     >
       <div className="text-sm font-medium mb-2">Documents</div>
       {docs.length === 0 && (
-        <p className="text-sm text-muted-foreground mb-2">None yet — drop a PDF or photo here, or use Add file.</p>
+        <p className="text-sm text-muted-foreground mb-2">None yet — drop a PDF or photo here, or use Add file below.</p>
       )}
       <div className="flex flex-wrap gap-2">
         {docs.map((d) => (
@@ -595,30 +668,6 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
             </a>
           </div>
         ))}
-        <input
-          ref={input}
-          type="file"
-          accept=".pdf,image/*"
-          multiple
-          className="hidden"
-          onChange={(e) => {
-            for (const f of Array.from(e.target.files ?? [])) upload.mutate(f);
-            e.target.value = "";
-          }}
-        />
-        <span className="inline-flex items-center gap-1">
-          <select
-            value={uploadKind}
-            onChange={(e) => setUploadKind(e.target.value)}
-            className="h-9 rounded-md border bg-background text-sm px-2"
-            title="What the file you're about to add is"
-          >
-            {DOC_KINDS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
-          </select>
-          <Button size="sm" variant="outline" onClick={() => input.current?.click()} disabled={upload.isPending}>
-            {upload.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />} Add file
-          </Button>
-        </span>
       </div>
 
       {/* Same-origin iframe preview — never blob: URLs (the CSP frame-src
@@ -663,11 +712,21 @@ function SuggestionsBlock({ lineId }: { lineId: number }) {
     queryKey: ["/api/finance/lines", lineId, "matches"],
     queryFn: () => jsonFetch(`${BASE}/api/finance/lines/${lineId}/matches`),
   });
+  // What each suggested email IS, chosen before attaching (defaults: a PDF
+  // is presumed the invoice, a bare email an order confirmation).
+  const [attachKinds, setAttachKinds] = useState<Record<number, string>>({});
   const decide = useMutation({
-    mutationFn: ({ id, action }: { id: number; action: "confirm" | "reject" }) =>
-      jsonFetch(`${BASE}/api/finance/matches/${id}/${action}`, { method: "POST" }),
+    mutationFn: ({ id, action, docKind }: { id: number; action: "confirm" | "reject"; docKind?: string }) =>
+      jsonFetch(`${BASE}/api/finance/matches/${id}/${action}`, {
+        method: "POST",
+        ...(docKind ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ docKind }) } : {}),
+      }),
     onSuccess: (_r, vars) => {
-      toast({ title: vars.action === "confirm" ? "Email attached as document" : "Suggestion dismissed" });
+      toast({
+        title: vars.action === "confirm"
+          ? `Attached as ${DOC_KINDS.find(k => k.value === vars.docKind)?.label?.toLowerCase() ?? "document"}`
+          : "Suggestion dismissed",
+      });
       queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
     },
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
@@ -716,7 +775,19 @@ function SuggestionsBlock({ lineId }: { lineId: number }) {
             >
               {m.strength === "very_strong" ? "Very strong" : m.strength === "strong" ? "Strong" : m.strength === "medium" ? "Medium" : "Weak"}
             </Badge>
-            <Button size="sm" onClick={() => decide.mutate({ id: m.id, action: "confirm" })} disabled={decide.isPending}>
+            <select
+              value={attachKinds[m.id] ?? (m.hasPdf ? "invoice" : "order_confirmation")}
+              onChange={(e) => setAttachKinds(prev => ({ ...prev, [m.id]: e.target.value }))}
+              className="h-8 shrink-0 rounded-md border bg-background text-xs px-1.5"
+              title="What this email is"
+            >
+              {DOC_KINDS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
+            </select>
+            <Button
+              size="sm"
+              onClick={() => decide.mutate({ id: m.id, action: "confirm", docKind: attachKinds[m.id] ?? (m.hasPdf ? "invoice" : "order_confirmation") })}
+              disabled={decide.isPending}
+            >
               <CheckCircle2 className="h-4 w-4 mr-1" /> Attach
             </Button>
             <Button size="sm" variant="ghost" onClick={() => decide.mutate({ id: m.id, action: "reject" })} disabled={decide.isPending}>
