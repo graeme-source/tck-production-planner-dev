@@ -331,9 +331,13 @@ async function submitForApproval(
       // the scoreboard, and nobody's name goes on an approval that didn't
       // happen (approved_by stays empty).
       ...(needsReview ? {} : { approvedAt: new Date() }),
-      // Whoever says they did it gets the credit, unless it's already set.
-      creditedTo: row.creditedTo ?? userId,
-      creditedToName: row.creditedToName ?? userName,
+      // Credit defaults to whoever FIRST REPORTED it (Graeme, 2026-09-10):
+      // spotting the problem is the valuable act, and the fixer is often
+      // just whoever had the tools that day. Falls back to the person
+      // marking it done when the reporter is unknown; already-set credit
+      // (incl. a manager's explicit reassignment) is never overwritten.
+      creditedTo: row.creditedTo ?? row.submittedBy ?? userId,
+      creditedToName: row.creditedToName ?? row.submittedByName ?? userName,
       // Clear any previous send-back note; this is a fresh attempt.
       reviewNote: null,
       updatedAt: new Date(),
