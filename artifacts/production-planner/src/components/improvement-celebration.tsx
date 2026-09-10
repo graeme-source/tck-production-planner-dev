@@ -1,26 +1,34 @@
 /**
  * The improvement celebration — the WhatsApp-group moment, in the app
- * (Graeme, 2026-09-02: "Great news, someone's made an improvement... a
- * really positive moment"). When a teammate marks an improvement done, a
- * prominent popup appears for everyone else who has the app open: watch it
- * right there, or keep working and let the bell hold onto it.
+ * (Graeme, 2026-09-02), rebuilt as a NON-BLOCKING toast (Graeme,
+ * 2026-09-10): the old full-screen modal trapped people mid-task — worst
+ * case, mid-production-plan with no way back but killing the tab — and
+ * dismissing one could instantly reveal the next identical-looking one,
+ * which read as "it won't close".
+ *
+ * Now: a card slides up in the corner, celebrates for ten seconds, and
+ * slides away on its own. Tap X to drop it sooner, tap "Show me" to jump
+ * to the improvement itself. Nothing is ever blocked; the bell keeps the
+ * notification for anyone who missed the ten seconds. Hovering pauses the
+ * clock (someone reading shouldn't have it yanked away).
  *
  * Piggybacks the same 15-second notifications poll the flash banners use
  * (shared query key), so it costs no extra requests. One celebration at a
  * time, only for notifications younger than ten minutes, and each is
- * celebrated once per device (localStorage guard, same pattern as the
- * flash banners). "I'll watch later" deliberately leaves the notification
- * UNREAD so the bell badge still points at it.
+ * celebrated once per device (localStorage guard, best effort — an
+ * auto-dismissing toast makes a re-show an annoyance, not a trap).
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { PartyPopper, Loader2, X } from "lucide-react";
+import { useLocation } from "wouter";
+import { motion, AnimatePresence } from "framer-motion";
+import { PartyPopper, X } from "lucide-react";
 import type { AppNotification } from "@/hooks/use-notifications";
-import { ImprovementFeedMedia, type ImprovementMediaItem } from "@/components/improvement-feed-media";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const CELEBRATED_KEY = "tck-celebrated-notification-ids";
 const MAX_AGE_MS = 10 * 60 * 1000;
+const SHOW_MS = 10_000;
 
 function loadCelebrated(): Set<number> {
   try {
@@ -38,19 +46,11 @@ function saveCelebrated(set: Set<number>) {
   } catch { /* storage full / disabled — worst case it re-shows, not a crash */ }
 }
 
-interface FeedImprovement {
-  id: number;
-  title: string;
-  description: string;
-  creditedToName: string | null;
-  submittedByName: string | null;
-  media?: ImprovementMediaItem[];
-}
-
 export function ImprovementCelebration() {
   const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
   const [celebrated, setCelebrated] = useState<Set<number>>(() => loadCelebrated());
-  const [watching, setWatching] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Same key as the flash-banner poll — this component adds no requests.
   const { data: list = [] } = useQuery<AppNotification[]>({
@@ -74,96 +74,84 @@ export function ImprovementCelebration() {
     ) ?? null;
   }, [list, celebrated]);
 
-  // The improvement itself (title, credit, media incl. the stitched clip) is
-  // fetched only once someone taps "Show me now".
-  const { data: improvement, isLoading: improvementLoading } = useQuery<FeedImprovement | null>({
-    queryKey: ["celebration-improvement", current?.improvementId],
-    enabled: watching && current?.improvementId != null,
-    queryFn: async () => {
-      const res = await fetch(`${BASE}/api/improvements`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load the improvement");
-      const all: FeedImprovement[] = await res.json();
-      return all.find(i => i.id === current!.improvementId) ?? null;
-    },
-  });
-
-  if (!current) return null;
-
-  const dismiss = (markAsRead: boolean) => {
+  const dismiss = (id: number) => {
     setCelebrated(prev => {
       const next = new Set(prev);
-      next.add(current.id);
+      next.add(id);
       saveCelebrated(next);
       return next;
     });
-    setWatching(false);
-    if (markAsRead) {
-      fetch(`${BASE}/api/notifications/${current.id}/read`, { method: "PATCH", credentials: "include" })
-        .then(() => queryClient.invalidateQueries({ queryKey: ["notifications"] }))
-        .catch(() => { /* the bell will still show it — fine */ });
-    }
+  };
+
+  // The ten-second clock. Re-armed per celebration; cleared on unmount.
+  useEffect(() => {
+    if (!current) return;
+    const id = current.id;
+    timerRef.current = setTimeout(() => dismiss(id), SHOW_MS);
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, [current?.id]);
+
+  const pauseClock = () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  const resumeClock = () => {
+    if (!current) return;
+    const id = current.id;
+    pauseClock();
+    timerRef.current = setTimeout(() => dismiss(id), SHOW_MS);
+  };
+
+  const showMe = () => {
+    if (!current) return;
+    const target = current.improvementId;
+    // Reading it counts as read — the bell shouldn't keep pointing at it.
+    fetch(`${BASE}/api/notifications/${current.id}/read`, { method: "PATCH", credentials: "include" })
+      .then(() => queryClient.invalidateQueries({ queryKey: ["notifications"] }))
+      .catch(() => { /* the bell will still show it — fine */ });
+    dismiss(current.id);
+    navigate(`/improvements?open=${target}`);
   };
 
   return (
-    <div className="fixed inset-0 z-[120] bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="bg-background w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl p-6 space-y-4 max-h-[92vh] overflow-y-auto">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center flex-shrink-0">
-              <PartyPopper className="w-7 h-7 text-primary" />
-            </div>
-            <h2 className="text-2xl font-bold leading-tight">Great news!</h2>
-          </div>
-          <button
-            onClick={() => dismiss(false)}
-            className="w-11 h-11 rounded-2xl bg-secondary flex items-center justify-center flex-shrink-0"
-            aria-label="Close"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* The heading already says "Great news!" — don't say it twice. */}
-        <p className="text-lg leading-snug">{current.message.replace(/^Great news — /, "")}</p>
-
-        {watching ? (
-          improvementLoading ? (
-            <div className="flex items-center justify-center py-10 text-muted-foreground">
-              <Loader2 className="w-7 h-7 animate-spin" />
-            </div>
-          ) : improvement ? (
-            <>
-              <ImprovementFeedMedia media={improvement.media} />
-              {improvement.description && improvement.description !== improvement.title && (
-                <p className="text-base text-muted-foreground">{improvement.description}</p>
-              )}
+    <AnimatePresence>
+      {current && (
+        <motion.div
+          key={current.id}
+          initial={{ opacity: 0, y: 80 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 80, transition: { duration: 0.4 } }}
+          transition={{ type: "spring", damping: 22, stiffness: 260 }}
+          // Bottom corner, above the dock, NO backdrop — the page behind
+          // stays fully usable. pointer events only on the card itself.
+          className="fixed bottom-24 right-4 left-4 sm:left-auto sm:w-[24rem] z-[120]"
+          onMouseEnter={pauseClock}
+          onMouseLeave={resumeClock}
+        >
+          <div className="bg-background border-2 border-primary/40 rounded-2xl shadow-2xl p-4 space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                <PartyPopper className="w-6 h-6 text-primary" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="font-bold text-lg leading-tight">Great news!</p>
+                {/* The heading already says it — don't say it twice. */}
+                <p className="text-sm leading-snug mt-0.5">{current.message.replace(/^Great news — /, "")}</p>
+              </div>
               <button
-                onClick={() => dismiss(true)}
-                className="w-full h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold active:scale-[0.99] transition-all"
+                onClick={() => dismiss(current.id)}
+                className="w-9 h-9 rounded-xl bg-secondary flex items-center justify-center flex-shrink-0 hover:bg-secondary/70"
+                aria-label="Close"
               >
-                Brilliant 🎉
+                <X className="w-4 h-4" />
               </button>
-            </>
-          ) : (
-            <p className="text-base text-muted-foreground">Couldn't load it here — it's waiting on the Improvements page.</p>
-          )
-        ) : (
-          <div className="grid grid-cols-1 gap-3">
+            </div>
             <button
-              onClick={() => setWatching(true)}
-              className="h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold active:scale-[0.99] transition-all"
+              onClick={showMe}
+              className="w-full h-11 rounded-xl bg-primary text-primary-foreground text-base font-bold active:scale-[0.99] transition-all"
             >
-              Show me now
-            </button>
-            <button
-              onClick={() => dismiss(false)}
-              className="h-12 rounded-2xl border-2 border-border text-base font-semibold text-muted-foreground hover:text-foreground"
-            >
-              I'll watch it later
+              Show me
             </button>
           </div>
-        )}
-      </div>
-    </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
