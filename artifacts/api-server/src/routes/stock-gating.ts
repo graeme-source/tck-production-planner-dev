@@ -11,6 +11,7 @@ import {
   runStockGateCycle,
   releaseHold,
 } from "../lib/stock-gating";
+import { londonDateString } from "../lib/london-time";
 import { requireFeature } from "../lib/feature-access";
 
 const router: IRouter = Router();
@@ -65,6 +66,32 @@ router.get("/scope", requireAdmin, async (_req, res) => {
 router.post("/run", requireAdmin, async (_req, res) => {
   const result = await runStockGateCycle("manual");
   res.json(result);
+});
+
+// POST /api/stock-gating/ack/:holdId — "checked it, leave it held, stop
+// telling me today". The hold stays live (tag stays on Shopify); the
+// dashboard banner just hides it until tomorrow, when it resurfaces only
+// if the product is still held (Graeme, 2026-09-10).
+router.post("/ack/:holdId", requireAdmin, async (req, res) => {
+  const holdId = Number(req.params.holdId);
+  if (!Number.isInteger(holdId)) {
+    res.status(400).json({ error: "holdId must be an integer" });
+    return;
+  }
+  const [hold] = await db.select().from(stockGateHoldsTable)
+    .where(and(eq(stockGateHoldsTable.id, holdId), isNull(stockGateHoldsTable.releasedAt)));
+  if (!hold) {
+    res.status(404).json({ error: "No live hold with that id" });
+    return;
+  }
+  const userId = req.session.userId;
+  const [user] = userId
+    ? await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId))
+    : [];
+  await db.update(stockGateHoldsTable)
+    .set({ ackUntil: londonDateString(), ackBy: user?.name ?? "unknown" })
+    .where(eq(stockGateHoldsTable.id, holdId));
+  res.json({ ok: true });
 });
 
 // POST /api/stock-gating/release/:holdId — manual release of one hold.

@@ -113,16 +113,16 @@ export async function setStockGateSettings(patch: Partial<Record<keyof typeof KE
 
 // ── Shopify: variant → product resolution and product tagging ───────────────
 
-type ProductRef = { productGid: string; productId: string; title: string };
+type ProductRef = { productGid: string; productId: string; title: string; status: string };
 
 async function resolveProductForVariant(variantId: string): Promise<ProductRef | null> {
   const { shopifyGraphQL } = await import("../services/shopify");
   const data = await shopifyGraphQL<{
-    nodes: Array<{ id: string; product: { id: string; title: string } } | null>;
+    nodes: Array<{ id: string; product: { id: string; title: string; status: string } } | null>;
   }>(
     `query ($ids: [ID!]!) {
       nodes(ids: $ids) {
-        ... on ProductVariant { id product { id title } }
+        ... on ProductVariant { id product { id title status } }
       }
     }`,
     { ids: [`gid://shopify/ProductVariant/${variantId}`] },
@@ -133,6 +133,10 @@ async function resolveProductForVariant(variantId: string): Promise<ProductRef |
     productGid: node.product.id,
     productId: node.product.id.split("/").pop() ?? "",
     title: node.product.title,
+    // ACTIVE | DRAFT | ARCHIVED — a non-active product can't be bought, so
+    // holding it only produces warnings nobody can act on (Graeme,
+    // 2026-09-10: the Don Bacon / Open Fire BBQ nag loop).
+    status: node.product.status,
   };
 }
 
@@ -152,6 +156,17 @@ async function setProductTag(productGid: string, tag: string, add: boolean): Pro
   const errs = data[mutation]?.userErrors ?? [];
   if (errs.length > 0) {
     throw new Error(`Shopify ${mutation}: ${errs.map(e => e.message).join("; ")}`);
+  }
+}
+
+/** True when the variant's product is draft/archived. Lookup failures count
+ *  as "still active" — a transient Shopify error must not release holds. */
+async function productGoneInactive(variantId: string): Promise<boolean> {
+  try {
+    const product = await resolveProductForVariant(variantId);
+    return product != null && product.status !== "ACTIVE";
+  } catch {
+    return false;
   }
 }
 
@@ -343,6 +358,12 @@ export async function runStockGateCycle(trigger: "timer" | "manual"): Promise<St
           console.error(`[stock-gate] product lookup failed for ${row.recipeName}:`, err);
         }
         if (!product) continue;
+        // Draft/archived = off the menu = nothing to protect. It rejoins
+        // the gate automatically the day it's set active again.
+        if (product.status !== "ACTIVE") {
+          console.log(`[stock-gate] skip ${row.recipeName}: product is ${product.status} on Shopify`);
+          continue;
+        }
         if (!settings.dryRun) {
           try {
             await setProductTag(product.productGid, settings.tag, true);
@@ -366,6 +387,16 @@ export async function runStockGateCycle(trigger: "timer" | "manual"): Promise<St
         }).onConflictDoNothing();
         held.push(row.recipeName);
         console.log(`[stock-gate] HOLD ${row.recipeName}: surplus ${surplus} ≤ ${settings.thresholdPacks}${settings.dryRun ? " (dry run)" : ""}`);
+      } else if (hold && await productGoneInactive(variantId)) {
+        // The product was taken off the menu while held — release for good.
+        // Low surplus can't re-hold it (the ACTIVE check above), which is
+        // what breaks the release-then-back-in-5-minutes loop.
+        try {
+          await releaseHold(hold, "auto (product no longer active on Shopify)", surplus);
+          released.push(`${row.recipeName} (off the menu)`);
+        } catch (err) {
+          console.error(`[stock-gate] inactive-release failed for ${row.recipeName}:`, err);
+        }
       } else if (hold && settings.autoRelease && surplus >= settings.releasePacks) {
         try {
           await releaseHold(hold, "auto", surplus);

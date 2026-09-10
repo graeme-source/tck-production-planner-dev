@@ -23,6 +23,11 @@ interface Hold {
   verifyStatus: string | null;
   verifyNote: string | null;
   heldAt: string;
+  /** Set when someone checked the physical stock and said "leave it held,
+   *  stop telling me today" — the banner hides the hold until the day
+   *  after this date. */
+  ackUntil: string | null;
+  ackBy: string | null;
 }
 interface StatusPayload {
   settings: { enabled: boolean; dryRun: boolean; thresholdPacks: number; releasePacks: number; autoRelease: boolean; tag: string };
@@ -93,8 +98,16 @@ export function StockGateBanner({ userRole }: { userRole?: string }) {
 
   if (!allowed || !data || data.activeHolds.length === 0) return null;
 
-  const count = data.activeHolds.length;
-  const allDry = data.activeHolds.every(h => h.dryRun);
+  // Acked holds ("checked today, leave it held") stay quiet until tomorrow —
+  // London's tomorrow, not UTC's. A hold that ISN'T actually blocking
+  // overrides its ack: that's a live problem, not a known state.
+  const todayLondon = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+  const acked = (h: Hold) => h.ackUntil != null && h.ackUntil.slice(0, 10) >= todayLondon;
+  const visibleHolds = data.activeHolds.filter(h => !acked(h) || holdVerifyState(h) === "not-blocking");
+  if (visibleHolds.length === 0) return null;
+
+  const count = visibleHolds.length;
+  const allDry = visibleHolds.every(h => h.dryRun);
   // Red only for a hold that is STILL not blocking well after its tag went
   // on. A check that failed moments after tagging is Shopify → Zapiet taking
   // its time, not a hole in the gate, and it used to sit red forever because
@@ -114,6 +127,24 @@ export function StockGateBanner({ userRole }: { userRole?: string }) {
       }
     } catch (err) {
       toast({ title: "Release failed", description: err instanceof Error ? err.message : "Network error", variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function ackHold(hold: Hold) {
+    setBusy(hold.id);
+    try {
+      const res = await fetch(`${BASE}/api/stock-gating/ack/${hold.id}`, { method: "POST", credentials: "include" });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) {
+        toast({ title: `${hold.recipeName} checked`, description: "Stays held; the banner won't mention it again until tomorrow." });
+        fetchStatus();
+      } else {
+        toast({ title: "Couldn't mark it checked", description: body.error ?? "Request failed.", variant: "destructive" });
+      }
+    } catch (err) {
+      toast({ title: "Couldn't mark it checked", description: err instanceof Error ? err.message : "Network error", variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -189,8 +220,26 @@ export function StockGateBanner({ userRole }: { userRole?: string }) {
                     {h.productTitle && <span>{h.productTitle} · </span>}
                     surplus was {h.surplusAtHold} (≤ {h.thresholdAtHold}) · held {fmtTime(h.heldAt)}
                   </div>
-                  <div className="mt-1"><VerifyBadge hold={h} /></div>
+                  <div className="mt-1 flex items-center gap-2 flex-wrap">
+                    <VerifyBadge hold={h} />
+                    {acked(h) && (
+                      <span className="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400">
+                        <CheckCircle2 className="w-3 h-3" /> checked today{h.ackBy ? ` by ${h.ackBy}` : ""} — quiet until tomorrow
+                      </span>
+                    )}
+                  </div>
                 </div>
+                {!acked(h) && (
+                  <button
+                    onClick={() => ackHold(h)}
+                    disabled={busy !== null}
+                    title="Stock checked and it really is short — keep the hold, stop the banner mentioning it until tomorrow"
+                    className="flex items-center gap-1.5 text-sm px-3 py-1.5 border border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 rounded-lg font-medium hover:bg-emerald-50 dark:hover:bg-emerald-950/30 disabled:opacity-50"
+                  >
+                    {busy === h.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                    Checked — hide until tomorrow
+                  </button>
+                )}
                 <button
                   onClick={() => releaseHold(h)}
                   disabled={busy !== null}
