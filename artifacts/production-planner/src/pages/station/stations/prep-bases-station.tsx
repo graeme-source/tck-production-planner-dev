@@ -22,6 +22,7 @@ import type { NextActivePlan } from "../shared/prep-helpers";
 import { PrepSubNav } from "./prep-hub";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
+import { StationStockChecks } from "../shared/station-stock-checks";
 import { useMainPrepData } from "./main-prep-station";
 import type { MainPrepIngredient, LinkedItem } from "./main-prep-station";
 import { NumberInput } from "@/components/ui/number-input";
@@ -1008,6 +1009,15 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
       {replenishTarget && (
         <SubRecipeReplenishModal target={replenishTarget} onClose={() => setReplenishTarget(null)} />
       )}
+
+      {/* Stock checks for this station's ingredients — same card as main
+          prep, saving to the same per-day record (Graeme, 2026-09-10). */}
+      <StationStockChecks
+        checkDate={nextPlan?.planDate ?? plan.planDate}
+        isDraft={isDraft}
+        stationLabel="Bases &amp; Sauces"
+        ingredientIds={(data?.ingredients ?? []).filter(i => !i.isSubRecipe).map(i => i.ingredientId)}
+      />
 
       <StockCheckStatusPanel checkDate={nextPlan?.planDate ?? plan.planDate} />
 

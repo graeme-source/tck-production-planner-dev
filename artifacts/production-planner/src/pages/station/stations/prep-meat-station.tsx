@@ -17,6 +17,7 @@ import { PrepSubNav, usePrepByRecipe } from "./prep-hub";
 import type { PrepRecipeDetail, PrepIngredientDetail } from "./prep-hub";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
+import { StationStockChecks } from "../shared/station-stock-checks";
 
 interface PrepTrayCompletion {
   id: number;
@@ -304,6 +305,19 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
       )}
 
       <StockCheckStatusPanel checkDate={nextPlan?.planDate ?? plan.planDate} />
+
+      {/* Stock checks for the marinade/linked ingredients on this station
+          (white onions attached to a raw meat — Graeme, 2026-09-10). The
+          meats themselves keep their existing inline stock-check card on
+          each recipe view; this covers only what that card can't see. */}
+      <StationStockChecks
+        checkDate={nextPlan?.planDate ?? plan.planDate}
+        isDraft={isDraft}
+        stationLabel="Raw Meat"
+        ingredientIds={recipes.flatMap(r =>
+          (r.marinades ?? []).map(m => m.marinadeIngredientId).filter((x): x is number => x != null),
+        )}
+      />
 
       {/* Summary bar */}
       <div className="bg-card border border-border rounded-xl p-4">
