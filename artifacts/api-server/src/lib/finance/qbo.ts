@@ -147,7 +147,11 @@ async function qboQuery<T>(query: string): Promise<T[]> {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`QuickBooks query failed (${res.status}): ${text.slice(0, 300)}`);
+    // intuit_tid is Intuit's per-request trace id — quoting it is how their
+    // support finds a failed call, so it rides in the error (and from there
+    // into lastError on the admin panel and the server logs).
+    const tid = res.headers.get("intuit_tid");
+    throw new Error(`QuickBooks query failed (${res.status}${tid ? `, intuit_tid ${tid}` : ""}): ${text.slice(0, 300)}`);
   }
   const json = await res.json() as { QueryResponse?: Record<string, T[]> };
   const qr = json.QueryResponse ?? {};
