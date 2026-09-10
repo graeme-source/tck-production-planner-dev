@@ -191,6 +191,22 @@ router.get("/", async (req: Request, res: Response) => {
     `);
     const seenIds = new Set((seenRows.rows ?? []).map(r => Number(r.improvement_id)));
 
+    // Emoji reactions, aggregated per improvement with "did I press this one".
+    const reactionRows = ids.length === 0 ? { rows: [] } : await db.execute<{ improvement_id: number; emoji: string; n: number; mine: boolean }>(sql`
+      SELECT improvement_id, emoji,
+             COUNT(*)::int AS n,
+             BOOL_OR(user_id = ${viewer.id ?? -1}) AS mine
+        FROM improvement_reactions
+       WHERE improvement_id = ANY(${intArrayLiteral(ids)}::int[])
+       GROUP BY improvement_id, emoji
+    `);
+    const reactionsById = new Map<number, Array<{ emoji: string; count: number; mine: boolean }>>();
+    for (const r of (reactionRows.rows ?? [])) {
+      const list = reactionsById.get(Number(r.improvement_id)) ?? [];
+      list.push({ emoji: r.emoji, count: Number(r.n), mine: !!r.mine });
+      reactionsById.set(Number(r.improvement_id), list);
+    }
+
     res.json(rows.map(r => ({
       ...decorate(
         r,
@@ -201,10 +217,43 @@ router.get("/", async (req: Request, res: Response) => {
       ),
       media: mediaById.get(r.id) ?? [],
       seenByMe: seenIds.has(r.id),
+      reactions: reactionsById.get(r.id) ?? [],
     })));
   } catch (err) {
     console.error("Error fetching improvement submissions:", err);
     res.status(500).json({ error: "Failed to fetch improvement submissions" });
+  }
+});
+
+// POST /:id/react — WhatsApp-style emoji applause, toggled. A fixed
+// palette keeps the row tidy and the data clean; tapping an emoji you
+// already pressed takes it back.
+const REACTION_EMOJI = new Set(["👍", "❤️", "🎉", "💪", "😂"]);
+router.post("/:id/react", async (req: Request, res: Response) => {
+  const userId = req.session.userId;
+  if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const id = parseInt(String(req.params.id), 10);
+  const emoji = typeof req.body?.emoji === "string" ? req.body.emoji : "";
+  if (isNaN(id) || !REACTION_EMOJI.has(emoji)) { res.status(400).json({ error: "Invalid reaction" }); return; }
+  try {
+    const inserted = await db.execute<{ id: number }>(sql`
+      INSERT INTO improvement_reactions (improvement_id, user_id, emoji)
+      VALUES (${id}, ${userId}, ${emoji})
+      ON CONFLICT (improvement_id, user_id, emoji) DO NOTHING
+      RETURNING id
+    `);
+    if ((inserted.rows ?? []).length === 0) {
+      await db.execute(sql`
+        DELETE FROM improvement_reactions
+        WHERE improvement_id = ${id} AND user_id = ${userId} AND emoji = ${emoji}
+      `);
+      res.json({ reacted: false });
+      return;
+    }
+    res.json({ reacted: true });
+  } catch (err) {
+    console.error("[Improvements] react failed:", err);
+    res.status(500).json({ error: "Couldn't save the reaction" });
   }
 });
 

@@ -82,7 +82,54 @@ type Improvement = {
   media?: Array<{ id: number; kind: "image" | "video"; phase: "before" | "after" | "stitched" | null }>;
   /** Has THIS viewer opened it? Powers the To-review tab and NEW markers. */
   seenByMe?: boolean;
+  /** Emoji applause, aggregated: [{emoji, count, mine}]. */
+  reactions?: Array<{ emoji: string; count: number; mine: boolean }>;
 };
+
+/** The reaction palette — mirrored by the server's allow-list. */
+const REACTION_EMOJI = ["👍", "❤️", "🎉", "💪", "😂"];
+
+/** WhatsApp-style applause row: counts for pressed emoji, the rest a tap
+ *  away. The vote button decides what gets DONE; this is the cheering
+ *  (Graeme, 2026-09-10). */
+function ReactionBar({ item }: { item: Improvement }) {
+  const queryClient = useQueryClient();
+  const react = useMutation({
+    mutationFn: (emoji: string) => api(`/improvements/${item.id}/react`, {
+      method: "POST", body: JSON.stringify({ emoji }),
+    }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["improvements"] }),
+    onError: (e: Error) => toast({ title: "Couldn't save that", description: e.message, variant: "destructive" }),
+  });
+  const byEmoji = new Map((item.reactions ?? []).map(r => [r.emoji, r]));
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap" onClick={e => e.stopPropagation()}>
+      {REACTION_EMOJI.map(emoji => {
+        const r = byEmoji.get(emoji);
+        return (
+          <button
+            key={emoji}
+            onClick={() => react.mutate(emoji)}
+            disabled={react.isPending}
+            aria-pressed={r?.mine ?? false}
+            title={r?.mine ? "Tap to take it back" : "React"}
+            className={cn(
+              "h-10 min-w-[2.75rem] px-2.5 rounded-full border-2 text-base flex items-center justify-center gap-1 transition-all active:scale-95",
+              r?.mine
+                ? "border-primary bg-primary/10"
+                : r
+                  ? "border-border bg-secondary/40"
+                  : "border-border/60 opacity-60 hover:opacity-100",
+            )}
+          >
+            <span>{emoji}</span>
+            {r && r.count > 0 && <span className="text-sm font-bold tabular-nums">{r.count}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /** An idea is work not yet done; everything past that is an improvement.
  *  The two words were blurring together on the page (Graeme, 2026-09-10). */
@@ -473,9 +520,11 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
       </div>
       </button>
       <ImprovementFeedMedia media={item.media} onOpen={onOpen} />
-      {/* Voting from the feed itself — outside the open-it button, so a tap
-          here backs the idea instead of navigating away. Only while it is
-          still to do: once it is done, voting on it means nothing. */}
+      {/* Applause first, then (for ideas) the vote. Both live outside the
+          open-it button so a tap reacts instead of navigating away. */}
+      <div className="mt-3">
+        <ReactionBar item={item} />
+      </div>
       {item.stage === "todo" && (
         <div className="mt-3">
           <VoteButton item={item} variant="feed" />
