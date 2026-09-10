@@ -36,7 +36,10 @@ function collectionBlock(): Record<string, unknown> {
       ...(APC_COLLECTION_ADDRESS1 ? { AddressLine1: APC_COLLECTION_ADDRESS1 } : {}),
       ...(APC_COLLECTION_CITY ? { City: APC_COLLECTION_CITY } : {}),
       ...(APC_COLLECTION_POSTCODE ? { PostalCode: APC_COLLECTION_POSTCODE } : {}),
-      ...(APC_COLLECTION_POSTCODE ? { CountryCode: "GB" } : {}),
+      // Always present once the block exists: the new Hypaship validator
+      // walked straight from PhoneNumber to "Collection CountryCode: ERROR
+      // COUNTRY CODE" (2026-09-11, second wave of the same outage).
+      CountryCode: "GB",
       Contact: {
         ...(APC_COLLECTION_COMPANY ? { PersonName: APC_COLLECTION_COMPANY.slice(0, 35) } : {}),
         PhoneNumber: APC_COLLECTION_PHONE,
