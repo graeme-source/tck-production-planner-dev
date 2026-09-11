@@ -325,14 +325,31 @@ export async function runStockGateCycle(trigger: "timer" | "manual"): Promise<St
 
     // Holds on recipes no longer in scope are released immediately — a
     // product we can't measure must not stay blocked on a stale number.
+    // And holds on products that have gone draft/archived release HERE,
+    // unconditionally: the per-row loop below skips rows without live
+    // Shopify sales, and a draft product stops selling — which is exactly
+    // why the first version of this check (inside that loop) never fired
+    // for Open Fire BBQ (Graeme, 2026-09-11). The hold's own stored
+    // variant id keys the lookup, independent of today's calc.
     for (const h of activeHolds) {
-      if (inScope(h.recipeId)) continue;
-      try {
-        await releaseHold(h, "auto (out of gate scope)", null);
-        holdByRecipe.delete(h.recipeId);
-        released.push(`${h.recipeName} (out of scope)`);
-      } catch (err) {
-        console.error(`[stock-gate] out-of-scope release failed for ${h.recipeName}:`, err);
+      if (!inScope(h.recipeId)) {
+        try {
+          await releaseHold(h, "auto (out of gate scope)", null);
+          holdByRecipe.delete(h.recipeId);
+          released.push(`${h.recipeName} (out of scope)`);
+        } catch (err) {
+          console.error(`[stock-gate] out-of-scope release failed for ${h.recipeName}:`, err);
+        }
+        continue;
+      }
+      if (h.shopifyVariantId && await productGoneInactive(h.shopifyVariantId)) {
+        try {
+          await releaseHold(h, "auto (product no longer active on Shopify)", null);
+          holdByRecipe.delete(h.recipeId);
+          released.push(`${h.recipeName} (off the menu)`);
+        } catch (err) {
+          console.error(`[stock-gate] inactive-release failed for ${h.recipeName}:`, err);
+        }
       }
     }
 
@@ -387,16 +404,6 @@ export async function runStockGateCycle(trigger: "timer" | "manual"): Promise<St
         }).onConflictDoNothing();
         held.push(row.recipeName);
         console.log(`[stock-gate] HOLD ${row.recipeName}: surplus ${surplus} ≤ ${settings.thresholdPacks}${settings.dryRun ? " (dry run)" : ""}`);
-      } else if (hold && await productGoneInactive(variantId)) {
-        // The product was taken off the menu while held — release for good.
-        // Low surplus can't re-hold it (the ACTIVE check above), which is
-        // what breaks the release-then-back-in-5-minutes loop.
-        try {
-          await releaseHold(hold, "auto (product no longer active on Shopify)", surplus);
-          released.push(`${row.recipeName} (off the menu)`);
-        } catch (err) {
-          console.error(`[stock-gate] inactive-release failed for ${row.recipeName}:`, err);
-        }
       } else if (hold && settings.autoRelease && surplus >= settings.releasePacks) {
         try {
           await releaseHold(hold, "auto", surplus);
