@@ -2385,7 +2385,7 @@ async function runStartupMigrations() {
         ('safety_issues', 2, 'Safety Issues'),
         ('order_of_production', 3, 'Order of Production'),
         ('special_prep', 4, 'Test Product Prep'),
-        ('local_delivery', 5, 'Local Despatch'),
+        ('local_delivery', 5, 'Local Dispatch'),
         ('bag_orders', 6, 'Bag Orders'),
         ('yesterday_kpis', 8, 'Yesterday''s Numbers'),
         ('new_sops', 9, 'New & Updated SOPs'),
@@ -2399,14 +2399,14 @@ async function runStartupMigrations() {
     await db.execute(sql`
       UPDATE meeting_slides ms
       SET order_position = m.new_pos,
-          title = CASE WHEN ms.title IN ('Special Prep','Local Delivery','Struggles','Improvements Required') THEN m.new_title ELSE ms.title END
+          title = CASE WHEN ms.title IN ('Special Prep','Local Delivery','Local Despatch','Struggles','Improvements Required') THEN m.new_title ELSE ms.title END
       FROM (VALUES
         ('station_assignments'::text, 0, 'Who''s On Today'::text),
         ('stretches', 1, 'Stretches'),
         ('safety_issues', 2, 'Safety Issues'),
         ('order_of_production', 3, 'Order of Production'),
         ('special_prep', 4, 'Test Product Prep'),
-        ('local_delivery', 5, 'Local Despatch'),
+        ('local_delivery', 5, 'Local Dispatch'),
         ('bag_orders', 6, 'Bag Orders'),
         ('yesterday_kpis', 8, 'Yesterday''s Numbers'),
         ('new_sops', 9, 'New & Updated SOPs'),

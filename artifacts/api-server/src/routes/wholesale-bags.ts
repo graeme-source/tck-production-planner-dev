@@ -263,7 +263,7 @@ router.post("/process", async (req, res) => {
   const requestedProductionDate: string | null =
     rawProductionDate != null && rawProductionDate !== "" ? String(rawProductionDate) : null;
   if (requestedProductionDate && requestedProductionDate > despatchDateFor(deliveryDate)) {
-    res.status(400).json({ error: `Production day must be on or before the despatch day (${despatchDateFor(deliveryDate)} for delivery ${deliveryDate}) — bags must exist before they ship.` });
+    res.status(400).json({ error: `Production day must be on or before the dispatch day (${despatchDateFor(deliveryDate)} for delivery ${deliveryDate}) — bags must exist before they ship.` });
     return;
   }
   // No more than three days ahead of delivery (Graeme, 2026-08): bags made
@@ -294,7 +294,7 @@ router.post("/process", async (req, res) => {
       // that can't go out until tomorrow.
       if (despatchDateFor(deliveryDate) < earliestDespatchDay()) {
         res.status(409).json({
-          error: `Too late to despatch for delivery ${deliveryDate} — despatch closes at ${DESPATCH_CUTOFF}, so the earliest delivery is now ${earliestTagOnlyDeliveryDay()}.`,
+          error: `Too late to dispatch for delivery ${deliveryDate} — dispatch closes at ${DESPATCH_CUTOFF}, so the earliest delivery is now ${earliestTagOnlyDeliveryDay()}.`,
         });
         return;
       }

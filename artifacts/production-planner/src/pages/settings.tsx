@@ -727,7 +727,7 @@ const SETTINGS_SEARCH_INDEX: { tab: SettingsSection; title: string; keywords: st
   { tab: "production", title: "Pack Weights & HACCP Chill", keywords: "weight grams chill haccp cooling check pack weight" },
   { tab: "production", title: "Oven Defaults", keywords: "oven temperature steam meat vegetarian cooking defaults" },
   { tab: "production", title: "Extra Tomato Base", keywords: "tomato base extra sauce batches" },
-  { tab: "packing", title: "Despatch Ice Packs", keywords: "ice packs boxes weather forecast summer despatch" },
+  { tab: "packing", title: "Dispatch Ice Packs", keywords: "ice packs boxes weather forecast summer dispatch despatch" },
   { tab: "production", title: "Pasta Cooking", keywords: "pasta cook mac cheese boil" },
   { tab: "production", title: "Break Durations", keywords: "breaks snack lunch minutes schedule" },
   { tab: "production", title: "Day Schedule", keywords: "start time changeover builders schedule defaults timeline" },
@@ -2728,7 +2728,7 @@ function IcePackSettingsSection() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-base font-semibold flex items-center gap-2">
-            <ThermometerSnowflake className="w-4 h-4 text-cyan-500" /> Despatch Ice Packs
+            <ThermometerSnowflake className="w-4 h-4 text-cyan-500" /> Dispatch Ice Packs
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
             How many ice packs to put in each box, set from the forecast high temperature over the despatch window (today + tomorrow) at one fixed location. Large boxes always get the small-box count plus the extra below.
@@ -3568,8 +3568,8 @@ function StockGateSection() {
           {savedMsg && <span className="text-xs text-emerald-600 font-medium">{savedMsg}</span>}
         </h2>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Watches the fridge-vs-despatch surplus per product (fridge + still to wrap − today's
-          remaining despatch). At the threshold it tags the Shopify product so the Zapiet
+          Watches the fridge-vs-dispatch surplus per product (fridge + still to wrap − today's
+          remaining dispatch). At the threshold it tags the Shopify product so the Zapiet
           preparation-time rule removes tomorrow from the date picker; the tag comes off when
           stock recovers. Needs the Zapiet rule set up once: tag → 2-day preparation time.
         </p>

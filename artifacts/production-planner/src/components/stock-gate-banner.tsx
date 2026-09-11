@@ -202,7 +202,7 @@ export function StockGateBanner({ userRole }: { userRole?: string }) {
               <ShieldAlert className="w-5 h-5 text-amber-500" /> Held from next-day delivery
             </DialogTitle>
             <DialogDescription>
-              These products got within {data.settings.thresholdPacks} packs of not covering today's despatch, so the
+              These products got within {data.settings.thresholdPacks} packs of not covering today's dispatch, so the
               <span className="font-mono text-xs mx-1 px-1 py-0.5 rounded bg-secondary">{data.settings.tag}</span>
               tag pulled tomorrow from the website's date picker.
               {data.settings.autoRelease

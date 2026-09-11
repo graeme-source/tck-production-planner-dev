@@ -1711,7 +1711,7 @@ function DynamicDataDisplay({ type, data, loading, planId }: { type: string; dat
           </div>
           <div className="ml-auto text-right text-xs text-muted-foreground">
             {ice.highTemp != null
-              ? <>Forecast high <span className="font-semibold text-foreground">{ice.highTemp}°C</span><br />({ice.location?.name ?? "despatch window"}, today/tomorrow)</>
+              ? <>Forecast high <span className="font-semibold text-foreground">{ice.highTemp}°C</span><br />({ice.location?.name ?? "dispatch window"}, today/tomorrow)</>
               : <span className="text-amber-600 dark:text-amber-400">{ice.message ?? "Weather unavailable"}</span>}
           </div>
         </div>

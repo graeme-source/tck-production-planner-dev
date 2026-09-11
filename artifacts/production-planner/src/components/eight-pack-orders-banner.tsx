@@ -402,7 +402,7 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
             <PackageCheck className="w-5 h-5 text-indigo-500" /> Process 8-pack &amp; wholesale orders
           </DialogTitle>
           <DialogDescription>
-            Pick a delivery day (Tue–Sat) for each order. <span className="font-medium">8-pack bag orders</span> add the bags to a production plan up to 3 days before delivery — Make defaults to the earliest plan that already has the products, and you can change it. <span className="font-medium">Wholesale 2-pack orders</span> are just tagged for despatch. Both get tagged with the delivery date + <span className="font-medium">production</span>.
+            Pick a delivery day (Tue–Sat) for each order. <span className="font-medium">8-pack bag orders</span> add the bags to a production plan up to 3 days before delivery — Make defaults to the earliest plan that already has the products, and you can change it. <span className="font-medium">Wholesale 2-pack orders</span> are just tagged for dispatch. Both get tagged with the delivery date + <span className="font-medium">production</span>.
           </DialogDescription>
         </DialogHeader>
 
