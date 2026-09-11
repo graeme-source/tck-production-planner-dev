@@ -67,6 +67,7 @@ import wholesaleBagsRouter from "./wholesale-bags";
 import bundlesRouter from "./bundles";
 import trainingRouter from "./training";
 import trainingAcknowledgeRouter from "./training-acknowledge";
+import incidentsRouter from "./incidents";
 import onboardingRouter from "./onboarding";
 import goveeRouter from "./govee";
 import visitorsRouter from "./visitors";
@@ -229,6 +230,8 @@ router.use("/ice-packs", icePacksRouter);
 router.use("/wholesale-bags", requireAdminOrManager, wholesaleBagsRouter);
 router.use("/bundles", requireAdminOrManager, bundlesRouter);
 router.use("/training", requireAdminOrManager, trainingRouter);
+// Accident & incident diary — a manager's HACCP due-diligence tool.
+router.use("/incidents", requireAdminOrManager, incidentsRouter);
 // Self-service "I've read and understood" from the document viewer — every
 // colleague confirms their own reading, so no manager guard; the router
 // scopes everything to the session user.

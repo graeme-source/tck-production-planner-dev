@@ -21,6 +21,7 @@ import { IssueAttachments } from "@/components/issue-attachments";
 import { useAuth } from "@/contexts/auth-context";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { FreshnessBadge } from "@/components/govee-freshness";
+import { IncidentDiaryTab } from "@/components/incident-diary";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -171,7 +172,7 @@ type TabId = "kpis" | "breaks" | "haccp" | "risk-assessments" | "improvements" |
 // HACCP is being built out into a full food-safety system, so it gets its
 // own sub-navigation. Temperature Log lives here too — fridge, freezer, and
 // cooked-core readings are all food-safety evidence.
-type HaccpSubTabId = "evidence" | "temperatures" | "cooling-weights" | "sensors" | "visitors";
+type HaccpSubTabId = "evidence" | "temperatures" | "cooling-weights" | "sensors" | "visitors" | "incidents";
 
 interface ImprovementRecord {
   id: number;
@@ -266,7 +267,7 @@ function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: stri
 }
 
 const VALID_TABS: TabId[] = ["kpis", "breaks", "haccp", "risk-assessments", "improvements", "issues", "leftover-filling", "employees", "printables"];
-const VALID_HACCP_SUBTABS: HaccpSubTabId[] = ["evidence", "temperatures", "cooling-weights", "sensors", "visitors"];
+const VALID_HACCP_SUBTABS: HaccpSubTabId[] = ["evidence", "temperatures", "cooling-weights", "sensors", "visitors", "incidents"];
 
 interface ReportsNavItem {
   id: TabId;
@@ -298,6 +299,7 @@ const HACCP_SUB_NAV_ITEMS: HaccpSubNavItem[] = [
   { id: "cooling-weights", label: "Cooling & Weights", icon: Hourglass },
   { id: "sensors", label: "Sensor History", icon: Activity },
   { id: "visitors", label: "Visitor Book", icon: UserPlus },
+  { id: "incidents", label: "Accidents & Incidents", icon: AlertTriangle },
 ];
 
 // Tabs only visible to admins (not managers). Empty — no admin-gated tabs right now.
@@ -540,6 +542,7 @@ export default function Reports() {
               {haccpSubTab === "cooling-weights" && <BatchWeightsTab fromDate={fromDate} toDate={toDate} />}
               {haccpSubTab === "sensors" && <GoveeSensorHistoryTab initialDevice={deviceParam} />}
               {haccpSubTab === "visitors" && <VisitorBookTab fromDate={fromDate} toDate={toDate} />}
+              {haccpSubTab === "incidents" && <IncidentDiaryTab />}
             </>
           )}
           {activeTab === "risk-assessments" && <RiskAssessmentsTab userRole={userRole} currentUserName={state.status === "authenticated" ? state.user.name : null} />}
