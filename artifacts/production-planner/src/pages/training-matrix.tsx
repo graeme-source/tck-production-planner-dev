@@ -366,10 +366,22 @@ function ItemRowHeader({ item, onEdit, onDelete }: { item: Item; onEdit: () => v
   const isSop = item.sopId != null;
   return (
     <div className="flex items-center justify-between gap-2">
-      <div className="flex items-center gap-2 min-w-0">
-        {isSop && <FileText className="w-4 h-4 text-primary flex-shrink-0" />}
-        <span className="text-sm font-medium">{item.label}</span>
-      </div>
+      {/* A linked item's label IS the link (Graeme, 2026-09-11: clicking
+          "review the jewellery policy" must open the jewellery policy —
+          the popover's Open document was too buried to discover). */}
+      {isSop ? (
+        <a
+          href={`${BASE}/documents/${item.sopId}`} target="_blank" rel="noopener noreferrer"
+          className="flex items-center gap-2 min-w-0 text-primary hover:underline"
+        >
+          <FileText className="w-4 h-4 flex-shrink-0" />
+          <span className="text-sm font-medium">{item.label}</span>
+        </a>
+      ) : (
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm font-medium">{item.label}</span>
+        </div>
+      )}
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button

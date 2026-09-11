@@ -1328,7 +1328,7 @@ export default function EmployeeHub() {
               <div className="mb-4 pb-4 border-b border-border">
                 <h2 className="text-lg font-semibold">Policies</h2>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Company policies that apply to everyone. Read each one — once you have, tell your manager and your sign-off is recorded on the training matrix.
+                  Company policies that apply to everyone. Open one, read it, and tap “I've read and understood” at the bottom — your training matrix is ticked automatically.
                 </p>
               </div>
               <PoliciesList />

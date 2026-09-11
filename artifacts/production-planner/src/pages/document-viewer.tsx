@@ -1,9 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRoute, Link } from "wouter";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format } from "date-fns";
-import { ArrowLeft, FileText, ScrollText, Download } from "lucide-react";
+import { ArrowLeft, FileText, ScrollText, Download, CheckCircle2, Loader2 } from "lucide-react";
+import { toast } from "@/hooks/use-toast";
 import type { JSX } from "react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -99,6 +100,100 @@ function MarkdownBody({ md }: { md: string }) {
   return <div className="space-y-3">{blocks}</div>;
 }
 
+// ── Read-and-understood confirmation ────────────────────────────────────────
+// When this document is a linked item on a training matrix the signed-in
+// colleague is enrolled in, they confirm their reading right here and the
+// tick lands on the matrix immediately — no "tell your manager" loop
+// (Graeme, 2026-09-11: review it there and then, and it ticks itself off).
+
+interface AckItem {
+  itemId: number;
+  itemLabel: string;
+  matrixName: string;
+  trained: boolean | null;
+  trainedAt: string | null;
+  signedOffByName: string | null;
+}
+
+function ReadConfirmation({ documentId, docTypeLabel, isPolicy }: {
+  documentId: number;
+  docTypeLabel: string;
+  isPolicy: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const { data } = useQuery<{ items: AckItem[] }>({
+    queryKey: ["training-ack", documentId],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/training-ack/status?documentId=${documentId}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+  });
+
+  const confirm = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${BASE}/api/training-ack/confirm`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentId }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "Failed to record");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["training-ack", documentId] });
+      toast({ title: "Recorded", description: "Your training matrix has been ticked — nothing else to do." });
+    },
+    onError: (e) => {
+      toast({ title: "Couldn't record that", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    },
+  });
+
+  const items = data?.items ?? [];
+  if (items.length === 0) {
+    // Not on this person's training matrix. For a policy, keep the gentle
+    // pointer so the expectation ("reading these matters") survives.
+    return isPolicy ? (
+      <p className="text-xs text-muted-foreground">
+        Once you have read and understood this policy, tell your manager — your sign-off is recorded on the training matrix.
+      </p>
+    ) : null;
+  }
+
+  const unread = items.filter(i => !i.trained);
+  if (unread.length === 0) {
+    const first = items[0];
+    return (
+      <div className="rounded-2xl border border-emerald-500/50 bg-emerald-500/10 p-4 flex items-center gap-3">
+        <CheckCircle2 className="w-6 h-6 text-emerald-600 flex-shrink-0" />
+        <div className="text-sm">
+          <p className="font-semibold text-emerald-800 dark:text-emerald-300">You've confirmed this {docTypeLabel}</p>
+          <p className="text-muted-foreground">
+            Recorded on your training matrix{first.trainedAt ? ` — ${format(new Date(`${first.trainedAt}T00:00:00`), "d MMM yyyy")}` : ""}.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border-2 border-primary/40 bg-primary/5 p-5 space-y-3">
+      <p className="text-sm font-medium">
+        This {docTypeLabel} is on your training matrix
+        {unread.length === 1 ? ` (“${unread[0].itemLabel}”)` : ""}. Once you've read it, confirm below and it's ticked off for you — no need to tell a manager.
+      </p>
+      <button
+        onClick={() => confirm.mutate()}
+        disabled={confirm.isPending}
+        className="w-full sm:w-auto px-5 py-3 rounded-xl bg-primary text-primary-foreground text-base font-bold hover:bg-primary/90 active:scale-[0.99] transition-all disabled:opacity-60 inline-flex items-center justify-center gap-2"
+      >
+        {confirm.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
+        I've read and understood this {docTypeLabel}
+      </button>
+    </div>
+  );
+}
+
 // ── Page ───────────────────────────────────────────────────────────────────
 export default function DocumentViewer() {
   const [, params] = useRoute("/documents/:id");
@@ -158,11 +253,7 @@ export default function DocumentViewer() {
             )}
           </div>
 
-          {data.assessmentType === "policy" && (
-            <p className="text-xs text-muted-foreground">
-              Once you have read and understood this policy, tell your manager — your sign-off is recorded on the training matrix.
-            </p>
-          )}
+          <ReadConfirmation documentId={data.id} docTypeLabel={typeLabel(data.assessmentType).toLowerCase()} isPolicy={data.assessmentType === "policy"} />
         </>
       )}
     </div>

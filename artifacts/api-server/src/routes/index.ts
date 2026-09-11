@@ -66,6 +66,7 @@ import icePacksRouter from "./ice-packs";
 import wholesaleBagsRouter from "./wholesale-bags";
 import bundlesRouter from "./bundles";
 import trainingRouter from "./training";
+import trainingAcknowledgeRouter from "./training-acknowledge";
 import onboardingRouter from "./onboarding";
 import goveeRouter from "./govee";
 import visitorsRouter from "./visitors";
@@ -228,6 +229,10 @@ router.use("/ice-packs", icePacksRouter);
 router.use("/wholesale-bags", requireAdminOrManager, wholesaleBagsRouter);
 router.use("/bundles", requireAdminOrManager, bundlesRouter);
 router.use("/training", requireAdminOrManager, trainingRouter);
+// Self-service "I've read and understood" from the document viewer — every
+// colleague confirms their own reading, so no manager guard; the router
+// scopes everything to the session user.
+router.use("/training-ack", trainingAcknowledgeRouter);
 router.use("/govee", goveeRouter);
 // Visitor book. Open to all logged-in staff — anyone on the floor may be the
 // one who greets a visitor and hands them the iPad.
