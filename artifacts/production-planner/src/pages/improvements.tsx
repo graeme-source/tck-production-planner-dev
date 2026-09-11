@@ -73,6 +73,10 @@ type Improvement = {
   approvedByName: string | null;
   reviewNote: string | null;
   createdAt: string;
+  /** Lifecycle stamps — when it was fixed / approved. The feed sorts
+   *  improvements by these, not by when the idea was first logged. */
+  doneAt?: string | null;
+  approvedAt?: string | null;
   voteCount: number;
   votedByMe: boolean;
   subjectTitle: string | null;
@@ -253,6 +257,12 @@ export default function Improvements() {
   // Server order is newest-first; keep every list that way — the feed leads
   // with the most recent and scrolls back in time (Graeme, 2026-09-10).
   const byNewest = (a: Improvement, b: Improvement) => b.createdAt.localeCompare(a.createdAt);
+  // The FEED's clock is when a thing became what it is (Graeme,
+  // 2026-09-11): an idea sits at its logged time, but the moment it's
+  // fixed it is, by definition, the latest improvement — a Tuesday idea
+  // finished on Thursday tops Thursday's feed, not Tuesday's backlog.
+  const feedStamp = (i: Improvement) => (isIdea(i) ? i.createdAt : (i.doneAt ?? i.approvedAt ?? i.createdAt));
+  const byFeedNewest = (a: Improvement, b: Improvement) => feedStamp(b).localeCompare(feedStamp(a));
   const waiting = items.filter(i => i.stage === "waiting").sort(byNewest);
   const toReview = items.filter(i => !i.seenByMe && !i.isMine).sort(byNewest);
 
@@ -293,7 +303,7 @@ export default function Improvements() {
         };
         const timeline = items
           .filter(i => (isIdea(i) ? showIdeas : showImprovements))
-          .sort(byNewest)
+          .sort(byFeedNewest)
           .slice(0, 40);
         return (
         <>
