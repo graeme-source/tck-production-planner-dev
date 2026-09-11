@@ -3,6 +3,7 @@ import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batch
 import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as drizzleSum, ne, isNotNull, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
+import { FRIED_CHICKEN_CATEGORY } from "./fried-chicken";
 // Aliased: this file has its own in-handler requireManagerOrAdmin() helper
 // (returns boolean, used mid-handler) — the middleware form guards routes.
 import { requireManagerOrAdmin as requireManagerOrAdminMw } from "../middleware/roles";
@@ -4370,7 +4371,8 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
     })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
-    .where(eq(productionPlanItemsTable.planId, planId));
+    // Same fried-chicken exclusion as /main-prep — it preps elsewhere.
+    .where(and(eq(productionPlanItemsTable.planId, planId), sql`${recipesTable.category} IS DISTINCT FROM ${FRIED_CHICKEN_CATEGORY}`));
 
   if (planItems.length === 0) {
     res.json({ recipes: [], pastaCooking: { waterLPerKg: 0, saltGPerKg: 0 } });
@@ -7241,7 +7243,10 @@ router.get("/:id/main-prep", async (req, res) => {
     })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
-    .where(eq(productionPlanItemsTable.planId, planId));
+    // Fried chicken preps on its own station, on its own days, with its own
+    // people (Graeme, 2026-09-11) — its plan items never feed main/meat/bases
+    // prep. IS DISTINCT FROM keeps rows whose recipe join came back null.
+    .where(and(eq(productionPlanItemsTable.planId, planId), sql`${recipesTable.category} IS DISTINCT FROM ${FRIED_CHICKEN_CATEGORY}`));
 
   if (planItems.length === 0) {
     res.json({ ingredients: [], completions: [] });
