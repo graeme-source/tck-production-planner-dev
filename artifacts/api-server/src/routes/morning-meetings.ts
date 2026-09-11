@@ -39,6 +39,8 @@ import {
 } from "@workspace/db";
 import { and, eq, gte, lte, desc, asc, sql, isNull, notInArray } from "drizzle-orm";
 import { londonDateString } from "../lib/london-time";
+import { z } from "zod";
+import { validate } from "../middleware/validate";
 import {
   computeBuilderBatchesPerHourForDay,
   computePackingOrdersPerHourForDay,
@@ -362,7 +364,7 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       .from(productionPlansTable)
       .where(eq(productionPlansTable.planDate, today))
       .limit(1);
-    let todayPlanItems: Array<{ recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null; eightPackBagCount: number }> = [];
+    let todayPlanItems: Array<{ itemId: number; recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null; eightPackBagCount: number; status: string }> = [];
     // ── The day in two big numbers for the opening slide (Graeme,
     //    2026-09-02): batches being made today (calzones and mac cheese
     //    split, per the house rule) and orders being packed. Orders going
@@ -386,12 +388,14 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
     if (todayPlan) {
       todayPlanItems = await db
         .select({
+          itemId: productionPlanItemsTable.id,
           recipeId: productionPlanItemsTable.recipeId,
           recipeName: recipesTable.name,
           recipeColor: recipesTable.color,
           batchesTarget: productionPlanItemsTable.batchesTarget,
           recipeCategory: recipesTable.category,
           eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
+          status: productionPlanItemsTable.status,
         })
         .from(productionPlanItemsTable)
         .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
@@ -485,12 +489,14 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
     if (tomorrowPlan) {
       tomorrowPlanItems = await db
         .select({
+          itemId: productionPlanItemsTable.id,
           recipeId: productionPlanItemsTable.recipeId,
           recipeName: recipesTable.name,
           recipeColor: recipesTable.color,
           batchesTarget: productionPlanItemsTable.batchesTarget,
           recipeCategory: recipesTable.category,
           eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
+          status: productionPlanItemsTable.status,
         })
         .from(productionPlanItemsTable)
         .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
@@ -655,6 +661,7 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
         startedAt: morningMeetingsTable.startedAt,
         endedAt: morningMeetingsTable.endedAt,
         gratitudeCaption: morningMeetingsTable.gratitudeCaption,
+        gratitudeSeed: morningMeetingsTable.gratitudeSeed,
         trialWelcome: morningMeetingsTable.trialWelcome,
         hasGratitudePhoto: sql<boolean>`${morningMeetingsTable.gratitudePhoto} IS NOT NULL`,
       })
@@ -722,6 +729,7 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
             lessonId: meeting.lessonId,
             exampleId: meeting.exampleId ?? null,
             gratitudeCaption: meeting.gratitudeCaption ?? null,
+            gratitudeSeed: meeting.gratitudeSeed ?? null,
             trialWelcome: meeting.trialWelcome ?? null,
             hasGratitudePhoto: Boolean(meeting.hasGratitudePhoto),
           }
@@ -854,6 +862,21 @@ router.patch("/:id/gratitude-caption", async (req: Request, res: Response) => {
     .returning({ id: morningMeetingsTable.id });
   if (!row) { res.status(404).json({ error: "Meeting not found" }); return; }
   res.json({ ok: true, gratitudeCaption: caption });
+});
+
+/** Shuffle the gratitude slide's fallback themed image: bump the seed so
+ *  the day's deterministic pick changes. Only matters while no photo is
+ *  uploaded — an uploaded photo always wins. */
+router.post("/:id/gratitude-shuffle", validate(z.object({})), async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid meeting id" }); return; }
+  const [row] = await db
+    .update(morningMeetingsTable)
+    .set({ gratitudeSeed: sql`COALESCE(${morningMeetingsTable.gratitudeSeed}, 0) + 1` })
+    .where(eq(morningMeetingsTable.id, id))
+    .returning({ id: morningMeetingsTable.id, gratitudeSeed: morningMeetingsTable.gratitudeSeed });
+  if (!row) { res.status(404).json({ error: "Meeting not found" }); return; }
+  res.json({ ok: true, gratitudeSeed: row.gratitudeSeed });
 });
 
 /** Trial-shift welcome names for the opening slide. Empty clears it — the
@@ -1451,6 +1474,7 @@ router.get("/day-setup", async (req: Request, res: Response) => {
         id: morningMeetingsTable.id,
         exampleId: morningMeetingsTable.exampleId,
         gratitudeCaption: morningMeetingsTable.gratitudeCaption,
+        gratitudeSeed: morningMeetingsTable.gratitudeSeed,
         trialWelcome: morningMeetingsTable.trialWelcome,
         hasGratitudePhoto: sql<boolean>`${morningMeetingsTable.gratitudePhoto} IS NOT NULL`,
       })
@@ -1509,6 +1533,7 @@ router.get("/day-setup", async (req: Request, res: Response) => {
       meetingId: meeting?.id ?? null,
       hasGratitudePhoto: meeting?.hasGratitudePhoto ?? false,
       gratitudeCaption: meeting?.gratitudeCaption ?? null,
+      gratitudeSeed: meeting?.gratitudeSeed ?? null,
       trialWelcome: meeting?.trialWelcome ?? null,
       exampleId: meeting?.exampleId ?? null,
       isLessonOverridden: meeting?.exampleId != null,

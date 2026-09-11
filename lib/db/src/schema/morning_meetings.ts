@@ -193,6 +193,10 @@ export const morningMeetingsTable = pgTable("morning_meetings", {
   gratitudePhoto: bytea("gratitude_photo"),
   gratitudePhotoMime: text("gratitude_photo_mime"),
   gratitudeCaption: text("gratitude_caption"),
+  // Shuffle counter for the fallback themed image: bumping it picks a
+  // different photo for the day so the host can skip a bad one from the
+  // setup screen (migration 0097).
+  gratitudeSeed: integer("gratitude_seed"),
   // Names of anyone in on a trial shift today, typed by the presenter on
   // the setup screen; the opening slide shows a welcome only when set
   // (migration 0056).

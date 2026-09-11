@@ -15,7 +15,6 @@
  */
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import type React from "react";
-import { ImageCropDialog } from "@/components/image-crop-dialog";
 import { ImprovementFeedMedia } from "@/components/improvement-feed-media";
 import { useLocation, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -56,6 +55,20 @@ export interface MeetingSlide {
   photoCaption?: string | null;
 }
 
+/** One plan item as the dashboard payload carries it. itemId/status are
+ *  optional so a cached older server payload doesn't crash the slide —
+ *  without them the row simply isn't draggable. */
+export interface PlanSlideItem {
+  itemId?: number;
+  recipeId: number;
+  recipeName: string;
+  recipeColor: string | null;
+  batchesTarget: number;
+  recipeCategory: string | null;
+  eightPackBagCount: number;
+  status?: string;
+}
+
 export interface DashboardData {
   /** The day in two big numbers for the opening slide (2026-09-02). */
   dayNumbers?: { calzoneBatches: number; macCheeseBatches: number; ordersToPack: number };
@@ -69,14 +82,14 @@ export interface DashboardData {
   tomorrowNonCoreItems: Array<{ recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null }>;
   todayPlan: {
     id: number | null;
-    items: Array<{ recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null; eightPackBagCount: number }>;
+    items: Array<PlanSlideItem>;
   };
   /** Tomorrow's plan in the same shape — the pack report flips its
    *  production columns to this after 3pm, when the dispatch flips too.
    *  Optional so a cached older server payload doesn't crash the slide. */
   tomorrowPlan?: {
     id: number | null;
-    items: Array<{ recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null; eightPackBagCount: number }>;
+    items: Array<PlanSlideItem>;
   };
   yesterdayKpis: {
     wonkyCount: number;
@@ -101,7 +114,7 @@ export interface DashboardData {
     principleId?: number;
     principleTitle?: string;
   } | null;
-  meeting: { id: number; hostName: string | null; startedAt: string; endedAt: string | null; lessonId: number | null; exampleId: number | null; gratitudeCaption: string | null; trialWelcome: string | null; hasGratitudePhoto: boolean } | null;
+  meeting: { id: number; hostName: string | null; startedAt: string; endedAt: string | null; lessonId: number | null; exampleId: number | null; gratitudeCaption: string | null; gratitudeSeed?: number | null; trialWelcome: string | null; hasGratitudePhoto: boolean } | null;
   slides: MeetingSlide[];
   gratitude: Array<{ id: number; fromName: string; toName: string | null; content: string }>;
 }
@@ -212,7 +225,7 @@ const SLIDE_KIND_META: Record<SlideKind, { icon: React.ElementType; color: strin
   yesterday_kpis:      { icon: ChefHat,       color: "text-violet-500",  fallbackTitle: "Yesterday's Numbers" },
   station_assignments: { icon: Users,         color: "text-teal-500",    fallbackTitle: "Who's On Today" },
   order_of_production: { icon: ClipboardCheck,color: "text-primary",     fallbackTitle: "Order of Production" },
-  local_delivery:      { icon: Truck,         color: "text-blue-500",    fallbackTitle: "Local Despatch" },
+  local_delivery:      { icon: Truck,         color: "text-blue-500",    fallbackTitle: "Local Dispatch" },
   bag_orders:          { icon: ShoppingBag,   color: "text-indigo-500",  fallbackTitle: "Bag Orders" },
   short_on_pack:       { icon: AlertCircle,   color: "text-orange-500",  fallbackTitle: "Short on the Pack" },
   safety_issues:       { icon: AlertCircle,   color: "text-red-500",     fallbackTitle: "Safety Issues" },
@@ -734,7 +747,6 @@ function SetupGratitudeCard({ data, ensureMeeting }: {
   const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
-  const [pendingCrop, setPendingCrop] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [cacheBust, setCacheBust] = useState(0);
   const meeting = data.meeting;
@@ -771,6 +783,22 @@ function SetupGratitudeCard({ data, ensureMeeting }: {
     }
   }
 
+  async function shuffleFallback() {
+    setBusy(true);
+    try {
+      const id = await ensureMeeting();
+      if (!id) throw new Error("Couldn't create today's meeting");
+      const res = await fetch(`${BASE}/api/morning-meetings/${id}/gratitude-shuffle`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" }, body: "{}",
+      });
+      if (!res.ok) throw new Error("Shuffle failed");
+      queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
+    } catch (e) {
+      toast({ title: "Couldn't shuffle the image", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
   const hasPhoto = !!meeting?.hasGratitudePhoto;
   return (
     <div className="glass-panel rounded-2xl p-6 mb-6">
@@ -778,32 +806,36 @@ function SetupGratitudeCard({ data, ensureMeeting }: {
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Gratitude photo</p>
           <p className="text-sm text-muted-foreground">
-            {hasPhoto ? "Loaded — it'll fill the gratitude slide, uncropped." : "Add a team photo for the gratitude slide (optional)."}
+            {hasPhoto
+              ? "Loaded — it'll fill the gratitude slide, uncropped."
+              : "This is today's automatic image — shuffle it if it's a dud, or add your own photo."}
           </p>
         </div>
-        {hasPhoto && meeting && (
+        {hasPhoto && meeting ? (
           <img
             src={`${BASE}/api/morning-meetings/${meeting.id}/gratitude-photo?v=${cacheBust}`}
             alt="Gratitude"
             className="w-16 h-16 rounded-xl object-contain bg-black/5 border border-border flex-shrink-0"
           />
+        ) : (
+          // The automatic image the slide will actually show today, so a dud
+          // (the cat incident) is caught here rather than live on slide 13.
+          <img
+            key={meeting?.gratitudeSeed ?? 0}
+            src={fallbackGratitudePhotoUrl(data.today, meeting?.gratitudeSeed ?? 0)}
+            alt="Today's automatic gratitude image"
+            className="w-28 h-16 rounded-xl object-cover bg-black/5 border border-border flex-shrink-0"
+          />
         )}
       </div>
       <div className="flex gap-2 mt-3 flex-wrap">
-        {/* Both pickers hand the photo to the cropper first, so a portrait
-            phone shot becomes the landscape crop the host actually wants
-            rather than being letterboxed on the slide. */}
+        {/* No cropper (Graeme, 2026-09-11): iPhone HEIC shots can't be
+            decoded by the browser canvas, so cropping blocked uploads
+            entirely. Photos upload as taken; the slide letterboxes. */}
         <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
-          onChange={e => { const f = e.target.files?.[0]; if (f) setPendingCrop(f); e.target.value = ""; }} />
+          onChange={e => { const f = e.target.files?.[0]; if (f) void upload(f); e.target.value = ""; }} />
         <input ref={fileRef} type="file" accept="image/*" className="hidden"
-          onChange={e => { const f = e.target.files?.[0]; if (f) setPendingCrop(f); e.target.value = ""; }} />
-        {pendingCrop && (
-          <ImageCropDialog
-            file={pendingCrop}
-            onCancel={() => setPendingCrop(null)}
-            onCropped={async cropped => { setPendingCrop(null); await upload(cropped); }}
-          />
-        )}
+          onChange={e => { const f = e.target.files?.[0]; if (f) void upload(f); e.target.value = ""; }} />
         <button onClick={() => cameraRef.current?.click()} disabled={busy}
           className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-50 inline-flex items-center gap-1.5">
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />} Take photo
@@ -813,6 +845,12 @@ function SetupGratitudeCard({ data, ensureMeeting }: {
           <ImageIcon className="w-4 h-4" />
           {hasPhoto ? "Replace photo" : "Add photo"}
         </button>
+        {!hasPhoto && (
+          <button onClick={shuffleFallback} disabled={busy}
+            className="px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+            <Shuffle className="w-4 h-4" /> Shuffle image
+          </button>
+        )}
         {hasPhoto && (
           <button onClick={remove} disabled={busy}
             className="px-3 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:opacity-50 inline-flex items-center gap-1.5">
@@ -904,7 +942,6 @@ function SetupTomorrowCard({ date }: { date: string }) {
   const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const tomorrowCameraRef = useRef<HTMLInputElement>(null);
-  const [pendingCrop, setPendingCrop] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [picking, setPicking] = useState(false);
   const [cacheBust, setCacheBust] = useState(0);
@@ -913,6 +950,7 @@ function SetupTomorrowCard({ date }: { date: string }) {
   const { data: setup } = useQuery<{
     meetingId: number | null;
     hasGratitudePhoto: boolean;
+    gratitudeSeed?: number | null;
     trialWelcome: string | null;
     exampleId: number | null;
     isLessonOverridden: boolean;
@@ -1076,29 +1114,31 @@ function SetupTomorrowCard({ date }: { date: string }) {
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Tomorrow's photo</p>
             <p className="text-sm text-muted-foreground">
-              {hasPhoto ? "Loaded — it'll fill tomorrow's gratitude slide." : "Add a team photo for the gratitude slide (optional)."}
+              {hasPhoto
+                ? "Loaded — it'll fill tomorrow's gratitude slide."
+                : "Tomorrow's automatic image — shuffle it if it's a dud, or add your own photo."}
             </p>
           </div>
-          {hasPhoto && setup?.meetingId && (
+          {hasPhoto && setup?.meetingId ? (
             <img
               src={`${BASE}/api/morning-meetings/${setup.meetingId}/gratitude-photo?v=${cacheBust}`}
               alt="Tomorrow's gratitude"
               className="w-16 h-16 rounded-xl object-contain bg-black/5 border border-border flex-shrink-0"
             />
+          ) : (
+            <img
+              key={setup?.gratitudeSeed ?? 0}
+              src={fallbackGratitudePhotoUrl(date, setup?.gratitudeSeed ?? 0)}
+              alt="Tomorrow's automatic gratitude image"
+              className="w-28 h-16 rounded-xl object-cover bg-black/5 border border-border flex-shrink-0"
+            />
           )}
         </div>
         <div className="flex gap-2 mt-3 flex-wrap">
           <input ref={tomorrowCameraRef} type="file" accept="image/*" capture="environment" className="hidden"
-            onChange={e => { const f = e.target.files?.[0]; if (f) setPendingCrop(f); e.target.value = ""; }} />
+            onChange={e => { const f = e.target.files?.[0]; if (f) void uploadPhoto(f); e.target.value = ""; }} />
           <input ref={fileRef} type="file" accept="image/*" className="hidden"
-            onChange={e => { const f = e.target.files?.[0]; if (f) setPendingCrop(f); e.target.value = ""; }} />
-          {pendingCrop && (
-            <ImageCropDialog
-              file={pendingCrop}
-              onCancel={() => setPendingCrop(null)}
-              onCropped={async cropped => { setPendingCrop(null); await uploadPhoto(cropped); }}
-            />
-          )}
+            onChange={e => { const f = e.target.files?.[0]; if (f) void uploadPhoto(f); e.target.value = ""; }} />
           <button onClick={() => tomorrowCameraRef.current?.click()} disabled={busy}
             className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-50 inline-flex items-center gap-1.5">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />} Take photo
@@ -1108,6 +1148,28 @@ function SetupTomorrowCard({ date }: { date: string }) {
             <ImageIcon className="w-4 h-4" />
             {hasPhoto ? "Replace photo" : "Add photo"}
           </button>
+          {!hasPhoto && (
+            <button
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const id = await ensureTomorrowMeeting();
+                  if (!id) throw new Error("Couldn't create tomorrow's meeting");
+                  const res = await fetch(`${BASE}/api/morning-meetings/${id}/gratitude-shuffle`, {
+                    method: "POST", credentials: "include",
+                    headers: { "Content-Type": "application/json" }, body: "{}",
+                  });
+                  if (!res.ok) throw new Error("Shuffle failed");
+                  queryClient.invalidateQueries({ queryKey });
+                } catch (e) {
+                  toast({ title: "Couldn't shuffle the image", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+                } finally { setBusy(false); }
+              }}
+              disabled={busy}
+              className="px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+              <Shuffle className="w-4 h-4" /> Shuffle image
+            </button>
+          )}
           {hasPhoto && (
             <button onClick={removePhoto} disabled={busy}
               className="px-3 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:opacity-50 inline-flex items-center gap-1.5">
@@ -1953,6 +2015,8 @@ type ProductionPlanRow = {
   recipeName: string;
   color: string | null;
   category: string | null;
+  itemId: number | null;         // plan item id; null when not in today's plan (not draggable)
+  locked: boolean;               // completed items keep their slot (same rule as mixing)
   seq: number | null;            // production order number; null when not in today's plan
   target: number | null;         // batches/packs target; null when not in today's plan
   // Today's production converted to 2-packs (batches × packsPerBatch, net of
@@ -1987,6 +2051,34 @@ function HeaderInfo({ children }: { children: React.ReactNode }) {
       </PopoverContent>
     </Popover>
   );
+}
+
+/** Sortable shell for one production-order row. Render-prop so the row
+ *  markup stays inline in the slide; the handle lands in the # column. */
+function SortableProductionRow({ id, disabled, children }: {
+  id: number;
+  disabled: boolean;
+  children: (handle: React.ReactNode) => React.ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+    zIndex: isDragging ? 50 : undefined,
+    position: "relative",
+  };
+  const handle = disabled ? null : (
+    <span
+      {...attributes}
+      {...listeners}
+      className="p-1 -m-1 text-muted-foreground/60 hover:text-foreground cursor-grab active:cursor-grabbing touch-none"
+      title="Drag to change the production order"
+    >
+      <GripVertical className="w-5 h-5" />
+    </span>
+  );
+  return <div ref={setNodeRef} style={style} className={cn(isDragging && "shadow-xl bg-background")}>{children(handle)}</div>;
 }
 
 /** Which stock figure the "have" column shows.
@@ -2028,6 +2120,81 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
   const tomorrowMode = isPreviewing || showTomorrowPack;
   const effectivePlanDate = tomorrowMode ? data.tomorrow : data.today;
   const effectivePlan = tomorrowMode ? (data.tomorrowPlan ?? { id: null, items: [] }) : data.todayPlan;
+
+  // ── Drag-to-reorder (Graeme, 2026-09-11): the meeting reviews this table,
+  // so the room should be able to fix the order on the spot — same endpoint
+  // and same rules as the mixing station's drag handles, so every station
+  // follows the new order immediately.
+  const queryClient = useQueryClient();
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const [savingOrder, setSavingOrder] = useState(false);
+  // Optimistic order so the row lands where it was dropped instead of
+  // snapping back while the save + refetch round-trips.
+  const [orderOverride, setOrderOverride] = useState<number[] | null>(null);
+  const baseItems = effectivePlan.items;
+  const orderedItems = useMemo(() => {
+    if (!orderOverride) return baseItems;
+    const byId = new Map(baseItems.map(it => [it.itemId, it]));
+    const ordered = orderOverride.map(id => byId.get(id)).filter((it): it is PlanSlideItem => !!it);
+    return ordered.length === baseItems.length ? ordered : baseItems;
+  }, [baseItems, orderOverride]);
+  // Once the refetched payload agrees with the override, drop it — later
+  // reorders made elsewhere (e.g. at the mixing station) must show through.
+  useEffect(() => {
+    if (!orderOverride) return;
+    const ids = baseItems.map(it => it.itemId);
+    if (ids.length === orderOverride.length && ids.every((id, i) => id === orderOverride[i])) setOrderOverride(null);
+  }, [baseItems, orderOverride]);
+  const canReorder = effectivePlan.id != null && baseItems.length > 1 && baseItems.every(it => it.itemId != null);
+
+  const saveOrder = async (items: PlanSlideItem[]) => {
+    setSavingOrder(true);
+    try {
+      const res = await fetch(`${BASE}/api/production-plans/${effectivePlan.id}/order`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ order: items.map((it, i) => ({ itemId: it.itemId, orderPosition: i + 1 })) }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null) as { error?: string } | null;
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
+      toast({ title: "Production order saved", description: "Every station now follows this order." });
+    } catch (err) {
+      setOrderOverride(null);
+      toast({ title: "Reorder failed", description: err instanceof Error ? err.message : "Could not save the new order.", variant: "destructive" });
+    } finally {
+      setSavingOrder(false);
+      void queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
+      void queryClient.invalidateQueries({ queryKey: ["plan-schedule", effectivePlan.id] });
+    }
+  };
+
+  const handleRowDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || savingOrder) return;
+    const ids = orderedItems.map(it => it.itemId);
+    const oldIndex = ids.indexOf(Number(active.id));
+    const newIndex = ids.indexOf(Number(over.id));
+    if (oldIndex === -1 || newIndex === -1) return;
+    const isMacItem = (it: PlanSlideItem) => it.recipeCategory === "Macaroni Cheese";
+    if (isMacItem(orderedItems[oldIndex]) !== isMacItem(orderedItems[newIndex])) {
+      toast({ title: "Can't reorder", description: "Mac & Cheese runs on its own station — reorder macs and calzones within their own groups.", variant: "destructive" });
+      return;
+    }
+    const reordered = arrayMove(orderedItems, oldIndex, newIndex);
+    // Completed recipes keep their slot — the same rule mixing applies, and
+    // the server rejects moving them anyway.
+    for (let i = 0; i < reordered.length; i++) {
+      if (reordered[i].status === "complete" && reordered[i].itemId !== orderedItems[i].itemId) {
+        toast({ title: "Can't reorder", description: "Completed recipes are fixed in place.", variant: "destructive" });
+        return;
+      }
+    }
+    setOrderOverride(reordered.map(it => it.itemId as number));
+    void saveOrder(reordered);
+  };
 
   const { data: calc, isLoading } = useQuery<{ recipes: CalcRecipeRow[]; dispatchDates: string[]; deliveryDates: string[] }>({
     queryKey: ["production-plan-calc", effectivePlanDate],
@@ -2127,7 +2294,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
   const plannedIds = new Set(effectivePlan.items.map(it => it.recipeId));
 
   // 1) Everything being made on the effective day, in production order.
-  const plannedRows: ProductionPlanRow[] = effectivePlan.items.map((it, i) => {
+  const plannedRows: ProductionPlanRow[] = orderedItems.map((it, i) => {
     const c = calcById.get(it.recipeId);
     const isMac = it.recipeCategory === "Macaroni Cheese";
     // Packs headed into 8-pack bags never reach the 2-pack fridge, so
@@ -2139,6 +2306,8 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
       recipeName: it.recipeName,
       color: it.recipeColor,
       category: it.recipeCategory,
+      itemId: it.itemId ?? null,
+      locked: it.status === "complete",
       seq: i + 1,
       target: it.batchesTarget,
       packs,
@@ -2162,6 +2331,8 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
       recipeName: r.recipeName,
       color: r.color,
       category: null,
+      itemId: null,
+      locked: false,
       seq: null,
       target: null,
       packs: null,
@@ -2204,12 +2375,12 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
   const dayCap = tomorrowMode ? `${packDayNameCap(data.today, data.tomorrow)}'s` : "Today's";
   // minmax on the recipe column: without it the 1fr track collapses to zero
   // on an iPad in portrait and the names vanish before anything truncates.
-  const cols = "grid-cols-[1.75rem_4.5rem_minmax(8rem,1fr)_4.75rem_5.25rem_4.75rem_5.75rem_5rem]";
+  const cols = "grid-cols-[2.25rem_4.5rem_minmax(8rem,1fr)_4.75rem_5.25rem_4.75rem_5.75rem_5rem]";
 
   return (
     <div>
       <SectionTitle>{slide.title || "Order of Production"}</SectionTitle>
-      <SectionLead>{dayCap} order — Mac &amp; Cheese first, then the calzones. Red = short · amber = within 10 spare. Production columns go red when even {packDayLabel} make won't cover the pack.</SectionLead>
+      <SectionLead>{dayCap} order — Mac &amp; Cheese first, then the calzones. Red = short · amber = within 10 spare. Production columns go red when even {packDayLabel} make won't cover the pack.{canReorder && " Drag a row to change the production order — every station follows."}</SectionLead>
 
       {/* Oversell pre-warning — shown in the morning meeting AND the pack
           report. Fires when fridge + today's whole production still leaves a
@@ -2273,6 +2444,8 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
             </span>
             <span className="text-center self-stretch bg-secondary/40 -my-3 py-3">{dayCap} batches</span>
           </div>
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleRowDragEnd}>
+          <SortableContext items={plannedRows.filter(r => r.itemId != null).map(r => r.itemId as number)} strategy={verticalListSortingStrategy}>
           {rows.map((r, i) => {
             const tone = r.stock?.tone;
             const toneClass =
@@ -2284,8 +2457,8 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
               tone === "warn" ? "text-amber-800 dark:text-amber-300" :
                                 "";
             const firstUnplanned = r.seq === null && (i === 0 || rows[i - 1].seq !== null);
-            return (
-              <div key={r.recipeId}>
+            const body = (handle: React.ReactNode) => (
+              <div>
                 {firstUnplanned && (
                   <div className="px-5 py-1.5 bg-secondary/40 text-[11px] uppercase tracking-wide text-muted-foreground font-semibold border-t border-border/50">
                     In the fridge, but not on {packDayLabel} plan
@@ -2299,7 +2472,10 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
                     i > 0 && !firstUnplanned && "border-t border-border/50",
                   )}
                 >
-                  <span className="text-2xl font-display font-bold tabular-nums text-muted-foreground">{r.seq ?? "–"}</span>
+                  <span className="flex flex-col items-center gap-0.5">
+                    <span className="text-2xl font-display font-bold tabular-nums text-muted-foreground">{r.seq ?? "–"}</span>
+                    {handle}
+                  </span>
                   <span className="text-2xl font-bold tabular-nums whitespace-nowrap">
                     {startByRecipe.get(r.recipeId) ?? <span className="text-muted-foreground">—</span>}
                   </span>
@@ -2348,7 +2524,16 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
                 </div>
               </div>
             );
+            return r.itemId != null && canReorder ? (
+              <SortableProductionRow key={r.recipeId} id={r.itemId} disabled={r.locked || savingOrder}>
+                {body}
+              </SortableProductionRow>
+            ) : (
+              <div key={r.recipeId}>{body(null)}</div>
+            );
           })}
+          </SortableContext>
+          </DndContext>
           <div className={cn("grid gap-1.5 items-center px-5 py-3 border-t-2 border-border bg-secondary/30", cols)}>
             <span />
             <span />
@@ -2424,14 +2609,14 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
 function LocalDeliverySlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
   return (
     <div className="space-y-5">
-      <SectionTitle>{slide.title || "Local Despatch"}</SectionTitle>
+      <SectionTitle>{slide.title || "Local Dispatch"}</SectionTitle>
       <SectionLead>Going out and coming in.</SectionLead>
 
       {/* Static prompt — outbound local despatches via the butcher run.
           No data wired for this yet; the host calls it out verbally. */}
       <div className="glass-panel rounded-2xl p-8 border-2 border-blue-500/30 bg-blue-500/5">
         <p className="text-base font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-300 mb-2">Outbound</p>
-        <p className="text-4xl font-display font-bold leading-tight">Any local despatches today?</p>
+        <p className="text-4xl font-display font-bold leading-tight">Any local dispatches today?</p>
         <p className="text-xl text-muted-foreground mt-2">Orders going out with the butcher.</p>
       </div>
 
@@ -3306,8 +3491,12 @@ const GRATITUDE_PHOTO_THEMES = [
 // Live, key-less themed image for the fallback. LoremFlickr serves a random
 // Creative-Commons photo matching the tag; `lock=<seed>` pins it for the whole
 // day so it doesn't reshuffle on every render, but rotates day to day.
-function fallbackGratitudePhotoUrl(dateIso: string): string {
-  const seed = dateSeed(dateIso);
+// `shuffle` is the meeting's stored shuffle counter — bumping it from the
+// setup screen re-rolls the day's pick when it's a dud (the cat incident,
+// Graeme 2026-09-11). Prime multiplier so consecutive bumps land on a
+// genuinely different lock, not the next photo in the same sequence.
+export function fallbackGratitudePhotoUrl(dateIso: string, shuffle = 0): string {
+  const seed = dateSeed(dateIso) + shuffle * 7919;
   const theme = GRATITUDE_PHOTO_THEMES[seed % GRATITUDE_PHOTO_THEMES.length];
   return `https://loremflickr.com/1200/800/${encodeURIComponent(theme)}?lock=${seed}`;
 }
@@ -3328,7 +3517,7 @@ function GratitudeSlide({ data, slide, onRefresh }: { data: DashboardData; slide
   const [fallbackFailed, setFallbackFailed] = useState(false);
 
   const uploadedUrl = meetingId ? `${BASE}/api/morning-meetings/${meetingId}/gratitude-photo` : "";
-  const fallbackUrl = fallbackGratitudePhotoUrl(todayIso);
+  const fallbackUrl = fallbackGratitudePhotoUrl(todayIso, data.meeting?.gratitudeSeed ?? 0);
 
   // Show an image whenever we have an uploaded one, or the live themed fallback
   // hasn't failed to load. If the fallback can't load (e.g. offline), drop back
@@ -3340,7 +3529,10 @@ function GratitudeSlide({ data, slide, onRefresh }: { data: DashboardData; slide
   // light or dark, from across the room.
   const captionShadow = { textShadow: "0 4px 24px rgba(0,0,0,0.85), 0 2px 6px rgba(0,0,0,0.95)" } as const;
   const labelShadow = { textShadow: "0 2px 8px rgba(0,0,0,0.9)" } as const;
-  const overlayText = hasPhoto ? serverCaption : prompt.line;
+  // No auto-generated caption over the fallback photo (Graeme, 2026-09-11:
+  // the rotating prompts read as the same line every day). Only a caption
+  // the host actually typed gets overlaid.
+  const overlayText = hasPhoto ? serverCaption : "";
 
   return (
     <div className="relative w-full flex-1 min-h-0 rounded-3xl overflow-hidden shadow-inner bg-gradient-to-br from-rose-100 via-amber-50 to-emerald-100 dark:from-rose-900/30 dark:via-amber-900/20 dark:to-emerald-900/30">
@@ -3419,7 +3611,7 @@ const SLIDE_KIND_CATALOG: Array<{ kind: SlideKind; label: string; description: s
   { kind: "yesterday_kpis",      label: "Yesterday's Numbers",  description: "Building rate, packing rate, wonkies" },
   { kind: "station_assignments", label: "Who's On Today",       description: "Stations and who's rostered on each, live from Planday" },
   { kind: "order_of_production", label: "Order of Production",  description: "Today's recipe order + batches, with shortages colour-coded" },
-  { kind: "local_delivery",      label: "Local Despatch",       description: "Any local despatches + today's deliveries in" },
+  { kind: "local_delivery",      label: "Local Dispatch",       description: "Any local dispatches + today's deliveries in" },
   { kind: "bag_orders",          label: "Bag Orders",           description: "Discussion prompt" },
   { kind: "safety_issues",       label: "Safety Issues",        description: "Open andons + log new" },
   { kind: "system_updates",      label: "System Updates",       description: "Auto-pulls recent commits to the planner" },
@@ -3668,7 +3860,6 @@ function SlideEditor({
 function SlidePhotoEditor({ slide, onChanged }: { slide: EditorSlide; onChanged: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
-  const [pendingCrop, setPendingCrop] = useState<File | null>(null);
   const [caption, setCaption] = useState(slide.photoCaption ?? "");
   const [busy, setBusy] = useState(false);
   const [cacheBust, setCacheBust] = useState(0);
@@ -3716,16 +3907,9 @@ function SlidePhotoEditor({ slide, onChanged }: { slide: EditorSlide; onChanged:
       )}
 
       <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
-        onChange={e => { const f = e.target.files?.[0]; if (f) setPendingCrop(f); e.target.value = ""; }} />
+        onChange={e => { const f = e.target.files?.[0]; if (f) void upload(f); e.target.value = ""; }} />
       <input ref={fileRef} type="file" accept="image/*" className="hidden"
-        onChange={e => { const f = e.target.files?.[0]; if (f) setPendingCrop(f); e.target.value = ""; }} />
-      {pendingCrop && (
-        <ImageCropDialog
-          file={pendingCrop}
-          onCancel={() => setPendingCrop(null)}
-          onCropped={async cropped => { setPendingCrop(null); await upload(cropped); }}
-        />
-      )}
+        onChange={e => { const f = e.target.files?.[0]; if (f) void upload(f); e.target.value = ""; }} />
 
       <div className="flex gap-2 flex-wrap">
         <button onClick={() => cameraRef.current?.click()} disabled={busy}
