@@ -93,6 +93,37 @@ Anything connected to religion, belief, disability or medical need will be indiv
 
 These requirements apply equally to owners, managers, employees, agency workers, contractors and visitors. Formal disciplinary procedures apply only where an employee refuses to follow controls that have been agreed through the process above.`;
 
+// The Mobile Phone Policy, seeded once as a DRAFT into risk_assessments
+// (type 'policy') for Graeme to review in Documents and activate. After
+// seeding, the DB row is the document — edits happen there, not here.
+const MOBILE_PHONE_POLICY_MARKDOWN = `**Applies to:** all employees, agency workers, contractors, managers and visitors entering production, ingredient-storage or packing areas.
+
+## Why we have this policy
+
+Mobile phones are a food-safety risk in a production environment. They are one of the most heavily handled objects we own and carry high levels of bacteria, so touching a phone and then handling food or food-contact surfaces undoes handwashing. They are also a foreign-body risk — a phone, case or detachable part dropped into open product contaminates it — and using one at a station is a distraction around ovens, machinery and knives. TCK produces 800–1,000 portions of open, unpackaged food five days a week, so we follow a standard in line with FSA guidance and the expectations of food-manufacturing certification schemes such as SALSA and BRCGS.
+
+## The rule
+
+1. **No mobile phones in production rooms.** Phones must not be taken into production, ingredient-storage or packing areas — not in pockets, not on silent. Store your phone in your personal drawer (or with your manager) before entering.
+2. **No personal calls, texts or browsing during working hours.** Personal phone use happens on your breaks, in break areas only.
+3. **Wash your hands** before re-entering production after handling your phone on a break, exactly as after any other break activity.
+
+## Pre-arranged exceptions
+
+We know life doesn't pause for a shift. An exception can be agreed for an **urgent and important expected call** — for example a doctor's or hospital phone appointment, a call about a dependant, or anything similarly time-critical — provided it is **agreed in advance with your direct report**. The agreed arrangement will cover where the phone is kept (with your manager, or on silent outside production), when the call is expected, and where you will take it — always outside the production rooms, with handwashing before returning to work. Exceptions are agreed beforehand, not claimed afterwards.
+
+## Emergencies
+
+You are never unreachable in a genuine emergency. Give your family your manager's contact details: a call to the factory reaches you on the floor immediately, at any time, without any prior arrangement.
+
+## Business use in production
+
+Where a device is genuinely needed for work inside production areas, we use the company station devices (iPads and kiosks), which are cleaned as part of the area's cleaning schedule. Photography or filming in production areas requires management permission.
+
+## Compliance
+
+These requirements apply equally to owners, managers, employees, agency workers, contractors and visitors. Formal disciplinary procedures apply only where someone refuses to follow the rules or an arrangement that has been agreed through the process above.`;
+
 async function runStartupMigrations() {
   try {
     await db.execute(sql`
@@ -2050,6 +2081,24 @@ async function runStartupMigrations() {
         `);
       }
       await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('jewellery_policy_seed_v1')`);
+    }
+
+    // Mobile Phone Policy — seeded as a DRAFT (Graeme, 2026-09-11): he
+    // reviews it in Reports → Documents and flips it to active there, at
+    // which point it appears on the Employee Hub policies list like the
+    // jewellery policy. Guarded one-shot; no training-matrix wiring until
+    // it's activated (that's the "next steps" after review).
+    const phonePolicySeedDone = await db.execute<{ key: string }>(
+      sql`SELECT key FROM _migrations_done WHERE key = 'mobile_phone_policy_seed_v1'`,
+    );
+    if (phonePolicySeedDone.rows.length === 0) {
+      await db.execute(sql`
+        INSERT INTO risk_assessments
+          (assessment_type, title, body_markdown, status, review_frequency_months, original_issue_date, last_reviewed_at, next_review_due)
+        VALUES
+          ('policy', 'Mobile Phone Policy', ${MOBILE_PHONE_POLICY_MARKDOWN}, 'draft', 12, CURRENT_DATE, NOW(), (CURRENT_DATE + INTERVAL '12 months')::date)
+      `);
+      await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('mobile_phone_policy_seed_v1')`);
     }
 
     // Periodic checklist schedule — every-4-weeks tasks (13 periods/year).
