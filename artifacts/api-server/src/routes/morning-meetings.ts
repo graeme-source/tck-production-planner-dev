@@ -32,12 +32,13 @@ import {
   meetingTemplatesTable,
   templateSlidesTable,
   meetingSlidesTable,
+  meetingSlideBlocksTable,
   morningMeetingsTable,
   meetingGratitudeTable,
   usersTable,
   appSettingsTable,
 } from "@workspace/db";
-import { and, eq, gte, lte, desc, asc, sql, isNull, notInArray } from "drizzle-orm";
+import { and, eq, gte, lte, desc, asc, sql, isNull, notInArray, inArray } from "drizzle-orm";
 import { londonDateString } from "../lib/london-time";
 import { z } from "zod";
 import { validate } from "../middleware/validate";
@@ -200,7 +201,7 @@ async function cloneTemplateSlidesIfEmpty(meetingId: number) {
  *  only needs to know a photo EXISTS — it loads the bytes from
  *  /slides/:id/photo, where the browser can cache them. */
 async function fetchMeetingSlides(meetingId: number) {
-  return db
+  const slides = await db
     .select({
       id: meetingSlidesTable.id,
       meetingId: meetingSlidesTable.meetingId,
@@ -217,6 +218,31 @@ async function fetchMeetingSlides(meetingId: number) {
     .from(meetingSlidesTable)
     .where(eq(meetingSlidesTable.meetingId, meetingId))
     .orderBy(asc(meetingSlidesTable.orderPosition));
+
+  // Presentation blocks ride along as metadata only (never the media
+  // bytes — same rule as slide photos): the runner streams each block's
+  // media lazily from /slide-blocks/:id/media.
+  const blocksBySlide = new Map<number, Array<{ id: number; kind: string; content: string | null; mediaMime: string | null; position: number }>>();
+  if (slides.length > 0) {
+    const blocks = await db
+      .select({
+        id: meetingSlideBlocksTable.id,
+        slideId: meetingSlideBlocksTable.slideId,
+        kind: meetingSlideBlocksTable.kind,
+        content: meetingSlideBlocksTable.content,
+        mediaMime: meetingSlideBlocksTable.mediaMime,
+        position: meetingSlideBlocksTable.position,
+      })
+      .from(meetingSlideBlocksTable)
+      .where(inArray(meetingSlideBlocksTable.slideId, slides.map(s => s.id)))
+      .orderBy(asc(meetingSlideBlocksTable.position), asc(meetingSlideBlocksTable.id));
+    for (const b of blocks) {
+      const list = blocksBySlide.get(b.slideId) ?? [];
+      list.push({ id: b.id, kind: b.kind, content: b.content, mediaMime: b.mediaMime, position: b.position });
+      blocksBySlide.set(b.slideId, list);
+    }
+  }
+  return slides.map(s => ({ ...s, blocks: blocksBySlide.get(s.id) ?? [] }));
 }
 
 function isoDateMinusDays(iso: string, days: number): string {
@@ -741,6 +767,9 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
         orderPosition: s.orderPosition,
         contentMd: s.contentMd,
         configJson: s.configJson,
+        hasPhoto: s.hasPhoto,
+        photoCaption: s.photoCaption,
+        blocks: s.blocks,
       })),
       gratitude,
     });
@@ -961,6 +990,123 @@ router.delete("/slides/:slideId/photo", async (req: Request, res: Response) => {
     .returning({ id: meetingSlidesTable.id });
   if (!row) { res.status(404).json({ error: "Slide not found" }); return; }
   res.json({ ok: true, hasPhoto: false });
+});
+
+// ── Slide presentation blocks ───────────────────────────────────────
+// A host can pin a big sentence, a photo, or a video to any slide on the
+// day (Graeme, 2026-09-11) — the deck becomes editable like a
+// presentation. Blocks live on the per-meeting slide copies, so each
+// day's deck starts clean. Metadata travels with the dashboard slides;
+// media streams lazily from /slide-blocks/:id/media.
+
+const BLOCK_VIDEO_MIMES = ["video/mp4", "video/webm", "video/quicktime", "video/ogg"];
+// Videos need more headroom than photos — a 30s iPhone clip is ~60MB.
+const blockUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+
+/** The blocks on one slide, metadata only. */
+router.get("/slides/:slideId/blocks", async (req: Request, res: Response) => {
+  const slideId = Number(req.params.slideId);
+  if (!slideId) { res.status(400).json({ error: "Invalid slide id" }); return; }
+  const rows = await db
+    .select({
+      id: meetingSlideBlocksTable.id,
+      kind: meetingSlideBlocksTable.kind,
+      content: meetingSlideBlocksTable.content,
+      mediaMime: meetingSlideBlocksTable.mediaMime,
+      position: meetingSlideBlocksTable.position,
+    })
+    .from(meetingSlideBlocksTable)
+    .where(eq(meetingSlideBlocksTable.slideId, slideId))
+    .orderBy(asc(meetingSlideBlocksTable.position), asc(meetingSlideBlocksTable.id));
+  res.json(rows);
+});
+
+/** Add a block to a slide. Multipart: `kind` ('text' | 'image' | 'video'),
+ *  `content` (the sentence for text blocks, optional caption for media),
+ *  `file` (required for image/video). */
+router.post("/slides/:slideId/blocks", blockUpload.single("file"), async (req: Request, res: Response) => {
+  const slideId = Number(req.params.slideId);
+  if (!slideId) { res.status(400).json({ error: "Invalid slide id" }); return; }
+  const kind = String(req.body?.kind ?? "");
+  const contentRaw = typeof req.body?.content === "string" ? req.body.content.trim() : "";
+  const content = contentRaw.length > 0 ? contentRaw.slice(0, 500) : null;
+
+  if (kind === "text") {
+    if (!content) { res.status(400).json({ error: "Text blocks need some text." }); return; }
+  } else if (kind === "image" || kind === "video") {
+    if (!req.file) { res.status(400).json({ error: "No file uploaded" }); return; }
+    const mime = req.file.mimetype;
+    const ok = kind === "image" ? GRATITUDE_IMAGE_MIMES.includes(mime) : BLOCK_VIDEO_MIMES.includes(mime);
+    if (!ok) {
+      res.status(400).json({ error: kind === "image" ? "Unsupported image type. Use JPEG, PNG, WebP, GIF or HEIC." : "Unsupported video type. Use MP4, WebM, MOV or OGG." });
+      return;
+    }
+  } else {
+    res.status(400).json({ error: "kind must be text, image or video" });
+    return;
+  }
+
+  const [slide] = await db.select({ id: meetingSlidesTable.id }).from(meetingSlidesTable).where(eq(meetingSlidesTable.id, slideId)).limit(1);
+  if (!slide) { res.status(404).json({ error: "Slide not found" }); return; }
+
+  const [{ maxPos }] = (await db
+    .select({ maxPos: sql<number>`COALESCE(MAX(${meetingSlideBlocksTable.position}), 0)` })
+    .from(meetingSlideBlocksTable)
+    .where(eq(meetingSlideBlocksTable.slideId, slideId)));
+
+  const [row] = await db
+    .insert(meetingSlideBlocksTable)
+    .values({
+      slideId,
+      kind,
+      content,
+      media: kind === "text" ? null : req.file!.buffer,
+      mediaMime: kind === "text" ? null : req.file!.mimetype,
+      position: Number(maxPos) + 1,
+    })
+    .returning({ id: meetingSlideBlocksTable.id, kind: meetingSlideBlocksTable.kind, content: meetingSlideBlocksTable.content, mediaMime: meetingSlideBlocksTable.mediaMime, position: meetingSlideBlocksTable.position });
+  res.status(201).json(row);
+});
+
+/** Edit a block's text/caption. */
+router.patch("/slide-blocks/:blockId", validate(z.object({ content: z.string().max(500).nullable().optional() })), async (req: Request, res: Response) => {
+  const blockId = Number(req.params.blockId);
+  if (!blockId) { res.status(400).json({ error: "Invalid block id" }); return; }
+  const content = typeof req.body?.content === "string" && req.body.content.trim().length > 0 ? req.body.content.trim().slice(0, 500) : null;
+  const [row] = await db
+    .update(meetingSlideBlocksTable)
+    .set({ content })
+    .where(eq(meetingSlideBlocksTable.id, blockId))
+    .returning({ id: meetingSlideBlocksTable.id, content: meetingSlideBlocksTable.content });
+  if (!row) { res.status(404).json({ error: "Block not found" }); return; }
+  res.json(row);
+});
+
+/** Remove a block. */
+router.delete("/slide-blocks/:blockId", async (req: Request, res: Response) => {
+  const blockId = Number(req.params.blockId);
+  if (!blockId) { res.status(400).json({ error: "Invalid block id" }); return; }
+  const [row] = await db
+    .delete(meetingSlideBlocksTable)
+    .where(eq(meetingSlideBlocksTable.id, blockId))
+    .returning({ id: meetingSlideBlocksTable.id });
+  if (!row) { res.status(404).json({ error: "Block not found" }); return; }
+  res.json({ ok: true });
+});
+
+/** Stream a block's media. 404 for text blocks. */
+router.get("/slide-blocks/:blockId/media", async (req: Request, res: Response) => {
+  const blockId = Number(req.params.blockId);
+  if (!blockId) { res.status(400).json({ error: "Invalid block id" }); return; }
+  const [row] = await db
+    .select({ media: meetingSlideBlocksTable.media, mime: meetingSlideBlocksTable.mediaMime })
+    .from(meetingSlideBlocksTable)
+    .where(eq(meetingSlideBlocksTable.id, blockId))
+    .limit(1);
+  if (!row || !row.media) { res.status(404).json({ error: "No media" }); return; }
+  res.setHeader("Content-Type", row.mime ?? "application/octet-stream");
+  res.setHeader("Cache-Control", "private, max-age=3600");
+  res.send(row.media);
 });
 
 /** Stream the gratitude photo bytes for a meeting. 404 when none uploaded. */

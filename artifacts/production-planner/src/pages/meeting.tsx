@@ -53,6 +53,18 @@ export interface MeetingSlide {
    *  cache them (migration 0062). */
   hasPhoto?: boolean;
   photoCaption?: string | null;
+  /** Free-form presentation blocks pinned to this slide for the day —
+   *  a big sentence, a photo, or a video (migration 0098). Metadata only;
+   *  media streams from /slide-blocks/:id/media. */
+  blocks?: SlideBlock[];
+}
+
+export interface SlideBlock {
+  id: number;
+  kind: string; // 'text' | 'image' | 'video'
+  content: string | null;
+  mediaMime: string | null;
+  position: number;
 }
 
 /** One plan item as the dashboard payload carries it. itemId/status are
@@ -1857,11 +1869,49 @@ function SlidePhoto({ slide }: { slide: MeetingSlide }) {
   );
 }
 
+/** The day's presentation blocks, stacked under the slide's own content
+ *  in the order they were added: a big sentence, a photo, or a video
+ *  (Graeme, 2026-09-11 — "use different examples that I haven't thought
+ *  about until the day"). */
+function SlideBlocks({ slide }: { slide: MeetingSlide }) {
+  const blocks = slide.blocks ?? [];
+  if (blocks.length === 0) return null;
+  return (
+    <div className="mt-6 space-y-6">
+      {blocks.map(b => {
+        if (b.kind === "text") {
+          return (
+            <p key={b.id} className="text-3xl md:text-4xl font-display font-bold leading-tight text-center max-w-4xl mx-auto">
+              {b.content}
+            </p>
+          );
+        }
+        const mediaUrl = `${BASE}/api/morning-meetings/slide-blocks/${b.id}/media`;
+        return (
+          <figure key={b.id}>
+            <div className="rounded-2xl overflow-hidden border-2 border-border bg-black/5">
+              {b.kind === "video" ? (
+                <video src={mediaUrl} controls playsInline className="w-full max-h-[52vh] bg-black" />
+              ) : (
+                <img src={mediaUrl} alt={b.content ?? "Slide picture"} className="w-full max-h-[52vh] object-contain bg-black/80" />
+              )}
+            </div>
+            {b.content && (
+              <figcaption className="text-xl text-center mt-3 text-muted-foreground">{b.content}</figcaption>
+            )}
+          </figure>
+        );
+      })}
+    </div>
+  );
+}
+
 function SlideBody(props: { slide: MeetingSlide; data: DashboardData; onRefresh: () => void; isPreviewing: boolean; subIndex: number; reportSubCount: (n: number) => void }) {
   return (
     <>
       <SlideBodyInner {...props} />
       <SlidePhoto slide={props.slide} />
+      <SlideBlocks slide={props.slide} />
     </>
   );
 }
@@ -3799,6 +3849,7 @@ function SlideEditor({
                     if (confirm(`Remove "${s.title}" from this list?`)) removeSlide.mutate(s.id);
                   }}
                   onPhotoChanged={() => queryClient.invalidateQueries({ queryKey })}
+                  blocksEnabled={mode !== "template"}
                 />
               ))}
             </div>
@@ -3950,8 +4001,156 @@ function SlidePhotoEditor({ slide, onChanged }: { slide: EditorSlide; onChanged:
   );
 }
 
+/**
+ * Presentation blocks on one meeting slide (Graeme, 2026-09-11): a big
+ * sentence, a photo, or a video, added on the day — the deck becomes a
+ * presentation the host can extend with examples thought of that morning.
+ * Blocks stack under the slide's own content in the order they're added.
+ */
+function SlideBlocksEditor({ slideId, onChanged }: { slideId: number; onChanged: () => void }) {
+  const queryClient = useQueryClient();
+  const queryKey = ["slide-blocks", slideId];
+  const { data: blocks = [] } = useQuery<SlideBlock[]>({
+    queryKey,
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/morning-meetings/slides/${slideId}/blocks`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load blocks");
+      return res.json();
+    },
+  });
+  const [busy, setBusy] = useState(false);
+  const [addingText, setAddingText] = useState(false);
+  const [text, setText] = useState("");
+  const imageRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLInputElement>(null);
+
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey });
+    onChanged();
+  };
+
+  const addBlock = async (form: FormData, doneMsg: string) => {
+    setBusy(true);
+    try {
+      const res = await fetch(`${BASE}/api/morning-meetings/slides/${slideId}/blocks`, {
+        method: "POST", credentials: "include", body: form,
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "Upload failed");
+      refresh();
+      toast({ title: doneMsg });
+    } catch (e) {
+      toast({ title: "Couldn't add that", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  const addText = async () => {
+    if (!text.trim()) return;
+    const form = new FormData();
+    form.append("kind", "text");
+    form.append("content", text.trim());
+    await addBlock(form, "Text added to this slide");
+    setText("");
+    setAddingText(false);
+  };
+
+  const addMedia = async (kind: "image" | "video", file: File) => {
+    const form = new FormData();
+    form.append("kind", kind);
+    form.append("file", file);
+    await addBlock(form, kind === "image" ? "Photo added to this slide" : "Video added to this slide");
+  };
+
+  const removeBlock = async (id: number) => {
+    setBusy(true);
+    try {
+      await fetch(`${BASE}/api/morning-meetings/slide-blocks/${id}`, { method: "DELETE", credentials: "include" });
+      refresh();
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="border-t border-border/60 pt-3">
+      <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5 block">
+        Extra content on this slide (optional)
+      </label>
+      <p className="text-xs text-muted-foreground mb-2">
+        Add a big sentence, a photo or a video — they show under the slide's own content, in this order.
+      </p>
+
+      {blocks.length > 0 && (
+        <div className="space-y-2 mb-3">
+          {blocks.map(b => (
+            <div key={b.id} className="flex items-center gap-3 border border-border rounded-lg p-2 bg-background/60">
+              {b.kind === "text" ? (
+                <p className="flex-1 min-w-0 text-sm font-semibold truncate">“{b.content}”</p>
+              ) : b.kind === "video" ? (
+                <>
+                  <video src={`${BASE}/api/morning-meetings/slide-blocks/${b.id}/media`} className="w-16 h-12 rounded object-cover bg-black flex-shrink-0" muted playsInline preload="metadata" />
+                  <p className="flex-1 min-w-0 text-sm text-muted-foreground truncate">Video{b.content ? ` — ${b.content}` : ""}</p>
+                </>
+              ) : (
+                <>
+                  <img src={`${BASE}/api/morning-meetings/slide-blocks/${b.id}/media`} alt="" className="w-16 h-12 rounded object-cover bg-black/5 flex-shrink-0" />
+                  <p className="flex-1 min-w-0 text-sm text-muted-foreground truncate">Photo{b.content ? ` — ${b.content}` : ""}</p>
+                </>
+              )}
+              <button onClick={() => removeBlock(b.id)} disabled={busy}
+                className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:opacity-50 flex-shrink-0"
+                aria-label="Remove this block">
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {addingText ? (
+        <div className="mb-2">
+          <textarea
+            value={text}
+            onChange={e => setText(e.target.value)}
+            rows={2}
+            maxLength={500}
+            autoFocus
+            placeholder="The big sentence to show on the slide…"
+            className="w-full bg-background border border-border rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+          <div className="flex gap-2 mt-1.5">
+            <button onClick={addText} disabled={busy || !text.trim()}
+              className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-50">
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add text"}
+            </button>
+            <button onClick={() => { setAddingText(false); setText(""); }} className="px-3 py-1.5 rounded-lg border border-border text-sm">
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex gap-2 flex-wrap">
+          <input ref={imageRef} type="file" accept="image/*" className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) void addMedia("image", f); e.target.value = ""; }} />
+          <input ref={videoRef} type="file" accept="video/*" className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) void addMedia("video", f); e.target.value = ""; }} />
+          <button onClick={() => setAddingText(true)} disabled={busy}
+            className="px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+            <Plus className="w-4 h-4" /> Text
+          </button>
+          <button onClick={() => imageRef.current?.click()} disabled={busy}
+            className="px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImageIcon className="w-4 h-4" />} Photo
+          </button>
+          <button onClick={() => videoRef.current?.click()} disabled={busy}
+            className="px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+            <Play className="w-4 h-4" /> Video
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SortableSlideRow({
-  slide, expanded, onToggle, onSave, onRemove, onPhotoChanged,
+  slide, expanded, onToggle, onSave, onRemove, onPhotoChanged, blocksEnabled,
 }: {
   slide: EditorSlide;
   expanded: boolean;
@@ -3959,6 +4158,9 @@ function SortableSlideRow({
   onSave: (patch: Partial<EditorSlide>) => void;
   onRemove: () => void;
   onPhotoChanged: () => void;
+  /** Presentation blocks hang off meeting slides only — the master
+   *  template has no per-day content, so the editor hides them there. */
+  blocksEnabled: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: slide.id });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 };
@@ -4072,6 +4274,7 @@ function SortableSlideRow({
             </div>
           )}
           <SlidePhotoEditor slide={slide} onChanged={onPhotoChanged} />
+          {blocksEnabled && <SlideBlocksEditor slideId={slide.id} onChanged={onPhotoChanged} />}
           <div className="flex items-center justify-end gap-2">
             <button
               onClick={() => { setTitle(slide.title); setContentMd(slide.contentMd ?? ""); setVideoUrl(initialVideoUrl); }}

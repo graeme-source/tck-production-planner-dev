@@ -225,6 +225,23 @@ export const meetingSlidesTable = pgTable("meeting_slides", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// Free-form presentation blocks a host can pin to any slide on the day
+// (Graeme, 2026-09-11): a big sentence, a photo, or a video, stacked under
+// the slide's built-in content so the deck can be extended like a
+// presentation with examples thought of on the morning. Per-meeting, so
+// tomorrow's deck starts clean (migration 0098).
+export const meetingSlideBlocksTable = pgTable("meeting_slide_blocks", {
+  id: serial("id").primaryKey(),
+  slideId: integer("slide_id").notNull().references(() => meetingSlidesTable.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(), // 'text' | 'image' | 'video'
+  // Text blocks: the big sentence itself. Media blocks: optional caption.
+  content: text("content"),
+  media: bytea("media"),
+  mediaMime: text("media_mime"),
+  position: integer("position").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const meetingGratitudeTable = pgTable("meeting_gratitude", {
   id: serial("id").primaryKey(),
   meetingId: integer("meeting_id").notNull().references(() => morningMeetingsTable.id, { onDelete: "cascade" }),
