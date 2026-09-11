@@ -136,15 +136,23 @@ export default function Locations() {
     staleTime: 60_000,
   });
 
-  // Product name per SKU — recent orders first (what the packer sees),
-  // barcode cache as fallback. Several products can share a shelf-label
-  // SKU; join the distinct titles so the chip tells the whole story.
+  // Product names per SKU. Several products legitimately share a shelf-label
+  // SKU (BBQ Sauce and Buffalo Hot Sauce are both "3d"; the buttermilk
+  // chicken variants are all "1"), so the chip joins EVERY distinct product
+  // title on the SKU — showing just one name made the others look missing
+  // from the map (Graeme, 2026-09-11).
   const titlesBySku = useMemo(() => {
+    const sets = new Map<string, Set<string>>();
+    const add = (sku: string | null, title: string | null) => {
+      if (!sku || !title) return;
+      const s = sets.get(sku) ?? new Set<string>();
+      s.add(title);
+      sets.set(sku, s);
+    };
+    for (const s of recentSkus) add(s.sku, s.title);
+    for (const b of barcodes) add(b.sku, b.productTitle);
     const m = new Map<string, string>();
-    for (const b of barcodes) {
-      if (b.sku && b.productTitle && !m.has(b.sku)) m.set(b.sku, b.productTitle);
-    }
-    for (const s of recentSkus) m.set(s.sku, s.title);
+    for (const [sku, s] of sets) m.set(sku, [...s].join(" · "));
     return m;
   }, [recentSkus, barcodes]);
 
@@ -269,6 +277,21 @@ export default function Locations() {
     () => recentSkus.filter(s => !locationsBySku.has(s.sku)).sort((a, b) => a.sku.localeCompare(b.sku, undefined, { numeric: true })),
     [recentSkus, locationsBySku],
   );
+  // The rest of the catalogue: SKUs the Shopify barcode cache knows about
+  // that have no bin yet and no recent order — so the tray shows every
+  // mappable product, not just what happened to be ordered in the last
+  // fortnight. (Variants with NO SKU in Shopify can't appear anywhere on
+  // this page — a bin is keyed by SKU; give them one in Shopify and
+  // re-sync.)
+  const catalogueUnassigned = useMemo(() => {
+    const seen = new Set(unassigned.map(u => u.sku));
+    const out: string[] = [];
+    for (const b of barcodes) {
+      if (!b.sku || seen.has(b.sku) || locationsBySku.has(b.sku) || out.includes(b.sku)) continue;
+      out.push(b.sku);
+    }
+    return out.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }, [barcodes, unassigned, locationsBySku]);
 
   // Extra SKU typed by hand (not on any recent order) — joins the tray.
   const [extraSkus, setExtraSkus] = useState<string[]>([]);
@@ -428,7 +451,7 @@ export default function Locations() {
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <h2 className="text-sm font-semibold flex items-center gap-2">
                 <PackageSearch className="w-4 h-4 text-primary" /> Not on the map yet
-                <span className="text-xs font-normal text-muted-foreground">({unassigned.length + trayExtra.length}) — drag onto a shelf</span>
+                <span className="text-xs font-normal text-muted-foreground">({unassigned.length + catalogueUnassigned.length + trayExtra.length}) — drag onto a shelf</span>
               </h2>
               <div className="flex items-center gap-1.5">
                 <input
@@ -447,12 +470,15 @@ export default function Locations() {
                 </button>
               </div>
             </div>
-            {unassigned.length + trayExtra.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Every SKU from the last 14 days of orders is on the map. 🎉</p>
+            {unassigned.length + catalogueUnassigned.length + trayExtra.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Every SKU Shopify knows about is on the map. 🎉</p>
             ) : (
               <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto">
                 {unassigned.map(s => (
-                  <ProductChip key={s.sku} sku={s.sku} title={s.title} note={`${s.orderCount} order${s.orderCount === 1 ? "" : "s"}`} saving={isSaving(s.sku)} />
+                  <ProductChip key={s.sku} sku={s.sku} title={chipTitle(s.sku) ?? s.title} note={`${s.orderCount} order${s.orderCount === 1 ? "" : "s"}`} saving={isSaving(s.sku)} />
+                ))}
+                {catalogueUnassigned.map(sku => (
+                  <ProductChip key={sku} sku={sku} title={chipTitle(sku)} saving={isSaving(sku)} />
                 ))}
                 {trayExtra.map(sku => (
                   <ProductChip key={sku} sku={sku} title={chipTitle(sku)} note="added by hand" saving={isSaving(sku)} />
