@@ -36,6 +36,12 @@ Read this first, every session.
 - Small, separately revertable commits; plain-English messages stating what
   changed and which objective it serves.
 - Fix causes, not symptoms; check for existing logic before writing new logic.
+- Anything the UI names, it links: a policy, SOP or document mentioned anywhere
+  (checklists, training items, lessons, notifications) links to its canonical
+  page (`/documents/:id` for the Documents repository), and the visible label
+  itself is the link — never buried in a menu. Where reading is the task,
+  prefer the in-app "I've read and understood" flow (`/api/training-ack`) over
+  telling users to report to a manager. (Graeme, 2026-09-11.)
 - Destructive/outward-facing actions (deletes, Shopify writes, emails, deploys)
   need explicit approval from Graeme.
 
