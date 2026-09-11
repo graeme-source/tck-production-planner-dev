@@ -1733,12 +1733,25 @@ function StationAssignmentsSlide({ trialWelcome, dayNumbers }: { trialWelcome?: 
     );
   }
   if (!data || !data.available) {
+    // Stretches still happen when Planday is down — this slide is their
+    // only home since the standalone Stretches slide was merged away.
+    const fallbackStretches = pickStretchesForDay(new Date().toISOString().slice(0, 10));
     return (
-      <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+      <div className="flex flex-col items-center py-8 gap-6 text-center">
         <DayNumbersRow dayNumbers={dayNumbers ?? null} />
-        <AlertCircle className="w-10 h-10 text-amber-500" />
-        <p className="text-lg font-semibold">Rota unavailable</p>
-        <p className="text-muted-foreground">{data?.reason ?? "Could not reach Planday."} Check the printed rota.</p>
+        <div className="flex flex-col items-center gap-2">
+          <AlertCircle className="w-10 h-10 text-amber-500" />
+          <p className="text-lg font-semibold">Rota unavailable</p>
+          <p className="text-muted-foreground">{data?.reason ?? "Could not reach Planday."} Check the printed rota.</p>
+        </div>
+        <div className="grid grid-cols-5 gap-3 w-full max-w-4xl">
+          {fallbackStretches.map((st, i) => (
+            <div key={i} className="rounded-2xl border border-border bg-card p-4 flex flex-col items-center gap-2">
+              <span className="text-5xl leading-none" aria-hidden>{st.emoji}</span>
+              <p className="text-base font-semibold leading-tight">{st.name}</p>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -1746,6 +1759,7 @@ function StationAssignmentsSlide({ trialWelcome, dayNumbers }: { trialWelcome?: 
   const everyone = [...data.stations.flatMap(s => s.people), ...data.extras];
   const lateCount = everyone.filter(p => p.late).length;
   const inCount = everyone.filter(p => p.punch === "in" || p.punch === "finished").length;
+  const stretches = pickStretchesForDay(new Date().toISOString().slice(0, 10));
 
   return (
     <div className="space-y-4">
@@ -1788,40 +1802,59 @@ function StationAssignmentsSlide({ trialWelcome, dayNumbers }: { trialWelcome?: 
         )}
       </div>
 
-      {/* One row per station, top to bottom in production-flow order (the
-          mapping's order in Settings mirrors the plan-day station list) —
-          the room reads it like the day's flow, not a wall of tiles. */}
-      <div className="space-y-1.5">
-        {data.stations.map(st => (
-          <div key={st.title}
-            className={cn(
-              "rounded-xl border px-4 py-2 flex items-center gap-4",
-              st.people.length > 0 ? "border-border bg-card" : "border-dashed border-border bg-secondary/20",
-            )}>
-            <p className="w-44 flex-shrink-0 text-sm font-semibold uppercase tracking-wide text-muted-foreground">{st.title}</p>
-            {st.people.length === 0 ? (
-              <p className="text-xl font-display font-bold text-muted-foreground/40">—</p>
-            ) : (
-              <div className="flex flex-wrap items-baseline gap-x-6 gap-y-0.5 min-w-0">
-                {st.people.map((p, i) => <PersonName key={i} p={p} />)}
+      {/* Stretches + rota share the opening slide (Graeme, 2026-09-11):
+          the team stretches WHILE reading who's on what station, so one
+          slide covers the whole opening. Stretches run top-to-bottom on
+          the left; people and positions fill the right. */}
+      <div className="grid gap-4 lg:grid-cols-[minmax(15rem,2fr)_5fr] items-start">
+        <div className="space-y-1.5">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground px-1">Stretches — while we read the board</p>
+          {stretches.map((st, i) => (
+            <div key={i} className="rounded-xl border border-border bg-card px-4 py-2.5 flex items-center gap-3">
+              <span className="text-4xl leading-none" aria-hidden>{st.emoji}</span>
+              <div className="min-w-0">
+                <p className="text-lg font-semibold leading-tight">{st.name}</p>
+                <p className="text-xs text-muted-foreground leading-snug">{st.description}</p>
               </div>
-            )}
-          </div>
-        ))}
-      </div>
-      {data.extras.length > 0 && (
-        <div className="rounded-xl border border-border bg-secondary/20 px-4 py-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Also in today</p>
-          <p className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm">
-            {data.extras.map((p, i) => (
-              <span key={i} className="inline-flex items-baseline gap-1.5">
-                <PersonName p={p} size="small" />
-                <span className="text-muted-foreground text-xs">({p.position})</span>
-              </span>
-            ))}
-          </p>
+            </div>
+          ))}
         </div>
-      )}
+
+        {/* One row per station, top to bottom in production-flow order (the
+            mapping's order in Settings mirrors the plan-day station list) —
+            the room reads it like the day's flow, not a wall of tiles. */}
+        <div className="space-y-1.5">
+          {data.stations.map(st => (
+            <div key={st.title}
+              className={cn(
+                "rounded-xl border px-4 py-2 flex items-center gap-4",
+                st.people.length > 0 ? "border-border bg-card" : "border-dashed border-border bg-secondary/20",
+              )}>
+              <p className="w-44 flex-shrink-0 text-sm font-semibold uppercase tracking-wide text-muted-foreground">{st.title}</p>
+              {st.people.length === 0 ? (
+                <p className="text-xl font-display font-bold text-muted-foreground/40">—</p>
+              ) : (
+                <div className="flex flex-wrap items-baseline gap-x-6 gap-y-0.5 min-w-0">
+                  {st.people.map((p, i) => <PersonName key={i} p={p} />)}
+                </div>
+              )}
+            </div>
+          ))}
+          {data.extras.length > 0 && (
+            <div className="rounded-xl border border-border bg-secondary/20 px-4 py-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Also in today</p>
+              <p className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm">
+                {data.extras.map((p, i) => (
+                  <span key={i} className="inline-flex items-baseline gap-1.5">
+                    <PersonName p={p} size="small" />
+                    <span className="text-muted-foreground text-xs">({p.position})</span>
+                  </span>
+                ))}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1922,10 +1955,10 @@ function SlideBodyInner({ slide, data, onRefresh, isPreviewing, subIndex, report
     case "stretches": return <StretchesPanel />;
     case "yesterday_kpis": return <YesterdayKpisSlide data={data} slide={slide} />;
     case "station_assignments": return <StationAssignmentsSlide trialWelcome={data.meeting?.trialWelcome ?? null} dayNumbers={data.dayNumbers ?? null} />;
-    case "order_of_production": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} stickyTotals />;
+    case "order_of_production": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} stickyTotals compact />;
     case "local_delivery": return <LocalDeliverySlide data={data} slide={slide} />;
     case "bag_orders": return <BagOrdersSlide data={data} slide={slide} />;
-    case "short_on_pack": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} stickyTotals />;
+    case "short_on_pack": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} stickyTotals compact />;
     case "safety_issues": return <SafetyIssuesSlide data={data} onRefresh={onRefresh} slide={slide} />;
     case "system_updates": return <SystemUpdatesSlide slide={slide} subIndex={subIndex} reportSubCount={reportSubCount} />;
     case "new_sops": return <NewSopsSlide data={data} slide={slide} />;
@@ -2141,7 +2174,7 @@ function SortableProductionRow({ id, disabled, children }: {
  *                  where the fridge actually lands by close of play. */
 export type PackStockMode = "actual" | "predicted";
 
-export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "actual", stickyTotals = false }: {
+export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "actual", stickyTotals = false, compact = false }: {
   data: DashboardData;
   slide: MeetingSlide;
   isPreviewing: boolean;
@@ -2150,6 +2183,10 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
    *  meeting, where the table is taller than the slide and the in-table
    *  totals row sits out of sight below the fold. */
   stickyTotals?: boolean;
+  /** Meeting mode (Graeme, 2026-09-11): the deck chrome already names the
+   *  slide, so drop the in-body title, the lead paragraph and the legend,
+   *  and tighten every row — the whole table should fit one screen. */
+  compact?: boolean;
 }) {
   // In a live meeting the pack is today's; in a preview of tomorrow's
   // meeting it's tomorrow's. Matches the old Short-on-pack behaviour.
@@ -2425,12 +2462,23 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
   const dayCap = tomorrowMode ? `${packDayNameCap(data.today, data.tomorrow)}'s` : "Today's";
   // minmax on the recipe column: without it the 1fr track collapses to zero
   // on an iPad in portrait and the names vanish before anything truncates.
-  const cols = "grid-cols-[2.25rem_4.5rem_minmax(8rem,1fr)_4.75rem_5.25rem_4.75rem_5.75rem_5rem]";
+  // Compact (meeting) keeps a wider # column: the sequence number and the
+  // drag grip sit side by side instead of stacked, saving row height.
+  const cols = compact
+    ? "grid-cols-[3.4rem_3.9rem_minmax(8rem,1fr)_4.5rem_5rem_4.5rem_5.5rem_4.75rem]"
+    : "grid-cols-[2.25rem_4.5rem_minmax(8rem,1fr)_4.75rem_5.25rem_4.75rem_5.75rem_5rem]";
+  // Row sizing knobs — the compact deck view fits the whole table on one
+  // screen; the pack report keeps its roomier layout.
+  const rowPad = compact ? "px-4 py-1.5" : "px-5 py-3";
+  const negMy = compact ? "-my-1.5" : "-my-3";
+  const numTxt = compact ? "text-xl" : "text-2xl";
 
   return (
     <div>
-      <SectionTitle>{slide.title || "Order of Production"}</SectionTitle>
-      <SectionLead>{dayCap} order — Mac &amp; Cheese first, then the calzones. Red = short · amber = within 10 spare. Production columns go red when even {packDayLabel} make won't cover the pack.{canReorder && " Drag a row to change the production order — every station follows."}</SectionLead>
+      {!compact && <SectionTitle>{slide.title || "Order of Production"}</SectionTitle>}
+      {!compact && (
+        <SectionLead>{dayCap} order — Mac &amp; Cheese first, then the calzones. Red = short · amber = within 10 spare. Production columns go red when even {packDayLabel} make won't cover the pack.{canReorder && " Drag a row to change the production order — every station follows."}</SectionLead>
+      )}
 
       {/* Oversell pre-warning — shown in the morning meeting AND the pack
           report. Fires when fridge + today's whole production still leaves a
@@ -2466,7 +2514,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
         <div className="glass-panel rounded-2xl overflow-hidden overflow-x-auto">
          <div className="min-w-[44rem]">
           {/* Header */}
-          <div className={cn("grid gap-1.5 px-5 py-3 bg-secondary/30 text-base leading-snug font-bold text-muted-foreground items-start", cols)}>
+          <div className={cn("grid gap-1.5 bg-secondary/30 leading-snug font-bold text-muted-foreground items-start", compact ? "px-4 py-2 text-sm" : "px-5 py-3 text-base", cols)}>
             <span>#</span>
             <span>Start</span>
             <span>Recipe</span>
@@ -2488,23 +2536,29 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
                 <HeaderInfo>Where each recipe lands at close of play, with everything wrapped in and every remaining order out: fridge + still to wrap − left to dispatch. Negative means today's orders oversell what we'll have.</HeaderInfo>
               )}
             </span>
-            <span className="text-center self-stretch border-l-[3px] border-border pl-3 bg-secondary/40 -my-3 py-3">
+            <span className={cn("text-center self-stretch border-l-[3px] border-border pl-3 bg-secondary/40", compact ? "-my-2 py-2" : "-my-3 py-3")}>
               {dayCap} packs
               <HeaderInfo>{dayCap} production in 2-packs — batches × packs per batch, minus any packs going into 8-pack bags. Compare it straight against The difference: red means even this production won't cover what's left to dispatch, amber means it only just does (10 or fewer spare).</HeaderInfo>
             </span>
-            <span className="text-center self-stretch bg-secondary/40 -my-3 py-3">{dayCap} batches</span>
+            <span className={cn("text-center self-stretch bg-secondary/40", compact ? "-my-2 py-2" : "-my-3 py-3")}>{dayCap} batches</span>
           </div>
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleRowDragEnd}>
           <SortableContext items={plannedRows.filter(r => r.itemId != null).map(r => r.itemId as number)} strategy={verticalListSortingStrategy}>
           {rows.map((r, i) => {
             const tone = r.stock?.tone;
+            // Three unmistakable states (Graeme, 2026-09-11: red and amber
+            // read too alike): short rows go strongly red, tight rows stay a
+            // pale amber, and healthy rows get a visible green wash instead
+            // of no colour at all — so the answer reads from across the room.
             const toneClass =
-              tone === "warn" ? "bg-amber-500/10 border-amber-500/40" :
-              tone === "bad"  ? "bg-red-500/10 border-red-500/50" :
+              tone === "warn" ? "bg-amber-400/10 border-amber-400/70" :
+              tone === "bad"  ? "bg-red-500/25 border-red-600" :
+              tone === "ok"   ? "bg-emerald-500/10 border-emerald-500/70" :
                                 "border-transparent";
             const numClass =
-              tone === "bad"  ? "text-red-700 dark:text-red-300" :
-              tone === "warn" ? "text-amber-800 dark:text-amber-300" :
+              tone === "bad"  ? "text-red-700 dark:text-red-300 font-extrabold" :
+              tone === "warn" ? "text-amber-700 dark:text-amber-300" :
+              tone === "ok"   ? "text-emerald-700 dark:text-emerald-400" :
                                 "";
             const firstUnplanned = r.seq === null && (i === 0 || rows[i - 1].seq !== null);
             const body = (handle: React.ReactNode) => (
@@ -2516,41 +2570,43 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
                 )}
                 <div
                   className={cn(
-                    "grid gap-1.5 items-center px-5 py-3 border-l-4",
+                    "grid gap-1.5 items-center border-l-4",
+                    rowPad,
                     cols,
                     toneClass,
                     i > 0 && !firstUnplanned && "border-t border-border/50",
                   )}
                 >
-                  <span className="flex flex-col items-center gap-0.5">
-                    <span className="text-2xl font-display font-bold tabular-nums text-muted-foreground">{r.seq ?? "–"}</span>
+                  <span className={cn("flex items-center gap-0.5", compact ? "flex-row" : "flex-col")}>
+                    <span className={cn("font-display font-bold tabular-nums text-muted-foreground", numTxt)}>{r.seq ?? "–"}</span>
                     {handle}
                   </span>
-                  <span className="text-2xl font-bold tabular-nums whitespace-nowrap">
+                  <span className={cn("font-bold tabular-nums whitespace-nowrap", numTxt)}>
                     {startByRecipe.get(r.recipeId) ?? <span className="text-muted-foreground">—</span>}
                   </span>
                   <div className="flex items-center gap-3 min-w-0">
                     <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: r.color ?? "hsl(var(--muted))" }} aria-hidden />
-                    <span className="text-2xl font-semibold truncate">{r.recipeName}</span>
+                    <span className={cn("font-semibold truncate", numTxt)}>{r.recipeName}</span>
                     {r.category === "Macaroni Cheese" && (
                       <span className="text-xs uppercase tracking-wide bg-amber-500/10 text-amber-700 dark:text-amber-300 px-2.5 py-0.5 rounded-full font-bold shrink-0">Mac</span>
                     )}
                   </div>
-                  <span className="text-2xl font-bold tabular-nums text-center">{r.stock ? r.stock.have : "—"}</span>
-                  <span className="text-2xl font-bold tabular-nums text-center">{r.stock ? r.stock.need : "—"}</span>
-                  <span className={cn("text-2xl font-bold tabular-nums text-center", numClass)}>
+                  <span className={cn("font-bold tabular-nums text-center", numTxt)}>{r.stock ? r.stock.have : "—"}</span>
+                  <span className={cn("font-bold tabular-nums text-center", numTxt)}>{r.stock ? r.stock.need : "—"}</span>
+                  <span className={cn("font-bold tabular-nums text-center", numTxt, numClass)}>
                     {r.stock ? (r.stock.surplus > 0 ? `+${r.stock.surplus}` : r.stock.surplus) : "—"}
                   </span>
                   <span className={cn(
-                    "self-stretch -my-3 py-1 flex flex-col items-center justify-center border-l-[3px] border-border pl-3 bg-secondary/20",
-                    r.stock?.prodTone === "bad" && r.packs !== null && "bg-red-500/15",
-                    r.stock?.prodTone === "warn" && r.packs !== null && "bg-amber-500/15",
+                    "self-stretch py-1 flex flex-col items-center justify-center border-l-[3px] border-border pl-3 bg-secondary/20",
+                    negMy,
+                    r.stock?.prodTone === "bad" && r.packs !== null && "bg-red-500/25",
+                    r.stock?.prodTone === "warn" && r.packs !== null && "bg-amber-400/15",
                   )}>
                     <span className={cn(
-                      "text-2xl font-bold tabular-nums whitespace-nowrap",
+                      "font-bold tabular-nums whitespace-nowrap", numTxt,
                       r.packs !== null && (
-                        r.stock?.prodTone === "bad" ? "text-red-700 dark:text-red-300" :
-                        r.stock?.prodTone === "warn" ? "text-amber-800 dark:text-amber-300" :
+                        r.stock?.prodTone === "bad" ? "text-red-700 dark:text-red-300 font-extrabold" :
+                        r.stock?.prodTone === "warn" ? "text-amber-700 dark:text-amber-300" :
                         tone === "bad" || tone === "warn" ? "text-emerald-700 dark:text-emerald-400" : ""
                       ),
                     )}>
@@ -2561,7 +2617,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
                       <span className="text-[10px] font-medium text-muted-foreground leading-tight whitespace-nowrap">after {r.bags} × 8-pk bags</span>
                     )}
                   </span>
-                  <span className="self-stretch -my-3 py-1 flex items-center justify-center bg-secondary/20 text-2xl font-bold tabular-nums whitespace-nowrap">
+                  <span className={cn("self-stretch py-1 flex items-center justify-center bg-secondary/20 font-bold tabular-nums whitespace-nowrap", negMy, numTxt)}>
                     {r.unit === "batches" && r.target !== null ? (
                       <>
                         {r.target}
@@ -2587,17 +2643,17 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
           <div className={cn("grid gap-1.5 items-center px-5 py-3 border-t-2 border-border bg-secondary/30", cols)}>
             <span />
             <span />
-            <span className="text-2xl font-bold">Totals</span>
-            <span className="text-2xl font-bold tabular-nums text-center">{sumHave}</span>
-            <span className="text-2xl font-bold tabular-nums text-center">{sumNeed}</span>
-            <span className="text-2xl font-bold tabular-nums text-center">
+            <span className={cn("font-bold", numTxt)}>Totals</span>
+            <span className={cn("font-bold tabular-nums text-center", numTxt)}>{sumHave}</span>
+            <span className={cn("font-bold tabular-nums text-center", numTxt)}>{sumNeed}</span>
+            <span className={cn("font-bold tabular-nums text-center", numTxt)}>
               {sumSurplus > 0 ? `+${sumSurplus}` : sumSurplus}
             </span>
-            <span className="text-center self-stretch -my-3 flex items-center justify-center border-l-[3px] border-border pl-3 bg-secondary/20 text-2xl font-bold tabular-nums whitespace-nowrap">
+            <span className={cn("text-center self-stretch flex items-center justify-center border-l-[3px] border-border pl-3 bg-secondary/20 font-bold tabular-nums whitespace-nowrap", negMy, numTxt)}>
               {totalPacks}
               <span className="text-xs font-medium text-muted-foreground ml-1">pk</span>
             </span>
-            <span className="text-center self-stretch -my-3 flex items-center justify-center bg-secondary/20 text-2xl font-bold tabular-nums whitespace-nowrap">
+            <span className={cn("text-center self-stretch flex items-center justify-center bg-secondary/20 font-bold tabular-nums whitespace-nowrap", negMy, numTxt)}>
               {calzoneBatches}
               <span className="text-xs font-medium text-muted-foreground ml-1">bt</span>
             </span>
@@ -2606,8 +2662,9 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
         </div>
       )}
 
-      {/* Legend */}
-      {rows.length > 0 && (
+      {/* Legend — dropped in compact mode: the green/amber/red row washes
+          are self-explanatory and the slide needs the vertical space. */}
+      {!compact && rows.length > 0 && (
         <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-emerald-500 inline-block" /> Enough</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-500 inline-block" /> Tight</span>

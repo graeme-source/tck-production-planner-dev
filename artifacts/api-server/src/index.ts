@@ -2465,6 +2465,24 @@ async function runStartupMigrations() {
       END $$;
     `);
 
+    // Stretches merged into Who's On Today (Graeme, 2026-09-11): the team
+    // stretches WHILE reading the rota, so the standalone Stretches slide
+    // comes out of the default deck and any meetings not yet held. Guarded
+    // one-shot — an admin can re-add the kind from the slide catalog if a
+    // standalone stretches slide is ever wanted again.
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'merge_stretches_into_whos_on_v1') THEN
+          DELETE FROM template_slides WHERE kind = 'stretches'
+            AND template_id IN (SELECT id FROM meeting_templates WHERE is_default = true);
+          DELETE FROM meeting_slides WHERE kind = 'stretches'
+            AND meeting_id IN (SELECT id FROM morning_meetings WHERE ended_at IS NULL);
+          INSERT INTO _migrations_done (key) VALUES ('merge_stretches_into_whos_on_v1');
+        END IF;
+      END $$;
+    `);
+
     // Retire the standalone "Short on the Pack" slide — its stock data is
     // now folded into the Order of Production slide (colour-coded Have/Need
     // columns). Drop any lingering short_on_pack slides from the default
