@@ -723,14 +723,8 @@ export default function Dashboard() {
         action={
           <div className="flex items-center gap-2">
             <VisitorCheckInButton />
-            {isFounder && (
-              <Link href="/founder/focus">
-                <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-2 hover:bg-secondary transition-colors">
-                  <LineChart className="w-3.5 h-3.5" />
-                  Founder Focus
-                </button>
-              </Link>
-            )}
+            {/* The founder entry moved to the top of the sidebar as
+                "The Business" (Graeme, 2026-09-11). */}
           </div>
         }
       />

@@ -10,8 +10,9 @@ import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { FEATURE_REGISTRY } from "@workspace/feature-registry";
 import { usePageHeaderValue } from "@/contexts/page-header-context";
 import { 
-  LayoutDashboard, 
-  ChefHat, 
+  LayoutDashboard,
+  Briefcase,
+  ChefHat,
   Carrot, 
   ClipboardList, 
   CalendarDays, 
@@ -623,7 +624,14 @@ export function Layout({ children }: { children: ReactNode }) {
   // Accountants see Finance and Deliveries (they reconcile against what
   // physically arrived) and nothing else — the production app is noise to
   // them, and they are noise to it (Graeme, 2026-09-09).
-  const navForUser = accountantOnly ? visibleNavItems.filter(i => i.href === "/finance" || i.href === "/deliveries") : visibleNavItems;
+  let navForUser = accountantOnly ? visibleNavItems.filter(i => i.href === "/finance" || i.href === "/deliveries") : visibleNavItems;
+  // "The Business" — the founder's own area, top of the menu, above
+  // Dashboard (Graeme, 2026-09-11). Email-gated like every founder
+  // surface; the /founder pages also guard themselves server-side. This
+  // replaces the old "Founder Focus" button on the dashboard header.
+  if (user?.email === "graeme@thecalzonekitchen.co.uk") {
+    navForUser = [{ name: "The Business", href: "/founder/focus", icon: Briefcase }, ...navForUser];
+  }
   const productForUser = accountantOnly ? [] : visibleProductItems;
   const inventoryForUser = accountantOnly ? [] : visibleInventoryItems;
 
