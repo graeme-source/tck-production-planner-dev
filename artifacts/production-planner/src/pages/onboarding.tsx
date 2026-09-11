@@ -18,10 +18,14 @@ type Submission = {
   submittedAt: string | null;
 } | null;
 
-const DOC_SLOTS: { kind: string; label: string; hint: string }[] = [
-  { kind: "right_to_work", label: "Right to work / ID", hint: "Passport, BRP or share code screenshot" },
-  { kind: "food_hygiene", label: "Food Hygiene certificate", hint: "If you already have one" },
-  { kind: "p45", label: "P45 from your last job", hint: "Optional — helps payroll get your tax code right" },
+// Both real starters stalled here thinking the certificate and P45 were
+// required (Graeme, 2026-09-11) — so the optional slots now say so loudly,
+// and say to carry on without them. Nothing in this section has ever
+// gated completion; the gate is details + forms + contract only.
+const DOC_SLOTS: { kind: string; label: string; hint: string; optional: boolean }[] = [
+  { kind: "right_to_work", label: "Right to work / ID", hint: "Passport, BRP or share code screenshot", optional: false },
+  { kind: "food_hygiene", label: "Food Hygiene certificate", hint: "Only if you already have one — don't worry if you don't, we'll sort your training. Please carry on.", optional: true },
+  { kind: "p45", label: "P45 from your last job", hint: "Don't worry if you don't have one — please carry on. It just helps payroll get your tax code right.", optional: true },
 ];
 
 interface GateStatus {
@@ -319,6 +323,11 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
               {/* Documents */}
               <section className="space-y-3">
                 <h2 className="text-sm font-semibold flex items-center gap-2"><FileText className="w-4 h-4 text-primary" /> Documents</h2>
+                <p className="text-xs text-muted-foreground">
+                  What we really need from you is the checklist above — your details, your forms and your contract.
+                  Documents here are extras: upload what you have, skip what you don't. Nothing in this section stops
+                  you finishing.
+                </p>
                 {DOC_SLOTS.map(slot => (
                   <DocSlot
                     key={slot.kind}
@@ -352,7 +361,7 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
 }
 
 function DocSlot({ slot, docs, onChanged }: {
-  slot: { kind: string; label: string; hint: string };
+  slot: { kind: string; label: string; hint: string; optional: boolean };
   docs: DocMeta[];
   onChanged: () => Promise<void>;
 }) {
@@ -388,7 +397,12 @@ function DocSlot({ slot, docs, onChanged }: {
     <div className="border border-border rounded-xl p-3">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-sm font-medium">{slot.label}</p>
+          <p className="text-sm font-medium flex items-center gap-2">
+            {slot.label}
+            {slot.optional && (
+              <span className="text-[10px] font-semibold uppercase tracking-wide bg-secondary text-muted-foreground px-1.5 py-0.5 rounded-full flex-shrink-0">Optional</span>
+            )}
+          </p>
           <p className="text-[11px] text-muted-foreground">{slot.hint}</p>
         </div>
         <label className="flex-shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary text-foreground text-xs font-medium hover:bg-secondary/70 transition-colors border border-border cursor-pointer">
