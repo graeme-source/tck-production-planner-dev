@@ -484,6 +484,11 @@ function OnboardingInfoDialog({ userId, name, onClose }: { userId: number; name:
               <Row label="Relationship" value={s?.emergencyContactRelationship} />
             </div>
             <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Footwear — have it ready for day one</p>
+              <Row label="Shoe size (UK)" value={s?.shoeSize} />
+              <Row label="Preference" value={s?.footwearChoice === "safety_shoes" ? "Safety shoes" : s?.footwearChoice === "crocs" ? "Crocs" : null} />
+            </div>
+            <div>
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Documents</p>
               {docs.length === 0 ? (
                 <p className="text-sm text-muted-foreground/60">None uploaded</p>

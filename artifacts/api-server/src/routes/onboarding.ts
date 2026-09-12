@@ -89,6 +89,10 @@ router.put("/me", async (req: Request, res: Response) => {
       emergencyContactName: str(req.body?.emergencyContactName),
       emergencyContactPhone: str(req.body?.emergencyContactPhone),
       emergencyContactRelationship: str(req.body?.emergencyContactRelationship),
+      shoeSize: str(req.body?.shoeSize),
+      // Two-way choice, validated to the two real options so the summary
+      // managers order footwear from can't hold free text.
+      footwearChoice: ["crocs", "safety_shoes"].includes(String(req.body?.footwearChoice)) ? String(req.body?.footwearChoice) : null,
     };
 
     // Emergency contact details are the point of this form — a blank submit
@@ -100,6 +104,8 @@ router.put("/me", async (req: Request, res: Response) => {
     if (!values.emergencyContactName) missing.push("emergency contact name");
     if (!values.emergencyContactPhone) missing.push("emergency contact phone");
     if (!values.emergencyContactRelationship) missing.push("emergency contact relationship");
+    if (!values.shoeSize) missing.push("your shoe size");
+    if (!values.footwearChoice) missing.push("your footwear choice (Crocs or safety shoes)");
     if (missing.length > 0) {
       res.status(400).json({ error: `Still needed: ${missing.join(", ")}` });
       return;

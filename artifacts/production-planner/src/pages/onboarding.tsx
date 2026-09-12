@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/auth-context";
-import { Loader2, Phone, MapPin, Heart, FileText, Upload, Check, X, ShieldCheck, ArrowRight, LogOut } from "lucide-react";
+import { Loader2, Phone, MapPin, Heart, FileText, Upload, Check, X, ShieldCheck, ArrowRight, LogOut, Footprints } from "lucide-react";
 import { StarterFormsList } from "@/components/starter-forms";
 import { MyContractSection } from "@/components/my-contract";
 
@@ -15,6 +15,7 @@ type DocMeta = { id: number; kind: string; fileName: string | null; fileSizeByte
 type Submission = {
   phone: string | null; address: string | null;
   emergencyContactName: string | null; emergencyContactPhone: string | null; emergencyContactRelationship: string | null;
+  shoeSize: string | null; footwearChoice: string | null;
   submittedAt: string | null;
 } | null;
 
@@ -60,6 +61,7 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
   const [form, setForm] = useState({
     phone: "", address: "",
     emergencyContactName: "", emergencyContactPhone: "", emergencyContactRelationship: "",
+    shoeSize: "", footwearChoice: "",
   });
 
   const refreshGate = async () => {
@@ -83,6 +85,8 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
           emergencyContactName: s.emergencyContactName ?? "",
           emergencyContactPhone: s.emergencyContactPhone ?? "",
           emergencyContactRelationship: s.emergencyContactRelationship ?? "",
+          shoeSize: s.shoeSize ?? "",
+          footwearChoice: s.footwearChoice ?? "",
         });
         if (s.submittedAt) setPhase("paperwork");
       }
@@ -214,6 +218,12 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
                     ? `${form.emergencyContactName} (${form.emergencyContactRelationship || "—"}) · ${form.emergencyContactPhone || "—"}`
                     : "— not filled in yet"}
                 </p>
+                <p className="text-sm">
+                  <span className="text-muted-foreground">Footwear:</span>{" "}
+                  {form.shoeSize
+                    ? `UK ${form.shoeSize} · ${form.footwearChoice === "safety_shoes" ? "Safety shoes" : form.footwearChoice === "crocs" ? "Crocs" : "—"}`
+                    : "— not filled in yet"}
+                </p>
               </div>
               <button
                 onClick={() => setPhase("details")}
@@ -316,6 +326,44 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
                   <div>
                     <label className="text-xs font-medium text-muted-foreground mb-1 block">Relationship <span className="text-destructive">*</span></label>
                     <input value={form.emergencyContactRelationship} onChange={set("emergencyContactRelationship")} placeholder="e.g. Partner" className={inputCls} />
+                  </div>
+                </div>
+              </section>
+
+              {/* Footwear — asked now so the right pair is waiting on day one. */}
+              <section className="space-y-3">
+                <h2 className="text-sm font-semibold flex items-center gap-2"><Footprints className="w-4 h-4 text-primary" /> Your footwear</h2>
+                <p className="text-xs text-muted-foreground">
+                  We provide your footwear for the factory floor — tell us your size and which you'd prefer,
+                  and they'll be ready for your first day.
+                </p>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Shoe size (UK) <span className="text-destructive">*</span></label>
+                  <input value={form.shoeSize} onChange={set("shoeSize")} inputMode="decimal" placeholder="e.g. 9 or 6.5" className={inputCls} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Which would you prefer? <span className="text-destructive">*</span></label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {([["crocs", "Crocs", "Light and easy to clean"], ["safety_shoes", "Safety shoes", "Protective toe, sturdier"]] as const).map(([value, label, hint]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setForm(f => ({ ...f, footwearChoice: value }))}
+                        className={`rounded-xl border-2 p-3 text-left transition-colors ${
+                          form.footwearChoice === value
+                            ? "border-primary bg-primary/10"
+                            : "border-border hover:bg-secondary/40"
+                        }`}
+                      >
+                        <span className="flex items-center gap-2 text-sm font-semibold">
+                          <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${form.footwearChoice === value ? "border-primary" : "border-border"}`}>
+                            {form.footwearChoice === value && <span className="w-2 h-2 rounded-full bg-primary" />}
+                          </span>
+                          {label}
+                        </span>
+                        <span className="block text-[11px] text-muted-foreground mt-0.5">{hint}</span>
+                      </button>
+                    ))}
                   </div>
                 </div>
               </section>
