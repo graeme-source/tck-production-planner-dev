@@ -252,22 +252,54 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
             )}
           </section>
 
-          {/* Get ahead with Lean — optional pre-arrival learning (Graeme,
-              2026-09-12): resources plus the same self-paced curriculum
-              that ticks the Lean training matrix. Entirely optional — a
-              head start for anyone who wants one, never a gate. */}
+          {/* No enter button, ever: the founder opens the app in person on
+              their first day (Graeme, 2026-09-07). The poll above lets that
+              grant flow this screen straight into the app. Once paperwork is
+              complete, the banner hands straight into the Lean curriculum
+              below — "this is the next step of the process" (Graeme,
+              2026-09-12). */}
+          {gate?.paperworkComplete ? (
+            <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 p-6 text-center space-y-2">
+              <p className="text-xl font-bold">Paperwork done — thank you! 🎉</p>
+              <p className="text-base text-muted-foreground">
+                {firstDay
+                  ? `See you on ${firstDay}. We'll open the rest of the app up for you when you come in.`
+                  : "We'll open the rest of the app up for you when you come in on your first day."}
+              </p>
+              <p className="text-base font-semibold flex items-center justify-center gap-2">
+                <GraduationCap className="w-4 h-4 text-primary" /> Your next step: start learning Lean below — it's how we work here.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                You can log back in here any time — to keep learning, or to read anything you've signed.
+              </p>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-border bg-card p-4 text-center">
+              <p className="text-base text-muted-foreground flex items-center justify-center gap-2">
+                <ArrowRight className="w-4 h-4" /> Work through the checklist above — everything autosaves as you go.
+              </p>
+            </div>
+          )}
+
+          {/* Get ahead with Lean — pre-arrival learning (Graeme, 2026-09-12):
+              resources plus the same self-paced curriculum that ticks the
+              Lean training matrix. Before paperwork is done it's a soft
+              "optional head start"; once paperwork is complete it IS the
+              next step, opened by default. Never a gate either way. */}
           <section className="bg-card border border-border rounded-2xl p-5 space-y-3">
             <h2 className="text-base font-semibold flex items-center gap-2">
-              <GraduationCap className="w-4 h-4 text-primary" /> Get ahead with Lean <span className="text-xs font-normal text-muted-foreground">(optional)</span>
+              <GraduationCap className="w-4 h-4 text-primary" />
+              {gate?.paperworkComplete ? "Next step: learn Lean" : "Get ahead with Lean"}
+              {!gate?.paperworkComplete && <span className="text-xs font-normal text-muted-foreground">(optional)</span>}
             </h2>
             <p className="text-sm text-muted-foreground leading-relaxed">
-              Lean is how we work at TCK — small improvements, every day, by everyone. None of this is
-              required before you start, but if you'd like a head start, here's where we learn it from,
-              and our own week-by-week curriculum you can begin right now. Anything you complete is
-              already ticked off on your training record when you arrive.
+              Lean is how we work at TCK — small improvements, every day, by everyone.
+              {gate?.paperworkComplete
+                ? " Between now and your first day, this is the best thing you can do: work through our week-by-week curriculum at your own pace. Anything you complete is already ticked off on your training record when you arrive."
+                : " None of this is required before you start, but if you'd like a head start, here's where we learn it from, and our own week-by-week curriculum you can begin right now. Anything you complete is already ticked off on your training record when you arrive."}
             </p>
             <LeanResources />
-            {leanOpen ? (
+            {(leanOpen || gate?.paperworkComplete) ? (
               <div className="pt-2 border-t border-border">
                 <LeanSelfPaced />
               </div>
@@ -280,29 +312,6 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
               </button>
             )}
           </section>
-
-          {/* No enter button, ever: the founder opens the app in person on
-              their first day (Graeme, 2026-09-07). The poll above lets that
-              grant flow this screen straight into the app. */}
-          {gate?.paperworkComplete ? (
-            <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 p-6 text-center space-y-1">
-              <p className="text-xl font-bold">Thanks — that's it for now! 🎉</p>
-              <p className="text-base text-muted-foreground">
-                {firstDay
-                  ? `See you on ${firstDay}. We'll open the rest of the app up for you when you come in.`
-                  : "We'll open the rest of the app up for you when you come in on your first day."}
-              </p>
-              <p className="text-sm text-muted-foreground">
-                You can log back in here any time to read or print anything you've signed.
-              </p>
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-border bg-card p-4 text-center">
-              <p className="text-base text-muted-foreground flex items-center justify-center gap-2">
-                <ArrowRight className="w-4 h-4" /> Work through the checklist above — everything autosaves as you go.
-              </p>
-            </div>
-          )}
         </div>
       </div>
     );
