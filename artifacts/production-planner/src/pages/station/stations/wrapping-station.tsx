@@ -6,8 +6,9 @@ import {
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import {
-  Loader2, Plus, Minus, CheckCircle2, Snowflake, AlertCircle, Gift, Flame, ChevronDown, ThermometerSnowflake, ArrowDown,
+  Loader2, Plus, Minus, CheckCircle2, Snowflake, AlertCircle, Gift, Flame, ChevronDown, ThermometerSnowflake, ArrowDown, ClipboardList, PackageCheck,
 } from "lucide-react";
+import { Link } from "wouter";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
@@ -537,6 +538,12 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
 
   return (
     <div className="space-y-4">
+      {/* What's left to wrap to RELEASE today's orders (Graeme, 2026-09-12):
+          the same numbers the fridge gate and pack report work from, right
+          where the wrappers stand — with the obvious route to the full
+          pack report alongside. */}
+      <LeftToWrapBanner />
+
       {/* Case-order banner — the wrapper's brief: how many cases to build,
           what goes in each, and the running made-vs-remaining. Only rendered
           when today's items carry a freezer allocation. */}
@@ -1283,6 +1290,87 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
       {/* One viewer for every chip on this screen, including the one inside
           the post-oven reminder modal. */}
       {sopViewer.dialog}
+    </div>
+  );
+}
+
+/**
+ * "Wrap these to release today's orders" (Graeme, 2026-09-12): the fridge
+ * gate holds orders until the fridge can cover them — this shows the
+ * wrappers exactly which packs are still short, using the same numbers as
+ * the pack report (what's left to dispatch today minus what's in the
+ * fridge; wrapped packs flow into fridge stock, so the list shrinks live
+ * as they work). Green when the fridge already covers every remaining
+ * order. The pack report itself is one obvious tap away.
+ */
+function LeftToWrapBanner() {
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date());
+  const { data } = useQuery<{ recipes: Array<{ recipeId: number; recipeName: string; color: string | null; fridgeStock: number; dispatch2Qty: number; dispatch2RemainingQty: number | null }> }>({
+    queryKey: ["wrap-to-release", today],
+    queryFn: async () => {
+      const res = await fetch(`/api/production-plans/calculate?planDate=${today}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load today's pack position");
+      return res.json();
+    },
+    refetchInterval: 60_000,
+  });
+
+  const shortfalls = (data?.recipes ?? [])
+    .map(r => ({
+      recipeId: r.recipeId,
+      name: r.recipeName,
+      color: r.color,
+      packs: Math.max(0, (r.dispatch2RemainingQty ?? r.dispatch2Qty) - r.fridgeStock),
+    }))
+    .filter(s => s.packs > 0)
+    .sort((a, b) => b.packs - a.packs);
+
+  const packReportButton = (
+    <Link
+      href="/pack-report"
+      className="flex-shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90"
+    >
+      <ClipboardList className="w-4 h-4" /> Pack report
+    </Link>
+  );
+
+  if (!data) return null;
+
+  if (shortfalls.length === 0) {
+    return (
+      <div className="rounded-xl border-2 border-emerald-300 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/30 px-4 py-3 flex items-center gap-3 flex-wrap">
+        <PackageCheck className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+        <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-200 flex-1 min-w-[12rem]">
+          The fridge already covers every remaining order for today's pack — everything wrapped now builds tomorrow's buffer.
+        </p>
+        {packReportButton}
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border-2 border-amber-400 dark:border-amber-700 bg-amber-50/80 dark:bg-amber-950/30 px-4 py-3 space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+        <p className="font-bold text-amber-900 dark:text-amber-100 flex-1 min-w-[12rem]">
+          Wrap these to release today's orders
+        </p>
+        {packReportButton}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {shortfalls.map(s => (
+          <span
+            key={s.recipeId}
+            className="inline-flex items-center gap-2 rounded-lg bg-background border border-amber-300 dark:border-amber-800 px-3 py-1.5 text-sm font-semibold"
+          >
+            <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: s.color ?? "hsl(var(--muted))" }} aria-hidden />
+            <span className="tabular-nums font-bold">{s.packs}</span> × {s.name}
+          </span>
+        ))}
+      </div>
+      <p className="text-xs text-amber-800/80 dark:text-amber-200/80">
+        Orders are held until the fridge covers them — these packs are the difference. The list updates as you wrap.
+      </p>
     </div>
   );
 }

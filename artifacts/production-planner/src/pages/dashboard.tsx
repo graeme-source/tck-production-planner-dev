@@ -6,7 +6,7 @@ import { EightPackOrdersBanner } from "@/components/eight-pack-orders-banner";
 import { StockGateBanner } from "@/components/stock-gate-banner";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { format, isToday, startOfWeek, addWeeks, addDays } from "date-fns";
-import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X, Sparkles, Salad, UserPlus } from "lucide-react";
+import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X, Sparkles, Salad, UserPlus, ClipboardList } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/contexts/auth-context";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from "recharts";
@@ -734,7 +734,7 @@ export default function Dashboard() {
       <EightPackOrdersBanner userRole={userRole} />
       <StockGateBanner userRole={userRole} />
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
         <StatCard
           title="Building"
           value={batchesLoading ? "…" : formatProgressValue(totalBatches?.calzoneBuilt ?? 0, totalBatches?.calzoneBatches ?? 0)}
@@ -817,12 +817,15 @@ export default function Dashboard() {
           title="Wrapping"
           value={batchesLoading ? "…" : formatProgressValue(totalBatches?.packsWrapped ?? 0, totalBatches?.packsTotal ?? 0)}
           subtitle={stockControlData == null
-            ? "Tap for pack report"
-            : `Factory #${(stockControlData.productionFridgeTotal ?? 0).toLocaleString()} · tap for pack report`}
+            ? "Tap for the wrapping station"
+            : `Factory #${(stockControlData.productionFridgeTotal ?? 0).toLocaleString()}`}
           icon={Thermometer}
           color="text-cyan-500"
           bg="bg-cyan-500/10"
-          href="/pack-report"
+          // Straight into today's WRAPPING STATION (Graeme, 2026-09-12) — a
+          // shortcut, not a detour through the production plan. The pack
+          // report has its own card next door.
+          href={todayPlans.length > 0 ? `/plans/${todayPlans[0].id}/station/wrapping` : "/pack-report"}
           progress={!batchesLoading && (totalBatches?.packsTotal ?? 0) > 0 ? {
             done: totalBatches!.packsWrapped,
             total: totalBatches!.packsTotal,
@@ -830,6 +833,15 @@ export default function Dashboard() {
             barClass: "bg-cyan-500",
             hideDetail: true,
           } : undefined}
+        />
+        <StatCard
+          title="Pack Report"
+          value="→"
+          subtitle="Stock vs dispatch — today's pack"
+          icon={ClipboardList}
+          color="text-violet-500"
+          bg="bg-violet-500/10"
+          href="/pack-report"
         />
         <StatCard
           title="Morning Meeting"
