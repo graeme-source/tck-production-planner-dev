@@ -14,7 +14,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Loader2, CheckCircle2, Lock, ChevronLeft, ChevronRight, GraduationCap,
-  BookOpen, Headphones, Youtube, ExternalLink, ArrowLeft,
+  BookOpen, Headphones, ExternalLink, ArrowLeft,
 } from "lucide-react";
 import { MarkdownBlock, YouTubeEmbed } from "@/components/lesson-media";
 import { LessonDiagram } from "@/components/lesson-diagrams";
@@ -40,8 +40,7 @@ interface ModuleDetail {
 
 const RESOURCES: Array<{ label: string; hint: string; href: string; icon: typeof BookOpen }> = [
   { label: "Lean Made Simple — the podcast", hint: "Ryan Tierney — our lean canon, in your ears", href: "https://www.youtube.com/@leanmadesimple/podcasts", icon: Headphones },
-  { label: "Lean Made Simple on YouTube", hint: "Factory tours and lean in practice", href: "https://www.youtube.com/@leanmadesimple", icon: Youtube },
-  { label: "Lean Made Simple — the book", hint: "Ryan Tierney's 12 steps; the book our curriculum follows", href: "https://www.leanmadesimple.com/", icon: BookOpen },
+  { label: "Lean Made Simple — the website", hint: "Ryan Tierney's book, videos and more — the source our curriculum follows", href: "https://www.leanmadesimple.com/", icon: BookOpen },
   { label: "2 Second Lean — free book", hint: "Paul Akers — fix what bugs you, every day", href: "https://paulakers.net/books/2-second-lean", icon: BookOpen },
 ];
 
