@@ -39,7 +39,7 @@ interface ModuleDetail {
 }
 
 const RESOURCES: Array<{ label: string; hint: string; href: string; icon: typeof BookOpen }> = [
-  { label: "Lean Made Simple — the podcast", hint: "Ryan Tierney — our lean canon, in your ears", href: "https://www.leanmadesimple.com/podcast", icon: Headphones },
+  { label: "Lean Made Simple — the podcast", hint: "Ryan Tierney — our lean canon, in your ears", href: "https://www.youtube.com/@leanmadesimple/podcasts", icon: Headphones },
   { label: "Lean Made Simple on YouTube", hint: "Factory tours and lean in practice", href: "https://www.youtube.com/@leanmadesimple", icon: Youtube },
   { label: "Lean Made Simple — the book", hint: "Ryan Tierney's 12 steps; the book our curriculum follows", href: "https://www.leanmadesimple.com/", icon: BookOpen },
   { label: "2 Second Lean — free book", hint: "Paul Akers — fix what bugs you, every day", href: "https://paulakers.net/books/2-second-lean", icon: BookOpen },
