@@ -137,6 +137,45 @@ async function ensureWeeklyTodo(params: {
   `);
 }
 
+/** The five lesson pages for one principle — shared by the weekly module
+ *  and the self-paced curriculum. */
+async function loadLessons(principleId: number) {
+  return db
+    .select({
+      id: leanExamplesTable.id,
+      title: leanExamplesTable.title,
+      summary: leanExamplesTable.summary,
+      whatToShowMd: leanExamplesTable.whatToShowMd,
+      diagram: leanExamplesTable.diagram,
+      imageUrl: leanExamplesTable.imageUrl,
+      videoUrl: leanExamplesTable.videoUrl,
+    })
+    .from(leanExamplesTable)
+    .where(and(eq(leanExamplesTable.principleId, principleId), eq(leanExamplesTable.isActive, true)))
+    .orderBy(asc(leanExamplesTable.orderPosition));
+}
+
+/** Tick the Lean training-matrix item that certifies a principle, enrolling
+ *  the person on first contact. Shared by the weekly review and the
+ *  self-paced curriculum. */
+async function tickLeanMatrix(userId: number, principleId: number) {
+  const [item] = await db
+    .select({ id: trainingMatrixItemsTable.id, matrixId: trainingMatrixItemsTable.matrixId })
+    .from(trainingMatrixItemsTable)
+    .where(eq(trainingMatrixItemsTable.principleId, principleId));
+  if (!item) return;
+  await db.insert(trainingMatrixEnrolmentsTable)
+    .values({ matrixId: item.matrixId, userId })
+    .onConflictDoNothing();
+  await db.execute(sql`
+    INSERT INTO training_records (item_id, user_id, trained, trained_at, signed_off_by_user_id, signed_off_by_name)
+    VALUES (${item.id}, ${userId}, TRUE, ${londonDateString()}, NULL, 'In-app lesson review')
+    ON CONFLICT (item_id, user_id)
+    DO UPDATE SET trained = TRUE, trained_at = EXCLUDED.trained_at,
+                  signed_off_by_name = 'In-app lesson review', updated_at = NOW()
+  `);
+}
+
 // GET /api/lean-reviews/current — the week's module for the signed-in user:
 // principle, five lesson pages, quiz questions (without answers), and the
 // caller's completion state.
@@ -151,19 +190,7 @@ router.get("/current", requireAuth, async (req: Request, res: Response) => {
     res.json({ weekStart, principle: null, lessons: [], quiz: [], completed: false });
     return;
   }
-  const lessons = await db
-    .select({
-      id: leanExamplesTable.id,
-      title: leanExamplesTable.title,
-      summary: leanExamplesTable.summary,
-      whatToShowMd: leanExamplesTable.whatToShowMd,
-      diagram: leanExamplesTable.diagram,
-      imageUrl: leanExamplesTable.imageUrl,
-      videoUrl: leanExamplesTable.videoUrl,
-    })
-    .from(leanExamplesTable)
-    .where(and(eq(leanExamplesTable.principleId, principle.id), eq(leanExamplesTable.isActive, true)))
-    .orderBy(asc(leanExamplesTable.orderPosition));
+  const lessons = await loadLessons(principle.id);
 
   const quiz = parseQuiz(principle.quizJson ?? null);
 
@@ -247,28 +274,127 @@ router.post("/complete", requireAuth, validate(completeSchema), async (req: Requ
 
   // Self-filling training matrix: tick the item that certifies this week's
   // principle, enrolling the person on first contact.
-  const [item] = await db
-    .select({ id: trainingMatrixItemsTable.id, matrixId: trainingMatrixItemsTable.matrixId })
-    .from(trainingMatrixItemsTable)
-    .where(eq(trainingMatrixItemsTable.principleId, principle.id));
-  if (item) {
-    await db.insert(trainingMatrixEnrolmentsTable)
-      .values({ matrixId: item.matrixId, userId })
-      .onConflictDoNothing();
-    await db.execute(sql`
-      INSERT INTO training_records (item_id, user_id, trained, trained_at, signed_off_by_user_id, signed_off_by_name)
-      VALUES (${item.id}, ${userId}, TRUE, ${londonDateString()}, NULL, 'In-app lesson review')
-      ON CONFLICT (item_id, user_id)
-      DO UPDATE SET trained = TRUE, trained_at = EXCLUDED.trained_at,
-                    signed_off_by_name = 'In-app lesson review', updated_at = NOW()
-    `);
-  }
+  await tickLeanMatrix(userId, principle.id);
 
   // Close the weekly to-do so My To-dos reflects the completion.
   await db.execute(sql`
     UPDATE todo_tasks SET status = 'done', completed_at = NOW(), updated_at = NOW()
     WHERE assignee_id = ${userId} AND lean_week_start = ${weekStart} AND status <> 'done'
   `);
+
+  res.json({ passed: true, correct, total });
+});
+
+// ── Self-paced curriculum (Graeme, 2026-09-12) ─────────────────────────────
+// New starters (and anyone catching up) walk the curriculum in week order
+// at their own pace — before their first day, from the gated onboarding
+// screen. Completing a module with full marks records a review and ticks
+// the same Lean training-matrix item as the weekly flow. Any prior
+// completion of a principle (weekly OR self-paced) counts as done here.
+
+/** Synthetic week_start for self-paced completions: Mondays in the year
+ *  2000 keyed by curriculum position — they satisfy the (user, week_start)
+ *  unique constraint without ever colliding with real weekly reviews. */
+function selfPacedWeekStart(weekPosition: number): string {
+  const d = new Date(Date.UTC(2000, 0, 3)); // Monday 3 Jan 2000
+  d.setUTCDate(d.getUTCDate() + (weekPosition - 1) * 7);
+  return d.toISOString().slice(0, 10);
+}
+
+async function selfPacedContext(userId: number) {
+  const principles = await db
+    .select({
+      id: leanPrinciplesTable.id,
+      weekPosition: leanPrinciplesTable.weekPosition,
+      title: leanPrinciplesTable.title,
+      summary: leanPrinciplesTable.summary,
+      quizJson: leanPrinciplesTable.quizJson,
+    })
+    .from(leanPrinciplesTable)
+    .where(and(eq(leanPrinciplesTable.isActive, true), eq(leanPrinciplesTable.status, "locked")))
+    .orderBy(asc(leanPrinciplesTable.weekPosition));
+  const reviews = await db
+    .select({ principleId: leanLessonReviewsTable.principleId, completedAt: leanLessonReviewsTable.completedAt })
+    .from(leanLessonReviewsTable)
+    .where(eq(leanLessonReviewsTable.userId, userId));
+  const completedAtByPrinciple = new Map(reviews.map(r => [r.principleId, r.completedAt]));
+  const next = principles.find(p => !completedAtByPrinciple.has(p.id)) ?? null;
+  return { principles, completedAtByPrinciple, next };
+}
+
+// GET /self-paced — the curriculum map for the signed-in user.
+router.get("/self-paced", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  const { principles, completedAtByPrinciple, next } = await selfPacedContext(userId);
+  res.json({
+    modules: principles.map((p, i) => ({
+      id: p.id,
+      week: i + 1,
+      title: p.title,
+      summary: p.summary,
+      completed: completedAtByPrinciple.has(p.id),
+      completedAt: completedAtByPrinciple.get(p.id) ?? null,
+    })),
+    nextId: next?.id ?? null,
+  });
+});
+
+// GET /self-paced/module/:principleId — one module's pages + quiz (answers
+// stay server-side). Open for completed modules (revision) and the next
+// uncompleted one; later modules stay locked so the journey is in order.
+router.get("/self-paced/module/:principleId", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  const principleId = Number(req.params.principleId);
+  if (!Number.isInteger(principleId)) { res.status(400).json({ error: "Invalid module" }); return; }
+  const { principles, completedAtByPrinciple, next } = await selfPacedContext(userId);
+  const principle = principles.find(p => p.id === principleId);
+  if (!principle) { res.status(404).json({ error: "Module not found" }); return; }
+  if (!completedAtByPrinciple.has(principleId) && next?.id !== principleId) {
+    res.status(403).json({ error: "Finish the earlier weeks first — the curriculum runs in order." });
+    return;
+  }
+  const lessons = await loadLessons(principleId);
+  const quiz = parseQuiz(principle.quizJson ?? null);
+  res.json({
+    principle: { id: principle.id, title: principle.title, summary: principle.summary },
+    lessons,
+    quiz: quiz.map(q => ({ question: q.question, options: q.options })),
+    completed: completedAtByPrinciple.has(principleId),
+  });
+});
+
+const selfPacedCompleteSchema = z.object({
+  principleId: z.number().int(),
+  answers: z.array(z.number().int().min(0)).max(20),
+});
+
+// POST /self-paced/complete — full marks records the review (synthetic
+// week key) and ticks the Lean matrix, exactly like the weekly flow.
+router.post("/self-paced/complete", requireAuth, validate(selfPacedCompleteSchema), async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  const { principleId, answers } = req.body as { principleId: number; answers: number[] };
+  const { principles, completedAtByPrinciple, next } = await selfPacedContext(userId);
+  const idx = principles.findIndex(p => p.id === principleId);
+  if (idx === -1) { res.status(404).json({ error: "Module not found" }); return; }
+  if (completedAtByPrinciple.has(principleId)) { res.json({ passed: true, alreadyCompleted: true }); return; }
+  if (next?.id !== principleId) { res.status(403).json({ error: "Finish the earlier weeks first." }); return; }
+
+  const quiz = parseQuiz(principles[idx].quizJson ?? null);
+  const total = quiz.length;
+  const correct = quiz.filter((q, i) => answers[i] === q.answer).length;
+  if (total > 0 && (answers.length !== total || correct !== total)) {
+    res.json({ passed: false, correct, total });
+    return;
+  }
+
+  await db.insert(leanLessonReviewsTable).values({
+    userId,
+    principleId,
+    weekStart: selfPacedWeekStart(idx + 1),
+    quizCorrect: total > 0 ? correct : null,
+    quizTotal: total > 0 ? total : null,
+  }).onConflictDoNothing();
+  await tickLeanMatrix(userId, principleId);
 
   res.json({ passed: true, correct, total });
 });

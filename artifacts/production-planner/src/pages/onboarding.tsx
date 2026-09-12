@@ -5,7 +5,8 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/auth-context";
-import { Loader2, Phone, MapPin, Heart, FileText, Upload, Check, X, ShieldCheck, ArrowRight, LogOut, Footprints } from "lucide-react";
+import { Loader2, Phone, MapPin, Heart, FileText, Upload, Check, X, ShieldCheck, ArrowRight, LogOut, Footprints, GraduationCap } from "lucide-react";
+import { LeanResources, LeanSelfPaced } from "@/components/lean-self-paced";
 import { StarterFormsList } from "@/components/starter-forms";
 import { MyContractSection } from "@/components/my-contract";
 
@@ -57,6 +58,7 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
   // paperwork — three starter forms plus the contract when one is issued.
   // The app stays gated until the server says everything is signed.
   const [phase, setPhase] = useState<"details" | "paperwork">("details");
+  const [leanOpen, setLeanOpen] = useState(false);
   const [gate, setGate] = useState<GateStatus | null>(null);
   const [form, setForm] = useState({
     phone: "", address: "",
@@ -247,6 +249,35 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
               <p className="text-sm text-muted-foreground bg-card border border-border rounded-2xl p-4">
                 Graeme hasn't issued your contract yet — it will appear right here (and in your Employee Hub) the moment he does.
               </p>
+            )}
+          </section>
+
+          {/* Get ahead with Lean — optional pre-arrival learning (Graeme,
+              2026-09-12): resources plus the same self-paced curriculum
+              that ticks the Lean training matrix. Entirely optional — a
+              head start for anyone who wants one, never a gate. */}
+          <section className="bg-card border border-border rounded-2xl p-5 space-y-3">
+            <h2 className="text-base font-semibold flex items-center gap-2">
+              <GraduationCap className="w-4 h-4 text-primary" /> Get ahead with Lean <span className="text-xs font-normal text-muted-foreground">(optional)</span>
+            </h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              Lean is how we work at TCK — small improvements, every day, by everyone. None of this is
+              required before you start, but if you'd like a head start, here's where we learn it from,
+              and our own week-by-week curriculum you can begin right now. Anything you complete is
+              already ticked off on your training record when you arrive.
+            </p>
+            <LeanResources />
+            {leanOpen ? (
+              <div className="pt-2 border-t border-border">
+                <LeanSelfPaced />
+              </div>
+            ) : (
+              <button
+                onClick={() => setLeanOpen(true)}
+                className="w-full py-3 rounded-xl border-2 border-primary text-primary font-semibold hover:bg-primary/5 inline-flex items-center justify-center gap-2"
+              >
+                <GraduationCap className="w-4 h-4" /> Start the Lean curriculum
+              </button>
             )}
           </section>
 
