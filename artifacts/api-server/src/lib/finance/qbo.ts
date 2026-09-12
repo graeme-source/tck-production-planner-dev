@@ -166,6 +166,8 @@ interface QboTxn {
   DocNumber?: string;
   EntityRef?: { name?: string };
   VendorRef?: { name?: string };
+  AccountRef?: { name?: string };
+  PaymentType?: string;
   MetaData?: { LastUpdatedTime?: string };
 }
 
@@ -173,6 +175,7 @@ export interface QboSyncOutcome {
   purchases: number;
   bills: number;
   linesClosed: number;
+  linesImported?: number;
   error?: string;
 }
 
@@ -220,11 +223,12 @@ async function doQboSync(): Promise<QboSyncOutcome> {
       for (const t of batch) {
         const vendorName = t.EntityRef?.name ?? t.VendorRef?.name ?? null;
         await db.execute(sql`
-          INSERT INTO fin_qbo_txns (qbo_id, entity_type, txn_date, total_amt, vendor_name, doc_number, synced_at)
-          VALUES (${t.Id}, ${entity}, ${t.TxnDate ?? null}, ${t.TotalAmt ?? null}, ${vendorName}, ${t.DocNumber ?? null}, NOW())
+          INSERT INTO fin_qbo_txns (qbo_id, entity_type, txn_date, total_amt, vendor_name, doc_number, account_name, payment_type, synced_at)
+          VALUES (${t.Id}, ${entity}, ${t.TxnDate ?? null}, ${t.TotalAmt ?? null}, ${vendorName}, ${t.DocNumber ?? null}, ${t.AccountRef?.name ?? null}, ${t.PaymentType ?? null}, NOW())
           ON CONFLICT (entity_type, qbo_id) DO UPDATE
             SET txn_date = EXCLUDED.txn_date, total_amt = EXCLUDED.total_amt,
                 vendor_name = EXCLUDED.vendor_name, doc_number = EXCLUDED.doc_number,
+                account_name = EXCLUDED.account_name, payment_type = EXCLUDED.payment_type,
                 synced_at = NOW()
         `);
         if (entity === "Purchase") purchases++; else bills++;
@@ -234,6 +238,7 @@ async function doQboSync(): Promise<QboSyncOutcome> {
     }
   }
 
+  const linesImported = await autoImportQboLines();
   const linesClosed = await closePostedLines();
 
   await db.update(finQboConnectionTable).set({
@@ -243,7 +248,7 @@ async function doQboSync(): Promise<QboSyncOutcome> {
     updatedAt: new Date(),
   }).where(eq(finQboConnectionTable.id, conn.id));
 
-  return { purchases, bills, linesClosed };
+  return { purchases, bills, linesClosed, linesImported };
 }
 
 /**
@@ -253,11 +258,81 @@ async function doQboSync(): Promise<QboSyncOutcome> {
  * A line with MORE than one candidate stays open (wrongly closing a line
  * whose invoice is missing is the exact failure this app exists to stop).
  */
+/**
+ * Indirect Capital-on-Tap import (Graeme, 2026-09-12): purchases paid from
+ * the configured QBO account become finance lines automatically — the CSV
+ * upload's replacement. Only purchases dated on/after the switch-on date
+ * (history would flood the queue), only entity Purchase (a Bill in QBO
+ * normally means the supplier's invoice already exists). Each imported
+ * line starts OPEN with its qboTxnId already linked: posted-in-QBO is a
+ * given on this path, and the line's whole job is collecting the VAT
+ * invoice. Where an existing line (e.g. from an earlier CSV) already
+ * covers the purchase, it's linked rather than duplicated — same
+ * conservative amount+date matcher as closePostedLines.
+ */
+export async function autoImportQboLines(): Promise<number> {
+  const [conn] = await db.select().from(finQboConnectionTable).limit(1);
+  if (!conn?.autoImportAccount || !conn.autoImportSince) return 0;
+
+  const candidates = ((await db.execute<{
+    id: number; qbo_id: string; txn_date: string; total_amt: string; vendor_name: string | null; doc_number: string | null;
+  }>(sql`
+    SELECT t.id, t.qbo_id, t.txn_date, t.total_amt, t.vendor_name, t.doc_number
+      FROM fin_qbo_txns t
+     WHERE t.entity_type = 'Purchase'
+       AND t.account_name = ${conn.autoImportAccount}
+       AND t.txn_date >= ${conn.autoImportSince}
+       AND t.total_amt IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM fin_lines l WHERE l.qbo_txn_id = t.id)
+     ORDER BY t.txn_date
+  `)) as any).rows ?? [];
+
+  let imported = 0;
+  for (const t of candidates) {
+    // Adopt an existing unlinked line first (exact amount, ±3 days, single
+    // candidate) so CSV-era lines don't get duplicated during transition.
+    const from = new Date(`${t.txn_date}T00:00:00Z`); from.setUTCDate(from.getUTCDate() - 3);
+    const to = new Date(`${t.txn_date}T00:00:00Z`); to.setUTCDate(to.getUTCDate() + 3);
+    const existing = await db
+      .select({ id: finLinesTable.id })
+      .from(finLinesTable)
+      .where(and(
+        sql`${finLinesTable.qboTxnId} IS NULL`,
+        eq(finLinesTable.amount, t.total_amt),
+        gte(finLinesTable.lineDate, from.toISOString().slice(0, 10)),
+        lte(finLinesTable.lineDate, to.toISOString().slice(0, 10)),
+      ));
+    if (existing.length === 1) {
+      await db.update(finLinesTable)
+        .set({ qboTxnId: t.id, postedDetectedAt: new Date(), updatedAt: new Date() })
+        .where(eq(finLinesTable.id, existing[0].id));
+      continue;
+    }
+    if (existing.length > 1) continue; // ambiguous — leave for a human, retry next sync
+
+    const dedupeHash = createHash("sha256").update(`qbo|Purchase|${t.qbo_id}`).digest("hex");
+    await db.execute(sql`
+      INSERT INTO fin_lines (source, line_date, descriptor, merchant, amount, currency, status, status_note, qbo_txn_id, posted_detected_at, dedupe_hash)
+      VALUES ('qbo', ${t.txn_date}, ${t.vendor_name ?? `QuickBooks purchase ${t.doc_number ?? t.qbo_id}`}, ${t.vendor_name}, ${t.total_amt}, 'GBP',
+              'open', 'Imported from QuickBooks — waiting for invoice', ${t.id}, NOW(), ${dedupeHash})
+      ON CONFLICT (dedupe_hash) DO NOTHING
+    `);
+    imported++;
+  }
+  return imported;
+}
+
 export async function closePostedLines(): Promise<number> {
+  // Lines already linked to a QBO transaction (the auto-import path) are
+  // skipped: posted is a given there, and marking them done would defeat
+  // the invoice-collection workflow they exist for.
   const openLines = await db
     .select()
     .from(finLinesTable)
-    .where(inArray(finLinesTable.status, ["open", "identified", "matched"]));
+    .where(and(
+      inArray(finLinesTable.status, ["open", "identified", "matched"]),
+      sql`${finLinesTable.qboTxnId} IS NULL`,
+    ));
   if (openLines.length === 0) return 0;
 
   let closed = 0;
@@ -304,6 +379,8 @@ export async function qboStatus() {
       lastSyncAt: finQboConnectionTable.lastSyncAt,
       lastError: finQboConnectionTable.lastError,
       refreshExpiresAt: finQboConnectionTable.refreshExpiresAt,
+      autoImportAccount: finQboConnectionTable.autoImportAccount,
+      autoImportSince: finQboConnectionTable.autoImportSince,
     })
     .from(finQboConnectionTable)
     .limit(1);

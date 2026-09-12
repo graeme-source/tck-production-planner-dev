@@ -22,7 +22,7 @@ import { sealSecret } from "../lib/finance/secret-box";
 import { runMailboxSync, refreshSuggestions, fetchAttachmentForMessage, fetchEmailPreview } from "../lib/finance/mailbox-sync";
 import { extractSupplierInfo } from "../lib/finance/extract-supplier-info";
 import { sendEmail } from "../lib/email";
-import { authorizeUrl, exchangeCode, newStateToken, qboConfigured, qboStatus, runQboSync } from "../lib/finance/qbo";
+import { authorizeUrl, exchangeCode, newStateToken, qboConfigured, qboStatus, runQboSync, autoImportQboLines } from "../lib/finance/qbo";
 import { db as dbForQbo, finQboConnectionTable } from "@workspace/db";
 
 // Finance / VAT invoice reconciliation (docs/vat-reconciliation/PLAN.md).
@@ -730,6 +730,45 @@ router.delete("/qbo", requireAdmin, async (_req: Request, res: Response) => {
   await dbForQbo.delete(finQboConnectionTable);
   res.json({ ok: true });
 });
+
+// ── Auto-import: purchases from one QBO account become finance lines ──────
+// The Capital-on-Tap replacement for CSV uploads (Graeme, 2026-09-12).
+
+/** Distinct payment accounts seen on mirrored purchases — the picker's
+ *  options. Accounts only appear after at least one sync has run. */
+router.get("/qbo/accounts", requireAdmin, async (_req: Request, res: Response) => {
+  const rows = ((await dbForQbo.execute(sql`
+    SELECT account_name, COUNT(*)::int AS n
+      FROM fin_qbo_txns
+     WHERE entity_type = 'Purchase' AND account_name IS NOT NULL
+     GROUP BY account_name
+     ORDER BY n DESC
+  `)) as any).rows ?? [];
+  res.json({ accounts: rows.map((r: any) => ({ name: r.account_name, purchases: Number(r.n) })) });
+});
+
+/** Choose (or clear) the auto-import account. Switch-on stamps today as
+ *  the since-date so months of history don't flood the queue; imports run
+ *  immediately and then with every hourly sync. */
+router.put(
+  "/qbo/auto-import",
+  requireAdmin,
+  validate(z.object({ account: z.string().min(1).max(200).nullable() })),
+  async (req: Request, res: Response) => {
+    const { account } = req.body as { account: string | null };
+    const [conn] = await dbForQbo.select({ id: finQboConnectionTable.id, autoImportAccount: finQboConnectionTable.autoImportAccount, autoImportSince: finQboConnectionTable.autoImportSince }).from(finQboConnectionTable).limit(1);
+    if (!conn) { res.status(400).json({ error: "QuickBooks is not connected" }); return; }
+    await dbForQbo.update(finQboConnectionTable).set({
+      autoImportAccount: account,
+      // Keep the original since-date when just re-picking the account;
+      // stamp today on first switch-on; clear on switch-off.
+      autoImportSince: account ? (conn.autoImportSince ?? new Date().toISOString().slice(0, 10)) : null,
+      updatedAt: new Date(),
+    }).where(eq(finQboConnectionTable.id, conn.id));
+    const imported = account ? await autoImportQboLines() : 0;
+    res.json({ ok: true, account, imported });
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Finance access management — ADMIN ONLY. Lives here (not settings.tsx,

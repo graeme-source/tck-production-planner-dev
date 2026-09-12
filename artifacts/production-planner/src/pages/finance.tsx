@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
@@ -1020,6 +1020,35 @@ function AdminPanel() {
     onError: (e: Error) => toast({ title: "Sync failed to start", description: e.message, variant: "destructive" }),
   });
 
+  // Auto-import: which QBO account's purchases become lines automatically
+  // (the Capital on Tap card — replaces the CSV upload).
+  const qboAccounts = useQuery<{ accounts: Array<{ name: string; purchases: number }> }>({
+    queryKey: ["/api/finance/qbo/accounts"],
+    queryFn: () => jsonFetch(`${BASE}/api/finance/qbo/accounts`),
+    enabled: Boolean(qbo.data?.connected),
+  });
+  const [autoImportPick, setAutoImportPick] = useState("");
+  useEffect(() => {
+    setAutoImportPick(qbo.data?.autoImportAccount ?? "");
+  }, [qbo.data?.autoImportAccount]);
+  const saveAutoImport = useMutation({
+    mutationFn: (account: string | null) =>
+      jsonFetch(`${BASE}/api/finance/qbo/auto-import`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account }),
+      }) as Promise<{ imported: number }>,
+    onSuccess: (d, account) => {
+      toast({
+        title: account ? "Auto-import on" : "Auto-import off",
+        description: account ? `${d.imported} line${d.imported === 1 ? "" : "s"} imported now; new card purchases arrive with every hourly sync.` : "Card lines come from CSV uploads again.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/qbo/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't save", description: e.message, variant: "destructive" }),
+  });
+
   const scanRange = useMutation({
     mutationFn: () =>
       jsonFetch(`${BASE}/api/finance/mailbox/scan-range`, {
@@ -1141,6 +1170,49 @@ function AdminPanel() {
               <Button size="sm" variant="outline" onClick={() => qboSync.mutate()} disabled={qboSync.isPending}>
                 {qboSync.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />} Sync now
               </Button>
+
+              {/* Auto-import: purchases from one QBO account (the Capital on
+                  Tap card) become lines here automatically — the CSV
+                  upload's replacement (Graeme, 2026-09-12). Freshness note:
+                  QuickBooks' API only shows ACCEPTED transactions, so a
+                  card purchase appears once it has left the bank feed's
+                  "For review" (or instantly, when CoT posts it itself). */}
+              <div className="pt-3 border-t border-border space-y-1.5">
+                <div className="text-sm font-medium">Auto-import card transactions</div>
+                <p className="text-xs text-muted-foreground">
+                  Purchases paid from the chosen QuickBooks account appear here as lines
+                  automatically — no more CSV exports. Only transactions from the switch-on
+                  date forward are imported{qbo.data.autoImportSince ? ` (importing since ${new Date(`${qbo.data.autoImportSince}T00:00:00`).toLocaleDateString("en-GB")})` : ""}.
+                  A purchase shows up once it's been accepted into QuickBooks from the bank feed.
+                </p>
+                <div className="flex gap-2 items-center flex-wrap">
+                  <select
+                    className="px-3 py-2 bg-background border border-border rounded-lg text-sm min-w-[220px]"
+                    value={autoImportPick}
+                    onChange={(e) => setAutoImportPick(e.target.value)}
+                  >
+                    <option value="">Off — don't auto-import</option>
+                    {(qboAccounts.data?.accounts ?? []).map((a: { name: string; purchases: number }) => (
+                      <option key={a.name} value={a.name}>{a.name} ({a.purchases} purchases)</option>
+                    ))}
+                  </select>
+                  <Button
+                    size="sm"
+                    onClick={() => saveAutoImport.mutate(autoImportPick || null)}
+                    disabled={saveAutoImport.isPending || autoImportPick === (qbo.data.autoImportAccount ?? "")}
+                  >
+                    {saveAutoImport.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null} Save
+                  </Button>
+                  {qbo.data.autoImportAccount && (
+                    <span className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
+                      Importing from “{qbo.data.autoImportAccount}”
+                    </span>
+                  )}
+                </div>
+                {(qboAccounts.data?.accounts ?? []).length === 0 && (
+                  <p className="text-xs text-muted-foreground">No payment accounts seen yet — run a sync first; account names arrive with the next mirrored purchases.</p>
+                )}
+              </div>
             </div>
           ) : (
             <div className="space-y-2">
