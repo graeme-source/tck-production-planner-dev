@@ -1111,6 +1111,17 @@ export function TodoInterstitial() {
 
   if (!task || meId === null) return null;
 
+  // "Review now": acknowledge FIRST (that's what dismisses this modal on
+  // every page), then follow the task's link with a full navigation.
+  const reviewNow = async () => {
+    if (!task.url) return;
+    try {
+      await ackMut.mutateAsync();
+      const { href } = resolveTodoLink(task.url);
+      window.location.assign(href);
+    } catch { /* the mutation's own onError toast covers it */ }
+  };
+
   const meta = PRIORITY_META[task.priority];
 
   // The weekly lean lesson isn't a drop-everything task — it just has to be
@@ -1156,7 +1167,11 @@ export function TodoInterstitial() {
             </p>
           )}
 
-          {task.url && <LinkButton url={task.url} big />}
+          {/* No raw link in this modal (Graeme, 2026-09-13): clicking a
+              plain link navigated but the modal re-appeared on the new page
+              because the task was still unacknowledged. Both primary
+              actions below acknowledge FIRST, so the modal genuinely goes
+              away — Review now then follows the link. */}
 
           {askOpen ? (
             <textarea
@@ -1176,20 +1191,43 @@ export function TodoInterstitial() {
             </button>
           )}
 
-          <button
-            onClick={() => ackMut.mutate()}
-            disabled={ackMut.isPending}
-            className="w-full h-20 rounded-2xl bg-primary text-primary-foreground text-2xl font-bold flex items-center justify-center gap-3 hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50 shadow-lg shadow-primary/25"
-          >
-            {ackMut.isPending ? <Loader2 className="w-7 h-7 animate-spin" /> : <CheckCircle2 className="w-8 h-8 flex-shrink-0" />}
-            <span className={cn(isWeeklyLesson && !question.trim() && "text-xl md:text-2xl")}>
-              {question.trim()
-                ? "Send question — seen it"
-                : isWeeklyLesson
-                  ? `No problem — I'll get it done by ${dueLabel}`
-                  : "Seen it — understood"}
-            </span>
-          </button>
+          {question.trim() || !task.url ? (
+            <button
+              onClick={() => ackMut.mutate()}
+              disabled={ackMut.isPending}
+              className="w-full h-20 rounded-2xl bg-primary text-primary-foreground text-2xl font-bold flex items-center justify-center gap-3 hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50 shadow-lg shadow-primary/25"
+            >
+              {ackMut.isPending ? <Loader2 className="w-7 h-7 animate-spin" /> : <CheckCircle2 className="w-8 h-8 flex-shrink-0" />}
+              <span className={cn(isWeeklyLesson && !question.trim() && "text-xl md:text-2xl")}>
+                {question.trim()
+                  ? "Send question — seen it"
+                  : isWeeklyLesson
+                    ? `No problem — I'll get it done by ${dueLabel}`
+                    : "Seen it — understood"}
+              </span>
+            </button>
+          ) : (
+            <>
+              {/* Linked task: Review now goes straight there (acknowledged
+                  first, so the modal is gone when the page lands); later
+                  keeps the task waiting at the top of My To-dos. */}
+              <button
+                onClick={() => void reviewNow()}
+                disabled={ackMut.isPending}
+                className="w-full h-20 rounded-2xl bg-primary text-primary-foreground text-2xl font-bold flex items-center justify-center gap-3 hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50 shadow-lg shadow-primary/25"
+              >
+                {ackMut.isPending ? <Loader2 className="w-7 h-7 animate-spin" /> : <ExternalLink className="w-8 h-8 flex-shrink-0" />}
+                Review now
+              </button>
+              <button
+                onClick={() => ackMut.mutate()}
+                disabled={ackMut.isPending}
+                className="w-full h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 transition-colors disabled:opacity-50"
+              >
+                {isWeeklyLesson ? `I'll do it by ${dueLabel}` : "I'll do this later — keep it on my list"}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
