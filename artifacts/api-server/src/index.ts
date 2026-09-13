@@ -104,9 +104,23 @@ Mobile phones are a food-safety risk in a production environment. They are one o
 
 ## The rule
 
-1. **No mobile phones in production rooms.** Phones must not be taken into production, ingredient-storage or packing areas — not in pockets, not on silent. Store your phone in your personal drawer (or with your manager) before entering.
+1. **No mobile phones in production rooms.** Phones must not be taken into production, ingredient-storage or packing areas — not in pockets, not on silent. Store your phone in your personal drawer (or with your manager) before entering. The only exception is a **recorded duty-contact exception** (below).
 2. **No personal calls, texts or browsing during working hours.** Personal phone use happens on your breaks, in break areas only.
 3. **Wash your hands** before re-entering production after handling your phone on a break, exactly as after any other break activity.
+
+## Duty-contact exceptions — the Managing Director and named managers
+
+The business must always be reachable, so a small number of people carry a phone as part of their role:
+
+1. **The Managing Director carries a phone at all times.** They are the business's contact for suppliers, couriers, alarm and monitoring services, and for the team's families in an emergency — a role that doesn't pause when they walk into production.
+2. **The Managing Director may grant the same standing exception to named managers** where the role requires reachability — for example the duty manager backing up the office line, or cover for a specific day. These exceptions are granted at the Managing Director's discretion, named individually, and recorded, so everyone always knows exactly who legitimately carries a device and why.
+
+A duty-contact exception is a responsibility, not a privilege, and the hygiene rules still apply in full:
+
+- The phone stays **on silent or vibrate** and **on the person** — never placed on work surfaces, equipment or anywhere above open product.
+- It is **not used over open food**. Calls are answered away from open product, and taken outside the production rooms wherever possible.
+- **Hands are washed after handling the phone** and before touching food or food-contact surfaces — every time, no exceptions.
+- Personal use under a duty-contact exception follows the same rules as everyone else: breaks, in break areas.
 
 ## Pre-arranged exceptions
 
@@ -124,7 +138,7 @@ Where a device is genuinely needed for work inside production areas, we use the 
 
 ## Compliance
 
-These requirements apply equally to owners, managers, employees, agency workers, contractors and visitors. Formal disciplinary procedures apply only where someone refuses to follow the rules or an arrangement that has been agreed through the process above.`;
+These requirements apply equally to owners, managers, employees, agency workers, contractors and visitors — the only difference a duty-contact exception makes is being reachable; its holder is bound by every hygiene condition above. Formal disciplinary procedures apply only where someone refuses to follow the rules or an arrangement that has been agreed through the process above.`;
 
 async function runStartupMigrations() {
   try {
@@ -2101,6 +2115,24 @@ async function runStartupMigrations() {
           ('policy', 'Mobile Phone Policy', ${MOBILE_PHONE_POLICY_MARKDOWN}, 'draft', 12, CURRENT_DATE, NOW(), (CURRENT_DATE + INTERVAL '12 months')::date)
       `);
       await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('mobile_phone_policy_seed_v1')`);
+    }
+
+    // v2 (Graeme, 2026-09-13): duty-contact exceptions — the MD carries a
+    // phone at all times, and may grant recorded exceptions to named
+    // managers, all still bound by the hygiene rules. Refreshes the seeded
+    // text ONLY while the policy is still a draft: once Graeme activates
+    // (or hand-edits) it, the DB row is the document and code never
+    // overwrites it.
+    const phonePolicyV2Done = await db.execute<{ key: string }>(
+      sql`SELECT key FROM _migrations_done WHERE key = 'mobile_phone_policy_seed_v2'`,
+    );
+    if (phonePolicyV2Done.rows.length === 0) {
+      await db.execute(sql`
+        UPDATE risk_assessments
+           SET body_markdown = ${MOBILE_PHONE_POLICY_MARKDOWN}, updated_at = NOW()
+         WHERE assessment_type = 'policy' AND title = 'Mobile Phone Policy' AND status = 'draft'
+      `);
+      await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('mobile_phone_policy_seed_v2')`);
     }
 
     // Periodic checklist schedule — every-4-weeks tasks (13 periods/year).
