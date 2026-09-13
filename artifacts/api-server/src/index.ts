@@ -128,7 +128,7 @@ We know life doesn't pause for a shift. An exception can be agreed for an **urge
 
 ## Emergencies
 
-You are never unreachable in a genuine emergency. Give your family the **factory office number: [office line — number to be added]**. During production hours this line is answered by whoever is available — it does not depend on one named person being in. Whoever answers will bring you off the floor immediately, at any time, without any prior arrangement.
+You are never unreachable in a genuine emergency. Give your family the **factory office number: 01908 915940**. During production hours this line is answered by whoever is available — it does not depend on one named person being in. Whoever answers will bring you off the floor immediately, at any time, without any prior arrangement.
 
 The **duty manager** (the manager running the shift) is responsible for making sure an emergency message reaches you straight away. If the office line is ever unanswered, callers should ring the duty manager's number, which is displayed in the office and given to every team member on their first day.
 
