@@ -24,6 +24,7 @@ import {
 import { eq, and, asc } from "drizzle-orm";
 import { z } from "zod";
 import { validate } from "../middleware/validate";
+import { recordPolicyAcceptance, acceptanceState } from "../lib/policy-rollout";
 
 const router: IRouter = Router();
 
@@ -72,7 +73,12 @@ router.get("/status", async (req: Request, res: Response) => {
   if (!Number.isInteger(documentId)) { res.status(400).json({ error: "documentId is required" }); return; }
   try {
     const items = await myItemsForDocument(userId, documentId);
-    res.json({ items });
+    // Policies carry versioned acceptance (the source of truth) alongside
+    // the matrix items — the viewer shows the confirm button off THIS,
+    // so a policy update re-asks even people whose cell was once ticked,
+    // and a brand-new starter (not yet enrolled anywhere) still sees it.
+    const policy = await acceptanceState(documentId, userId);
+    res.json({ items, policy });
   } catch (err) {
     console.error("[training-ack] status failed:", err);
     res.status(500).json({ error: "Failed to load training status" });
@@ -91,8 +97,14 @@ router.post("/confirm", validate(z.object({ documentId: z.number().int() })), as
     const [user] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId));
     if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
 
+    // Policies first: record the versioned acceptance (the source of
+    // truth), enrol the reader in the Policies matrix if they weren't
+    // yet (pre-arrival starters), and close their review to-do. Then the
+    // ordinary tick loop below mirrors it onto every linked matrix item.
+    const acceptedVersion = await recordPolicyAcceptance(documentId, userId, user.name);
+
     const items = await myItemsForDocument(userId, documentId);
-    if (items.length === 0) {
+    if (items.length === 0 && acceptedVersion == null) {
       res.status(404).json({ error: "This document isn't on your training matrix" });
       return;
     }

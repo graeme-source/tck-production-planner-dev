@@ -52,7 +52,7 @@ function renderInline(text: string): (string | JSX.Element)[] {
   return parts.map((p, i) => (i % 2 === 1 ? <strong key={i}>{p}</strong> : p));
 }
 
-function MarkdownBody({ md }: { md: string }) {
+export function MarkdownBody({ md }: { md: string }) {
   const blocks: JSX.Element[] = [];
   const lines = md.split("\n");
   let list: { ordered: boolean; items: string[] } | null = null;
@@ -115,13 +115,20 @@ interface AckItem {
   signedOffByName: string | null;
 }
 
+/** Versioned policy acceptance — the source of truth for policies. */
+interface AckPolicy {
+  version: number;
+  acceptedVersion: number | null;
+  needsAcceptance: boolean;
+}
+
 function ReadConfirmation({ documentId, docTypeLabel, isPolicy }: {
   documentId: number;
   docTypeLabel: string;
   isPolicy: boolean;
 }) {
   const queryClient = useQueryClient();
-  const { data } = useQuery<{ items: AckItem[] }>({
+  const { data } = useQuery<{ items: AckItem[]; policy?: AckPolicy | null }>({
     queryKey: ["training-ack", documentId],
     queryFn: async () => {
       const res = await fetch(`${BASE}/api/training-ack/status?documentId=${documentId}`, { credentials: "include" });
@@ -150,6 +157,48 @@ function ReadConfirmation({ documentId, docTypeLabel, isPolicy }: {
   });
 
   const items = data?.items ?? [];
+  const policy = data?.policy ?? null;
+
+  // Policies run on versioned acceptance (the source of truth): the button
+  // shows whenever the CURRENT version is unaccepted — including for a
+  // brand-new starter with no matrix enrolments yet, and again after any
+  // policy update bumps the version.
+  if (policy) {
+    if (policy.needsAcceptance) {
+      const isReReview = policy.acceptedVersion != null;
+      return (
+        <div className="rounded-2xl border-2 border-primary/40 bg-primary/5 p-5 space-y-3">
+          <p className="text-sm font-medium">
+            {isReReview
+              ? "This policy has been updated since you last accepted it — please read it again and re-confirm."
+              : "Once you've read this policy, confirm below — your acceptance is recorded and your training matrix ticks itself. No need to tell a manager."}
+          </p>
+          <button
+            onClick={() => confirm.mutate()}
+            disabled={confirm.isPending}
+            className="w-full sm:w-auto px-5 py-3 rounded-xl bg-primary text-primary-foreground text-base font-bold hover:bg-primary/90 active:scale-[0.99] transition-all disabled:opacity-60 inline-flex items-center justify-center gap-2"
+          >
+            {confirm.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
+            I've read and understood this policy
+          </button>
+        </div>
+      );
+    }
+    if (policy.acceptedVersion != null) {
+      return (
+        <div className="rounded-2xl border border-emerald-500/50 bg-emerald-500/10 p-4 flex items-center gap-3">
+          <CheckCircle2 className="w-6 h-6 text-emerald-600 flex-shrink-0" />
+          <div className="text-sm">
+            <p className="font-semibold text-emerald-800 dark:text-emerald-300">You've accepted this policy</p>
+            <p className="text-muted-foreground">Your acceptance of the current version is on record.</p>
+          </div>
+        </div>
+      );
+    }
+    // Policy exists but isn't active (draft/archived) — nothing to confirm.
+    return null;
+  }
+
   if (items.length === 0) {
     // Not on this person's training matrix. For a policy, keep the gentle
     // pointer so the expectation ("reading these matters") survives.

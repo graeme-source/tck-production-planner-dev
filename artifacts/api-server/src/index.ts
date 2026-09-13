@@ -4,6 +4,7 @@ import { sql, count } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { startBackupScheduler, runBackup } from "./lib/backup";
 import { LOCATION_DEFS } from "./lib/storage-location-defs";
+import { rolloutPolicy } from "./lib/policy-rollout";
 
 const rawPort = process.env["PORT"];
 
@@ -2133,6 +2134,46 @@ async function runStartupMigrations() {
          WHERE assessment_type = 'policy' AND title = 'Mobile Phone Policy' AND status = 'draft'
       `);
       await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('mobile_phone_policy_seed_v2')`);
+    }
+
+    // Activate the Mobile Phone Policy (Graeme, 2026-09-13: "push it to
+    // live and active"). Runs after the v2 text refresh so the activated
+    // document carries the duty-contact exceptions + office number.
+    const phonePolicyActivated = await db.execute<{ key: string }>(
+      sql`SELECT key FROM _migrations_done WHERE key = 'mobile_phone_policy_activate_v1'`,
+    );
+    if (phonePolicyActivated.rows.length === 0) {
+      await db.execute(sql`
+        UPDATE risk_assessments
+           SET status = 'active', original_issue_date = COALESCE(original_issue_date, CURRENT_DATE), updated_at = NOW()
+         WHERE assessment_type = 'policy' AND title = 'Mobile Phone Policy' AND status = 'draft'
+      `);
+      await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('mobile_phone_policy_activate_v1')`);
+    }
+
+    // Policy rollout backfill (Graeme, 2026-09-13): every ACTIVE policy
+    // gets its Policies-matrix item, team-wide enrolment and 3-day review
+    // to-dos. Guarded on the acceptances table existing (sql-migrations
+    // and this runner can race on a fresh deploy) — the done-key is only
+    // recorded once the rollout actually ran, so a skipped boot retries.
+    const rolloutBackfillDone = await db.execute<{ key: string }>(
+      sql`SELECT key FROM _migrations_done WHERE key = 'policy_rollout_backfill_v1'`,
+    );
+    if (rolloutBackfillDone.rows.length === 0) {
+      const hasAcceptances = await db.execute<{ ok: string | null }>(
+        sql`SELECT to_regclass('public.policy_acceptances')::text AS ok`,
+      );
+      if (hasAcceptances.rows[0]?.ok) {
+        const activePolicies = await db.execute<{ id: number }>(
+          sql`SELECT id FROM risk_assessments WHERE assessment_type = 'policy' AND status = 'active'`,
+        );
+        for (const p of activePolicies.rows ?? []) {
+          await rolloutPolicy(Number(p.id));
+        }
+        await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('policy_rollout_backfill_v1')`);
+      } else {
+        console.warn("[startup] policy rollout backfill deferred — policy_acceptances not created yet");
+      }
     }
 
     // Periodic checklist schedule — every-4-weeks tasks (13 periods/year).

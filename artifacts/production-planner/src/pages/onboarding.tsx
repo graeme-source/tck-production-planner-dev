@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/auth-context";
 import { Loader2, Phone, MapPin, Heart, FileText, Upload, Check, X, ShieldCheck, ArrowRight, LogOut, Footprints, GraduationCap } from "lucide-react";
 import { LeanResources, LeanSelfPaced } from "@/components/lean-self-paced";
+import { PolicyReviewList } from "@/components/policy-review";
 import { StarterFormsList } from "@/components/starter-forms";
 import { MyContractSection } from "@/components/my-contract";
 
@@ -250,6 +251,19 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
                 Graeme hasn't issued your contract yet — it will appear right here (and in your Employee Hub) the moment he does.
               </p>
             )}
+          </section>
+
+          {/* Company policies — read & accepted BEFORE full access (Graeme,
+              2026-09-13). Gated users can't reach /documents, so the reader
+              comes to them; accepting records the versioned acceptance and
+              ticks the Policies training matrix. */}
+          <section className="space-y-3">
+            <h2 className="text-base font-semibold">3 · Company policies</h2>
+            <p className="text-sm text-muted-foreground">
+              How we keep the food safe and the team looked after. Read each one and tap
+              "I've read and understood" — it's recorded on your training file before you even arrive.
+            </p>
+            <PolicyReviewList />
           </section>
 
           {/* No enter button, ever: the founder opens the app in person on
