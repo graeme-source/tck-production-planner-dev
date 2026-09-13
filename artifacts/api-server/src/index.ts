@@ -2151,6 +2151,39 @@ async function runStartupMigrations() {
       await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('mobile_phone_policy_activate_v1')`);
     }
 
+    // Unpublish the Jewellery policy (Graeme, 2026-09-13: "not quite
+    // right, I don't want it exposed to the team yet"). Back to draft, its
+    // open review to-dos deleted (never actioned — nothing to keep), and
+    // its Policies-matrix column removed. Acceptances already recorded
+    // stay in policy_acceptances — the source of truth survives, so when
+    // the fixed version goes active again the rollout re-creates
+    // everything and only asks people the edit actually invalidated.
+    // Runs AFTER the backfill guard below would have populated things on
+    // an earlier boot; guarded one-shot like its neighbours.
+    const jewelleryUnpublished = await db.execute<{ key: string }>(
+      sql`SELECT key FROM _migrations_done WHERE key = 'jewellery_policy_unpublish_v1'`,
+    );
+    if (jewelleryUnpublished.rows.length === 0) {
+      const jewellery = await db.execute<{ id: number }>(sql`
+        SELECT id FROM risk_assessments
+         WHERE assessment_type = 'policy' AND title = 'Jewellery & Body Piercings Policy' AND status = 'active'
+      `);
+      const jid = jewellery.rows?.[0]?.id;
+      if (jid != null) {
+        await db.execute(sql`UPDATE risk_assessments SET status = 'draft', updated_at = NOW() WHERE id = ${jid}`);
+        await db.execute(sql`
+          DELETE FROM todo_tasks
+           WHERE created_by_name = 'Policy review' AND url = ${`/documents/${jid}`} AND status <> 'done'
+        `);
+        await db.execute(sql`
+          DELETE FROM training_matrix_items
+           WHERE sop_id = ${jid}
+             AND matrix_id IN (SELECT id FROM training_matrices WHERE name = 'Policies')
+        `);
+      }
+      await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('jewellery_policy_unpublish_v1')`);
+    }
+
     // Policy rollout backfill (Graeme, 2026-09-13): every ACTIVE policy
     // gets its Policies-matrix item, team-wide enrolment and 3-day review
     // to-dos. Guarded on the acceptances table existing (sql-migrations
