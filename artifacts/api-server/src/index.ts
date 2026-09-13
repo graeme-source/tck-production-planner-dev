@@ -3125,6 +3125,16 @@ async function startup() {
     void refreshSystemUpdatesSnapshot();
     setInterval(() => void refreshSystemUpdatesSnapshot(), 3 * 60 * 60_000).unref();
 
+    // Rotating-special sync: keeps Shopify's `tck.current_special`
+    // metafield and `current-special` product tag in step with the
+    // planner's is_current_special flag. The planner flip (done after
+    // the Zapiet delivery-date changeover) is what moves the storefront
+    // — every 5 minutes, so a changeover lands within minutes without
+    // any manual Shopify edits. See lib/special-shopify-sync.ts.
+    const { syncSpecialToShopify } = await import("./lib/special-shopify-sync");
+    setTimeout(() => void syncSpecialToShopify().catch(err => console.error("[special-sync] startup run failed:", err)), 30_000).unref();
+    setInterval(() => void syncSpecialToShopify().catch(err => console.error("[special-sync] run failed:", err)), 5 * 60_000).unref();
+
     // Finance / VAT reconciliation — one-time backlog seed (guarded) and the
     // hourly mailbox sync (no-op until a mailbox is configured in the app).
     const { seedFinanceBacklogIfNeeded, startFinanceMailboxTimer } = await import("./lib/finance/startup");
