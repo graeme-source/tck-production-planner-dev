@@ -163,6 +163,13 @@ When someone is off we re-plan stations within minutes of the day starting, and 
 - Call before your shift on **each day** you're off, unless a longer absence has already been agreed on a previous call.
 - Up to 7 calendar days you self-certify. Beyond 7 days we need a fit note from your GP.
 
+## Medical appointments
+
+- Book appointments outside working hours where you reasonably can.
+- When the only slot is during a shift — NHS appointments often are — tell a manager as soon as you have it and show the appointment confirmation (the text, letter or app screen). We will never ask what the appointment is for.
+- Agree with the manager how the time is handled: unpaid, made up by arrangement, or holiday. Made-up time never comes out of your legal rest break.
+- Antenatal appointments are different: paid time off, protected by law, no making up.
+
 ## When you come back
 
 - On your first day back you'll have a short **return-to-work conversation** with a manager, recorded in the planner (about two minutes). It's private — only you and the named managers can read it. It exists to make sure you're okay and to catch anything we should change.
@@ -2166,6 +2173,24 @@ async function runStartupMigrations() {
           ('policy', 'Sickness & Absence Policy', ${ABSENCE_POLICY_MARKDOWN}, 'draft', 12, CURRENT_DATE, NOW(), (CURRENT_DATE + INTERVAL '12 months')::date)
       `);
       await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('absence_policy_seed_v1')`);
+    }
+
+    // v2 (Graeme, 2026-09-14 evening): medical appointments section — book
+    // outside hours where possible, show the confirmation (never the
+    // reason), agree unpaid / made-up / holiday, statutory break untouched,
+    // antenatal always paid and protected. Refreshes the text ONLY while
+    // the policy is still a draft — once activated or hand-edited, the DB
+    // row is the document and code never overwrites it.
+    const absencePolicyV2Done = await db.execute<{ key: string }>(
+      sql`SELECT key FROM _migrations_done WHERE key = 'absence_policy_seed_v2'`,
+    );
+    if (absencePolicyV2Done.rows.length === 0) {
+      await db.execute(sql`
+        UPDATE risk_assessments
+           SET body_markdown = ${ABSENCE_POLICY_MARKDOWN}, updated_at = NOW()
+         WHERE assessment_type = 'policy' AND title = 'Sickness & Absence Policy' AND status = 'draft'
+      `);
+      await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('absence_policy_seed_v2')`);
     }
 
     // v2 (Graeme, 2026-09-13): duty-contact exceptions — the MD carries a
