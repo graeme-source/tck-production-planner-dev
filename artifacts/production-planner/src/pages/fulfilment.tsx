@@ -2521,7 +2521,7 @@ export default function Fulfilment() {
       const res = await fetch(`${BASE}/api/fulfilment/reconcile-label?orderName=${encodeURIComponent(activeOrder.name)}`, { credentials: "include" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Label fetch failed");
-      printAllLabels(data.waybill as string, (data.labelPdfs as string[]).length);
+      printAllLabels(data.waybill as string, (data.labelPdfs as string[]).length, { force: true });
       toast({
         title: `Printing label for ${activeOrder.name}`,
         description: data.duplicateCount > 1
@@ -2536,16 +2536,20 @@ export default function Fulfilment() {
   }
 
   /** Print every piece of a consignment, each fetched live from APC at the
-   *  moment it prints — so a consignment amended mid-wave prints as amended. */
-  function printAllLabels(waybill: string, pieces: number) {
+   *  moment it prints — so a consignment amended mid-wave prints as amended.
+   *  The already-printed-today dedupe only guards the AUTOMATIC print on
+   *  order open — a deliberate button press (Reprint, Retry, Add box,
+   *  reconcile print) always prints, because the packer pressing it is
+   *  holding a damaged label or an empty tray (Graeme, 2026-09-14). */
+  function printAllLabels(waybill: string, pieces: number, opts?: { force?: boolean }) {
     const count = Math.max(1, pieces);
     // Already off the printer today? Don't send it again — tell the packer
     // to find it in the printed stack instead of making a duplicate.
-    if (wasLabelPrinted(waybill)) {
+    if (!opts?.force && wasLabelPrinted(waybill)) {
       setPrintStatus("done");
       toast({
         title: "Label already printed",
-        description: `${waybill} came off the printer earlier today — take it from the printed stack rather than printing another.`,
+        description: `${waybill} came off the printer earlier today — take it from the printed stack, or press Reprint Label to print it anyway.`,
       });
       return;
     }
@@ -2579,7 +2583,9 @@ export default function Fulfilment() {
       // The consignment now has more pieces than when it was opened — carry
       // that forward so a later Reprint doesn't fall back to the old count.
       setShipment(prev => prev ? { ...prev, pieceCount: result.pieceCount } : prev);
-      printAllLabels(shipment.consignmentNumber, result.pieceCount);
+      // Force: the original labels may have printed earlier today, but the
+      // consignment now has MORE pieces — the new box needs its label.
+      printAllLabels(shipment.consignmentNumber, result.pieceCount, { force: true });
       if (result.warnings && result.warnings.length > 0) {
         setShipment(prev => prev ? { ...prev, warnings: [...(prev.warnings ?? []), ...result.warnings!] } : prev);
       }
@@ -2601,7 +2607,7 @@ export default function Fulfilment() {
       // when the order was opened.
       const result = await reprintLabel(shipment.consignmentNumber);
       setShipment(prev => prev ? { ...prev, pieceCount: result.pieceCount } : prev);
-      printAllLabels(shipment.consignmentNumber, result.pieceCount);
+      printAllLabels(shipment.consignmentNumber, result.pieceCount, { force: true });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setConsignmentActionError(`Reprint failed: ${msg}`);
@@ -3271,7 +3277,7 @@ export default function Fulfilment() {
                     <XCircle className="w-4 h-4" /> Print failed
                   </span>
                   <button
-                    onClick={() => printAllLabels(shipment.consignmentNumber, shipment.pieceCount ?? 1)}
+                    onClick={() => printAllLabels(shipment.consignmentNumber, shipment.pieceCount ?? 1, { force: true })}
                     className="text-xs px-2 py-1 bg-destructive/10 hover:bg-destructive/20 text-destructive rounded-lg flex items-center gap-1 transition-colors"
                   >
                     <RotateCcw className="w-3 h-3" /> Retry print
