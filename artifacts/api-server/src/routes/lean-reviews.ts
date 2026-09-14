@@ -115,9 +115,69 @@ function nextMondayFrom(monday: string): string {
   return d.toISOString().slice(0, 10);
 }
 
+const WEEKLY_TODO_NOTES = "Do it any day this week — the week's five morning-meeting pages, then three quick questions. Due Friday. Completing it ticks your Lean training matrix.";
+
+/** Friday of the week that starts on the given Monday. */
+function fridayOf(monday: string): string {
+  return new Date(new Date(`${monday}T00:00:00Z`).getTime() + 4 * 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
+ * Create this week's lean to-do for EVERY active user, up front (Graeme,
+ * 2026-09-14): the reminder lands on Monday saying "due by Friday" and the
+ * module can be done any day — the old lazy per-visit creation meant people
+ * who don't work Fridays met the reminder late or not at all. Idempotent on
+ * (assignee, lean_week_start); people who already completed the week (e.g.
+ * the founder's review-ahead) are skipped. The founder instead gets their
+ * NEXT-week review-ahead task, due the same Friday. Called hourly from
+ * lib/lean-todo-scheduler.ts, so Monday's first run seeds the whole team
+ * and mid-week joiners get theirs within the hour.
+ */
+export async function ensureWeeklyLeanTodosForAll(): Promise<void> {
+  if (!(await reviewsEnabled())) return;
+  const weekStart = mondayOf(londonDateString());
+  const dueDate = fridayOf(weekStart);
+  const founderEmails = Array.from(FOUNDER_EMAILS);
+
+  const { principle } = (await getWeekFocusPrinciple(weekStart)) as { principle: LeanPrincipleRow | null };
+  if (principle) {
+    await db.execute(sql`
+      INSERT INTO todo_tasks (assignee_id, created_by, created_by_name, title, notes, url, priority, due_date, status, lean_week_start)
+      SELECT u.id, NULL, 'Lean learning',
+             ${`Lean lesson of the week: ${principle.title}`}, ${WEEKLY_TODO_NOTES},
+             '/lean-review', 'normal', ${dueDate}::date, 'open', ${weekStart}
+      FROM app_users u
+      WHERE u.is_active = TRUE
+        AND u.email NOT IN (${sql.join(founderEmails.map(e => sql`${e}`), sql`, `)})
+        AND NOT EXISTS (SELECT 1 FROM todo_tasks t WHERE t.assignee_id = u.id AND t.lean_week_start = ${weekStart})
+        AND NOT EXISTS (SELECT 1 FROM lean_lesson_reviews r WHERE r.user_id = u.id AND r.week_start = ${weekStart})
+    `);
+  }
+
+  // Founder review-ahead: next week's module, due this Friday.
+  const nextMonday = nextMondayFrom(weekStart);
+  const { principle: nextPrinciple } = (await getWeekFocusPrinciple(nextMonday)) as { principle: LeanPrincipleRow | null };
+  if (nextPrinciple) {
+    await db.execute(sql`
+      INSERT INTO todo_tasks (assignee_id, created_by, created_by_name, title, notes, url, priority, due_date, status, lean_week_start)
+      SELECT u.id, NULL, 'Lean learning',
+             ${`Review next week's lean module: ${nextPrinciple.title}`},
+             ${"Founder review-ahead: read next week's five pages, check the videos and quiz, swap anything that isn't right — then count it as your completion. Same rules as everyone, a week early."},
+             '/lean-review?week=next', 'normal', ${dueDate}::date, 'open', ${nextMonday}
+      FROM app_users u
+      WHERE u.is_active = TRUE
+        AND u.email IN (${sql.join(founderEmails.map(e => sql`${e}`), sql`, `)})
+        AND NOT EXISTS (SELECT 1 FROM todo_tasks t WHERE t.assignee_id = u.id AND t.lean_week_start = ${nextMonday})
+        AND NOT EXISTS (SELECT 1 FROM lean_lesson_reviews r WHERE r.user_id = u.id AND r.week_start = ${nextMonday})
+    `);
+  }
+}
+
 /** Lazily ensure a weekly lean to-do exists — the push that makes the
  *  module findable from My To-dos. Identified by (assignee, lean_week_start),
- *  never by title. No-op once the task exists. */
+ *  never by title. No-op once the task exists. Kept as belt-and-braces under
+ *  the scheduler: someone activated seconds ago still gets their task the
+ *  moment they open the module. */
 async function ensureWeeklyTodo(params: {
   userId: number;
   weekStart: string;
@@ -214,7 +274,7 @@ router.get("/current", requireAuth, async (req: Request, res: Response) => {
           notes: "Founder review-ahead: read next week's five pages, check the videos and quiz, swap anything that isn't right — then count it as your completion. Same rules as everyone, a week early.",
           url: "/lean-review?week=next",
           // Due the Friday of the CURRENT week — reviewed before it starts.
-          dueDate: new Date(new Date(`${weekStart}T00:00:00Z`).getTime() + 4 * 86_400_000).toISOString().slice(0, 10),
+          dueDate: fridayOf(weekStart),
         });
       }
     }
@@ -223,9 +283,9 @@ router.get("/current", requireAuth, async (req: Request, res: Response) => {
       userId,
       weekStart,
       title: `Lean lesson of the week: ${principle.title}`,
-      notes: "Two minutes: the week's five morning-meeting pages, then three quick questions. Completing it ticks your Lean training matrix.",
+      notes: WEEKLY_TODO_NOTES,
       url: "/lean-review",
-      dueDate: new Date(new Date(`${weekStart}T00:00:00Z`).getTime() + 4 * 86_400_000).toISOString().slice(0, 10),
+      dueDate: fridayOf(weekStart),
     });
   }
 

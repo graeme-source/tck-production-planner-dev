@@ -2531,15 +2531,18 @@ async function runStartupMigrations() {
       END $$;
     `);
     // Who's On Today leads the meeting (Graeme, 2026-08-11): the rota is
-    // the first thing the room needs, before stretches. Slides 0-4 shift
-    // down one; the 4 slot the old numbering skipped gets used.
+    // the first thing the room needs. The Lean lesson sits at slide 3 —
+    // right after Safety Issues, before Order of Production — because at
+    // the tail of the deck it kept getting skipped (Graeme, 2026-09-14).
+    // Stretches left the deck 2026-09-11 (merged into Who's On Today),
+    // freeing slot 1 for Safety Issues and 2 for the lesson.
     await db.execute(sql`
       UPDATE template_slides ts
       SET order_position = m.new_pos, title = m.new_title
       FROM (VALUES
         ('station_assignments'::text, 0, 'Who''s On Today'::text),
-        ('stretches', 1, 'Stretches'),
-        ('safety_issues', 2, 'Safety Issues'),
+        ('safety_issues', 1, 'Safety Issues'),
+        ('lesson', 2, 'Today''s Lean Lesson'),
         ('order_of_production', 3, 'Order of Production'),
         ('special_prep', 4, 'Test Product Prep'),
         ('local_delivery', 5, 'Local Dispatch'),
@@ -2547,7 +2550,6 @@ async function runStartupMigrations() {
         ('yesterday_kpis', 8, 'Yesterday''s Numbers'),
         ('new_sops', 9, 'New & Updated SOPs'),
         ('struggles', 10, 'Improvements'),
-        ('lesson', 11, 'Today''s Lean Lesson'),
         ('gratitude', 12, 'Gratitude')
       ) AS m(kind, new_pos, new_title)
       WHERE ts.kind = m.kind
@@ -2559,8 +2561,8 @@ async function runStartupMigrations() {
           title = CASE WHEN ms.title IN ('Special Prep','Local Delivery','Local Despatch','Struggles','Improvements Required') THEN m.new_title ELSE ms.title END
       FROM (VALUES
         ('station_assignments'::text, 0, 'Who''s On Today'::text),
-        ('stretches', 1, 'Stretches'),
-        ('safety_issues', 2, 'Safety Issues'),
+        ('safety_issues', 1, 'Safety Issues'),
+        ('lesson', 2, 'Today''s Lean Lesson'),
         ('order_of_production', 3, 'Order of Production'),
         ('special_prep', 4, 'Test Product Prep'),
         ('local_delivery', 5, 'Local Dispatch'),
@@ -2568,10 +2570,10 @@ async function runStartupMigrations() {
         ('yesterday_kpis', 8, 'Yesterday''s Numbers'),
         ('new_sops', 9, 'New & Updated SOPs'),
         ('struggles', 10, 'Improvements'),
-        ('lesson', 11, 'Today''s Lean Lesson'),
         ('gratitude', 12, 'Gratitude')
       ) AS m(kind, new_pos, new_title)
       WHERE ms.kind = m.kind
+        AND ms.meeting_id IN (SELECT id FROM morning_meetings WHERE ended_at IS NULL)
     `);
     // Recent Improvements joins the default deck right after Improvements
     // Required (Graeme, 2026-09-02): Required is now just the idea logs, and
@@ -3274,6 +3276,11 @@ async function startup() {
     // load after deploy is instant rather than paying the backfill itself.
     const { prewarmAttendanceCache } = await import("./services/planday-attendance-cache");
     prewarmAttendanceCache();
+
+    // Weekly lean to-dos land on Monday for the whole team, due Friday,
+    // doable any day (Graeme, 2026-09-14) — hourly idempotent sweep.
+    const { startLeanTodoScheduler } = await import("./lib/lean-todo-scheduler");
+    startLeanTodoScheduler();
 
     // Stock gate — holds products back from next-day delivery when the
     // fridge-vs-despatch surplus runs low. Self-gates on stock_gate_enabled
