@@ -37,6 +37,7 @@ import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { LessonDiagram, DIAGRAM_OPTIONS } from "@/components/lesson-diagrams";
+import ImprovementsPage from "@/pages/improvements";
 import { MarkdownBlock, YouTubeEmbed } from "@/components/lesson-media";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -1966,7 +1967,7 @@ function SlideBodyInner({ slide, data, onRefresh, isPreviewing, subIndex, report
     case "safety_issues": return <SafetyIssuesSlide data={data} onRefresh={onRefresh} slide={slide} />;
     case "system_updates": return <SystemUpdatesSlide slide={slide} subIndex={subIndex} reportSubCount={reportSubCount} />;
     case "new_sops": return <NewSopsSlide data={data} slide={slide} />;
-    case "struggles": return <StrugglesSlide data={data} onRefresh={onRefresh} slide={slide} />;
+    case "struggles": return <ImprovementsPage />;
     case "recent_improvements": return <RecentImprovementsSlide data={data} slide={slide} />;
     case "lesson":
     case "learning": return <LearningSlide data={data} slide={slide} />;
@@ -3211,76 +3212,10 @@ function NewSopsSlide({ data, slide }: { data: DashboardData; slide: MeetingSlid
  *  Improvements Required idea list sits below it. No Complete button: an
  *  item leaves Required by being done properly in the Improvement Centre
  *  (marked done with before/after media), never by a tap here. */
-function StrugglesSlide({ data, onRefresh, slide }: { data: DashboardData; onRefresh: () => void; slide: MeetingSlide }) {
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const submit = async () => {
-    if (!title.trim() || !description.trim()) return;
-    setSubmitting(true);
-    try {
-      const res = await fetch(`${BASE}/api/improvements`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, description, station: "morning-meeting", type: "improvement", reportContext: "Raised in morning meeting" }),
-      });
-      if (!res.ok) throw new Error("Failed");
-      setTitle(""); setDescription("");
-      onRefresh();
-      toast({ title: "Struggle logged" });
-    } catch {
-      toast({ title: "Failed to log", variant: "destructive" });
-    } finally {
-      setSubmitting(false);
-    }
-  };
-  return (
-    <div>
-      <SectionTitle>{slide.title || "Improvements"}</SectionTitle>
-      <SectionLead>What we&apos;ve made better — and what&apos;s next. Play the clips, then scroll for what needs doing.</SectionLead>
-
-      <div className="mb-6">
-        <ImprovementsFeedList limit={6} />
-      </div>
-
-      {data.struggles.length > 0 && (
-        <div className="glass-panel rounded-2xl overflow-hidden mb-6">
-          <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground px-6 py-3 border-b border-border/50">Improvements required</p>
-          {data.struggles.map(s => (
-            <div key={s.id} className="px-6 py-4 border-b border-border/50 last:border-0">
-              <p className="text-2xl font-semibold leading-tight">{s.title}</p>
-              <p className="text-lg text-muted-foreground mt-1 leading-snug">{s.description}</p>
-              {s.assignedToName && (
-                <p className="text-base text-muted-foreground mt-1">Assigned to <span className="font-semibold text-foreground">{s.assignedToName}</span></p>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="glass-panel rounded-2xl p-6">
-        <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground mb-3">Log a new struggle</p>
-        <input
-          value={title}
-          onChange={e => setTitle(e.target.value)}
-          placeholder="Short title — what's the problem?"
-          className="w-full bg-background border border-border rounded-xl p-3 text-base mb-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
-        />
-        <textarea
-          value={description}
-          onChange={e => setDescription(e.target.value)}
-          placeholder="A sentence or two of detail"
-          className="w-full min-h-[80px] bg-background border border-border rounded-xl p-3 text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
-        />
-        <div className="flex justify-end mt-3">
-          <button onClick={submit} disabled={!title.trim() || !description.trim() || submitting} className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 disabled:opacity-50">
-            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Log struggle"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+// The Improvements slide IS the Improvements page (Graeme, 2026-09-14):
+// leaderboard on top, the same filters and feed, scrollable in the slide
+// body — one surface to learn, not two diverging ones. Rendered directly
+// in the slide switch below.
 
 /** What the meeting scrolls through to celebrate finished work — the same
  *  feed as the Improvement Centre, media inline and playable on the slide:
