@@ -324,6 +324,27 @@
       ],
       "cwd": "artifacts/production-planner",
       "port": 5291
+    },
+    {
+      "name": "api-stretchfix",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5293 PORT=59740 pnpm run dev"
+      ],
+      "cwd": "artifacts/api-server",
+      "port": 59740,
+      "autoPort": true
+    },
+    {
+      "name": "frontend-stretchfix",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59740 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5293 --strictPort"
+      ],
+      "cwd": "artifacts/production-planner",
+      "port": 5293
     }
   ]
 }

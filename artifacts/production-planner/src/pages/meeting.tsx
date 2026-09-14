@@ -1655,10 +1655,10 @@ function PersonName({ p, size = "big" }: { p: StationAssignmentPerson; size?: "b
   const inNow = p.punch === "in";
   const done = p.punch === "finished";
   return (
-    <span className="flex items-baseline gap-2 min-w-0">
+    <span className="flex flex-wrap items-baseline gap-2 min-w-0">
       <span
         className={cn(
-          "font-display font-bold leading-tight whitespace-nowrap",
+          "font-display font-bold leading-tight",
           size === "big" ? "text-2xl" : "text-base",
           late && "text-red-600 dark:text-red-400",
           !late && !inNow && !done && "text-muted-foreground",
@@ -1805,8 +1805,12 @@ function StationAssignmentsSlide({ trialWelcome, dayNumbers }: { trialWelcome?: 
       {/* Stretches + rota share the opening slide (Graeme, 2026-09-11):
           the team stretches WHILE reading who's on what station, so one
           slide covers the whole opening. Stretches run top-to-bottom on
-          the left; people and positions fill the right. */}
-      <div className="grid gap-4 lg:grid-cols-[minmax(15rem,2fr)_5fr] items-start">
+          the left; people and positions fill the right. The split engages
+          from md (768px) so an iPad in portrait — or with Safari zoom —
+          still shows both side by side; below lg the layout only stacked,
+          which pushed the stretches off-screen once the room was reading
+          the rota (Graeme, 2026-09-14). */}
+      <div className="grid gap-4 grid-cols-[minmax(0,1fr)] md:grid-cols-[minmax(13rem,2fr)_minmax(0,5fr)] items-start">
         <div className="space-y-1.5">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground px-1">Stretches — while we read the board</p>
           {stretches.map((st, i) => (
