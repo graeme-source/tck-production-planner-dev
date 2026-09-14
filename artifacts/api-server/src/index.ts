@@ -178,6 +178,15 @@ When someone is off we re-plan stations within minutes of the day starting, and 
 
 Sick pay follows the government's Statutory Sick Pay (SSP) rules unless your contract says otherwise.
 
+## When we review attendance
+
+So this is the same for everyone, attendance reviews are triggered by the numbers, not by opinion:
+
+- **4 instances of sickness absence in any rolling 12-month period**, or
+- **6 late arrivals in any rolling 12-month period**
+
+trigger an attendance review meeting with a manager. The meeting starts from support — is something underlying going on that we can help with? — but where absence or lateness continues without good reason, it can lead to formal disciplinary procedures. Absence connected to a disability, to pregnancy, or to authorised appointments never counts toward these triggers.
+
 ## Not following this policy
 
 Not calling in — or texting instead of calling — is treated as unauthorised absence and may lead to formal disciplinary procedures. Ring us; that's the whole ask.`;
@@ -2191,6 +2200,22 @@ async function runStartupMigrations() {
          WHERE assessment_type = 'policy' AND title = 'Sickness & Absence Policy' AND status = 'draft'
       `);
       await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('absence_policy_seed_v2')`);
+    }
+
+    // v3 (Graeme, 2026-09-14 evening): mechanical attendance-review
+    // triggers — 4 sickness instances or 6 lates in a rolling 12 months —
+    // so reviews fire from the numbers, not opinion. Draft-only refresh,
+    // same rule as v2.
+    const absencePolicyV3Done = await db.execute<{ key: string }>(
+      sql`SELECT key FROM _migrations_done WHERE key = 'absence_policy_seed_v3'`,
+    );
+    if (absencePolicyV3Done.rows.length === 0) {
+      await db.execute(sql`
+        UPDATE risk_assessments
+           SET body_markdown = ${ABSENCE_POLICY_MARKDOWN}, updated_at = NOW()
+         WHERE assessment_type = 'policy' AND title = 'Sickness & Absence Policy' AND status = 'draft'
+      `);
+      await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('absence_policy_seed_v3')`);
     }
 
     // v2 (Graeme, 2026-09-13): duty-contact exceptions — the MD carries a
