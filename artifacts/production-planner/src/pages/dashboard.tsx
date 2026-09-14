@@ -769,7 +769,7 @@ export default function Dashboard() {
           // plan's own plan_date and hops one prep day further ahead
           // (tomorrow's prep), which is only wanted when arriving from a
           // production plan's page, not from this date-based card.
-          href={prepPlanId ? `/plans/${prepPlanId}/station/prep?direct=1` : "/plans"}
+          href={prepPlanId ? `/plans/${prepPlanId}/station/prep?direct=1&from=dashboard` : "/plans"}
           progress={prepProgress && prepProgress.totalTins > 0 ? {
             done: prepProgress.completedTins,
             total: prepProgress.totalTins,
@@ -789,7 +789,7 @@ export default function Dashboard() {
           // to the despatch page instead). Falls back to the despatch wave
           // when no plan is open today.
           href={todayPlans.length > 0
-            ? `/plans/${todayPlans[0].id}/station/packing`
+            ? `/plans/${todayPlans[0].id}/station/packing?from=dashboard`
             : `/fulfilment?tag=${format(addDays(new Date(), 1), "yyyy-MM-dd")}`}
           progress={todayIndex >= 0 && (currentWeekOrders![todayIndex].orderCount ?? 0) > 0 ? {
             done: currentWeekOrders![todayIndex].fulfilledCount,
@@ -825,7 +825,7 @@ export default function Dashboard() {
           // Straight into today's WRAPPING STATION (Graeme, 2026-09-12) — a
           // shortcut, not a detour through the production plan. The pack
           // report has its own card next door.
-          href={todayPlans.length > 0 ? `/plans/${todayPlans[0].id}/station/wrapping` : "/pack-report"}
+          href={todayPlans.length > 0 ? `/plans/${todayPlans[0].id}/station/wrapping?from=dashboard` : "/pack-report"}
           progress={!batchesLoading && (totalBatches?.packsTotal ?? 0) > 0 ? {
             done: totalBatches!.packsWrapped,
             total: totalBatches!.packsTotal,

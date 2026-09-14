@@ -81,6 +81,12 @@ interface StationLayoutProps {
 export function StationLayout({ planId, stationType, plan, children, headerSlot, onBreakActiveChange }: StationLayoutProps) {
   const [location, navigate] = useLocation();
   const search = useSearch();
+  // Arrived from the dashboard card? Then the exit button takes you back
+  // there, not to Production Plans you never came from (Graeme, 2026-09-14).
+  // The flag rides along when hopping stations or into prep sub-sections so
+  // the way back stays true however deep you go.
+  const fromDashboard = new URLSearchParams(search).get("from") === "dashboard";
+  const fromSuffix = fromDashboard ? "?from=dashboard" : "";
   const [navOpen, setNavOpen] = useState(false);
   const [stationNavOpen, setStationNavOpen] = useState(false);
   const [standardsOpen, setStandardsOpen] = useState(false);
@@ -259,11 +265,11 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
                 const isInPrepSub = (prepSubKeys as readonly string[]).includes(stationType);
                 return (
                   <button
-                    onClick={() => navigate(isInPrepSub ? `/plans/${planId}/station/prep` : `/plans`)}
+                    onClick={() => navigate(isInPrepSub ? `/plans/${planId}/station/prep${fromSuffix}` : fromDashboard ? "/" : "/plans")}
                     className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors border border-border rounded-lg px-3 py-1.5"
                   >
                     <ChevronLeft className="w-4 h-4" />
-                    {isInPrepSub ? "Prep Sections" : "Exit Station"}
+                    {isInPrepSub ? "Prep Sections" : fromDashboard ? "Dashboard" : "Exit Station"}
                   </button>
                 );
               })()}
@@ -311,7 +317,7 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
                       key={s.key}
                       onClick={() => {
                         if (isLockedToOther) return;
-                        navigate(`/plans/${planId}/station/${s.key}`);
+                        navigate(`/plans/${planId}/station/${s.key}${fromSuffix}`);
                         setStationNavOpen(false);
                       }}
                       disabled={isLockedToOther}

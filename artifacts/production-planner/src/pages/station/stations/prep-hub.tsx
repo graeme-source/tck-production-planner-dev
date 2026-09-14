@@ -486,7 +486,9 @@ export function PrepHub({ planId, planDate, planName, planStatus, planPrepDate }
             return (
               <button
                 key={s.key}
-                onClick={() => navigate(`/plans/${planId}/station/${s.key}${direct ? "?direct=1" : ""}`)}
+                // Full query string rides along (?direct=1, ?from=dashboard)
+                // so the exit path stays true from inside a sub-section.
+                onClick={() => navigate(`/plans/${planId}/station/${s.key}${search ? `?${search.replace(/^\?/, "")}` : ""}`)}
                 className={cn(
                   "flex items-center gap-4 p-5 border-2 rounded-2xl text-left transition-all hover:scale-[1.01] active:scale-[0.99]",
                   s.borderColor,
