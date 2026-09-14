@@ -32,6 +32,8 @@ interface FormRow extends Record<string, unknown> {
   reason_category: string | null;
   reason_details: string | null;
   support_notes: string | null;
+  doctor_seen: boolean | null;
+  work_related: boolean | null;
   manager_name: string | null;
   colleague_signed_at: string | null;
   manager_signed_at: string | null;
@@ -42,6 +44,7 @@ interface FormRow extends Record<string, unknown> {
 const formSelect = sql`
   SELECT f.id, f.user_id, u.name AS user_name, f.absence_start::text, f.absence_end::text,
          f.return_date::text, f.reason_category, f.reason_details, f.support_notes,
+         f.doctor_seen, f.work_related,
          f.manager_name, f.colleague_signed_at, f.manager_signed_at, f.status, f.created_at
   FROM return_to_work_forms f JOIN app_users u ON u.id = f.user_id
 `;
@@ -57,6 +60,8 @@ function shapeForm(r: FormRow) {
     reasonCategory: r.reason_category,
     reasonDetails: r.reason_details,
     supportNotes: r.support_notes,
+    doctorSeen: r.doctor_seen,
+    workRelated: r.work_related,
     managerName: r.manager_name,
     colleagueSignedAt: r.colleague_signed_at,
     managerSignedAt: r.manager_signed_at,
@@ -142,6 +147,8 @@ const patchSchema = z.object({
   reasonCategory: z.string().max(60).nullable().optional(),
   reasonDetails: z.string().max(8000).nullable().optional(),
   supportNotes: z.string().max(8000).nullable().optional(),
+  doctorSeen: z.boolean().nullable().optional(),
+  workRelated: z.boolean().nullable().optional(),
   managerName: z.string().max(120).nullable().optional(),
 });
 
@@ -169,6 +176,8 @@ router.patch("/:id", validate(patchSchema), async (req: Request, res: Response) 
       reason_category = ${b.reasonCategory !== undefined ? b.reasonCategory : sql`reason_category`},
       reason_details = ${b.reasonDetails !== undefined ? b.reasonDetails : sql`reason_details`},
       support_notes = ${b.supportNotes !== undefined ? b.supportNotes : sql`support_notes`},
+      doctor_seen = ${b.doctorSeen !== undefined ? b.doctorSeen : sql`doctor_seen`},
+      work_related = ${b.workRelated !== undefined ? b.workRelated : sql`work_related`},
       manager_name = ${b.managerName !== undefined ? b.managerName : sql`manager_name`},
       updated_at = NOW()
     WHERE id = ${id}
@@ -178,6 +187,10 @@ router.patch("/:id", validate(patchSchema), async (req: Request, res: Response) 
 
 // POST /:id/complete — the sit-down sign-off. The colleague's press signs
 // for them; when an RTW manager is the caller their countersign lands too.
+// The ONLY required field is who recorded it (Graeme, 2026-09-14: historical
+// back-fills may carry just a reason, or even less — the dates and the
+// recorder are the contract). An RTW manager completing a form with no
+// manager name recorded gets their own name stamped in automatically.
 router.post("/:id/complete", async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid form" }); return; }
@@ -187,13 +200,18 @@ router.post("/:id/complete", async (req: Request, res: Response) => {
   const row = rows.rows[0];
   if (!row) { res.status(404).json({ error: "Form not found" }); return; }
   if (!(await canAccessRtwUser(req, Number(row.user_id)))) { res.status(403).json({ error: "Private" }); return; }
-  if (!row.reason_category || !row.manager_name) {
-    res.status(422).json({ error: "Fill in the reason and the manager you completed this with before signing." });
-    return;
-  }
   const callerId = req.session.userId!;
   const isManager = await hasRtwManagerAccess(req);
   const isSubject = callerId === Number(row.user_id);
+  if (!row.manager_name) {
+    if (isManager) {
+      const me = await db.execute<{ name: string }>(sql`SELECT name FROM app_users WHERE id = ${callerId}`);
+      await db.execute(sql`UPDATE return_to_work_forms SET manager_name = ${me.rows[0]?.name ?? "Manager"} WHERE id = ${id}`);
+    } else {
+      res.status(422).json({ error: "Add the manager you completed this with before signing." });
+      return;
+    }
+  }
   await db.execute(sql`
     UPDATE return_to_work_forms SET
       status = 'complete',

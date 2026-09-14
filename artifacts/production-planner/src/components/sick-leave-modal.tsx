@@ -18,6 +18,7 @@ interface RtwForm {
   id: number; userId: number; userName: string | null;
   absenceStart: string; absenceEnd: string | null; returnDate: string | null;
   reasonCategory: string | null; reasonDetails: string | null; supportNotes: string | null;
+  doctorSeen: boolean | null; workRelated: boolean | null;
   managerName: string | null; colleagueSignedAt: string | null; managerSignedAt: string | null;
   status: string;
 }
@@ -25,12 +26,76 @@ interface RtwForm {
 const fmtDay = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
 const fmtRange = (s: string, e: string | null) => (!e || e === s) ? fmtDay(s) : `${fmtDay(s)} – ${fmtDay(e)}`;
 
+const REASONS = ["Illness", "Injury", "Medical appointment / procedure", "Stress or mental health", "Other"];
+
+/** Historical back-fill (Graeme, 2026-09-14): just a reason against the
+ *  dates — no full form. Creates a minimal record signed by the recorder. */
+function QuickAddReason({ userId, spell, onSaved }: {
+  userId: number;
+  spell: SickSpell;
+  onSaved: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const created = await fetch(`${BASE}/api/return-to-work`, {
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, absenceStart: spell.start, absenceEnd: spell.end }),
+      }).then(r => r.json());
+      if (!created.id) throw new Error(created.error ?? "Failed");
+      await fetch(`${BASE}/api/return-to-work/${created.id}`, {
+        method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reasonCategory: reason || null, reasonDetails: note.trim() || null }),
+      });
+      const done = await fetch(`${BASE}/api/return-to-work/${created.id}/complete`, { method: "POST", credentials: "include" });
+      if (!done.ok) throw new Error((await done.json().catch(() => ({}))).error ?? "Failed to save");
+      onSaved();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Couldn't save the reason");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button onClick={e => { e.stopPropagation(); setOpen(true); }}
+        className="text-xs font-semibold text-primary hover:underline flex-shrink-0">
+        Add reason
+      </button>
+    );
+  }
+  return (
+    <div className="w-full mt-2 flex flex-col gap-2" onClick={e => e.stopPropagation()}>
+      <select value={reason} onChange={e => setReason(e.target.value)}
+        className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm">
+        <option value="">Reason…</option>
+        {REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+      </select>
+      <input type="text" value={note} onChange={e => setNote(e.target.value)} placeholder="Optional note"
+        className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+      <div className="flex gap-2">
+        <button onClick={save} disabled={saving}
+          className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-bold disabled:opacity-50 flex items-center gap-1.5">
+          {saving && <Loader2 className="w-3 h-3 animate-spin" />} Save reason
+        </button>
+        <button onClick={() => setOpen(false)} className="px-3 py-1.5 rounded-lg text-xs text-muted-foreground">Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 export function SickLeaveModal({ userId, userName, onClose }: { userId: number; userName: string; onClose: () => void }) {
   const [data, setData] = useState<{ forms: RtwForm[]; spells: SickSpell[] } | null>(null);
   const [denied, setDenied] = useState(false);
   const [detail, setDetail] = useState<RtwForm | null>(null);
 
-  useEffect(() => {
+  const load = () =>
     fetch(`${BASE}/api/return-to-work/user/${userId}`, { credentials: "include" })
       .then(async r => {
         if (r.status === 403) { setDenied(true); return; }
@@ -38,7 +103,7 @@ export function SickLeaveModal({ userId, userName, onClose }: { userId: number; 
         setData(await r.json());
       })
       .catch(() => setDenied(true));
-  }, [userId]);
+  useEffect(() => { void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [userId]);
 
   const openDetail = async (formId: number) => {
     const r = await fetch(`${BASE}/api/return-to-work/form/${formId}`, { credentials: "include" });
@@ -86,6 +151,12 @@ export function SickLeaveModal({ userId, userName, onClose }: { userId: number; 
               </div>
               <div><p className="text-xs text-muted-foreground">Reason</p><p className="font-semibold">{detail.reasonCategory ?? "—"}</p></div>
               {detail.reasonDetails && <div><p className="text-xs text-muted-foreground">What happened</p><p className="whitespace-pre-wrap">{detail.reasonDetails}</p></div>}
+              {(detail.doctorSeen != null || detail.workRelated != null) && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div><p className="text-xs text-muted-foreground">Doctor / fit note</p><p className="font-semibold">{detail.doctorSeen == null ? "—" : detail.doctorSeen ? "Yes" : "No"}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Work-related</p><p className="font-semibold">{detail.workRelated == null ? "—" : detail.workRelated ? "Yes" : "No"}</p></div>
+                </div>
+              )}
               {detail.supportNotes && <div><p className="text-xs text-muted-foreground">Support / adjustments</p><p className="whitespace-pre-wrap">{detail.supportNotes}</p></div>}
               <div className="flex items-center gap-2 pt-2 border-t border-border">
                 {detail.status === "complete"
@@ -101,25 +172,34 @@ export function SickLeaveModal({ userId, userName, onClose }: { userId: number; 
             <>
               {data.spells.map(spell => {
                 const form = spell.formId != null ? formsById.get(spell.formId) : undefined;
+                if (spell.formId == null) {
+                  return (
+                    <div key={spell.start} className="w-full rounded-xl border-2 border-dashed border-border bg-secondary/20 p-3.5">
+                      <div className="flex items-center gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold">{fmtRange(spell.start, spell.end)} · {spell.days} day{spell.days !== 1 ? "s" : ""}</p>
+                          <p className="text-sm text-muted-foreground truncate">No return-to-work report yet</p>
+                        </div>
+                        <QuickAddReason userId={userId} spell={spell} onSaved={() => void load()} />
+                      </div>
+                    </div>
+                  );
+                }
                 return (
                   <button
                     key={spell.start}
-                    onClick={() => spell.formId != null && openDetail(spell.formId)}
-                    disabled={spell.formId == null}
-                    className={cn(
-                      "w-full text-left rounded-xl border-2 p-3.5 flex items-center gap-3 transition-colors",
-                      spell.formId != null ? "border-border bg-background hover:border-primary/50" : "border-dashed border-border bg-secondary/20",
-                    )}
+                    onClick={() => openDetail(spell.formId!)}
+                    className="w-full text-left rounded-xl border-2 border-border bg-background p-3.5 flex items-center gap-3 transition-colors hover:border-primary/50"
                   >
                     <div className="min-w-0 flex-1">
                       <p className="font-semibold">{fmtRange(spell.start, spell.end)} · {spell.days} day{spell.days !== 1 ? "s" : ""}</p>
                       <p className="text-sm text-muted-foreground truncate">
                         {form?.reasonCategory
                           ? `${form.reasonCategory}${form.status !== "complete" ? " (draft)" : ""}`
-                          : spell.formId != null ? "Report started — no reason recorded yet" : "No return-to-work report yet"}
+                          : "Report started — no reason recorded yet"}
                       </p>
                     </div>
-                    {spell.formId != null && <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />}
+                    <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
                   </button>
                 );
               })}

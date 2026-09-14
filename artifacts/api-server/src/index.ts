@@ -141,6 +141,40 @@ Where a device is genuinely needed for work inside production areas, we use the 
 
 These requirements apply equally to owners, managers, employees, agency workers, contractors and visitors — the only difference a duty-contact exception makes is being reachable; its holder is bound by every hygiene condition above. Formal disciplinary procedures apply only where someone refuses to follow the rules or an arrangement that has been agreed through the process above.`;
 
+// Sickness & Absence Policy (Graeme, 2026-09-14) — seeded as a DRAFT for
+// review. The distinctive rule: phone a manager at least an hour before the
+// shift; a text is not sufficient. The call-in number is deliberately "to be
+// confirmed" — Graeme will add it before activating.
+const ABSENCE_POLICY_MARKDOWN = `**Applies to:** all employees and agency workers.
+
+## Why we have this policy
+
+When someone is off we re-plan stations within minutes of the day starting, and because we make food we sometimes legally cannot let a person work. Both depend on hearing from you early, by phone, with the facts.
+
+## If you can't come in
+
+- **Call at least 1 hour before your shift starts and speak to a manager.** A text, WhatsApp, voicemail or message passed through a colleague is **not** sufficient — if nobody answers, keep trying until you speak to someone.
+- The number to call will be confirmed and added to this policy. Until then, use the number your manager has given you.
+- Tell the manager: what's wrong, how long you expect to be off, and anything urgent your station needs handing over.
+- **If your illness involves vomiting or diarrhoea, say so on the call.** Food-safety law means you must stay away from food areas until 48 hours after symptoms stop — this is part of our HACCP plan, not a judgement call.
+
+## While you're off
+
+- Call before your shift on **each day** you're off, unless a longer absence has already been agreed on a previous call.
+- Up to 7 calendar days you self-certify. Beyond 7 days we need a fit note from your GP.
+
+## When you come back
+
+- On your first day back you'll have a short **return-to-work conversation** with a manager, recorded in the planner (about two minutes). It's private — only you and the named managers can read it. It exists to make sure you're okay and to catch anything we should change.
+
+## Pay
+
+Sick pay follows the government's Statutory Sick Pay (SSP) rules unless your contract says otherwise.
+
+## Not following this policy
+
+Not calling in — or texting instead of calling — is treated as unauthorised absence and may lead to formal disciplinary procedures. Ring us; that's the whole ask.`;
+
 async function runStartupMigrations() {
   try {
     await db.execute(sql`
@@ -2116,6 +2150,22 @@ async function runStartupMigrations() {
           ('policy', 'Mobile Phone Policy', ${MOBILE_PHONE_POLICY_MARKDOWN}, 'draft', 12, CURRENT_DATE, NOW(), (CURRENT_DATE + INTERVAL '12 months')::date)
       `);
       await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('mobile_phone_policy_seed_v1')`);
+    }
+
+    // Sickness & Absence Policy — DRAFT for Graeme's review (2026-09-14).
+    // Stays draft until he adds the call-in number and activates it from
+    // Analytics → Documents; activation then triggers the policy rollout.
+    const absencePolicySeedDone = await db.execute<{ key: string }>(
+      sql`SELECT key FROM _migrations_done WHERE key = 'absence_policy_seed_v1'`,
+    );
+    if (absencePolicySeedDone.rows.length === 0) {
+      await db.execute(sql`
+        INSERT INTO risk_assessments
+          (assessment_type, title, body_markdown, status, review_frequency_months, original_issue_date, last_reviewed_at, next_review_due)
+        VALUES
+          ('policy', 'Sickness & Absence Policy', ${ABSENCE_POLICY_MARKDOWN}, 'draft', 12, CURRENT_DATE, NOW(), (CURRENT_DATE + INTERVAL '12 months')::date)
+      `);
+      await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('absence_policy_seed_v1')`);
     }
 
     // v2 (Graeme, 2026-09-13): duty-contact exceptions — the MD carries a

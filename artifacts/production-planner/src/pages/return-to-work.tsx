@@ -27,6 +27,8 @@ export interface RtwForm {
   reasonCategory: string | null;
   reasonDetails: string | null;
   supportNotes: string | null;
+  doctorSeen: boolean | null;
+  workRelated: boolean | null;
   managerName: string | null;
   colleagueSignedAt: string | null;
   managerSignedAt: string | null;
@@ -139,6 +141,27 @@ function FormEditor({ form, onDone, onBack }: { form: RtwForm; onDone: () => voi
         <textarea disabled={readOnly} value={f.supportNotes ?? ""} onChange={e => set("supportNotes", e.target.value || null, "supportNotes")}
           placeholder="Adjustments discussed, lighter duties, follow-ups — or 'nothing needed'."
           className={cn(inputCls, "min-h-[80px]")} />
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label className="text-sm font-semibold block mb-1">Saw a doctor / has a fit note?</label>
+          <select disabled={readOnly} value={f.doctorSeen == null ? "" : f.doctorSeen ? "yes" : "no"}
+            onChange={e => set("doctorSeen", e.target.value === "" ? null : e.target.value === "yes", "doctorSeen")} className={inputCls}>
+            <option value="">—</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-sm font-semibold block mb-1">Work-related?</label>
+          <select disabled={readOnly} value={f.workRelated == null ? "" : f.workRelated ? "yes" : "no"}
+            onChange={e => set("workRelated", e.target.value === "" ? null : e.target.value === "yes", "workRelated")} className={inputCls}>
+            <option value="">—</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </div>
       </div>
 
       <div>
