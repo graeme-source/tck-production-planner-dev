@@ -529,6 +529,7 @@ router.get("/packs-by-date", async (req, res) => {
       JOIN recipes r ON r.id = pi.recipe_id
       WHERE p.plan_date BETWEEN ${start} AND ${end}
         AND COALESCE(r.category, '') <> 'Macaroni Cheese'
+        AND COALESCE(r.category, '') <> ${FRIED_CHICKEN_CATEGORY}
         AND pi.batches_target > 0
       GROUP BY p.plan_date
       ORDER BY p.plan_date

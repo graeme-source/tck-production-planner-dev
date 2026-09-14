@@ -1132,19 +1132,35 @@ export function TodoInterstitial() {
   const dueLabel = task.due_date ? format(parseISO(task.due_date), "EEEE d MMM") : "the due date";
 
   return (
-    <div className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center p-4 md:p-8 overflow-y-auto">
-      <div className="bg-background rounded-3xl border border-border shadow-2xl max-w-2xl w-full my-auto overflow-hidden">
-        <div className={cn("h-3", meta.bar)} />
-        <div className="p-6 md:p-8 space-y-5">
+    // Viewport-fit modal (Graeme, 2026-09-14: it overflowed his phone and
+    // iPad landscape with no way out): the card caps at 92dvh and scrolls
+    // INTERNALLY, so the actions are always reachable, and the X in the
+    // corner always offers a way out (it acknowledges — same as "I'll do
+    // this later" — because an unacknowledged task would just re-open it).
+    <div className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center p-3 md:p-8">
+      <div className="bg-background rounded-3xl border border-border shadow-2xl max-w-2xl w-full max-h-[92dvh] flex flex-col overflow-hidden">
+        <div className={cn("h-3 flex-shrink-0", meta.bar)} />
+        <div className="p-4 md:p-8 space-y-4 md:space-y-5 overflow-y-auto">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-lg font-bold text-muted-foreground uppercase tracking-wide">
+            <p className="text-base md:text-lg font-bold text-muted-foreground uppercase tracking-wide">
               New to-do for you
               {pending && pending.length > 1 ? ` · 1 of ${pending.length}` : ""}
             </p>
-            <PriorityChip p={task.priority} big />
+            <div className="flex items-center gap-2">
+              <PriorityChip p={task.priority} big />
+              <button
+                onClick={() => ackMut.mutate()}
+                disabled={ackMut.isPending}
+                aria-label="Close — keep this on my list"
+                title="Close — keep this on my list"
+                className="w-10 h-10 rounded-xl border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary/50 flex-shrink-0"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
 
-          <h1 className="text-3xl md:text-5xl font-display font-bold leading-tight break-words">{task.title}</h1>
+          <h1 className="text-2xl md:text-4xl font-display font-bold leading-tight break-words">{task.title}</h1>
 
           <p className="text-lg text-muted-foreground font-medium">
             From <strong className="text-foreground">{task.created_by_name ?? "a manager"}</strong>
@@ -1195,7 +1211,7 @@ export function TodoInterstitial() {
             <button
               onClick={() => ackMut.mutate()}
               disabled={ackMut.isPending}
-              className="w-full h-20 rounded-2xl bg-primary text-primary-foreground text-2xl font-bold flex items-center justify-center gap-3 hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50 shadow-lg shadow-primary/25"
+              className="w-full h-16 md:h-20 rounded-2xl bg-primary text-primary-foreground text-xl md:text-2xl font-bold flex items-center justify-center gap-3 hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50 shadow-lg shadow-primary/25"
             >
               {ackMut.isPending ? <Loader2 className="w-7 h-7 animate-spin" /> : <CheckCircle2 className="w-8 h-8 flex-shrink-0" />}
               <span className={cn(isWeeklyLesson && !question.trim() && "text-xl md:text-2xl")}>
@@ -1214,7 +1230,7 @@ export function TodoInterstitial() {
               <button
                 onClick={() => void reviewNow()}
                 disabled={ackMut.isPending}
-                className="w-full h-20 rounded-2xl bg-primary text-primary-foreground text-2xl font-bold flex items-center justify-center gap-3 hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50 shadow-lg shadow-primary/25"
+                className="w-full h-16 md:h-20 rounded-2xl bg-primary text-primary-foreground text-xl md:text-2xl font-bold flex items-center justify-center gap-3 hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-50 shadow-lg shadow-primary/25"
               >
                 {ackMut.isPending ? <Loader2 className="w-7 h-7 animate-spin" /> : <ExternalLink className="w-8 h-8 flex-shrink-0" />}
                 Review now
