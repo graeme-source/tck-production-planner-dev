@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isLateName, isAbsenceReasonName } from "./attendance-classify";
+import { isLateName, isAbsenceReasonName, isSickName, countSickInstances } from "./attendance-classify";
 
 // Regression for the 2026-09-14 report bug: holiday accrual accounts were
 // rolling into "Total Absent" (and Planday's broken pagination multiplied
@@ -42,5 +42,60 @@ describe("isLateName", () => {
     expect(isLateName("Arrived late")).toBe(true);
     expect(isLateName("Sick Leave")).toBe(false);
     expect(isLateName(undefined)).toBe(false);
+  });
+});
+
+describe("isSickName", () => {
+  it("matches every sickness variant, nothing else", () => {
+    expect(isSickName("Sick Leave")).toBe(true);
+    expect(isSickName("Sick - paid")).toBe(true);
+    expect(isSickName("Sick - unpaid")).toBe(true);
+    expect(isSickName("Dependants Leave")).toBe(false);
+    expect(isSickName(undefined)).toBe(false);
+  });
+});
+
+describe("countSickInstances", () => {
+  it("no sick days is zero instances", () => {
+    expect(countSickInstances([], ["2026-09-01"])).toBe(0);
+  });
+
+  it("Mon-Wed off sick, back Thursday, is ONE instance", () => {
+    expect(countSickInstances(
+      ["2026-09-07", "2026-09-08", "2026-09-09"],
+      ["2026-09-10", "2026-09-11"],
+    )).toBe(1);
+  });
+
+  it("sick Friday, weekend off, sick Monday is still one instance", () => {
+    expect(countSickInstances(
+      ["2026-09-11", "2026-09-14"],
+      ["2026-09-09", "2026-09-10", "2026-09-15"],
+    )).toBe(1);
+  });
+
+  it("a worked shift between sick days splits the instance", () => {
+    expect(countSickInstances(
+      ["2026-09-07", "2026-09-09"],
+      ["2026-09-08"],
+    )).toBe(2);
+  });
+
+  it("10 days across three separated runs is three instances", () => {
+    expect(countSickInstances(
+      [
+        "2026-08-03", "2026-08-04", "2026-08-05",             // run 1 (3 days)
+        "2026-08-17", "2026-08-18", "2026-08-19", "2026-08-20", // run 2 (4 days)
+        "2026-09-01", "2026-09-02", "2026-09-03",             // run 3 (3 days)
+      ],
+      ["2026-08-06", "2026-08-10", "2026-08-24", "2026-08-25"],
+    )).toBe(3);
+  });
+
+  it("duplicate and unsorted dates don't double-count", () => {
+    expect(countSickInstances(
+      ["2026-09-08", "2026-09-07", "2026-09-08"],
+      [],
+    )).toBe(1);
   });
 });

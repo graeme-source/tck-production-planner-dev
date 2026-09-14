@@ -29,3 +29,34 @@ export function isAbsenceReasonName(name: string | undefined): boolean {
   if (n.includes("holiday")) return false;
   return n.includes("sick") || n.includes("absent") || n.includes("leave");
 }
+
+/** Any sickness shift type — "Sick Leave", "Sick - paid", "Sick - unpaid".
+ *  These consolidate into ONE "Sick leave" column plus an instances count
+ *  (Graeme, 2026-09-14). */
+export function isSickName(name: string | undefined): boolean {
+  if (!name) return false;
+  return name.toLowerCase().includes("sick");
+}
+
+/**
+ * Count sickness INSTANCES: 10 sick days might be 3 instances — Mon–Wed off
+ * sick then back Thursday is ONE instance, however many days it spanned
+ * (Graeme, 2026-09-14). A run of sick days stays one instance until a shift
+ * the person actually WORKED breaks it — so sick Friday, weekend off, sick
+ * Monday is still one instance, while sick Monday, worked Tuesday, sick
+ * Wednesday is two.
+ *
+ * `sickDates` and `workedDates` are ISO date strings (duplicates fine).
+ */
+export function countSickInstances(sickDates: string[], workedDates: string[]): number {
+  if (sickDates.length === 0) return 0;
+  const sick = [...new Set(sickDates)].sort();
+  const worked = [...new Set(workedDates)].sort();
+  let instances = 1;
+  for (let i = 1; i < sick.length; i++) {
+    const prev = sick[i - 1];
+    const cur = sick[i];
+    if (worked.some(w => w > prev && w < cur)) instances++;
+  }
+  return instances;
+}

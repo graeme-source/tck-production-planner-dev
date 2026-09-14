@@ -23,6 +23,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { FreshnessBadge } from "@/components/govee-freshness";
 import { IncidentDiaryTab } from "@/components/incident-diary";
 import { AttendanceFreshness } from "@/components/attendance-freshness";
+import { AttendanceAdminNotices } from "@/components/attendance-admin-notices";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -5071,6 +5072,8 @@ interface EmployeeAttendanceRow {
   totalShifts: number;
   lateShifts: number;
   totalAbsent: number;
+  sickDays?: number;
+  sickInstances?: number;
   shiftTypeCounts: Record<string, number>;
   absenceAccountCounts: Record<string, number>;
 }
@@ -5081,7 +5084,7 @@ interface AttendanceResponse {
   to: string;
   rows: EmployeeAttendanceRow[];
   unmatchedAppUsers: Array<{ userId: number; name: string; email: string }>;
-  unmatchedPlandayEmployees?: Array<{ plandayEmployeeId: number; name: string; email: string | null }>;
+  unmatchedPlandayEmployees?: Array<{ plandayEmployeeId: number; name: string; email: string | null; dismissed?: boolean }>;
   shiftTypeNames: string[];
   absenceAccountNames: string[];
   activeShiftTypeNames: string[];
@@ -5091,72 +5094,7 @@ interface AttendanceResponse {
   stale?: boolean;
 }
 
-function UnmatchedPlandayRow({ employee }: { employee: { plandayEmployeeId: number; name: string; email: string | null } }) {
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [role, setRole] = useState<"viewer" | "manager" | "admin">("viewer");
-
-  const invite = async () => {
-    if (!employee.email) {
-      toast({ title: "No email on Plan Day", description: "Add an email in Plan Day first, or create the user manually in Settings.", variant: "destructive" });
-      return;
-    }
-    setSending(true);
-    try {
-      const resp = await fetch(`${BASE}/api/auth/invites`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ email: employee.email, role }),
-      });
-      if (!resp.ok) {
-        const data = await resp.json().catch(() => ({}));
-        throw new Error(data.error ?? `HTTP ${resp.status}`);
-      }
-      setSent(true);
-      toast({ title: "Invite sent", description: `${employee.name} will get an email with a sign-up link. Their Plan Day record auto-links when they accept.` });
-    } catch (err) {
-      toast({ title: "Failed to send invite", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
-    } finally {
-      setSending(false);
-    }
-  };
-
-  return (
-    <div className="flex items-center justify-between gap-3 bg-background rounded-lg px-3 py-2">
-      <div className="min-w-0 flex-1">
-        <div className="font-medium truncate">{employee.name}</div>
-        <div className="text-xs text-muted-foreground truncate">
-          {employee.email ?? <span className="text-amber-600">no email on Plan Day</span>}
-        </div>
-      </div>
-      {!sent && (
-        <select
-          value={role}
-          onChange={e => setRole(e.target.value as "viewer" | "manager" | "admin")}
-          disabled={sending}
-          className="text-xs px-2 py-1 rounded-md bg-background border border-border"
-        >
-          <option value="viewer">Viewer</option>
-          <option value="manager">Manager</option>
-          <option value="admin">Admin</option>
-        </select>
-      )}
-      <button
-        onClick={invite}
-        disabled={sending || sent || !employee.email}
-        className={cn(
-          "text-xs px-3 py-1.5 rounded-md border transition-colors whitespace-nowrap",
-          sent
-            ? "bg-emerald-50 border-emerald-300 text-emerald-700"
-            : "bg-primary text-primary-foreground border-primary hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed",
-        )}
-      >
-        {sent ? "Invite sent" : sending ? "Sending…" : "Invite to planner"}
-      </button>
-    </div>
-  );
-}
+// UnmatchedPlandayRow moved to components/attendance-admin-notices.tsx (2026-09-14).
 
 function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
   const [data, setData] = useState<AttendanceResponse | null>(null);
@@ -5234,6 +5172,15 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
 
   return (
     <>
+      {/* Housekeeping (invite/unmatched) collapses to one line up here, out
+          of the report's way — expandable, and rows are dismissable
+          (Graeme, 2026-09-14). */}
+      <AttendanceAdminNotices
+        unmatchedAppUsers={data.unmatchedAppUsers}
+        unmatchedPlandayEmployees={data.unmatchedPlandayEmployees ?? []}
+        showUnlinked={showUnlinked}
+        onToggleUnlinked={() => setShowUnlinked(v => !v)}
+      />
       <AttendanceFreshness syncedAt={data.syncedAt ?? null} stale={!!data.stale} refreshing={loading} onRefresh={() => setRefreshNonce(n => n + 1)} />
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <SummaryCard
@@ -5256,36 +5203,6 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
         />
       </div>
 
-      {data.unmatchedAppUsers.length > 0 && (
-        <div className="bg-secondary/50 border border-border rounded-xl p-4 text-sm">
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <span className="font-medium">{data.unmatchedAppUsers.length}</span>{" "}
-              app user{data.unmatchedAppUsers.length === 1 ? "" : "s"} could not be matched to a Plan Day employee by email or name.
-            </div>
-            <button
-              onClick={() => setShowUnlinked(v => !v)}
-              className="text-xs px-2 py-1 rounded-md bg-background border border-border hover:bg-secondary transition-colors"
-            >
-              {showUnlinked ? "Hide unlinked" : "Show unlinked"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {data.unmatchedPlandayEmployees && data.unmatchedPlandayEmployees.length > 0 && (
-        <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-xl p-4 text-sm">
-          <div className="font-medium text-blue-900 dark:text-blue-200 mb-2">
-            {data.unmatchedPlandayEmployees.length} Plan Day employee{data.unmatchedPlandayEmployees.length === 1 ? "" : "s"} without a planner login
-          </div>
-          <div className="space-y-2">
-            {data.unmatchedPlandayEmployees.map(emp => (
-              <UnmatchedPlandayRow key={emp.plandayEmployeeId} employee={emp} />
-            ))}
-          </div>
-        </div>
-      )}
-
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -5295,6 +5212,8 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
                 <th className="text-right px-3 py-3 font-medium text-muted-foreground">Total shifts</th>
                 <th className="text-right px-3 py-3 font-medium text-rose-700">Total absent</th>
                 <th className="text-right px-2 py-3 font-medium text-rose-700/70 text-xs">%</th>
+                <th className="text-right px-3 py-3 font-medium text-rose-700 whitespace-nowrap">Sick leave</th>
+                <th className="text-right px-2 py-3 font-medium text-rose-700/70 text-xs whitespace-nowrap">Instances</th>
                 {activeShiftTypes.map(name => (
                   <Fragment key={`sh:${name}`}>
                     <th
@@ -5328,7 +5247,7 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
             <tbody>
               {rowsToShow.length === 0 && (
                 <tr>
-                  <td colSpan={4 + activeShiftTypes.length * 2 + activeAbsenceAccounts.length * 2} className="text-center text-muted-foreground py-8">
+                  <td colSpan={6 + activeShiftTypes.length * 2 + activeAbsenceAccounts.length * 2} className="text-center text-muted-foreground py-8">
                     No employees to show.
                   </td>
                 </tr>
@@ -5354,6 +5273,12 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
                   </td>
                   <td className="px-2 py-3 text-right tabular-nums">
                     {fmtPct(r.totalAbsent, r.totalShifts)}
+                  </td>
+                  <td className={cn("px-3 py-3 text-right tabular-nums", (r.sickDays ?? 0) > 0 ? "text-rose-700 font-medium" : "text-muted-foreground")}>
+                    {r.sickDays ?? 0}
+                  </td>
+                  <td className={cn("px-2 py-3 text-right tabular-nums", (r.sickInstances ?? 0) > 0 ? "text-rose-700" : "text-muted-foreground")}>
+                    {r.sickInstances ?? 0}
                   </td>
                   {activeShiftTypes.map(name => {
                     const n = r.shiftTypeCounts?.[name] ?? 0;
