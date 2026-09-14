@@ -24,6 +24,7 @@ import {
   isPlandayConfigured,
 } from "../services/planday";
 import { getAttendanceFromCache } from "../services/planday-attendance-cache";
+import { isLateName, isAbsenceReasonName } from "../services/attendance-classify";
 
 const router: IRouter = Router();
 
@@ -48,31 +49,11 @@ async function requireManager(req: Request, res: Response, next: NextFunction) {
 router.use(requireManager);
 
 // ── Classification helpers ─────────────────────────────────────────────────
-
-/**
- * The only special-cased category left — "Arrived late" still shows on the
- * summary cards because it's the headline metric managers look at. Every
- * other shift type / absence account is returned verbatim so the frontend
- * can render one column per type.
- */
-function isLateName(name: string | undefined): boolean {
-  if (!name) return false;
-  return name.toLowerCase().includes("late");
-}
-
-/**
- * Unpaid shift types (Absent, Sick Leave, Dependants Leave, Emergency Leave)
- * roll up into the Total Absent count. Paid absences (e.g. "Holiday with Pay")
- * don't. Heuristic: any shift type whose name contains "absent", "sick", or
- * "leave" is unpaid EXCEPT when the name also mentions "pay" / "paid", which
- * catches Planday's "Holiday (with Pay)" convention.
- */
-function isUnpaidAbsenceName(name: string | undefined): boolean {
-  if (!name) return false;
-  const n = name.toLowerCase();
-  if (n.includes("with pay") || n.includes("paid")) return false;
-  return n.includes("absent") || n.includes("sick") || n.includes("leave");
-}
+// isAbsenceReasonName / isLateName live in services/attendance-classify.ts:
+// "absent" means a REASON someone wasn't at work (sickness paid or unpaid,
+// Absent, dependants/emergency leave) — holiday and holiday accrual accounts
+// never count, and Meeting/Training/Holiday columns aren't shown at all
+// (Graeme, 2026-09-14).
 
 function daysBetweenInclusive(start: string, end: string): number {
   const s = new Date(start).getTime();
@@ -264,17 +245,21 @@ router.get("/attendance", async (req: Request, res: Response) => {
     if (name) {
       c.shiftTypes.set(name, (c.shiftTypes.get(name) ?? 0) + 1);
       if (isLateName(name)) c.late += 1;
-      if (isUnpaidAbsenceName(name)) c.totalAbsent += 1;
+      if (isAbsenceReasonName(name)) c.totalAbsent += 1;
     }
   }
 
   // Absence records — for setups that use the Absence API instead of (or in
   // addition to) shift types. Each registration day within the range is one
-  // absence day, bucketed by its account name. All absence accounts count as
-  // "absent" here — if you're bothering to record it as an absence, it is one.
+  // absence day, bucketed by its account name. Only accounts that describe
+  // an absence REASON count: in this Planday the absence API is almost all
+  // per-employee holiday accrual accounts, and holiday is planned time off,
+  // not absence — counting it made "Total Absent" nonsense (2026-09-14).
+  // Declined requests never count; pending ones do, so absence shows up
+  // before the approval paperwork catches up.
   for (const r of absenceRecords) {
     if (r.employeeId == null) continue;
-    if (r.status !== "Approved") continue;
+    if (r.status === "Declined") continue;
 
     const c = getCounts(r.employeeId);
 
@@ -283,14 +268,18 @@ router.get("/attendance", async (req: Request, res: Response) => {
         if (!reg.date) continue;
         if (reg.date < from || reg.date > to) continue;
         const accName = reg.account?.id != null ? absenceAccountName.get(reg.account.id) : undefined;
-        if (!accName) continue;
+        if (!accName) {
+          if (reg.account?.id != null) console.warn(`[employees/attendance] absence record ${r.id} references unknown account ${reg.account.id} — skipped`);
+          continue;
+        }
+        if (!isAbsenceReasonName(accName)) continue;
         c.absenceAccounts.set(accName, (c.absenceAccounts.get(accName) ?? 0) + 1);
         c.totalAbsent += 1;
       }
     } else if (r.absencePeriod?.start && r.absencePeriod.end) {
       const firstAccId = r.registrations?.[0]?.account?.id;
       const accName = firstAccId != null ? absenceAccountName.get(firstAccId) : undefined;
-      if (!accName) continue;
+      if (!accName || !isAbsenceReasonName(accName)) continue;
       const days = clampToRange(r.absencePeriod.start, r.absencePeriod.end, from, to);
       if (days <= 0) continue;
       c.absenceAccounts.set(accName, (c.absenceAccounts.get(accName) ?? 0) + days);
@@ -335,12 +324,15 @@ router.get("/attendance", async (req: Request, res: Response) => {
   const shiftTypeNames = Array.from(new Set(shiftTypes.map(s => s.name))).sort();
   const absenceAccountNames = Array.from(new Set(absenceAccounts.map(a => a.name))).sort();
 
-  // Every configured Plan Day shift type gets a column, even at zero. That
-  // way "Sick Leave" doesn't vanish from the table during a healthy week —
-  // managers need to see the zero to know they looked. Absence accounts
-  // are sparser (Plan Day ships dozens by default, most unused) so we
-  // still only show ones with activity in the range.
-  const activeShiftTypeNames = Array.from(new Set(shiftTypes.map(t => t.name))).sort();
+  // Columns: absence reasons and "Arrived late" only — the report answers
+  // "how much was someone absent and why", so Holiday (with Pay), Meeting
+  // and Training columns aren't shown (Graeme, 2026-09-14). Absence-reason
+  // columns always appear, even at zero: "Sick Leave" mustn't vanish from
+  // the table during a healthy week — managers need to see the zero to know
+  // they looked. Absence accounts only show reason-y ones with activity.
+  const activeShiftTypeNames = Array.from(new Set(
+    shiftTypes.map(t => t.name).filter(n => isAbsenceReasonName(n) || isLateName(n)),
+  )).sort();
   const activeAbsenceAccountSet = new Set<string>();
   for (const r of rows) {
     if (!r.linked) continue;
@@ -350,11 +342,13 @@ router.get("/attendance", async (req: Request, res: Response) => {
   }
   const activeAbsenceAccountNames = Array.from(activeAbsenceAccountSet).sort();
 
-  // Classify every shift type once, so the frontend can mark unpaid columns
-  // and match backend rollup behaviour without re-implementing the heuristic.
+  // Classify every shift type once, so the frontend can mark absence columns
+  // red and match backend rollup behaviour without re-implementing the
+  // heuristic. (Field keeps its historical name; it now means "counts toward
+  // Total Absent".)
   const shiftTypeIsUnpaid: Record<string, boolean> = {};
   for (const name of activeShiftTypeNames) {
-    shiftTypeIsUnpaid[name] = isUnpaidAbsenceName(name);
+    shiftTypeIsUnpaid[name] = isAbsenceReasonName(name);
   }
 
   const response: AttendanceResponse = {
