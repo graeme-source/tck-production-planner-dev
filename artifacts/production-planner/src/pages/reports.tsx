@@ -5102,7 +5102,7 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
   const [loading, setLoading] = useState(true);
   const [showUnlinked, setShowUnlinked] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
-  const [sickModal, setSickModal] = useState<{ userId: number; userName: string } | null>(null);
+  const [sickModal, setSickModal] = useState<{ userId: number; userName: string; filter?: "all" | "sick" | "late" | "absence" } | null>(null);
 
   useEffect(() => {
     if (!fromDate || !toDate) return;
@@ -5293,6 +5293,9 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
                   {activeShiftTypes.map(name => {
                     const n = r.shiftTypeCounts?.[name] ?? 0;
                     const isUnpaid = unpaidMap[name];
+                    // Late and absence counts open the same attendance
+                    // timeline as the sick numbers, pre-filtered.
+                    const cellFilter = name.toLowerCase().includes("late") ? "late" as const : "absence" as const;
                     return (
                       <Fragment key={`sh:${name}`}>
                         <td
@@ -5303,7 +5306,11 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
                             n === 0 && "text-muted-foreground",
                           )}
                         >
-                          {n}
+                          {n > 0 ? (
+                            <button onClick={() => setSickModal({ userId: r.userId, userName: r.userName, filter: cellFilter })} className="underline decoration-dotted underline-offset-2 hover:decoration-solid" title="See the dates on the attendance timeline">
+                              {n}
+                            </button>
+                          ) : n}
                         </td>
                         <td className="px-2 py-3 text-right tabular-nums">
                           {fmtPct(n, r.totalShifts)}
@@ -5360,7 +5367,7 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
         </details>
       )}
       {sickModal && (
-        <SickLeaveModal userId={sickModal.userId} userName={sickModal.userName} fromDate={fromDate} onClose={() => setSickModal(null)} />
+        <SickLeaveModal userId={sickModal.userId} userName={sickModal.userName} fromDate={fromDate} initialFilter={sickModal.filter ?? "sick"} onClose={() => setSickModal(null)} />
       )}
     </>
   );

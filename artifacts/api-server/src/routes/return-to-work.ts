@@ -12,7 +12,7 @@ import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { validate } from "../middleware/validate";
 import { hasRtwManagerAccess, canAccessRtwUser } from "../middleware/rtw-access";
-import { sickSpellsForUser, dueSpells } from "../lib/rtw-detect";
+import { sickSpellsForUser, dueSpells, attendanceEventsForUser } from "../lib/rtw-detect";
 
 const router: IRouter = Router();
 
@@ -96,7 +96,10 @@ router.get("/user/:userId", async (req: Request, res: Response) => {
   const from = /^\d{4}-\d{2}-\d{2}$/.test(fromRaw) ? fromRaw : undefined;
   const rows = await db.execute<FormRow>(sql`${formSelect} WHERE f.user_id = ${subjectId} ORDER BY f.absence_start DESC`);
   const spells = await sickSpellsForUser(subjectId, from).catch(() => []);
-  res.json({ forms: rows.rows.map(shapeForm), spells });
+  // Lates + non-sick absences, so the modal can show one chronological
+  // attendance timeline (Graeme, 2026-09-14).
+  const events = await attendanceEventsForUser(subjectId, from).catch(() => []);
+  res.json({ forms: rows.rows.map(shapeForm), spells, events });
 });
 
 // GET /form/:id — one form in full.

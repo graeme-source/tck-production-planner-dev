@@ -8,7 +8,7 @@
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { getPlandayShiftTypes } from "../services/planday";
-import { isSickName, isAbsenceReasonName, sickRuns } from "../services/attendance-classify";
+import { isSickName, isAbsenceReasonName, isLateName, sickRuns } from "../services/attendance-classify";
 
 export interface SickSpell {
   start: string;
@@ -106,4 +106,44 @@ export async function sickSpellsForUsers(appUserIds: number[] | null, fromIso?: 
 /** Spells that owe a form: the person is back and nothing covers the dates. */
 export function dueSpells(spells: SickSpell[]): SickSpell[] {
   return spells.filter(s => s.returned && s.formId == null);
+}
+
+export interface AttendanceEvent {
+  date: string;
+  kind: "late" | "absence";
+  /** The Planday shift type name — "Arrived late", "Absent",
+   *  "Dependants Leave", "Emergency Leave"… shown verbatim. */
+  label: string;
+}
+
+/**
+ * Non-sickness attendance events for ONE user over the window — lates and
+ * absence-reason shifts (sickness excluded: it's covered by the spells).
+ * Feeds the attendance timeline modal (Graeme, 2026-09-14: one
+ * chronological view of an employee's sick leave, lates and absences).
+ */
+export async function attendanceEventsForUser(appUserId: number, fromIso?: string): Promise<AttendanceEvent[]> {
+  const from = fromIso ?? daysAgoIso(WINDOW_DAYS);
+  const users = await db.execute<{ planday_employee_id: number | null }>(sql`
+    SELECT planday_employee_id FROM app_users WHERE id = ${appUserId} LIMIT 1
+  `);
+  const plandayId = users.rows[0]?.planday_employee_id;
+  if (plandayId == null) return [];
+
+  const shiftTypes = await getPlandayShiftTypes();
+  const typeName = new Map(shiftTypes.map(t => [t.id, t.name]));
+
+  const shifts = await db.execute<{ shift_type_id: number | null; date: string }>(sql`
+    SELECT shift_type_id, date::text FROM planday_shifts_cache
+    WHERE date >= ${from} AND employee_id = ${plandayId} AND shift_type_id IS NOT NULL
+  `);
+
+  const events: AttendanceEvent[] = [];
+  for (const s of shifts.rows) {
+    const name = typeName.get(Number(s.shift_type_id));
+    if (!name || isSickName(name)) continue;
+    if (isLateName(name)) events.push({ date: s.date.slice(0, 10), kind: "late", label: name });
+    else if (isAbsenceReasonName(name)) events.push({ date: s.date.slice(0, 10), kind: "absence", label: name });
+  }
+  return events.sort((a, b) => b.date.localeCompare(a.date));
 }

@@ -1,19 +1,21 @@
 /**
- * Sick-leave drill-down for the Employee Records report (Graeme,
- * 2026-09-14): click a sick number → every INSTANCE for that person (dates,
- * length, reason from the return-to-work form when one exists) → click an
- * instance to read the full report. Privacy is enforced server-side: only
- * the colleague and the named RTW managers get content — anyone else gets
- * the door held politely shut.
+ * Attendance timeline for the Employee Records report (Graeme, 2026-09-14):
+ * click a sick, instance or late number → ONE chronological history of the
+ * person's sick-leave spells, lates and absences, clearly labelled and
+ * filterable. Sick spells carry their return-to-work reason inline and open
+ * the full report; bare spells offer the quick "Add reason" back-fill.
+ * Privacy is enforced server-side: only the colleague and the named RTW
+ * managers get content — anyone else gets the door held politely shut.
  * Closable + viewport-fit per the standing modal rule.
  */
 import { useEffect, useState } from "react";
-import { X, Loader2, HeartPulse, ChevronRight, ChevronLeft, Lock, PenLine, CheckCircle2 } from "lucide-react";
+import { X, Loader2, HeartPulse, ChevronRight, ChevronLeft, Lock, PenLine, CheckCircle2, Clock, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface SickSpell { start: string; end: string; days: number; returned: boolean; formId: number | null; formStatus: string | null }
+interface AttendanceEvent { date: string; kind: "late" | "absence"; label: string }
 interface RtwForm {
   id: number; userId: number; userName: string | null;
   absenceStart: string; absenceEnd: string | null; returnDate: string | null;
@@ -22,6 +24,8 @@ interface RtwForm {
   managerName: string | null; colleagueSignedAt: string | null; managerSignedAt: string | null;
   status: string;
 }
+
+export type TimelineFilter = "all" | "sick" | "late" | "absence";
 
 const fmtDay = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
 const fmtRange = (s: string, e: string | null) => (!e || e === s) ? fmtDay(s) : `${fmtDay(s)} – ${fmtDay(e)}`;
@@ -90,10 +94,22 @@ function QuickAddReason({ userId, spell, onSaved }: {
   );
 }
 
-export function SickLeaveModal({ userId, userName, fromDate, onClose }: { userId: number; userName: string; fromDate?: string; onClose: () => void }) {
-  const [data, setData] = useState<{ forms: RtwForm[]; spells: SickSpell[] } | null>(null);
+type TimelineItem =
+  | { sortKey: string; kind: "sick"; spell: SickSpell }
+  | { sortKey: string; kind: "sick-form"; form: RtwForm }
+  | { sortKey: string; kind: "late" | "absence"; event: AttendanceEvent };
+
+export function SickLeaveModal({ userId, userName, fromDate, initialFilter = "all", onClose }: {
+  userId: number;
+  userName: string;
+  fromDate?: string;
+  initialFilter?: TimelineFilter;
+  onClose: () => void;
+}) {
+  const [data, setData] = useState<{ forms: RtwForm[]; spells: SickSpell[]; events?: AttendanceEvent[] } | null>(null);
   const [denied, setDenied] = useState(false);
   const [detail, setDetail] = useState<RtwForm | null>(null);
+  const [filter, setFilter] = useState<TimelineFilter>(initialFilter);
 
   const load = () =>
     fetch(`${BASE}/api/return-to-work/user/${userId}${fromDate ? `?from=${fromDate}` : ""}`, { credentials: "include" })
@@ -111,6 +127,36 @@ export function SickLeaveModal({ userId, userName, fromDate, onClose }: { userId
   };
 
   const formsById = new Map((data?.forms ?? []).map(f => [f.id, f]));
+  const spellFormIds = new Set((data?.spells ?? []).map(s => s.formId).filter(Boolean));
+
+  // One chronological ledger, newest first: sick spells, orphan forms
+  // (dates outside the window, e.g. hand-recorded history), lates, absences.
+  const items: TimelineItem[] = [
+    ...(data?.spells ?? []).map(spell => ({ sortKey: spell.end, kind: "sick" as const, spell })),
+    ...(data?.forms ?? []).filter(f => !spellFormIds.has(f.id))
+      .map(form => ({ sortKey: form.absenceEnd ?? form.absenceStart, kind: "sick-form" as const, form })),
+    ...(data?.events ?? []).map(event => ({ sortKey: event.date, kind: event.kind, event })),
+  ].sort((a, b) => b.sortKey.localeCompare(a.sortKey));
+
+  const counts = {
+    sick: items.filter(i => i.kind === "sick" || i.kind === "sick-form").length,
+    late: items.filter(i => i.kind === "late").length,
+    absence: items.filter(i => i.kind === "absence").length,
+  };
+  const visible = items.filter(i =>
+    filter === "all" ? true :
+    filter === "sick" ? (i.kind === "sick" || i.kind === "sick-form") :
+    i.kind === filter);
+
+  const chip = (key: TimelineFilter, label: string, count?: number) => (
+    <button key={key} onClick={() => setFilter(key)}
+      className={cn(
+        "px-3 py-1.5 rounded-full text-xs font-bold border-2 transition-colors",
+        filter === key ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground hover:text-foreground",
+      )}>
+      {label}{count != null ? ` ${count}` : ""}
+    </button>
+  );
 
   return (
     <div className="fixed inset-0 z-[120] bg-black/70 flex items-center justify-center p-3 md:p-8" onClick={onClose}>
@@ -124,12 +170,12 @@ export function SickLeaveModal({ userId, userName, fromDate, onClose }: { userId
           </div>
           <div className="flex-1 min-w-0">
             <h2 className="font-display font-bold text-lg leading-tight truncate">
-              {detail ? fmtRange(detail.absenceStart, detail.absenceEnd) : `Sick leave — ${userName}`}
+              {detail ? fmtRange(detail.absenceStart, detail.absenceEnd) : `Attendance — ${userName}`}
             </h2>
             <p className="text-xs text-muted-foreground flex items-center gap-1"><Lock className="w-3 h-3" /> Private — colleague, Graeme and Lorna only</p>
           </div>
           {detail && (
-            <button onClick={() => setDetail(null)} className="p-2 rounded-lg hover:bg-secondary" aria-label="Back to instances">
+            <button onClick={() => setDetail(null)} className="p-2 rounded-lg hover:bg-secondary" aria-label="Back to timeline">
               <ChevronLeft className="w-5 h-5" />
             </button>
           )}
@@ -141,7 +187,7 @@ export function SickLeaveModal({ userId, userName, fromDate, onClose }: { userId
         <div className="flex-1 overflow-y-auto p-5 space-y-3">
           {denied ? (
             <p className="text-muted-foreground text-sm">
-              Return-to-work records are private — only the colleague themselves, Graeme and Lorna can read them.
+              Attendance records here include return-to-work reports, which are private — only the colleague themselves, Graeme and Lorna can read them.
             </p>
           ) : detail ? (
             <div className="space-y-4 text-sm">
@@ -166,11 +212,55 @@ export function SickLeaveModal({ userId, userName, fromDate, onClose }: { userId
             </div>
           ) : data == null ? (
             <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
-          ) : data.spells.length === 0 && data.forms.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No sick leave in the last few months, and no reports on file.</p>
+          ) : items.length === 0 ? (
+            <p className="text-muted-foreground text-sm">Nothing on record in this date range — no sick leave, lates or absences.</p>
           ) : (
             <>
-              {data.spells.map(spell => {
+              <div className="flex flex-wrap gap-2">
+                {chip("all", "All", items.length)}
+                {chip("sick", "Sick leave", counts.sick)}
+                {chip("late", "Late", counts.late)}
+                {chip("absence", "Absence", counts.absence)}
+              </div>
+
+              {visible.map((item, idx) => {
+                if (item.kind === "late" || item.kind === "absence") {
+                  const isLate = item.kind === "late";
+                  return (
+                    <div key={`${item.kind}-${item.event.date}-${idx}`}
+                      className="w-full rounded-xl border border-border bg-background px-3.5 py-2.5 flex items-center gap-3">
+                      {isLate
+                        ? <Clock className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                        : <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0" />}
+                      <p className="min-w-0 flex-1 text-sm"><span className="font-semibold">{fmtDay(item.event.date)}</span></p>
+                      <span className={cn(
+                        "text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0",
+                        isLate ? "bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300"
+                          : "bg-rose-100 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300",
+                      )}>
+                        {item.event.label}
+                      </span>
+                    </div>
+                  );
+                }
+                if (item.kind === "sick-form") {
+                  const f = item.form;
+                  return (
+                    <button key={`f${f.id}`} onClick={() => openDetail(f.id)}
+                      className="w-full text-left rounded-xl border-2 border-border bg-background p-3.5 flex items-center gap-3 hover:border-primary/50 transition-colors">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold">{fmtRange(f.absenceStart, f.absenceEnd)}</p>
+                        <p className="text-sm text-muted-foreground line-clamp-2">
+                          {f.reasonCategory ?? "Report"}{f.reasonDetails ? ` — ${f.reasonDetails}` : ""}{f.status !== "complete" ? " (draft)" : ""}
+                        </p>
+                      </div>
+                      <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 flex-shrink-0">Sick leave</span>
+                      <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+                    </button>
+                  );
+                }
+                if (item.kind !== "sick") return null;
+                const spell = item.spell;
                 const form = spell.formId != null ? formsById.get(spell.formId) : undefined;
                 if (spell.formId == null) {
                   return (
@@ -180,6 +270,7 @@ export function SickLeaveModal({ userId, userName, fromDate, onClose }: { userId
                           <p className="font-semibold">{fmtRange(spell.start, spell.end)} · {spell.days} day{spell.days !== 1 ? "s" : ""}</p>
                           <p className="text-sm text-muted-foreground truncate">No return-to-work report yet</p>
                         </div>
+                        <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 flex-shrink-0">Sick leave</span>
                         <QuickAddReason userId={userId} spell={spell} onSaved={() => void load()} />
                       </div>
                     </div>
@@ -193,32 +284,19 @@ export function SickLeaveModal({ userId, userName, fromDate, onClose }: { userId
                   >
                     <div className="min-w-0 flex-1">
                       <p className="font-semibold">{fmtRange(spell.start, spell.end)} · {spell.days} day{spell.days !== 1 ? "s" : ""}</p>
-                      {/* The note rides along so Graeme can scan for a
-                          recurring illness without opening each report. */}
+                      {/* The note rides along so a scan reads the actual
+                          reasons, not just the category. */}
                       <p className="text-sm text-muted-foreground line-clamp-2">
                         {form?.reasonCategory
                           ? `${form.reasonCategory}${form.reasonDetails ? ` — ${form.reasonDetails}` : ""}${form.status !== "complete" ? " (draft)" : ""}`
                           : "Report started — no reason recorded yet"}
                       </p>
                     </div>
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 flex-shrink-0">Sick leave</span>
                     <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
                   </button>
                 );
               })}
-              {/* Forms whose dates fall outside the detection window (e.g.
-                  historical ones Graeme back-fills) still deserve a row. */}
-              {data.forms.filter(f => !data.spells.some(s => s.formId === f.id)).map(f => (
-                <button key={`f${f.id}`} onClick={() => openDetail(f.id)}
-                  className="w-full text-left rounded-xl border-2 border-border bg-background p-3.5 flex items-center gap-3 hover:border-primary/50 transition-colors">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-semibold">{fmtRange(f.absenceStart, f.absenceEnd)}</p>
-                    <p className="text-sm text-muted-foreground line-clamp-2">
-                      {f.reasonCategory ?? "Report"}{f.reasonDetails ? ` — ${f.reasonDetails}` : ""}{f.status !== "complete" ? " (draft)" : ""}
-                    </p>
-                  </div>
-                  <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
-                </button>
-              ))}
               <a href={`${BASE}/return-to-work?user=${userId}`}
                 className="block text-center text-sm font-semibold text-primary hover:underline pt-1">
                 Open {userName.split(" ")[0]}'s return-to-work page →
