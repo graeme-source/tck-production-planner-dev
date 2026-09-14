@@ -1629,13 +1629,9 @@ export default function Fulfilment() {
       document.querySelector<HTMLInputElement>('input[data-scan-input="true"]')?.focus();
     });
   }
-  const remainingToPack = progress ? progress.totalOrders - progress.totalFulfilled : null;
-  const showShrinkWrapPrompt = shouldPromptShrinkWrap({
-    totalOrders: progress?.totalOrders ?? null,
-    totalFulfilled: progress?.totalFulfilled ?? null,
-    view,
-    acknowledged: shrinkWrapAcked,
-  });
+  // remainingToPack / showShrinkWrapPrompt are derived AFTER the fridge gate
+  // below — the prompt counts orders packable right now, not the day's raw
+  // remainder (Graeme, 2026-09-14).
 
   // ── Kiosk-printing watchdog ──────────────────────────────────────────────
   // printLabel dispatches this event when a print() call blocked long enough
@@ -1830,6 +1826,21 @@ export default function Fulfilment() {
   // order allocating wrapped fridge stock; held orders' unmet demand is the
   // wrap-deficit readout.
   const fridgeAllocation = computeFridgeAllocation(labelledOrdered, fridgeGate ? fridgeAvailability : null);
+
+  // Shrink-wrap prompt: count orders we can PACK RIGHT NOW — after the
+  // fridge gate, before the wave filters (a narrowed wave mustn't fire the
+  // prompt early). An order the gate holds doesn't extend the packing
+  // runway; it already means the wrapper is needed. 120 orders with 105
+  // coverable prompts at 90 packed, not 105 (Graeme, 2026-09-14).
+  const dayLabelled = [...collectionsForList, ...unfulfilledOrders].filter(o => !lacksLabel(o));
+  const remainingToPack = orders != null
+    ? computeFridgeAllocation(dayLabelled, fridgeGate ? fridgeAvailability : null).pickable.length
+    : null;
+  const showShrinkWrapPrompt = shouldPromptShrinkWrap({
+    remainingPackable: remainingToPack,
+    view,
+    acknowledged: shrinkWrapAcked,
+  });
   // Held orders drop out of the pickable list entirely, so the picking
   // cycle, counts, and advance-to-next all respect the gate automatically.
   const filteredUnfulfilled = fridgeAllocation.pickable;

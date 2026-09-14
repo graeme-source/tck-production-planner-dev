@@ -23,19 +23,24 @@ export const SHRINK_WRAP_REMAINING_THRESHOLD = 15;
  *  someone walk to the wrapper would be noise. */
 const PACKING_CYCLE_VIEWS = new Set(["picking", "pre-confirm", "confirm"]);
 
-export function shouldPromptShrinkWrap({ totalOrders, totalFulfilled, view, acknowledged }: {
-  totalOrders: number | null | undefined;
-  totalFulfilled: number | null | undefined;
+/**
+ * `remainingPackable` is the count of orders still PACKABLE RIGHT NOW —
+ * after the fridge gate, not the day's raw remainder (Graeme, 2026-09-14):
+ * an order the fridge can't cover doesn't extend the packing runway — it
+ * already means wrapping (and therefore the wrapper) is needed. 120 orders
+ * with only 105 coverable prompts at 90 packed, not 105.
+ */
+export function shouldPromptShrinkWrap({ remainingPackable, view, acknowledged }: {
+  remainingPackable: number | null | undefined;
   view: string;
   acknowledged: boolean;
 }): boolean {
   if (acknowledged) return false;
   if (!PACKING_CYCLE_VIEWS.has(view)) return false;
-  if (totalOrders == null || totalFulfilled == null || totalOrders <= 0) return false;
-  const remaining = totalOrders - totalFulfilled;
-  // A wave that STARTS at 15 or fewer orders still prompts (on the first
-  // order opened): the wrapper needs switching on immediately in that case.
-  return remaining > 0 && remaining <= SHRINK_WRAP_REMAINING_THRESHOLD;
+  if (remainingPackable == null) return false;
+  // A wave that STARTS at 15 or fewer packable orders still prompts (on the
+  // first order opened): the wrapper needs switching on immediately then.
+  return remainingPackable > 0 && remainingPackable <= SHRINK_WRAP_REMAINING_THRESHOLD;
 }
 
 /** With --kiosk-printing, print() spools the job and returns within

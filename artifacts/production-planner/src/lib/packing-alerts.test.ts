@@ -7,22 +7,24 @@ import {
 } from "./packing-alerts";
 
 describe("shouldPromptShrinkWrap", () => {
-  const base = { totalOrders: 100, totalFulfilled: 85, view: "picking", acknowledged: false };
+  // remainingPackable is post-fridge-gate (Graeme, 2026-09-14): 120 orders
+  // with only 105 coverable prompts once the PACKABLE remainder hits 15.
+  const base = { remainingPackable: 15, view: "picking", acknowledged: false };
 
-  it("fires at exactly 15 orders remaining", () => {
+  it("fires at exactly 15 packable orders remaining", () => {
     expect(shouldPromptShrinkWrap(base)).toBe(true);
   });
 
-  it("stays quiet at 16 remaining", () => {
-    expect(shouldPromptShrinkWrap({ ...base, totalFulfilled: 84 })).toBe(false);
+  it("stays quiet at 16 packable remaining", () => {
+    expect(shouldPromptShrinkWrap({ ...base, remainingPackable: 16 })).toBe(false);
   });
 
   it("fires all the way down to 1 remaining", () => {
-    expect(shouldPromptShrinkWrap({ ...base, totalFulfilled: 99 })).toBe(true);
+    expect(shouldPromptShrinkWrap({ ...base, remainingPackable: 1 })).toBe(true);
   });
 
   it("stays quiet once the wave is done — nothing left to warm up for", () => {
-    expect(shouldPromptShrinkWrap({ ...base, totalFulfilled: 100 })).toBe(false);
+    expect(shouldPromptShrinkWrap({ ...base, remainingPackable: 0 })).toBe(false);
   });
 
   it("never fires after acknowledgement", () => {
@@ -42,16 +44,12 @@ describe("shouldPromptShrinkWrap", () => {
   });
 
   it("fires immediately for a wave that starts at or under the threshold", () => {
-    expect(shouldPromptShrinkWrap({ ...base, totalOrders: 12, totalFulfilled: 0 })).toBe(true);
+    expect(shouldPromptShrinkWrap({ ...base, remainingPackable: 12 })).toBe(true);
   });
 
-  it("stays quiet while progress hasn't loaded", () => {
-    expect(shouldPromptShrinkWrap({ ...base, totalOrders: null, totalFulfilled: null })).toBe(false);
-    expect(shouldPromptShrinkWrap({ ...base, totalOrders: undefined, totalFulfilled: undefined })).toBe(false);
-  });
-
-  it("stays quiet on an empty wave", () => {
-    expect(shouldPromptShrinkWrap({ ...base, totalOrders: 0, totalFulfilled: 0 })).toBe(false);
+  it("stays quiet while orders haven't loaded", () => {
+    expect(shouldPromptShrinkWrap({ ...base, remainingPackable: null })).toBe(false);
+    expect(shouldPromptShrinkWrap({ ...base, remainingPackable: undefined })).toBe(false);
   });
 
   it("threshold is 15 — the wrapper's measured warm-up in packing work", () => {
