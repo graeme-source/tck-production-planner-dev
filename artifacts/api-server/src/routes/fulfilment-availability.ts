@@ -37,7 +37,9 @@ const router: IRouter = Router();
 // "not stock-checked" (or worse, fail the fridge data that gates packing).
 const TRACKED_TTL_MS = 5 * 60_000;
 let trackedCache: { at: number; map: Record<string, number> } | null = null;
-async function shopifyTrackedVariants(): Promise<Record<string, number>> {
+/** Exported for /production-plans/calculate, which uses the same cached map
+ *  to show fried chicken's Shopify freezer stock as its Have figure. */
+export async function shopifyTrackedVariants(): Promise<Record<string, number>> {
   if (trackedCache && Date.now() - trackedCache.at < TRACKED_TTL_MS) return trackedCache.map;
   try {
     const map = trackedVariantMap(await getProducts());

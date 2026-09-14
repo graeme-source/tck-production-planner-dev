@@ -2357,7 +2357,10 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
     // dispatch = predicted end of day — the same formula the Create Plan
     // screen uses. Unclamped, so a genuine oversell shows as a negative.
     const wrapRemain = r.remainingWrappingPacksToday ?? 0;
-    const have = stockMode === "predicted" ? r.fridgeStock + wrapRemain : r.fridgeStock;
+    // Fried chicken stocks in the Shopify-tracked freezer, not the fridge —
+    // its Have is the Shopify on-hand figure (Graeme, 2026-09-14).
+    const baseStock = r.shopifyStock ?? r.fridgeStock;
+    const have = stockMode === "predicted" ? baseStock + wrapRemain : baseStock;
     const need = r.dispatch2RemainingQty ?? r.dispatch2Qty;
     const surplus = have - need;
     // Red when short (negative spare); amber when only 0–10 spare;
@@ -2377,7 +2380,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
     // must be added, or the warning compares tomorrow's orders against
     // today's make and cries wolf.
     const plannedAhead = tomorrowMode ? (plannedPacksById.get(r.recipeId) ?? 0) : 0;
-    const cover = r.fridgeStock + wrapRemain + plannedAhead - need;
+    const cover = baseStock + wrapRemain + plannedAhead - need;
     const prodTone: "ok" | "warn" | "bad" = cover < 0 ? "bad" : cover <= 10 ? "warn" : "ok";
     calcById.set(r.recipeId, { have, need, surplus, tone, cover, prodTone });
   }
@@ -2818,6 +2821,10 @@ interface CalcRecipeRow {
   // each bag removes (8 / packSize) 2-packs from what the day yields.
   eightPackBagCount: number;
   fridgeStock: number;
+  // Shopify on-hand for freezer-stocked recipes (fried chicken): those never
+  // enter the production fridge, so fridgeStock is always 0 for them — this
+  // is their real sellable stock. Null for fridge-stocked recipes.
+  shopifyStock?: number | null;
   // Predicted end-of-today fridge stock: what's in the fridge NOW, plus what
   // the wrapping station still has to push in, minus what fulfilment still has
   // to pull out — clamped at zero.

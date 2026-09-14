@@ -4,6 +4,7 @@ import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as driz
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
 import { FRIED_CHICKEN_CATEGORY } from "./fried-chicken";
+import { shopifyTrackedVariants } from "./fulfilment-availability";
 // Aliased: this file has its own in-handler requireManagerOrAdmin() helper
 // (returns boolean, used mid-handler) — the middleware form guards routes.
 import { requireManagerOrAdmin as requireManagerOrAdminMw } from "../middleware/roles";
@@ -1146,6 +1147,46 @@ export async function calculatePlanData(planDate: string) {
         color: cm.color,
         isCoreMenu: cm.isCoreMenu,
       });
+      dptRecipeIds.add(cm.id);
+    }
+  }
+
+  // Fried chicken recipes ride along even without a DPT row (Graeme,
+  // 2026-09-14): they're never DPT-planned, but the pack tables still need
+  // their orders and Shopify freezer stock — a variant missing here showed
+  // no stock position at all (Korean 1.2kg).
+  const friedChickenRows = await db
+    .select({
+      id: recipesTable.id,
+      name: recipesTable.name,
+      category: recipesTable.category,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+      packSize: recipesTable.packSize,
+      tinSize: recipesTable.tinSize,
+      maxBatchesPerTin: recipesTable.maxBatchesPerTin,
+      sopUrl: recipesTable.sopUrl,
+      color: recipesTable.color,
+      isCoreMenu: recipesTable.isCoreMenu,
+    })
+    .from(recipesTable)
+    .where(eq(recipesTable.category, FRIED_CHICKEN_CATEGORY));
+  for (const fc of friedChickenRows) {
+    if (!dptRecipeIds.has(fc.id)) {
+      dptRows.push({
+        recipeId: fc.id,
+        recipeName: fc.name,
+        recipeCategory: fc.category,
+        packsSold: 0,
+        isActive: true,
+        portionsPerBatch: fc.portionsPerBatch,
+        packSize: fc.packSize,
+        tinSize: fc.tinSize,
+        maxBatchesPerTin: fc.maxBatchesPerTin,
+        sopUrl: fc.sopUrl,
+        color: fc.color,
+        isCoreMenu: fc.isCoreMenu,
+      });
+      dptRecipeIds.add(fc.id);
     }
   }
 
@@ -1291,6 +1332,15 @@ export async function calculatePlanData(planDate: string) {
 
   const totalDptPacksSold = dptRows.reduce((s, x) => s + (x.packsSold ?? 0), 0);
 
+  // Fried chicken never enters the production fridge — its sellable stock is
+  // the Shopify-tracked freezer inventory (Graeme, 2026-09-14). Same cached
+  // map the fridge gate uses; only fetched when the day actually has fried
+  // chicken recipes.
+  const shopifyStockLevels: Record<string, number> =
+    dptRows.some(r => (r.recipeCategory ?? "") === FRIED_CHICKEN_CATEGORY)
+      ? await shopifyTrackedVariants()
+      : {};
+
   const recipesWithData = dptRows.map(r => {
     const recipeName = r.recipeName ?? `Recipe #${r.recipeId}`;
     const recipeId = r.recipeId;
@@ -1305,6 +1355,12 @@ export async function calculatePlanData(planDate: string) {
     const bagPackEquivalents = plannedBags * (8 / packSize);
 
     const fridgeStock = latestStock[recipeId] ?? fridgeStockFromPlans[recipeId] ?? 0;
+
+    // Shopify on-hand for freezer-stocked (fried chicken) recipes — the
+    // figure the pack tables show as Have instead of the always-zero fridge.
+    const shopifyStock = (r.recipeCategory ?? "") === FRIED_CHICKEN_CATEGORY && recipeToVariantIds.has(recipeId)
+      ? (recipeToVariantIds.get(recipeId) ?? []).reduce((s, vid) => s + (shopifyStockLevels[vid] ?? 0), 0)
+      : null;
 
     const recipeDptPercent = totalDptPacksSold > 0 ? ((r.packsSold ?? 0) / totalDptPacksSold) * 100 : 0;
     const dptDailyPacks = Math.round((recipeDptPercent / 100) * totalDailyBatches * packsPerBatch);
@@ -1412,6 +1468,7 @@ export async function calculatePlanData(planDate: string) {
       color: r.color ?? null,
       isCoreMenu: isCore,
       fridgeStock: Math.round(fridgeStock),
+      shopifyStock,
       stockCheckedAt: latestStockCheckedAt[recipeId]?.toISOString() ?? null,
       predictedFridgeStock,
       remainingWrappingPacksToday: Math.round(wrapRemain),
