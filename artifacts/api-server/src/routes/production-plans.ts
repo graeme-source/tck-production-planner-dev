@@ -5948,10 +5948,10 @@ router.post("/:id/items/:itemId/manual-batch", async (req, res) => {
 // PATCH /:id/items/:itemId/wrapping-complete — toggle wrapping done for a plan item.
 // When completing (complete=true):
 //   • Reads freezerQty from the item BEFORE any updates (used as Shopify delta base).
-//   • Auto-freezes wonky (reject) packs to production_freezer stock; also zeroes
-//     wonlyCount and updates freezerQty so /wonky-to-freezer cannot double-count.
-//   • If a Shopify mapping exists, always adjusts Shopify inventory by
-//     (pre-update freezerQty + wonkyFrozen) — computed server-side, no client value.
+//   • Wonky packs are NOT auto-frozen (removed 2026-09-14) — they stay on the
+//     Wonky Rack until the team transfers them via /wonky-to-freezer.
+//   • If a Shopify mapping exists, always adjusts Shopify inventory by the
+//     pre-update freezerQty — computed server-side, no client value.
 // Body: { complete: boolean }
 // ──────────────────────────────────────────────────────────────────────────────
 router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
@@ -6004,20 +6004,13 @@ router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
         AND chill_end_at IS NULL
     `);
 
-    // Auto-freeze wonky packs into production_freezer stock.
-    // Also zeroes wonlyCount and updates freezerQty so the Wonky Rack card
-    // cannot double-transfer the same packs via /wonky-to-freezer.
-    const wonlys = Number(item.wonlyCount) || 0;
-    if (wonlys > 0) {
-      await syncRecipeFreezerStock(item.recipeId, wonlys);
-      wonkyFrozen = wonlys;
-      await db.update(productionPlanItemsTable)
-        .set({
-          wonlyCount: 0,
-          freezerQty: sql`${productionPlanItemsTable.freezerQty} + ${wonlys}`,
-        })
-        .where(eq(productionPlanItemsTable.id, itemId));
-    }
+    // Wonky packs are deliberately NOT touched here (Graeme, 2026-09-14):
+    // they stay on the Wonky Rack, physically unwrapped, until the team
+    // wraps them all in one go and presses the rack's transfer button
+    // (/wonky-to-freezer). The old auto-freeze on wrapping-complete booked
+    // them as wrapped-and-frozen while they were still sitting on the red
+    // table — and the packs "left over" then got hand-added back into
+    // stock, inflating the fridge count.
 
     // Shopify inventory sync — delta computed server-side as:
     //   (packs already committed to Product Freezer) + (wonky packs just frozen)
