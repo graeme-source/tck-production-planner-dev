@@ -193,9 +193,11 @@ export function SickLeaveModal({ userId, userName, fromDate, onClose }: { userId
                   >
                     <div className="min-w-0 flex-1">
                       <p className="font-semibold">{fmtRange(spell.start, spell.end)} · {spell.days} day{spell.days !== 1 ? "s" : ""}</p>
-                      <p className="text-sm text-muted-foreground truncate">
+                      {/* The note rides along so Graeme can scan for a
+                          recurring illness without opening each report. */}
+                      <p className="text-sm text-muted-foreground line-clamp-2">
                         {form?.reasonCategory
-                          ? `${form.reasonCategory}${form.status !== "complete" ? " (draft)" : ""}`
+                          ? `${form.reasonCategory}${form.reasonDetails ? ` — ${form.reasonDetails}` : ""}${form.status !== "complete" ? " (draft)" : ""}`
                           : "Report started — no reason recorded yet"}
                       </p>
                     </div>
@@ -210,7 +212,9 @@ export function SickLeaveModal({ userId, userName, fromDate, onClose }: { userId
                   className="w-full text-left rounded-xl border-2 border-border bg-background p-3.5 flex items-center gap-3 hover:border-primary/50 transition-colors">
                   <div className="min-w-0 flex-1">
                     <p className="font-semibold">{fmtRange(f.absenceStart, f.absenceEnd)}</p>
-                    <p className="text-sm text-muted-foreground truncate">{f.reasonCategory ?? "Report"}{f.status !== "complete" ? " (draft)" : ""}</p>
+                    <p className="text-sm text-muted-foreground line-clamp-2">
+                      {f.reasonCategory ?? "Report"}{f.reasonDetails ? ` — ${f.reasonDetails}` : ""}{f.status !== "complete" ? " (draft)" : ""}
+                    </p>
                   </div>
                   <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
                 </button>

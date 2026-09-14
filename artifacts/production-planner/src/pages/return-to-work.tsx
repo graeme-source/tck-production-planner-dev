@@ -297,6 +297,11 @@ export default function ReturnToWorkPage() {
           </div>
           <div className="min-w-0 flex-1">
             <p className="font-semibold">{fmtRange(form.absenceStart, form.absenceEnd)}{form.reasonCategory ? ` — ${form.reasonCategory}` : ""}</p>
+            {/* The note shows inline so a scan down the list reads the
+                actual reasons, not just the category. */}
+            {form.reasonDetails && (
+              <p className="text-sm text-foreground/80 line-clamp-2">{form.reasonDetails}</p>
+            )}
             <p className="text-sm text-muted-foreground truncate">
               {form.status === "complete" ? `Signed${form.managerName ? ` with ${form.managerName}` : ""}` : "Draft — finish and sign with a manager"}
             </p>
