@@ -4,13 +4,12 @@ import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as driz
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
 import { FRIED_CHICKEN_CATEGORY } from "./fried-chicken";
-import { shopifyTrackedVariants } from "./fulfilment-availability";
 // Aliased: this file has its own in-handler requireManagerOrAdmin() helper
 // (returns boolean, used mid-handler) — the middleware form guards routes.
 import { requireManagerOrAdmin as requireManagerOrAdminMw } from "../middleware/roles";
 import * as z from "zod";
 import { resolveRecipeIngredients, resolveSubRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
-import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag, type ProductCount } from "../services/shopify";
+import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag, getVariantOnHandQuantities, type ProductCount } from "../services/shopify";
 import { remainingFulfilmentPacks } from "../lib/remaining-fulfilment";
 import { getFactoryNumberCoreMenuOnly, getShopifyFreezerSyncEnabled } from "../lib/inventory-sync";
 import { logFridgeStockChange, type FridgeChangeSource } from "../lib/fridge-stock-log";
@@ -1332,14 +1331,15 @@ export async function calculatePlanData(planDate: string) {
 
   const totalDptPacksSold = dptRows.reduce((s, x) => s + (x.packsSold ?? 0), 0);
 
-  // Fried chicken never enters the production fridge — its sellable stock is
-  // the Shopify-tracked freezer inventory (Graeme, 2026-09-14). Same cached
-  // map the fridge gate uses; only fetched when the day actually has fried
-  // chicken recipes.
-  const shopifyStockLevels: Record<string, number> =
-    dptRows.some(r => (r.recipeCategory ?? "") === FRIED_CHICKEN_CATEGORY)
-      ? await shopifyTrackedVariants()
-      : {};
+  // Fried chicken never enters the production fridge — its physical stock is
+  // the Shopify freezer count (Graeme, 2026-09-14). Specifically ON-HAND,
+  // not available: available already has open orders deducted, and the pack
+  // tables deduct today's dispatch themselves — pairing them counted the
+  // same orders twice. Cached 5 min in the service.
+  const fcVariantIds = dptRows
+    .filter(r => (r.recipeCategory ?? "") === FRIED_CHICKEN_CATEGORY)
+    .flatMap(r => recipeToVariantIds.get(r.recipeId) ?? []);
+  const shopifyStockLevels: Record<string, number> = await getVariantOnHandQuantities(fcVariantIds);
 
   const recipesWithData = dptRows.map(r => {
     const recipeName = r.recipeName ?? `Recipe #${r.recipeId}`;
