@@ -90,13 +90,13 @@ function QuickAddReason({ userId, spell, onSaved }: {
   );
 }
 
-export function SickLeaveModal({ userId, userName, onClose }: { userId: number; userName: string; onClose: () => void }) {
+export function SickLeaveModal({ userId, userName, fromDate, onClose }: { userId: number; userName: string; fromDate?: string; onClose: () => void }) {
   const [data, setData] = useState<{ forms: RtwForm[]; spells: SickSpell[] } | null>(null);
   const [denied, setDenied] = useState(false);
   const [detail, setDetail] = useState<RtwForm | null>(null);
 
   const load = () =>
-    fetch(`${BASE}/api/return-to-work/user/${userId}`, { credentials: "include" })
+    fetch(`${BASE}/api/return-to-work/user/${userId}${fromDate ? `?from=${fromDate}` : ""}`, { credentials: "include" })
       .then(async r => {
         if (r.status === 403) { setDenied(true); return; }
         if (!r.ok) throw new Error();

@@ -83,6 +83,8 @@ router.get("/mine", async (req: Request, res: Response) => {
 });
 
 // GET /user/:userId — spells + forms for one person. Self or RTW manager.
+// ?from=YYYY-MM-DD widens the spell window (the report modal passes its own
+// range so the instances listed match the numbers that were clicked).
 router.get("/user/:userId", async (req: Request, res: Response) => {
   const subjectId = Number(req.params.userId);
   if (!Number.isInteger(subjectId)) { res.status(400).json({ error: "Invalid user" }); return; }
@@ -90,8 +92,10 @@ router.get("/user/:userId", async (req: Request, res: Response) => {
     res.status(403).json({ error: "Return-to-work records are private — the colleague and named RTW managers only." });
     return;
   }
+  const fromRaw = String(req.query["from"] ?? "");
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(fromRaw) ? fromRaw : undefined;
   const rows = await db.execute<FormRow>(sql`${formSelect} WHERE f.user_id = ${subjectId} ORDER BY f.absence_start DESC`);
-  const spells = await sickSpellsForUser(subjectId).catch(() => []);
+  const spells = await sickSpellsForUser(subjectId, from).catch(() => []);
   res.json({ forms: rows.rows.map(shapeForm), spells });
 });
 

@@ -29,15 +29,19 @@ function daysAgoIso(days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Sick spells for ONE app user (empty when they have no Planday link). */
-export async function sickSpellsForUser(appUserId: number): Promise<SickSpell[]> {
-  const map = await sickSpellsForUsers([appUserId]);
+/** Sick spells for ONE app user (empty when they have no Planday link).
+ *  `fromIso` widens the default trailing window — the report's sick-leave
+ *  modal passes its own date range so the instances shown match the
+ *  numbers clicked (Graeme, 2026-09-14: 9 instances in the table, 3 in
+ *  the modal, because the modal only looked back 120 days). */
+export async function sickSpellsForUser(appUserId: number, fromIso?: string): Promise<SickSpell[]> {
+  const map = await sickSpellsForUsers([appUserId], fromIso);
   return map.get(appUserId) ?? [];
 }
 
 /** Sick spells per app user over the trailing window, forms matched. */
-export async function sickSpellsForUsers(appUserIds: number[] | null): Promise<Map<number, SickSpell[]>> {
-  const from = daysAgoIso(WINDOW_DAYS);
+export async function sickSpellsForUsers(appUserIds: number[] | null, fromIso?: string): Promise<Map<number, SickSpell[]>> {
+  const from = fromIso ?? daysAgoIso(WINDOW_DAYS);
 
   const users = await db.execute<{ id: number; planday_employee_id: number | null }>(sql`
     SELECT id, planday_employee_id FROM app_users

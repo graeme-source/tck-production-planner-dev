@@ -5360,7 +5360,7 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
         </details>
       )}
       {sickModal && (
-        <SickLeaveModal userId={sickModal.userId} userName={sickModal.userName} onClose={() => setSickModal(null)} />
+        <SickLeaveModal userId={sickModal.userId} userName={sickModal.userName} fromDate={fromDate} onClose={() => setSickModal(null)} />
       )}
     </>
   );
