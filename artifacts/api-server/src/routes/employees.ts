@@ -19,12 +19,11 @@ import { db, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import {
   getPlandayEmployees,
-  getPlandayShifts,
   getPlandayShiftTypes,
-  getPlandayAbsenceRecords,
   getPlandayAbsenceAccounts,
   isPlandayConfigured,
 } from "../services/planday";
+import { getAttendanceFromCache } from "../services/planday-attendance-cache";
 
 const router: IRouter = Router();
 
@@ -128,6 +127,10 @@ interface AttendanceResponse {
   // absence types (Absent, Sick Leave, etc.), false for paid / non-absence
   // types (Holiday with Pay, Arrived late, Meeting, Training…).
   shiftTypeIsUnpaid: Record<string, boolean>;
+  // Mirror freshness: when the trailing window last synced from Plan Day,
+  // and whether the last sync attempt failed (mirror may be behind).
+  syncedAt: string | null;
+  stale: boolean;
 }
 
 // ── Main route ─────────────────────────────────────────────────────────────
@@ -146,7 +149,7 @@ router.get("/attendance", async (req: Request, res: Response) => {
       from, to, rows: [], unmatchedAppUsers: [], unmatchedPlandayEmployees: [],
       shiftTypeNames: [], absenceAccountNames: [],
       activeShiftTypeNames: [], activeAbsenceAccountNames: [],
-      shiftTypeIsUnpaid: {},
+      shiftTypeIsUnpaid: {}, syncedAt: null, stale: false,
     } satisfies AttendanceResponse);
     return;
   }
@@ -164,14 +167,17 @@ router.get("/attendance", async (req: Request, res: Response) => {
     .from(usersTable)
     .where(eq(usersTable.isActive, true));
 
-  // 2. Fetch Plan Day data in parallel
-  const [plandayEmployees, shiftTypes, shifts, absenceRecords, absenceAccounts] = await Promise.all([
+  // 2. Lookups straight from Plan Day (small, 10-min cached in-process);
+  // shifts + absences from the Postgres mirror, which only re-syncs what's
+  // missing or recently editable — this is what turned minutes into instant
+  // (Graeme, 2026-09-14). ?refresh=1 forces the trailing-window re-sync.
+  const [plandayEmployees, shiftTypes, absenceAccounts, cached] = await Promise.all([
     getPlandayEmployees(),
     getPlandayShiftTypes(),
-    getPlandayShifts(from, to),
-    getPlandayAbsenceRecords(from, to),
     getPlandayAbsenceAccounts(),
+    getAttendanceFromCache(from, to, { forceFresh: String(req.query["refresh"] ?? "") === "1" }),
   ]);
+  const { shifts, absences: absenceRecords, syncedAt, stale } = cached;
 
   // 3. Auto-match by email first, then fall back to first+last name matching.
   // Name fallback catches people whose Planday email doesn't match their app
@@ -363,6 +369,8 @@ router.get("/attendance", async (req: Request, res: Response) => {
     activeShiftTypeNames,
     activeAbsenceAccountNames,
     shiftTypeIsUnpaid,
+    syncedAt,
+    stale,
   };
   res.json(response);
 });

@@ -3269,6 +3269,12 @@ async function startup() {
     const { startGoveePoller } = await import("./lib/govee-poller");
     startGoveePoller();
 
+    // Planday attendance mirror pre-warm — backfills the last year in the
+    // background when the mirror is empty, so the first Employee Records
+    // load after deploy is instant rather than paying the backfill itself.
+    const { prewarmAttendanceCache } = await import("./services/planday-attendance-cache");
+    prewarmAttendanceCache();
+
     // Stock gate — holds products back from next-day delivery when the
     // fridge-vs-despatch surplus runs low. Self-gates on stock_gate_enabled
     // (default false) + dry-run, so it's a no-op until configured. One

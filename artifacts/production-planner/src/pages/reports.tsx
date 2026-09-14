@@ -22,6 +22,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { FreshnessBadge } from "@/components/govee-freshness";
 import { IncidentDiaryTab } from "@/components/incident-diary";
+import { AttendanceFreshness } from "@/components/attendance-freshness";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -5086,6 +5087,8 @@ interface AttendanceResponse {
   activeShiftTypeNames: string[];
   activeAbsenceAccountNames: string[];
   shiftTypeIsUnpaid?: Record<string, boolean>;
+  syncedAt?: string | null;
+  stale?: boolean;
 }
 
 function UnmatchedPlandayRow({ employee }: { employee: { plandayEmployeeId: number; name: string; email: string | null } }) {
@@ -5159,11 +5162,13 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
   const [data, setData] = useState<AttendanceResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [showUnlinked, setShowUnlinked] = useState(false);
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   useEffect(() => {
     if (!fromDate || !toDate) return;
     setLoading(true);
     const params = new URLSearchParams({ from: fromDate, to: toDate });
+    if (refreshNonce > 0) params.set("refresh", "1");
     fetch(`${BASE}/api/employees/attendance?${params.toString()}`, { credentials: "include" })
       .then(r => { if (!r.ok) throw new Error("Failed"); return r.json() as Promise<AttendanceResponse>; })
       .then(d => { setData(d); setLoading(false); })
@@ -5173,7 +5178,7 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
         setData(null);
         setLoading(false);
       });
-  }, [fromDate, toDate]);
+  }, [fromDate, toDate, refreshNonce]);
 
   if (loading) {
     return (
@@ -5229,6 +5234,7 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
 
   return (
     <>
+      <AttendanceFreshness syncedAt={data.syncedAt ?? null} stale={!!data.stale} refreshing={loading} onRefresh={() => setRefreshNonce(n => n + 1)} />
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <SummaryCard
           icon={<Users className="w-5 h-5 text-blue-600" />}
