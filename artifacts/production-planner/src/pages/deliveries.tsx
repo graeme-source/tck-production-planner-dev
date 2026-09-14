@@ -16,6 +16,7 @@ import { toast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { packNoun, packDescriptor, fmtQty, formatLineQty, formatLineQtyParts, packSizeHint } from "@/pages/station/shared/prep-helpers";
 import { NumberInput } from "@/components/ui/number-input";
+import { TempDial } from "@/components/temp-dial";
 import {
   CollectionPanel, AddCollectionDialog, useWeekCollections, groupCollections, collectionKey,
   type Collection,
@@ -728,24 +729,34 @@ function ReceivingDialog({
                 Temperature must be recorded for all chilled and frozen items before the delivery can be marked as received.
               </p>
               <div className="grid grid-cols-2 gap-4">
+                {/* Same dial as the fridge checklist (Graeme, 2026-09-14):
+                    −/+ nudge 0.1°C (hold to spin) with a slider for coarse
+                    jumps, −20…+20°C. "Record" reveals the dial at a sensible
+                    starting point so an untouched reading still counts as
+                    missing, never silently defaulted. */}
                 {hasChilled && (
                   <div>
                     <label className="text-base font-semibold block mb-1">
                       Chilled Temp (°C) <span className="text-destructive">*</span>
                     </label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={chilledTemp}
-                      onChange={(e) => editChilledTemp(e.target.value)}
-                      placeholder="e.g. 3.5"
-                      className={cn(
-                        "w-full px-3 py-2 bg-background border rounded-lg text-xl font-bold tabular-nums focus:outline-none focus:ring-2",
-                        chilledTempMissing
-                          ? "border-destructive focus:ring-destructive/30"
-                          : "border-border focus:ring-primary/30"
-                      )}
-                    />
+                    {chilledTemp.trim() === "" ? (
+                      <button
+                        type="button"
+                        onClick={() => editChilledTemp("4.0")}
+                        className="w-full px-3 py-3 rounded-lg border-2 border-dashed border-destructive/60 text-destructive font-semibold hover:bg-destructive/5"
+                      >
+                        Record chilled temperature
+                      </button>
+                    ) : (
+                      <TempDial
+                        value={Number(chilledTemp)}
+                        min={-20}
+                        max={20}
+                        out={false}
+                        onStep={d => editChilledTemp((Math.min(20, Math.max(-20, Number(chilledTemp) + d))).toFixed(1))}
+                        onSet={v => editChilledTemp(v.toFixed(1))}
+                      />
+                    )}
                     {chilledTempMissing && (
                       <p className="text-sm text-destructive mt-1 flex items-center gap-1">
                         <AlertCircle className="w-4 h-4" /> Chilled temperature is required
@@ -758,19 +769,24 @@ function ReceivingDialog({
                     <label className="text-base font-semibold block mb-1">
                       Frozen Temp (°C) <span className="text-destructive">*</span>
                     </label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={frozenTemp}
-                      onChange={(e) => editFrozenTemp(e.target.value)}
-                      placeholder="e.g. -18.0"
-                      className={cn(
-                        "w-full px-3 py-2 bg-background border rounded-lg text-xl font-bold tabular-nums focus:outline-none focus:ring-2",
-                        frozenTempMissing
-                          ? "border-destructive focus:ring-destructive/30"
-                          : "border-border focus:ring-primary/30"
-                      )}
-                    />
+                    {frozenTemp.trim() === "" ? (
+                      <button
+                        type="button"
+                        onClick={() => editFrozenTemp("-18.0")}
+                        className="w-full px-3 py-3 rounded-lg border-2 border-dashed border-destructive/60 text-destructive font-semibold hover:bg-destructive/5"
+                      >
+                        Record frozen temperature
+                      </button>
+                    ) : (
+                      <TempDial
+                        value={Number(frozenTemp)}
+                        min={-20}
+                        max={20}
+                        out={false}
+                        onStep={d => editFrozenTemp((Math.min(20, Math.max(-20, Number(frozenTemp) + d))).toFixed(1))}
+                        onSet={v => editFrozenTemp(v.toFixed(1))}
+                      />
+                    )}
                     {frozenTempMissing && (
                       <p className="text-sm text-destructive mt-1 flex items-center gap-1">
                         <AlertCircle className="w-4 h-4" /> Frozen temperature is required
