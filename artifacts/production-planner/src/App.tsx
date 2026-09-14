@@ -38,6 +38,7 @@ import Supplies from "@/pages/supplies";
 import Settings from "@/pages/settings";
 import LeanCave from "@/pages/lean-cave";
 import LeanStart from "@/pages/lean-start";
+import ReturnToWorkPage from "@/pages/return-to-work";
 import Reports from "@/pages/reports";
 import Improvements from "@/pages/improvements";
 import EmployeeHub from "@/pages/employee-hub";
@@ -210,6 +211,7 @@ function Router() {
               <Route path="/lean-cave" component={LeanCave} />
               <Route path="/lean-review" component={LeanReviewPage} />
               <Route path="/lean-start" component={LeanStart} />
+              <Route path="/return-to-work" component={ReturnToWorkPage} />
               <Route path="/hub" component={EmployeeHub} />
               <Route path="/documents/:id" component={DocumentViewer} />
               <Route path="/settings" component={Settings} />

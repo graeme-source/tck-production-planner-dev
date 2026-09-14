@@ -45,6 +45,7 @@ import checklistsRouter from "./checklists";
 import curiosityRouter from "./curiosity";
 import notificationsRouter from "./notifications";
 import employeesRouter from "./employees";
+import returnToWorkRouter from "./return-to-work";
 import employeeReviewsRouter from "./employee-reviews";
 import friedChickenRouter from "./fried-chicken";
 import riskAssessmentsRouter from "./risk-assessments";
@@ -204,6 +205,9 @@ router.use("/checklists", checklistsRouter);
 router.use("/curiosity", curiosityRouter);
 router.use("/notifications", notificationsRouter);
 router.use("/employees", employeesRouter);
+// Return-to-work forms: private (colleague + named RTW managers), guarded
+// per-route inside via middleware/rtw-access.ts.
+router.use("/return-to-work", returnToWorkRouter);
 router.use("/employee-reviews", employeeReviewsRouter);
 router.use("/fried-chicken", friedChickenRouter);
 router.use("/risk-assessments", riskAssessmentsRouter);

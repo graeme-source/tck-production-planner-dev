@@ -49,14 +49,33 @@ export function isSickName(name: string | undefined): boolean {
  * `sickDates` and `workedDates` are ISO date strings (duplicates fine).
  */
 export function countSickInstances(sickDates: string[], workedDates: string[]): number {
-  if (sickDates.length === 0) return 0;
+  return sickRuns(sickDates, workedDates).length;
+}
+
+/**
+ * The instances themselves, as date ranges — one run per continuous spell of
+ * sickness (see countSickInstances). Powers the sick-leave modal and the
+ * return-to-work detection: a run whose last day is behind a worked shift is
+ * a completed spell the person has returned from.
+ */
+export function sickRuns(sickDates: string[], workedDates: string[]): Array<{ start: string; end: string; days: number }> {
+  if (sickDates.length === 0) return [];
   const sick = [...new Set(sickDates)].sort();
   const worked = [...new Set(workedDates)].sort();
-  let instances = 1;
+  const runs: Array<{ start: string; end: string; days: number }> = [];
+  let start = sick[0];
+  let days = 1;
   for (let i = 1; i < sick.length; i++) {
     const prev = sick[i - 1];
     const cur = sick[i];
-    if (worked.some(w => w > prev && w < cur)) instances++;
+    if (worked.some(w => w > prev && w < cur)) {
+      runs.push({ start, end: prev, days });
+      start = cur;
+      days = 1;
+    } else {
+      days++;
+    }
   }
-  return instances;
+  runs.push({ start, end: sick[sick.length - 1], days });
+  return runs;
 }

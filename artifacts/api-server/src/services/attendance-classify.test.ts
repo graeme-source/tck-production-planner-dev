@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isLateName, isAbsenceReasonName, isSickName, countSickInstances } from "./attendance-classify";
+import { isLateName, isAbsenceReasonName, isSickName, countSickInstances, sickRuns } from "./attendance-classify";
 
 // Regression for the 2026-09-14 report bug: holiday accrual accounts were
 // rolling into "Total Absent" (and Planday's broken pagination multiplied
@@ -97,5 +97,27 @@ describe("countSickInstances", () => {
       ["2026-09-08", "2026-09-07", "2026-09-08"],
       [],
     )).toBe(1);
+  });
+});
+
+describe("sickRuns", () => {
+  it("returns each spell with its span and day count", () => {
+    expect(sickRuns(
+      ["2026-09-07", "2026-09-08", "2026-09-09", "2026-09-14"],
+      ["2026-09-10", "2026-09-11"],
+    )).toEqual([
+      { start: "2026-09-07", end: "2026-09-09", days: 3 },
+      { start: "2026-09-14", end: "2026-09-14", days: 1 },
+    ]);
+  });
+
+  it("a weekend gap with no worked shift stays one run", () => {
+    expect(sickRuns(["2026-09-11", "2026-09-14"], ["2026-09-15"])).toEqual([
+      { start: "2026-09-11", end: "2026-09-14", days: 2 },
+    ]);
+  });
+
+  it("empty in, empty out", () => {
+    expect(sickRuns([], ["2026-09-01"])).toEqual([]);
   });
 });

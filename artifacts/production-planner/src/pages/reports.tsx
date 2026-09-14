@@ -24,6 +24,7 @@ import { FreshnessBadge } from "@/components/govee-freshness";
 import { IncidentDiaryTab } from "@/components/incident-diary";
 import { AttendanceFreshness } from "@/components/attendance-freshness";
 import { AttendanceAdminNotices } from "@/components/attendance-admin-notices";
+import { SickLeaveModal } from "@/components/sick-leave-modal";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -5101,6 +5102,7 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
   const [loading, setLoading] = useState(true);
   const [showUnlinked, setShowUnlinked] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [sickModal, setSickModal] = useState<{ userId: number; userName: string } | null>(null);
 
   useEffect(() => {
     if (!fromDate || !toDate) return;
@@ -5275,10 +5277,18 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
                     {fmtPct(r.totalAbsent, r.totalShifts)}
                   </td>
                   <td className={cn("px-3 py-3 text-right tabular-nums", (r.sickDays ?? 0) > 0 ? "text-rose-700 font-medium" : "text-muted-foreground")}>
-                    {r.sickDays ?? 0}
+                    {(r.sickDays ?? 0) > 0 ? (
+                      <button onClick={() => setSickModal({ userId: r.userId, userName: r.userName })} className="underline decoration-dotted underline-offset-2 hover:decoration-solid" title="See each instance and its return-to-work report">
+                        {r.sickDays}
+                      </button>
+                    ) : 0}
                   </td>
                   <td className={cn("px-2 py-3 text-right tabular-nums", (r.sickInstances ?? 0) > 0 ? "text-rose-700" : "text-muted-foreground")}>
-                    {r.sickInstances ?? 0}
+                    {(r.sickInstances ?? 0) > 0 ? (
+                      <button onClick={() => setSickModal({ userId: r.userId, userName: r.userName })} className="underline decoration-dotted underline-offset-2 hover:decoration-solid" title="See each instance and its return-to-work report">
+                        {r.sickInstances}
+                      </button>
+                    ) : 0}
                   </td>
                   {activeShiftTypes.map(name => {
                     const n = r.shiftTypeCounts?.[name] ?? 0;
@@ -5348,6 +5358,9 @@ function EmployeesTab({ fromDate, toDate }: { fromDate: string; toDate: string }
             Each column above corresponds to a Plan Day shift type or absence account that had at least one entry in the selected range. Shift types whose name contains “late” also roll up into the Arrived Late summary card. “Total Absent” sums every approved absence day across all accounts.
           </p>
         </details>
+      )}
+      {sickModal && (
+        <SickLeaveModal userId={sickModal.userId} userName={sickModal.userName} onClose={() => setSickModal(null)} />
       )}
     </>
   );

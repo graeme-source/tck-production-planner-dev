@@ -3282,6 +3282,12 @@ async function startup() {
     const { startLeanTodoScheduler } = await import("./lib/lean-todo-scheduler");
     startLeanTodoScheduler();
 
+    // Return-to-work chase: detects completed sick spells from the Planday
+    // mirror and raises to-dos for the colleague + RTW managers until the
+    // form is signed (Graeme, 2026-09-14).
+    const { startRtwScheduler } = await import("./lib/rtw-scheduler");
+    startRtwScheduler();
+
     // Stock gate — holds products back from next-day delivery when the
     // fridge-vs-despatch surplus runs low. Self-gates on stock_gate_enabled
     // (default false) + dry-run, so it's a no-op until configured. One
