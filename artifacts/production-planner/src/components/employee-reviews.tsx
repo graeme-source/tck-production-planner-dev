@@ -21,9 +21,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/auth-context";
+import { groupRecordNotes } from "@/lib/employee-record-grouping";
 import {
   CalendarDays, ChevronLeft, ChevronRight, Eye, EyeOff, Loader2, Lock,
-  MessageSquare, Plus, Target, CheckCircle2, Users, X,
+  MessageSquare, Pencil, Plus, Target, CheckCircle2, Trash2, Users, X,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
@@ -52,12 +54,14 @@ interface Meeting {
   scheduledFor: string | null;
   heldAt: string | null;
   status: "booked" | "held" | "cancelled";
+  createdBy: number | null;
   createdByName: string | null;
 }
 
 interface Note {
   id: number;
   kind: NoteKind;
+  meetingId: number | null;
   body: string;
   visibility: "private" | "shared";
   sharedAt: string | null;
@@ -105,6 +109,8 @@ function niceDate(iso: string | null): string {
 
 function RecordView({ userId, onBack }: { userId: number | "me"; onBack?: () => void }) {
   const queryClient = useQueryClient();
+  const { state: authState } = useAuth();
+  const currentUserId = authState.status === "authenticated" ? authState.user.id : null;
   const key = ["employee-review-record", String(userId)];
   const { data, isLoading, error } = useQuery<Record_>({
     queryKey: key,
@@ -122,10 +128,19 @@ function RecordView({ userId, onBack }: { userId: number | "me"; onBack?: () => 
     return <div className="p-5 rounded-2xl bg-destructive/10 text-destructive text-lg font-semibold">{error instanceof Error ? error.message : "Couldn't load this record."}</div>;
   }
 
-  const openObjectives = data.notes.filter(n => n.kind === "objective" && !n.doneAt);
-  const diary = data.notes.filter(n => n.kind !== "objective" || n.doneAt);
+  const { openObjectives, byMeeting, unattached } = groupRecordNotes(
+    data.notes,
+    new Set(data.meetings.map(m => m.id)),
+  );
   const upcoming = data.meetings.filter(m => m.status === "booked");
   const past = data.meetings.filter(m => m.status !== "booked");
+  const meetingCardProps = {
+    canManage: data.canManage,
+    currentUserId,
+    subjectId: data.subject.id,
+    subjectName: data.subject.name,
+    onChanged: refresh,
+  };
 
   return (
     <div className="space-y-5">
@@ -171,20 +186,22 @@ function RecordView({ userId, onBack }: { userId: number | "me"; onBack?: () => 
       {upcoming.length > 0 && (
         <section className="space-y-3">
           <h3 className="text-lg font-bold">Coming up</h3>
-          {upcoming.map(m => <MeetingCard key={m.id} meeting={m} canManage={data.canManage} onChanged={refresh} />)}
+          {upcoming.map(m => (
+            <MeetingCard key={m.id} meeting={m} notes={byMeeting.get(m.id) ?? []} {...meetingCardProps} />
+          ))}
         </section>
       )}
 
       {openObjectives.length > 0 && (
         <section className="space-y-3">
           <h3 className="text-lg font-bold flex items-center gap-2"><Target className="w-5 h-5 text-primary" /> What we agreed</h3>
-          {openObjectives.map(n => <NoteCard key={n.id} note={n} canManage={data.canManage} onChanged={refresh} />)}
+          {openObjectives.map(n => <NoteCard key={n.id} note={n} canManage={data.canManage} currentUserId={currentUserId} onChanged={refresh} />)}
         </section>
       )}
 
       <section className="space-y-3">
         <h3 className="text-lg font-bold">The record</h3>
-        {diary.length === 0 && past.length === 0 ? (
+        {unattached.length === 0 && past.length === 0 ? (
           <div className="text-center py-10 rounded-2xl bg-secondary/30">
             <p className="text-2xl font-bold">Nothing here yet</p>
             <p className="text-base text-muted-foreground mt-1">
@@ -193,8 +210,10 @@ function RecordView({ userId, onBack }: { userId: number | "me"; onBack?: () => 
           </div>
         ) : (
           <>
-            {diary.map(n => <NoteCard key={n.id} note={n} canManage={data.canManage} onChanged={refresh} />)}
-            {past.map(m => <MeetingCard key={m.id} meeting={m} canManage={data.canManage} onChanged={refresh} />)}
+            {unattached.map(n => <NoteCard key={n.id} note={n} canManage={data.canManage} currentUserId={currentUserId} onChanged={refresh} />)}
+            {past.map(m => (
+              <MeetingCard key={m.id} meeting={m} notes={byMeeting.get(m.id) ?? []} {...meetingCardProps} />
+            ))}
           </>
         )}
       </section>
@@ -204,13 +223,34 @@ function RecordView({ userId, onBack }: { userId: number | "me"; onBack?: () => 
 
 // ── Cards ──────────────────────────────────────────────────────────────────
 
-function MeetingCard({ meeting, canManage, onChanged }: { meeting: Meeting; canManage: boolean; onChanged: () => void }) {
+function MeetingCard({ meeting, notes, canManage, currentUserId, subjectId, subjectName, onChanged }: {
+  meeting: Meeting;
+  notes: Note[];
+  canManage: boolean;
+  currentUserId: number | null;
+  subjectId: number;
+  subjectName: string;
+  onChanged: () => void;
+}) {
+  const [writingNote, setWritingNote] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
   const update = useMutation({
     mutationFn: (patch: Record<string, unknown>) =>
       api(`/employee-reviews/meetings/${meeting.id}`, { method: "PATCH", body: JSON.stringify(patch) }),
     onSuccess: onChanged,
     onError: (e: Error) => toast({ title: "Couldn't update it", description: e.message, variant: "destructive" }),
   });
+
+  const remove = useMutation({
+    mutationFn: () => api(`/employee-reviews/meetings/${meeting.id}`, { method: "DELETE" }),
+    onSuccess: () => { toast({ title: "Meeting deleted", description: "Anything written up under it stays on the record." }); onChanged(); },
+    onError: (e: Error) => toast({ title: "Couldn't delete it", description: e.message, variant: "destructive" }),
+  });
+
+  // Deleting mirrors the note rule: only whoever booked it. The server
+  // enforces this — the button simply doesn't show for anyone else.
+  const canDelete = canManage && currentUserId != null && meeting.createdBy === currentUserId;
 
   return (
     <div className={cn(
@@ -229,7 +269,47 @@ function MeetingCard({ meeting, canManage, onChanged }: { meeting: Meeting; canM
             {meeting.createdByName && ` · booked by ${meeting.createdByName}`}
           </p>
         </div>
+        {canDelete && !confirmDelete && (
+          <button
+            onClick={() => setConfirmDelete(true)}
+            className="shrink-0 p-2.5 rounded-xl text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+            title="Delete this meeting — its write-up notes stay on the record"
+          >
+            <Trash2 className="w-5 h-5" />
+          </button>
+        )}
       </div>
+
+      {confirmDelete && (
+        <div className="rounded-2xl border-2 border-destructive bg-destructive/5 p-4 space-y-3">
+          <p className="text-lg font-bold">Delete this meeting?</p>
+          <p className="text-base">Anything written up under it stays on the record — only the meeting itself goes.</p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button
+              onClick={() => remove.mutate()}
+              disabled={remove.isPending}
+              className="h-14 rounded-2xl bg-destructive text-destructive-foreground text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {remove.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Trash2 className="w-5 h-5" />} Yes, delete it
+            </button>
+            <button
+              onClick={() => setConfirmDelete(false)}
+              className="h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50"
+            >
+              <X className="w-5 h-5" /> Keep it
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* The meeting's write-up: what was said, feedback given, objectives
+          set — nested with the meeting so the story reads in one place. */}
+      {notes.length > 0 && (
+        <div className="space-y-3 pl-3 border-l-4 border-secondary">
+          {notes.map(n => <NoteCard key={n.id} note={n} canManage={canManage} currentUserId={currentUserId} onChanged={onChanged} />)}
+        </div>
+      )}
+
       {canManage && meeting.status === "booked" && (
         <div className="grid gap-3 sm:grid-cols-2">
           <button
@@ -248,22 +328,55 @@ function MeetingCard({ meeting, canManage, onChanged }: { meeting: Meeting; canM
           </button>
         </div>
       )}
+
+      {canManage && meeting.status !== "cancelled" && !writingNote && (
+        <button
+          onClick={() => setWritingNote(true)}
+          className="w-full h-14 rounded-2xl border-2 border-dashed border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <Plus className="w-5 h-5" /> Write this meeting up
+        </button>
+      )}
+
+      {writingNote && (
+        <WriteNote
+          subjectId={subjectId}
+          subjectName={subjectName}
+          meetingId={meeting.id}
+          meetingLabel={`${meeting.title || MEETING_LABEL[meeting.kind]} · ${niceDate(meeting.scheduledFor)}`}
+          onDone={() => { setWritingNote(false); onChanged(); }}
+          onCancel={() => setWritingNote(false)}
+        />
+      )}
     </div>
   );
 }
 
-function NoteCard({ note, canManage, onChanged }: { note: Note; canManage: boolean; onChanged: () => void }) {
+function NoteCard({ note, canManage, currentUserId, onChanged }: {
+  note: Note; canManage: boolean; currentUserId: number | null; onChanged: () => void;
+}) {
   const [confirmShare, setConfirmShare] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(note.body);
   const Icon = NOTE_ICON[note.kind];
 
   const update = useMutation({
     mutationFn: (patch: Record<string, unknown>) =>
       api(`/employee-reviews/notes/${note.id}`, { method: "PATCH", body: JSON.stringify(patch) }),
-    onSuccess: () => { setConfirmShare(false); onChanged(); },
+    onSuccess: () => { setConfirmShare(false); setEditing(false); onChanged(); },
     onError: (e: Error) => toast({ title: "Couldn't update it", description: e.message, variant: "destructive" }),
   });
 
+  const remove = useMutation({
+    mutationFn: () => api(`/employee-reviews/notes/${note.id}`, { method: "DELETE" }),
+    onSuccess: () => { toast({ title: "Deleted" }); onChanged(); },
+    onError: (e: Error) => toast({ title: "Couldn't delete it", description: e.message, variant: "destructive" }),
+  });
+
   const isPrivate = note.visibility === "private";
+  // The server only lets an author touch their own note; the buttons follow.
+  const isAuthor = currentUserId != null && note.authorId === currentUserId;
 
   return (
     <div className={cn(
@@ -291,15 +404,87 @@ function NoteCard({ note, canManage, onChanged }: { note: Note; canManage: boole
               </span>
             )}
           </div>
-          <p className="text-xl leading-relaxed whitespace-pre-wrap break-words">{note.body}</p>
+          {editing ? (
+            <div className="space-y-3 mt-1">
+              <textarea
+                value={draft}
+                onChange={e => setDraft(e.target.value)}
+                rows={5}
+                autoFocus
+                className="w-full px-4 py-3 rounded-2xl border-2 border-primary bg-card text-lg focus:outline-none focus:ring-2 focus:ring-primary/40 resize-y"
+              />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <button
+                  onClick={() => update.mutate({ body: draft.trim() })}
+                  disabled={update.isPending || !draft.trim()}
+                  className="h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {update.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />} Save changes
+                </button>
+                <button
+                  onClick={() => { setEditing(false); setDraft(note.body); }}
+                  className="h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50"
+                >
+                  <X className="w-5 h-5" /> Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xl leading-relaxed whitespace-pre-wrap break-words">{note.body}</p>
+          )}
           <p className="text-base text-muted-foreground mt-2">
             {note.authorName ?? "Someone"} · {niceDate(note.createdAt.slice(0, 10))}
             {note.dueDate && ` · due ${niceDate(note.dueDate)}`}
           </p>
         </div>
+        {isAuthor && !editing && !confirmDelete && (
+          <div className="flex gap-1 shrink-0">
+            <button
+              onClick={() => { setDraft(note.body); setEditing(true); }}
+              className="p-2.5 rounded-xl text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+              title="Edit — you wrote this"
+            >
+              <Pencil className="w-5 h-5" />
+            </button>
+            <button
+              onClick={() => setConfirmDelete(true)}
+              className="p-2.5 rounded-xl text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+              title="Delete — you wrote this"
+            >
+              <Trash2 className="w-5 h-5" />
+            </button>
+          </div>
+        )}
       </div>
 
-      {canManage && (
+      {confirmDelete && (
+        <div className="rounded-2xl border-2 border-destructive bg-destructive/5 p-4 space-y-3">
+          <p className="text-lg font-bold">Delete this {NOTE_LABEL[note.kind].toLowerCase()}?</p>
+          <p className="text-base">
+            {isPrivate ? "It's private to you — it goes without anyone else ever seeing it." : "It's shared — it disappears from their record too."}
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button
+              onClick={() => remove.mutate()}
+              disabled={remove.isPending}
+              className="h-14 rounded-2xl bg-destructive text-destructive-foreground text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {remove.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Trash2 className="w-5 h-5" />} Yes, delete it
+            </button>
+            <button
+              onClick={() => setConfirmDelete(false)}
+              className="h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50"
+            >
+              <X className="w-5 h-5" /> Keep it
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Author-only, matching the server: only whoever wrote a note can
+          share, unshare, tick or change it — showing these to another
+          manager would just earn them a 403. */}
+      {canManage && isAuthor && !editing && (
         <div className="space-y-3">
           {note.kind === "objective" && (
             <button
@@ -415,8 +600,11 @@ function BookMeeting({ subjectId, onDone, onCancel }: { subjectId: number; onDon
   );
 }
 
-function WriteNote({ subjectId, subjectName, onDone, onCancel }: {
-  subjectId: number; subjectName: string; onDone: () => void; onCancel: () => void;
+function WriteNote({ subjectId, subjectName, meetingId, meetingLabel, onDone, onCancel }: {
+  subjectId: number; subjectName: string;
+  /** When set, the note is saved as part of this meeting's write-up. */
+  meetingId?: number; meetingLabel?: string;
+  onDone: () => void; onCancel: () => void;
 }) {
   const [kind, setKind] = useState<NoteKind>("note");
   const [body, setBody] = useState("");
@@ -433,6 +621,7 @@ function WriteNote({ subjectId, subjectName, onDone, onCancel }: {
         body: body.trim(),
         visibility: share ? "shared" : "private",
         dueDate: kind === "objective" && dueDate ? dueDate : undefined,
+        meetingId: meetingId ?? undefined,
       }),
     }),
     onSuccess: () => {
@@ -447,7 +636,12 @@ function WriteNote({ subjectId, subjectName, onDone, onCancel }: {
 
   return (
     <div className="rounded-2xl border-2 border-primary bg-card p-4 space-y-4">
-      <p className="text-xl font-bold">Write a note</p>
+      <p className="text-xl font-bold">{meetingId ? "Write this meeting up" : "Write a note"}</p>
+      {meetingId && meetingLabel && (
+        <p className="inline-flex items-center gap-2 text-base font-bold px-3 py-2 rounded-xl bg-primary/10 text-primary">
+          <CalendarDays className="w-5 h-5" /> Part of: {meetingLabel}
+        </p>
+      )}
       <div className="grid gap-3 sm:grid-cols-3">
         {(Object.keys(NOTE_LABEL) as NoteKind[]).map(k => (
           <button

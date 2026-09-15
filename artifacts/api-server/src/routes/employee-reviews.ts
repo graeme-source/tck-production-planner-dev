@@ -205,6 +205,36 @@ router.patch("/meetings/:id", validate(MeetingPatch), async (req: Request, res: 
   }
 });
 
+/** Delete a meeting outright. Only whoever booked it (employees never get
+ *  here — the manager guard runs first). Its write-up notes survive: the
+ *  meeting_id FK is ON DELETE SET NULL, so they fall back to the flat diary
+ *  rather than vanishing with the meeting. */
+router.delete("/meetings/:id", async (req: Request, res: Response) => {
+  const user = await sessionUser(req);
+  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  if (!canManageRecord(user)) { res.status(403).json({ error: "Managers only" }); return; }
+
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  try {
+    const [meeting] = await db.select().from(employeeMeetingsTable).where(eq(employeeMeetingsTable.id, id));
+    if (!meeting) { res.status(404).json({ error: "Not found" }); return; }
+    // Same promise as notes: what you put on a record is yours to take off.
+    // createdBy null means the booker's account is gone — an admin may tidy.
+    if (meeting.createdBy !== user.id && !(meeting.createdBy == null && user.role === "admin")) {
+      res.status(403).json({ error: "Only whoever booked a meeting can delete it" });
+      return;
+    }
+    await db.delete(employeeMeetingsTable).where(eq(employeeMeetingsTable.id, id));
+    console.log(`[EmployeeReviews] meeting ${id} on user ${meeting.subjectUserId} deleted by ${user.id}`);
+    res.status(204).send();
+  } catch (err) {
+    console.error("[EmployeeReviews] delete meeting error:", err);
+    res.status(500).json({ error: "Failed to delete the meeting" });
+  }
+});
+
 // ── Notes, feedback and objectives ─────────────────────────────────────────
 
 const NoteBody = z.object({
@@ -225,6 +255,20 @@ router.post("/:userId/notes", validate(NoteBody), async (req: Request, res: Resp
   if (!Number.isInteger(subjectId)) { res.status(400).json({ error: "Invalid user id" }); return; }
 
   const b = req.body as z.infer<typeof NoteBody>;
+
+  // A note may only attach to a meeting on THIS person's record — a stray
+  // or crafted meetingId must not stitch records together.
+  if (b.meetingId != null) {
+    const [mtg] = await db
+      .select({ subjectUserId: employeeMeetingsTable.subjectUserId })
+      .from(employeeMeetingsTable)
+      .where(eq(employeeMeetingsTable.id, b.meetingId));
+    if (!mtg || mtg.subjectUserId !== subjectId) {
+      res.status(400).json({ error: "That meeting isn't on this record" });
+      return;
+    }
+  }
+
   try {
     const [row] = await db.insert(employeeNotesTable).values({
       subjectUserId: subjectId,
