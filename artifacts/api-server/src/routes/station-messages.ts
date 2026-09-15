@@ -24,8 +24,8 @@ router.use(requireAuth);
 router.get("/", async (req: Request, res: Response) => {
   const station = String(req.query["station"] ?? "");
   if (!station || station.length > 40) { res.status(400).json({ error: "station is required" }); return; }
-  const rows = await db.execute<{ id: number; body: string; created_by_name: string | null; created_at: string }>(sql`
-    SELECT id, body, created_by_name, created_at FROM station_messages
+  const rows = await db.execute<{ id: number; body: string; created_by_name: string | null; created_at: string; requires_ack: boolean }>(sql`
+    SELECT id, body, created_by_name, created_at, requires_ack FROM station_messages
     WHERE station_type = ${station}
       AND dismissed_at IS NULL
       AND created_at > NOW() - INTERVAL '48 hours'
@@ -37,21 +37,25 @@ router.get("/", async (req: Request, res: Response) => {
     body: r.body,
     fromName: r.created_by_name,
     createdAt: r.created_at,
+    requiresAck: Boolean(r.requires_ack),
   })) });
 });
 
 const sendSchema = z.object({
   stationType: z.string().min(1).max(40),
   body: z.string().min(1).max(1000),
+  // Must-acknowledge mode: locks the station's screen behind the message
+  // until someone there explicitly confirms they'll action it.
+  requiresAck: z.boolean().optional(),
 });
 
 // POST / — send a message to a station.
 router.post("/", validate(sendSchema), async (req: Request, res: Response) => {
-  const { stationType, body } = req.body as z.infer<typeof sendSchema>;
+  const { stationType, body, requiresAck } = req.body as z.infer<typeof sendSchema>;
   const me = await db.execute<{ name: string }>(sql`SELECT name FROM app_users WHERE id = ${req.session.userId}`);
   await db.execute(sql`
-    INSERT INTO station_messages (station_type, body, created_by_user_id, created_by_name)
-    VALUES (${stationType}, ${body.trim()}, ${req.session.userId}, ${me.rows[0]?.name ?? null})
+    INSERT INTO station_messages (station_type, body, created_by_user_id, created_by_name, requires_ack)
+    VALUES (${stationType}, ${body.trim()}, ${req.session.userId}, ${me.rows[0]?.name ?? null}, ${requiresAck ?? false})
   `);
   res.json({ ok: true });
 });
