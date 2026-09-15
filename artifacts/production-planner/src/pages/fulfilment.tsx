@@ -33,6 +33,7 @@ import {
 import { shouldPromptShrinkWrap, printDialogLikelyShown } from "@/lib/packing-alerts";
 import { fetchFridgeAvailability, computeFridgeAllocation } from "@/lib/fridge-gate";
 import { ShopifyOrderNumber } from "@/components/shopify-order-link";
+import { StationMessagesBanner } from "@/components/station-messages";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -4147,6 +4148,10 @@ export default function Fulfilment() {
           onClose={() => setShowFailuresModal(false)}
         />
       )}
+
+      {/* Messages sent to the packing station — this screen is where the
+          packers actually live, so 'packing' notes land here too. */}
+      <StationMessagesBanner stationType="packing" />
 
       {/* One summary for the day. Gate warnings live behind a button here:
           they belong BEFORE picking (tag → book → pick) or after it, never

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useListProductionPlans, useListDispatchOrders, useGetProductionPlan } from "@workspace/api-client-react";
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
+import { SendStationMessageButton } from "@/components/station-messages";
 import { EightPackOrdersBanner } from "@/components/eight-pack-orders-banner";
 import { StockGateBanner } from "@/components/stock-gate-banner";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
@@ -722,6 +723,7 @@ export default function Dashboard() {
         description={format(new Date(), "EEEE, MMMM do, yyyy")}
         action={
           <div className="flex items-center gap-2">
+            <SendStationMessageButton />
             <VisitorCheckInButton />
             {/* The founder entry moved to the top of the sidebar as
                 "The Business" (Graeme, 2026-09-11). */}

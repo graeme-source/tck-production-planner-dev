@@ -11,6 +11,7 @@ import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import { STATIONS, type StationType } from "./constants";
 import { BreakTracker } from "./break-tracker";
 import { StationReminderBanner } from "./timed-reminders";
+import { StationMessagesBanner, SendStationMessageButton } from "@/components/station-messages";
 import {
   NavLinks,
   AccountButton,
@@ -264,13 +265,16 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
                 const prepSubKeys = ["main_prep", "prep_bases", "prep_meat"] as const;
                 const isInPrepSub = (prepSubKeys as readonly string[]).includes(stationType);
                 return (
-                  <button
-                    onClick={() => navigate(isInPrepSub ? `/plans/${planId}/station/prep${fromSuffix}` : fromDashboard ? "/" : "/plans")}
-                    className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors border border-border rounded-lg px-3 py-1.5"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                    {isInPrepSub ? "Prep Sections" : fromDashboard ? "Dashboard" : "Exit Station"}
-                  </button>
+                  <>
+                    <SendStationMessageButton />
+                    <button
+                      onClick={() => navigate(isInPrepSub ? `/plans/${planId}/station/prep${fromSuffix}` : fromDashboard ? "/" : "/plans")}
+                      className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors border border-border rounded-lg px-3 py-1.5"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                      {isInPrepSub ? "Prep Sections" : fromDashboard ? "Dashboard" : "Exit Station"}
+                    </button>
+                  </>
                 );
               })()}
             </div>
@@ -361,6 +365,10 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
           <StationSopRail stationType={stationType} stationLabel={meta.label} />
         </div>
         <StationReminderBanner stationType={stationType} plan={plan} />
+        {/* Messages sent to THIS station — banner until someone taps Got it. */}
+        <div className="mb-4">
+          <StationMessagesBanner stationType={stationType} />
+        </div>
         {children}
       </div>
 
