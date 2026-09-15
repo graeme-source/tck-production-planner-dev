@@ -28,6 +28,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { ImprovementsTab } from "@/pages/reports";
 import { ImprovementAttachments } from "@/components/improvement-attachments";
 import { cn } from "@/lib/utils";
+import { feedTimestamp } from "@/lib/feed-time";
 import { ImprovementFeedMedia } from "@/components/improvement-feed-media";
 import { toast } from "@/hooks/use-toast";
 import { useMarkImprovementSeen } from "@/hooks/use-unseen-improvements";
@@ -528,6 +529,9 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
         </span>
       </div>
       <div className="flex items-center gap-3 mt-2 text-base text-muted-foreground flex-wrap">
+        {/* Social-feed timestamp: relative today, "Yesterday HH:MM", then
+            date + time (Graeme, 2026-09-15). Same stamp the feed sorts by. */}
+        <span className="flex items-center gap-1.5 text-sm"><Clock className="w-4 h-4" /> {feedTimestamp(isIdea(item) ? item.createdAt : (item.doneAt ?? item.approvedAt ?? item.createdAt))}</span>
         {item.mediaCount > 0 && (
           <span className="flex items-center gap-1.5"><Camera className="w-4 h-4" /> {item.mediaCount}</span>
         )}
