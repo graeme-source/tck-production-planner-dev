@@ -24,6 +24,7 @@ import { Router, type IRouter } from "express";
 import { db, productionPlanItemsTable } from "@workspace/db";
 import { inArray, sql } from "drizzle-orm";
 import { londonDateString } from "../lib/london-time";
+import { sendEmail } from "../lib/email";
 import {
   earliestProductionDay,
   defaultDeliveryDay,
@@ -244,6 +245,50 @@ router.get("/queue", async (_req, res) => {
 // be any earlier plan, so bags can be made days ahead of a delivery (Graeme,
 // 2026-08: deliver the 13th, make on the 10th). The order tag is always the
 // DELIVERY date, so despatch routing is untouched by the override.
+/**
+ * Tell the customer their scheduled delivery date (Graeme, 2026-09-15).
+ * Wording is deliberately non-committal — "scheduled for delivery on", and
+ * "we'll let you know if anything changes" — because we do not guarantee
+ * delivery dates. Fire-and-forget: a mail failure never fails the
+ * processing, it just logs loudly and reports emailed:false to the UI.
+ */
+async function emailDeliverySchedule(order: { name: string; email?: string | null; contact_email?: string | null; customer: { first_name: string; email: string } | null }, deliveryDate: string): Promise<boolean> {
+  const to = order.email ?? order.contact_email ?? order.customer?.email;
+  if (!to) {
+    console.warn(`[wholesale-bags] no customer email on ${order.name} — delivery-date email not sent`);
+    return false;
+  }
+  const friendly = new Date(`${deliveryDate}T00:00:00`).toLocaleDateString("en-GB", {
+    weekday: "long", day: "numeric", month: "long",
+  });
+  const firstName = order.customer?.first_name?.trim();
+  const greeting = firstName ? `Hi ${firstName},` : "Hi,";
+  const text = `${greeting}
+
+Thanks for your order ${order.name}. It's in production and is scheduled for delivery on ${friendly}.
+
+If anything changes with the schedule we'll let you know.
+
+The Calzone Kitchen`;
+  const html = `<p>${greeting}</p>
+<p>Thanks for your order <strong>${order.name}</strong>. It's in production and is scheduled for delivery on <strong>${friendly}</strong>.</p>
+<p>If anything changes with the schedule we'll let you know.</p>
+<p>The Calzone Kitchen</p>`;
+  try {
+    await sendEmail({
+      to,
+      subject: `Your Calzone Kitchen order ${order.name} — scheduled for delivery ${friendly}`,
+      text,
+      html,
+      fromName: "The Calzone Kitchen",
+    });
+    return true;
+  } catch (err) {
+    console.error(`[wholesale-bags] delivery-date email to ${to} for ${order.name} FAILED:`, err);
+    return false;
+  }
+}
+
 router.post("/process", async (req, res) => {
   const orderId = Number(req.body?.orderId);
   const deliveryDate = String(req.body?.deliveryDate ?? "");
@@ -306,7 +351,8 @@ router.post("/process", async (req, res) => {
         return;
       }
       queueCache = null; // reflect the change on the next poll
-      res.json({ ok: true, orderId, deliveryDate, tagOnly: true, tags: updatedTags, added: [] });
+      const emailed = await emailDeliverySchedule(order, deliveryDate);
+      res.json({ ok: true, orderId, deliveryDate, tagOnly: true, tags: updatedTags, added: [], emailed });
       return;
     }
 
@@ -393,14 +439,15 @@ router.post("/process", async (req, res) => {
 
     queueCache = null; // reflect the change on the next poll
 
+    const emailed = await emailDeliverySchedule(order, deliveryDate);
     if (failedToAdd.length) {
       res.status(207).json({
         warning: "Order tagged, but some bags couldn't be added — add these manually on the production overview.",
-        orderId, deliveryDate, despatchDate, productionDate, planId: plan.planId, tags: updatedTags, added, failedToAdd,
+        orderId, deliveryDate, despatchDate, productionDate, planId: plan.planId, tags: updatedTags, added, failedToAdd, emailed,
       });
       return;
     }
-    res.json({ ok: true, orderId, deliveryDate, despatchDate, productionDate, planId: plan.planId, tags: updatedTags, added });
+    res.json({ ok: true, orderId, deliveryDate, despatchDate, productionDate, planId: plan.planId, tags: updatedTags, added, emailed });
   } catch (err) {
     console.error("[wholesale-bags] process failed:", err);
     res.status(502).json({ error: err instanceof Error ? err.message : "Failed to process order" });

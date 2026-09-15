@@ -231,11 +231,18 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
       });
       const body = await res.json().catch(() => ({}));
       if (res.ok) {
+        // Say whether the customer heard about their date — a send that
+        // silently failed is indistinguishable from one that worked.
+        const emailNote = body.emailed === true
+          ? " Customer emailed their scheduled date."
+          : body.emailed === false
+            ? " ⚠ Customer NOT emailed (no address or send failed)."
+            : "";
         toast({
           title: `Processed ${order.name}`,
-          description: order.kind === "eight_pack"
+          description: (order.kind === "eight_pack"
             ? `Bags on the ${fmtNice(productionDate)} plan · delivering ${fmtNice(deliveryDate)}.`
-            : `Tagged for delivery ${fmtNice(deliveryDate)}.`,
+            : `Tagged for delivery ${fmtNice(deliveryDate)}.`) + emailNote,
         });
         setDone(prev => new Set(prev).add(order.orderId));
         onProcessed();

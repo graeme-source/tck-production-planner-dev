@@ -313,6 +313,8 @@ export interface ShopifyOrder {
   id: number;
   name: string;
   tags: string;
+  email?: string | null;
+  contact_email?: string | null;
   created_at: string;
   cancelled_at: string | null;
   financial_status: string;
@@ -772,7 +774,9 @@ export async function getRecentUnfulfilledOrders(daysBack = 30): Promise<Shopify
 export async function getOrderById(orderId: number): Promise<ShopifyOrder | null> {
   try {
     const data = (await shopifyFetch(`/orders/${orderId}.json`, {
-      fields: "id,name,tags,created_at,fulfillment_status,line_items",
+      // email/contact_email/customer: the wholesale-processing flow emails
+      // the customer their scheduled delivery date (Graeme, 2026-09-15).
+      fields: "id,name,tags,created_at,fulfillment_status,line_items,email,contact_email,customer",
     })) as { order: ShopifyOrder };
     return data.order ? toPackableLineItems(data.order) : null;
   } catch (err) {
