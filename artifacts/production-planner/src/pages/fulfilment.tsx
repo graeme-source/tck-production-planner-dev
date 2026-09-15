@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import { shouldPromptShrinkWrap, printDialogLikelyShown } from "@/lib/packing-alerts";
 import { fetchFridgeAvailability, computeFridgeAllocation } from "@/lib/fridge-gate";
+import { ShopifyOrderNumber } from "@/components/shopify-order-link";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -960,29 +961,9 @@ function printLabel(
  *  The base URL arrives once from /config-status rather than per order: a
  *  wave is several hundred rows. Falls back to plain text when the base
  *  hasn't loaded, so the number is never missing. */
-function OrderNumber({ orderId, name, adminBase, className }: {
-  orderId: number | string;
-  name: string;
-  adminBase?: string;
-  className?: string;
-}) {
-  if (!adminBase) return <span className={className}>{name}</span>;
-  return (
-    <a
-      href={`${adminBase}${orderId}`}
-      target="_blank"
-      rel="noopener noreferrer"
-      onClick={e => e.stopPropagation()}
-      // Underlined ALWAYS, not just on hover: the packing screen is used on
-      // an iPad, where there is no hover state, so a hover-only affordance is
-      // invisible to the people actually using it.
-      className={cn(className, "underline decoration-dotted underline-offset-2 decoration-current/40 hover:decoration-current")}
-      title={`Open ${name} in Shopify`}
-    >
-      {name}
-    </a>
-  );
-}
+// Moved to components/shopify-order-link.tsx (2026-09-15) — order numbers
+// link to Shopify everywhere now, not just on this page.
+const OrderNumber = ShopifyOrderNumber;
 
 type PrintStatus = "idle" | "printing" | "done" | "failed";
 
@@ -4873,7 +4854,7 @@ export default function Fulfilment() {
                 <div key={order.id} className="glass-panel px-4 py-3 rounded-xl border border-border opacity-60 flex items-center gap-3">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate">
-                      {order.name} {order.shipping_address?.name ?? order.customer?.first_name ?? ""}
+                      <ShopifyOrderNumber orderId={order.id} name={order.name} adminBase={configStatus?.shopifyAdminOrderBase} /> {order.shipping_address?.name ?? order.customer?.first_name ?? ""}
                     </p>
                     <p className="text-xs text-muted-foreground truncate" title={(fridgeAllocation.shortFor.get(order.id) ?? []).join("\n")}>
                       Short: {(fridgeAllocation.shortFor.get(order.id) ?? []).join(" · ") || "fridge stock"}

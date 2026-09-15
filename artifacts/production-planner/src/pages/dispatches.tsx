@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
+import { ShopifyOrderNumber } from "@/components/shopify-order-link";
 import { ShoppingBag, Package, RefreshCw, AlertCircle, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight, Scan, Tag, CheckCircle2, XCircle, RotateCcw, Loader2, SlidersHorizontal, MapPin, ShieldCheck } from "lucide-react";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { format, startOfWeek, addWeeks, addDays, isSameWeek, parseISO } from "date-fns";
@@ -696,14 +697,7 @@ export default function Dispatches() {
                           <Tag className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
-                              <a
-                                href={`https://admin.shopify.com/store/the-calzone-kitchen/orders/${p.orderId}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-sm font-semibold text-amber-700 dark:text-amber-300 hover:underline"
-                              >
-                                {p.orderName}
-                              </a>
+                              <ShopifyOrderNumber orderId={p.orderId} name={p.orderName} className="text-sm font-semibold text-amber-700 dark:text-amber-300" />
                               <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${p.issue === "bad_format" ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"}`}>
                                 {p.issue === "bad_format" ? "Bad format" : "No date tag"}
                               </span>
@@ -752,7 +746,7 @@ export default function Dispatches() {
                         <div key={issue.shopify_order_id} className="flex items-start gap-3 py-2">
                           <MapPin className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
                           <div className="min-w-0">
-                            <span className="text-sm font-medium text-red-700 dark:text-red-300">{issue.order_number}</span>
+                            <ShopifyOrderNumber orderId={issue.shopify_order_id} name={issue.order_number} className="text-sm font-medium text-red-700 dark:text-red-300" />
                             <span className="text-xs text-muted-foreground ml-2 font-mono">{issue.postcode || "no postcode"}</span>
                             {issue.reason && <p className="text-xs text-muted-foreground mt-0.5">{issue.reason}</p>}
                           </div>

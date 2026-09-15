@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { PackageCheck, Loader2, AlertTriangle, CheckCircle2, ArrowRight, Store, MessageSquareText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { ShopifyOrderNumber } from "@/components/shopify-order-link";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
@@ -298,7 +299,7 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
       >
         <div className="flex items-center justify-between gap-3 mb-2">
           <div className="min-w-0">
-            <span className="font-semibold">{order.name}</span>
+            <ShopifyOrderNumber orderId={order.orderId} name={order.name} className="font-semibold" />
             {order.customerName && <span className="text-sm text-muted-foreground ml-2">{order.customerName}</span>}
             {order.existingDateTag && (
               <span className="text-xs ml-2 px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">requested {fmtNice(order.existingDateTag)}</span>
