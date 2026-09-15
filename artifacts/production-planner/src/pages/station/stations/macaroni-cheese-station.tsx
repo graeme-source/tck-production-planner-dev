@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { getGetProductionPlanQueryKey, getListProductionPlansQueryKey } from "@workspace/api-client-react";
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Loader2, Plus, Thermometer, Clock,
+  Loader2, Lock, LockOpen, Plus, Thermometer, Clock,
   UtensilsCrossed, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -12,6 +12,7 @@ import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { useAuth } from "@/contexts/auth-context";
 import { isMacCheese, MAC_CHEESE_CATEGORY, type StationPlanItem } from "../shared/constants";
 import { NumberInput } from "@/components/ui/number-input";
+import { stockCellEdited, planStockWrite } from "@/lib/stock-override-guard";
 import { DeferredPrepBanner } from "../shared/deferred-prep-banner";
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -33,6 +34,8 @@ interface MacCheeseCalcRecipe {
   isCoreMenu: boolean;
   packsPerBatch: number;
   leftOverStock: number;
+  liveStock: number;
+  stillToDispatchToday: number;
   salesNextDay: number;
   salesNextDayPlus1: number;
   salesNextDayPlus2: number;
@@ -71,45 +74,73 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
   const [extraOverrides, setExtraOverrides] = useState<Record<number, number>>({});
   const [stockOverrides, setStockOverrides] = useState<Record<number, number>>({});
   const [zeroedDays, setZeroedDays] = useState<{ d1: boolean; d2: boolean; d3: boolean }>({ d1: false, d2: false, d3: false });
-  // Debounced writers for stock-entry overrides — mirrors the calzone
-  // calculator's behaviour so editing the leftover-stock cell here updates
-  // the same single source of truth (production_fridge stock_entries) and
-  // tomorrow's plan picks up the corrected number.
-  const stockSaveTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
+  // GUARD (2026-09-15): typing in the Stock cell used to auto-save every
+  // keystroke straight into Stock Control with no visible feedback — on
+  // 2026-09-14 that silently rewrote both mac cheese fridge counts while a
+  // plan was being built, and the next day's stock count was out by exactly
+  // those edits. Edits now only affect this calculation; writing Stock
+  // Control is a separate explicit step behind a confirmation that states
+  // the exact change (see lib/stock-override-guard).
+  // The column is LOCKED by default: the figure is Stock Control's and should
+  // be accurate now that despatch/wrapping keep it in step. Correcting it is
+  // a deliberate three-step: tap the padlock to unlock one row, type the real
+  // count, then Save and confirm the exact change being written.
+  const [stockUnlockedId, setStockUnlockedId] = useState<number | null>(null);
+  const [stockConfirmId, setStockConfirmId] = useState<number | null>(null);
+  const [stockSaving, setStockSaving] = useState(false);
+  const [stockJustSaved, setStockJustSaved] = useState<Record<number, boolean>>({});
 
-  // Persist a leftover-stock override back to the master stock_entries
-  // table the same way the calzone planner does, so the next plan's
-  // calculator pulls the corrected fridge count instead of yesterday's
-  // stale figure. Debounced so rapid keystrokes don't spam the API.
-  const persistStockOverride = useCallback((recipeId: number, newStock: number) => {
-    if (stockSaveTimers.current[recipeId]) clearTimeout(stockSaveTimers.current[recipeId]);
-    stockSaveTimers.current[recipeId] = setTimeout(async () => {
-      try {
-        await fetch(`/api/stock-entries`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({
-            recipeId,
-            ingredientId: null,
-            itemType: "recipe",
-            quantity: newStock,
-            unit: "packs",
-            location: "production_fridge",
-            notes: "Mac cheese calculator override",
-          }),
-        });
-      } catch (e) {
-        console.error("Failed to save mac cheese stock override", e);
-      }
-    }, 800);
+  const relockStockRow = useCallback((recipeId: number, keepOverride: boolean) => {
+    if (!keepOverride) {
+      setStockOverrides(prev => {
+        const next = { ...prev };
+        delete next[recipeId];
+        return next;
+      });
+    }
+    setStockConfirmId(prev => (prev === recipeId ? null : prev));
+    setStockUnlockedId(prev => (prev === recipeId ? null : prev));
   }, []);
 
-  useEffect(() => () => {
-    // Flush any pending timers on unmount so an edit-then-close doesn't
-    // silently drop the operator's typed value.
-    Object.values(stockSaveTimers.current).forEach(t => clearTimeout(t));
-  }, []);
+  const saveStockToControl = useCallback(async (recipe: MacCheeseCalcRecipe, newLevel: number) => {
+    setStockSaving(true);
+    try {
+      const resp = await fetch(`/api/stock-entries`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          recipeId: recipe.recipeId,
+          ingredientId: null,
+          itemType: "recipe",
+          quantity: newLevel,
+          unit: "packs",
+          location: "production_fridge",
+          notes: "Mac cheese calculator override (confirmed)",
+        }),
+      });
+      if (!resp.ok) throw new Error(`Save failed (${resp.status})`);
+      // The saved figure is the new baseline: the cell is no longer "edited"
+      // and the next confirmation compares against the level just written.
+      const rebase = (list: MacCheeseCalcRecipe[]) => list.map(r =>
+        r.recipeId === recipe.recipeId
+          ? { ...r, liveStock: newLevel, leftOverStock: newLevel, stillToDispatchToday: 0 }
+          : r,
+      );
+      setAllRecipes(rebase);
+      setRecipes(rebase);
+      relockStockRow(recipe.recipeId, false);
+      setStockJustSaved(prev => ({ ...prev, [recipe.recipeId]: true }));
+      setTimeout(() => {
+        setStockJustSaved(prev => ({ ...prev, [recipe.recipeId]: false }));
+      }, 2500);
+    } catch (e) {
+      console.error("Failed to save mac cheese stock override", e);
+      toast({ title: "Stock not saved", description: "Could not update Stock Control — the calculation still uses your number.", variant: "destructive" });
+    } finally {
+      setStockSaving(false);
+    }
+  }, [relockStockRow]);
 
   useEffect(() => {
     setLoading(true);
@@ -126,6 +157,8 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
           isCoreMenu: !!r.isCoreMenu,
           packsPerBatch: r.packsPerBatch ?? 5,
           leftOverStock: Math.round(r.leftOverStock ?? 0),
+          liveStock: Math.round(r.liveStock ?? r.leftOverStock ?? 0),
+          stillToDispatchToday: Math.round(r.stillToDispatchToday ?? 0),
           salesNextDay: r.salesNextDay ?? 0,
           salesNextDayPlus1: r.salesNextDayPlus1 ?? 0,
           salesNextDayPlus2: r.salesNextDayPlus2 ?? 0,
@@ -270,16 +303,106 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
                     </div>
                   </td>
                   <td className="py-2.5 px-2 text-right">
-                    <NumberInput
-                      min={0}
-                      value={stockOverrides[r.recipeId] ?? r.leftOverStock}
-                      onChange={n => {
-                        const v = Math.max(0, n);
-                        setStockOverrides(prev => ({ ...prev, [r.recipeId]: v }));
-                        persistStockOverride(r.recipeId, v);
-                      }}
-                      className="w-16 px-2 py-1 text-right bg-background border border-border rounded text-sm tabular-nums"
-                    />
+                    {(() => {
+                      const unlocked = stockUnlockedId === r.recipeId;
+                      if (!unlocked) {
+                        return (
+                          <div className="flex flex-col items-end gap-0.5">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <span className="tabular-nums">{r.leftOverStock}</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  // One row unlocked at a time — moving the
+                                  // padlock discards any unsaved edit on the
+                                  // previously unlocked row.
+                                  if (stockUnlockedId !== null && stockUnlockedId !== r.recipeId) {
+                                    relockStockRow(stockUnlockedId, false);
+                                  }
+                                  setStockUnlockedId(r.recipeId);
+                                }}
+                                className="text-muted-foreground hover:text-foreground transition-colors p-0.5"
+                                title="Stock is locked — it comes from Stock Control and should be right. Tap to unlock and correct it after a physical count."
+                              >
+                                <Lock className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                            {stockJustSaved[r.recipeId] && (
+                              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">Stock updated ✓</span>
+                            )}
+                          </div>
+                        );
+                      }
+                      const typed = stockOverrides[r.recipeId];
+                      const edited = stockCellEdited(typed, r.leftOverStock);
+                      const writePlan = planStockWrite(typed ?? r.leftOverStock, r.liveStock, r.stillToDispatchToday);
+                      return (
+                        <div className="flex flex-col items-end gap-1">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <NumberInput
+                              min={0}
+                              value={typed ?? r.leftOverStock}
+                              onChange={n => {
+                                setStockOverrides(prev => ({ ...prev, [r.recipeId]: Math.max(0, n) }));
+                                if (stockConfirmId === r.recipeId) setStockConfirmId(null);
+                              }}
+                              autoFocus
+                              className="w-16 px-2 py-1 text-right bg-background border border-amber-400 dark:border-amber-600 rounded text-sm tabular-nums"
+                            />
+                            <LockOpen className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                          </div>
+                          {stockConfirmId === r.recipeId ? (
+                            <div className="w-48 text-left text-[10px] leading-snug bg-amber-50 dark:bg-amber-950/40 border border-amber-400 dark:border-amber-600 rounded-lg p-2 space-y-1.5">
+                              <div className="font-semibold text-amber-900 dark:text-amber-200">
+                                Stock Control: {writePlan.currentLevel} → {writePlan.newLevel} packs ({writePlan.delta > 0 ? "+" : ""}{writePlan.delta})
+                              </div>
+                              {writePlan.dispatchWarning && (
+                                <div className="text-amber-800 dark:text-amber-300">{writePlan.dispatchWarning}</div>
+                              )}
+                              <div className="flex gap-1.5 justify-end">
+                                <button
+                                  type="button"
+                                  disabled={stockSaving}
+                                  onClick={() => setStockConfirmId(null)}
+                                  className="px-2 py-1 rounded border border-border bg-background hover:bg-secondary/60 disabled:opacity-50"
+                                >
+                                  Back
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={stockSaving}
+                                  onClick={() => saveStockToControl(r, writePlan.newLevel)}
+                                  className="px-2 py-1 rounded bg-amber-600 text-white font-semibold hover:bg-amber-700 disabled:opacity-50 flex items-center gap-1"
+                                >
+                                  {stockSaving && <Loader2 className="w-3 h-3 animate-spin" />}
+                                  Update stock
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => relockStockRow(r.recipeId, false)}
+                                className="px-2 py-1 rounded border border-border bg-background text-[10px] hover:bg-secondary/60"
+                                title="Discard the edit and lock the column again"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                disabled={!edited}
+                                onClick={() => setStockConfirmId(r.recipeId)}
+                                className="px-2 py-1 rounded bg-primary text-primary-foreground text-[10px] font-semibold hover:bg-primary/90 disabled:opacity-40"
+                                title="Review and save this number to Stock Control"
+                              >
+                                Save…
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td className={cn("py-2.5 px-2 text-right tabular-nums", zeroedDays.d1 && "text-muted-foreground line-through")}>{getSalesD1(r)}</td>
                   <td className="py-2.5 px-2 text-right tabular-nums text-amber-600">{getDeficit(r)}</td>
@@ -326,7 +449,7 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Stock = current fridge packs. Sales D1/D2/D3 = next 3 dispatch days from Shopify. Deficit = max(0, D1 − Stock). Extra = additional packs. <strong>To Make is rounded up to whole batches</strong> — you can't produce partial batches, so target + rounding-up is what you'll actually make.
+        Stock = current fridge packs from Stock Control, locked because it should be right. To correct it after a physical count: tap the padlock, type the real number, then Save — you'll be shown exactly what changes before anything is written. Cancel discards the edit. Sales D1/D2/D3 = next 3 dispatch days from Shopify. Deficit = max(0, D1 − Stock). Extra = additional packs. <strong>To Make is rounded up to whole batches</strong> — you can't produce partial batches, so target + rounding-up is what you'll actually make.
       </p>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
