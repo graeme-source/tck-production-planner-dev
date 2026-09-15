@@ -25,6 +25,7 @@ import { IncidentDiaryTab } from "@/components/incident-diary";
 import { AttendanceFreshness } from "@/components/attendance-freshness";
 import { AttendanceAdminNotices } from "@/components/attendance-admin-notices";
 import { SickLeaveModal } from "@/components/sick-leave-modal";
+import { WrappingSpeedReport } from "@/components/wrapping-speed-report";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -677,6 +678,8 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
           </div>
         </div>
       )}
+
+      <WrappingSpeedReport fromDate={fromDate} toDate={toDate} />
 
       <div>
         <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
