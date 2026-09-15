@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import {
   ClipboardList, Loader2, CheckCircle2, Package, Plus, Minus, Check, Salad, Pencil, RotateCcw, MoreVertical, Clock3, X as XIcon,
-  BookOpen,
+  BookOpen, FlaskConical,
 } from "lucide-react";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
 import { format, parseISO } from "date-fns";
@@ -20,6 +20,8 @@ import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftB
 import type { NextActivePlan } from "../shared/prep-helpers";
 import { DeferredPrepBanner } from "../shared/deferred-prep-banner";
 import { PrepSubNav } from "./prep-hub";
+import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
+import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
 
 export interface MainPrepIngredient {
   ingredientId: number;
@@ -96,6 +98,52 @@ interface PrepTinDeferral {
 
 type PrepPresenceData = Record<number, { userId: number; userName: string }[]>;
 
+/** Ticks for linked rows (pasta water/salt) — their own tiny endpoint, so
+ *  water and salt can be struck off like any other prep task even though
+ *  they aren't recipe ingredients (Graeme, 2026-09-09). Polls on the same
+ *  cadence as the main prep data. */
+function useLinkedCompletions(planId: number | null) {
+  const [done, setDone] = useState<Set<string>>(new Set());
+  const load = useCallback(async () => {
+    if (!planId) { setDone(new Set()); return; }
+    try {
+      const r = await fetch(`/api/prep-linked-completions/${planId}`, { credentials: "include" });
+      if (r.ok) {
+        const rows = (await r.json()) as Array<{ key: string }>;
+        setDone(new Set(rows.map(x => x.key)));
+      }
+    } catch { /* poll again shortly */ }
+  }, [planId]);
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [load]);
+  const toggle = async (key: string) => {
+    if (!planId) return;
+    const isDone = done.has(key);
+    // Optimistic — a bench tap must not wait on the network.
+    setDone(prev => {
+      const next = new Set(prev);
+      if (isDone) next.delete(key); else next.add(key);
+      return next;
+    });
+    const res = await fetch(`/api/prep-linked-completions/${planId}`, {
+      method: isDone ? "DELETE" : "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key }),
+    }).catch(() => null);
+    if (!res || (!res.ok && res.status !== 409)) load(); // roll back to server truth
+    if (res && res.status === 409) {
+      const body = await res.json().catch(() => ({}));
+      toast({ title: "Couldn't tick that", description: body.error, variant: "destructive" });
+      load();
+    }
+  };
+  return { linkedDone: done, toggleLinked: toggle };
+}
+
 interface StockCheckEntry {
   id: number;
   ingredientId: number;
@@ -107,6 +155,9 @@ interface StockCheckEntry {
 }
 
 export interface LinkedItem {
+  /** Present on rows that are tickable tasks (pasta water/salt) — persisted
+   *  per plan in prep_linked_completions. Absent = display-only sub-row. */
+  key?: string;
   ingredientName: string;
   unit: string;
   totalQty: number;
@@ -150,6 +201,9 @@ export function useMainPrepData(planId: number, station: string = "main_prep") {
 export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const { state: authState } = useAuth();
   const currentUserId = authState.status === "authenticated" ? authState.user.id : null;
+  // A sub-recipe row's "Replenish" button opens the make-flow modal for it
+  // without leaving the prep list (Graeme, 2026-09-08).
+  const [replenishTarget, setReplenishTarget] = useState<ReplenishTarget | null>(null);
   // ?direct=1 means the user navigated here from a calendar prep card for a
   // specific plan — bypass the auto-route to "next active plan" and use the
   // URL plan id as-is. Without this, an explicit click can be redirected past
@@ -164,6 +218,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
     ? plan.id
     : (noFuturePlan ? plan.id : (nextPlan?.planId ?? plan.id));
   const { data, loading, refetch } = useMainPrepData(targetPlanId);
+  const { linkedDone, toggleLinked } = useLinkedCompletions(targetPlanId);
   const [stockValues, setStockValues] = useState<Record<number, string>>({});
   const [stockValuesLoaded, setStockValuesLoaded] = useState(false);
   const [savingStock, setSavingStock] = useState<Record<number, boolean>>({});
@@ -710,6 +765,10 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
 
       <PrepSubNav planId={plan.id} current="main_prep" />
 
+      {replenishTarget && (
+        <SubRecipeReplenishModal target={replenishTarget} onClose={() => setReplenishTarget(null)} />
+      )}
+
       {/* Deferred-prep banner — hidden when no items are owed today. Ticking
           from here POSTs to the source plan's prep-completions endpoint, so
           a refetch of this station's data picks up the new completion on
@@ -945,21 +1004,49 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                             ) : null}
                           </div>
                         </button>
-                        {/* Linked ingredient sub-rows */}
-                        {ingLinkedItems.map((li, liIdx) => (
-                          <div
-                            key={`linked-${ing.ingredientId}-${liIdx}`}
-                            className="flex items-center justify-between pl-10 pr-4 py-1.5 border-t border-border/20 text-sm text-muted-foreground bg-secondary/10"
-                          >
-                            <span className="flex items-center gap-2">
-                              <span className="text-primary/60">↳</span>
-                              <span>{li.ingredientName}</span>
-                            </span>
-                            <span className="tabular-nums font-medium text-foreground">
-                              {fmtQty(li.totalQty, li.unit)}
-                            </span>
-                          </div>
-                        ))}
+                        {/* Linked ingredient sub-rows. Rows with a key are
+                            real tasks (pasta water/salt) and tick off like
+                            any other prep item; keyless rows stay
+                            display-only. */}
+                        {ingLinkedItems.map((li, liIdx) => {
+                          const liDone = li.key != null && linkedDone.has(li.key);
+                          const rowInner = (
+                            <>
+                              <span className="flex items-center gap-2">
+                                {li.key != null ? (
+                                  liDone
+                                    ? <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                                    : <span className="w-4 h-4 rounded-full border-2 border-muted-foreground/40 flex-shrink-0" />
+                                ) : (
+                                  <span className="text-primary/60">↳</span>
+                                )}
+                                <span className={cn(liDone && "line-through")}>{li.ingredientName}</span>
+                              </span>
+                              <span className={cn("tabular-nums font-medium", liDone ? "text-emerald-600 dark:text-emerald-400" : "text-foreground")}>
+                                {fmtQty(li.totalQty, li.unit)}
+                              </span>
+                            </>
+                          );
+                          return li.key != null ? (
+                            <button
+                              key={`linked-${ing.ingredientId}-${liIdx}`}
+                              onClick={() => toggleLinked(li.key!)}
+                              className={cn(
+                                "w-full flex items-center justify-between pl-10 pr-4 py-1.5 border-t border-border/20 text-sm text-left transition-colors active:scale-[0.99]",
+                                liDone ? "text-muted-foreground bg-emerald-50/40 dark:bg-emerald-950/10" : "text-muted-foreground bg-secondary/10 hover:bg-secondary/30",
+                              )}
+                            >
+                              {rowInner}
+                            </button>
+                          ) : (
+                            <div
+                              key={`linked-${ing.ingredientId}-${liIdx}`}
+                              className="flex items-center justify-between pl-10 pr-4 py-1.5 border-t border-border/20 text-sm text-muted-foreground bg-secondary/10"
+                            >
+                              {rowInner}
+                            </div>
+                          );
+                        })}
                         </React.Fragment>
                       );
                     })}
@@ -1002,6 +1089,24 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                             )}>
                               {ing.ingredientName}
                             </h3>
+                            {/* This row IS a sub-recipe (ingredientId = the
+                                sub-recipe id) — offer to make more of it in a
+                                popup, prep list stays put. */}
+                            {ing.isSubRecipe && (
+                              <button
+                                onClick={() => setReplenishTarget({ subRecipeId: ing.ingredientId, name: ing.ingredientName })}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-primary/40 text-primary text-sm font-semibold hover:bg-primary/10 transition-colors"
+                                title={`Replenish ${ing.ingredientName} without leaving this screen`}
+                              >
+                                <FlaskConical className="w-4 h-4" /> Replenish
+                              </button>
+                            )}
+                            {/* One-tap opened-ingredient label — for real
+                                ingredients only: a sub-recipe row's id is a
+                                sub-recipe id, not an ingredient id. */}
+                            {!ing.isSubRecipe && (
+                              <PrintIngredientLabelButton ingredientId={ing.ingredientId} itemName={ing.ingredientName} />
+                            )}
                           </div>
                           <p className="text-base text-muted-foreground mt-0.5">
                             <span className="font-semibold text-foreground">{fmtQty(ing.totalQty, ing.unit)}</span>

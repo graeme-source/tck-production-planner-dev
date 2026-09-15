@@ -22,9 +22,29 @@ import { cn } from "@/lib/utils";
  *     threshold (80px), the page reloads. Otherwise the indicator animates
  *     back out.
  */
-const THRESHOLD = 160; // px the user must drag before a reload triggers (iPad-friendly)
-const MAX_PULL = 220; // visual cap so the indicator doesn't keep growing
-const DEAD_ZONE = 30; // px of initial vertical movement before we treat it as a pull
+// The reload needs a DELIBERATE drag: 60% of the screen height (Graeme,
+// 2026-09-12 — accidental refreshes while scrolling up kept losing his
+// place). Computed per-gesture so it tracks rotation/resize.
+const thresholdPx = () => Math.round(window.innerHeight * 0.6);
+const DEAD_ZONE = 40; // px of initial vertical movement before we treat it as a pull
+
+/**
+ * The historic root cause of accidental refreshes: the old guard checked
+ * `window.scrollY === 0`, but every page in this app scrolls an INNER
+ * container (Layout's overflow-y-auto main), so window.scrollY is always 0
+ * and the guard never guarded anything — any downward swipe mid-feed armed
+ * the pull. This walks up from the touched element instead: if ANY
+ * scrollable ancestor is scrolled down, the user is mid-page and a
+ * downward swipe means "scroll up", never "reload".
+ */
+function anyAncestorScrolled(start: EventTarget | null): boolean {
+  let el = start instanceof Element ? start : null;
+  while (el) {
+    if (el.scrollTop > 0 && el.scrollHeight > el.clientHeight) return true;
+    el = el.parentElement;
+  }
+  return false;
+}
 
 export function PullToRefresh() {
   const [enabled, setEnabled] = useState(false);
@@ -32,6 +52,7 @@ export function PullToRefresh() {
   const [refreshing, setRefreshing] = useState(false);
 
   const startYRef = useRef<number | null>(null);
+  const startTargetRef = useRef<EventTarget | null>(null);
   const activeRef = useRef(false);
 
   // Detect standalone mode once on mount. If the user later shares the URL in
@@ -62,9 +83,12 @@ export function PullToRefresh() {
     function onTouchStart(e: TouchEvent) {
       if (refreshing) return;
       if (isSuppressed()) return;
-      if (window.scrollY > 0) return;
+      // Mid-page anywhere (window OR any inner scroll container) means a
+      // downward swipe is "scroll up" — never arm the pull.
+      if (window.scrollY > 0 || anyAncestorScrolled(e.target)) return;
       if (e.touches.length !== 1) return;
       startYRef.current = e.touches[0].clientY;
+      startTargetRef.current = e.target;
       activeRef.current = false;
     }
 
@@ -77,8 +101,9 @@ export function PullToRefresh() {
         return;
       }
       if (startYRef.current === null) return;
-      // If the user has scrolled during the gesture, abort.
-      if (window.scrollY > 0) {
+      // If anything has scrolled during the gesture, abort — the user is
+      // scrolling content, not asking for a reload.
+      if (window.scrollY > 0 || anyAncestorScrolled(startTargetRef.current)) {
         startYRef.current = null;
         activeRef.current = false;
         setPullDistance(0);
@@ -92,11 +117,11 @@ export function PullToRefresh() {
       }
       // Ignore small movements so a casual scroll-up doesn't trigger the pull.
       if (dy < DEAD_ZONE) return;
+      const threshold = thresholdPx();
       const effective = dy - DEAD_ZONE;
-      // Resistance curve: the pull feels heavier past the threshold so users
-      // get tactile feedback even on long drags.
-      const resisted = effective < THRESHOLD ? effective : THRESHOLD + (effective - THRESHOLD) * 0.4;
-      const capped = Math.min(resisted, MAX_PULL);
+      // Resistance past the threshold so long drags still feel anchored.
+      const resisted = effective < threshold ? effective : threshold + (effective - threshold) * 0.4;
+      const capped = Math.min(resisted, threshold + 80);
       setPullDistance(capped);
       activeRef.current = capped > 5;
       // Prevent the browser's rubber-band scroll while we're visually
@@ -110,12 +135,12 @@ export function PullToRefresh() {
         setPullDistance(0);
         return;
       }
-      const crossed = pullDistance >= THRESHOLD;
+      const crossed = pullDistance >= thresholdPx();
       startYRef.current = null;
       activeRef.current = false;
       if (crossed) {
         setRefreshing(true);
-        setPullDistance(THRESHOLD);
+        setPullDistance(thresholdPx());
         // Small delay so the spinner is visible before the navigation tears
         // down the React tree.
         setTimeout(() => window.location.reload(), 200);
@@ -141,11 +166,12 @@ export function PullToRefresh() {
   if (!enabled) return null;
 
   const visible = pullDistance > 5 || refreshing;
-  const progress = Math.min(pullDistance / THRESHOLD, 1);
+  const progress = Math.min(pullDistance / thresholdPx(), 1);
   const ready = progress >= 1;
   // Translate from hidden (above the viewport) down into view as the user
-  // pulls. When refreshing, snap to a fixed offset and spin the loader.
-  const translateY = refreshing ? 48 : Math.max(0, pullDistance * 0.7 - 16);
+  // pulls — capped so a 60%-of-screen drag doesn't march the indicator off
+  // into the page. When refreshing, snap to a fixed offset and spin.
+  const translateY = refreshing ? 48 : Math.min(Math.max(0, pullDistance * 0.35 - 12), 88);
 
   return (
     <div

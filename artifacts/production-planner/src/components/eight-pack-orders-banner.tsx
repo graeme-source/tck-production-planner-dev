@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { PackageCheck, Loader2, AlertTriangle, CheckCircle2, ArrowRight, Store } from "lucide-react";
+import { PackageCheck, Loader2, AlertTriangle, CheckCircle2, ArrowRight, Store, MessageSquareText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { ShopifyOrderNumber } from "@/components/shopify-order-link";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
@@ -23,6 +24,12 @@ interface QueueOrder {
   existingDateTag: string | null;
   proposedDeliveryDate: string;
   lines: QueueLine[];
+  // The order's free-text note, plus the delivery date scanned out of it (and
+  // the phrase it came from). Optional so an older cached server response
+  // degrades to no note shown.
+  note?: string | null;
+  noteSuggestedDate?: string | null;
+  noteMatchedText?: string | null;
 }
 interface PlanInfo { planId: number; planDate: string; status: string; recipeIds: number[]; }
 interface QueuePayload {
@@ -224,11 +231,18 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
       });
       const body = await res.json().catch(() => ({}));
       if (res.ok) {
+        // Say whether the customer heard about their date — a send that
+        // silently failed is indistinguishable from one that worked.
+        const emailNote = body.emailed === true
+          ? " Customer emailed their scheduled date."
+          : body.emailed === false
+            ? " ⚠ Customer NOT emailed (no address or send failed)."
+            : "";
         toast({
           title: `Processed ${order.name}`,
-          description: order.kind === "eight_pack"
+          description: (order.kind === "eight_pack"
             ? `Bags on the ${fmtNice(productionDate)} plan · delivering ${fmtNice(deliveryDate)}.`
-            : `Tagged for delivery ${fmtNice(deliveryDate)}.`,
+            : `Tagged for delivery ${fmtNice(deliveryDate)}.`) + emailNote,
         });
         setDone(prev => new Set(prev).add(order.orderId));
         onProcessed();
@@ -292,14 +306,32 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
       >
         <div className="flex items-center justify-between gap-3 mb-2">
           <div className="min-w-0">
-            <span className="font-semibold">{order.name}</span>
+            <ShopifyOrderNumber orderId={order.orderId} name={order.name} className="font-semibold" />
             {order.customerName && <span className="text-sm text-muted-foreground ml-2">{order.customerName}</span>}
             {order.existingDateTag && (
               <span className="text-xs ml-2 px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">requested {fmtNice(order.existingDateTag)}</span>
             )}
+            {order.noteSuggestedDate && (
+              <span
+                className="text-xs ml-2 px-1.5 py-0.5 rounded bg-sky-100 dark:bg-sky-900/40 text-sky-800 dark:text-sky-300"
+                title={order.noteMatchedText ? `Read from the order note: “${order.noteMatchedText}”` : "Read from the order note"}
+              >
+                note asks {fmtNice(order.noteSuggestedDate)}
+              </span>
+            )}
           </div>
           {isDone && <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
         </div>
+
+        {/* The note itself, in full — the date chip above is only a reading
+            of it, and the human confirming the date needs the actual words
+            (allergies, gate codes, "not before 9am"…) in front of them. */}
+        {order.note && (
+          <div className="flex items-start gap-2 rounded-lg border border-sky-200 dark:border-sky-900 bg-sky-50/60 dark:bg-sky-950/20 px-3 py-2 mb-2">
+            <MessageSquareText className="w-4 h-4 text-sky-600 dark:text-sky-400 flex-shrink-0 mt-0.5" />
+            <span className="text-sm whitespace-pre-wrap min-w-0">{order.note}</span>
+          </div>
+        )}
 
         <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-sm mb-2">
           {order.lines.map(l => (
@@ -378,7 +410,7 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
             <PackageCheck className="w-5 h-5 text-indigo-500" /> Process 8-pack &amp; wholesale orders
           </DialogTitle>
           <DialogDescription>
-            Pick a delivery day (Tue–Sat) for each order. <span className="font-medium">8-pack bag orders</span> add the bags to a production plan up to 3 days before delivery — Make defaults to the earliest plan that already has the products, and you can change it. <span className="font-medium">Wholesale 2-pack orders</span> are just tagged for despatch. Both get tagged with the delivery date + <span className="font-medium">production</span>.
+            Pick a delivery day (Tue–Sat) for each order. <span className="font-medium">8-pack bag orders</span> add the bags to a production plan up to 3 days before delivery — Make defaults to the earliest plan that already has the products, and you can change it. <span className="font-medium">Wholesale 2-pack orders</span> are just tagged for dispatch. Both get tagged with the delivery date + <span className="font-medium">production</span>.
           </DialogDescription>
         </DialogHeader>
 

@@ -79,6 +79,15 @@ export const finLinesTable = pgTable("fin_lines", {
   statusNote: text("status_note"),
   doneAt: timestamp("done_at"),
   doneBy: integer("done_by"),
+  // Supplier contact + order reference — extracted from an attached order
+  // confirmation (or typed by hand); feeds the chase-for-VAT-invoice email.
+  orderReference: text("order_reference"),
+  supplierEmail: text("supplier_email"),
+  supplierWebsite: text("supplier_website"),
+  // Chase bookkeeping: how many times and when this supplier was last
+  // emailed for the invoice — the guard against double-chasing.
+  chaseCount: integer("chase_count").notNull().default(0),
+  lastChasedAt: timestamp("last_chased_at"),
   // Set when the QuickBooks sync matches this line to a posted
   // transaction — the "ruled out, already posted" signal.
   qboTxnId: integer("qbo_txn_id"),
@@ -186,6 +195,12 @@ export const finQboConnectionTable = pgTable("fin_qbo_connection", {
   syncCursor: timestamp("sync_cursor"),
   lastSyncAt: timestamp("last_sync_at"),
   lastError: text("last_error"),
+  // Auto-import (migration 0101): purchases paid from this QBO account
+  // (the Capital on Tap card) become finance lines automatically — no CSV.
+  // Null = off. `since` stops the switch-on from flooding the queue with
+  // months of history: only purchases dated on/after it are imported.
+  autoImportAccount: text("auto_import_account"),
+  autoImportSince: date("auto_import_since"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -199,6 +214,11 @@ export const finQboTxnsTable = pgTable("fin_qbo_txns", {
   totalAmt: numeric("total_amt", { precision: 12, scale: 2 }),
   vendorName: text("vendor_name"),
   docNumber: text("doc_number"),
+  // Which QBO account paid it (Purchase.AccountRef — the bank/card) and
+  // how (CreditCard/Cash/Check). Feeds the Capital-on-Tap auto-import
+  // filter (migration 0101).
+  accountName: text("account_name"),
+  paymentType: text("payment_type"),
   syncedAt: timestamp("synced_at").notNull().defaultNow(),
 });
 

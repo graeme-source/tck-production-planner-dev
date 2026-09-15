@@ -113,16 +113,16 @@ export async function setStockGateSettings(patch: Partial<Record<keyof typeof KE
 
 // ── Shopify: variant → product resolution and product tagging ───────────────
 
-type ProductRef = { productGid: string; productId: string; title: string };
+type ProductRef = { productGid: string; productId: string; title: string; status: string };
 
 async function resolveProductForVariant(variantId: string): Promise<ProductRef | null> {
   const { shopifyGraphQL } = await import("../services/shopify");
   const data = await shopifyGraphQL<{
-    nodes: Array<{ id: string; product: { id: string; title: string } } | null>;
+    nodes: Array<{ id: string; product: { id: string; title: string; status: string } } | null>;
   }>(
     `query ($ids: [ID!]!) {
       nodes(ids: $ids) {
-        ... on ProductVariant { id product { id title } }
+        ... on ProductVariant { id product { id title status } }
       }
     }`,
     { ids: [`gid://shopify/ProductVariant/${variantId}`] },
@@ -133,6 +133,10 @@ async function resolveProductForVariant(variantId: string): Promise<ProductRef |
     productGid: node.product.id,
     productId: node.product.id.split("/").pop() ?? "",
     title: node.product.title,
+    // ACTIVE | DRAFT | ARCHIVED — a non-active product can't be bought, so
+    // holding it only produces warnings nobody can act on (Graeme,
+    // 2026-09-10: the Don Bacon / Open Fire BBQ nag loop).
+    status: node.product.status,
   };
 }
 
@@ -152,6 +156,17 @@ async function setProductTag(productGid: string, tag: string, add: boolean): Pro
   const errs = data[mutation]?.userErrors ?? [];
   if (errs.length > 0) {
     throw new Error(`Shopify ${mutation}: ${errs.map(e => e.message).join("; ")}`);
+  }
+}
+
+/** True when the variant's product is draft/archived. Lookup failures count
+ *  as "still active" — a transient Shopify error must not release holds. */
+async function productGoneInactive(variantId: string): Promise<boolean> {
+  try {
+    const product = await resolveProductForVariant(variantId);
+    return product != null && product.status !== "ACTIVE";
+  } catch {
+    return false;
   }
 }
 
@@ -310,14 +325,31 @@ export async function runStockGateCycle(trigger: "timer" | "manual"): Promise<St
 
     // Holds on recipes no longer in scope are released immediately — a
     // product we can't measure must not stay blocked on a stale number.
+    // And holds on products that have gone draft/archived release HERE,
+    // unconditionally: the per-row loop below skips rows without live
+    // Shopify sales, and a draft product stops selling — which is exactly
+    // why the first version of this check (inside that loop) never fired
+    // for Open Fire BBQ (Graeme, 2026-09-11). The hold's own stored
+    // variant id keys the lookup, independent of today's calc.
     for (const h of activeHolds) {
-      if (inScope(h.recipeId)) continue;
-      try {
-        await releaseHold(h, "auto (out of gate scope)", null);
-        holdByRecipe.delete(h.recipeId);
-        released.push(`${h.recipeName} (out of scope)`);
-      } catch (err) {
-        console.error(`[stock-gate] out-of-scope release failed for ${h.recipeName}:`, err);
+      if (!inScope(h.recipeId)) {
+        try {
+          await releaseHold(h, "auto (out of gate scope)", null);
+          holdByRecipe.delete(h.recipeId);
+          released.push(`${h.recipeName} (out of scope)`);
+        } catch (err) {
+          console.error(`[stock-gate] out-of-scope release failed for ${h.recipeName}:`, err);
+        }
+        continue;
+      }
+      if (h.shopifyVariantId && await productGoneInactive(h.shopifyVariantId)) {
+        try {
+          await releaseHold(h, "auto (product no longer active on Shopify)", null);
+          holdByRecipe.delete(h.recipeId);
+          released.push(`${h.recipeName} (off the menu)`);
+        } catch (err) {
+          console.error(`[stock-gate] inactive-release failed for ${h.recipeName}:`, err);
+        }
       }
     }
 
@@ -343,6 +375,12 @@ export async function runStockGateCycle(trigger: "timer" | "manual"): Promise<St
           console.error(`[stock-gate] product lookup failed for ${row.recipeName}:`, err);
         }
         if (!product) continue;
+        // Draft/archived = off the menu = nothing to protect. It rejoins
+        // the gate automatically the day it's set active again.
+        if (product.status !== "ACTIVE") {
+          console.log(`[stock-gate] skip ${row.recipeName}: product is ${product.status} on Shopify`);
+          continue;
+        }
         if (!settings.dryRun) {
           try {
             await setProductTag(product.productGid, settings.tag, true);

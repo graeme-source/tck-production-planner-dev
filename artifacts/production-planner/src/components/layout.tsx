@@ -10,8 +10,9 @@ import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { FEATURE_REGISTRY } from "@workspace/feature-registry";
 import { usePageHeaderValue } from "@/contexts/page-header-context";
 import { 
-  LayoutDashboard, 
-  ChefHat, 
+  LayoutDashboard,
+  Briefcase,
+  ChefHat,
   Carrot, 
   ClipboardList, 
   CalendarDays, 
@@ -47,6 +48,7 @@ import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/user-avatar";
 import { NotificationBell } from "@/components/notification-bell";
 import { CurrentUserBadge } from "@/components/current-user-badge";
+import { PageSopButton } from "@/components/page-sop-rail";
 import { useUnseenImprovementCount } from "@/hooks/use-unseen-improvements";
 import { LeanWeeklyStrip } from "@/components/lean-weekly-review";
 import { NotificationFlash } from "@/components/notification-flash";
@@ -619,7 +621,17 @@ export function Layout({ children }: { children: ReactNode }) {
     if (entry) visibleNavItems.push(entry);
   }
 
-  const navForUser = accountantOnly ? visibleNavItems.filter(i => i.href === "/finance") : visibleNavItems;
+  // Accountants see Finance and Deliveries (they reconcile against what
+  // physically arrived) and nothing else — the production app is noise to
+  // them, and they are noise to it (Graeme, 2026-09-09).
+  let navForUser = accountantOnly ? visibleNavItems.filter(i => i.href === "/finance" || i.href === "/deliveries") : visibleNavItems;
+  // "The Business" — the founder's own area, top of the menu, above
+  // Dashboard (Graeme, 2026-09-11). Email-gated like every founder
+  // surface; the /founder pages also guard themselves server-side. This
+  // replaces the old "Founder Focus" button on the dashboard header.
+  if (user?.email === "graeme@thecalzonekitchen.co.uk") {
+    navForUser = [{ name: "The Business", href: "/founder/focus", icon: Briefcase }, ...navForUser];
+  }
   const productForUser = accountantOnly ? [] : visibleProductItems;
   const inventoryForUser = accountantOnly ? [] : visibleInventoryItems;
 
@@ -735,10 +747,15 @@ export function Layout({ children }: { children: ReactNode }) {
             contain stops a top-of-page drag chaining into the browser's
             pull-to-refresh (which reloaded mid-shift — Graeme, 2026-09-07). */}
         <div id="app-main-scroll" ref={mainScrollRef} className="flex-1 overflow-y-auto overscroll-contain p-4 md:p-8 pb-[200px] relative">
-          {/* Weekly lean lesson reminder — every main page, until completed */}
-          <div className="mb-4 empty:hidden">
-            <LeanWeeklyStrip />
-          </div>
+          {/* Weekly lean lesson reminder — every main page, until completed.
+              Not for accountants: they're external, the lean curriculum and
+              the rest of the team machinery aren't theirs (Graeme,
+              2026-09-09). */}
+          {!accountantOnly && (
+            <div className="mb-4 empty:hidden">
+              <LeanWeeklyStrip />
+            </div>
+          )}
           <motion.div
             key={location}
             initial={{ opacity: 0, y: 10 }}
@@ -753,13 +770,14 @@ export function Layout({ children }: { children: ReactNode }) {
       <StandardsSopsDialog open={sopsOpen} onClose={() => setSopsOpen(false)} currentStationType={null} />
       <NotificationFlash />
       {/* The big positive popup when a teammate finishes an improvement —
-          flash banners handle everything else. */}
-      <ImprovementCelebration />
+          flash banners handle everything else. Not for accountants. */}
+      {!accountantOnly && <ImprovementCelebration />}
 
-      {/* Caz is available to every logged-in user. The founder additionally
-          gets recipe-design + memory powers; staff get a read-only look-up
-          assistant (enforced server-side, not just here). */}
-      <QuickActionsDock />
+      {/* Caz is available to every logged-in TEAM user. The founder
+          additionally gets recipe-design + memory powers; staff get a
+          read-only look-up assistant (enforced server-side, not just
+          here). Accountants get neither the dock nor the to-do machinery. */}
+      {!accountantOnly && <QuickActionsDock />}
       {/* Weekly sales-derived DPT refresh — renders nothing except for
           managers/admins in the week it's due. */}
       <DptSuggestionPrompt />
@@ -952,6 +970,11 @@ function TopBar({ onMenu, fallbackTitle, onOpenSops }: { onMenu: () => void; fal
           {header.description}
         </span>
       )}
+      {/* This page's own SOPs — "Show me how" plus attach — on every screen,
+          keyed by route. fallbackTitle (the nav name) labels it, not the
+          header title: pages like packing retitle per order, and an SOP
+          created here should be named for the PAGE, not order #133647. */}
+      <PageSopButton pageLabel={fallbackTitle} />
       <CurrentUserBadge />
       <button
         onClick={onOpenSops}

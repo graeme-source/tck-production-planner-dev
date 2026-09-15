@@ -993,7 +993,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                                       entry.source === "reset" && "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
                                       (entry.source === "manual" || !["wrapping", "fulfilment", "reset"].includes(entry.source)) && "bg-secondary text-muted-foreground",
                                     )}>
-                                      {entry.source === "wrapping" ? "Wrapped" : entry.source === "fulfilment" ? "Despatch" : entry.source === "reset" ? "Reset" : "Manual"}
+                                      {entry.source === "wrapping" ? "Wrapped" : entry.source === "fulfilment" ? "Dispatch" : entry.source === "reset" ? "Reset" : "Manual"}
                                     </span>
                                   )}
                                   <span className="truncate">{entry.notes ?? ""}</span>

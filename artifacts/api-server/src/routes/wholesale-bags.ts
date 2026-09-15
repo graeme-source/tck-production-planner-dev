@@ -24,6 +24,7 @@ import { Router, type IRouter } from "express";
 import { db, productionPlanItemsTable } from "@workspace/db";
 import { inArray, sql } from "drizzle-orm";
 import { londonDateString } from "../lib/london-time";
+import { sendEmail } from "../lib/email";
 import {
   earliestProductionDay,
   defaultDeliveryDay,
@@ -33,6 +34,7 @@ import {
   DESPATCH_CUTOFF,
 } from "../lib/production-cutoff";
 import { getRecentUnfulfilledOrders, getOrderById, addTagsToOrder } from "../services/shopify";
+import { suggestDeliveryDateFromNote } from "../lib/note-delivery-date";
 
 const router: IRouter = Router();
 
@@ -181,19 +183,38 @@ router.get("/queue", async (_req, res) => {
       })
       .map(({ o, kind, lines }) => {
         const existingDateTag = firstDateTag(o.tags);
+        // Customers often ask for a delivery day in the free-text order note
+        // ("deliver Friday please", "for the 12th"). Scan it — relative words
+        // resolve from the day the note was written, not from today — and
+        // propose what it asks for when that's still a feasible delivery day.
+        // The note itself rides along so the human confirming the date can
+        // read exactly what was asked (Graeme, 2026-09-08).
+        const note = (o.note ?? "").trim() || null;
+        const createdDay = o.created_at ? londonDateString(new Date(o.created_at)) : today;
+        const noteSuggestion = suggestDeliveryDateFromNote(note, createdDay, today);
         // A customer-requested date is respected only when it's still feasible
         // from now — otherwise we propose the kind's own default: 8-pack bags
         // get production + 2, tag-only wholesale gets the earliest despatchable
-        // delivery.
+        // delivery. An explicit date tag (Zapiet / earlier processing) always
+        // outranks a date read out of prose.
         const kindEarliest = kind === "wholesale_2pack" ? wholesaleEarliestDelivery : addDays(earliestProductionDate, 1);
         const kindDefault = kind === "wholesale_2pack" ? wholesaleEarliestDelivery : defaultDeliveryDay();
-        const proposedDeliveryDate = existingDateTag && isDeliveryDay(existingDateTag) && existingDateTag >= kindEarliest
+        const feasible = (d: string | null | undefined): d is string =>
+          !!d && isDeliveryDay(d) && d >= kindEarliest;
+        const proposedDeliveryDate = feasible(existingDateTag)
           ? existingDateTag
-          : kindDefault;
+          : feasible(noteSuggestion?.date)
+            ? noteSuggestion!.date
+            : kindDefault;
         const customerName = o.shipping_address?.name
           || (o.customer ? `${o.customer.first_name ?? ""} ${o.customer.last_name ?? ""}`.trim() : "")
           || "";
-        return { orderId: o.id, name: o.name, customerName, tags: o.tags, kind, existingDateTag, proposedDeliveryDate, lines };
+        return {
+          orderId: o.id, name: o.name, customerName, tags: o.tags, kind, existingDateTag, proposedDeliveryDate, lines,
+          note,
+          noteSuggestedDate: noteSuggestion?.date ?? null,
+          noteMatchedText: noteSuggestion?.matched ?? null,
+        };
       })
       .sort((a, b) => (a.name < b.name ? 1 : -1)); // newest order name first
 
@@ -224,6 +245,50 @@ router.get("/queue", async (_req, res) => {
 // be any earlier plan, so bags can be made days ahead of a delivery (Graeme,
 // 2026-08: deliver the 13th, make on the 10th). The order tag is always the
 // DELIVERY date, so despatch routing is untouched by the override.
+/**
+ * Tell the customer their scheduled delivery date (Graeme, 2026-09-15).
+ * Wording is deliberately non-committal — "scheduled for delivery on", and
+ * "we'll let you know if anything changes" — because we do not guarantee
+ * delivery dates. Fire-and-forget: a mail failure never fails the
+ * processing, it just logs loudly and reports emailed:false to the UI.
+ */
+async function emailDeliverySchedule(order: { name: string; email?: string | null; contact_email?: string | null; customer: { first_name: string; email: string } | null }, deliveryDate: string): Promise<boolean> {
+  const to = order.email ?? order.contact_email ?? order.customer?.email;
+  if (!to) {
+    console.warn(`[wholesale-bags] no customer email on ${order.name} — delivery-date email not sent`);
+    return false;
+  }
+  const friendly = new Date(`${deliveryDate}T00:00:00`).toLocaleDateString("en-GB", {
+    weekday: "long", day: "numeric", month: "long",
+  });
+  const firstName = order.customer?.first_name?.trim();
+  const greeting = firstName ? `Hi ${firstName},` : "Hi,";
+  const text = `${greeting}
+
+Thanks for your order ${order.name}. It's in production and is scheduled for delivery on ${friendly}.
+
+If anything changes with the schedule we'll let you know.
+
+The Calzone Kitchen`;
+  const html = `<p>${greeting}</p>
+<p>Thanks for your order <strong>${order.name}</strong>. It's in production and is scheduled for delivery on <strong>${friendly}</strong>.</p>
+<p>If anything changes with the schedule we'll let you know.</p>
+<p>The Calzone Kitchen</p>`;
+  try {
+    await sendEmail({
+      to,
+      subject: `Your Calzone Kitchen order ${order.name} — scheduled for delivery ${friendly}`,
+      text,
+      html,
+      fromName: "The Calzone Kitchen",
+    });
+    return true;
+  } catch (err) {
+    console.error(`[wholesale-bags] delivery-date email to ${to} for ${order.name} FAILED:`, err);
+    return false;
+  }
+}
+
 router.post("/process", async (req, res) => {
   const orderId = Number(req.body?.orderId);
   const deliveryDate = String(req.body?.deliveryDate ?? "");
@@ -243,7 +308,7 @@ router.post("/process", async (req, res) => {
   const requestedProductionDate: string | null =
     rawProductionDate != null && rawProductionDate !== "" ? String(rawProductionDate) : null;
   if (requestedProductionDate && requestedProductionDate > despatchDateFor(deliveryDate)) {
-    res.status(400).json({ error: `Production day must be on or before the despatch day (${despatchDateFor(deliveryDate)} for delivery ${deliveryDate}) — bags must exist before they ship.` });
+    res.status(400).json({ error: `Production day must be on or before the dispatch day (${despatchDateFor(deliveryDate)} for delivery ${deliveryDate}) — bags must exist before they ship.` });
     return;
   }
   // No more than three days ahead of delivery (Graeme, 2026-08): bags made
@@ -274,7 +339,7 @@ router.post("/process", async (req, res) => {
       // that can't go out until tomorrow.
       if (despatchDateFor(deliveryDate) < earliestDespatchDay()) {
         res.status(409).json({
-          error: `Too late to despatch for delivery ${deliveryDate} — despatch closes at ${DESPATCH_CUTOFF}, so the earliest delivery is now ${earliestTagOnlyDeliveryDay()}.`,
+          error: `Too late to dispatch for delivery ${deliveryDate} — dispatch closes at ${DESPATCH_CUTOFF}, so the earliest delivery is now ${earliestTagOnlyDeliveryDay()}.`,
         });
         return;
       }
@@ -286,7 +351,8 @@ router.post("/process", async (req, res) => {
         return;
       }
       queueCache = null; // reflect the change on the next poll
-      res.json({ ok: true, orderId, deliveryDate, tagOnly: true, tags: updatedTags, added: [] });
+      const emailed = await emailDeliverySchedule(order, deliveryDate);
+      res.json({ ok: true, orderId, deliveryDate, tagOnly: true, tags: updatedTags, added: [], emailed });
       return;
     }
 
@@ -373,14 +439,15 @@ router.post("/process", async (req, res) => {
 
     queueCache = null; // reflect the change on the next poll
 
+    const emailed = await emailDeliverySchedule(order, deliveryDate);
     if (failedToAdd.length) {
       res.status(207).json({
         warning: "Order tagged, but some bags couldn't be added — add these manually on the production overview.",
-        orderId, deliveryDate, despatchDate, productionDate, planId: plan.planId, tags: updatedTags, added, failedToAdd,
+        orderId, deliveryDate, despatchDate, productionDate, planId: plan.planId, tags: updatedTags, added, failedToAdd, emailed,
       });
       return;
     }
-    res.json({ ok: true, orderId, deliveryDate, despatchDate, productionDate, planId: plan.planId, tags: updatedTags, added });
+    res.json({ ok: true, orderId, deliveryDate, despatchDate, productionDate, planId: plan.planId, tags: updatedTags, added, emailed });
   } catch (err) {
     console.error("[wholesale-bags] process failed:", err);
     res.status(502).json({ error: err instanceof Error ? err.message : "Failed to process order" });

@@ -296,6 +296,7 @@ async function fetchAllPages<T>(pathWithoutPaging: string, token: string): Promi
   const limit = 50;
   let offset = 0;
   const all: T[] = [];
+  let lastPageSig: string | null = null;
   while (true) {
     const sep = pathWithoutPaging.includes("?") ? "&" : "?";
     const page = await plandayGet<Paged<T>>(
@@ -303,6 +304,15 @@ async function fetchAllPages<T>(pathWithoutPaging: string, token: string): Promi
       token,
     );
     if (!page?.data || page.data.length === 0) break;
+    // Some Planday endpoints (absencerecords, 2026-09-14) ignore limit/offset
+    // and return the full result set for every "page". Without this guard the
+    // loop re-fetched the same records 201 times before the safety cap —
+    // multiplying every absence count by 201 and burning minutes of sequential
+    // rate-limited requests. A repeated first item means paging isn't
+    // advancing: keep the one copy we have and stop.
+    const sig = JSON.stringify(page.data[0]);
+    if (sig === lastPageSig) break;
+    lastPageSig = sig;
     all.push(...page.data);
     if (page.data.length < limit) break;
     offset += limit;
@@ -446,16 +456,25 @@ export interface PlandayAbsenceAccount {
 }
 
 /**
- * Fetches approved absence records overlapping the given period.
- * Only "Approved" records are counted as attendance events.
+ * Fetches absence records overlapping the given period — all statuses, so
+ * the report can show requested-but-not-yet-approved absence too (Graeme,
+ * 2026-09-14); consumers filter out "Declined" themselves. Deduped by id
+ * because this endpoint ignores limit/offset (see fetchAllPages guard) and
+ * a single record must only ever count once.
  */
 export async function getPlandayAbsenceRecords(from: string, to: string): Promise<PlandayAbsenceRecord[]> {
   const token = await getAccessToken();
   if (!token) return [];
-  return fetchAllPages<PlandayAbsenceRecord>(
-    `/absence/v1.0/absencerecords?startDate=${from}&endDate=${to}&statuses=Approved`,
+  const records = await fetchAllPages<PlandayAbsenceRecord>(
+    `/absence/v1.0/absencerecords?startDate=${from}&endDate=${to}`,
     token,
   );
+  const seen = new Set<number>();
+  return records.filter(r => {
+    if (seen.has(r.id)) return false;
+    seen.add(r.id);
+    return true;
+  });
 }
 
 /**

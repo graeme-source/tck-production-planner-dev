@@ -907,7 +907,29 @@ router.get("/links/for-station", requireAuth, async (req, res) => {
   })));
 });
 
-const LINK_TYPES = new Set(["checklist_template", "ingredient", "recipe_ingredient", "recipe", "sub_recipe", "station"]);
+// GET /links/for-page?page=/fulfilment → [{linkId,sopId,title,stepCount}]
+//
+// Page-level SOPs: any screen in the planner can carry its own SOPs, keyed
+// by the route path (parameterised segments normalised to "*" client-side,
+// so every production plan's copy of a page shares one set). Same shape as
+// station links — a text key, because pages have no numeric id.
+router.get("/links/for-page", requireAuth, async (req, res) => {
+  const page = String(req.query.page ?? "").trim();
+  if (!page || !page.startsWith("/") || page.length > 128) { res.json([]); return; }
+  const rows = await db.execute<{ link_id: number; sop_id: number; title: string; step_count: number }>(sql`
+    SELECT l.id AS link_id, l.sop_id, s.title, ${STEP_COUNT_SQL}
+    FROM sop_links l JOIN standards_sops s ON s.id = l.sop_id
+    WHERE l.target_type = 'page' AND l.target_text = ${page}
+    ORDER BY s.title
+  `);
+  res.json((rows.rows ?? []).map(r => ({
+    linkId: r.link_id, sopId: r.sop_id, title: r.title, stepCount: Number(r.step_count) || 0,
+  })));
+});
+
+const LINK_TYPES = new Set(["checklist_template", "ingredient", "recipe_ingredient", "recipe", "sub_recipe", "station", "page"]);
+/** Link types addressed by a text key rather than a numeric id. */
+const TEXT_KEYED_LINK_TYPES = new Set(["station", "page"]);
 
 // POST /links {sopId, targetType, a?, b?, text?} — attach (idempotent).
 router.post("/links", requireAuth, async (req, res) => {
@@ -920,7 +942,7 @@ router.post("/links", requireAuth, async (req, res) => {
     res.status(400).json({ error: "sopId and a valid targetType are required" });
     return;
   }
-  if (targetType === "station" ? !text : !Number.isInteger(a)) {
+  if (TEXT_KEYED_LINK_TYPES.has(targetType) ? !text : !Number.isInteger(a)) {
     res.status(400).json({ error: "Target reference missing" });
     return;
   }

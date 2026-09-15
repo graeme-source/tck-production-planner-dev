@@ -21,6 +21,7 @@ import LabelLiveTest from "@/pages/label-live-test";
 import Ingredients from "@/pages/ingredients";
 import Inventory from "@/pages/inventory";
 import ToolsPage from "@/pages/tools";
+import LabelPrinterPage from "@/pages/label-printer";
 import LabelStockCheck from "@/pages/label-stock-check";
 import SubRecipes from "@/pages/sub-recipes";
 import Recipes from "@/pages/recipes";
@@ -36,6 +37,8 @@ import FinancePage from "@/pages/finance";
 import Supplies from "@/pages/supplies";
 import Settings from "@/pages/settings";
 import LeanCave from "@/pages/lean-cave";
+import LeanStart from "@/pages/lean-start";
+import ReturnToWorkPage from "@/pages/return-to-work";
 import Reports from "@/pages/reports";
 import Improvements from "@/pages/improvements";
 import EmployeeHub from "@/pages/employee-hub";
@@ -167,6 +170,7 @@ function Router() {
               <Route path="/label-live-test" component={LabelLiveTest} />
               <Route path="/inventory" component={Inventory} />
               <Route path="/inventory/tools" component={ToolsPage} />
+              <Route path="/inventory/tools/label-printer" component={LabelPrinterPage} />
               <Route path="/inventory/tools/label-stock-check" component={LabelStockCheck} />
               <Route path="/ingredients">{() => <Redirect to="/inventory?tab=ingredients" />}</Route>
               <Route path="/sub-recipes" component={SubRecipes} />
@@ -206,6 +210,8 @@ function Router() {
               <Route path="/lean-curriculum">{() => <ProtectedRoute component={LeanCurriculum} pageKey="/lean-curriculum" />}</Route>
               <Route path="/lean-cave" component={LeanCave} />
               <Route path="/lean-review" component={LeanReviewPage} />
+              <Route path="/lean-start" component={LeanStart} />
+              <Route path="/return-to-work" component={ReturnToWorkPage} />
               <Route path="/hub" component={EmployeeHub} />
               <Route path="/documents/:id" component={DocumentViewer} />
               <Route path="/settings" component={Settings} />

@@ -293,13 +293,16 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
               />
             </div>
 
-            {/* Live camera — the before shot for an idea, the after shot for
-                finished work. */}
+            {/* The main shot — the before for an idea, the after for finished
+                work. Deliberately NO capture attribute: forcing the camera
+                open removes iOS's own "Photo Library" option, and the photo
+                is often already on the roll (Graeme, 2026-09-09). Without it
+                Safari shows its chooser — Take Photo / Photo Library — which
+                is both paths from one button. */}
             <input
               ref={cameraRef}
               type="file"
               accept="image/*,video/*"
-              capture="environment"
               className="hidden"
               onChange={e => {
                 const file = e.target.files?.[0];
@@ -356,11 +359,11 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
             >
               {(isIdea ? beforeTaken : afterTaken) ? <CheckCircle2 className="w-6 h-6" /> : <Camera className="w-6 h-6" />}
               {isIdea
-                ? (beforeTaken ? "Before photo ready — tap to retake" : "Take the before photo")
-                : (afterTaken ? "After photo ready — tap to retake" : "Take the after photo")}
+                ? (beforeTaken ? "Before photo ready — tap to change" : "Add the before photo")
+                : (afterTaken ? "After photo ready — tap to change" : "Add the after photo")}
             </button>
             <p className="text-sm text-muted-foreground text-center -mt-1">
-              A photo is fine. A short video is even better.
+              Take it now or pick it from the camera roll. A photo is fine — a short video is even better.
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

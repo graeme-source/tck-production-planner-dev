@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
@@ -49,6 +49,11 @@ type FinLine = {
   vendorId: number | null;
   status: string;
   statusNote: string | null;
+  orderReference: string | null;
+  supplierEmail: string | null;
+  supplierWebsite: string | null;
+  chaseCount: number;
+  lastChasedAt: string | null;
 };
 
 type FinVendor = {
@@ -66,6 +71,16 @@ type FinVendor = {
 };
 
 type FinDocMeta = { id: number; lineId: number; fileName: string; docKind: string; fileMime: string; createdAt: string };
+
+// What a stored document IS — drives whether a line still needs chasing
+// (an order confirmation is evidence you bought it, not a VAT invoice).
+const DOC_KINDS: Array<{ value: string; label: string }> = [
+  { value: "invoice", label: "VAT invoice" },
+  { value: "order_confirmation", label: "Order confirmation" },
+  { value: "receipt", label: "Receipt" },
+  { value: "statement", label: "Statement" },
+  { value: "other", label: "Other" },
+];
 
 type LinesResponse = {
   lines: FinLine[];
@@ -311,7 +326,17 @@ function LineRow({
   onToggle: () => void;
   onStatus: (status: string, note?: string | null) => void;
 }) {
-  const status = STATUS_LABELS[line.status] ?? STATUS_LABELS.open;
+  // The pill says what we actually HOLD, not just "Document found": a VAT
+  // invoice beats an order confirmation beats the generic label (Graeme,
+  // 2026-09-10).
+  const baseStatus = STATUS_LABELS[line.status] ?? STATUS_LABELS.open;
+  const hasInvoiceDoc = docs.some(d => d.docKind === "invoice");
+  const hasConfirmationDoc = docs.some(d => d.docKind === "order_confirmation");
+  const status = (line.status === "matched" || line.status === "identified") && hasInvoiceDoc
+    ? { label: "Invoice attached", tone: "bg-emerald-100 text-emerald-900" }
+    : (line.status === "matched" || line.status === "identified") && hasConfirmationDoc
+      ? { label: "Order confirmation attached", tone: "bg-sky-100 text-sky-900" }
+      : baseStatus;
   return (
     <Card>
       <button className="w-full text-left" onClick={onToggle}>
@@ -331,6 +356,9 @@ function LineRow({
           </div>
           <Badge className={`${status.tone} shrink-0`}>{status.label}</Badge>
           {docs.length > 0 && <Paperclip className="h-4 w-4 text-emerald-600 shrink-0" />}
+          {line.chaseCount > 0 && line.status !== "done" && (
+            <Badge variant="outline" className="shrink-0 text-amber-700 border-amber-400">chased {line.chaseCount}×</Badge>
+          )}
           {suggestionCount > 0 && line.status !== "done" && (
             <Badge variant="outline" className="shrink-0"><Mail className="h-3 w-3 mr-1" />{suggestionCount}</Badge>
           )}
@@ -340,9 +368,12 @@ function LineRow({
         <CardContent className="border-t pt-4 space-y-4">
           {line.statusNote && <p className="text-sm text-muted-foreground italic">“{line.statusNote}”</p>}
           <DocumentsBlock line={line} docs={docs} />
+          {line.status !== "done" && line.status !== "not_needed" && <SupplierFieldsBlock line={line} />}
+          {line.status !== "done" && line.status !== "not_needed" && <AddFileControl line={line} />}
           {(line.status === "open" || line.status === "identified" || line.status === "matched") && (
             <SuggestionsBlock lineId={line.id} />
           )}
+          {line.status !== "done" && line.status !== "not_needed" && <ChaseSupplierBlock line={line} />}
           {vendor && <VendorBlock vendor={vendor} />}
           <StatusButtons line={line} onStatus={onStatus} />
         </CardContent>
@@ -351,16 +382,230 @@ function LineRow({
   );
 }
 
-function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
+/** Supplier contact + order reference — extracted from an attached order
+ *  confirmation or typed by hand. Autosaves on blur with visible state.
+ *  The chase button lives further down the card, below the mailbox
+ *  suggestions (Graeme, 2026-09-10). */
+function SupplierFieldsBlock({ line }: { line: FinLine }) {
+  const queryClient = useQueryClient();
+  const [orderRef, setOrderRef] = useState(line.orderReference ?? "");
+  const [supEmail, setSupEmail] = useState(line.supplierEmail ?? "");
+  const [supSite, setSupSite] = useState(line.supplierWebsite ?? "");
+  const [fieldState, setFieldState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+
+  const saveFields = useMutation({
+    mutationFn: () =>
+      jsonFetch(`${BASE}/api/finance/lines/${line.id}/supplier`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderReference: orderRef || null,
+          supplierEmail: supEmail || null,
+          supplierWebsite: supSite || null,
+        }),
+      }),
+    onMutate: () => setFieldState("saving"),
+    onSuccess: () => {
+      setFieldState("saved");
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+    },
+    onError: () => setFieldState("error"),
+  });
+  const dirty =
+    (orderRef || "") !== (line.orderReference ?? "") ||
+    (supEmail || "") !== (line.supplierEmail ?? "") ||
+    (supSite || "") !== (line.supplierWebsite ?? "");
+  const onBlur = () => { if (dirty) saveFields.mutate(); };
+
+  return (
+    <div>
+      <div className="text-sm font-medium mb-2 flex items-center justify-between gap-2">
+        <span>Supplier &amp; order</span>
+        <span className={`text-xs ${fieldState === "error" ? "text-destructive" : fieldState === "saved" ? "text-emerald-600" : "text-muted-foreground"}`}>
+          {fieldState === "saving" && "Saving…"}
+          {fieldState === "saved" && "Saved ✓"}
+          {fieldState === "error" && "Not saved — check the values"}
+        </span>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <div>
+          <Label className="text-xs">Order number</Label>
+          <Input value={orderRef} onChange={(e) => { setOrderRef(e.target.value); setFieldState("idle"); }} onBlur={onBlur} placeholder="e.g. ALX-2214" />
+        </div>
+        <div>
+          <Label className="text-xs">Supplier email</Label>
+          <Input value={supEmail} onChange={(e) => { setSupEmail(e.target.value); setFieldState("idle"); }} onBlur={onBlur} placeholder="sales@supplier.co.uk" />
+        </div>
+        <div>
+          <Label className="text-xs">Website</Label>
+          <Input value={supSite} onChange={(e) => { setSupSite(e.target.value); setFieldState("idle"); }} onBlur={onBlur} placeholder="https://supplier.co.uk" />
+        </div>
+      </div>
+      {supSite && (
+        <a href={supSite} target="_blank" rel="noopener noreferrer" className="inline-block mt-1 text-xs underline text-muted-foreground hover:text-foreground">
+          {supSite.replace(/^https?:\/\//, "")}
+        </a>
+      )}
+    </div>
+  );
+}
+
+/** "Add file" with an up-front kind choice — sits with the other ways of
+ *  getting evidence onto the line (just above the mailbox suggestions),
+ *  away from the stored-documents list so the two kind dropdowns can't be
+ *  confused (Graeme, 2026-09-10). */
+function AddFileControl({ line }: { line: FinLine }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const input = useRef<HTMLInputElement>(null);
-  const [dragOver, setDragOver] = useState(false);
-  const [preview, setPreview] = useState<FinDocMeta | null>(null);
+  const [uploadKind, setUploadKind] = useState("invoice");
   const upload = useMutation({
     mutationFn: async (file: File) => {
       const form = new FormData();
       form.append("file", file);
+      form.append("docKind", uploadKind);
+      return jsonFetch(`${BASE}/api/finance/lines/${line.id}/documents`, { method: "POST", body: form });
+    },
+    onSuccess: () => {
+      toast({ title: `${DOC_KINDS.find(k => k.value === uploadKind)?.label ?? "Document"} stored` });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+    },
+    onError: (e: Error) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
+  });
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="text-sm font-medium">Attach from this device:</span>
+      <select
+        value={uploadKind}
+        onChange={(e) => setUploadKind(e.target.value)}
+        className="h-9 rounded-md border bg-background text-sm px-2"
+        title="What the file you're about to add is"
+      >
+        {DOC_KINDS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
+      </select>
+      <input
+        ref={input}
+        type="file"
+        accept=".pdf,image/*"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          for (const f of Array.from(e.target.files ?? [])) upload.mutate(f);
+          e.target.value = "";
+        }}
+      />
+      <Button size="sm" variant="outline" onClick={() => input.current?.click()} disabled={upload.isPending}>
+        {upload.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />} Add file
+      </Button>
+    </div>
+  );
+}
+
+/** The chase-for-VAT-invoice button + history. Reads the supplier email
+ *  from the line (kept fresh by the fields block's autosave). */
+function ChaseSupplierBlock({ line }: { line: FinLine }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [chaseOpen, setChaseOpen] = useState(false);
+  const supEmail = line.supplierEmail ?? "";
+  const orderRef = line.orderReference ?? "";
+  const merchant = line.merchant ?? line.descriptor;
+  const defaultSubject = `VAT invoice request${orderRef ? ` — order ${orderRef}` : ""}`;
+  const defaultMessage =
+    `Hi,\n\nPlease could you send us a VAT invoice for ${orderRef ? `order ${orderRef}` : "our recent order"}` +
+    ` (${merchant}, £${Number(line.amount).toFixed(2)}, ${line.lineDate})?\n\n` +
+    `Please reply to accounts@thecalzonekitchen.co.uk.\n\nThanks,\nThe Calzone Kitchen — Accounts`;
+  const [chaseTo, setChaseTo] = useState("");
+  const [chaseSubject, setChaseSubject] = useState("");
+  const [chaseMessage, setChaseMessage] = useState("");
+  const openChase = () => {
+    setChaseTo(supEmail);
+    setChaseSubject(defaultSubject);
+    setChaseMessage(defaultMessage);
+    setChaseOpen(true);
+  };
+  const chase = useMutation({
+    mutationFn: () =>
+      jsonFetch(`${BASE}/api/finance/lines/${line.id}/chase`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toEmail: chaseTo.trim(), subject: chaseSubject.trim(), message: chaseMessage }),
+      }),
+    onSuccess: () => {
+      toast({ title: "Chase email sent", description: `Sent to ${chaseTo.trim()} — replies go to accounts@, and a copy is in the accounts mailbox.` });
+      setChaseOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+    },
+    onError: (e: Error) => toast({ title: "Chase not sent", description: e.message, variant: "destructive" }),
+  });
+
+  return (
+    <div className="flex items-center gap-3 flex-wrap">
+      <Button size="sm" onClick={openChase} disabled={!supEmail.trim()}>
+        <Mail className="h-4 w-4 mr-1" /> Chase supplier for VAT invoice
+      </Button>
+      {!supEmail.trim() && <span className="text-xs text-muted-foreground">Needs a supplier email first (Supplier &amp; order above).</span>}
+      {line.chaseCount > 0 && (
+        <Badge variant="outline" className="text-amber-700 border-amber-400">
+          Chased {line.chaseCount}× — last {line.lastChasedAt ? new Date(line.lastChasedAt).toLocaleDateString("en-GB") : ""}
+        </Badge>
+      )}
+
+      {chaseOpen && (
+        <div className="fixed inset-0 z-[150] bg-black/60 flex items-center justify-center p-4" onClick={() => setChaseOpen(false)}>
+          <div className="bg-background rounded-2xl w-full max-w-xl p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="font-semibold">Chase {merchant} for a VAT invoice</div>
+            {line.chaseCount > 0 && (
+              <p className="text-sm text-amber-700 dark:text-amber-400 font-medium">
+                ⚠ Already chased {line.chaseCount}× — last on {line.lastChasedAt ? new Date(line.lastChasedAt).toLocaleDateString("en-GB") : "?"}. Send again?
+              </p>
+            )}
+            <div>
+              <Label className="text-xs">To</Label>
+              <Input value={chaseTo} onChange={(e) => setChaseTo(e.target.value)} />
+            </div>
+            <div>
+              <Label className="text-xs">Subject</Label>
+              <Input value={chaseSubject} onChange={(e) => setChaseSubject(e.target.value)} />
+            </div>
+            <div>
+              <Label className="text-xs">Message</Label>
+              <textarea
+                value={chaseMessage}
+                onChange={(e) => setChaseMessage(e.target.value)}
+                rows={8}
+                className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Sends from The Calzone Kitchen — Accounts; replies and a copy go to accounts@thecalzonekitchen.co.uk.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setChaseOpen(false)}>Cancel</Button>
+              <Button size="sm" onClick={() => chase.mutate()} disabled={chase.isPending || !chaseTo.trim() || !chaseSubject.trim() || !chaseMessage.trim()}>
+                {chase.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Mail className="h-4 w-4 mr-1" />} Send
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [dragOver, setDragOver] = useState(false);
+  const [preview, setPreview] = useState<FinDocMeta | null>(null);
+  // Drag-drop assumes the dropped file is the invoice (the overwhelmingly
+  // common case) — the per-document selector re-tags in one tap. Choosing a
+  // kind up front lives on the Add file control further down the card.
+  const upload = useMutation({
+    mutationFn: async (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("docKind", "invoice");
       return jsonFetch(`${BASE}/api/finance/lines/${line.id}/documents`, { method: "POST", body: form });
     },
     onSuccess: () => {
@@ -368,6 +613,16 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
       queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
     },
     onError: (e: Error) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
+  });
+  const retag = useMutation({
+    mutationFn: ({ id, docKind }: { id: number; docKind: string }) =>
+      jsonFetch(`${BASE}/api/finance/documents/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ docKind }),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] }),
+    onError: (e: Error) => toast({ title: "Couldn't change the type", description: e.message, variant: "destructive" }),
   });
 
   return (
@@ -383,7 +638,7 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
     >
       <div className="text-sm font-medium mb-2">Documents</div>
       {docs.length === 0 && (
-        <p className="text-sm text-muted-foreground mb-2">None yet — drop a PDF or photo here, or use Add file.</p>
+        <p className="text-sm text-muted-foreground mb-2">None yet — drop a PDF or photo here, or use Add file below.</p>
       )}
       <div className="flex flex-wrap gap-2">
         {docs.map((d) => (
@@ -396,6 +651,14 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
               <FileText className="h-4 w-4" />
               <span className="max-w-[220px] truncate">{d.fileName}</span>
             </button>
+            <select
+              value={d.docKind}
+              onChange={(e) => retag.mutate({ id: d.id, docKind: e.target.value })}
+              className="border-l bg-transparent text-xs px-1.5 py-1.5 text-muted-foreground hover:bg-accent cursor-pointer"
+              title="What this document is"
+            >
+              {DOC_KINDS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
+            </select>
             <a
               href={`${BASE}/api/finance/documents/${d.id}/file?download=1`}
               className="px-2 py-1.5 border-l hover:bg-accent text-muted-foreground"
@@ -405,20 +668,6 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
             </a>
           </div>
         ))}
-        <input
-          ref={input}
-          type="file"
-          accept=".pdf,image/*"
-          multiple
-          className="hidden"
-          onChange={(e) => {
-            for (const f of Array.from(e.target.files ?? [])) upload.mutate(f);
-            e.target.value = "";
-          }}
-        />
-        <Button size="sm" variant="outline" onClick={() => input.current?.click()} disabled={upload.isPending}>
-          {upload.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />} Add file
-        </Button>
       </div>
 
       {/* Same-origin iframe preview — never blob: URLs (the CSP frame-src
@@ -463,11 +712,21 @@ function SuggestionsBlock({ lineId }: { lineId: number }) {
     queryKey: ["/api/finance/lines", lineId, "matches"],
     queryFn: () => jsonFetch(`${BASE}/api/finance/lines/${lineId}/matches`),
   });
+  // What each suggested email IS, chosen before attaching (defaults: a PDF
+  // is presumed the invoice, a bare email an order confirmation).
+  const [attachKinds, setAttachKinds] = useState<Record<number, string>>({});
   const decide = useMutation({
-    mutationFn: ({ id, action }: { id: number; action: "confirm" | "reject" }) =>
-      jsonFetch(`${BASE}/api/finance/matches/${id}/${action}`, { method: "POST" }),
+    mutationFn: ({ id, action, docKind }: { id: number; action: "confirm" | "reject"; docKind?: string }) =>
+      jsonFetch(`${BASE}/api/finance/matches/${id}/${action}`, {
+        method: "POST",
+        ...(docKind ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ docKind }) } : {}),
+      }),
     onSuccess: (_r, vars) => {
-      toast({ title: vars.action === "confirm" ? "Email attached as document" : "Suggestion dismissed" });
+      toast({
+        title: vars.action === "confirm"
+          ? `Attached as ${DOC_KINDS.find(k => k.value === vars.docKind)?.label?.toLowerCase() ?? "document"}`
+          : "Suggestion dismissed",
+      });
       queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
     },
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
@@ -516,7 +775,19 @@ function SuggestionsBlock({ lineId }: { lineId: number }) {
             >
               {m.strength === "very_strong" ? "Very strong" : m.strength === "strong" ? "Strong" : m.strength === "medium" ? "Medium" : "Weak"}
             </Badge>
-            <Button size="sm" onClick={() => decide.mutate({ id: m.id, action: "confirm" })} disabled={decide.isPending}>
+            <select
+              value={attachKinds[m.id] ?? (m.hasPdf ? "invoice" : "order_confirmation")}
+              onChange={(e) => setAttachKinds(prev => ({ ...prev, [m.id]: e.target.value }))}
+              className="h-8 shrink-0 rounded-md border bg-background text-xs px-1.5"
+              title="What this email is"
+            >
+              {DOC_KINDS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
+            </select>
+            <Button
+              size="sm"
+              onClick={() => decide.mutate({ id: m.id, action: "confirm", docKind: attachKinds[m.id] ?? (m.hasPdf ? "invoice" : "order_confirmation") })}
+              disabled={decide.isPending}
+            >
               <CheckCircle2 className="h-4 w-4 mr-1" /> Attach
             </Button>
             <Button size="sm" variant="ghost" onClick={() => decide.mutate({ id: m.id, action: "reject" })} disabled={decide.isPending}>
@@ -749,6 +1020,35 @@ function AdminPanel() {
     onError: (e: Error) => toast({ title: "Sync failed to start", description: e.message, variant: "destructive" }),
   });
 
+  // Auto-import: which QBO account's purchases become lines automatically
+  // (the Capital on Tap card — replaces the CSV upload).
+  const qboAccounts = useQuery<{ accounts: Array<{ name: string; purchases: number }> }>({
+    queryKey: ["/api/finance/qbo/accounts"],
+    queryFn: () => jsonFetch(`${BASE}/api/finance/qbo/accounts`),
+    enabled: Boolean(qbo.data?.connected),
+  });
+  const [autoImportPick, setAutoImportPick] = useState("");
+  useEffect(() => {
+    setAutoImportPick(qbo.data?.autoImportAccount ?? "");
+  }, [qbo.data?.autoImportAccount]);
+  const saveAutoImport = useMutation({
+    mutationFn: (account: string | null) =>
+      jsonFetch(`${BASE}/api/finance/qbo/auto-import`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account }),
+      }) as Promise<{ imported: number }>,
+    onSuccess: (d, account) => {
+      toast({
+        title: account ? "Auto-import on" : "Auto-import off",
+        description: account ? `${d.imported} line${d.imported === 1 ? "" : "s"} imported now; new card purchases arrive with every hourly sync.` : "Card lines come from CSV uploads again.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/qbo/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't save", description: e.message, variant: "destructive" }),
+  });
+
   const scanRange = useMutation({
     mutationFn: () =>
       jsonFetch(`${BASE}/api/finance/mailbox/scan-range`, {
@@ -761,6 +1061,31 @@ function AdminPanel() {
       queryClient.invalidateQueries({ queryKey: ["/api/finance/mailbox"] });
     },
     onError: (e: Error) => toast({ title: "Scan failed to start", description: e.message, variant: "destructive" }),
+  });
+
+  // Invite an external accountant: viewer role + bookkeeper flag on the
+  // invite itself, so on accepting they land straight in the finance-only
+  // view — no employment contract, no onboarding gate, no lean curriculum
+  // (Graeme, 2026-09-09). Lives here because Settings is charter-frozen
+  // and finance access is managed on this page anyway.
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteFallbackUrl, setInviteFallbackUrl] = useState<string | null>(null);
+  const inviteAccountant = useMutation({
+    mutationFn: async (): Promise<{ emailSent: boolean; inviteUrl?: string }> =>
+      jsonFetch(`${BASE}/api/auth/invites`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: inviteEmail.trim(), role: "viewer", isBookkeeper: true }),
+      }),
+    onSuccess: (r) => {
+      setInviteFallbackUrl(r.emailSent ? null : r.inviteUrl ?? null);
+      toast(r.emailSent
+        ? { title: "Invite sent", description: `${inviteEmail.trim()} has 48 hours to accept — they'll land straight on this page.` }
+        : { title: "Invite created — email didn't send", description: "Copy the link below and send it to them yourself.", variant: "destructive" });
+      setInviteEmail("");
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/access"] });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't create the invite", description: e.message, variant: "destructive" }),
   });
 
   const toggleAccess = useMutation({
@@ -845,6 +1170,49 @@ function AdminPanel() {
               <Button size="sm" variant="outline" onClick={() => qboSync.mutate()} disabled={qboSync.isPending}>
                 {qboSync.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />} Sync now
               </Button>
+
+              {/* Auto-import: purchases from one QBO account (the Capital on
+                  Tap card) become lines here automatically — the CSV
+                  upload's replacement (Graeme, 2026-09-12). Freshness note:
+                  QuickBooks' API only shows ACCEPTED transactions, so a
+                  card purchase appears once it has left the bank feed's
+                  "For review" (or instantly, when CoT posts it itself). */}
+              <div className="pt-3 border-t border-border space-y-1.5">
+                <div className="text-sm font-medium">Auto-import card transactions</div>
+                <p className="text-xs text-muted-foreground">
+                  Purchases paid from the chosen QuickBooks account appear here as lines
+                  automatically — no more CSV exports. Only transactions from the switch-on
+                  date forward are imported{qbo.data.autoImportSince ? ` (importing since ${new Date(`${qbo.data.autoImportSince}T00:00:00`).toLocaleDateString("en-GB")})` : ""}.
+                  A purchase shows up once it's been accepted into QuickBooks from the bank feed.
+                </p>
+                <div className="flex gap-2 items-center flex-wrap">
+                  <select
+                    className="px-3 py-2 bg-background border border-border rounded-lg text-sm min-w-[220px]"
+                    value={autoImportPick}
+                    onChange={(e) => setAutoImportPick(e.target.value)}
+                  >
+                    <option value="">Off — don't auto-import</option>
+                    {(qboAccounts.data?.accounts ?? []).map((a: { name: string; purchases: number }) => (
+                      <option key={a.name} value={a.name}>{a.name} ({a.purchases} purchases)</option>
+                    ))}
+                  </select>
+                  <Button
+                    size="sm"
+                    onClick={() => saveAutoImport.mutate(autoImportPick || null)}
+                    disabled={saveAutoImport.isPending || autoImportPick === (qbo.data.autoImportAccount ?? "")}
+                  >
+                    {saveAutoImport.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null} Save
+                  </Button>
+                  {qbo.data.autoImportAccount && (
+                    <span className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
+                      Importing from “{qbo.data.autoImportAccount}”
+                    </span>
+                  )}
+                </div>
+                {(qboAccounts.data?.accounts ?? []).length === 0 && (
+                  <p className="text-xs text-muted-foreground">No payment accounts seen yet — run a sync first; account names arrive with the next mirrored purchases.</p>
+                )}
+              </div>
             </div>
           ) : (
             <div className="space-y-2">
@@ -863,10 +1231,35 @@ function AdminPanel() {
         <div>
           <div className="text-sm font-medium mb-2">Accountants — who can see finance</div>
           <p className="text-xs text-muted-foreground mb-2">
-            Switched-on users get a finance-only view: this page and nothing of the
-            production app. Admins always see everything. Create new profiles via the
-            normal user invite, then switch them on here.
+            Switched-on users get an accountant view: this page plus Deliveries, and
+            nothing of the production app — no onboarding, contracts or lean lessons.
+            Admins always see everything.
           </p>
+          <div className="flex gap-2 mb-3 flex-wrap items-end">
+            <div className="flex-1 min-w-[220px]">
+              <Label className="text-xs">Invite an accountant by email</Label>
+              <Input
+                type="email"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="accounts@yourbookkeeper.co.uk"
+                autoComplete="off"
+              />
+            </div>
+            <Button
+              size="sm"
+              onClick={() => inviteAccountant.mutate()}
+              disabled={inviteAccountant.isPending || !inviteEmail.trim()}
+            >
+              {inviteAccountant.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Send invite
+            </Button>
+          </div>
+          {inviteFallbackUrl && (
+            <p className="text-xs text-amber-700 dark:text-amber-400 mb-3 break-all">
+              Email failed to send — give them this link instead (valid 48h):{" "}
+              <span className="font-mono">{inviteFallbackUrl}</span>
+            </p>
+          )}
           <div className="space-y-1">
             {(users.data ?? []).map((u) => (
               <div key={u.id} className="flex items-center justify-between rounded border px-3 py-2">

@@ -6,7 +6,7 @@ import { postcodeServiceFor } from "../services/apc-postinfo";
 import { removeTagFromOrder, shopifyAdminOrderUrl, shopifyAdminOrderBase, getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
 import { nextAvailableDeliveryDate, rescheduleTags, withDeliveryDate, rescheduleEmailText, rescheduleEmailHtml, friendlyDate, firstNameOf, toZapietDate } from "../lib/order-reschedule";
 import { validate } from "../middleware/validate";
-import { userHasFeature } from "../lib/feature-access";
+import { userHasFeature, requireFeature } from "../lib/feature-access";
 import { sendEmail } from "../lib/email";
 import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService, lookupOrderByReference, lookupOrdersByReference, lookupOrderByWaybill, parseApcBarcode, waybillCore, apcTrackingUrl, type ApcOrderLookup } from "../services/apc";
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
@@ -60,13 +60,11 @@ const ROLE_RANK: Record<string, number> = { viewer: 0, manager: 1, admin: 2 };
  * (Graeme, 2026-08-21). The page permission stays where it is; these specific
  * endpoints sit above it.
  */
-async function requireManagerForCourierActions(req: Request, res: Response, next: NextFunction) {
-  const role = await resolveRole(req);
-  if (role === "admin" || role === "manager") { next(); return; }
-  res.status(403).json({
-    error: "Booking consignments and rescheduling orders are manager-only. Ask a manager or admin to do this one.",
-  });
-}
+// Courier actions (batch booking, preflight, rescheduling) are manager-and-up
+// by default, but the "Book APC labels" ability grant opens them to a named
+// person without promoting them (Graeme, 2026-09-09) — the whole point of the
+// feature-grants screen. requireFeature = role clears manager OR the grant.
+const requireManagerForCourierActions = requireFeature("ability.book_apc_labels");
 
 // Operational fulfilment endpoints (list orders, verify labels, complete)
 // honour the "/fulfilment" page permission set in Settings → Page Access
@@ -1611,8 +1609,10 @@ router.post("/shipments/:waybill/cancel", requireFulfilmentAccess, async (req: R
 });
 
 // POST /tag-dispatch — find an order by name and add the "dispatch" tag.
-// Used by the Dispatch Tagging page to gate which orders appear in the packing queue.
-router.post("/tag-dispatch", requireFulfilmentAccess, async (req: Request, res: Response) => {
+// Approving orders for dispatch is its own grantable ability now (Graeme,
+// 2026-09-09): manager-and-up by default, or the "Tag orders for dispatch"
+// grant — no longer implied by merely being able to open the packing page.
+router.post("/tag-dispatch", requireFeature("ability.tag_dispatch"), async (req: Request, res: Response) => {
   const { orderName } = req.body as { orderName?: string };
   if (!orderName || typeof orderName !== "string" || !orderName.trim()) {
     res.status(400).json({ error: "orderName is required" });
@@ -1663,7 +1663,7 @@ router.post("/tag-dispatch", requireFulfilmentAccess, async (req: Request, res: 
   }
 });
 
-router.post("/tag-dispatch-bulk", requireFulfilmentAccess, async (req: Request, res: Response) => {
+router.post("/tag-dispatch-bulk", requireFeature("ability.tag_dispatch"), async (req: Request, res: Response) => {
   // `orderIds` is the precise path: the picking screen can filter by multiple
   // box categories, arbitrary order tags and products, and the server cannot
   // re-derive that from a single `category` string. When the client sends the
@@ -2802,9 +2802,16 @@ router.get("/sku-locations/recent-skus", requireAdmin, async (req: Request, res:
   }
 });
 
+// A location is either a mapped bin (door number + shelf letter — the
+// fridge-map page writes these and the label is derived, e.g. "3B") or a
+// legacy free-text label (locationLabel only, door/shelf null).
 const UpsertLocationBody = z.object({
   zone: z.enum(["fridge", "freezer", "ambient"]),
-  locationLabel: z.string().min(1, "Location label is required"),
+  locationLabel: z.string().min(1).optional(),
+  door: z.number().int().min(1).max(99).optional(),
+  shelf: z.string().regex(/^[A-Z]$/, "Shelf must be a single letter A–Z").optional(),
+}).refine(b => b.locationLabel || (b.door != null && b.shelf), {
+  message: "Provide door + shelf, or a location label",
 });
 
 router.put("/sku-locations/:sku", requireAdmin, async (req: Request<{ sku: string }>, res: Response) => {
@@ -2815,13 +2822,15 @@ router.put("/sku-locations/:sku", requireAdmin, async (req: Request<{ sku: strin
     return;
   }
 
+  const { zone, door = null, shelf = null } = parsed.data;
+  const locationLabel = door != null && shelf ? `${door}${shelf}` : parsed.data.locationLabel!;
   try {
     const [row] = await db
       .insert(skuLocationsTable)
-      .values({ sku, zone: parsed.data.zone, locationLabel: parsed.data.locationLabel })
+      .values({ sku, zone, locationLabel, door, shelf })
       .onConflictDoUpdate({
         target: skuLocationsTable.sku,
-        set: { zone: parsed.data.zone, locationLabel: parsed.data.locationLabel, updatedAt: new Date() },
+        set: { zone, locationLabel, door, shelf, updatedAt: new Date() },
       })
       .returning();
     res.json(row);
@@ -2835,6 +2844,85 @@ router.delete("/sku-locations/:sku", requireAdmin, async (req: Request<{ sku: st
   try {
     await db.delete(skuLocationsTable).where(eq(skuLocationsTable.sku, sku));
     res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Pick config: zone walk order + the physical bin layout ────────────────
+// The Bin Locations page draws the fridge/freezer as they stand and lets an
+// admin drag the ZONES into the order the pick walk should follow — the
+// picking page sorts by this, then door, then shelf (Graeme, 2026-09-11:
+// bin locations are the single source of truth for picking order).
+const PICK_CONFIG_KEY = "fulfilment_pick_config";
+
+interface PickConfig {
+  zoneOrder: Array<"fridge" | "freezer" | "ambient">;
+  layout: Record<string, { doors: number; shelves: number; firstDoor: number }>;
+}
+
+// Defaults match the unit today: 7 fridge doors then 2 freezer doors
+// (numbered on from the fridge so every door number is unique), 5 shelves
+// each, A at the top.
+const DEFAULT_PICK_CONFIG: PickConfig = {
+  zoneOrder: ["fridge", "freezer", "ambient"],
+  layout: {
+    fridge: { doors: 7, shelves: 5, firstDoor: 1 },
+    freezer: { doors: 2, shelves: 5, firstDoor: 8 },
+  },
+};
+
+async function readPickConfig(): Promise<PickConfig> {
+  const raw = await getAppSetting(PICK_CONFIG_KEY);
+  if (!raw) return DEFAULT_PICK_CONFIG;
+  try {
+    const parsed = JSON.parse(raw) as Partial<PickConfig>;
+    return {
+      zoneOrder: Array.isArray(parsed.zoneOrder) && parsed.zoneOrder.length > 0 ? parsed.zoneOrder : DEFAULT_PICK_CONFIG.zoneOrder,
+      layout: parsed.layout && typeof parsed.layout === "object" ? { ...DEFAULT_PICK_CONFIG.layout, ...parsed.layout } : DEFAULT_PICK_CONFIG.layout,
+    };
+  } catch {
+    return DEFAULT_PICK_CONFIG;
+  }
+}
+
+// Read by the picking page (every packer) — no admin guard.
+router.get("/pick-config", async (_req: Request, res: Response) => {
+  try {
+    res.json(await readPickConfig());
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+const PutPickConfigBody = z.object({
+  zoneOrder: z.array(z.enum(["fridge", "freezer", "ambient"])).min(1).optional(),
+  layout: z.record(
+    z.enum(["fridge", "freezer"]),
+    z.object({
+      doors: z.number().int().min(1).max(20),
+      shelves: z.number().int().min(1).max(10),
+      firstDoor: z.number().int().min(1).max(99),
+    }),
+  ).optional(),
+});
+
+router.put("/pick-config", requireAdmin, async (req: Request, res: Response) => {
+  const parsed = PutPickConfigBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues.map(i => i.message).join(", ") });
+    return;
+  }
+  try {
+    const current = await readPickConfig();
+    const next: PickConfig = {
+      zoneOrder: parsed.data.zoneOrder ?? current.zoneOrder,
+      layout: parsed.data.layout ? { ...current.layout, ...parsed.data.layout } : current.layout,
+    };
+    await db.insert(appSettingsTable)
+      .values({ key: PICK_CONFIG_KEY, value: JSON.stringify(next) })
+      .onConflictDoUpdate({ target: appSettingsTable.key, set: { value: JSON.stringify(next), updatedAt: new Date() } });
+    res.json(next);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

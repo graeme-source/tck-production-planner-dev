@@ -9,6 +9,7 @@ import {
 } from "@workspace/db";
 import { eq, and, isNull, sql, asc, desc, gte, lte, inArray, ne } from "drizzle-orm";
 import { londonDateString } from "../lib/london-time";
+import { rolloutPolicy } from "../lib/policy-rollout";
 import { requireFeature } from "../lib/feature-access";
 
 const router: IRouter = Router();
@@ -255,6 +256,14 @@ router.patch("/:id", requireAdmin, async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
     const { title, bodyMarkdown, status, reviewFrequencyMonths, assessmentType, originalIssueDate, fileVersion } = req.body;
+    const [current] = await db.select({
+      assessmentType: riskAssessmentsTable.assessmentType,
+      status: riskAssessmentsTable.status,
+      bodyMarkdown: riskAssessmentsTable.bodyMarkdown,
+      policyVersion: riskAssessmentsTable.policyVersion,
+    }).from(riskAssessmentsTable).where(eq(riskAssessmentsTable.id, id));
+    if (!current) { res.status(404).json({ error: "Not found" }); return; }
+
     const updates: Partial<typeof riskAssessmentsTable.$inferInsert> = { updatedAt: new Date() };
     if (title !== undefined) updates.title = String(title);
     if (bodyMarkdown !== undefined) updates.bodyMarkdown = String(bodyMarkdown);
@@ -263,8 +272,25 @@ router.patch("/:id", requireAdmin, async (req: Request, res: Response) => {
     if (reviewFrequencyMonths !== undefined) updates.reviewFrequencyMonths = Number(reviewFrequencyMonths);
     if (originalIssueDate !== undefined) updates.originalIssueDate = originalIssueDate || null;
     if (fileVersion !== undefined) updates.fileVersion = fileVersion || null;
+
+    // Policy lifecycle (Graeme, 2026-09-13): editing an ACTIVE policy's
+    // body bumps its version — acceptances are per-version, so everyone
+    // gets a fresh review. Going draft → active (or a bump) rolls the
+    // policy out: matrix item + enrolments + 3-day review to-dos.
+    const resultingType = (updates.assessmentType ?? current.assessmentType) as string;
+    const resultingStatus = (updates.status ?? current.status) as string;
+    const bodyChanged = bodyMarkdown !== undefined && String(bodyMarkdown) !== current.bodyMarkdown;
+    const becameActive = resultingType === "policy" && resultingStatus === "active" && current.status !== "active";
+    const activeBodyChange = resultingType === "policy" && current.status === "active" && resultingStatus === "active" && bodyChanged;
+    if (activeBodyChange) updates.policyVersion = current.policyVersion + 1;
+
     const [row] = await db.update(riskAssessmentsTable).set(updates).where(eq(riskAssessmentsTable.id, id)).returning(documentMetaColumns);
     if (!row) { res.status(404).json({ error: "Not found" }); return; }
+
+    if (becameActive || activeBodyChange) {
+      rolloutPolicy(id).catch(err =>
+        console.error("[risk-assessments] policy rollout failed:", err instanceof Error ? err.message : err));
+    }
     res.json(row);
   } catch (err) {
     console.error("[risk-assessments] update error:", err);

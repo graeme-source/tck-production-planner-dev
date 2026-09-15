@@ -4,6 +4,7 @@ import { sql, count } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { startBackupScheduler, runBackup } from "./lib/backup";
 import { LOCATION_DEFS } from "./lib/storage-location-defs";
+import { rolloutPolicy } from "./lib/policy-rollout";
 
 const rawPort = process.env["PORT"];
 
@@ -92,6 +93,103 @@ Anything connected to religion, belief, disability or medical need will be indiv
 ## Compliance
 
 These requirements apply equally to owners, managers, employees, agency workers, contractors and visitors. Formal disciplinary procedures apply only where an employee refuses to follow controls that have been agreed through the process above.`;
+
+// The Mobile Phone Policy, seeded once as a DRAFT into risk_assessments
+// (type 'policy') for Graeme to review in Documents and activate. After
+// seeding, the DB row is the document — edits happen there, not here.
+const MOBILE_PHONE_POLICY_MARKDOWN = `**Applies to:** all employees, agency workers, contractors, managers and visitors entering production, ingredient-storage or packing areas.
+
+## Why we have this policy
+
+Mobile phones are a food-safety risk in a production environment. They are one of the most heavily handled objects we own and carry high levels of bacteria, so touching a phone and then handling food or food-contact surfaces undoes handwashing. They are also a foreign-body risk — a phone, case or detachable part dropped into open product contaminates it — and using one at a station is a distraction around ovens, machinery and knives. TCK produces 800–1,000 portions of open, unpackaged food five days a week, so we follow a standard in line with FSA guidance and the expectations of food-manufacturing certification schemes such as SALSA and BRCGS.
+
+## The rule
+
+1. **No mobile phones in production rooms.** Phones must not be taken into production, ingredient-storage or packing areas — not in pockets, not on silent. Store your phone in your personal drawer (or with your manager) before entering. The only exception is a **recorded duty-contact exception** (below).
+2. **No personal calls, texts or browsing during working hours.** Personal phone use happens on your breaks, in break areas only.
+3. **Wash your hands** before re-entering production after handling your phone on a break, exactly as after any other break activity.
+
+## Duty-contact exceptions — the Managing Director and named managers
+
+The business must always be reachable, so a small number of people carry a phone as part of their role:
+
+1. **The Managing Director carries a phone at all times.** They are the business's contact for suppliers, couriers, alarm and monitoring services, and for the team's families in an emergency — a role that doesn't pause when they walk into production.
+2. **The Managing Director may grant the same standing exception to named managers** where the role requires reachability — for example the duty manager backing up the office line, or cover for a specific day. These exceptions are granted at the Managing Director's discretion, named individually, and recorded, so everyone always knows exactly who legitimately carries a device and why.
+
+A duty-contact exception is a responsibility, not a privilege, and the hygiene rules still apply in full:
+
+- The phone stays **on silent or vibrate** and **on the person** — never placed on work surfaces, equipment or anywhere above open product.
+- It is **not used over open food**. Calls are answered away from open product, and taken outside the production rooms wherever possible.
+- **Hands are washed after handling the phone** and before touching food or food-contact surfaces — every time, no exceptions.
+- Personal use under a duty-contact exception follows the same rules as everyone else: breaks, in break areas.
+
+## Pre-arranged exceptions
+
+We know life doesn't pause for a shift. An exception can be agreed for an **urgent and important expected call** — for example a doctor's or hospital phone appointment, a call about a dependant, or anything similarly time-critical — provided it is **agreed in advance with your direct report**. The agreed arrangement will cover where the phone is kept (with your manager, or on silent outside production), when the call is expected, and where you will take it — always outside the production rooms, with handwashing before returning to work. Exceptions are agreed beforehand, not claimed afterwards.
+
+## Emergencies
+
+You are never unreachable in a genuine emergency. Give your family the **factory office number: 01908 915940**. During production hours this line is answered by whoever is available — it does not depend on one named person being in. Whoever answers will bring you off the floor immediately, at any time, without any prior arrangement.
+
+The **duty manager** (the manager running the shift) is responsible for making sure an emergency message reaches you straight away. If the office line is ever unanswered, callers should ring the duty manager's number, which is displayed in the office and given to every team member on their first day.
+
+## Business use in production
+
+Where a device is genuinely needed for work inside production areas, we use the company station devices (iPads and kiosks), which are cleaned as part of the area's cleaning schedule. Photography or filming in production areas requires management permission.
+
+## Compliance
+
+These requirements apply equally to owners, managers, employees, agency workers, contractors and visitors — the only difference a duty-contact exception makes is being reachable; its holder is bound by every hygiene condition above. Formal disciplinary procedures apply only where someone refuses to follow the rules or an arrangement that has been agreed through the process above.`;
+
+// Sickness & Absence Policy (Graeme, 2026-09-14) — seeded as a DRAFT for
+// review. The distinctive rule: phone a manager at least an hour before the
+// shift; a text is not sufficient. The call-in number is deliberately "to be
+// confirmed" — Graeme will add it before activating.
+const ABSENCE_POLICY_MARKDOWN = `**Applies to:** all employees and agency workers.
+
+## Why we have this policy
+
+When someone is off we re-plan stations within minutes of the day starting, and because we make food we sometimes legally cannot let a person work. Both depend on hearing from you early, by phone, with the facts.
+
+## If you can't come in
+
+- **Call at least 1 hour before your shift starts and speak to a manager.** A text, WhatsApp, voicemail or message passed through a colleague is **not** sufficient — if nobody answers, keep trying until you speak to someone.
+- The number to call will be confirmed and added to this policy. Until then, use the number your manager has given you.
+- Tell the manager: what's wrong, how long you expect to be off, and anything urgent your station needs handing over.
+- **If your illness involves vomiting or diarrhoea, say so on the call.** Food-safety law means you must stay away from food areas until 48 hours after symptoms stop — this is part of our HACCP plan, not a judgement call.
+
+## While you're off
+
+- Call before your shift on **each day** you're off, unless a longer absence has already been agreed on a previous call.
+- Up to 7 calendar days you self-certify. Beyond 7 days we need a fit note from your GP.
+
+## Medical appointments
+
+- Book appointments outside working hours where you reasonably can.
+- When the only slot is during a shift — NHS appointments often are — tell a manager as soon as you have it and show the appointment confirmation (the text, letter or app screen). We will never ask what the appointment is for.
+- Agree with the manager how the time is handled: unpaid, made up by arrangement, or holiday. Made-up time never comes out of your legal rest break.
+- Antenatal appointments are different: paid time off, protected by law, no making up.
+
+## When you come back
+
+- On your first day back you'll have a short **return-to-work conversation** with a manager, recorded in the planner (about two minutes). It's private — only you and the named managers can read it. It exists to make sure you're okay and to catch anything we should change.
+
+## Pay
+
+Sick pay follows the government's Statutory Sick Pay (SSP) rules unless your contract says otherwise.
+
+## When we review attendance
+
+So this is the same for everyone, attendance reviews are triggered by the numbers, not by opinion:
+
+- **4 instances of sickness absence in any rolling 12-month period**, or
+- **6 late arrivals in any rolling 12-month period**
+
+trigger an attendance review meeting with a manager. The meeting starts from support — is something underlying going on that we can help with? — but where absence or lateness continues without good reason, it can lead to formal disciplinary procedures. Absence connected to a disability, to pregnancy, or to authorised appointments never counts toward these triggers.
+
+## Not following this policy
+
+Not calling in — or texting instead of calling — is treated as unauthorised absence and may lead to formal disciplinary procedures. Ring us; that's the whole ask.`;
 
 async function runStartupMigrations() {
   try {
@@ -2052,6 +2150,165 @@ async function runStartupMigrations() {
       await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('jewellery_policy_seed_v1')`);
     }
 
+    // Mobile Phone Policy — seeded as a DRAFT (Graeme, 2026-09-11): he
+    // reviews it in Reports → Documents and flips it to active there, at
+    // which point it appears on the Employee Hub policies list like the
+    // jewellery policy. Guarded one-shot; no training-matrix wiring until
+    // it's activated (that's the "next steps" after review).
+    const phonePolicySeedDone = await db.execute<{ key: string }>(
+      sql`SELECT key FROM _migrations_done WHERE key = 'mobile_phone_policy_seed_v1'`,
+    );
+    if (phonePolicySeedDone.rows.length === 0) {
+      await db.execute(sql`
+        INSERT INTO risk_assessments
+          (assessment_type, title, body_markdown, status, review_frequency_months, original_issue_date, last_reviewed_at, next_review_due)
+        VALUES
+          ('policy', 'Mobile Phone Policy', ${MOBILE_PHONE_POLICY_MARKDOWN}, 'draft', 12, CURRENT_DATE, NOW(), (CURRENT_DATE + INTERVAL '12 months')::date)
+      `);
+      await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('mobile_phone_policy_seed_v1')`);
+    }
+
+    // Sickness & Absence Policy — DRAFT for Graeme's review (2026-09-14).
+    // Stays draft until he adds the call-in number and activates it from
+    // Analytics → Documents; activation then triggers the policy rollout.
+    const absencePolicySeedDone = await db.execute<{ key: string }>(
+      sql`SELECT key FROM _migrations_done WHERE key = 'absence_policy_seed_v1'`,
+    );
+    if (absencePolicySeedDone.rows.length === 0) {
+      await db.execute(sql`
+        INSERT INTO risk_assessments
+          (assessment_type, title, body_markdown, status, review_frequency_months, original_issue_date, last_reviewed_at, next_review_due)
+        VALUES
+          ('policy', 'Sickness & Absence Policy', ${ABSENCE_POLICY_MARKDOWN}, 'draft', 12, CURRENT_DATE, NOW(), (CURRENT_DATE + INTERVAL '12 months')::date)
+      `);
+      await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('absence_policy_seed_v1')`);
+    }
+
+    // v2 (Graeme, 2026-09-14 evening): medical appointments section — book
+    // outside hours where possible, show the confirmation (never the
+    // reason), agree unpaid / made-up / holiday, statutory break untouched,
+    // antenatal always paid and protected. Refreshes the text ONLY while
+    // the policy is still a draft — once activated or hand-edited, the DB
+    // row is the document and code never overwrites it.
+    const absencePolicyV2Done = await db.execute<{ key: string }>(
+      sql`SELECT key FROM _migrations_done WHERE key = 'absence_policy_seed_v2'`,
+    );
+    if (absencePolicyV2Done.rows.length === 0) {
+      await db.execute(sql`
+        UPDATE risk_assessments
+           SET body_markdown = ${ABSENCE_POLICY_MARKDOWN}, updated_at = NOW()
+         WHERE assessment_type = 'policy' AND title = 'Sickness & Absence Policy' AND status = 'draft'
+      `);
+      await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('absence_policy_seed_v2')`);
+    }
+
+    // v3 (Graeme, 2026-09-14 evening): mechanical attendance-review
+    // triggers — 4 sickness instances or 6 lates in a rolling 12 months —
+    // so reviews fire from the numbers, not opinion. Draft-only refresh,
+    // same rule as v2.
+    const absencePolicyV3Done = await db.execute<{ key: string }>(
+      sql`SELECT key FROM _migrations_done WHERE key = 'absence_policy_seed_v3'`,
+    );
+    if (absencePolicyV3Done.rows.length === 0) {
+      await db.execute(sql`
+        UPDATE risk_assessments
+           SET body_markdown = ${ABSENCE_POLICY_MARKDOWN}, updated_at = NOW()
+         WHERE assessment_type = 'policy' AND title = 'Sickness & Absence Policy' AND status = 'draft'
+      `);
+      await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('absence_policy_seed_v3')`);
+    }
+
+    // v2 (Graeme, 2026-09-13): duty-contact exceptions — the MD carries a
+    // phone at all times, and may grant recorded exceptions to named
+    // managers, all still bound by the hygiene rules. Refreshes the seeded
+    // text ONLY while the policy is still a draft: once Graeme activates
+    // (or hand-edits) it, the DB row is the document and code never
+    // overwrites it.
+    const phonePolicyV2Done = await db.execute<{ key: string }>(
+      sql`SELECT key FROM _migrations_done WHERE key = 'mobile_phone_policy_seed_v2'`,
+    );
+    if (phonePolicyV2Done.rows.length === 0) {
+      await db.execute(sql`
+        UPDATE risk_assessments
+           SET body_markdown = ${MOBILE_PHONE_POLICY_MARKDOWN}, updated_at = NOW()
+         WHERE assessment_type = 'policy' AND title = 'Mobile Phone Policy' AND status = 'draft'
+      `);
+      await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('mobile_phone_policy_seed_v2')`);
+    }
+
+    // Activate the Mobile Phone Policy (Graeme, 2026-09-13: "push it to
+    // live and active"). Runs after the v2 text refresh so the activated
+    // document carries the duty-contact exceptions + office number.
+    const phonePolicyActivated = await db.execute<{ key: string }>(
+      sql`SELECT key FROM _migrations_done WHERE key = 'mobile_phone_policy_activate_v1'`,
+    );
+    if (phonePolicyActivated.rows.length === 0) {
+      await db.execute(sql`
+        UPDATE risk_assessments
+           SET status = 'active', original_issue_date = COALESCE(original_issue_date, CURRENT_DATE), updated_at = NOW()
+         WHERE assessment_type = 'policy' AND title = 'Mobile Phone Policy' AND status = 'draft'
+      `);
+      await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('mobile_phone_policy_activate_v1')`);
+    }
+
+    // Unpublish the Jewellery policy (Graeme, 2026-09-13: "not quite
+    // right, I don't want it exposed to the team yet"). Back to draft, its
+    // open review to-dos deleted (never actioned — nothing to keep), and
+    // its Policies-matrix column removed. Acceptances already recorded
+    // stay in policy_acceptances — the source of truth survives, so when
+    // the fixed version goes active again the rollout re-creates
+    // everything and only asks people the edit actually invalidated.
+    // Runs AFTER the backfill guard below would have populated things on
+    // an earlier boot; guarded one-shot like its neighbours.
+    const jewelleryUnpublished = await db.execute<{ key: string }>(
+      sql`SELECT key FROM _migrations_done WHERE key = 'jewellery_policy_unpublish_v1'`,
+    );
+    if (jewelleryUnpublished.rows.length === 0) {
+      const jewellery = await db.execute<{ id: number }>(sql`
+        SELECT id FROM risk_assessments
+         WHERE assessment_type = 'policy' AND title = 'Jewellery & Body Piercings Policy' AND status = 'active'
+      `);
+      const jid = jewellery.rows?.[0]?.id;
+      if (jid != null) {
+        await db.execute(sql`UPDATE risk_assessments SET status = 'draft', updated_at = NOW() WHERE id = ${jid}`);
+        await db.execute(sql`
+          DELETE FROM todo_tasks
+           WHERE created_by_name = 'Policy review' AND url = ${`/documents/${jid}`} AND status <> 'done'
+        `);
+        await db.execute(sql`
+          DELETE FROM training_matrix_items
+           WHERE sop_id = ${jid}
+             AND matrix_id IN (SELECT id FROM training_matrices WHERE name = 'Policies')
+        `);
+      }
+      await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('jewellery_policy_unpublish_v1')`);
+    }
+
+    // Policy rollout backfill (Graeme, 2026-09-13): every ACTIVE policy
+    // gets its Policies-matrix item, team-wide enrolment and 3-day review
+    // to-dos. Guarded on the acceptances table existing (sql-migrations
+    // and this runner can race on a fresh deploy) — the done-key is only
+    // recorded once the rollout actually ran, so a skipped boot retries.
+    const rolloutBackfillDone = await db.execute<{ key: string }>(
+      sql`SELECT key FROM _migrations_done WHERE key = 'policy_rollout_backfill_v1'`,
+    );
+    if (rolloutBackfillDone.rows.length === 0) {
+      const hasAcceptances = await db.execute<{ ok: string | null }>(
+        sql`SELECT to_regclass('public.policy_acceptances')::text AS ok`,
+      );
+      if (hasAcceptances.rows[0]?.ok) {
+        const activePolicies = await db.execute<{ id: number }>(
+          sql`SELECT id FROM risk_assessments WHERE assessment_type = 'policy' AND status = 'active'`,
+        );
+        for (const p of activePolicies.rows ?? []) {
+          await rolloutPolicy(Number(p.id));
+        }
+        await db.execute(sql`INSERT INTO _migrations_done (key) VALUES ('policy_rollout_backfill_v1')`);
+      } else {
+        console.warn("[startup] policy rollout backfill deferred — policy_acceptances not created yet");
+      }
+    }
+
     // Periodic checklist schedule — every-4-weeks tasks (13 periods/year).
     // See lib/db/migrations/0045_periodic_checklists.sql.
     await db.execute(sql`ALTER TABLE checklist_templates ADD COLUMN IF NOT EXISTS schedule_anchor_date DATE`);
@@ -2374,23 +2631,25 @@ async function runStartupMigrations() {
       END $$;
     `);
     // Who's On Today leads the meeting (Graeme, 2026-08-11): the rota is
-    // the first thing the room needs, before stretches. Slides 0-4 shift
-    // down one; the 4 slot the old numbering skipped gets used.
+    // the first thing the room needs. The Lean lesson sits at slide 3 —
+    // right after Safety Issues, before Order of Production — because at
+    // the tail of the deck it kept getting skipped (Graeme, 2026-09-14).
+    // Stretches left the deck 2026-09-11 (merged into Who's On Today),
+    // freeing slot 1 for Safety Issues and 2 for the lesson.
     await db.execute(sql`
       UPDATE template_slides ts
       SET order_position = m.new_pos, title = m.new_title
       FROM (VALUES
         ('station_assignments'::text, 0, 'Who''s On Today'::text),
-        ('stretches', 1, 'Stretches'),
-        ('safety_issues', 2, 'Safety Issues'),
+        ('safety_issues', 1, 'Safety Issues'),
+        ('lesson', 2, 'Today''s Lean Lesson'),
         ('order_of_production', 3, 'Order of Production'),
         ('special_prep', 4, 'Test Product Prep'),
-        ('local_delivery', 5, 'Local Despatch'),
+        ('local_delivery', 5, 'Local Dispatch'),
         ('bag_orders', 6, 'Bag Orders'),
         ('yesterday_kpis', 8, 'Yesterday''s Numbers'),
         ('new_sops', 9, 'New & Updated SOPs'),
         ('struggles', 10, 'Improvements'),
-        ('lesson', 11, 'Today''s Lean Lesson'),
         ('gratitude', 12, 'Gratitude')
       ) AS m(kind, new_pos, new_title)
       WHERE ts.kind = m.kind
@@ -2399,22 +2658,22 @@ async function runStartupMigrations() {
     await db.execute(sql`
       UPDATE meeting_slides ms
       SET order_position = m.new_pos,
-          title = CASE WHEN ms.title IN ('Special Prep','Local Delivery','Struggles','Improvements Required') THEN m.new_title ELSE ms.title END
+          title = CASE WHEN ms.title IN ('Special Prep','Local Delivery','Local Despatch','Struggles','Improvements Required') THEN m.new_title ELSE ms.title END
       FROM (VALUES
         ('station_assignments'::text, 0, 'Who''s On Today'::text),
-        ('stretches', 1, 'Stretches'),
-        ('safety_issues', 2, 'Safety Issues'),
+        ('safety_issues', 1, 'Safety Issues'),
+        ('lesson', 2, 'Today''s Lean Lesson'),
         ('order_of_production', 3, 'Order of Production'),
         ('special_prep', 4, 'Test Product Prep'),
-        ('local_delivery', 5, 'Local Despatch'),
+        ('local_delivery', 5, 'Local Dispatch'),
         ('bag_orders', 6, 'Bag Orders'),
         ('yesterday_kpis', 8, 'Yesterday''s Numbers'),
         ('new_sops', 9, 'New & Updated SOPs'),
         ('struggles', 10, 'Improvements'),
-        ('lesson', 11, 'Today''s Lean Lesson'),
         ('gratitude', 12, 'Gratitude')
       ) AS m(kind, new_pos, new_title)
       WHERE ms.kind = m.kind
+        AND ms.meeting_id IN (SELECT id FROM morning_meetings WHERE ended_at IS NULL)
     `);
     // Recent Improvements joins the default deck right after Improvements
     // Required (Graeme, 2026-09-02): Required is now just the idea logs, and
@@ -2461,6 +2720,24 @@ async function runStartupMigrations() {
           DELETE FROM template_slides WHERE kind = 'recent_improvements';
           DELETE FROM meeting_slides WHERE kind = 'recent_improvements';
           INSERT INTO _migrations_done (key) VALUES ('merge_improvements_slides_v1');
+        END IF;
+      END $$;
+    `);
+
+    // Stretches merged into Who's On Today (Graeme, 2026-09-11): the team
+    // stretches WHILE reading the rota, so the standalone Stretches slide
+    // comes out of the default deck and any meetings not yet held. Guarded
+    // one-shot — an admin can re-add the kind from the slide catalog if a
+    // standalone stretches slide is ever wanted again.
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'merge_stretches_into_whos_on_v1') THEN
+          DELETE FROM template_slides WHERE kind = 'stretches'
+            AND template_id IN (SELECT id FROM meeting_templates WHERE is_default = true);
+          DELETE FROM meeting_slides WHERE kind = 'stretches'
+            AND meeting_id IN (SELECT id FROM morning_meetings WHERE ended_at IS NULL);
+          INSERT INTO _migrations_done (key) VALUES ('merge_stretches_into_whos_on_v1');
         END IF;
       END $$;
     `);
@@ -3093,6 +3370,23 @@ async function startup() {
     // until configured. Lean: one Govee fetch per cycle.
     const { startGoveePoller } = await import("./lib/govee-poller");
     startGoveePoller();
+
+    // Planday attendance mirror pre-warm — backfills the last year in the
+    // background when the mirror is empty, so the first Employee Records
+    // load after deploy is instant rather than paying the backfill itself.
+    const { prewarmAttendanceCache } = await import("./services/planday-attendance-cache");
+    prewarmAttendanceCache();
+
+    // Weekly lean to-dos land on Monday for the whole team, due Friday,
+    // doable any day (Graeme, 2026-09-14) — hourly idempotent sweep.
+    const { startLeanTodoScheduler } = await import("./lib/lean-todo-scheduler");
+    startLeanTodoScheduler();
+
+    // Return-to-work chase: detects completed sick spells from the Planday
+    // mirror and raises to-dos for the colleague + RTW managers until the
+    // form is signed (Graeme, 2026-09-14).
+    const { startRtwScheduler } = await import("./lib/rtw-scheduler");
+    startRtwScheduler();
 
     // Stock gate — holds products back from next-day delivery when the
     // fridge-vs-despatch surplus runs low. Self-gates on stock_gate_enabled

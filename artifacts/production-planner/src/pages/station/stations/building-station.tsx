@@ -573,7 +573,10 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   // reference target (just a sensible starting point — the builder can tap any
   // recipe to switch). Targets never restrict which recipe is current.
   const selectedItem = selectedItemId != null ? items.find(it => it.id === selectedItemId) : null;
-  const defaultItem = items.find(it => getCombinedBuildCount(it) < getTargetRef(it)) ?? items[0];
+  // A recipe the builder marked FINISHED is done for the day even when it's
+  // short of the planned target (0/8 on the day the oven door shattered) —
+  // never auto-select it as the next thing to build (Graeme, 2026-09-11).
+  const defaultItem = items.find(it => !it.builderMarkedCompleteAt && getCombinedBuildCount(it) < getTargetRef(it)) ?? items[0];
   const currentItem = selectedItem ?? defaultItem;
 
   const buildingCount = currentItem ? getCombinedBuildCount(currentItem) : 0;
@@ -583,8 +586,11 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   // remaining = planned batches still to build toward the reference target
   // (purely informational; building is never blocked when it reaches 0).
   const remaining = currentItem ? Math.max(0, targetRef - buildingCount) : 0;
+  // A recipe counts as done when it hit the planned target OR the builder
+  // marked it finished for the day (short builds included — what was built
+  // is the day's output). Building is complete once every recipe is done.
   const allDone = items.length > 0 && items.every(it =>
-    getCombinedBuildCount(it) >= getTargetRef(it)
+    !!it.builderMarkedCompleteAt || getCombinedBuildCount(it) >= getTargetRef(it)
   );
 
   // checklistPending is computed below but we need it here for the timer.
@@ -1382,6 +1388,11 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
             const combinedCount = getCombinedBuildCount(item);
             const effTarget = getTargetRef(item); // reference target (planned)
             const targetReached = combinedCount >= effTarget;
+            // Ticked in the queue when the target was hit OR the builder
+            // marked it finished for the day — a short build (even 0/8)
+            // is complete once the builder has said so.
+            const finishedFlag = !!item.builderMarkedCompleteAt;
+            const itemDone = targetReached || finishedFlag;
             const itemMyCount = getStationCount(item, stationType);
             // Informational only — how many batches are left to hit the planned
             // target. Building is NEVER blocked when this reaches 0.
@@ -1407,7 +1418,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                         : "bg-blue-50/60 dark:bg-blue-900/15"
                       : isCurrent
                         ? "bg-primary/5"
-                        : targetReached
+                        : itemDone
                           ? "bg-emerald-50/30 dark:bg-emerald-900/10"
                           : "hover:bg-secondary/20"
                   )}
@@ -1423,7 +1434,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                   <span
                     className={cn(
                       "flex-1 font-bold text-sm truncate",
-                      targetReached && !isExpanded ? "line-through opacity-60" : ""
+                      itemDone && !isExpanded ? "line-through opacity-60" : ""
                     )}
                     style={{ color: item.recipeColor || undefined }}
                   >
@@ -1441,9 +1452,11 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                     </span>
                   )}
 
-                  {/* Status icon */}
-                  {targetReached ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                  {/* Status icon — emerald for a full build, amber for a
+                      builder-declared short finish (still DONE, but the
+                      colour flags that the day ended under target). */}
+                  {itemDone ? (
+                    <CheckCircle2 className={cn("w-4 h-4 flex-shrink-0", targetReached ? "text-emerald-500" : "text-amber-500")} />
                   ) : (
                     <ChevronDown className={cn(
                       "w-4 h-4 text-muted-foreground flex-shrink-0 transition-transform",
@@ -1589,7 +1602,9 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                                 style={{ width: `${Math.min(itemPct, 100)}%` }}
                               />
                             </div>
-                            <p className="text-xs text-muted-foreground text-center mt-0.5">{itemRemaining} left</p>
+                            <p className="text-xs text-muted-foreground text-center mt-0.5">
+                              {finishedFlag ? "finished for the day" : `${itemRemaining} left`}
+                            </p>
                           </div>
 
                           {/* Target reached — purely informational. Building is NOT

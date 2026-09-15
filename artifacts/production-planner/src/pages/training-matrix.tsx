@@ -366,10 +366,22 @@ function ItemRowHeader({ item, onEdit, onDelete }: { item: Item; onEdit: () => v
   const isSop = item.sopId != null;
   return (
     <div className="flex items-center justify-between gap-2">
-      <div className="flex items-center gap-2 min-w-0">
-        {isSop && <FileText className="w-4 h-4 text-primary flex-shrink-0" />}
-        <span className="text-sm font-medium">{item.label}</span>
-      </div>
+      {/* A linked item's label IS the link (Graeme, 2026-09-11: clicking
+          "review the jewellery policy" must open the jewellery policy —
+          the popover's Open document was too buried to discover). */}
+      {isSop ? (
+        <a
+          href={`${BASE}/documents/${item.sopId}`} target="_blank" rel="noopener noreferrer"
+          className="flex items-center gap-2 min-w-0 text-primary hover:underline"
+        >
+          <FileText className="w-4 h-4 flex-shrink-0" />
+          <span className="text-sm font-medium">{item.label}</span>
+        </a>
+      ) : (
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm font-medium">{item.label}</span>
+        </div>
+      )}
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button
@@ -470,6 +482,11 @@ function OnboardingInfoDialog({ userId, name, onClose }: { userId: number; name:
               <Row label="Name" value={s?.emergencyContactName} />
               <Row label="Phone" value={s?.emergencyContactPhone} />
               <Row label="Relationship" value={s?.emergencyContactRelationship} />
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Footwear — have it ready for day one</p>
+              <Row label="Shoe size (UK)" value={s?.shoeSize} />
+              <Row label="Preference" value={s?.footwearChoice === "safety_shoes" ? "Safety shoes" : s?.footwearChoice === "crocs" ? "Crocs" : null} />
             </div>
             <div>
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Documents</p>

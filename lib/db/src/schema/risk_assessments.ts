@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, timestamp, date, customType } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, date, customType, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { usersTable } from "./users";
 
@@ -25,6 +25,10 @@ export const riskAssessmentsTable = pgTable("risk_assessments", {
   assessmentType: text("assessment_type").notNull(),
   title: text("title").notNull(),
   bodyMarkdown: text("body_markdown").notNull().default(""),
+  // Version counter for POLICY documents (migration 0103): bumped whenever
+  // an ACTIVE policy's body changes, so acceptances are per-version and an
+  // update sends everyone a fresh review.
+  policyVersion: integer("policy_version").notNull().default(1),
   // "draft" | "active" | "archived"
   status: text("status").notNull().default("draft"),
   reviewFrequencyMonths: integer("review_frequency_months").notNull().default(12),
@@ -95,6 +99,21 @@ export const complianceActionCompletionsTable = pgTable("compliance_action_compl
 export type RiskAssessment = typeof riskAssessmentsTable.$inferSelect;
 export type ComplianceAction = typeof complianceActionsTable.$inferSelect;
 export type ComplianceActionCompletion = typeof complianceActionCompletionsTable.$inferSelect;
+
+// The single source of truth for "who has accepted which policy, at which
+// version" (Graeme, 2026-09-13). One row per (policy, user, version) —
+// the training matrix is a display layer derived from these.
+export const policyAcceptancesTable = pgTable("policy_acceptances", {
+  id: serial("id").primaryKey(),
+  policyId: integer("policy_id").notNull().references(() => riskAssessmentsTable.id, { onDelete: "cascade" }),
+  userId: integer("user_id").notNull(),
+  version: integer("version").notNull(),
+  acceptedAt: timestamp("accepted_at").notNull().defaultNow(),
+}, (table) => [
+  unique("uq_policy_acceptance").on(table.policyId, table.userId, table.version),
+]);
+
+export type PolicyAcceptance = typeof policyAcceptancesTable.$inferSelect;
 
 export const insertRiskAssessmentSchema = createInsertSchema(riskAssessmentsTable).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertComplianceActionSchema = createInsertSchema(complianceActionsTable).omit({ id: true, createdAt: true, updatedAt: true });

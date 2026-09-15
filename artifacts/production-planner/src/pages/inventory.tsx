@@ -803,21 +803,20 @@ export default function Inventory() {
                     </td>
                     <td className="py-3 px-3 sticky right-0 bg-card border-l border-border">
                       <div className="flex items-center gap-1 justify-end">
-                        {activeTab === "ingredients" && (
-                          <>
-                            <button onClick={() => printKanban(item.id)} className="p-1.5 text-foreground bg-secondary/30 hover:bg-secondary/60 transition-colors rounded-lg" title="Print Kanban card">
-                              <Printer className="w-3.5 h-3.5" />
-                            </button>
-                            <a
-                              href={`${BASE}/api/qr/ingredient/${item.id}?download=1`}
-                              download={`qr-${item.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.png`}
-                              className="p-1.5 text-foreground bg-secondary/30 hover:bg-secondary/60 transition-colors rounded-lg inline-flex"
-                              title="Download QR code only"
-                            >
-                              <QrCode className="w-3.5 h-3.5" />
-                            </a>
-                          </>
-                        )}
+                        {/* Kanban print + QR on BOTH tabs — supplies are the
+                            same stock rows and get kanban cards on the shelf
+                            just like ingredients (Graeme, 2026-09-14). */}
+                        <button onClick={() => printKanban(item.id)} className="p-1.5 text-foreground bg-secondary/30 hover:bg-secondary/60 transition-colors rounded-lg" title="Print Kanban card">
+                          <Printer className="w-3.5 h-3.5" />
+                        </button>
+                        <a
+                          href={`${BASE}/api/qr/ingredient/${item.id}?download=1`}
+                          download={`qr-${item.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.png`}
+                          className="p-1.5 text-foreground bg-secondary/30 hover:bg-secondary/60 transition-colors rounded-lg inline-flex"
+                          title="Download QR code only"
+                        >
+                          <QrCode className="w-3.5 h-3.5" />
+                        </a>
                         <button onClick={() => openEdit(item)} className="p-1.5 text-foreground bg-secondary/30 hover:bg-secondary/60 transition-colors rounded-lg" title="Edit">
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>

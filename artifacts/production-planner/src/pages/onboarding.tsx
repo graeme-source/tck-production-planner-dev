@@ -5,7 +5,9 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/auth-context";
-import { Loader2, Phone, MapPin, Heart, FileText, Upload, Check, X, ShieldCheck, ArrowRight, LogOut } from "lucide-react";
+import { Loader2, Phone, MapPin, Heart, FileText, Upload, Check, X, ShieldCheck, ArrowRight, LogOut, Footprints, GraduationCap } from "lucide-react";
+import { LeanResources, LeanSelfPaced } from "@/components/lean-self-paced";
+import { PolicyReviewList } from "@/components/policy-review";
 import { StarterFormsList } from "@/components/starter-forms";
 import { MyContractSection } from "@/components/my-contract";
 
@@ -15,13 +17,18 @@ type DocMeta = { id: number; kind: string; fileName: string | null; fileSizeByte
 type Submission = {
   phone: string | null; address: string | null;
   emergencyContactName: string | null; emergencyContactPhone: string | null; emergencyContactRelationship: string | null;
+  shoeSize: string | null; footwearChoice: string | null;
   submittedAt: string | null;
 } | null;
 
-const DOC_SLOTS: { kind: string; label: string; hint: string }[] = [
-  { kind: "right_to_work", label: "Right to work / ID", hint: "Passport, BRP or share code screenshot" },
-  { kind: "food_hygiene", label: "Food Hygiene certificate", hint: "If you already have one" },
-  { kind: "p45", label: "P45 from your last job", hint: "Optional — helps payroll get your tax code right" },
+// Both real starters stalled here thinking the certificate and P45 were
+// required (Graeme, 2026-09-11) — so the optional slots now say so loudly,
+// and say to carry on without them. Nothing in this section has ever
+// gated completion; the gate is details + forms + contract only.
+const DOC_SLOTS: { kind: string; label: string; hint: string; optional: boolean }[] = [
+  { kind: "right_to_work", label: "Right to work / ID", hint: "Passport, BRP or share code screenshot", optional: false },
+  { kind: "food_hygiene", label: "Food Hygiene certificate", hint: "Only if you already have one — don't worry if you don't, we'll sort your training. Please carry on.", optional: true },
+  { kind: "p45", label: "P45 from your last job", hint: "Don't worry if you don't have one — please carry on. It just helps payroll get your tax code right.", optional: true },
 ];
 
 interface GateStatus {
@@ -52,10 +59,12 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
   // paperwork — three starter forms plus the contract when one is issued.
   // The app stays gated until the server says everything is signed.
   const [phase, setPhase] = useState<"details" | "paperwork">("details");
+  const [leanOpen, setLeanOpen] = useState(false);
   const [gate, setGate] = useState<GateStatus | null>(null);
   const [form, setForm] = useState({
     phone: "", address: "",
     emergencyContactName: "", emergencyContactPhone: "", emergencyContactRelationship: "",
+    shoeSize: "", footwearChoice: "",
   });
 
   const refreshGate = async () => {
@@ -79,6 +88,8 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
           emergencyContactName: s.emergencyContactName ?? "",
           emergencyContactPhone: s.emergencyContactPhone ?? "",
           emergencyContactRelationship: s.emergencyContactRelationship ?? "",
+          shoeSize: s.shoeSize ?? "",
+          footwearChoice: s.footwearChoice ?? "",
         });
         if (s.submittedAt) setPhase("paperwork");
       }
@@ -210,6 +221,12 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
                     ? `${form.emergencyContactName} (${form.emergencyContactRelationship || "—"}) · ${form.emergencyContactPhone || "—"}`
                     : "— not filled in yet"}
                 </p>
+                <p className="text-sm">
+                  <span className="text-muted-foreground">Footwear:</span>{" "}
+                  {form.shoeSize
+                    ? `UK ${form.shoeSize} · ${form.footwearChoice === "safety_shoes" ? "Safety shoes" : form.footwearChoice === "crocs" ? "Crocs" : "—"}`
+                    : "— not filled in yet"}
+                </p>
               </div>
               <button
                 onClick={() => setPhase("details")}
@@ -236,19 +253,38 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
             )}
           </section>
 
+          {/* Company policies — read & accepted BEFORE full access (Graeme,
+              2026-09-13). Gated users can't reach /documents, so the reader
+              comes to them; accepting records the versioned acceptance and
+              ticks the Policies training matrix. */}
+          <section className="space-y-3">
+            <h2 className="text-base font-semibold">3 · Company policies</h2>
+            <p className="text-sm text-muted-foreground">
+              How we keep the food safe and the team looked after. Read each one and tap
+              "I've read and understood" — it's recorded on your training file before you even arrive.
+            </p>
+            <PolicyReviewList />
+          </section>
+
           {/* No enter button, ever: the founder opens the app in person on
               their first day (Graeme, 2026-09-07). The poll above lets that
-              grant flow this screen straight into the app. */}
+              grant flow this screen straight into the app. Once paperwork is
+              complete, the banner hands straight into the Lean curriculum
+              below — "this is the next step of the process" (Graeme,
+              2026-09-12). */}
           {gate?.paperworkComplete ? (
-            <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 p-6 text-center space-y-1">
-              <p className="text-xl font-bold">Thanks — that's it for now! 🎉</p>
+            <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 p-6 text-center space-y-2">
+              <p className="text-xl font-bold">Paperwork done — thank you! 🎉</p>
               <p className="text-base text-muted-foreground">
                 {firstDay
                   ? `See you on ${firstDay}. We'll open the rest of the app up for you when you come in.`
                   : "We'll open the rest of the app up for you when you come in on your first day."}
               </p>
+              <p className="text-base font-semibold flex items-center justify-center gap-2">
+                <GraduationCap className="w-4 h-4 text-primary" /> Your next step: start learning Lean below — it's how we work here.
+              </p>
               <p className="text-sm text-muted-foreground">
-                You can log back in here any time to read or print anything you've signed.
+                You can log back in here any time — to keep learning, or to read anything you've signed.
               </p>
             </div>
           ) : (
@@ -258,6 +294,38 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
               </p>
             </div>
           )}
+
+          {/* Get ahead with Lean — pre-arrival learning (Graeme, 2026-09-12):
+              resources plus the same self-paced curriculum that ticks the
+              Lean training matrix. Before paperwork is done it's a soft
+              "optional head start"; once paperwork is complete it IS the
+              next step, opened by default. Never a gate either way. */}
+          <section className="bg-card border border-border rounded-2xl p-5 space-y-3">
+            <h2 className="text-base font-semibold flex items-center gap-2">
+              <GraduationCap className="w-4 h-4 text-primary" />
+              {gate?.paperworkComplete ? "Next step: learn Lean" : "Get ahead with Lean"}
+              {!gate?.paperworkComplete && <span className="text-xs font-normal text-muted-foreground">(optional)</span>}
+            </h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              Lean is how we work at TCK — small improvements, every day, by everyone.
+              {gate?.paperworkComplete
+                ? " Between now and your first day, this is the best thing you can do: work through our week-by-week curriculum at your own pace. Anything you complete is already ticked off on your training record when you arrive."
+                : " None of this is required before you start, but if you'd like a head start, here's where we learn it from, and our own week-by-week curriculum you can begin right now. Anything you complete is already ticked off on your training record when you arrive."}
+            </p>
+            <LeanResources />
+            {(leanOpen || gate?.paperworkComplete) ? (
+              <div className="pt-2 border-t border-border">
+                <LeanSelfPaced />
+              </div>
+            ) : (
+              <button
+                onClick={() => setLeanOpen(true)}
+                className="w-full py-3 rounded-xl border-2 border-primary text-primary font-semibold hover:bg-primary/5 inline-flex items-center justify-center gap-2"
+              >
+                <GraduationCap className="w-4 h-4" /> Start the Lean curriculum
+              </button>
+            )}
+          </section>
         </div>
       </div>
     );
@@ -316,9 +384,52 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
                 </div>
               </section>
 
+              {/* Footwear — asked now so the right pair is waiting on day one. */}
+              <section className="space-y-3">
+                <h2 className="text-sm font-semibold flex items-center gap-2"><Footprints className="w-4 h-4 text-primary" /> Your footwear</h2>
+                <p className="text-xs text-muted-foreground">
+                  We provide your footwear for the factory floor — tell us your size and which you'd prefer,
+                  and they'll be ready for your first day.
+                </p>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Shoe size (UK) <span className="text-destructive">*</span></label>
+                  <input value={form.shoeSize} onChange={set("shoeSize")} inputMode="decimal" placeholder="e.g. 9 or 6.5" className={inputCls} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Which would you prefer? <span className="text-destructive">*</span></label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {([["crocs", "Crocs", "Light and easy to clean"], ["safety_shoes", "Safety shoes", "Protective toe, sturdier"]] as const).map(([value, label, hint]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setForm(f => ({ ...f, footwearChoice: value }))}
+                        className={`rounded-xl border-2 p-3 text-left transition-colors ${
+                          form.footwearChoice === value
+                            ? "border-primary bg-primary/10"
+                            : "border-border hover:bg-secondary/40"
+                        }`}
+                      >
+                        <span className="flex items-center gap-2 text-sm font-semibold">
+                          <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${form.footwearChoice === value ? "border-primary" : "border-border"}`}>
+                            {form.footwearChoice === value && <span className="w-2 h-2 rounded-full bg-primary" />}
+                          </span>
+                          {label}
+                        </span>
+                        <span className="block text-[11px] text-muted-foreground mt-0.5">{hint}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
               {/* Documents */}
               <section className="space-y-3">
                 <h2 className="text-sm font-semibold flex items-center gap-2"><FileText className="w-4 h-4 text-primary" /> Documents</h2>
+                <p className="text-xs text-muted-foreground">
+                  What we really need from you is the checklist above — your details, your forms and your contract.
+                  Documents here are extras: upload what you have, skip what you don't. Nothing in this section stops
+                  you finishing.
+                </p>
                 {DOC_SLOTS.map(slot => (
                   <DocSlot
                     key={slot.kind}
@@ -352,7 +463,7 @@ export default function Onboarding(_props: { onComplete?: () => void | Promise<v
 }
 
 function DocSlot({ slot, docs, onChanged }: {
-  slot: { kind: string; label: string; hint: string };
+  slot: { kind: string; label: string; hint: string; optional: boolean };
   docs: DocMeta[];
   onChanged: () => Promise<void>;
 }) {
@@ -388,7 +499,12 @@ function DocSlot({ slot, docs, onChanged }: {
     <div className="border border-border rounded-xl p-3">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-sm font-medium">{slot.label}</p>
+          <p className="text-sm font-medium flex items-center gap-2">
+            {slot.label}
+            {slot.optional && (
+              <span className="text-[10px] font-semibold uppercase tracking-wide bg-secondary text-muted-foreground px-1.5 py-0.5 rounded-full flex-shrink-0">Optional</span>
+            )}
+          </p>
           <p className="text-[11px] text-muted-foreground">{slot.hint}</p>
         </div>
         <label className="flex-shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary text-foreground text-xs font-medium hover:bg-secondary/70 transition-colors border border-border cursor-pointer">

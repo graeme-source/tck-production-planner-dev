@@ -45,6 +45,8 @@ import checklistsRouter from "./checklists";
 import curiosityRouter from "./curiosity";
 import notificationsRouter from "./notifications";
 import employeesRouter from "./employees";
+import returnToWorkRouter from "./return-to-work";
+import stationMessagesRouter from "./station-messages";
 import employeeReviewsRouter from "./employee-reviews";
 import friedChickenRouter from "./fried-chicken";
 import riskAssessmentsRouter from "./risk-assessments";
@@ -60,10 +62,14 @@ import upfRouter from "./upf";
 import formsRouter from "./forms";
 import systemUpdatesRouter from "./system-updates";
 import labelStockRouter from "./label-stock";
+import printJobsRouter from "./print-jobs";
+import prepLinkedCompletionsRouter from "./prep-linked-completions";
 import icePacksRouter from "./ice-packs";
 import wholesaleBagsRouter from "./wholesale-bags";
 import bundlesRouter from "./bundles";
 import trainingRouter from "./training";
+import trainingAcknowledgeRouter from "./training-acknowledge";
+import incidentsRouter from "./incidents";
 import onboardingRouter from "./onboarding";
 import goveeRouter from "./govee";
 import visitorsRouter from "./visitors";
@@ -200,6 +206,10 @@ router.use("/checklists", checklistsRouter);
 router.use("/curiosity", curiosityRouter);
 router.use("/notifications", notificationsRouter);
 router.use("/employees", employeesRouter);
+// Return-to-work forms: private (colleague + named RTW managers), guarded
+// per-route inside via middleware/rtw-access.ts.
+router.use("/return-to-work", returnToWorkRouter);
+router.use("/station-messages", stationMessagesRouter);
 router.use("/employee-reviews", employeeReviewsRouter);
 router.use("/fried-chicken", friedChickenRouter);
 router.use("/risk-assessments", riskAssessmentsRouter);
@@ -217,10 +227,21 @@ router.use("/lean-curriculum", requireAdminOrManager, leanCurriculumRouter);
 router.use("/forms", formsRouter);
 router.use("/system-updates", systemUpdatesRouter);
 router.use("/label-stock", labelStockRouter);
+// Prep-room label printing. Open to all logged-in staff — anyone opening a
+// bag of chicken prints the label; the bridge endpoints inside carry their
+// own token auth.
+router.use("/print-jobs", printJobsRouter);
+router.use("/prep-linked-completions", prepLinkedCompletionsRouter);
 router.use("/ice-packs", icePacksRouter);
 router.use("/wholesale-bags", requireAdminOrManager, wholesaleBagsRouter);
 router.use("/bundles", requireAdminOrManager, bundlesRouter);
 router.use("/training", requireAdminOrManager, trainingRouter);
+// Accident & incident diary — a manager's HACCP due-diligence tool.
+router.use("/incidents", requireAdminOrManager, incidentsRouter);
+// Self-service "I've read and understood" from the document viewer — every
+// colleague confirms their own reading, so no manager guard; the router
+// scopes everything to the session user.
+router.use("/training-ack", trainingAcknowledgeRouter);
 router.use("/govee", goveeRouter);
 // Visitor book. Open to all logged-in staff — anyone on the floor may be the
 // one who greets a visitor and hands them the iPad.

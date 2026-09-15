@@ -20,7 +20,7 @@ import {
 } from "@/lib/dispatch-tagging";
 import { ApcBatchBookingDialog } from "@/components/apc-batch-booking";
 import { RescheduleOrderDialog } from "@/components/reschedule-order-dialog";
-import { useAuth } from "@/contexts/auth-context";
+import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { format, addDays, parseISO } from "date-fns";
 import { useLocation } from "wouter";
 import {
@@ -28,8 +28,12 @@ import {
   RefreshCw, MapPin, SkipForward, RotateCcw, XCircle, Loader2,
   ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter, ArrowUpDown,
   Volume2, VolumeX, AlertTriangle, PackageCheck, Snowflake, CalendarClock,
-  ClipboardCheck, Factory, ShoppingBag, Refrigerator,
+  ClipboardCheck, Factory, ShoppingBag, Refrigerator, Flame,
 } from "lucide-react";
+import { shouldPromptShrinkWrap, printDialogLikelyShown } from "@/lib/packing-alerts";
+import { fetchFridgeAvailability, computeFridgeAllocation } from "@/lib/fridge-gate";
+import { ShopifyOrderNumber } from "@/components/shopify-order-link";
+import { StationMessagesBanner } from "@/components/station-messages";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -37,6 +41,10 @@ interface SkuLocation {
   sku: string;
   zone: "fridge" | "freezer" | "ambient";
   locationLabel: string;
+  /** Fridge-map bin (migration 0099): door number + shelf letter (A = top).
+   *  Null on legacy free-text locations and the ambient tray. */
+  door?: number | null;
+  shelf?: string | null;
 }
 
 interface LineItem {
@@ -628,38 +636,9 @@ async function fetchBookedConsignments(tag: string): Promise<BookedConsignment[]
   return (data.consignments ?? []) as BookedConsignment[];
 }
 
-/** Current 2-pack fridge stock per recipe + the variant→recipe map, so the
- *  pick list can be gated to orders the fridge can actually satisfy. */
-interface FridgeAvailability {
-  stock: Array<{ recipeId: number; recipeName: string; packs: number }>;
-  variants: Record<string, { recipeId: number; packsPerUnit: number; pool?: "packs" | "bags" }>;
-  /** Name for every mapped recipe — recipes with no fridge stock row (the
-   *  short ones) aren't in `stock`, but the deficit card must still name
-   *  them. */
-  recipeNames?: Record<number, string>;
-  /** variantId → recipe name for products that ARE mapped but whose recipe
-   *  isn't flagged core-menu / fridge-product, so the fridge holds no count
-   *  for them. Distinguishing these from truly unmapped lines is the
-   *  difference between "map the variant" and "tick Core menu". */
-  outOfScopeVariants?: Record<string, string>;
-  /** 8-pack bags wrapped TODAY per recipe — the pool bag orders gate on. */
-  bagStock?: Array<{ recipeId: number; bags: number }>;
-  /** variantId → Shopify inventory level, for variants Shopify itself
-   *  tracks (oversell denied). An accepted order line on one of these is
-   *  already stock-checked — by Shopify, not the fridge. */
-  shopifyTracked?: Record<string, number>;
-  /** lower-cased Shopify product title → recipeId, for resolving "8 Pack
-   *  Bag" variant lines to their recipe's bag pool (eight_pack_variant_id
-   *  was never populated — same title convention as wholesale-bags). */
-  bagRecipeByTitle?: Record<string, number>;
-  specialRecipeId: number | null;
-}
-
-async function fetchFridgeAvailability(): Promise<FridgeAvailability | null> {
-  const res = await fetch(`${BASE}/api/fulfilment/fridge-availability`, { credentials: "include" });
-  if (!res.ok) return null;
-  return (await res.json()) as FridgeAvailability;
-}
+// FridgeAvailability + fetchFridgeAvailability + the allocation walk live in
+// lib/fridge-gate.ts, shared with the wrapping station's release banner so
+// both read EXACTLY the same data (Graeme, 2026-09-14).
 
 /** What the "Ship order?" dialog should actually say. An order that already
  *  has a consignment will REUSE it — telling the packer it's about to raise
@@ -941,7 +920,17 @@ function printLabel(
           settle(false, "The print frame had no document to print. Nothing was sent to the printer.");
           return;
         }
+        const printCalledAt = performance.now();
         iframe.contentWindow.print();
+        // In kiosk mode print() spools and returns within milliseconds. A
+        // call that blocked for over a second means Chrome put its print
+        // dialog up and someone clicked it away — this machine has lost
+        // --kiosk-printing. The page can't suppress the dialog itself, so
+        // tell the bench how to fix the machine instead of leaving them
+        // clicking Print on every label (Graeme, 2026-09-08).
+        if (printDialogLikelyShown(performance.now() - printCalledAt)) {
+          window.dispatchEvent(new CustomEvent("apc-print-dialog-shown"));
+        }
         clearTimeout(fallbackTimer);
         fallbackTimer = setTimeout(() => settle(true), 5_000);
       } catch (err) {
@@ -973,29 +962,9 @@ function printLabel(
  *  The base URL arrives once from /config-status rather than per order: a
  *  wave is several hundred rows. Falls back to plain text when the base
  *  hasn't loaded, so the number is never missing. */
-function OrderNumber({ orderId, name, adminBase, className }: {
-  orderId: number | string;
-  name: string;
-  adminBase?: string;
-  className?: string;
-}) {
-  if (!adminBase) return <span className={className}>{name}</span>;
-  return (
-    <a
-      href={`${adminBase}${orderId}`}
-      target="_blank"
-      rel="noopener noreferrer"
-      onClick={e => e.stopPropagation()}
-      // Underlined ALWAYS, not just on hover: the packing screen is used on
-      // an iPad, where there is no hover state, so a hover-only affordance is
-      // invisible to the people actually using it.
-      className={cn(className, "underline decoration-dotted underline-offset-2 decoration-current/40 hover:decoration-current")}
-      title={`Open ${name} in Shopify`}
-    >
-      {name}
-    </a>
-  );
-}
+// Moved to components/shopify-order-link.tsx (2026-09-15) — order numbers
+// link to Shopify everywhere now, not just on this page.
+const OrderNumber = ShopifyOrderNumber;
 
 type PrintStatus = "idle" | "printing" | "done" | "failed";
 
@@ -1055,6 +1024,67 @@ function PickingPaceStrip({ packed, total, oph }: {
         <span className="text-xs uppercase tracking-wider opacity-90">orders/hr</span>
         <span className="text-sm leading-tight">{band ? band.label : "warming up…"}</span>
       </span>
+    </div>
+  );
+}
+
+/** Full-screen acknowledge-to-dismiss prompt: the shrink wrapper takes about
+ *  15 orders' worth of packing to get up to temperature, and the team wraps
+ *  the moment packing runs out — so at 15 orders remaining someone must walk
+ *  over and switch it on NOW or everyone waits on a cold wrapper later. It
+ *  deliberately blocks scanning until acknowledged: the button is the walk. */
+function ShrinkWrapPrompt({ remaining, onAcknowledge }: { remaining: number; onAcknowledge: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+      <div className="bg-card border-2 border-orange-400 dark:border-orange-700 rounded-2xl shadow-2xl w-full max-w-lg p-8 text-center space-y-4">
+        <Flame className="w-16 h-16 text-orange-500 mx-auto" />
+        <h2 className="text-2xl font-extrabold leading-tight">
+          Turn on the shrink wrapper now if it&rsquo;s not already on
+        </h2>
+        <p className="text-base text-muted-foreground">
+          <span className="font-bold text-foreground tabular-nums">{remaining}</span> order{remaining === 1 ? "" : "s"} left to pack —
+          that&rsquo;s about how long the wrapper takes to heat up, so switching it on
+          now means it&rsquo;s warm the moment wrapping starts.
+        </p>
+        <button
+          onClick={onAcknowledge}
+          className="w-full px-8 py-4 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-bold text-lg transition-colors"
+        >
+          It&rsquo;s on — keep packing
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Shown after a label print blocked long enough that Chrome must have put its
+ *  print dialog up: this machine's Chrome is running WITHOUT --kiosk-printing,
+ *  so every label needs a manual click. The app cannot suppress the dialog —
+ *  the fix is relaunching Chrome with the flag, and the classic trap is that
+ *  the flag is silently ignored when any Chrome process is already running. */
+function KioskPrintBanner({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <div className="rounded-xl border-2 border-amber-500 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 flex items-start gap-3">
+      <Printer className="w-5 h-5 text-amber-700 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+      <div className="flex-1 space-y-1.5">
+        <p className="font-semibold text-sm text-amber-900 dark:text-amber-200">
+          Labels need a click to print — silent printing is off on this computer
+        </p>
+        <p className="text-sm text-amber-800 dark:text-amber-300">
+          Chrome showed its print dialogue, which means it was started without the
+          kiosk-printing flag. To fix: <span className="font-medium">close every Chrome window</span> (and
+          quit any Chrome icon in the system tray), then reopen Chrome from the shortcut that includes{" "}
+          <code className="bg-amber-100 dark:bg-amber-900 px-1.5 py-0.5 rounded font-mono text-xs">--kiosk-printing</code>.
+          The flag is ignored if Chrome is still running anywhere when the shortcut is clicked.
+        </p>
+      </div>
+      <button
+        onClick={onDismiss}
+        className="p-1.5 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40 rounded-lg transition-colors"
+        title="Dismiss — it will come back if another print shows the dialogue"
+      >
+        <X className="w-4 h-4" />
+      </button>
     </div>
   );
 }
@@ -1356,6 +1386,18 @@ export default function Fulfilment() {
   // writing real tracking numbers onto real customers' orders.
   const showTestModeBanner = apcMode === "full" && (configStatus?.testMode ?? false);
 
+  // Zone walk order for the pick sort — set by dragging the zone cards on
+  // the Bin Locations page (single source of truth for picking order).
+  const { data: pickConfig } = useQuery<{ zoneOrder: string[] }>({
+    queryKey: ["fulfilment-pick-config"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/fulfilment/pick-config`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
+
   // Manual-tap kill switch — read from app_settings via /manual-tick-config.
   // Defaults to enabled until the fetch resolves so we don't briefly look
   // locked-down on a slow connection.
@@ -1551,6 +1593,41 @@ export default function Fulfilment() {
     },
   });
 
+  // ── Shrink-wrapper warm-up prompt ────────────────────────────────────────
+  // At 15 orders remaining an overlay tells the bench to switch the shrink
+  // wrapper on, so it's up to temperature the moment packing runs out and
+  // wrapping starts. Once per dispatch day, per device; the acknowledgement
+  // lives in localStorage so a mid-wave page reload doesn't re-nag.
+  const [shrinkWrapAcked, setShrinkWrapAcked] = useState(false);
+  useEffect(() => {
+    try { setShrinkWrapAcked(localStorage.getItem(`fulfilment_shrink_wrap_ack_${queryTag}`) === "1"); }
+    catch { setShrinkWrapAcked(false); }
+  }, [queryTag]);
+  function acknowledgeShrinkWrap() {
+    setShrinkWrapAcked(true);
+    try { localStorage.setItem(`fulfilment_shrink_wrap_ack_${queryTag}`, "1"); } catch { /* private mode */ }
+    // The overlay swallowed keyboard focus — put the scanner back to work.
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLInputElement>('input[data-scan-input="true"]')?.focus();
+    });
+  }
+  // remainingToPack / showShrinkWrapPrompt are derived AFTER the fridge gate
+  // below — the prompt counts orders packable right now, not the day's raw
+  // remainder (Graeme, 2026-09-14).
+
+  // ── Kiosk-printing watchdog ──────────────────────────────────────────────
+  // printLabel dispatches this event when a print() call blocked long enough
+  // that Chrome must have shown its print dialogue (i.e. --kiosk-printing is
+  // off on this machine). Sticky until dismissed, and dismissal isn't
+  // permanent: the next dialogue-shaped print raises it again, so it can't
+  // be swiped away and forgotten while printing is still manual.
+  const [printDialogSeen, setPrintDialogSeen] = useState(false);
+  useEffect(() => {
+    const onDialogShown = () => setPrintDialogSeen(true);
+    window.addEventListener("apc-print-dialog-shown", onDialogShown);
+    return () => window.removeEventListener("apc-print-dialog-shown", onDialogShown);
+  }, []);
+
   const { data: postcodeValidations, refetch: refetchPostcodes } = useQuery({
     queryKey: ["fulfilment-postcode-validations", queryTag],
     queryFn: () => fetchPostcodeValidations(queryTag),
@@ -1726,137 +1803,26 @@ export default function Fulfilment() {
   const labelledOrdered = filteredUnfulfilledOrdered.filter(o => !lacksLabel(o));
 
   // ── Fridge gate ─────────────────────────────────────────────────────────
-  // Walk the pick list in DISPLAY order, allocating wrapped 2-pack fridge
-  // stock to each order. An order stays pickable only when every mapped line
-  // fits in what's left; a held order consumes nothing (a smaller later
-  // order can still fit). Lines we can't map to a recipe never gate their
-  // order — better to over-offer than wrongly hide. The unmet demand of the
-  // held orders becomes the wrap-deficit readout for the wrapping station.
-  const fridgeAllocation = (() => {
-    const empty = {
-      held: [] as ShopifyOrder[],
-      deficits: [] as Array<{ recipeName: string; packs: number }>,
-      active: false,
-      shortFor: new Map<number, string[]>(),
-      // Lines the gate CANNOT check — no recipe mapping for the variant. They
-      // never hold an order back, so without surfacing them the gate looks
-      // broken when it's actually blind (Graeme, 2026-08-28).
-      uncheckedTitles: new Set<string>(),
-      uncheckedOrderIds: new Set<number>(),
-    };
-    if (!fridgeGate || !fridgeAvailability) return { ...empty, pickable: labelledOrdered };
-    // Two pools per recipe, keyed "packs:<id>" and "bags:<id>". 2-pack lines
-    // draw on the fridge's 2-pack level; 8-pack bag lines draw on bags
-    // wrapped TODAY (backend sends only today's entries) — so a bag order
-    // stays held until its bags are wrapped that day.
-    const remaining = new Map<string, number>();
-    const names = new Map<number, string>();
-    for (const [rid, name] of Object.entries(fridgeAvailability.recipeNames ?? {})) {
-      names.set(Number(rid), name);
-    }
-    for (const s of fridgeAvailability.stock) {
-      remaining.set(`packs:${s.recipeId}`, s.packs);
-      names.set(s.recipeId, s.recipeName);
-    }
-    for (const b of fridgeAvailability.bagStock ?? []) {
-      remaining.set(`bags:${b.recipeId}`, b.bags);
-    }
-    const poolLabel = (key: string) => {
-      const [pool, rid] = key.split(":");
-      const name = names.get(Number(rid)) ?? `Recipe ${rid}`;
-      return pool === "bags" ? `${name} (8-pack bags)` : name;
-    };
-    const uncheckedTitles = new Set<string>();
-    const uncheckedOrderIds = new Set<number>();
-    const needsFor = (o: ShopifyOrder) => {
-      const needs = new Map<string, number>();
-      for (const li of o.line_items ?? []) {
-        const mapped = li.variant_id != null ? fridgeAvailability.variants[String(li.variant_id)] : undefined;
-        let recipeId = mapped?.recipeId;
-        let packsPer = mapped?.packsPerUnit ?? 1;
-        let pool: "packs" | "bags" = mapped?.pool ?? "packs";
-        if (recipeId == null && fridgeAvailability.specialRecipeId != null
-            && li.title.toLowerCase().includes("calzone club special")) {
-          recipeId = fridgeAvailability.specialRecipeId;
-          packsPer = 1;
-          pool = "packs";
-        }
-        // 8-pack bag lines resolve by PRODUCT TITLE — the bag is a variant
-        // of the same Shopify product as the mapped 2-pack, and
-        // eight_pack_variant_id was never populated (same convention as the
-        // wholesale-bags queue). These gate on TODAY's wrapped bags.
-        if (recipeId == null
-            && (li.variant_title ?? "").toLowerCase().includes("8 pack bag")) {
-          const bagRecipe = fridgeAvailability.bagRecipeByTitle?.[li.title.trim().toLowerCase()];
-          if (bagRecipe != null) {
-            recipeId = bagRecipe;
-            packsPer = 1;
-            pool = "bags";
-          }
-        }
-        if (recipeId == null) {
-          // The fridge can't check this line — but Shopify may already have.
-          // Everything TCK sells that isn't wrapped into the production
-          // fridge (fried chicken in the freezer, dessert packs, third-party
-          // sauces, F2F lines) is inventory-tracked on Shopify with
-          // overselling denied, so the accepted order IS the stock check.
-          // Those lines are checked, not "unchecked" (Graeme, 2026-09-04).
-          if (li.variant_id != null
-              && fridgeAvailability.shopifyTracked?.[String(li.variant_id)] != null) {
-            continue;
-          }
-          // £0 and 0 g is a paper insert riding along with the order (e.g.
-          // "Order Insert (first time customers)") — there is no stock to
-          // check. Structural, not name-based, per the charter.
-          if (Number(li.price ?? "0") === 0 && (li.grams ?? 0) === 0) {
-            continue;
-          }
-          // NOTHING checked this line — no fridge mapping AND Shopify isn't
-          // tracking it. Say so out loud, and say WHY, naming the fix.
-          const outOfScopeName = li.variant_id != null
-            ? fridgeAvailability.outOfScopeVariants?.[String(li.variant_id)]
-            : undefined;
-          uncheckedTitles.add(outOfScopeName
-            ? `${li.title} — ${outOfScopeName} isn't flagged core menu / fridge product, and Shopify isn't tracking its stock`
-            : `${li.title} — no recipe mapping, and Shopify isn't tracking its stock`);
-          uncheckedOrderIds.add(o.id);
-          continue;
-        }
-        const key = `${pool}:${recipeId}`;
-        needs.set(key, (needs.get(key) ?? 0) + li.quantity * packsPer);
-      }
-      return needs;
-    };
-    const pickable: ShopifyOrder[] = [];
-    const held: ShopifyOrder[] = [];
-    const heldDemand = new Map<string, number>();
-    const shortFor = new Map<number, string[]>();
-    for (const o of labelledOrdered) {
-      const needs = needsFor(o);
-      const fits = [...needs].every(([key, qty]) => (remaining.get(key) ?? 0) >= qty);
-      if (fits) {
-        for (const [key, qty] of needs) remaining.set(key, (remaining.get(key) ?? 0) - qty);
-        pickable.push(o);
-      } else {
-        held.push(o);
-        const shorts: string[] = [];
-        for (const [key, qty] of needs) {
-          heldDemand.set(key, (heldDemand.get(key) ?? 0) + qty);
-          const have = remaining.get(key) ?? 0;
-          if (have < qty) shorts.push(`${poolLabel(key)} (need ${qty}, ${key.startsWith("bags") ? "wrapped today" : "fridge has"} ${have})`);
-        }
-        shortFor.set(o.id, shorts);
-      }
-    }
-    const deficits = [...heldDemand]
-      .map(([key, demand]) => ({
-        recipeName: poolLabel(key),
-        packs: Math.max(0, demand - (remaining.get(key) ?? 0)),
-      }))
-      .filter(d => d.packs > 0)
-      .sort((a, b) => b.packs - a.packs);
-    return { pickable, held, deficits, active: true, shortFor, uncheckedTitles, uncheckedOrderIds };
-  })();
+  // The allocation walk lives in lib/fridge-gate.ts (shared verbatim with
+  // the wrapping station's release banner): walk the pick list in display
+  // order allocating wrapped fridge stock; held orders' unmet demand is the
+  // wrap-deficit readout.
+  const fridgeAllocation = computeFridgeAllocation(labelledOrdered, fridgeGate ? fridgeAvailability : null);
+
+  // Shrink-wrap prompt: count orders we can PACK RIGHT NOW — after the
+  // fridge gate, before the wave filters (a narrowed wave mustn't fire the
+  // prompt early). An order the gate holds doesn't extend the packing
+  // runway; it already means the wrapper is needed. 120 orders with 105
+  // coverable prompts at 90 packed, not 105 (Graeme, 2026-09-14).
+  const dayLabelled = [...collectionsForList, ...unfulfilledOrders].filter(o => !lacksLabel(o));
+  const remainingToPack = orders != null
+    ? computeFridgeAllocation(dayLabelled, fridgeGate ? fridgeAvailability : null).pickable.length
+    : null;
+  const showShrinkWrapPrompt = shouldPromptShrinkWrap({
+    remainingPackable: remainingToPack,
+    view,
+    acknowledged: shrinkWrapAcked,
+  });
   // Held orders drop out of the pickable list entirely, so the picking
   // cycle, counts, and advance-to-next all respect the gate automatically.
   const filteredUnfulfilled = fridgeAllocation.pickable;
@@ -1971,12 +1937,15 @@ export default function Fulfilment() {
   };
 
   const [showBatchBooking, setShowBatchBooking] = useState(false);
-  // Packing is open to viewers; booking real consignments and rescheduling
-  // customer orders is not. The API enforces this — hiding the button just
-  // saves a packer finding a 403 mid-shift.
-  const { state: authState } = useAuth();
-  const canBookCourier = authState.status === "authenticated"
-    && (authState.user.role === "admin" || authState.user.role === "manager");
+  // Packing is open to viewers; booking real consignments, rescheduling
+  // customer orders and approving the day (tagging) are not. Both are now
+  // grantable abilities (Settings → Team & Access) rather than raw role
+  // checks, so a named person can be handed them without a promotion
+  // (Graeme, 2026-09-09). The API enforces the same keys — hiding the
+  // buttons just saves a packer finding a 403 mid-shift.
+  const { can } = useFeatureAccess();
+  const canBookCourier = can("ability.book_apc_labels");
+  const canTagDispatch = can("ability.tag_dispatch");
   const [bulkTagging, setBulkTagging] = useState(false);
   const [showBulkTagConfirm, setShowBulkTagConfirm] = useState(false);
   const [consignmentAction, setConsignmentAction] = useState<"idle" | "adding-box" | "reprinting" | "cancelling">("idle");
@@ -2221,14 +2190,25 @@ export default function Fulfilment() {
     startPicking(activeOrder);
   }
 
-  const ZONE_PICK_ORDER = ["fridge", "freezer", "ambient"];
+  // Pick walk order — the zones in the order set on the Bin Locations page
+  // (drag the zone cards there to do the fridge or the freezer first). Falls
+  // back to the historic fridge → freezer → ambient until the config loads.
+  const zonePickOrder: string[] = pickConfig?.zoneOrder ?? ["fridge", "freezer", "ambient"];
   const sortedLineItems = activeOrder ? [...activeOrder.line_items].sort((a, b) => {
-    const idxA = a.location ? ZONE_PICK_ORDER.indexOf(a.location.zone) : ZONE_PICK_ORDER.length;
-    const idxB = b.location ? ZONE_PICK_ORDER.indexOf(b.location.zone) : ZONE_PICK_ORDER.length;
-    // Within a zone, sort by SKU (natural/numeric) so the pick list matches
-    // the kitchen's label numbering (1, 3c, 5b, 5c) instead of product-title
-    // alphabetical order. Items with no SKU sort last.
+    const idxA = a.location ? zonePickOrder.indexOf(a.location.zone) : zonePickOrder.length;
+    const idxB = b.location ? zonePickOrder.indexOf(b.location.zone) : zonePickOrder.length;
     if (idxA !== idxB) return idxA - idxB;
+    // Within a zone the walk is door by door, shelf by shelf (A at the top)
+    // — the fridge map on Bin Locations IS the pick order. Bins beat
+    // legacy free-text locations; those fall back to SKU order below.
+    const doorA = a.location?.door ?? Number.MAX_SAFE_INTEGER;
+    const doorB = b.location?.door ?? Number.MAX_SAFE_INTEGER;
+    if (doorA !== doorB) return doorA - doorB;
+    const shelfA = a.location?.shelf ?? "ZZ";
+    const shelfB = b.location?.shelf ?? "ZZ";
+    if (shelfA !== shelfB) return shelfA.localeCompare(shelfB);
+    // Same bin (or no bin): SKU natural sort keeps the kitchen's label
+    // numbering (1, 3c, 5b, 5c); items with no SKU sort last.
     if (a.sku && !b.sku) return -1;
     if (!a.sku && b.sku) return 1;
     if (a.sku && b.sku) return a.sku.localeCompare(b.sku, undefined, { numeric: true });
@@ -2534,7 +2514,7 @@ export default function Fulfilment() {
       const res = await fetch(`${BASE}/api/fulfilment/reconcile-label?orderName=${encodeURIComponent(activeOrder.name)}`, { credentials: "include" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Label fetch failed");
-      printAllLabels(data.waybill as string, (data.labelPdfs as string[]).length);
+      printAllLabels(data.waybill as string, (data.labelPdfs as string[]).length, { force: true });
       toast({
         title: `Printing label for ${activeOrder.name}`,
         description: data.duplicateCount > 1
@@ -2549,16 +2529,20 @@ export default function Fulfilment() {
   }
 
   /** Print every piece of a consignment, each fetched live from APC at the
-   *  moment it prints — so a consignment amended mid-wave prints as amended. */
-  function printAllLabels(waybill: string, pieces: number) {
+   *  moment it prints — so a consignment amended mid-wave prints as amended.
+   *  The already-printed-today dedupe only guards the AUTOMATIC print on
+   *  order open — a deliberate button press (Reprint, Retry, Add box,
+   *  reconcile print) always prints, because the packer pressing it is
+   *  holding a damaged label or an empty tray (Graeme, 2026-09-14). */
+  function printAllLabels(waybill: string, pieces: number, opts?: { force?: boolean }) {
     const count = Math.max(1, pieces);
     // Already off the printer today? Don't send it again — tell the packer
     // to find it in the printed stack instead of making a duplicate.
-    if (wasLabelPrinted(waybill)) {
+    if (!opts?.force && wasLabelPrinted(waybill)) {
       setPrintStatus("done");
       toast({
         title: "Label already printed",
-        description: `${waybill} came off the printer earlier today — take it from the printed stack rather than printing another.`,
+        description: `${waybill} came off the printer earlier today — take it from the printed stack, or press Reprint Label to print it anyway.`,
       });
       return;
     }
@@ -2592,7 +2576,9 @@ export default function Fulfilment() {
       // The consignment now has more pieces than when it was opened — carry
       // that forward so a later Reprint doesn't fall back to the old count.
       setShipment(prev => prev ? { ...prev, pieceCount: result.pieceCount } : prev);
-      printAllLabels(shipment.consignmentNumber, result.pieceCount);
+      // Force: the original labels may have printed earlier today, but the
+      // consignment now has MORE pieces — the new box needs its label.
+      printAllLabels(shipment.consignmentNumber, result.pieceCount, { force: true });
       if (result.warnings && result.warnings.length > 0) {
         setShipment(prev => prev ? { ...prev, warnings: [...(prev.warnings ?? []), ...result.warnings!] } : prev);
       }
@@ -2614,7 +2600,7 @@ export default function Fulfilment() {
       // when the order was opened.
       const result = await reprintLabel(shipment.consignmentNumber);
       setShipment(prev => prev ? { ...prev, pieceCount: result.pieceCount } : prev);
-      printAllLabels(shipment.consignmentNumber, result.pieceCount);
+      printAllLabels(shipment.consignmentNumber, result.pieceCount, { force: true });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setConsignmentActionError(`Reprint failed: ${msg}`);
@@ -2779,6 +2765,10 @@ export default function Fulfilment() {
           total={progress?.totalOrders ?? null}
           oph={packingPace?.ordersPerHour ?? null}
         />
+        {showShrinkWrapPrompt && remainingToPack != null && (
+          <ShrinkWrapPrompt remaining={remainingToPack} onAcknowledge={acknowledgeShrinkWrap} />
+        )}
+        {printDialogSeen && <KioskPrintBanner onDismiss={() => setPrintDialogSeen(false)} />}
         {showTestModeBanner && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
         {reconcileMode && <ReconcileModeBanner />}
 
@@ -3011,6 +3001,10 @@ export default function Fulfilment() {
           total={progress?.totalOrders ?? null}
           oph={packingPace?.ordersPerHour ?? null}
         />
+        {showShrinkWrapPrompt && remainingToPack != null && (
+          <ShrinkWrapPrompt remaining={remainingToPack} onAcknowledge={acknowledgeShrinkWrap} />
+        )}
+        {printDialogSeen && <KioskPrintBanner onDismiss={() => setPrintDialogSeen(false)} />}
         <div className="glass-panel p-8 rounded-2xl border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 text-center">
           <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto mb-4" />
           <h2 className="text-2xl font-bold text-green-800 dark:text-green-200 mb-1">Order Complete!</h2>
@@ -3068,6 +3062,10 @@ export default function Fulfilment() {
           total={progress?.totalOrders ?? null}
           oph={packingPace?.ordersPerHour ?? null}
         />
+        {showShrinkWrapPrompt && remainingToPack != null && (
+          <ShrinkWrapPrompt remaining={remainingToPack} onAcknowledge={acknowledgeShrinkWrap} />
+        )}
+        {printDialogSeen && <KioskPrintBanner onDismiss={() => setPrintDialogSeen(false)} />}
         {pendingPickOrder && (
           <ShopifyConfirmDialog
             title={`Ship order ${pendingPickOrder.name}?`}
@@ -3272,7 +3270,7 @@ export default function Fulfilment() {
                     <XCircle className="w-4 h-4" /> Print failed
                   </span>
                   <button
-                    onClick={() => printAllLabels(shipment.consignmentNumber, shipment.pieceCount ?? 1)}
+                    onClick={() => printAllLabels(shipment.consignmentNumber, shipment.pieceCount ?? 1, { force: true })}
                     className="text-xs px-2 py-1 bg-destructive/10 hover:bg-destructive/20 text-destructive rounded-lg flex items-center gap-1 transition-colors"
                   >
                     <RotateCcw className="w-3 h-3" /> Retry print
@@ -4002,6 +4000,7 @@ export default function Fulfilment() {
     <div className="space-y-6">
       {showTestModeBanner && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
         {reconcileMode && <ReconcileModeBanner />}
+      {printDialogSeen && <KioskPrintBanner onDismiss={() => setPrintDialogSeen(false)} />}
 
       {/* Live-mode confirmation dialog — appears when operator selects an order */}
       {pendingPickOrder && (
@@ -4052,7 +4051,13 @@ export default function Fulfilment() {
 
       <div className="flex items-center gap-3">
         <button onClick={() => {
-          // The date-list view is retired — back always means Dispatches.
+          // Back means where you came FROM (Graeme, 2026-09-10 — the old
+          // hard-wired /dispatches dropped people somewhere obscure): the
+          // plan's packing station when a plan brought us here, otherwise
+          // real browser-back, with Dispatches only as the deep-link
+          // fallback when there is no history to go back to.
+          if (stationPlanId) { navigate(`/plans/${stationPlanId}/station/packing`); return; }
+          if (window.history.length > 1) { window.history.back(); return; }
           navigate("/dispatches");
         }} className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors">
           <ArrowLeft className="w-5 h-5" />
@@ -4144,6 +4149,10 @@ export default function Fulfilment() {
         />
       )}
 
+      {/* Messages sent to the packing station — this screen is where the
+          packers actually live, so 'packing' notes land here too. */}
+      <StationMessagesBanner stationType="packing" />
+
       {/* One summary for the day. Gate warnings live behind a button here:
           they belong BEFORE picking (tag → book → pick) or after it, never
           competing with the order in the packer's hands. */}
@@ -4193,20 +4202,30 @@ export default function Fulfilment() {
                   >
                     {awaitingPanelOpen ? "Hide orders" : "Show orders"}
                   </button>
-                  <button
-                    // Always reopens at "all orders": narrowing is a one-off
-                    // decision made in the dialog, never a setting that can
-                    // quietly persist into tomorrow's tagging.
-                    onClick={() => { setTagScope("all"); setShowBulkTagConfirm(true); }}
-                    disabled={bulkTagging}
-                    className="flex items-center gap-2 px-5 py-3 bg-orange-600 text-white rounded-xl text-base font-bold hover:bg-orange-700 transition-colors disabled:opacity-50"
-                  >
-                    {bulkTagging ? (
-                      <><Loader2 className="w-5 h-5 animate-spin" /> Tagging…</>
-                    ) : (
-                      <><Tag className="w-5 h-5" /> Tag all {untaggedOrders.length} for dispatch</>
-                    )}
-                  </button>
+                  {canTagDispatch ? (
+                    <button
+                      // Always reopens at "all orders": narrowing is a one-off
+                      // decision made in the dialog, never a setting that can
+                      // quietly persist into tomorrow's tagging.
+                      onClick={() => { setTagScope("all"); setShowBulkTagConfirm(true); }}
+                      disabled={bulkTagging}
+                      className="flex items-center gap-2 px-5 py-3 bg-orange-600 text-white rounded-xl text-base font-bold hover:bg-orange-700 transition-colors disabled:opacity-50"
+                    >
+                      {bulkTagging ? (
+                        <><Loader2 className="w-5 h-5 animate-spin" /> Tagging…</>
+                      ) : (
+                        <><Tag className="w-5 h-5" /> Tag all {untaggedOrders.length} for dispatch</>
+                      )}
+                    </button>
+                  ) : (
+                    // Says WHY there's no button rather than hiding the
+                    // day's approval step from view — and names the exact
+                    // grant an admin needs to flick.
+                    <span className="text-sm font-medium text-orange-800 dark:text-orange-300 max-w-[18rem]">
+                      Tagging needs the &ldquo;Tag orders for dispatch&rdquo; grant —
+                      an admin can add it in Settings → Team &amp; Access.
+                    </span>
+                  )}
                 </div>
               </div>
               {/* Says out loud why this panel is first: booking skips
@@ -4840,7 +4859,7 @@ export default function Fulfilment() {
                 <div key={order.id} className="glass-panel px-4 py-3 rounded-xl border border-border opacity-60 flex items-center gap-3">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate">
-                      {order.name} {order.shipping_address?.name ?? order.customer?.first_name ?? ""}
+                      <ShopifyOrderNumber orderId={order.id} name={order.name} adminBase={configStatus?.shopifyAdminOrderBase} /> {order.shipping_address?.name ?? order.customer?.first_name ?? ""}
                     </p>
                     <p className="text-xs text-muted-foreground truncate" title={(fridgeAllocation.shortFor.get(order.id) ?? []).join("\n")}>
                       Short: {(fridgeAllocation.shortFor.get(order.id) ?? []).join(" · ") || "fridge stock"}

@@ -3,6 +3,7 @@ import { getOrdersByTag, getProducts, countProductsByTag, getOrdersByDateRange, 
 import { db, recipesTable, usersTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { londonDateString, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
+import { FRIED_CHICKEN_CATEGORY } from "./fried-chicken";
 
 const WEEKDAY_TO_NUM: Record<string, number> = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
 const londonWeekdayNumber = (d: Date) => WEEKDAY_TO_NUM[londonWeekdayName(d)] ?? 0;
@@ -182,6 +183,19 @@ router.get("/weekly-orders", async (req, res) => {
     const EXCLUDE_VARIANT = "8 pack bag";
     const EXCLUDE_TITLE = "f2f";
 
+    // Fried chicken isn't calzone packs (Graeme, 2026-09-14) — it runs on
+    // its own station with its own units, so its line items are excluded
+    // from the pack count entirely. Category-driven via the recipe
+    // mappings, not product names, so new fried chicken flavours are
+    // excluded automatically.
+    const fcRows = await db.execute<{ shopify_variant_id: string | null }>(sql`
+      SELECT m.shopify_variant_id
+        FROM recipe_shopify_mappings m
+        JOIN recipes r ON r.id = m.recipe_id
+       WHERE r.category = ${FRIED_CHICKEN_CATEGORY} AND m.shopify_variant_id IS NOT NULL
+    `);
+    const friedChickenVariantIds = new Set((fcRows.rows ?? []).map(r => String(r.shopify_variant_id)));
+
     // Pull each day's orders with line_items so we can compute pack count
     // alongside the order count. getOrdersByTag is REST-paginated; the
     // previous OOM concern was about pulling unfiltered 250-page slices
@@ -207,6 +221,7 @@ router.get("/weekly-orders", async (req, res) => {
           for (const li of o.line_items ?? []) {
             const productTitle = (li.title ?? "").toLowerCase();
             const variantTitle = (li.variant_title ?? "").toLowerCase();
+            if (li.variant_id != null && friedChickenVariantIds.has(String(li.variant_id))) continue;
             if (EXCLUDE_TITLE && productTitle.includes(EXCLUDE_TITLE)) continue;
             if (EXCLUDE_VARIANT && variantTitle.includes(EXCLUDE_VARIANT)) continue;
             if (INCLUDE_VARIANT && !variantTitle.includes(INCLUDE_VARIANT)) continue;

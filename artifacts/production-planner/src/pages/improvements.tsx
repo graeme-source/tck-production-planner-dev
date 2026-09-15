@@ -21,12 +21,14 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Loader2, Camera, CheckCircle2, Clock, ThumbsUp, RotateCcw,
   Trophy, ChevronLeft, X, AlertCircle, Settings2, Clapperboard, Trash2, ArrowBigUp, HandHelping, BookOpen,
+  Lightbulb, Eye,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/contexts/auth-context";
 import { ImprovementsTab } from "@/pages/reports";
 import { ImprovementAttachments } from "@/components/improvement-attachments";
 import { cn } from "@/lib/utils";
+import { feedTimestamp } from "@/lib/feed-time";
 import { ImprovementFeedMedia } from "@/components/improvement-feed-media";
 import { toast } from "@/hooks/use-toast";
 import { useMarkImprovementSeen } from "@/hooks/use-unseen-improvements";
@@ -72,6 +74,10 @@ type Improvement = {
   approvedByName: string | null;
   reviewNote: string | null;
   createdAt: string;
+  /** Lifecycle stamps — when it was fixed / approved. The feed sorts
+   *  improvements by these, not by when the idea was first logged. */
+  doneAt?: string | null;
+  approvedAt?: string | null;
   voteCount: number;
   votedByMe: boolean;
   subjectTitle: string | null;
@@ -79,7 +85,62 @@ type Improvement = {
   /** Attachment metadata for the feed — rendered inline like a social
    *  feed post (Graeme, 2026-08-28). */
   media?: Array<{ id: number; kind: "image" | "video"; phase: "before" | "after" | "stitched" | null }>;
+  /** Has THIS viewer opened it? Powers the To-review tab and NEW markers. */
+  seenByMe?: boolean;
+  /** Emoji applause, aggregated: [{emoji, count, mine}]. */
+  reactions?: Array<{ emoji: string; count: number; mine: boolean }>;
 };
+
+/** The reaction palette — mirrored by the server's allow-list. */
+const REACTION_EMOJI = ["👍", "❤️", "🎉", "💪", "😂"];
+
+/** WhatsApp-style applause row: counts for pressed emoji, the rest a tap
+ *  away. The vote button decides what gets DONE; this is the cheering
+ *  (Graeme, 2026-09-10). */
+function ReactionBar({ item }: { item: Improvement }) {
+  const queryClient = useQueryClient();
+  const react = useMutation({
+    mutationFn: (emoji: string) => api(`/improvements/${item.id}/react`, {
+      method: "POST", body: JSON.stringify({ emoji }),
+    }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["improvements"] }),
+    onError: (e: Error) => toast({ title: "Couldn't save that", description: e.message, variant: "destructive" }),
+  });
+  const byEmoji = new Map((item.reactions ?? []).map(r => [r.emoji, r]));
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap" onClick={e => e.stopPropagation()}>
+      {REACTION_EMOJI.map(emoji => {
+        const r = byEmoji.get(emoji);
+        return (
+          <button
+            key={emoji}
+            onClick={() => react.mutate(emoji)}
+            disabled={react.isPending}
+            aria-pressed={r?.mine ?? false}
+            title={r?.mine ? "Tap to take it back" : "React"}
+            className={cn(
+              "h-10 min-w-[2.75rem] px-2.5 rounded-full border-2 text-base flex items-center justify-center gap-1 transition-all active:scale-95",
+              r?.mine
+                ? "border-primary bg-primary/10"
+                : r
+                  ? "border-border bg-secondary/40"
+                  : "border-border/60 opacity-60 hover:opacity-100",
+            )}
+          >
+            <span>{emoji}</span>
+            {r && r.count > 0 && <span className="text-sm font-bold tabular-nums">{r.count}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** An idea is work not yet done; everything past that is an improvement.
+ *  The two words were blurring together on the page (Graeme, 2026-09-10). */
+function isIdea(item: Pick<Improvement, "stage">): boolean {
+  return item.stage === "todo";
+}
 
 // Feed media rendering lives in components/improvement-feed-media.tsx —
 // shared with the meeting's Recent Improvements slide so both tell the
@@ -112,6 +173,13 @@ export default function Improvements() {
 
   const [logging, setLogging] = useState(false);
   const [openId, setOpenId] = useState<number | null>(null);
+  // "review" surfaces what this person hasn't opened yet; otherwise one
+  // combined timeline with Improvements/Ideas as toggleable FILTERS, not
+  // exclusive tabs (Graeme, 2026-09-10). null = auto: review while
+  // anything's unread, the feed once it isn't.
+  const [tab, setTab] = useState<"review" | "feed" | null>(null);
+  const [showImprovements, setShowImprovements] = useState(true);
+  const [showIdeas, setShowIdeas] = useState(true);
   const [showAdmin, setShowAdmin] = useState(false);
   const queryClient = useQueryClient();
 
@@ -132,6 +200,15 @@ export default function Improvements() {
   // The approval step is a setting, OFF by default (Graeme, 2026-09-07):
   // with it off, a finished improvement goes straight into the feed and the
   // page copy stops promising a sign-off that isn't coming.
+  // "Once I've reviewed, it changes to improvements as the standard":
+  // when the unread list drains while the review view is open, hand the
+  // page back to the feed rather than leaving an empty room.
+  useEffect(() => {
+    if (tab === "review" && items.length > 0 && items.filter(i => !i.seenByMe && !i.isMine).length === 0) {
+      setTab("feed");
+    }
+  }, [items, tab]);
+
   const { data: settings } = useQuery<{ approvalRequired: boolean }>({
     queryKey: ["improvements", "settings"],
     queryFn: () => api<{ approvalRequired: boolean }>("/improvements/settings"),
@@ -162,7 +239,12 @@ export default function Improvements() {
     return (
       <ImprovementDetail
         id={openId}
-        onBack={() => setOpenId(null)}
+        onBack={() => {
+          setOpenId(null);
+          // The detail marked itself seen — refresh so the To-review tab
+          // and NEW markers move on without waiting for a stale cache.
+          queryClient.invalidateQueries({ queryKey: ["improvements"] });
+        }}
         isManager={isManager}
         isAdmin={userRole === "admin"}
       />
@@ -173,10 +255,17 @@ export default function Improvements() {
     return <LogImprovement onDone={id => { setLogging(false); setOpenId(id); }} onCancel={() => setLogging(false)} />;
   }
 
-  const waiting = items.filter(i => i.stage === "waiting");
-  const mine = items.filter(i => i.isMine && i.stage !== "approved");
-  const todo = items.filter(i => i.stage === "todo" && !i.isMine);
-  const approved = items.filter(i => i.stage === "approved").slice(0, 8);
+  // Server order is newest-first; keep every list that way — the feed leads
+  // with the most recent and scrolls back in time (Graeme, 2026-09-10).
+  const byNewest = (a: Improvement, b: Improvement) => b.createdAt.localeCompare(a.createdAt);
+  // The FEED's clock is when a thing became what it is (Graeme,
+  // 2026-09-11): an idea sits at its logged time, but the moment it's
+  // fixed it is, by definition, the latest improvement — a Tuesday idea
+  // finished on Thursday tops Thursday's feed, not Tuesday's backlog.
+  const feedStamp = (i: Improvement) => (isIdea(i) ? i.createdAt : (i.doneAt ?? i.approvedAt ?? i.createdAt));
+  const byFeedNewest = (a: Improvement, b: Improvement) => feedStamp(b).localeCompare(feedStamp(a));
+  const waiting = items.filter(i => i.stage === "waiting").sort(byNewest);
+  const toReview = items.filter(i => !i.seenByMe && !i.isMine).sort(byNewest);
 
   return (
     <div className="max-w-3xl mx-auto pb-24 space-y-6">
@@ -198,31 +287,102 @@ export default function Improvements() {
         <div className="flex items-center justify-center py-16 text-muted-foreground gap-3 text-lg">
           <Loader2 className="w-6 h-6 animate-spin" /> Loading…
         </div>
-      ) : (
+      ) : (() => {
+        // Review wins while anything's unread; the feed thereafter.
+        const activeTab = tab ?? (toReview.length > 0 ? "review" : "feed");
+        // Filter chips: at least one stays on — a feed of nothing helps no
+        // one. Clicking a chip from review mode jumps to the feed with it.
+        const toggleKind = (kind: "improvements" | "ideas") => {
+          if (activeTab === "review") { setTab("feed"); return; }
+          if (kind === "improvements") {
+            if (showImprovements && !showIdeas) return;
+            setShowImprovements(v => !v);
+          } else {
+            if (showIdeas && !showImprovements) return;
+            setShowIdeas(v => !v);
+          }
+        };
+        const timeline = items
+          .filter(i => (isIdea(i) ? showIdeas : showImprovements))
+          .sort(byFeedNewest)
+          .slice(0, 40);
+        return (
         <>
-          {isManager && waiting.length > 0 && (
-            <Section title={`Waiting for you to check (${waiting.length})`} icon={<Clock className="w-5 h-5 text-amber-500" />}>
-              {waiting.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
-            </Section>
-          )}
-
-          <Section title="Yours" icon={<Camera className="w-5 h-5 text-primary" />} empty="Nothing on the go. Log one above.">
-            {mine.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
-          </Section>
-
-          {todo.length > 0 && (
-            <Section title="Up for grabs" icon={<AlertCircle className="w-5 h-5 text-muted-foreground" />}>
-              {todo.slice(0, 10).map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
-            </Section>
-          )}
-
-          {approved.length > 0 && (
-            <Section title={approvalOn ? "Recently approved" : "Recent improvements"} icon={<CheckCircle2 className="w-5 h-5 text-emerald-500" />}>
-              {approved.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
-            </Section>
-          )}
-
+          {/* Leaderboard first — start by seeing the team's tallies
+              (Graeme, 2026-09-10). */}
           <Scoreboard />
+
+          {/* One timeline, three controls: the review view, and two kind
+              FILTERS that combine rather than exclude. */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => setTab("review")}
+              className={cn(
+                "flex-1 py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
+                activeTab === "review" ? "border-blue-500 text-blue-600 dark:text-blue-400" : "border-border text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Eye className="w-5 h-5" /> To review
+              {toReview.length > 0 && (
+                <span className="min-w-[22px] h-[22px] px-1.5 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center tabular-nums">
+                  {toReview.length}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => toggleKind("improvements")}
+              aria-pressed={activeTab !== "review" && showImprovements}
+              className={cn(
+                "flex-1 py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
+                activeTab !== "review" && showImprovements
+                  ? "border-emerald-500 text-emerald-600 dark:text-emerald-400"
+                  : "border-border text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <CheckCircle2 className="w-5 h-5" /> Improvements
+            </button>
+            <button
+              onClick={() => toggleKind("ideas")}
+              aria-pressed={activeTab !== "review" && showIdeas}
+              className={cn(
+                "flex-1 py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
+                activeTab !== "review" && showIdeas
+                  ? "border-amber-500 text-amber-600 dark:text-amber-400"
+                  : "border-border text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Lightbulb className="w-5 h-5" /> Ideas
+            </button>
+          </div>
+
+          {activeTab === "review" ? (
+            toReview.length === 0 ? (
+              <div className="rounded-2xl border-2 border-dashed border-border p-10 text-center text-muted-foreground">
+                <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-emerald-500" />
+                <p className="text-lg font-semibold text-foreground">All caught up</p>
+                <p>You've seen everything the team has logged.</p>
+              </div>
+            ) : (
+              <Section title={`New since you last looked (${toReview.length})`} icon={<Eye className="w-5 h-5 text-blue-500" />}>
+                {toReview.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
+              </Section>
+            )
+          ) : (
+            <>
+              {isManager && waiting.length > 0 && (
+                <Section title={`Waiting for you to check (${waiting.length})`} icon={<Clock className="w-5 h-5 text-amber-500" />}>
+                  {waiting.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
+                </Section>
+              )}
+              <Section
+                title="Latest"
+                icon={<CheckCircle2 className="w-5 h-5 text-emerald-500" />}
+                empty="Nothing here yet — the feed starts with the first one logged."
+              >
+                {timeline.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
+              </Section>
+            </>
+          )}
 
           {/* The feed invites scrolling — meet the reader at the bottom of
               it with the same call to action as the top. */}
@@ -233,7 +393,8 @@ export default function Improvements() {
             <Plus className="w-6 h-6" /> Log an improvement
           </button>
         </>
-      )}
+        );
+      })()}
 
       {userRole === "admin" && (
         <div className="pt-4 border-t border-border">
@@ -347,11 +508,30 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
       <button onClick={onOpen} className="w-full text-left">
       <div className="flex items-start justify-between gap-3">
         <p className="text-xl font-bold leading-snug break-words flex-1">{item.title}</p>
-        <span className={cn("text-xs px-2.5 py-1 rounded-lg font-bold whitespace-nowrap", STAGE_STYLE[item.stage])}>
-          {stageChipText(item)}
+        <span className="flex items-center gap-1.5 flex-shrink-0">
+          {/* What this IS: an idea (not done yet) or an improvement (done).
+              The two were indistinguishable at a glance (Graeme, 2026-09-10). */}
+          {isIdea(item) ? (
+            <span className="text-xs px-2.5 py-1 rounded-lg font-bold whitespace-nowrap bg-amber-500/15 text-amber-700 dark:text-amber-400 inline-flex items-center gap-1">
+              <Lightbulb className="w-3.5 h-3.5" /> Idea
+            </span>
+          ) : (
+            <span className="text-xs px-2.5 py-1 rounded-lg font-bold whitespace-nowrap bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Improvement
+            </span>
+          )}
+          <span className={cn("text-xs px-2.5 py-1 rounded-lg font-bold whitespace-nowrap", STAGE_STYLE[item.stage])}>
+            {stageChipText(item)}
+          </span>
+          {!item.seenByMe && !item.isMine && (
+            <span className="text-xs px-2 py-1 rounded-lg font-bold bg-blue-600 text-white" title="You haven't opened this yet">NEW</span>
+          )}
         </span>
       </div>
       <div className="flex items-center gap-3 mt-2 text-base text-muted-foreground flex-wrap">
+        {/* Social-feed timestamp: relative today, "Yesterday HH:MM", then
+            date + time (Graeme, 2026-09-15). Same stamp the feed sorts by. */}
+        <span className="flex items-center gap-1.5 text-sm"><Clock className="w-4 h-4" /> {feedTimestamp(isIdea(item) ? item.createdAt : (item.doneAt ?? item.approvedAt ?? item.createdAt))}</span>
         {item.mediaCount > 0 && (
           <span className="flex items-center gap-1.5"><Camera className="w-4 h-4" /> {item.mediaCount}</span>
         )}
@@ -367,9 +547,11 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
       </div>
       </button>
       <ImprovementFeedMedia media={item.media} onOpen={onOpen} />
-      {/* Voting from the feed itself — outside the open-it button, so a tap
-          here backs the idea instead of navigating away. Only while it is
-          still to do: once it is done, voting on it means nothing. */}
+      {/* Applause first, then (for ideas) the vote. Both live outside the
+          open-it button so a tap reacts instead of navigating away. */}
+      <div className="mt-3">
+        <ReactionBar item={item} />
+      </div>
       {item.stage === "todo" && (
         <div className="mt-3">
           <VoteButton item={item} variant="feed" />
@@ -564,6 +746,32 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
     onError: (e: Error) => toast({ title: "Couldn't save your vote", description: e.message, variant: "destructive" }),
   });
 
+  // Who gets the credit — the reporter deserves it even when someone else
+  // (usually Graeme, for app changes) did the fixing (2026-09-10).
+  const { data: creditUsers = [] } = useQuery<Array<{ id: number; name: string }>>({
+    queryKey: ["users-for-credit"],
+    enabled: isManager,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/users`, { credentials: "include" });
+      if (!res.ok) return [];
+      const rows = (await res.json()) as Array<{ id: number; name: string; isActive?: boolean }>;
+      return rows.filter(u => u.isActive !== false).map(u => ({ id: u.id, name: u.name }));
+    },
+  });
+  const changeCredit = useMutation({
+    mutationFn: (userId: number) => api(`/improvements/${id}/credit`, {
+      method: "PATCH", body: JSON.stringify({ userId }),
+    }),
+    onSuccess: () => {
+      refresh();
+      queryClient.invalidateQueries({ queryKey: ["improvements"] });
+      queryClient.invalidateQueries({ queryKey: ["improvement-scoreboard"] });
+      toast({ title: "Credit moved", description: "The feed and the scoreboard now show them." });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't move the credit", description: e.message, variant: "destructive" }),
+  });
+
   const markDone = useMutation({
     mutationFn: () => api(`/improvements/${id}/done`, { method: "POST" }),
     onSuccess: () => {
@@ -660,6 +868,32 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
             </button>
           )
         )
+      )}
+
+      {/* Credit — who this improvement belongs to. Reporter-first: the
+          person who spotted it keeps the credit even when someone else made
+          the technical change. */}
+      {isManager && (
+        <div className="rounded-2xl border-2 border-border bg-card p-4 flex items-center gap-3 flex-wrap">
+          <div className="min-w-0 flex-1">
+            <p className="text-base font-bold">Credited to</p>
+            <p className="text-sm text-muted-foreground">
+              {item.creditedToName ?? item.submittedByName ?? "Nobody yet"} — counts on their scoreboard and shows on the feed.
+            </p>
+          </div>
+          <select
+            value=""
+            onChange={e => {
+              const uid = Number(e.target.value);
+              if (Number.isInteger(uid) && uid > 0) changeCredit.mutate(uid);
+            }}
+            disabled={changeCredit.isPending}
+            className="h-11 rounded-xl border-2 border-border bg-background px-3 text-base font-semibold disabled:opacity-50"
+          >
+            <option value="">{changeCredit.isPending ? "Saving…" : "Give credit to…"}</option>
+            {creditUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+          </select>
+        </div>
       )}
 
       {item.stage === "sent_back" && item.reviewNote && (

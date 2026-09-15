@@ -20,7 +20,9 @@ import { parseCotCsv } from "../lib/finance/cot-csv";
 import { normaliseMerchant } from "../lib/finance/merchant-normalise";
 import { sealSecret } from "../lib/finance/secret-box";
 import { runMailboxSync, refreshSuggestions, fetchAttachmentForMessage, fetchEmailPreview } from "../lib/finance/mailbox-sync";
-import { authorizeUrl, exchangeCode, newStateToken, qboConfigured, qboStatus, runQboSync } from "../lib/finance/qbo";
+import { extractSupplierInfo } from "../lib/finance/extract-supplier-info";
+import { sendEmail } from "../lib/email";
+import { authorizeUrl, exchangeCode, newStateToken, qboConfigured, qboStatus, runQboSync, autoImportQboLines } from "../lib/finance/qbo";
 import { db as dbForQbo, finQboConnectionTable } from "@workspace/db";
 
 // Finance / VAT invoice reconciliation (docs/vat-reconciliation/PLAN.md).
@@ -317,6 +319,86 @@ router.post("/lines/:id/documents", requireFinanceAccess, upload.single("file"),
   }
 });
 
+// Re-tag a document's kind after the fact (order confirmation vs VAT
+// invoice vs receipt) — the kind drives whether a line still needs chasing.
+const docKindSchema = z.object({ docKind: z.enum(["invoice", "order_confirmation", "receipt", "statement", "other"]) });
+router.patch("/documents/:id", requireFinanceAccess, validate(docKindSchema), async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  const { docKind } = req.body as z.infer<typeof docKindSchema>;
+  const [row] = await db.update(finDocumentsTable).set({ docKind }).where(eq(finDocumentsTable.id, id))
+    .returning({ id: finDocumentsTable.id, docKind: finDocumentsTable.docKind });
+  if (!row) { res.status(404).json({ error: "Document not found" }); return; }
+  res.json(row);
+});
+
+// Supplier contact + order reference on a line — editable by hand; the
+// extractor only ever fills empty fields.
+const supplierPatchSchema = z.object({
+  orderReference: z.string().max(60).nullable().optional(),
+  supplierEmail: z.string().max(200).nullable().optional(),
+  supplierWebsite: z.string().max(300).nullable().optional(),
+});
+router.patch("/lines/:id/supplier", requireFinanceAccess, validate(supplierPatchSchema), async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  const body = req.body as z.infer<typeof supplierPatchSchema>;
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  if (body.orderReference !== undefined) updates["orderReference"] = body.orderReference?.trim() || null;
+  if (body.supplierEmail !== undefined) updates["supplierEmail"] = body.supplierEmail?.trim() || null;
+  if (body.supplierWebsite !== undefined) updates["supplierWebsite"] = body.supplierWebsite?.trim() || null;
+  const [row] = await db.update(finLinesTable).set(updates).where(eq(finLinesTable.id, id))
+    .returning({ id: finLinesTable.id });
+  if (!row) { res.status(404).json({ error: "Line not found" }); return; }
+  res.json({ ok: true });
+});
+
+// Chase the supplier for a VAT invoice. Sends from the accounts identity
+// (via the verified notify. subdomain — the apex isn't verified in Resend),
+// with replies AND a blind copy landing in accounts@thecalzonekitchen.co.uk,
+// so the accounts mailbox holds the whole thread. Every chase is counted on
+// the line — "have I already emailed them?" is answered by the button
+// itself, which is the pain this exists to kill (Graeme, 2026-09-10).
+const ACCOUNTS_MAILBOX = "accounts@thecalzonekitchen.co.uk";
+const chaseSchema = z.object({
+  toEmail: z.string().email(),
+  subject: z.string().min(1).max(200),
+  message: z.string().min(1).max(5000),
+});
+router.post("/lines/:id/chase", requireFinanceAccess, validate(chaseSchema), async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const { toEmail, subject, message } = req.body as z.infer<typeof chaseSchema>;
+    const [line] = await db.select().from(finLinesTable).where(eq(finLinesTable.id, id));
+    if (!line) { res.status(404).json({ error: "Line not found" }); return; }
+
+    const html = `<div style="font-family:sans-serif;max-width:560px;color:#333">${message
+      .split(/\n{2,}/)
+      .map(pa => `<p>${pa.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br/>")}</p>`)
+      .join("")}</div>`;
+    await sendEmail({
+      to: toEmail,
+      subject,
+      html,
+      text: message,
+      fromName: "The Calzone Kitchen — Accounts",
+      fromEmail: "accounts@notify.thecalzonekitchen.co.uk",
+      replyTo: ACCOUNTS_MAILBOX,
+      bcc: [ACCOUNTS_MAILBOX],
+    });
+
+    await db.update(finLinesTable).set({
+      supplierEmail: line.supplierEmail ?? toEmail,
+      chaseCount: (line.chaseCount ?? 0) + 1,
+      lastChasedAt: new Date(),
+      updatedAt: new Date(),
+    }).where(eq(finLinesTable.id, id));
+
+    res.json({ ok: true, chaseCount: (line.chaseCount ?? 0) + 1 });
+  } catch (err) {
+    console.error("[finance] chase email error:", err);
+    res.status(502).json({ error: "The chase email couldn't be sent — nothing was recorded. Try again." });
+  }
+});
+
 router.get("/documents/:id/file", requireFinanceAccess, async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
@@ -380,6 +462,13 @@ router.post("/matches/:id/confirm", requireFinanceAccess, async (req: Request, r
       return;
     }
 
+    // The bookkeeper says what this email IS at attach time (VAT invoice vs
+    // order confirmation etc. — Graeme, 2026-09-10); absent a choice, a PDF
+    // is assumed to be the invoice and a bare email an order confirmation.
+    const DOC_KINDS = new Set(["invoice", "order_confirmation", "receipt", "statement", "other"]);
+    const requestedKind = typeof req.body?.docKind === "string" && DOC_KINDS.has(req.body.docKind)
+      ? req.body.docKind
+      : attachment.mime === "application/pdf" ? "invoice" : "order_confirmation";
     const [doc] = await db
       .insert(finDocumentsTable)
       .values({
@@ -391,7 +480,7 @@ router.post("/matches/:id/confirm", requireFinanceAccess, async (req: Request, r
         sha256: createHash("sha256").update(attachment.content).digest("hex"),
         docSource: attachment.mime === "application/pdf" ? "imap_attachment" : "email_body_render",
         sourceRef: `${emailRow.folder}:${emailRow.imapUid}`,
-        docKind: attachment.mime === "application/pdf" ? "invoice" : "receipt",
+        docKind: requestedKind,
         uploadedBy: req.session.userId ?? null,
       })
       .returning({ id: finDocumentsTable.id });
@@ -405,7 +494,29 @@ router.post("/matches/:id/confirm", requireFinanceAccess, async (req: Request, r
       .set({ status: "matched", updatedAt: new Date() })
       .where(and(eq(finLinesTable.id, match.lineId), inArray(finLinesTable.status, ["open", "identified"])));
 
-    res.json({ documentId: doc.id });
+    // Suggest supplier contact details from the email just attached — order
+    // number, a contactable address, the website — into EMPTY fields only
+    // (never overwrite something a human typed). Suggestions feed the
+    // chase-for-VAT-invoice flow; they never send anything themselves.
+    const info = extractSupplierInfo({
+      text: attachment.emailMeta.text,
+      fromAddress: attachment.emailMeta.fromAddress,
+      fromName: attachment.emailMeta.fromName,
+      subject: attachment.emailMeta.subject,
+    });
+    const [lineNow] = await db.select().from(finLinesTable).where(eq(finLinesTable.id, match.lineId));
+    if (lineNow) {
+      const updates: Record<string, unknown> = {};
+      if (!lineNow.orderReference && info.orderReference) updates["orderReference"] = info.orderReference;
+      if (!lineNow.supplierEmail && info.supplierEmail) updates["supplierEmail"] = info.supplierEmail;
+      if (!lineNow.supplierWebsite && info.supplierWebsite) updates["supplierWebsite"] = info.supplierWebsite;
+      if (Object.keys(updates).length > 0) {
+        updates["updatedAt"] = new Date();
+        await db.update(finLinesTable).set(updates).where(eq(finLinesTable.id, match.lineId));
+      }
+    }
+
+    res.json({ documentId: doc.id, extracted: info });
   } catch (err) {
     console.error("[finance] confirm match error:", err);
     res.status(500).json({ error: "Failed to confirm match" });
@@ -619,6 +730,45 @@ router.delete("/qbo", requireAdmin, async (_req: Request, res: Response) => {
   await dbForQbo.delete(finQboConnectionTable);
   res.json({ ok: true });
 });
+
+// ── Auto-import: purchases from one QBO account become finance lines ──────
+// The Capital-on-Tap replacement for CSV uploads (Graeme, 2026-09-12).
+
+/** Distinct payment accounts seen on mirrored purchases — the picker's
+ *  options. Accounts only appear after at least one sync has run. */
+router.get("/qbo/accounts", requireAdmin, async (_req: Request, res: Response) => {
+  const rows = ((await dbForQbo.execute(sql`
+    SELECT account_name, COUNT(*)::int AS n
+      FROM fin_qbo_txns
+     WHERE entity_type = 'Purchase' AND account_name IS NOT NULL
+     GROUP BY account_name
+     ORDER BY n DESC
+  `)) as any).rows ?? [];
+  res.json({ accounts: rows.map((r: any) => ({ name: r.account_name, purchases: Number(r.n) })) });
+});
+
+/** Choose (or clear) the auto-import account. Switch-on stamps today as
+ *  the since-date so months of history don't flood the queue; imports run
+ *  immediately and then with every hourly sync. */
+router.put(
+  "/qbo/auto-import",
+  requireAdmin,
+  validate(z.object({ account: z.string().min(1).max(200).nullable() })),
+  async (req: Request, res: Response) => {
+    const { account } = req.body as { account: string | null };
+    const [conn] = await dbForQbo.select({ id: finQboConnectionTable.id, autoImportAccount: finQboConnectionTable.autoImportAccount, autoImportSince: finQboConnectionTable.autoImportSince }).from(finQboConnectionTable).limit(1);
+    if (!conn) { res.status(400).json({ error: "QuickBooks is not connected" }); return; }
+    await dbForQbo.update(finQboConnectionTable).set({
+      autoImportAccount: account,
+      // Keep the original since-date when just re-picking the account;
+      // stamp today on first switch-on; clear on switch-off.
+      autoImportSince: account ? (conn.autoImportSince ?? new Date().toISOString().slice(0, 10)) : null,
+      updatedAt: new Date(),
+    }).where(eq(finQboConnectionTable.id, conn.id));
+    const imported = account ? await autoImportQboLines() : 0;
+    res.json({ ok: true, account, imported });
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Finance access management — ADMIN ONLY. Lives here (not settings.tsx,

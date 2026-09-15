@@ -23,6 +23,10 @@ export const onboardingSubmissionsTable = pgTable("onboarding_submissions", {
   emergencyContactName: text("emergency_contact_name"),
   emergencyContactPhone: text("emergency_contact_phone"),
   emergencyContactRelationship: text("emergency_contact_relationship"),
+  // Footwear for the factory floor, asked pre-arrival so it's ready on
+  // day one (migration 0102): shoe size + 'crocs' | 'safety_shoes'.
+  shoeSize: text("shoe_size"),
+  footwearChoice: text("footwear_choice"),
   submittedAt: timestamp("submitted_at"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

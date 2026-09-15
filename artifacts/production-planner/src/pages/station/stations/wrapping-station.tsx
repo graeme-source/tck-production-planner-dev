@@ -6,8 +6,9 @@ import {
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import {
-  Loader2, Plus, Minus, CheckCircle2, Snowflake, AlertCircle, Gift, Flame, ChevronDown, ThermometerSnowflake, ArrowDown,
+  Loader2, Plus, Minus, CheckCircle2, Snowflake, AlertCircle, Gift, Flame, ChevronDown, ThermometerSnowflake, ArrowDown, ClipboardList, PackageCheck,
 } from "lucide-react";
+import { Link } from "wouter";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
@@ -18,6 +19,8 @@ import { useModalScrollKeeper } from "@/hooks/use-modal-scroll";
 import { getStationCount, getAvailableFromPrev, compareItemsForDisplay, type StationPlanItem } from "../shared/constants";
 import { netTwoPacks as computeNetTwoPacks, effectiveBatchesTarget } from "../shared/recipe-completion";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
+import { fetchFridgeAvailability, computeFridgeAllocation, type GateOrder } from "@/lib/fridge-gate";
+import { isCollection, isDispatchTagged, isLocalDelivery } from "@/lib/dispatch-tagging";
 
 // Case-order freezer split — new columns not yet in the generated API client
 // (openapi.yaml codegen deliberately deferred; see project_api_spec_drift).
@@ -430,11 +433,10 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
         body: JSON.stringify({ complete }),
         signal,
       });
-      const data = await res.json() as { wonkyFrozen?: number; shopifyProductTitle?: string | null; shopifyNewQty?: number | null; shopifyError?: string | null };
+      const data = await res.json() as { shopifyProductTitle?: string | null; shopifyNewQty?: number | null; shopifyError?: string | null };
       if (complete) {
-        if (data.wonkyFrozen && data.wonkyFrozen > 0) {
-          toast({ title: `${data.wonkyFrozen} wonky pack${data.wonkyFrozen !== 1 ? "s" : ""} → Production Freezer`, description: `Auto-frozen for ${item.recipeName ?? "recipe"}` });
-        }
+        // Wonky packs are untouched by completion (2026-09-14): they stay on
+        // the Wonky Rack until the team transfers the lot in one go.
         if (data.shopifyNewQty !== null && data.shopifyNewQty !== undefined && data.shopifyProductTitle) {
           toast({ title: `Shopify updated`, description: `${data.shopifyProductTitle}: inventory now ${data.shopifyNewQty}` });
         }
@@ -537,6 +539,12 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
 
   return (
     <div className="space-y-4">
+      {/* What's left to wrap to RELEASE today's orders (Graeme, 2026-09-12):
+          the same numbers the fridge gate and pack report work from, right
+          where the wrappers stand — with the obvious route to the full
+          pack report alongside. */}
+      <LeftToWrapBanner />
+
       {/* Case-order banner — the wrapper's brief: how many cases to build,
           what goes in each, and the running made-vs-remaining. Only rendered
           when today's items carry a freezer allocation. */}
@@ -700,9 +708,15 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <h3 className="font-semibold text-base">Wrapping Queue</h3>
           {allWrapped && (
-            <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-sm font-medium">
-              <CheckCircle2 className="w-4 h-4" /> All wrapped
-            </span>
+            totalWonly > 0 ? (
+              <span className="flex items-center gap-1.5 text-red-600 dark:text-red-400 text-sm font-medium">
+                <AlertCircle className="w-4 h-4" /> All wrapped — {totalWonly} wonky pack{totalWonly !== 1 ? "s" : ""} still on the rack below
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-sm font-medium">
+                <CheckCircle2 className="w-4 h-4" /> All wrapped
+              </span>
+            )
           )}
         </div>
 
@@ -714,9 +728,9 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
             // "Produced" is the full two-pack output coming off the ovens —
             // wonky packs count toward it, they're just tracked separately
             // afterwards. Matches the oven station's Net + Wonky = Total.
-            // Use wonlyTotal (cumulative) so the count survives wonky-to-freezer
-            // transfer and the auto-freeze on wrapping-complete. Falls back to
-            // wonlyCount if the field isn't present (older API client cache).
+            // Use wonlyTotal (cumulative) so the count survives the
+            // wonky-to-freezer transfer. Falls back to wonlyCount if the
+            // field isn't present (older API client cache).
             const wonkiesRecorded = ((item as ProductionPlanItem & { wonlyTotal?: number }).wonlyTotal ?? item.wonlyCount ?? 0);
             const produced = net + wonkiesRecorded;
             const eightPkCount = item.eightPackBagCount ?? 0;
@@ -1283,6 +1297,140 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
       {/* One viewer for every chip on this screen, including the one inside
           the post-oven reminder modal. */}
       {sopViewer.dialog}
+    </div>
+  );
+}
+
+/**
+ * "Wrap these to release today's orders" (Graeme, 2026-09-12): the fridge
+ * gate holds orders until the fridge can cover them — this shows the
+ * wrappers exactly which packs are still short, using the same numbers as
+ * the pack report (what's left to dispatch today minus what's in the
+ * fridge; wrapped packs flow into fridge stock, so the list shrinks live
+ * as they work). Green when the fridge already covers every remaining
+ * order. The pack report itself is one obvious tap away.
+ */
+function LeftToWrapBanner() {
+  // The banner reads EXACTLY what the packing queue reads (Graeme,
+  // 2026-09-14): real open orders for the day being packed (tomorrow's
+  // delivery tag + today's collections) walked through the shared fridge
+  // gate in lib/fridge-gate.ts. It previously derived from the planning
+  // calculation, which surfaced draft products and quantities nobody had
+  // actually ordered.
+  const london = (offsetDays: number) =>
+    new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date(Date.now() + offsetDays * 86_400_000));
+  const today = london(0);
+  const packDay = london(1); // orders packed today carry tomorrow's delivery tag
+
+  interface LeanOrder extends GateOrder { tags: string; fulfillment_status: string | null }
+  const fetchOrdersLean = async (tag: string): Promise<LeanOrder[]> => {
+    const res = await fetch(`/api/fulfilment/orders?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
+    if (!res.ok) throw new Error("Failed to load orders");
+    return res.json();
+  };
+
+  const { data: configStatus } = useQuery<{ apcEnabled?: boolean; apcMode?: string }>({
+    queryKey: ["fulfilment-config-status"],
+    queryFn: async () => {
+      const res = await fetch(`/api/fulfilment/config-status`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load config");
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
+  const apcMode = configStatus?.apcMode ?? (configStatus?.apcEnabled !== false ? "full" : "off");
+
+  const { data: packDayOrders } = useQuery({
+    queryKey: ["wrap-release-orders", packDay],
+    queryFn: () => fetchOrdersLean(packDay),
+    refetchInterval: 60_000,
+  });
+  const { data: todayOrders } = useQuery({
+    queryKey: ["wrap-release-orders", today],
+    queryFn: () => fetchOrdersLean(today),
+    refetchInterval: 60_000,
+  });
+  const { data: bookedConsignments } = useQuery<Array<{ orderId: number }>>({
+    queryKey: ["wrap-release-consignments", packDay],
+    queryFn: async () => {
+      const res = await fetch(`/api/fulfilment/consignments?tag=${encodeURIComponent(packDay)}`, { credentials: "include" });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return (data.consignments ?? []) as Array<{ orderId: number }>;
+    },
+    staleTime: 30_000,
+    enabled: apcMode === "full",
+  });
+  const { data: fridgeAvailability } = useQuery({
+    queryKey: ["fulfilment-fridge-availability"],
+    queryFn: fetchFridgeAvailability,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+
+  const data = packDayOrders && fridgeAvailability ? true : null;
+
+  const shortfalls = (() => {
+    if (!packDayOrders || !fridgeAvailability) return [];
+    // Same shape as the packing queue: today's collections ride first, then
+    // dispatch-tagged courier orders in placed order; unlabelled orders sit
+    // outside the walk exactly as they do on the packing screen.
+    const collections = (todayOrders ?? []).filter(o => isCollection(o) && o.fulfillment_status !== "fulfilled");
+    const courier = (packDayOrders ?? []).filter(o =>
+      o.fulfillment_status !== "fulfilled" && !isCollection(o) && isDispatchTagged(o));
+    const booked = new Set((bookedConsignments ?? []).map(c => Number(c.orderId)));
+    const labelGateActive = apcMode === "full" && bookedConsignments != null;
+    const labelled = [...collections, ...courier].filter(o =>
+      !labelGateActive || isLocalDelivery(o) || isCollection(o) || booked.has(o.id));
+    return computeFridgeAllocation(labelled, fridgeAvailability).deficits
+      .map(d => ({ name: d.recipeName, packs: d.packs }));
+  })();
+
+  const packReportButton = (
+    <Link
+      href="/pack-report"
+      className="flex-shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90"
+    >
+      <ClipboardList className="w-4 h-4" /> Pack report
+    </Link>
+  );
+
+  if (!data) return null;
+
+  if (shortfalls.length === 0) {
+    return (
+      <div className="rounded-xl border-2 border-emerald-300 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/30 px-4 py-3 flex items-center gap-3 flex-wrap">
+        <PackageCheck className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+        <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-200 flex-1 min-w-[12rem]">
+          The fridge already covers every remaining order for today's pack — everything wrapped now builds tomorrow's buffer.
+        </p>
+        {packReportButton}
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border-2 border-amber-400 dark:border-amber-700 bg-amber-50/80 dark:bg-amber-950/30 px-4 py-3 space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+        <p className="font-bold text-amber-900 dark:text-amber-100 flex-1 min-w-[12rem]">
+          Wrap these to release today's orders
+        </p>
+        {packReportButton}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {shortfalls.map(s => (
+          <span
+            key={s.name}
+            className="inline-flex items-center gap-2 rounded-lg bg-background border border-amber-300 dark:border-amber-800 px-3 py-1.5 text-sm font-semibold"
+          >
+            <span className="tabular-nums font-bold">{s.packs}</span> × {s.name}
+          </span>
+        ))}
+      </div>
+      <p className="text-xs text-amber-800/80 dark:text-amber-200/80">
+        Orders are held until the fridge covers them — these packs are the difference. The list updates as you wrap.
+      </p>
     </div>
   );
 }

@@ -11,7 +11,7 @@
  * Only holds created here are ever released here — a tag Graeme adds by
  * hand in Shopify admin is invisible to this table and never touched.
  */
-import { pgTable, serial, text, integer, boolean, timestamp, index } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, boolean, timestamp, index, date } from "drizzle-orm/pg-core";
 import { recipesTable } from "./recipes";
 
 export const stockGateHoldsTable = pgTable("stock_gate_holds", {
@@ -38,6 +38,11 @@ export const stockGateHoldsTable = pgTable("stock_gate_holds", {
   releasedAt: timestamp("released_at"),
   // "auto" or the name of the user who clicked Release.
   releasedBy: text("released_by"),
+  // Acknowledged ("checked, leave it held") — the banner hides this hold
+  // until the day AFTER ack_until. Nulled by nothing; a new day simply
+  // moves past it.
+  ackUntil: date("ack_until"),
+  ackBy: text("ack_by"),
   surplusAtRelease: integer("surplus_at_release"),
 }, (t) => ({
   recipeIdx: index("ix_stock_gate_holds_recipe").on(t.recipeId),

@@ -3,12 +3,13 @@ import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batch
 import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as drizzleSum, ne, isNotNull, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
+import { FRIED_CHICKEN_CATEGORY } from "./fried-chicken";
 // Aliased: this file has its own in-handler requireManagerOrAdmin() helper
 // (returns boolean, used mid-handler) — the middleware form guards routes.
 import { requireManagerOrAdmin as requireManagerOrAdminMw } from "../middleware/roles";
 import * as z from "zod";
 import { resolveRecipeIngredients, resolveSubRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
-import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag, type ProductCount } from "../services/shopify";
+import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag, getVariantOnHandQuantities, type ProductCount } from "../services/shopify";
 import { remainingFulfilmentPacks } from "../lib/remaining-fulfilment";
 import { getFactoryNumberCoreMenuOnly, getShopifyFreezerSyncEnabled } from "../lib/inventory-sync";
 import { logFridgeStockChange, type FridgeChangeSource } from "../lib/fridge-stock-log";
@@ -528,6 +529,7 @@ router.get("/packs-by-date", async (req, res) => {
       JOIN recipes r ON r.id = pi.recipe_id
       WHERE p.plan_date BETWEEN ${start} AND ${end}
         AND COALESCE(r.category, '') <> 'Macaroni Cheese'
+        AND COALESCE(r.category, '') <> ${FRIED_CHICKEN_CATEGORY}
         AND pi.batches_target > 0
       GROUP BY p.plan_date
       ORDER BY p.plan_date
@@ -1144,6 +1146,46 @@ export async function calculatePlanData(planDate: string) {
         color: cm.color,
         isCoreMenu: cm.isCoreMenu,
       });
+      dptRecipeIds.add(cm.id);
+    }
+  }
+
+  // Fried chicken recipes ride along even without a DPT row (Graeme,
+  // 2026-09-14): they're never DPT-planned, but the pack tables still need
+  // their orders and Shopify freezer stock — a variant missing here showed
+  // no stock position at all (Korean 1.2kg).
+  const friedChickenRows = await db
+    .select({
+      id: recipesTable.id,
+      name: recipesTable.name,
+      category: recipesTable.category,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+      packSize: recipesTable.packSize,
+      tinSize: recipesTable.tinSize,
+      maxBatchesPerTin: recipesTable.maxBatchesPerTin,
+      sopUrl: recipesTable.sopUrl,
+      color: recipesTable.color,
+      isCoreMenu: recipesTable.isCoreMenu,
+    })
+    .from(recipesTable)
+    .where(eq(recipesTable.category, FRIED_CHICKEN_CATEGORY));
+  for (const fc of friedChickenRows) {
+    if (!dptRecipeIds.has(fc.id)) {
+      dptRows.push({
+        recipeId: fc.id,
+        recipeName: fc.name,
+        recipeCategory: fc.category,
+        packsSold: 0,
+        isActive: true,
+        portionsPerBatch: fc.portionsPerBatch,
+        packSize: fc.packSize,
+        tinSize: fc.tinSize,
+        maxBatchesPerTin: fc.maxBatchesPerTin,
+        sopUrl: fc.sopUrl,
+        color: fc.color,
+        isCoreMenu: fc.isCoreMenu,
+      });
+      dptRecipeIds.add(fc.id);
     }
   }
 
@@ -1289,6 +1331,16 @@ export async function calculatePlanData(planDate: string) {
 
   const totalDptPacksSold = dptRows.reduce((s, x) => s + (x.packsSold ?? 0), 0);
 
+  // Fried chicken never enters the production fridge — its physical stock is
+  // the Shopify freezer count (Graeme, 2026-09-14). Specifically ON-HAND,
+  // not available: available already has open orders deducted, and the pack
+  // tables deduct today's dispatch themselves — pairing them counted the
+  // same orders twice. Cached 5 min in the service.
+  const fcVariantIds = dptRows
+    .filter(r => (r.recipeCategory ?? "") === FRIED_CHICKEN_CATEGORY)
+    .flatMap(r => recipeToVariantIds.get(r.recipeId) ?? []);
+  const shopifyStockLevels: Record<string, number> = await getVariantOnHandQuantities(fcVariantIds);
+
   const recipesWithData = dptRows.map(r => {
     const recipeName = r.recipeName ?? `Recipe #${r.recipeId}`;
     const recipeId = r.recipeId;
@@ -1303,6 +1355,12 @@ export async function calculatePlanData(planDate: string) {
     const bagPackEquivalents = plannedBags * (8 / packSize);
 
     const fridgeStock = latestStock[recipeId] ?? fridgeStockFromPlans[recipeId] ?? 0;
+
+    // Shopify on-hand for freezer-stocked (fried chicken) recipes — the
+    // figure the pack tables show as Have instead of the always-zero fridge.
+    const shopifyStock = (r.recipeCategory ?? "") === FRIED_CHICKEN_CATEGORY && recipeToVariantIds.has(recipeId)
+      ? (recipeToVariantIds.get(recipeId) ?? []).reduce((s, vid) => s + (shopifyStockLevels[vid] ?? 0), 0)
+      : null;
 
     const recipeDptPercent = totalDptPacksSold > 0 ? ((r.packsSold ?? 0) / totalDptPacksSold) * 100 : 0;
     const dptDailyPacks = Math.round((recipeDptPercent / 100) * totalDailyBatches * packsPerBatch);
@@ -1410,6 +1468,7 @@ export async function calculatePlanData(planDate: string) {
       color: r.color ?? null,
       isCoreMenu: isCore,
       fridgeStock: Math.round(fridgeStock),
+      shopifyStock,
       stockCheckedAt: latestStockCheckedAt[recipeId]?.toISOString() ?? null,
       predictedFridgeStock,
       remainingWrappingPacksToday: Math.round(wrapRemain),
@@ -4370,7 +4429,8 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
     })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
-    .where(eq(productionPlanItemsTable.planId, planId));
+    // Same fried-chicken exclusion as /main-prep — it preps elsewhere.
+    .where(and(eq(productionPlanItemsTable.planId, planId), sql`${recipesTable.category} IS DISTINCT FROM ${FRIED_CHICKEN_CATEGORY}`));
 
   if (planItems.length === 0) {
     res.json({ recipes: [], pastaCooking: { waterLPerKg: 0, saltGPerKg: 0 } });
@@ -4865,7 +4925,7 @@ router.get("/:id/filling-mix", async (req, res) => {
 
   const fillingIngredients = await db.execute(sql`
     SELECT ri.recipe_id as "recipeId", ri.ingredient_id as "ingredientId",
-           i.name as "ingredientName", i.unit, ri.quantity,
+           i.name as "ingredientName", i.unit, i.category as "category", ri.quantity,
            ri.marinade_for_ingredient_id as "marinadeForIngredientId",
            ri.mixing_overage as "mixingOverage"
     FROM recipe_ingredients ri
@@ -4885,7 +4945,7 @@ router.get("/:id/filling-mix", async (req, res) => {
       AND rs.include_in_filling_mix = true
   `);
 
-  const fiRows = fillingIngredients.rows as Array<{ recipeId: number; ingredientId: number; ingredientName: string; unit: string; quantity: string; marinadeForIngredientId: number | null; mixingOverage: string | null }>;
+  const fiRows = fillingIngredients.rows as Array<{ recipeId: number; ingredientId: number; ingredientName: string; unit: string; category: string | null; quantity: string; marinadeForIngredientId: number | null; mixingOverage: string | null }>;
   const fsRows = fillingSubRecipeRows.rows as Array<{ recipeId: number; subRecipeId: number; subRecipeName: string; unit: string; quantity: string; marinadeForIngredientId: number | null; mixingOverage: string | null }>;
 
   const result = planItems.map(item => {
@@ -4941,6 +5001,9 @@ router.get("/:id/filling-mix", async (req, res) => {
           ingredientId: fi.ingredientId,
           name: fi.ingredientName,
           unit: fi.unit,
+          // Lets the mixing screen call out the day's cooked-meat total
+          // (category raw_meat/cooked_meat) alongside the filling total.
+          category: fi.category ?? null,
           qtyPerBatch: totalQtyPerPortion * ppb,
           qtyPerTin: totalQtyPerPortion * ppb * evenBatchesPerTin + overagePerTin,
           mixingOverage: overage,
@@ -5942,10 +6005,10 @@ router.post("/:id/items/:itemId/manual-batch", async (req, res) => {
 // PATCH /:id/items/:itemId/wrapping-complete — toggle wrapping done for a plan item.
 // When completing (complete=true):
 //   • Reads freezerQty from the item BEFORE any updates (used as Shopify delta base).
-//   • Auto-freezes wonky (reject) packs to production_freezer stock; also zeroes
-//     wonlyCount and updates freezerQty so /wonky-to-freezer cannot double-count.
-//   • If a Shopify mapping exists, always adjusts Shopify inventory by
-//     (pre-update freezerQty + wonkyFrozen) — computed server-side, no client value.
+//   • Wonky packs are NOT auto-frozen (removed 2026-09-14) — they stay on the
+//     Wonky Rack until the team transfers them via /wonky-to-freezer.
+//   • If a Shopify mapping exists, always adjusts Shopify inventory by the
+//     pre-update freezerQty — computed server-side, no client value.
 // Body: { complete: boolean }
 // ──────────────────────────────────────────────────────────────────────────────
 router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
@@ -5998,20 +6061,13 @@ router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
         AND chill_end_at IS NULL
     `);
 
-    // Auto-freeze wonky packs into production_freezer stock.
-    // Also zeroes wonlyCount and updates freezerQty so the Wonky Rack card
-    // cannot double-transfer the same packs via /wonky-to-freezer.
-    const wonlys = Number(item.wonlyCount) || 0;
-    if (wonlys > 0) {
-      await syncRecipeFreezerStock(item.recipeId, wonlys);
-      wonkyFrozen = wonlys;
-      await db.update(productionPlanItemsTable)
-        .set({
-          wonlyCount: 0,
-          freezerQty: sql`${productionPlanItemsTable.freezerQty} + ${wonlys}`,
-        })
-        .where(eq(productionPlanItemsTable.id, itemId));
-    }
+    // Wonky packs are deliberately NOT touched here (Graeme, 2026-09-14):
+    // they stay on the Wonky Rack, physically unwrapped, until the team
+    // wraps them all in one go and presses the rack's transfer button
+    // (/wonky-to-freezer). The old auto-freeze on wrapping-complete booked
+    // them as wrapped-and-frozen while they were still sitting on the red
+    // table — and the packs "left over" then got hand-added back into
+    // stock, inflating the fridge count.
 
     // Shopify inventory sync — delta computed server-side as:
     //   (packs already committed to Product Freezer) + (wonky packs just frozen)
@@ -7238,7 +7294,10 @@ router.get("/:id/main-prep", async (req, res) => {
     })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
-    .where(eq(productionPlanItemsTable.planId, planId));
+    // Fried chicken preps on its own station, on its own days, with its own
+    // people (Graeme, 2026-09-11) — its plan items never feed main/meat/bases
+    // prep. IS DISTINCT FROM keeps rows whose recipe join came back null.
+    .where(and(eq(productionPlanItemsTable.planId, planId), sql`${recipesTable.category} IS DISTINCT FROM ${FRIED_CHICKEN_CATEGORY}`));
 
   if (planItems.length === 0) {
     res.json({ ingredients: [], completions: [] });
@@ -7932,6 +7991,8 @@ router.get("/:id/main-prep", async (req, res) => {
   // These are displayed as sub-rows under the parent ingredient, with per-recipe
   // tin breakdowns matching the parent's tin structure.
   type LinkedItemDetail = {
+    /** Present on rows that are tickable tasks (prep_linked_completions). */
+    key?: string;
     ingredientName: string;
     unit: string;
     totalQty: number;
@@ -8018,12 +8079,14 @@ router.get("/:id/main-prep", async (req, res) => {
       const saltG = Math.round(kg * pastaSaltGPerKg);
       if (!linkedItemsMap[ingId]) linkedItemsMap[ingId] = [];
       linkedItemsMap[ingId].push({
+        key: `pasta_water:${ingId}`,
         ingredientName: `Cooking water (for ${kgRounded} kg)`,
         unit: "L",
         totalQty: waterL,
         recipes: [],
       });
       linkedItemsMap[ingId].push({
+        key: `pasta_salt:${ingId}`,
         ingredientName: `Salt for pasta water (for ${kgRounded} kg)`,
         unit: "g",
         totalQty: saltG,

@@ -749,6 +749,27 @@ export function IngredientFormDialog({
                 <p className="text-xs text-muted-foreground mt-1">Auto-calculates use-by dates on deliveries.</p>
               </div>
 
+              <div className="grid grid-cols-2 gap-4 max-w-[360px]">
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Opened life <span className="text-xs font-normal text-muted-foreground">(days)</span></label>
+                  <div className="relative">
+                    <input type="number" step="1" min="1" {...register("openedLifeDays")} className={cn(numInputClass, "pr-12")} placeholder="auto" />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">days</span>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Defrost life <span className="text-xs font-normal text-muted-foreground">(days)</span></label>
+                  <div className="relative">
+                    <input type="number" step="1" min="1" {...register("defrostLifeDays")} className={cn(numInputClass, "pr-12")} placeholder="auto" />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">days</span>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground -mt-2 col-span-2">
+                  Drive the use-by on printed prep labels: days safe after opening / after defrosting.
+                  Empty = the category default set on the Label Printer page.
+                </p>
+              </div>
+
               <div>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" {...register("requiresUseByDate")} className="w-4 h-4 rounded border-border" />

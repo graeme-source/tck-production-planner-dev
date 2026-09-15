@@ -20,6 +20,9 @@ import { BreakTracker } from "../shared/break-tracker";
 import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftBlocked, StockCheckStatusPanel } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
 import { PrepSubNav } from "./prep-hub";
+import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
+import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
+import { StationStockChecks } from "../shared/station-stock-checks";
 import { useMainPrepData } from "./main-prep-station";
 import type { MainPrepIngredient, LinkedItem } from "./main-prep-station";
 import { NumberInput } from "@/components/ui/number-input";
@@ -62,16 +65,21 @@ function ScaledIngredientChecklist({
   batches,
   checked,
   onToggle,
+  onReplenishComponent,
 }: {
   ingredients: SubRecipePlanRequirement["ingredients"];
   subRecipeComponents: SubRecipePlanRequirement["subRecipeComponents"];
   batches: number;
   checked: Set<string>;
   onToggle: (key: string) => void;
+  /** When set, component rows (sub-recipes inside this sub-recipe) carry a
+   *  "Make" affordance that opens the replenish modal for that component
+   *  without leaving the checklist. */
+  onReplenishComponent?: (subRecipeId: number, name: string) => void;
 }) {
   const allItems = [
-    ...ingredients.map(i => ({ key: `ing-${i.id}`, label: i.ingredientName, qty: i.quantity, unit: i.unit, isComponent: false, packWeight: i.packWeight ?? null })),
-    ...subRecipeComponents.map(c => ({ key: `comp-${c.id}`, label: c.componentSubRecipeName, qty: c.quantity, unit: c.componentYieldUnit, isComponent: true, packWeight: null as number | null })),
+    ...ingredients.map(i => ({ key: `ing-${i.id}`, label: i.ingredientName, qty: i.quantity, unit: i.unit, isComponent: false, packWeight: i.packWeight ?? null, componentSubRecipeId: null as number | null })),
+    ...subRecipeComponents.map(c => ({ key: `comp-${c.id}`, label: c.componentSubRecipeName, qty: c.quantity, unit: c.componentYieldUnit, isComponent: true, packWeight: null as number | null, componentSubRecipeId: c.componentSubRecipeId as number | null })),
   ];
 
   if (allItems.length === 0) {
@@ -103,6 +111,20 @@ function ScaledIngredientChecklist({
             }
             <span className={cn("flex-1 font-medium text-base", isDone && "line-through text-muted-foreground")}>
               {item.label}
+              {/* A sub-recipe inside this sub-recipe: offer to make IT without
+                  leaving this checklist. span-with-role because this row is
+                  already a <button> and buttons can't nest. */}
+              {item.isComponent && item.componentSubRecipeId != null && onReplenishComponent && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={e => { e.stopPropagation(); onReplenishComponent(item.componentSubRecipeId!, item.label); }}
+                  onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); e.preventDefault(); onReplenishComponent(item.componentSubRecipeId!, item.label); } }}
+                  className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-primary/40 text-primary text-xs font-semibold hover:bg-primary/10 align-middle"
+                >
+                  Make
+                </span>
+              )}
             </span>
             <div className="text-right flex-shrink-0">
               {item.packWeight && item.packWeight > 0 && (() => {
@@ -151,12 +173,21 @@ export function SubRecipeMakeFlow({
   sopLinksBySubRecipe,
   onOpenSop,
   sopQueryKey,
+  initialSubRecipeId,
+  onReplenishComponent,
 }: {
   mode: SubReplenishMode;
   planRequirements: SubRecipePlanRequirement[];
   allSubRecipes: SubRecipe[];
   onClose?: () => void;
   onDone?: (subRecipeId: number, batches: number) => void;
+  /** Jump straight into making this sub-recipe (skips the pick list). The
+   *  entry point for the replenish modal — a rub clicked on a prep row
+   *  shouldn't make anyone search a list they already know the answer to. */
+  initialSubRecipeId?: number;
+  /** Passed through to the checklist: lets component rows open a replenish
+   *  modal for the component sub-recipe. */
+  onReplenishComponent?: (subRecipeId: number, name: string) => void;
   /** Sub-recipes already marked complete for this plan (plan mode only). */
   completedIds?: Set<number>;
   /** Direct tick on a pick-list row — mark done/undone without running the
@@ -198,6 +229,20 @@ export function SubRecipeMakeFlow({
     ingredients: [],
     subRecipeComponents: [],
   });
+
+  // Pre-select the requested sub-recipe once the list has landed. Fires once:
+  // navigating back to the pick list afterwards (to make something else) must
+  // not snap back to the original selection. No isBase filter here — the
+  // caller named a specific sub-recipe, so it gets that one, base or not.
+  const initialApplied = useRef(false);
+  useEffect(() => {
+    if (initialSubRecipeId == null || initialApplied.current) return;
+    const found = allSubRecipes.find(s => s.id === initialSubRecipeId);
+    if (!found) return;
+    initialApplied.current = true;
+    selectSr(resolveStandaloneSr(found));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allSubRecipes, initialSubRecipeId]);
 
   const [loadedDetail, setLoadedDetail] = useState<SubRecipePlanRequirement | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -293,7 +338,7 @@ export function SubRecipeMakeFlow({
           <p className="text-muted-foreground mt-1">
             {state.batches === 0
               ? "Existing stock covered today's requirement — nothing made."
-              : `${state.batches} batch${state.batches !== 1 ? "es" : ""} made · ${(yieldPerBatch * state.batches).toFixed(3)} ${sr?.yieldUnit} ready`}
+              : `${state.batches} mix${state.batches !== 1 ? "es" : ""} made · ${(yieldPerBatch * state.batches).toFixed(3)} ${sr?.yieldUnit} ready`}
           </p>
         </div>
         <div className="flex gap-3">
@@ -320,7 +365,7 @@ export function SubRecipeMakeFlow({
           <div className="flex-1">
             <h3 className="font-bold text-xl">{sr?.subRecipeName}</h3>
             <p className="text-base text-muted-foreground">
-              {state.batches} batch{state.batches !== 1 ? "es" : ""} · Total yield: {(yieldPerBatch * state.batches).toFixed(3)} {sr?.yieldUnit}
+              {state.batches} mix{state.batches !== 1 ? "es" : ""} · Total yield: {(yieldPerBatch * state.batches).toFixed(3)} {sr?.yieldUnit}
             </p>
           </div>
           <div className={cn(
@@ -343,6 +388,7 @@ export function SubRecipeMakeFlow({
               batches={state.batches}
               checked={state.checked}
               onToggle={toggleItem}
+              onReplenishComponent={onReplenishComponent}
             />
 
             {checkedCount === totalItems && totalItems > 0 && (
@@ -387,7 +433,7 @@ export function SubRecipeMakeFlow({
               <p className="text-2xl font-bold tabular-nums">{sr.totalRequired.toFixed(3)} <span className="text-base font-medium text-muted-foreground">{sr.yieldUnit}</span></p>
             </div>
             <div className="bg-secondary/30 rounded-xl px-4 py-3">
-              <p className="text-sm text-muted-foreground mb-1">Yield per batch</p>
+              <p className="text-sm text-muted-foreground mb-1">Yield per mix</p>
               <p className="text-2xl font-bold tabular-nums">{yieldPerBatch.toFixed(3)} <span className="text-base font-medium text-muted-foreground">{sr.yieldUnit}</span></p>
             </div>
           </div>
@@ -427,7 +473,7 @@ export function SubRecipeMakeFlow({
                     : "bg-primary/10 border border-primary/30"
                 )}>
                   <div>
-                    <p className="text-base font-medium text-muted-foreground">Batches to make</p>
+                    <p className="text-base font-medium text-muted-foreground">Mixes to make</p>
                     <p className="text-sm text-muted-foreground mt-0.5">⌈{net.toFixed(3)} ÷ {yieldPerBatch.toFixed(3)}⌉ = {batchCount}</p>
                   </div>
                   <span className="text-4xl font-bold tabular-nums text-primary">{batchCount}</span>
@@ -459,7 +505,7 @@ export function SubRecipeMakeFlow({
               className="w-full py-4 rounded-2xl bg-primary text-primary-foreground font-bold text-base hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               <Beaker className="w-5 h-5" />
-              Start Making {batchCount != null && batchCount > 0 ? `${batchCount} Batch${batchCount !== 1 ? "es" : ""}` : ""}
+              Start Making {batchCount != null && batchCount > 0 ? `${batchCount} Mix${batchCount !== 1 ? "es" : ""}` : ""}
             </button>
           )}
         </div>
@@ -476,18 +522,18 @@ export function SubRecipeMakeFlow({
           </button>
           <div>
             <h3 className="font-bold text-xl">{sr.subRecipeName}</h3>
-            <p className="text-base text-muted-foreground">Choose how many batches to make</p>
+            <p className="text-base text-muted-foreground">Choose how many mixes to make</p>
           </div>
         </div>
 
         <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
           <div className="bg-secondary/30 rounded-xl px-4 py-3">
-            <p className="text-sm text-muted-foreground mb-1">Yield per batch</p>
+            <p className="text-sm text-muted-foreground mb-1">Yield per mix</p>
             <p className="text-xl font-bold tabular-nums">{yieldPerBatch.toFixed(3)} {sr.yieldUnit}</p>
           </div>
 
           <div>
-            <p className="text-base font-semibold mb-3">Number of batches</p>
+            <p className="text-base font-semibold mb-3">Number of mixes</p>
             <div className="flex items-center gap-2 flex-wrap">
               {([1, 2, 4] as const).map(m => (
                 <button
@@ -537,7 +583,7 @@ export function SubRecipeMakeFlow({
                 >
                   <Plus className="w-4 h-4" />
                 </button>
-                <span className="text-base text-muted-foreground">batches</span>
+                <span className="text-base text-muted-foreground">mixes</span>
               </div>
             )}
 
@@ -551,7 +597,7 @@ export function SubRecipeMakeFlow({
             className="w-full py-4 rounded-2xl bg-primary text-primary-foreground font-bold text-base hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
           >
             <Beaker className="w-5 h-5" />
-            Start Making {effectiveBatches} Batch{effectiveBatches !== 1 ? "es" : ""}
+            Start Making {effectiveBatches} Mix{effectiveBatches !== 1 ? "es" : ""}
           </button>
         </div>
       </div>
@@ -631,7 +677,7 @@ export function SubRecipeMakeFlow({
                     {isDone
                       ? "✓ Completed today"
                       : <>
-                          {sr.yield.toFixed(3)} {sr.yieldUnit} per batch
+                          {sr.yield.toFixed(3)} {sr.yieldUnit} per mix
                           {mode === "plan" && sr.totalRequired > 0 && ` · ${sr.totalRequired.toFixed(3)} ${sr.yieldUnit} required`}
                         </>}
                   </p>
@@ -649,7 +695,7 @@ export function SubRecipeMakeFlow({
                 {batchsNeeded !== null && !isDone && (
                   <div className="text-right flex-shrink-0">
                     <p className="text-2xl font-bold text-primary tabular-nums">{batchsNeeded}</p>
-                    <p className="text-sm text-muted-foreground">batch{batchsNeeded !== 1 ? "es" : ""}</p>
+                    <p className="text-sm text-muted-foreground">mix{batchsNeeded !== 1 ? "es" : ""}</p>
                   </div>
                 )}
                 <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
@@ -712,6 +758,9 @@ function usePlanSubRecipeRequirements(planId: number) {
 export function PrepBasesStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const [selectedItem, setSelectedItem] = useState<"tomato_base" | number>("tomato_base");
   const [hideCompleted, setHideCompleted] = useState(false);
+  // A component sub-recipe tapped inside a checklist ("Make") — opens the
+  // replenish modal for it without abandoning the base being made.
+  const [replenishTarget, setReplenishTarget] = useState<ReplenishTarget | null>(null);
   // ?direct=1 — see main-prep-station for rationale.
   const search = useSearch();
   const isDirect = new URLSearchParams(search).get("direct") === "1";
@@ -957,6 +1006,18 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
 
       <PrepSubNav planId={plan.id} current="prep_bases" />
       {sopViewer.dialog}
+      {replenishTarget && (
+        <SubRecipeReplenishModal target={replenishTarget} onClose={() => setReplenishTarget(null)} />
+      )}
+
+      {/* Stock checks for this station's ingredients — same card as main
+          prep, saving to the same per-day record (Graeme, 2026-09-10). */}
+      <StationStockChecks
+        checkDate={nextPlan?.planDate ?? plan.planDate}
+        isDraft={isDraft}
+        stationLabel="Bases &amp; Sauces"
+        ingredientIds={(data?.ingredients ?? []).filter(i => !i.isSubRecipe).map(i => i.ingredientId)}
+      />
 
       <StockCheckStatusPanel checkDate={nextPlan?.planDate ?? plan.planDate} />
 
@@ -1197,7 +1258,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                   <FlaskConical className="w-5 h-5 text-primary" />
                   <div>
                     <h3 className="font-semibold">Tomato Base — Sub-Recipe Production</h3>
-                    <p className="text-sm text-muted-foreground">Stock check → auto-calculate batches → ingredient checklist</p>
+                    <p className="text-sm text-muted-foreground">Stock check → auto-calculate mixes → ingredient checklist</p>
                   </div>
                 </div>
                 {subRecipesLoading ? (
@@ -1213,6 +1274,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                     sopLinksBySubRecipe={sopLinksBySubRecipe}
                     onOpenSop={sopViewer.open}
                     sopQueryKey={subRecipeSopKey}
+                    onReplenishComponent={(subRecipeId, name) => setReplenishTarget({ subRecipeId, name })}
                   />
                 )}
               </div>
@@ -1251,7 +1313,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                         {" in: "}{ing.recipes.map(r => r.recipeName).join(", ")}
                       </p>
                     )}
-                    <div className="mt-2">
+                    <div className="mt-2 flex items-start justify-between gap-2">
                       <SopChips
                         links={sopLinksByIngredient?.[ing.ingredientId] ?? []}
                         onOpen={sopViewer.open}
@@ -1263,6 +1325,11 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                         ]}
                         queryKeysToInvalidate={[sopLinksKey]}
                       />
+                      {/* One-tap opened-ingredient label — real ingredients
+                          only; a sub-recipe row's id isn't an ingredient id. */}
+                      {!ing.isSubRecipe && (
+                        <PrintIngredientLabelButton ingredientId={ing.ingredientId} itemName={ing.ingredientName} className="flex-shrink-0" />
+                      )}
                     </div>
                   </div>
                   {status.totalTinCount > 0 && (

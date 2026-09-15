@@ -2,11 +2,12 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useListProductionPlans, useListDispatchOrders, useGetProductionPlan } from "@workspace/api-client-react";
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
+import { SendStationMessageButton } from "@/components/station-messages";
 import { EightPackOrdersBanner } from "@/components/eight-pack-orders-banner";
 import { StockGateBanner } from "@/components/stock-gate-banner";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { format, isToday, startOfWeek, addWeeks, addDays } from "date-fns";
-import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X, Sparkles, Salad, UserPlus } from "lucide-react";
+import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X, Sparkles, Salad, UserPlus, ClipboardList } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/contexts/auth-context";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from "recharts";
@@ -722,15 +723,10 @@ export default function Dashboard() {
         description={format(new Date(), "EEEE, MMMM do, yyyy")}
         action={
           <div className="flex items-center gap-2">
+            <SendStationMessageButton />
             <VisitorCheckInButton />
-            {isFounder && (
-              <Link href="/founder/focus">
-                <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg px-3 py-2 hover:bg-secondary transition-colors">
-                  <LineChart className="w-3.5 h-3.5" />
-                  Founder Focus
-                </button>
-              </Link>
-            )}
+            {/* The founder entry moved to the top of the sidebar as
+                "The Business" (Graeme, 2026-09-11). */}
           </div>
         }
       />
@@ -740,7 +736,7 @@ export default function Dashboard() {
       <EightPackOrdersBanner userRole={userRole} />
       <StockGateBanner userRole={userRole} />
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
         <StatCard
           title="Building"
           value={batchesLoading ? "…" : formatProgressValue(totalBatches?.calzoneBuilt ?? 0, totalBatches?.calzoneBatches ?? 0)}
@@ -775,7 +771,7 @@ export default function Dashboard() {
           // plan's own plan_date and hops one prep day further ahead
           // (tomorrow's prep), which is only wanted when arriving from a
           // production plan's page, not from this date-based card.
-          href={prepPlanId ? `/plans/${prepPlanId}/station/prep?direct=1` : "/plans"}
+          href={prepPlanId ? `/plans/${prepPlanId}/station/prep?direct=1&from=dashboard` : "/plans"}
           progress={prepProgress && prepProgress.totalTins > 0 ? {
             done: prepProgress.completedTins,
             total: prepProgress.totalTins,
@@ -795,7 +791,7 @@ export default function Dashboard() {
           // to the despatch page instead). Falls back to the despatch wave
           // when no plan is open today.
           href={todayPlans.length > 0
-            ? `/plans/${todayPlans[0].id}/station/packing`
+            ? `/plans/${todayPlans[0].id}/station/packing?from=dashboard`
             : `/fulfilment?tag=${format(addDays(new Date(), 1), "yyyy-MM-dd")}`}
           progress={todayIndex >= 0 && (currentWeekOrders![todayIndex].orderCount ?? 0) > 0 ? {
             done: currentWeekOrders![todayIndex].fulfilledCount,
@@ -823,12 +819,15 @@ export default function Dashboard() {
           title="Wrapping"
           value={batchesLoading ? "…" : formatProgressValue(totalBatches?.packsWrapped ?? 0, totalBatches?.packsTotal ?? 0)}
           subtitle={stockControlData == null
-            ? "Tap for pack report"
-            : `Factory #${(stockControlData.productionFridgeTotal ?? 0).toLocaleString()} · tap for pack report`}
+            ? "Tap for the wrapping station"
+            : `Factory #${(stockControlData.productionFridgeTotal ?? 0).toLocaleString()}`}
           icon={Thermometer}
           color="text-cyan-500"
           bg="bg-cyan-500/10"
-          href="/pack-report"
+          // Straight into today's WRAPPING STATION (Graeme, 2026-09-12) — a
+          // shortcut, not a detour through the production plan. The pack
+          // report has its own card next door.
+          href={todayPlans.length > 0 ? `/plans/${todayPlans[0].id}/station/wrapping?from=dashboard` : "/pack-report"}
           progress={!batchesLoading && (totalBatches?.packsTotal ?? 0) > 0 ? {
             done: totalBatches!.packsWrapped,
             total: totalBatches!.packsTotal,
@@ -836,6 +835,15 @@ export default function Dashboard() {
             barClass: "bg-cyan-500",
             hideDetail: true,
           } : undefined}
+        />
+        <StatCard
+          title="Pack Report"
+          value="→"
+          subtitle="Stock vs dispatch — today's pack"
+          icon={ClipboardList}
+          color="text-violet-500"
+          bg="bg-violet-500/10"
+          href="/pack-report"
         />
         <StatCard
           title="Morning Meeting"

@@ -15,6 +15,7 @@ import { eq, and, gte, lte, sql, isNotNull, inArray } from "drizzle-orm";
 import { getOrdersByTag } from "../services/shopify";
 import { londonDateString, londonEndOfDay } from "../lib/london-time";
 import { getStandardBreakConfig, computeBatchesPerHour, aggregateBph } from "../lib/batches-per-hour";
+import { paceFromSubs } from "../services/wrapping-pace";
 
 // Recipe category name for macaroni cheese products. Mac cheese is a separate
 // product line and is excluded from the batches-per-hour KPI entirely.
@@ -517,8 +518,6 @@ router.get("/packing-speed", async (req, res) => {
 // Graeme's own fast-day bursts). Bands live client-side so they're easy to
 // tune; this endpoint just reports honestly.
 // ──────────────────────────────────────────────────────────────────────────────
-const WRAPPING_IDLE_THRESHOLD_MS = 20 * 60 * 1000;
-
 router.get("/wrapping-speed", async (req, res) => {
   const date = req.query.date ? String(req.query.date) : londonDateString(new Date());
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -533,44 +532,94 @@ router.get("/wrapping-speed", async (req, res) => {
       ORDER BY created_at
     `);
     const subs = (rows.rows ?? []).map(r => ({ ts: new Date(r.created_at + "Z").getTime(), packs: Number(r.delta) }));
-
-    const packs = subs.reduce((s, x) => s + x.packs, 0);
-    if (subs.length < 2) {
-      res.json({ date, packs, submissions: subs.length, windowMinutes: null, idleMinutes: null, idleBreaks: 0, activeMinutes: null, packsPerHour: null });
-      return;
-    }
-
-    const firstTs = subs[0].ts;
-    const lastTs = subs[subs.length - 1].ts;
-    const windowMs = lastTs - firstTs;
-    let idleMs = 0;
-    let idleBreaks = 0;
-    for (let i = 1; i < subs.length; i++) {
-      const gap = subs[i].ts - subs[i - 1].ts;
-      if (gap > WRAPPING_IDLE_THRESHOLD_MS) {
-        idleMs += gap;
-        idleBreaks++;
-      }
-    }
-    const activeMs = Math.max(0, windowMs - idleMs);
-    const activeHours = activeMs > 60_000 ? activeMs / 3_600_000 : null;
-
+    const pace = paceFromSubs(subs);
     res.json({
       date,
-      packs,
-      submissions: subs.length,
-      firstAt: new Date(firstTs).toISOString(),
-      lastAt: new Date(lastTs).toISOString(),
-      windowMinutes: Math.round(windowMs / 60_000),
-      idleMinutes: Math.round(idleMs / 60_000),
-      idleBreaks,
-      activeMinutes: Math.round(activeMs / 60_000),
-      packsPerHour: activeHours != null ? Math.round(packs / activeHours) : null,
+      ...pace,
+      firstAt: subs.length ? new Date(Math.min(...subs.map(s => s.ts))).toISOString() : null,
+      lastAt: subs.length ? new Date(Math.max(...subs.map(s => s.ts))).toISOString() : null,
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("Wrapping speed error:", msg);
     res.status(500).json({ error: "Unable to compute wrapping speed" });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// GET /wrapping-speed-history?from&to — the wrapping pace KPI over a period,
+// per day and per PERSON (Graeme, 2026-09-15). Same fridge_stock_changes
+// source and idle-gap method as the live station strip — one definition of
+// packs/hour (services/wrapping-pace.ts). Every wrapping row carries the
+// signed-in user, so per-person pace is each person's own submission stream
+// run through the same maths, day by day.
+// ──────────────────────────────────────────────────────────────────────────────
+router.get("/wrapping-speed-history", async (req, res) => {
+  const from = String(req.query.from ?? "");
+  const to = String(req.query.to ?? londonDateString(new Date()));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    res.status(400).json({ error: "from and to must be YYYY-MM-DD" });
+    return;
+  }
+  try {
+    const rows = await db.execute<{ created_at: string; delta: number; user_id: number | null; user_name: string | null }>(sql`
+      SELECT c.created_at, c.delta, c.user_id, u.name AS user_name
+      FROM fridge_stock_changes c
+      LEFT JOIN app_users u ON u.id = c.user_id
+      WHERE c.source = 'wrapping' AND c.delta > 0
+        AND c.created_at >= ${from}::date - INTERVAL '1 day'
+        AND c.created_at < ${to}::date + INTERVAL '2 days'
+      ORDER BY c.created_at
+    `);
+    const londonDay = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" });
+    const subs = (rows.rows ?? []).map(r => ({
+      ts: new Date(r.created_at + "Z").getTime(),
+      packs: Number(r.delta),
+      userId: r.user_id != null ? Number(r.user_id) : null,
+      userName: r.user_name,
+      day: londonDay.format(new Date(r.created_at + "Z")),
+    })).filter(s => s.day >= from && s.day <= to);
+
+    // Per day, whole team.
+    const byDay = new Map<string, typeof subs>();
+    for (const s of subs) (byDay.get(s.day) ?? byDay.set(s.day, []).get(s.day)!).push(s);
+    const days = [...byDay.entries()]
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([day, daySubs]) => ({ date: day, ...paceFromSubs(daySubs) }));
+
+    // Per person: their own stream, day by day, then totals. A person's
+    // packs/hour uses only THEIR active minutes, so two people wrapping in
+    // parallel each get an honest individual rate.
+    const byPerson = new Map<number, { name: string; subs: typeof subs }>();
+    for (const s of subs) {
+      if (s.userId == null) continue;
+      const entry = byPerson.get(s.userId) ?? { name: s.userName ?? `User ${s.userId}`, subs: [] };
+      entry.subs.push(s);
+      byPerson.set(s.userId, entry);
+    }
+    const people = [...byPerson.entries()].map(([userId, entry]) => {
+      const personByDay = new Map<string, typeof subs>();
+      for (const s of entry.subs) (personByDay.get(s.day) ?? personByDay.set(s.day, []).get(s.day)!).push(s);
+      const personDays = [...personByDay.entries()]
+        .sort((a, b) => b[0].localeCompare(a[0]))
+        .map(([day, daySubs]) => ({ date: day, ...paceFromSubs(daySubs) }));
+      const packs = personDays.reduce((s, d) => s + d.packs, 0);
+      const activeMinutes = personDays.reduce((s, d) => s + (d.activeMinutes ?? 0), 0);
+      return {
+        userId,
+        name: entry.name,
+        packs,
+        daysWorked: personDays.length,
+        activeMinutes,
+        packsPerHour: activeMinutes > 1 ? Math.round(packs / (activeMinutes / 60)) : null,
+        days: personDays,
+      };
+    }).sort((a, b) => b.packs - a.packs);
+
+    res.json({ from, to, days, people });
+  } catch (err: unknown) {
+    console.error("Wrapping speed history error:", err instanceof Error ? err.message : err);
+    res.status(500).json({ error: "Unable to compute wrapping speed history" });
   }
 });
 

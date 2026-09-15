@@ -313,6 +313,8 @@ export interface ShopifyOrder {
   id: number;
   name: string;
   tags: string;
+  email?: string | null;
+  contact_email?: string | null;
   created_at: string;
   cancelled_at: string | null;
   financial_status: string;
@@ -441,6 +443,65 @@ export async function getProducts(): Promise<ShopifyProduct[]> {
   }
 
   return allProducts;
+}
+
+/**
+ * ON-HAND inventory per variant, via GraphQL — the physical count in the
+ * freezer. REST's inventory_quantity is AVAILABLE (on hand minus packs
+ * committed to open orders); pairing that with a "still to dispatch" column
+ * deducts the same orders twice (Graeme, 2026-09-14). Summed across
+ * locations (TCK has one). Cached 5 min per id-set; on a fetch failure the
+ * last good map is served so a Shopify blip doesn't zero the stock columns.
+ */
+const onHandCache = new Map<string, { at: number; map: Record<string, number> }>();
+const ON_HAND_TTL_MS = 5 * 60 * 1000;
+
+export async function getVariantOnHandQuantities(variantIds: string[]): Promise<Record<string, number>> {
+  if (variantIds.length === 0) return {};
+  const key = [...variantIds].sort().join(",");
+  const cached = onHandCache.get(key);
+  if (cached && Date.now() - cached.at < ON_HAND_TTL_MS) return cached.map;
+  try {
+    const data = await shopifyGraphQL<{
+      nodes: Array<{
+        id: string;
+        inventoryItem?: {
+          inventoryLevels?: { edges: Array<{ node: { quantities: Array<{ name: string; quantity: number }> } }> };
+        };
+      } | null>;
+    }>(
+      `query($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          ... on ProductVariant {
+            id
+            inventoryItem {
+              inventoryLevels(first: 10) {
+                edges { node { quantities(names: ["on_hand"]) { name quantity } } }
+              }
+            }
+          }
+        }
+      }`,
+      { ids: variantIds.map(id => `gid://shopify/ProductVariant/${id}`) },
+    );
+    const map: Record<string, number> = {};
+    for (const node of data.nodes ?? []) {
+      if (!node?.id) continue;
+      const numericId = node.id.split("/").pop() ?? node.id;
+      let total = 0;
+      for (const edge of node.inventoryItem?.inventoryLevels?.edges ?? []) {
+        for (const q of edge.node.quantities ?? []) {
+          if (q.name === "on_hand") total += q.quantity;
+        }
+      }
+      map[numericId] = total;
+    }
+    onHandCache.set(key, { at: Date.now(), map });
+    return map;
+  } catch (err) {
+    console.warn("[Shopify] on-hand fetch failed — serving last-known map:", err instanceof Error ? err.message : err);
+    return cached?.map ?? {};
+  }
 }
 
 const productsByTagCache = new Map<string, { data: Set<string>; expiry: number }>();
@@ -713,7 +774,9 @@ export async function getRecentUnfulfilledOrders(daysBack = 30): Promise<Shopify
 export async function getOrderById(orderId: number): Promise<ShopifyOrder | null> {
   try {
     const data = (await shopifyFetch(`/orders/${orderId}.json`, {
-      fields: "id,name,tags,created_at,fulfillment_status,line_items",
+      // email/contact_email/customer: the wholesale-processing flow emails
+      // the customer their scheduled delivery date (Graeme, 2026-09-15).
+      fields: "id,name,tags,created_at,fulfillment_status,line_items,email,contact_email,customer",
     })) as { order: ShopifyOrder };
     return data.order ? toPackableLineItems(data.order) : null;
   } catch (err) {

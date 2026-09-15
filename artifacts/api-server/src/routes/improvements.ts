@@ -181,6 +181,32 @@ router.get("/", async (req: Request, res: Response) => {
       mediaById.set(Number(m.improvement_id), list);
     }
 
+    // Which of these THIS viewer has opened — powers the "To review" tab
+    // and the NEW markers (Graeme, 2026-09-10: the nav badge said there
+    // were unseen ones, but nothing on the page said which).
+    const seenRows = ids.length === 0 || viewer.id == null ? { rows: [] } : await db.execute<{ improvement_id: number }>(sql`
+      SELECT improvement_id FROM improvement_views
+       WHERE user_id = ${viewer.id}
+         AND improvement_id = ANY(${intArrayLiteral(ids)}::int[])
+    `);
+    const seenIds = new Set((seenRows.rows ?? []).map(r => Number(r.improvement_id)));
+
+    // Emoji reactions, aggregated per improvement with "did I press this one".
+    const reactionRows = ids.length === 0 ? { rows: [] } : await db.execute<{ improvement_id: number; emoji: string; n: number; mine: boolean }>(sql`
+      SELECT improvement_id, emoji,
+             COUNT(*)::int AS n,
+             BOOL_OR(user_id = ${viewer.id ?? -1}) AS mine
+        FROM improvement_reactions
+       WHERE improvement_id = ANY(${intArrayLiteral(ids)}::int[])
+       GROUP BY improvement_id, emoji
+    `);
+    const reactionsById = new Map<number, Array<{ emoji: string; count: number; mine: boolean }>>();
+    for (const r of (reactionRows.rows ?? [])) {
+      const list = reactionsById.get(Number(r.improvement_id)) ?? [];
+      list.push({ emoji: r.emoji, count: Number(r.n), mine: !!r.mine });
+      reactionsById.set(Number(r.improvement_id), list);
+    }
+
     res.json(rows.map(r => ({
       ...decorate(
         r,
@@ -190,10 +216,44 @@ router.get("/", async (req: Request, res: Response) => {
         r.subjectId != null ? subjectTitles.get(r.subjectId) ?? null : null,
       ),
       media: mediaById.get(r.id) ?? [],
+      seenByMe: seenIds.has(r.id),
+      reactions: reactionsById.get(r.id) ?? [],
     })));
   } catch (err) {
     console.error("Error fetching improvement submissions:", err);
     res.status(500).json({ error: "Failed to fetch improvement submissions" });
+  }
+});
+
+// POST /:id/react — WhatsApp-style emoji applause, toggled. A fixed
+// palette keeps the row tidy and the data clean; tapping an emoji you
+// already pressed takes it back.
+const REACTION_EMOJI = new Set(["👍", "❤️", "🎉", "💪", "😂"]);
+router.post("/:id/react", async (req: Request, res: Response) => {
+  const userId = req.session.userId;
+  if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const id = parseInt(String(req.params.id), 10);
+  const emoji = typeof req.body?.emoji === "string" ? req.body.emoji : "";
+  if (isNaN(id) || !REACTION_EMOJI.has(emoji)) { res.status(400).json({ error: "Invalid reaction" }); return; }
+  try {
+    const inserted = await db.execute<{ id: number }>(sql`
+      INSERT INTO improvement_reactions (improvement_id, user_id, emoji)
+      VALUES (${id}, ${userId}, ${emoji})
+      ON CONFLICT (improvement_id, user_id, emoji) DO NOTHING
+      RETURNING id
+    `);
+    if ((inserted.rows ?? []).length === 0) {
+      await db.execute(sql`
+        DELETE FROM improvement_reactions
+        WHERE improvement_id = ${id} AND user_id = ${userId} AND emoji = ${emoji}
+      `);
+      res.json({ reacted: false });
+      return;
+    }
+    res.json({ reacted: true });
+  } catch (err) {
+    console.error("[Improvements] react failed:", err);
+    res.status(500).json({ error: "Couldn't save the reaction" });
   }
 });
 
@@ -271,9 +331,13 @@ async function submitForApproval(
       // the scoreboard, and nobody's name goes on an approval that didn't
       // happen (approved_by stays empty).
       ...(needsReview ? {} : { approvedAt: new Date() }),
-      // Whoever says they did it gets the credit, unless it's already set.
-      creditedTo: row.creditedTo ?? userId,
-      creditedToName: row.creditedToName ?? userName,
+      // Credit defaults to whoever FIRST REPORTED it (Graeme, 2026-09-10):
+      // spotting the problem is the valuable act, and the fixer is often
+      // just whoever had the tools that day. Falls back to the person
+      // marking it done when the reporter is unknown; already-set credit
+      // (incl. a manager's explicit reassignment) is never overwritten.
+      creditedTo: row.creditedTo ?? row.submittedBy ?? userId,
+      creditedToName: row.creditedToName ?? row.submittedByName ?? userName,
       // Clear any previous send-back note; this is a fresh attempt.
       reviewNote: null,
       updatedAt: new Date(),
@@ -342,6 +406,33 @@ router.put("/settings", async (req: Request, res: Response) => {
 // (Graeme, 2026-09-07): some improvements ARE a how-to, photos and all. The
 // new SOP takes the improvement's title, its description as step one, and
 // every photo/video as a step (before-phase first), filed under the
+// PATCH /:id/credit — move the credit to whoever actually deserves it.
+// Graeme's case (2026-09-10): someone reports the thing, he makes the
+// technical change, and the improvement should be THEIRS — the report was
+// the valuable part. Manager-only; feeds the scoreboard and the feed's
+// name chips immediately.
+router.patch("/:id/credit", async (req: Request, res: Response) => {
+  const viewer = await viewerOf(req);
+  if (!viewer.isManager) { res.status(403).json({ error: "Manager or admin access required" }); return; }
+  const id = parseInt(String(req.params.id), 10);
+  const userId = parseInt(String(req.body?.userId ?? ""), 10);
+  if (isNaN(id) || isNaN(userId)) { res.status(400).json({ error: "Invalid id" }); return; }
+  try {
+    const [user] = await db.select({ id: usersTable.id, name: usersTable.name })
+      .from(usersTable).where(eq(usersTable.id, userId));
+    if (!user) { res.status(404).json({ error: "No such user" }); return; }
+    const [row] = await db.update(improvementSubmissionsTable)
+      .set({ creditedTo: user.id, creditedToName: user.name, updatedAt: new Date() })
+      .where(eq(improvementSubmissionsTable.id, id))
+      .returning({ id: improvementSubmissionsTable.id, creditedToName: improvementSubmissionsTable.creditedToName });
+    if (!row) { res.status(404).json({ error: "Not found" }); return; }
+    res.json(row);
+  } catch (err) {
+    console.error("[Improvements] credit change failed:", err);
+    res.status(500).json({ error: "Couldn't change the credit" });
+  }
+});
+
 // improvement's station so the library filter finds it. The client opens
 // the SOP editor on it straight away for the quick tidy-and-tag.
 router.post("/:id/create-sop", async (req: Request, res: Response) => {

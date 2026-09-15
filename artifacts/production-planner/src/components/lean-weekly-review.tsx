@@ -86,7 +86,7 @@ export function LeanWeeklyStrip() {
       <GraduationCap className="w-4 h-4 flex-shrink-0" />
       <span className="min-w-0 flex-1 truncate">
         This week's lean lesson: <strong>{data.principle.title}</strong>
-        {late ? " — due by Friday, don't get caught out" : " — two minutes, due Friday"}
+        {late ? " — due by Friday, don't get caught out" : " — two minutes, any day this week, due Friday"}
       </span>
       <span className={cn(
         "flex-shrink-0 px-3 py-1 rounded-lg text-xs font-bold",

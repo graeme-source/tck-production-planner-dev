@@ -618,6 +618,9 @@ export default function Orders() {
           if (prior && !prior.isManual && !prior.isMisc) {
             return {
               ...l,
+              // A pulled kanban STAYS a kanban across refetches — losing the
+              // flag is what let the calc re-absorb and re-sort it.
+              isKanban: prior.isKanban || l.isKanban,
               checked: prior.checked,
               editedPacks: prior.stockDirty ? prior.editedPacks : l.packsToOrder,
               editedStock: prior.stockDirty ? prior.editedStock : l.stockOnHand,
@@ -632,7 +635,25 @@ export default function Orders() {
             stockDirty: false,
           };
         });
-        next[so.supplier.id] = [...merged, ...preservedLocals];
+        // Anything the operator ADDED (pulled kanbans, manual items, misc
+        // lines) keeps the position it was added in — at the bottom, in
+        // added order — permanently. Without this, the next calc refetch
+        // folded a pulled kanban into the alphabetically-sorted calc lines
+        // and it jumped mid-list while someone was working down it
+        // (Graeme, 2026-09-10).
+        const tailIds = existing
+          .filter(l => l.isKanban || l.isManual || l.isMisc)
+          .map(l => l.ingredientId);
+        const tailSet = new Set(tailIds);
+        const body = merged.filter(l => !tailSet.has(l.ingredientId));
+        const tail = tailIds
+          .map(id =>
+            merged.find(l => l.ingredientId === id)
+            ?? preservedLocals.find(l => l.ingredientId === id))
+          .filter((l): l is EditableLine => l != null);
+        const tailIncluded = new Set(tail.map(l => l.ingredientId));
+        const extraLocals = preservedLocals.filter(l => !tailIncluded.has(l.ingredientId));
+        next[so.supplier.id] = [...body, ...tail, ...extraLocals];
       }
 
       // Suppliers that exist only via locally-added kanbans/manual items

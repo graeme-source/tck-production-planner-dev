@@ -15,7 +15,6 @@
  */
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import type React from "react";
-import { ImageCropDialog } from "@/components/image-crop-dialog";
 import { ImprovementFeedMedia } from "@/components/improvement-feed-media";
 import { useLocation, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -38,6 +37,7 @@ import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { LessonDiagram, DIAGRAM_OPTIONS } from "@/components/lesson-diagrams";
+import ImprovementsPage from "@/pages/improvements";
 import { MarkdownBlock, YouTubeEmbed } from "@/components/lesson-media";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -54,6 +54,32 @@ export interface MeetingSlide {
    *  cache them (migration 0062). */
   hasPhoto?: boolean;
   photoCaption?: string | null;
+  /** Free-form presentation blocks pinned to this slide for the day —
+   *  a big sentence, a photo, or a video (migration 0098). Metadata only;
+   *  media streams from /slide-blocks/:id/media. */
+  blocks?: SlideBlock[];
+}
+
+export interface SlideBlock {
+  id: number;
+  kind: string; // 'text' | 'image' | 'video'
+  content: string | null;
+  mediaMime: string | null;
+  position: number;
+}
+
+/** One plan item as the dashboard payload carries it. itemId/status are
+ *  optional so a cached older server payload doesn't crash the slide —
+ *  without them the row simply isn't draggable. */
+export interface PlanSlideItem {
+  itemId?: number;
+  recipeId: number;
+  recipeName: string;
+  recipeColor: string | null;
+  batchesTarget: number;
+  recipeCategory: string | null;
+  eightPackBagCount: number;
+  status?: string;
 }
 
 export interface DashboardData {
@@ -69,14 +95,14 @@ export interface DashboardData {
   tomorrowNonCoreItems: Array<{ recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null }>;
   todayPlan: {
     id: number | null;
-    items: Array<{ recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null; eightPackBagCount: number }>;
+    items: Array<PlanSlideItem>;
   };
   /** Tomorrow's plan in the same shape — the pack report flips its
    *  production columns to this after 3pm, when the dispatch flips too.
    *  Optional so a cached older server payload doesn't crash the slide. */
   tomorrowPlan?: {
     id: number | null;
-    items: Array<{ recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null; eightPackBagCount: number }>;
+    items: Array<PlanSlideItem>;
   };
   yesterdayKpis: {
     wonkyCount: number;
@@ -101,7 +127,7 @@ export interface DashboardData {
     principleId?: number;
     principleTitle?: string;
   } | null;
-  meeting: { id: number; hostName: string | null; startedAt: string; endedAt: string | null; lessonId: number | null; exampleId: number | null; gratitudeCaption: string | null; trialWelcome: string | null; hasGratitudePhoto: boolean } | null;
+  meeting: { id: number; hostName: string | null; startedAt: string; endedAt: string | null; lessonId: number | null; exampleId: number | null; gratitudeCaption: string | null; gratitudeSeed?: number | null; trialWelcome: string | null; hasGratitudePhoto: boolean } | null;
   slides: MeetingSlide[];
   gratitude: Array<{ id: number; fromName: string; toName: string | null; content: string }>;
 }
@@ -212,7 +238,7 @@ const SLIDE_KIND_META: Record<SlideKind, { icon: React.ElementType; color: strin
   yesterday_kpis:      { icon: ChefHat,       color: "text-violet-500",  fallbackTitle: "Yesterday's Numbers" },
   station_assignments: { icon: Users,         color: "text-teal-500",    fallbackTitle: "Who's On Today" },
   order_of_production: { icon: ClipboardCheck,color: "text-primary",     fallbackTitle: "Order of Production" },
-  local_delivery:      { icon: Truck,         color: "text-blue-500",    fallbackTitle: "Local Despatch" },
+  local_delivery:      { icon: Truck,         color: "text-blue-500",    fallbackTitle: "Local Dispatch" },
   bag_orders:          { icon: ShoppingBag,   color: "text-indigo-500",  fallbackTitle: "Bag Orders" },
   short_on_pack:       { icon: AlertCircle,   color: "text-orange-500",  fallbackTitle: "Short on the Pack" },
   safety_issues:       { icon: AlertCircle,   color: "text-red-500",     fallbackTitle: "Safety Issues" },
@@ -734,7 +760,6 @@ function SetupGratitudeCard({ data, ensureMeeting }: {
   const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
-  const [pendingCrop, setPendingCrop] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [cacheBust, setCacheBust] = useState(0);
   const meeting = data.meeting;
@@ -771,6 +796,22 @@ function SetupGratitudeCard({ data, ensureMeeting }: {
     }
   }
 
+  async function shuffleFallback() {
+    setBusy(true);
+    try {
+      const id = await ensureMeeting();
+      if (!id) throw new Error("Couldn't create today's meeting");
+      const res = await fetch(`${BASE}/api/morning-meetings/${id}/gratitude-shuffle`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" }, body: "{}",
+      });
+      if (!res.ok) throw new Error("Shuffle failed");
+      queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
+    } catch (e) {
+      toast({ title: "Couldn't shuffle the image", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
   const hasPhoto = !!meeting?.hasGratitudePhoto;
   return (
     <div className="glass-panel rounded-2xl p-6 mb-6">
@@ -778,32 +819,36 @@ function SetupGratitudeCard({ data, ensureMeeting }: {
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Gratitude photo</p>
           <p className="text-sm text-muted-foreground">
-            {hasPhoto ? "Loaded — it'll fill the gratitude slide, uncropped." : "Add a team photo for the gratitude slide (optional)."}
+            {hasPhoto
+              ? "Loaded — it'll fill the gratitude slide, uncropped."
+              : "This is today's automatic image — shuffle it if it's a dud, or add your own photo."}
           </p>
         </div>
-        {hasPhoto && meeting && (
+        {hasPhoto && meeting ? (
           <img
             src={`${BASE}/api/morning-meetings/${meeting.id}/gratitude-photo?v=${cacheBust}`}
             alt="Gratitude"
             className="w-16 h-16 rounded-xl object-contain bg-black/5 border border-border flex-shrink-0"
           />
+        ) : (
+          // The automatic image the slide will actually show today, so a dud
+          // (the cat incident) is caught here rather than live on slide 13.
+          <img
+            key={meeting?.gratitudeSeed ?? 0}
+            src={fallbackGratitudePhotoUrl(data.today, meeting?.gratitudeSeed ?? 0)}
+            alt="Today's automatic gratitude image"
+            className="w-28 h-16 rounded-xl object-cover bg-black/5 border border-border flex-shrink-0"
+          />
         )}
       </div>
       <div className="flex gap-2 mt-3 flex-wrap">
-        {/* Both pickers hand the photo to the cropper first, so a portrait
-            phone shot becomes the landscape crop the host actually wants
-            rather than being letterboxed on the slide. */}
+        {/* No cropper (Graeme, 2026-09-11): iPhone HEIC shots can't be
+            decoded by the browser canvas, so cropping blocked uploads
+            entirely. Photos upload as taken; the slide letterboxes. */}
         <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
-          onChange={e => { const f = e.target.files?.[0]; if (f) setPendingCrop(f); e.target.value = ""; }} />
+          onChange={e => { const f = e.target.files?.[0]; if (f) void upload(f); e.target.value = ""; }} />
         <input ref={fileRef} type="file" accept="image/*" className="hidden"
-          onChange={e => { const f = e.target.files?.[0]; if (f) setPendingCrop(f); e.target.value = ""; }} />
-        {pendingCrop && (
-          <ImageCropDialog
-            file={pendingCrop}
-            onCancel={() => setPendingCrop(null)}
-            onCropped={async cropped => { setPendingCrop(null); await upload(cropped); }}
-          />
-        )}
+          onChange={e => { const f = e.target.files?.[0]; if (f) void upload(f); e.target.value = ""; }} />
         <button onClick={() => cameraRef.current?.click()} disabled={busy}
           className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-50 inline-flex items-center gap-1.5">
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />} Take photo
@@ -813,6 +858,12 @@ function SetupGratitudeCard({ data, ensureMeeting }: {
           <ImageIcon className="w-4 h-4" />
           {hasPhoto ? "Replace photo" : "Add photo"}
         </button>
+        {!hasPhoto && (
+          <button onClick={shuffleFallback} disabled={busy}
+            className="px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+            <Shuffle className="w-4 h-4" /> Shuffle image
+          </button>
+        )}
         {hasPhoto && (
           <button onClick={remove} disabled={busy}
             className="px-3 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:opacity-50 inline-flex items-center gap-1.5">
@@ -904,7 +955,6 @@ function SetupTomorrowCard({ date }: { date: string }) {
   const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const tomorrowCameraRef = useRef<HTMLInputElement>(null);
-  const [pendingCrop, setPendingCrop] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [picking, setPicking] = useState(false);
   const [cacheBust, setCacheBust] = useState(0);
@@ -913,6 +963,7 @@ function SetupTomorrowCard({ date }: { date: string }) {
   const { data: setup } = useQuery<{
     meetingId: number | null;
     hasGratitudePhoto: boolean;
+    gratitudeSeed?: number | null;
     trialWelcome: string | null;
     exampleId: number | null;
     isLessonOverridden: boolean;
@@ -1076,29 +1127,31 @@ function SetupTomorrowCard({ date }: { date: string }) {
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Tomorrow's photo</p>
             <p className="text-sm text-muted-foreground">
-              {hasPhoto ? "Loaded — it'll fill tomorrow's gratitude slide." : "Add a team photo for the gratitude slide (optional)."}
+              {hasPhoto
+                ? "Loaded — it'll fill tomorrow's gratitude slide."
+                : "Tomorrow's automatic image — shuffle it if it's a dud, or add your own photo."}
             </p>
           </div>
-          {hasPhoto && setup?.meetingId && (
+          {hasPhoto && setup?.meetingId ? (
             <img
               src={`${BASE}/api/morning-meetings/${setup.meetingId}/gratitude-photo?v=${cacheBust}`}
               alt="Tomorrow's gratitude"
               className="w-16 h-16 rounded-xl object-contain bg-black/5 border border-border flex-shrink-0"
             />
+          ) : (
+            <img
+              key={setup?.gratitudeSeed ?? 0}
+              src={fallbackGratitudePhotoUrl(date, setup?.gratitudeSeed ?? 0)}
+              alt="Tomorrow's automatic gratitude image"
+              className="w-28 h-16 rounded-xl object-cover bg-black/5 border border-border flex-shrink-0"
+            />
           )}
         </div>
         <div className="flex gap-2 mt-3 flex-wrap">
           <input ref={tomorrowCameraRef} type="file" accept="image/*" capture="environment" className="hidden"
-            onChange={e => { const f = e.target.files?.[0]; if (f) setPendingCrop(f); e.target.value = ""; }} />
+            onChange={e => { const f = e.target.files?.[0]; if (f) void uploadPhoto(f); e.target.value = ""; }} />
           <input ref={fileRef} type="file" accept="image/*" className="hidden"
-            onChange={e => { const f = e.target.files?.[0]; if (f) setPendingCrop(f); e.target.value = ""; }} />
-          {pendingCrop && (
-            <ImageCropDialog
-              file={pendingCrop}
-              onCancel={() => setPendingCrop(null)}
-              onCropped={async cropped => { setPendingCrop(null); await uploadPhoto(cropped); }}
-            />
-          )}
+            onChange={e => { const f = e.target.files?.[0]; if (f) void uploadPhoto(f); e.target.value = ""; }} />
           <button onClick={() => tomorrowCameraRef.current?.click()} disabled={busy}
             className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-50 inline-flex items-center gap-1.5">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />} Take photo
@@ -1108,6 +1161,28 @@ function SetupTomorrowCard({ date }: { date: string }) {
             <ImageIcon className="w-4 h-4" />
             {hasPhoto ? "Replace photo" : "Add photo"}
           </button>
+          {!hasPhoto && (
+            <button
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const id = await ensureTomorrowMeeting();
+                  if (!id) throw new Error("Couldn't create tomorrow's meeting");
+                  const res = await fetch(`${BASE}/api/morning-meetings/${id}/gratitude-shuffle`, {
+                    method: "POST", credentials: "include",
+                    headers: { "Content-Type": "application/json" }, body: "{}",
+                  });
+                  if (!res.ok) throw new Error("Shuffle failed");
+                  queryClient.invalidateQueries({ queryKey });
+                } catch (e) {
+                  toast({ title: "Couldn't shuffle the image", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+                } finally { setBusy(false); }
+              }}
+              disabled={busy}
+              className="px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+              <Shuffle className="w-4 h-4" /> Shuffle image
+            </button>
+          )}
           {hasPhoto && (
             <button onClick={removePhoto} disabled={busy}
               className="px-3 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:opacity-50 inline-flex items-center gap-1.5">
@@ -1581,10 +1656,10 @@ function PersonName({ p, size = "big" }: { p: StationAssignmentPerson; size?: "b
   const inNow = p.punch === "in";
   const done = p.punch === "finished";
   return (
-    <span className="flex items-baseline gap-2 min-w-0">
+    <span className="flex flex-wrap items-baseline gap-2 min-w-0">
       <span
         className={cn(
-          "font-display font-bold leading-tight whitespace-nowrap",
+          "font-display font-bold leading-tight",
           size === "big" ? "text-2xl" : "text-base",
           late && "text-red-600 dark:text-red-400",
           !late && !inNow && !done && "text-muted-foreground",
@@ -1659,12 +1734,25 @@ function StationAssignmentsSlide({ trialWelcome, dayNumbers }: { trialWelcome?: 
     );
   }
   if (!data || !data.available) {
+    // Stretches still happen when Planday is down — this slide is their
+    // only home since the standalone Stretches slide was merged away.
+    const fallbackStretches = pickStretchesForDay(new Date().toISOString().slice(0, 10));
     return (
-      <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+      <div className="flex flex-col items-center py-8 gap-6 text-center">
         <DayNumbersRow dayNumbers={dayNumbers ?? null} />
-        <AlertCircle className="w-10 h-10 text-amber-500" />
-        <p className="text-lg font-semibold">Rota unavailable</p>
-        <p className="text-muted-foreground">{data?.reason ?? "Could not reach Planday."} Check the printed rota.</p>
+        <div className="flex flex-col items-center gap-2">
+          <AlertCircle className="w-10 h-10 text-amber-500" />
+          <p className="text-lg font-semibold">Rota unavailable</p>
+          <p className="text-muted-foreground">{data?.reason ?? "Could not reach Planday."} Check the printed rota.</p>
+        </div>
+        <div className="grid grid-cols-5 gap-3 w-full max-w-4xl">
+          {fallbackStretches.map((st, i) => (
+            <div key={i} className="rounded-2xl border border-border bg-card p-4 flex flex-col items-center gap-2">
+              <span className="text-5xl leading-none" aria-hidden>{st.emoji}</span>
+              <p className="text-base font-semibold leading-tight">{st.name}</p>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -1672,6 +1760,7 @@ function StationAssignmentsSlide({ trialWelcome, dayNumbers }: { trialWelcome?: 
   const everyone = [...data.stations.flatMap(s => s.people), ...data.extras];
   const lateCount = everyone.filter(p => p.late).length;
   const inCount = everyone.filter(p => p.punch === "in" || p.punch === "finished").length;
+  const stretches = pickStretchesForDay(new Date().toISOString().slice(0, 10));
 
   return (
     <div className="space-y-4">
@@ -1714,40 +1803,63 @@ function StationAssignmentsSlide({ trialWelcome, dayNumbers }: { trialWelcome?: 
         )}
       </div>
 
-      {/* One row per station, top to bottom in production-flow order (the
-          mapping's order in Settings mirrors the plan-day station list) —
-          the room reads it like the day's flow, not a wall of tiles. */}
-      <div className="space-y-1.5">
-        {data.stations.map(st => (
-          <div key={st.title}
-            className={cn(
-              "rounded-xl border px-4 py-2 flex items-center gap-4",
-              st.people.length > 0 ? "border-border bg-card" : "border-dashed border-border bg-secondary/20",
-            )}>
-            <p className="w-44 flex-shrink-0 text-sm font-semibold uppercase tracking-wide text-muted-foreground">{st.title}</p>
-            {st.people.length === 0 ? (
-              <p className="text-xl font-display font-bold text-muted-foreground/40">—</p>
-            ) : (
-              <div className="flex flex-wrap items-baseline gap-x-6 gap-y-0.5 min-w-0">
-                {st.people.map((p, i) => <PersonName key={i} p={p} />)}
+      {/* Stretches + rota share the opening slide (Graeme, 2026-09-11):
+          the team stretches WHILE reading who's on what station, so one
+          slide covers the whole opening. Stretches run top-to-bottom on
+          the left; people and positions fill the right. The split engages
+          from md (768px) so an iPad in portrait — or with Safari zoom —
+          still shows both side by side; below lg the layout only stacked,
+          which pushed the stretches off-screen once the room was reading
+          the rota (Graeme, 2026-09-14). */}
+      <div className="grid gap-4 grid-cols-[minmax(0,1fr)] md:grid-cols-[minmax(13rem,2fr)_minmax(0,5fr)] items-start">
+        <div className="space-y-1.5">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground px-1">Stretches — while we read the board</p>
+          {stretches.map((st, i) => (
+            <div key={i} className="rounded-xl border border-border bg-card px-4 py-2.5 flex items-center gap-3">
+              <span className="text-4xl leading-none" aria-hidden>{st.emoji}</span>
+              <div className="min-w-0">
+                <p className="text-lg font-semibold leading-tight">{st.name}</p>
+                <p className="text-xs text-muted-foreground leading-snug">{st.description}</p>
               </div>
-            )}
-          </div>
-        ))}
-      </div>
-      {data.extras.length > 0 && (
-        <div className="rounded-xl border border-border bg-secondary/20 px-4 py-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Also in today</p>
-          <p className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm">
-            {data.extras.map((p, i) => (
-              <span key={i} className="inline-flex items-baseline gap-1.5">
-                <PersonName p={p} size="small" />
-                <span className="text-muted-foreground text-xs">({p.position})</span>
-              </span>
-            ))}
-          </p>
+            </div>
+          ))}
         </div>
-      )}
+
+        {/* One row per station, top to bottom in production-flow order (the
+            mapping's order in Settings mirrors the plan-day station list) —
+            the room reads it like the day's flow, not a wall of tiles. */}
+        <div className="space-y-1.5">
+          {data.stations.map(st => (
+            <div key={st.title}
+              className={cn(
+                "rounded-xl border px-4 py-2 flex items-center gap-4",
+                st.people.length > 0 ? "border-border bg-card" : "border-dashed border-border bg-secondary/20",
+              )}>
+              <p className="w-44 flex-shrink-0 text-sm font-semibold uppercase tracking-wide text-muted-foreground">{st.title}</p>
+              {st.people.length === 0 ? (
+                <p className="text-xl font-display font-bold text-muted-foreground/40">—</p>
+              ) : (
+                <div className="flex flex-wrap items-baseline gap-x-6 gap-y-0.5 min-w-0">
+                  {st.people.map((p, i) => <PersonName key={i} p={p} />)}
+                </div>
+              )}
+            </div>
+          ))}
+          {data.extras.length > 0 && (
+            <div className="rounded-xl border border-border bg-secondary/20 px-4 py-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Also in today</p>
+              <p className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm">
+                {data.extras.map((p, i) => (
+                  <span key={i} className="inline-flex items-baseline gap-1.5">
+                    <PersonName p={p} size="small" />
+                    <span className="text-muted-foreground text-xs">({p.position})</span>
+                  </span>
+                ))}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1795,11 +1907,49 @@ function SlidePhoto({ slide }: { slide: MeetingSlide }) {
   );
 }
 
+/** The day's presentation blocks, stacked under the slide's own content
+ *  in the order they were added: a big sentence, a photo, or a video
+ *  (Graeme, 2026-09-11 — "use different examples that I haven't thought
+ *  about until the day"). */
+function SlideBlocks({ slide }: { slide: MeetingSlide }) {
+  const blocks = slide.blocks ?? [];
+  if (blocks.length === 0) return null;
+  return (
+    <div className="mt-6 space-y-6">
+      {blocks.map(b => {
+        if (b.kind === "text") {
+          return (
+            <p key={b.id} className="text-3xl md:text-4xl font-display font-bold leading-tight text-center max-w-4xl mx-auto">
+              {b.content}
+            </p>
+          );
+        }
+        const mediaUrl = `${BASE}/api/morning-meetings/slide-blocks/${b.id}/media`;
+        return (
+          <figure key={b.id}>
+            <div className="rounded-2xl overflow-hidden border-2 border-border bg-black/5">
+              {b.kind === "video" ? (
+                <video src={mediaUrl} controls playsInline className="w-full max-h-[52vh] bg-black" />
+              ) : (
+                <img src={mediaUrl} alt={b.content ?? "Slide picture"} className="w-full max-h-[52vh] object-contain bg-black/80" />
+              )}
+            </div>
+            {b.content && (
+              <figcaption className="text-xl text-center mt-3 text-muted-foreground">{b.content}</figcaption>
+            )}
+          </figure>
+        );
+      })}
+    </div>
+  );
+}
+
 function SlideBody(props: { slide: MeetingSlide; data: DashboardData; onRefresh: () => void; isPreviewing: boolean; subIndex: number; reportSubCount: (n: number) => void }) {
   return (
     <>
       <SlideBodyInner {...props} />
       <SlidePhoto slide={props.slide} />
+      <SlideBlocks slide={props.slide} />
     </>
   );
 }
@@ -1810,14 +1960,14 @@ function SlideBodyInner({ slide, data, onRefresh, isPreviewing, subIndex, report
     case "stretches": return <StretchesPanel />;
     case "yesterday_kpis": return <YesterdayKpisSlide data={data} slide={slide} />;
     case "station_assignments": return <StationAssignmentsSlide trialWelcome={data.meeting?.trialWelcome ?? null} dayNumbers={data.dayNumbers ?? null} />;
-    case "order_of_production": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} stickyTotals />;
+    case "order_of_production": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} stickyTotals compact />;
     case "local_delivery": return <LocalDeliverySlide data={data} slide={slide} />;
     case "bag_orders": return <BagOrdersSlide data={data} slide={slide} />;
-    case "short_on_pack": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} stickyTotals />;
+    case "short_on_pack": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} stickyTotals compact />;
     case "safety_issues": return <SafetyIssuesSlide data={data} onRefresh={onRefresh} slide={slide} />;
     case "system_updates": return <SystemUpdatesSlide slide={slide} subIndex={subIndex} reportSubCount={reportSubCount} />;
     case "new_sops": return <NewSopsSlide data={data} slide={slide} />;
-    case "struggles": return <StrugglesSlide data={data} onRefresh={onRefresh} slide={slide} />;
+    case "struggles": return <ImprovementsPage />;
     case "recent_improvements": return <RecentImprovementsSlide data={data} slide={slide} />;
     case "lesson":
     case "learning": return <LearningSlide data={data} slide={slide} />;
@@ -1953,6 +2103,8 @@ type ProductionPlanRow = {
   recipeName: string;
   color: string | null;
   category: string | null;
+  itemId: number | null;         // plan item id; null when not in today's plan (not draggable)
+  locked: boolean;               // completed items keep their slot (same rule as mixing)
   seq: number | null;            // production order number; null when not in today's plan
   target: number | null;         // batches/packs target; null when not in today's plan
   // Today's production converted to 2-packs (batches × packsPerBatch, net of
@@ -1989,6 +2141,34 @@ function HeaderInfo({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** Sortable shell for one production-order row. Render-prop so the row
+ *  markup stays inline in the slide; the handle lands in the # column. */
+function SortableProductionRow({ id, disabled, children }: {
+  id: number;
+  disabled: boolean;
+  children: (handle: React.ReactNode) => React.ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+    zIndex: isDragging ? 50 : undefined,
+    position: "relative",
+  };
+  const handle = disabled ? null : (
+    <span
+      {...attributes}
+      {...listeners}
+      className="p-1 -m-1 text-muted-foreground/60 hover:text-foreground cursor-grab active:cursor-grabbing touch-none"
+      title="Drag to change the production order"
+    >
+      <GripVertical className="w-5 h-5" />
+    </span>
+  );
+  return <div ref={setNodeRef} style={style} className={cn(isDragging && "shadow-xl bg-background")}>{children(handle)}</div>;
+}
+
 /** Which stock figure the "have" column shows.
  *  - "actual"    — what is physically in the fridge right now (the default;
  *                  what the morning meeting and the pack report have always
@@ -1999,7 +2179,7 @@ function HeaderInfo({ children }: { children: React.ReactNode }) {
  *                  where the fridge actually lands by close of play. */
 export type PackStockMode = "actual" | "predicted";
 
-export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "actual", stickyTotals = false }: {
+export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "actual", stickyTotals = false, compact = false }: {
   data: DashboardData;
   slide: MeetingSlide;
   isPreviewing: boolean;
@@ -2008,6 +2188,10 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
    *  meeting, where the table is taller than the slide and the in-table
    *  totals row sits out of sight below the fold. */
   stickyTotals?: boolean;
+  /** Meeting mode (Graeme, 2026-09-11): the deck chrome already names the
+   *  slide, so drop the in-body title, the lead paragraph and the legend,
+   *  and tighten every row — the whole table should fit one screen. */
+  compact?: boolean;
 }) {
   // In a live meeting the pack is today's; in a preview of tomorrow's
   // meeting it's tomorrow's. Matches the old Short-on-pack behaviour.
@@ -2028,6 +2212,81 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
   const tomorrowMode = isPreviewing || showTomorrowPack;
   const effectivePlanDate = tomorrowMode ? data.tomorrow : data.today;
   const effectivePlan = tomorrowMode ? (data.tomorrowPlan ?? { id: null, items: [] }) : data.todayPlan;
+
+  // ── Drag-to-reorder (Graeme, 2026-09-11): the meeting reviews this table,
+  // so the room should be able to fix the order on the spot — same endpoint
+  // and same rules as the mixing station's drag handles, so every station
+  // follows the new order immediately.
+  const queryClient = useQueryClient();
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const [savingOrder, setSavingOrder] = useState(false);
+  // Optimistic order so the row lands where it was dropped instead of
+  // snapping back while the save + refetch round-trips.
+  const [orderOverride, setOrderOverride] = useState<number[] | null>(null);
+  const baseItems = effectivePlan.items;
+  const orderedItems = useMemo(() => {
+    if (!orderOverride) return baseItems;
+    const byId = new Map(baseItems.map(it => [it.itemId, it]));
+    const ordered = orderOverride.map(id => byId.get(id)).filter((it): it is PlanSlideItem => !!it);
+    return ordered.length === baseItems.length ? ordered : baseItems;
+  }, [baseItems, orderOverride]);
+  // Once the refetched payload agrees with the override, drop it — later
+  // reorders made elsewhere (e.g. at the mixing station) must show through.
+  useEffect(() => {
+    if (!orderOverride) return;
+    const ids = baseItems.map(it => it.itemId);
+    if (ids.length === orderOverride.length && ids.every((id, i) => id === orderOverride[i])) setOrderOverride(null);
+  }, [baseItems, orderOverride]);
+  const canReorder = effectivePlan.id != null && baseItems.length > 1 && baseItems.every(it => it.itemId != null);
+
+  const saveOrder = async (items: PlanSlideItem[]) => {
+    setSavingOrder(true);
+    try {
+      const res = await fetch(`${BASE}/api/production-plans/${effectivePlan.id}/order`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ order: items.map((it, i) => ({ itemId: it.itemId, orderPosition: i + 1 })) }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null) as { error?: string } | null;
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
+      toast({ title: "Production order saved", description: "Every station now follows this order." });
+    } catch (err) {
+      setOrderOverride(null);
+      toast({ title: "Reorder failed", description: err instanceof Error ? err.message : "Could not save the new order.", variant: "destructive" });
+    } finally {
+      setSavingOrder(false);
+      void queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
+      void queryClient.invalidateQueries({ queryKey: ["plan-schedule", effectivePlan.id] });
+    }
+  };
+
+  const handleRowDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || savingOrder) return;
+    const ids = orderedItems.map(it => it.itemId);
+    const oldIndex = ids.indexOf(Number(active.id));
+    const newIndex = ids.indexOf(Number(over.id));
+    if (oldIndex === -1 || newIndex === -1) return;
+    const isMacItem = (it: PlanSlideItem) => it.recipeCategory === "Macaroni Cheese";
+    if (isMacItem(orderedItems[oldIndex]) !== isMacItem(orderedItems[newIndex])) {
+      toast({ title: "Can't reorder", description: "Mac & Cheese runs on its own station — reorder macs and calzones within their own groups.", variant: "destructive" });
+      return;
+    }
+    const reordered = arrayMove(orderedItems, oldIndex, newIndex);
+    // Completed recipes keep their slot — the same rule mixing applies, and
+    // the server rejects moving them anyway.
+    for (let i = 0; i < reordered.length; i++) {
+      if (reordered[i].status === "complete" && reordered[i].itemId !== orderedItems[i].itemId) {
+        toast({ title: "Can't reorder", description: "Completed recipes are fixed in place.", variant: "destructive" });
+        return;
+      }
+    }
+    setOrderOverride(reordered.map(it => it.itemId as number));
+    void saveOrder(reordered);
+  };
 
   const { data: calc, isLoading } = useQuery<{ recipes: CalcRecipeRow[]; dispatchDates: string[]; deliveryDates: string[] }>({
     queryKey: ["production-plan-calc", effectivePlanDate],
@@ -2099,7 +2358,10 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
     // dispatch = predicted end of day — the same formula the Create Plan
     // screen uses. Unclamped, so a genuine oversell shows as a negative.
     const wrapRemain = r.remainingWrappingPacksToday ?? 0;
-    const have = stockMode === "predicted" ? r.fridgeStock + wrapRemain : r.fridgeStock;
+    // Fried chicken stocks in the Shopify-tracked freezer, not the fridge —
+    // its Have is the Shopify on-hand figure (Graeme, 2026-09-14).
+    const baseStock = r.shopifyStock ?? r.fridgeStock;
+    const have = stockMode === "predicted" ? baseStock + wrapRemain : baseStock;
     const need = r.dispatch2RemainingQty ?? r.dispatch2Qty;
     const surplus = have - need;
     // Red when short (negative spare); amber when only 0–10 spare;
@@ -2119,7 +2381,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
     // must be added, or the warning compares tomorrow's orders against
     // today's make and cries wolf.
     const plannedAhead = tomorrowMode ? (plannedPacksById.get(r.recipeId) ?? 0) : 0;
-    const cover = r.fridgeStock + wrapRemain + plannedAhead - need;
+    const cover = baseStock + wrapRemain + plannedAhead - need;
     const prodTone: "ok" | "warn" | "bad" = cover < 0 ? "bad" : cover <= 10 ? "warn" : "ok";
     calcById.set(r.recipeId, { have, need, surplus, tone, cover, prodTone });
   }
@@ -2127,7 +2389,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
   const plannedIds = new Set(effectivePlan.items.map(it => it.recipeId));
 
   // 1) Everything being made on the effective day, in production order.
-  const plannedRows: ProductionPlanRow[] = effectivePlan.items.map((it, i) => {
+  const plannedRows: ProductionPlanRow[] = orderedItems.map((it, i) => {
     const c = calcById.get(it.recipeId);
     const isMac = it.recipeCategory === "Macaroni Cheese";
     // Packs headed into 8-pack bags never reach the 2-pack fridge, so
@@ -2139,6 +2401,8 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
       recipeName: it.recipeName,
       color: it.recipeColor,
       category: it.recipeCategory,
+      itemId: it.itemId ?? null,
+      locked: it.status === "complete",
       seq: i + 1,
       target: it.batchesTarget,
       packs,
@@ -2162,6 +2426,8 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
       recipeName: r.recipeName,
       color: r.color,
       category: null,
+      itemId: null,
+      locked: false,
       seq: null,
       target: null,
       packs: null,
@@ -2204,12 +2470,23 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
   const dayCap = tomorrowMode ? `${packDayNameCap(data.today, data.tomorrow)}'s` : "Today's";
   // minmax on the recipe column: without it the 1fr track collapses to zero
   // on an iPad in portrait and the names vanish before anything truncates.
-  const cols = "grid-cols-[1.75rem_4.5rem_minmax(8rem,1fr)_4.75rem_5.25rem_4.75rem_5.75rem_5rem]";
+  // Compact (meeting) keeps a wider # column: the sequence number and the
+  // drag grip sit side by side instead of stacked, saving row height.
+  const cols = compact
+    ? "grid-cols-[3.4rem_3.9rem_minmax(8rem,1fr)_4.5rem_5rem_4.5rem_5.5rem_4.75rem]"
+    : "grid-cols-[2.25rem_4.5rem_minmax(8rem,1fr)_4.75rem_5.25rem_4.75rem_5.75rem_5rem]";
+  // Row sizing knobs — the compact deck view fits the whole table on one
+  // screen; the pack report keeps its roomier layout.
+  const rowPad = compact ? "px-4 py-1.5" : "px-5 py-3";
+  const negMy = compact ? "-my-1.5" : "-my-3";
+  const numTxt = compact ? "text-xl" : "text-2xl";
 
   return (
     <div>
-      <SectionTitle>{slide.title || "Order of Production"}</SectionTitle>
-      <SectionLead>{dayCap} order — Mac &amp; Cheese first, then the calzones. Red = short · amber = within 10 spare. Production columns go red when even {packDayLabel} make won't cover the pack.</SectionLead>
+      {!compact && <SectionTitle>{slide.title || "Order of Production"}</SectionTitle>}
+      {!compact && (
+        <SectionLead>{dayCap} order — Mac &amp; Cheese first, then the calzones. Red = short · amber = within 10 spare. Production columns go red when even {packDayLabel} make won't cover the pack.{canReorder && " Drag a row to change the production order — every station follows."}</SectionLead>
+      )}
 
       {/* Oversell pre-warning — shown in the morning meeting AND the pack
           report. Fires when fridge + today's whole production still leaves a
@@ -2245,7 +2522,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
         <div className="glass-panel rounded-2xl overflow-hidden overflow-x-auto">
          <div className="min-w-[44rem]">
           {/* Header */}
-          <div className={cn("grid gap-1.5 px-5 py-3 bg-secondary/30 text-base leading-snug font-bold text-muted-foreground items-start", cols)}>
+          <div className={cn("grid gap-1.5 bg-secondary/30 leading-snug font-bold text-muted-foreground items-start", compact ? "px-4 py-2 text-sm" : "px-5 py-3 text-base", cols)}>
             <span>#</span>
             <span>Start</span>
             <span>Recipe</span>
@@ -2267,25 +2544,33 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
                 <HeaderInfo>Where each recipe lands at close of play, with everything wrapped in and every remaining order out: fridge + still to wrap − left to dispatch. Negative means today's orders oversell what we'll have.</HeaderInfo>
               )}
             </span>
-            <span className="text-center self-stretch border-l-[3px] border-border pl-3 bg-secondary/40 -my-3 py-3">
+            <span className={cn("text-center self-stretch border-l-[3px] border-border pl-3 bg-secondary/40", compact ? "-my-2 py-2" : "-my-3 py-3")}>
               {dayCap} packs
               <HeaderInfo>{dayCap} production in 2-packs — batches × packs per batch, minus any packs going into 8-pack bags. Compare it straight against The difference: red means even this production won't cover what's left to dispatch, amber means it only just does (10 or fewer spare).</HeaderInfo>
             </span>
-            <span className="text-center self-stretch bg-secondary/40 -my-3 py-3">{dayCap} batches</span>
+            <span className={cn("text-center self-stretch bg-secondary/40", compact ? "-my-2 py-2" : "-my-3 py-3")}>{dayCap} batches</span>
           </div>
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleRowDragEnd}>
+          <SortableContext items={plannedRows.filter(r => r.itemId != null).map(r => r.itemId as number)} strategy={verticalListSortingStrategy}>
           {rows.map((r, i) => {
             const tone = r.stock?.tone;
+            // Three unmistakable states (Graeme, 2026-09-11: red and amber
+            // read too alike): short rows go strongly red, tight rows stay a
+            // pale amber, and healthy rows get a visible green wash instead
+            // of no colour at all — so the answer reads from across the room.
             const toneClass =
-              tone === "warn" ? "bg-amber-500/10 border-amber-500/40" :
-              tone === "bad"  ? "bg-red-500/10 border-red-500/50" :
+              tone === "warn" ? "bg-amber-400/10 border-amber-400/70" :
+              tone === "bad"  ? "bg-red-500/25 border-red-600" :
+              tone === "ok"   ? "bg-emerald-500/10 border-emerald-500/70" :
                                 "border-transparent";
             const numClass =
-              tone === "bad"  ? "text-red-700 dark:text-red-300" :
-              tone === "warn" ? "text-amber-800 dark:text-amber-300" :
+              tone === "bad"  ? "text-red-700 dark:text-red-300 font-extrabold" :
+              tone === "warn" ? "text-amber-700 dark:text-amber-300" :
+              tone === "ok"   ? "text-emerald-700 dark:text-emerald-400" :
                                 "";
             const firstUnplanned = r.seq === null && (i === 0 || rows[i - 1].seq !== null);
-            return (
-              <div key={r.recipeId}>
+            const body = (handle: React.ReactNode) => (
+              <div>
                 {firstUnplanned && (
                   <div className="px-5 py-1.5 bg-secondary/40 text-[11px] uppercase tracking-wide text-muted-foreground font-semibold border-t border-border/50">
                     In the fridge, but not on {packDayLabel} plan
@@ -2293,38 +2578,43 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
                 )}
                 <div
                   className={cn(
-                    "grid gap-1.5 items-center px-5 py-3 border-l-4",
+                    "grid gap-1.5 items-center border-l-4",
+                    rowPad,
                     cols,
                     toneClass,
                     i > 0 && !firstUnplanned && "border-t border-border/50",
                   )}
                 >
-                  <span className="text-2xl font-display font-bold tabular-nums text-muted-foreground">{r.seq ?? "–"}</span>
-                  <span className="text-2xl font-bold tabular-nums whitespace-nowrap">
+                  <span className={cn("flex items-center gap-0.5", compact ? "flex-row" : "flex-col")}>
+                    <span className={cn("font-display font-bold tabular-nums text-muted-foreground", numTxt)}>{r.seq ?? "–"}</span>
+                    {handle}
+                  </span>
+                  <span className={cn("font-bold tabular-nums whitespace-nowrap", numTxt)}>
                     {startByRecipe.get(r.recipeId) ?? <span className="text-muted-foreground">—</span>}
                   </span>
                   <div className="flex items-center gap-3 min-w-0">
                     <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: r.color ?? "hsl(var(--muted))" }} aria-hidden />
-                    <span className="text-2xl font-semibold truncate">{r.recipeName}</span>
+                    <span className={cn("font-semibold truncate", numTxt)}>{r.recipeName}</span>
                     {r.category === "Macaroni Cheese" && (
                       <span className="text-xs uppercase tracking-wide bg-amber-500/10 text-amber-700 dark:text-amber-300 px-2.5 py-0.5 rounded-full font-bold shrink-0">Mac</span>
                     )}
                   </div>
-                  <span className="text-2xl font-bold tabular-nums text-center">{r.stock ? r.stock.have : "—"}</span>
-                  <span className="text-2xl font-bold tabular-nums text-center">{r.stock ? r.stock.need : "—"}</span>
-                  <span className={cn("text-2xl font-bold tabular-nums text-center", numClass)}>
+                  <span className={cn("font-bold tabular-nums text-center", numTxt)}>{r.stock ? r.stock.have : "—"}</span>
+                  <span className={cn("font-bold tabular-nums text-center", numTxt)}>{r.stock ? r.stock.need : "—"}</span>
+                  <span className={cn("font-bold tabular-nums text-center", numTxt, numClass)}>
                     {r.stock ? (r.stock.surplus > 0 ? `+${r.stock.surplus}` : r.stock.surplus) : "—"}
                   </span>
                   <span className={cn(
-                    "self-stretch -my-3 py-1 flex flex-col items-center justify-center border-l-[3px] border-border pl-3 bg-secondary/20",
-                    r.stock?.prodTone === "bad" && r.packs !== null && "bg-red-500/15",
-                    r.stock?.prodTone === "warn" && r.packs !== null && "bg-amber-500/15",
+                    "self-stretch py-1 flex flex-col items-center justify-center border-l-[3px] border-border pl-3 bg-secondary/20",
+                    negMy,
+                    r.stock?.prodTone === "bad" && r.packs !== null && "bg-red-500/25",
+                    r.stock?.prodTone === "warn" && r.packs !== null && "bg-amber-400/15",
                   )}>
                     <span className={cn(
-                      "text-2xl font-bold tabular-nums whitespace-nowrap",
+                      "font-bold tabular-nums whitespace-nowrap", numTxt,
                       r.packs !== null && (
-                        r.stock?.prodTone === "bad" ? "text-red-700 dark:text-red-300" :
-                        r.stock?.prodTone === "warn" ? "text-amber-800 dark:text-amber-300" :
+                        r.stock?.prodTone === "bad" ? "text-red-700 dark:text-red-300 font-extrabold" :
+                        r.stock?.prodTone === "warn" ? "text-amber-700 dark:text-amber-300" :
                         tone === "bad" || tone === "warn" ? "text-emerald-700 dark:text-emerald-400" : ""
                       ),
                     )}>
@@ -2335,7 +2625,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
                       <span className="text-[10px] font-medium text-muted-foreground leading-tight whitespace-nowrap">after {r.bags} × 8-pk bags</span>
                     )}
                   </span>
-                  <span className="self-stretch -my-3 py-1 flex items-center justify-center bg-secondary/20 text-2xl font-bold tabular-nums whitespace-nowrap">
+                  <span className={cn("self-stretch py-1 flex items-center justify-center bg-secondary/20 font-bold tabular-nums whitespace-nowrap", negMy, numTxt)}>
                     {r.unit === "batches" && r.target !== null ? (
                       <>
                         {r.target}
@@ -2348,21 +2638,30 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
                 </div>
               </div>
             );
+            return r.itemId != null && canReorder ? (
+              <SortableProductionRow key={r.recipeId} id={r.itemId} disabled={r.locked || savingOrder}>
+                {body}
+              </SortableProductionRow>
+            ) : (
+              <div key={r.recipeId}>{body(null)}</div>
+            );
           })}
+          </SortableContext>
+          </DndContext>
           <div className={cn("grid gap-1.5 items-center px-5 py-3 border-t-2 border-border bg-secondary/30", cols)}>
             <span />
             <span />
-            <span className="text-2xl font-bold">Totals</span>
-            <span className="text-2xl font-bold tabular-nums text-center">{sumHave}</span>
-            <span className="text-2xl font-bold tabular-nums text-center">{sumNeed}</span>
-            <span className="text-2xl font-bold tabular-nums text-center">
+            <span className={cn("font-bold", numTxt)}>Totals</span>
+            <span className={cn("font-bold tabular-nums text-center", numTxt)}>{sumHave}</span>
+            <span className={cn("font-bold tabular-nums text-center", numTxt)}>{sumNeed}</span>
+            <span className={cn("font-bold tabular-nums text-center", numTxt)}>
               {sumSurplus > 0 ? `+${sumSurplus}` : sumSurplus}
             </span>
-            <span className="text-center self-stretch -my-3 flex items-center justify-center border-l-[3px] border-border pl-3 bg-secondary/20 text-2xl font-bold tabular-nums whitespace-nowrap">
+            <span className={cn("text-center self-stretch flex items-center justify-center border-l-[3px] border-border pl-3 bg-secondary/20 font-bold tabular-nums whitespace-nowrap", negMy, numTxt)}>
               {totalPacks}
               <span className="text-xs font-medium text-muted-foreground ml-1">pk</span>
             </span>
-            <span className="text-center self-stretch -my-3 flex items-center justify-center bg-secondary/20 text-2xl font-bold tabular-nums whitespace-nowrap">
+            <span className={cn("text-center self-stretch flex items-center justify-center bg-secondary/20 font-bold tabular-nums whitespace-nowrap", negMy, numTxt)}>
               {calzoneBatches}
               <span className="text-xs font-medium text-muted-foreground ml-1">bt</span>
             </span>
@@ -2371,8 +2670,9 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
         </div>
       )}
 
-      {/* Legend */}
-      {rows.length > 0 && (
+      {/* Legend — dropped in compact mode: the green/amber/red row washes
+          are self-explanatory and the slide needs the vertical space. */}
+      {!compact && rows.length > 0 && (
         <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-emerald-500 inline-block" /> Enough</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-500 inline-block" /> Tight</span>
@@ -2424,14 +2724,14 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
 function LocalDeliverySlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
   return (
     <div className="space-y-5">
-      <SectionTitle>{slide.title || "Local Despatch"}</SectionTitle>
+      <SectionTitle>{slide.title || "Local Dispatch"}</SectionTitle>
       <SectionLead>Going out and coming in.</SectionLead>
 
       {/* Static prompt — outbound local despatches via the butcher run.
           No data wired for this yet; the host calls it out verbally. */}
       <div className="glass-panel rounded-2xl p-8 border-2 border-blue-500/30 bg-blue-500/5">
         <p className="text-base font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-300 mb-2">Outbound</p>
-        <p className="text-4xl font-display font-bold leading-tight">Any local despatches today?</p>
+        <p className="text-4xl font-display font-bold leading-tight">Any local dispatches today?</p>
         <p className="text-xl text-muted-foreground mt-2">Orders going out with the butcher.</p>
       </div>
 
@@ -2522,6 +2822,10 @@ interface CalcRecipeRow {
   // each bag removes (8 / packSize) 2-packs from what the day yields.
   eightPackBagCount: number;
   fridgeStock: number;
+  // Shopify on-hand for freezer-stocked recipes (fried chicken): those never
+  // enter the production fridge, so fridgeStock is always 0 for them — this
+  // is their real sellable stock. Null for fridge-stocked recipes.
+  shopifyStock?: number | null;
   // Predicted end-of-today fridge stock: what's in the fridge NOW, plus what
   // the wrapping station still has to push in, minus what fulfilment still has
   // to pull out — clamped at zero.
@@ -2908,76 +3212,10 @@ function NewSopsSlide({ data, slide }: { data: DashboardData; slide: MeetingSlid
  *  Improvements Required idea list sits below it. No Complete button: an
  *  item leaves Required by being done properly in the Improvement Centre
  *  (marked done with before/after media), never by a tap here. */
-function StrugglesSlide({ data, onRefresh, slide }: { data: DashboardData; onRefresh: () => void; slide: MeetingSlide }) {
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const submit = async () => {
-    if (!title.trim() || !description.trim()) return;
-    setSubmitting(true);
-    try {
-      const res = await fetch(`${BASE}/api/improvements`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, description, station: "morning-meeting", type: "improvement", reportContext: "Raised in morning meeting" }),
-      });
-      if (!res.ok) throw new Error("Failed");
-      setTitle(""); setDescription("");
-      onRefresh();
-      toast({ title: "Struggle logged" });
-    } catch {
-      toast({ title: "Failed to log", variant: "destructive" });
-    } finally {
-      setSubmitting(false);
-    }
-  };
-  return (
-    <div>
-      <SectionTitle>{slide.title || "Improvements"}</SectionTitle>
-      <SectionLead>What we&apos;ve made better — and what&apos;s next. Play the clips, then scroll for what needs doing.</SectionLead>
-
-      <div className="mb-6">
-        <ImprovementsFeedList limit={6} />
-      </div>
-
-      {data.struggles.length > 0 && (
-        <div className="glass-panel rounded-2xl overflow-hidden mb-6">
-          <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground px-6 py-3 border-b border-border/50">Improvements required</p>
-          {data.struggles.map(s => (
-            <div key={s.id} className="px-6 py-4 border-b border-border/50 last:border-0">
-              <p className="text-2xl font-semibold leading-tight">{s.title}</p>
-              <p className="text-lg text-muted-foreground mt-1 leading-snug">{s.description}</p>
-              {s.assignedToName && (
-                <p className="text-base text-muted-foreground mt-1">Assigned to <span className="font-semibold text-foreground">{s.assignedToName}</span></p>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="glass-panel rounded-2xl p-6">
-        <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground mb-3">Log a new struggle</p>
-        <input
-          value={title}
-          onChange={e => setTitle(e.target.value)}
-          placeholder="Short title — what's the problem?"
-          className="w-full bg-background border border-border rounded-xl p-3 text-base mb-2 focus:outline-none focus:ring-2 focus:ring-primary/30"
-        />
-        <textarea
-          value={description}
-          onChange={e => setDescription(e.target.value)}
-          placeholder="A sentence or two of detail"
-          className="w-full min-h-[80px] bg-background border border-border rounded-xl p-3 text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
-        />
-        <div className="flex justify-end mt-3">
-          <button onClick={submit} disabled={!title.trim() || !description.trim() || submitting} className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 disabled:opacity-50">
-            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Log struggle"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+// The Improvements slide IS the Improvements page (Graeme, 2026-09-14):
+// leaderboard on top, the same filters and feed, scrollable in the slide
+// body — one surface to learn, not two diverging ones. Rendered directly
+// in the slide switch below.
 
 /** What the meeting scrolls through to celebrate finished work — the same
  *  feed as the Improvement Centre, media inline and playable on the slide:
@@ -3306,8 +3544,12 @@ const GRATITUDE_PHOTO_THEMES = [
 // Live, key-less themed image for the fallback. LoremFlickr serves a random
 // Creative-Commons photo matching the tag; `lock=<seed>` pins it for the whole
 // day so it doesn't reshuffle on every render, but rotates day to day.
-function fallbackGratitudePhotoUrl(dateIso: string): string {
-  const seed = dateSeed(dateIso);
+// `shuffle` is the meeting's stored shuffle counter — bumping it from the
+// setup screen re-rolls the day's pick when it's a dud (the cat incident,
+// Graeme 2026-09-11). Prime multiplier so consecutive bumps land on a
+// genuinely different lock, not the next photo in the same sequence.
+export function fallbackGratitudePhotoUrl(dateIso: string, shuffle = 0): string {
+  const seed = dateSeed(dateIso) + shuffle * 7919;
   const theme = GRATITUDE_PHOTO_THEMES[seed % GRATITUDE_PHOTO_THEMES.length];
   return `https://loremflickr.com/1200/800/${encodeURIComponent(theme)}?lock=${seed}`;
 }
@@ -3328,7 +3570,7 @@ function GratitudeSlide({ data, slide, onRefresh }: { data: DashboardData; slide
   const [fallbackFailed, setFallbackFailed] = useState(false);
 
   const uploadedUrl = meetingId ? `${BASE}/api/morning-meetings/${meetingId}/gratitude-photo` : "";
-  const fallbackUrl = fallbackGratitudePhotoUrl(todayIso);
+  const fallbackUrl = fallbackGratitudePhotoUrl(todayIso, data.meeting?.gratitudeSeed ?? 0);
 
   // Show an image whenever we have an uploaded one, or the live themed fallback
   // hasn't failed to load. If the fallback can't load (e.g. offline), drop back
@@ -3340,7 +3582,10 @@ function GratitudeSlide({ data, slide, onRefresh }: { data: DashboardData; slide
   // light or dark, from across the room.
   const captionShadow = { textShadow: "0 4px 24px rgba(0,0,0,0.85), 0 2px 6px rgba(0,0,0,0.95)" } as const;
   const labelShadow = { textShadow: "0 2px 8px rgba(0,0,0,0.9)" } as const;
-  const overlayText = hasPhoto ? serverCaption : prompt.line;
+  // No auto-generated caption over the fallback photo (Graeme, 2026-09-11:
+  // the rotating prompts read as the same line every day). Only a caption
+  // the host actually typed gets overlaid.
+  const overlayText = hasPhoto ? serverCaption : "";
 
   return (
     <div className="relative w-full flex-1 min-h-0 rounded-3xl overflow-hidden shadow-inner bg-gradient-to-br from-rose-100 via-amber-50 to-emerald-100 dark:from-rose-900/30 dark:via-amber-900/20 dark:to-emerald-900/30">
@@ -3419,7 +3664,7 @@ const SLIDE_KIND_CATALOG: Array<{ kind: SlideKind; label: string; description: s
   { kind: "yesterday_kpis",      label: "Yesterday's Numbers",  description: "Building rate, packing rate, wonkies" },
   { kind: "station_assignments", label: "Who's On Today",       description: "Stations and who's rostered on each, live from Planday" },
   { kind: "order_of_production", label: "Order of Production",  description: "Today's recipe order + batches, with shortages colour-coded" },
-  { kind: "local_delivery",      label: "Local Despatch",       description: "Any local despatches + today's deliveries in" },
+  { kind: "local_delivery",      label: "Local Dispatch",       description: "Any local dispatches + today's deliveries in" },
   { kind: "bag_orders",          label: "Bag Orders",           description: "Discussion prompt" },
   { kind: "safety_issues",       label: "Safety Issues",        description: "Open andons + log new" },
   { kind: "system_updates",      label: "System Updates",       description: "Auto-pulls recent commits to the planner" },
@@ -3607,6 +3852,7 @@ function SlideEditor({
                     if (confirm(`Remove "${s.title}" from this list?`)) removeSlide.mutate(s.id);
                   }}
                   onPhotoChanged={() => queryClient.invalidateQueries({ queryKey })}
+                  blocksEnabled={mode !== "template"}
                 />
               ))}
             </div>
@@ -3668,7 +3914,6 @@ function SlideEditor({
 function SlidePhotoEditor({ slide, onChanged }: { slide: EditorSlide; onChanged: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
-  const [pendingCrop, setPendingCrop] = useState<File | null>(null);
   const [caption, setCaption] = useState(slide.photoCaption ?? "");
   const [busy, setBusy] = useState(false);
   const [cacheBust, setCacheBust] = useState(0);
@@ -3716,16 +3961,9 @@ function SlidePhotoEditor({ slide, onChanged }: { slide: EditorSlide; onChanged:
       )}
 
       <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
-        onChange={e => { const f = e.target.files?.[0]; if (f) setPendingCrop(f); e.target.value = ""; }} />
+        onChange={e => { const f = e.target.files?.[0]; if (f) void upload(f); e.target.value = ""; }} />
       <input ref={fileRef} type="file" accept="image/*" className="hidden"
-        onChange={e => { const f = e.target.files?.[0]; if (f) setPendingCrop(f); e.target.value = ""; }} />
-      {pendingCrop && (
-        <ImageCropDialog
-          file={pendingCrop}
-          onCancel={() => setPendingCrop(null)}
-          onCropped={async cropped => { setPendingCrop(null); await upload(cropped); }}
-        />
-      )}
+        onChange={e => { const f = e.target.files?.[0]; if (f) void upload(f); e.target.value = ""; }} />
 
       <div className="flex gap-2 flex-wrap">
         <button onClick={() => cameraRef.current?.click()} disabled={busy}
@@ -3766,8 +4004,156 @@ function SlidePhotoEditor({ slide, onChanged }: { slide: EditorSlide; onChanged:
   );
 }
 
+/**
+ * Presentation blocks on one meeting slide (Graeme, 2026-09-11): a big
+ * sentence, a photo, or a video, added on the day — the deck becomes a
+ * presentation the host can extend with examples thought of that morning.
+ * Blocks stack under the slide's own content in the order they're added.
+ */
+function SlideBlocksEditor({ slideId, onChanged }: { slideId: number; onChanged: () => void }) {
+  const queryClient = useQueryClient();
+  const queryKey = ["slide-blocks", slideId];
+  const { data: blocks = [] } = useQuery<SlideBlock[]>({
+    queryKey,
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/morning-meetings/slides/${slideId}/blocks`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load blocks");
+      return res.json();
+    },
+  });
+  const [busy, setBusy] = useState(false);
+  const [addingText, setAddingText] = useState(false);
+  const [text, setText] = useState("");
+  const imageRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLInputElement>(null);
+
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey });
+    onChanged();
+  };
+
+  const addBlock = async (form: FormData, doneMsg: string) => {
+    setBusy(true);
+    try {
+      const res = await fetch(`${BASE}/api/morning-meetings/slides/${slideId}/blocks`, {
+        method: "POST", credentials: "include", body: form,
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "Upload failed");
+      refresh();
+      toast({ title: doneMsg });
+    } catch (e) {
+      toast({ title: "Couldn't add that", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  const addText = async () => {
+    if (!text.trim()) return;
+    const form = new FormData();
+    form.append("kind", "text");
+    form.append("content", text.trim());
+    await addBlock(form, "Text added to this slide");
+    setText("");
+    setAddingText(false);
+  };
+
+  const addMedia = async (kind: "image" | "video", file: File) => {
+    const form = new FormData();
+    form.append("kind", kind);
+    form.append("file", file);
+    await addBlock(form, kind === "image" ? "Photo added to this slide" : "Video added to this slide");
+  };
+
+  const removeBlock = async (id: number) => {
+    setBusy(true);
+    try {
+      await fetch(`${BASE}/api/morning-meetings/slide-blocks/${id}`, { method: "DELETE", credentials: "include" });
+      refresh();
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="border-t border-border/60 pt-3">
+      <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5 block">
+        Extra content on this slide (optional)
+      </label>
+      <p className="text-xs text-muted-foreground mb-2">
+        Add a big sentence, a photo or a video — they show under the slide's own content, in this order.
+      </p>
+
+      {blocks.length > 0 && (
+        <div className="space-y-2 mb-3">
+          {blocks.map(b => (
+            <div key={b.id} className="flex items-center gap-3 border border-border rounded-lg p-2 bg-background/60">
+              {b.kind === "text" ? (
+                <p className="flex-1 min-w-0 text-sm font-semibold truncate">“{b.content}”</p>
+              ) : b.kind === "video" ? (
+                <>
+                  <video src={`${BASE}/api/morning-meetings/slide-blocks/${b.id}/media`} className="w-16 h-12 rounded object-cover bg-black flex-shrink-0" muted playsInline preload="metadata" />
+                  <p className="flex-1 min-w-0 text-sm text-muted-foreground truncate">Video{b.content ? ` — ${b.content}` : ""}</p>
+                </>
+              ) : (
+                <>
+                  <img src={`${BASE}/api/morning-meetings/slide-blocks/${b.id}/media`} alt="" className="w-16 h-12 rounded object-cover bg-black/5 flex-shrink-0" />
+                  <p className="flex-1 min-w-0 text-sm text-muted-foreground truncate">Photo{b.content ? ` — ${b.content}` : ""}</p>
+                </>
+              )}
+              <button onClick={() => removeBlock(b.id)} disabled={busy}
+                className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:opacity-50 flex-shrink-0"
+                aria-label="Remove this block">
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {addingText ? (
+        <div className="mb-2">
+          <textarea
+            value={text}
+            onChange={e => setText(e.target.value)}
+            rows={2}
+            maxLength={500}
+            autoFocus
+            placeholder="The big sentence to show on the slide…"
+            className="w-full bg-background border border-border rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+          <div className="flex gap-2 mt-1.5">
+            <button onClick={addText} disabled={busy || !text.trim()}
+              className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold disabled:opacity-50">
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add text"}
+            </button>
+            <button onClick={() => { setAddingText(false); setText(""); }} className="px-3 py-1.5 rounded-lg border border-border text-sm">
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex gap-2 flex-wrap">
+          <input ref={imageRef} type="file" accept="image/*" className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) void addMedia("image", f); e.target.value = ""; }} />
+          <input ref={videoRef} type="file" accept="video/*" className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) void addMedia("video", f); e.target.value = ""; }} />
+          <button onClick={() => setAddingText(true)} disabled={busy}
+            className="px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+            <Plus className="w-4 h-4" /> Text
+          </button>
+          <button onClick={() => imageRef.current?.click()} disabled={busy}
+            className="px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImageIcon className="w-4 h-4" />} Photo
+          </button>
+          <button onClick={() => videoRef.current?.click()} disabled={busy}
+            className="px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+            <Play className="w-4 h-4" /> Video
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SortableSlideRow({
-  slide, expanded, onToggle, onSave, onRemove, onPhotoChanged,
+  slide, expanded, onToggle, onSave, onRemove, onPhotoChanged, blocksEnabled,
 }: {
   slide: EditorSlide;
   expanded: boolean;
@@ -3775,6 +4161,9 @@ function SortableSlideRow({
   onSave: (patch: Partial<EditorSlide>) => void;
   onRemove: () => void;
   onPhotoChanged: () => void;
+  /** Presentation blocks hang off meeting slides only — the master
+   *  template has no per-day content, so the editor hides them there. */
+  blocksEnabled: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: slide.id });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 };
@@ -3888,6 +4277,7 @@ function SortableSlideRow({
             </div>
           )}
           <SlidePhotoEditor slide={slide} onChanged={onPhotoChanged} />
+          {blocksEnabled && <SlideBlocksEditor slideId={slide.id} onChanged={onPhotoChanged} />}
           <div className="flex items-center justify-end gap-2">
             <button
               onClick={() => { setTitle(slide.title); setContentMd(slide.contentMd ?? ""); setVideoUrl(initialVideoUrl); }}

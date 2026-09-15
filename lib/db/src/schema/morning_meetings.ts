@@ -193,6 +193,10 @@ export const morningMeetingsTable = pgTable("morning_meetings", {
   gratitudePhoto: bytea("gratitude_photo"),
   gratitudePhotoMime: text("gratitude_photo_mime"),
   gratitudeCaption: text("gratitude_caption"),
+  // Shuffle counter for the fallback themed image: bumping it picks a
+  // different photo for the day so the host can skip a bad one from the
+  // setup screen (migration 0097).
+  gratitudeSeed: integer("gratitude_seed"),
   // Names of anyone in on a trial shift today, typed by the presenter on
   // the setup screen; the opening slide shows a welcome only when set
   // (migration 0056).
@@ -219,6 +223,23 @@ export const meetingSlidesTable = pgTable("meeting_slides", {
   photoCaption: text("photo_caption"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// Free-form presentation blocks a host can pin to any slide on the day
+// (Graeme, 2026-09-11): a big sentence, a photo, or a video, stacked under
+// the slide's built-in content so the deck can be extended like a
+// presentation with examples thought of on the morning. Per-meeting, so
+// tomorrow's deck starts clean (migration 0098).
+export const meetingSlideBlocksTable = pgTable("meeting_slide_blocks", {
+  id: serial("id").primaryKey(),
+  slideId: integer("slide_id").notNull().references(() => meetingSlidesTable.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(), // 'text' | 'image' | 'video'
+  // Text blocks: the big sentence itself. Media blocks: optional caption.
+  content: text("content"),
+  media: bytea("media"),
+  mediaMime: text("media_mime"),
+  position: integer("position").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export const meetingGratitudeTable = pgTable("meeting_gratitude", {
