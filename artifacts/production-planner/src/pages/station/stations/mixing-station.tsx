@@ -66,7 +66,9 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { BreakTracker } from "../shared/break-tracker";
 import { useModalScrollKeeper, useNoScrollAutoFocus } from "@/hooks/use-modal-scroll";
-import { getStationCount, isMacCheese } from "../shared/constants";
+import { createPortal } from "react-dom";
+import { getStationCount, isMacCheese, STATION_VIEW_ROW_SLOT_ID } from "../shared/constants";
+import { tinsCompleteFrom } from "../shared/tin-math";
 import type { PrepRecipeDetail, PrepMarinadeDetail, PrepIngredientDetail } from "./prep-hub";
 
 // Weight the cooked meat filling should come to once every tray is out of the
@@ -133,6 +135,14 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
   const authUser = state.status === "authenticated" ? state.user : null;
 
   const [mixingTab, setMixingTab] = useState<"tins" | "cooking">("cooking");
+  // The toggle-row slot exists only after the parent's first commit, so
+  // look it up in an effect rather than during render (shared station
+  // pattern, Graeme 2026-09-16 — daily progress rides beside the
+  // Checklist/Production toggle instead of costing its own card).
+  const [viewRowSlot, setViewRowSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setViewRowSlot(document.getElementById(STATION_VIEW_ROW_SLOT_ID));
+  }, []);
   // key = `${recipeId}-${ingredientId}`, value = map of trayIdx → 0 (empty), 1 (in oven), 2 (done)
   const [trayStates, setTrayStates] = useState<Record<string, Record<number, 0 | 1 | 2>>>({});
   // key = `${recipeId}-${ingredientId}`, value = map of trayIdx → pack count (1 or 2, default 2)
@@ -721,7 +731,7 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
     const mixed = getStationCount(item, "mixing");
     const tinsTarget = item.mixingTinOverride ?? calcTins(target, bpt);
     const batchesPerTinEven = tinsTarget > 0 ? Math.ceil(target / tinsTarget) : target;
-    const tinsComplete = tinsTarget > 0 ? Math.min(Math.floor(mixed / batchesPerTinEven), tinsTarget) : 0;
+    const tinsComplete = tinsCompleteFrom(mixed, tinsTarget, batchesPerTinEven);
     if (mixed >= target && target > 0) {
       return { tinsTarget, tinsComplete: tinsTarget, batchesPerTinEven, mixed, target, allDone: true };
     }
@@ -1053,34 +1063,36 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
     )}
     <div className="space-y-4">
       {sopViewer.dialog}
-      <div className="bg-card border border-border rounded-xl p-4">
-        <div className="flex items-center justify-between mb-2">
-          <div>
-            <h2 className="font-semibold text-lg">Today's Production</h2>
-            <p className="text-base text-muted-foreground">
-              {totalTinsComplete} of {totalTinsTarget} tins complete · {totalBatchesDone} / {totalBatchesTarget} batches
+      {/* Daily progress — a slim strip portalled beside the Checklist/
+          Production toggle so they share one line (Graeme, 2026-09-16);
+          the old full-width card cost a whole band of height. Falls back
+          inline when the toggle row isn't rendered. */}
+      {(() => {
+        const strip = (
+          <div className="flex items-center gap-3 min-w-0">
+            <p className="text-sm font-medium truncate">
+              {totalTinsComplete}/{totalTinsTarget} tins
+              <span className="text-xs font-normal text-muted-foreground"> · {totalBatchesDone}/{totalBatchesTarget} batches</span>
             </p>
+            <div className="flex-1 min-w-[60px] h-2 bg-secondary rounded-full overflow-hidden">
+              <div
+                className={cn("h-full rounded-full transition-all", overallProgress >= 100 ? "bg-emerald-500" : "bg-primary")}
+                style={{ width: `${Math.min(overallProgress, 100)}%` }}
+              />
+            </div>
+            <span className="text-lg font-bold tabular-nums flex-shrink-0">{overallProgress}%</span>
           </div>
-          <span className="text-3xl font-bold font-display">{overallProgress}%</span>
-        </div>
-        <div className="w-full h-3 bg-secondary rounded-full overflow-hidden">
-          <div
-            className={cn(
-              "h-full rounded-full transition-all",
-              overallProgress >= 100 ? "bg-emerald-500" : "bg-primary"
-            )}
-            style={{ width: `${Math.min(overallProgress, 100)}%` }}
-          />
-        </div>
+        );
+        return viewRowSlot ? createPortal(strip, viewRowSlot) : strip;
+      })()}
 
-      </div>
-
-      {/* ── Big tab switcher ── */}
+      {/* ── Tab switcher — half its old height; the saved band goes to the
+          queue below, which is what actually needs the room. ── */}
       <div className="flex gap-2">
         <button
           onClick={() => setMixingTab("cooking")}
           className={cn(
-            "flex-1 py-4 rounded-xl font-bold text-xl transition-all border-2 bg-card",
+            "flex-1 py-2.5 rounded-xl font-bold text-base transition-all border-2 bg-card",
             mixingTab === "cooking"
               ? "border-rose-500 text-rose-600 dark:text-rose-400"
               : "border-border text-muted-foreground hover:border-rose-400/60 hover:text-foreground"
@@ -1091,7 +1103,7 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
         <button
           onClick={() => setMixingTab("tins")}
           className={cn(
-            "flex-1 py-4 rounded-xl font-bold text-xl transition-all border-2 bg-card",
+            "flex-1 py-2.5 rounded-xl font-bold text-base transition-all border-2 bg-card",
             mixingTab === "tins"
               ? "border-primary text-primary"
               : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
@@ -1107,18 +1119,24 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
         const doneCooking = allCooking.filter(isCookingRecipeDone);
         const visibleCooking = showCompleted ? allCooking : allCooking.filter(r => !isCookingRecipeDone(r));
         return (
-        <div className="space-y-4">
-          {doneCooking.length > 0 && (
-            <div className="flex justify-end">
+        <div className="space-y-3">
+          {/* List header — same shape as the tins tab: the show-completed
+              toggle sits INSIDE the list's own header row, top right, so it
+              stops costing a band of vertical space (Graeme, 2026-09-16). */}
+          <div className="flex items-center justify-between gap-2 px-1 flex-wrap">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              Meat Cooking — {doneCooking.length}/{allCooking.length} done
+            </h3>
+            {doneCooking.length > 0 && (
               <button
                 onClick={toggleShowCompleted}
-                className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-full border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+                className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
               >
-                {showCompleted ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                {showCompleted ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 {showCompleted ? "Hide completed" : `Show completed (${doneCooking.length})`}
               </button>
-            </div>
-          )}
+            )}
+          </div>
           {allCooking.length === 0 ? (
             <div className="bg-card border border-border rounded-xl p-6 text-center text-muted-foreground text-sm">
               No raw meat trays for this plan — cooking settings not yet configured on ingredients.
@@ -1512,7 +1530,7 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                 const bpt = item.maxBatchesPerTin ?? 1;
                 const tinsTarget = item.mixingTinOverride ?? calcTins(target, bpt);
                 const batchesPerTinEven = tinsTarget > 0 ? Math.ceil(target / tinsTarget) : target;
-                let tinsComplete = tinsTarget > 0 ? Math.min(Math.floor(mixingCount / batchesPerTinEven), tinsTarget) : 0;
+                let tinsComplete = tinsCompleteFrom(mixingCount, tinsTarget, batchesPerTinEven);
                 if (mixingCount >= target && target > 0) tinsComplete = tinsTarget;
                 const allTinsDone = tinsComplete >= tinsTarget;
                 const progress = tinsTarget > 0 ? Math.round((tinsComplete / tinsTarget) * 100) : 0;
