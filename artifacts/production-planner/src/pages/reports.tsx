@@ -317,9 +317,16 @@ export default function Reports() {
   const isManagerOrAdmin = userRole === "admin" || userRole === "manager";
 
   // Require PIN re-entry on entering Analytics (5-min unlock window).
+  // The Employee Records tab is people-data: it prompts EVERYONE on every
+  // entry, admins included — same posture as the Employee Hub and the
+  // return-to-work forms (Graeme, 2026-09-16). Charter note: this extends
+  // the page's EXISTING pin hook rather than adding a feature to this file.
+  const onEmployeesTab = new URLSearchParams(search).get("tab") === "employees";
   useEffect(() => {
-    if (state.status === "authenticated" && isManagerOrAdmin) requireSensitivePin();
-  }, [state.status, isManagerOrAdmin, requireSensitivePin]);
+    if (state.status !== "authenticated") return;
+    if (onEmployeesTab) requireSensitivePin({ includeAdmins: true, fresh: true });
+    else if (isManagerOrAdmin) requireSensitivePin();
+  }, [state.status, isManagerOrAdmin, onEmployeesTab, requireSensitivePin]);
 
   // Viewers only see the Issue Log tab; managers see everything except admin-only tabs; admins see everything.
   const isAdmin = userRole === "admin";
