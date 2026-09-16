@@ -7,7 +7,7 @@ import { EightPackOrdersBanner } from "@/components/eight-pack-orders-banner";
 import { StockGateBanner } from "@/components/stock-gate-banner";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { format, isToday, startOfWeek, addWeeks, addDays } from "date-fns";
-import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X, Sparkles, Salad, UserPlus, ClipboardList } from "lucide-react";
+import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X, Sparkles, Salad, UserPlus, ClipboardList, Layers, UtensilsCrossed, Drumstick, Waves, Flame } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/contexts/auth-context";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from "recharts";
@@ -229,10 +229,12 @@ async function fetchTodayBatchCount(planIds: number[]): Promise<{
   calzoneBatches: number;
   macPacks: number;
   calzoneBuilt: number;
+  calzoneMixed: number;
+  ovensDone: number;
   packsTotal: number;
   packsWrapped: number;
 }> {
-  const empty = { calzoneBatches: 0, macPacks: 0, calzoneBuilt: 0, packsTotal: 0, packsWrapped: 0 };
+  const empty = { calzoneBatches: 0, macPacks: 0, calzoneBuilt: 0, calzoneMixed: 0, ovensDone: 0, packsTotal: 0, packsWrapped: 0 };
   if (planIds.length === 0) return empty;
   const totals = { ...empty };
   for (const id of planIds) {
@@ -243,12 +245,16 @@ async function fetchTodayBatchCount(planIds: number[]): Promise<{
       const target = it.batchesTarget ?? 0;
       const sc = it.stationCompletions ?? {};
       const built = (sc.building_1 ?? 0) + (sc.building_2 ?? 0);
+      // Ovens process everything (mac packs go through the blast-chiller
+      // flow on the same station), so the ovens bar spans all items.
+      totals.ovensDone += Math.min(sc.ovens ?? 0, target);
       if (it.recipeCategory === MAC_CHEESE_CATEGORY) {
         totals.macPacks += target;
       } else {
         totals.calzoneBatches += target;
         // Cap per item so extra packs can't push the day past its total
         totals.calzoneBuilt += Math.min(built, target);
+        totals.calzoneMixed += Math.min(sc.mixing ?? 0, target);
       }
       if (target > 0) {
         // Planned pack units for the day: 2-packs after the 8-pack bags take
@@ -652,6 +658,33 @@ export default function Dashboard() {
     },
   });
   const prepPlanId = prepTarget?.planId ?? null;
+
+  // Dough card — dough (and sheeting) also work ahead of production, so
+  // resolve the plan whose dough is due the same way the dough stations do
+  // (/next-active walking the dough_date column).
+  const { data: doughTarget } = useQuery({
+    queryKey: ["dashboard-next-dough", todayStr],
+    refetchInterval: 60000,
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/production-plans/next-active?afterDate=${todayStr}&for=dough`, { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json() as Promise<{ planId: number | null; planDate: string | null; status: string | null }>;
+    },
+  });
+  const doughPlanId = doughTarget?.planId ?? null;
+
+  // One Building card for both tables: tapping it asks which table you're
+  // working at (Graeme, 2026-09-16), instead of two cards or a detour
+  // through the production plan.
+  const [buildChooserOpen, setBuildChooserOpen] = useState(false);
+
+  // Station links land straight on today's plan's station screens — the
+  // dashboard IS the station picker now, no production-plan detour.
+  const todayPlanId = todayPlans[0]?.id ?? null;
+  const stationHref = (key: string) =>
+    todayPlanId ? `/plans/${todayPlanId}/station/${key}?from=dashboard` : "/plans";
+  const doughHref = (key: string) =>
+    doughPlanId ? `/plans/${doughPlanId}/station/${key}?direct=1&from=dashboard` : "/plans";
   const { data: prepBatches } = useQuery({
     queryKey: ["dashboard-prep-batches", prepPlanId],
     enabled: prepPlanId != null,
@@ -736,25 +769,87 @@ export default function Dashboard() {
       <EightPackOrdersBanner userRole={userRole} />
       <StockGateBanner userRole={userRole} />
 
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
+      {/* Not-a-station row — the day's admin, above the stations so the
+          station grid below reads as one thing: "go to where you work". */}
+      <div className="grid grid-cols-3 gap-4">
         <StatCard
-          title="Building"
-          value={batchesLoading ? "…" : formatProgressValue(totalBatches?.calzoneBuilt ?? 0, totalBatches?.calzoneBatches ?? 0)}
-          subtitle={batchesLoading ? undefined : [
-            teamBph > 0 ? `${teamBph.toFixed(1)} batches/hr` : null,
-            (totalBatches?.macPacks ?? 0) > 0 ? `+ ${totalBatches!.macPacks} mac packs` : null,
-          ].filter(Boolean).join(" · ") || undefined}
-          icon={ChefHat}
-          color="text-primary"
-          bg="bg-primary/10"
-          href={todayPlans.length > 0 ? `/plans?planId=${todayPlans[0].id}` : "/plans"}
-          progress={!batchesLoading && (totalBatches?.calzoneBatches ?? 0) > 0 ? {
-            done: totalBatches!.calzoneBuilt,
-            total: totalBatches!.calzoneBatches,
-            label: "built",
-            barClass: "bg-primary",
+          title="Deliveries Arriving"
+          value={formatProgressValue(todayDeliveriesCount?.arrived ?? 0, todayDeliveriesCount?.total ?? 0)}
+          icon={PackageCheck}
+          color="text-emerald-500"
+          bg="bg-emerald-500/10"
+          href="/deliveries"
+          progress={(todayDeliveriesCount?.total ?? 0) > 0 ? {
+            done: todayDeliveriesCount!.arrived,
+            total: todayDeliveriesCount!.total,
+            label: "arrived",
+            barClass: "bg-emerald-500",
             hideDetail: true,
           } : undefined}
+        />
+        <StatCard
+          title="Pack Report"
+          value="→"
+          subtitle="Stock vs dispatch — today's pack"
+          icon={ClipboardList}
+          color="text-violet-500"
+          bg="bg-violet-500/10"
+          href="/pack-report"
+        />
+        <StatCard
+          title="Morning Meeting"
+          value="▶"
+          subtitle="10-min Two Second Lean"
+          icon={Sparkles}
+          color="text-amber-500"
+          bg="bg-amber-500/10"
+          href="/meeting"
+        />
+      </div>
+
+      {/* Every station, in production-flow order — log in, tap where you
+          work, no production-plan detour (Graeme, 2026-09-16). Exit Station
+          brings everyone back here. */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+        <StatCard
+          title="Dough Prep"
+          value="→"
+          subtitle={doughTarget?.planDate
+            ? `dough for ${format(new Date(doughTarget.planDate + "T00:00:00"), "EEE d MMM")}`
+            : "no upcoming plan"}
+          icon={Layers}
+          color="text-amber-600"
+          bg="bg-amber-500/10"
+          href={doughHref("dough_prep")}
+        />
+        <StatCard
+          title="Mac Cheese"
+          value={(totalBatches?.macPacks ?? 0) > 0 ? totalBatches!.macPacks.toString() : "→"}
+          subtitle={(totalBatches?.macPacks ?? 0) > 0 ? "packs today" : "Macaroni cheese station"}
+          icon={UtensilsCrossed}
+          color="text-yellow-600"
+          bg="bg-yellow-500/10"
+          href={stationHref("macaroni_cheese")}
+        />
+        <StatCard
+          title="Fried Chicken"
+          value="→"
+          subtitle="Fried chicken station"
+          icon={Drumstick}
+          color="text-orange-600"
+          bg="bg-orange-500/10"
+          href={stationHref("fried_chicken")}
+        />
+        <StatCard
+          title="Sheeting"
+          value="→"
+          subtitle={doughTarget?.planDate
+            ? `dough for ${format(new Date(doughTarget.planDate + "T00:00:00"), "EEE d MMM")}`
+            : "no upcoming plan"}
+          icon={Layers}
+          color="text-amber-500"
+          bg="bg-amber-500/10"
+          href={doughHref("dough_sheeting")}
         />
         <StatCard
           title="Prepping For"
@@ -780,38 +875,54 @@ export default function Dashboard() {
           } : undefined}
         />
         <StatCard
-          title="Packing"
-          value={currentWeekLoading ? "…" : (todayShopifyOrderCount ?? todayDispatches.length).toString()}
-          subtitle={packingOph > 0 ? `${packingOph.toFixed(1)} orders/hr packed` : undefined}
-          icon={Truck}
+          title="Mixing"
+          value={batchesLoading ? "…" : formatProgressValue(totalBatches?.calzoneMixed ?? 0, totalBatches?.calzoneBatches ?? 0)}
+          icon={Waves}
           color="text-blue-500"
           bg="bg-blue-500/10"
-          // Straight into today's PACKING STATION — that's where the person
-          // tapping this card is headed (Graeme, 2026-08-19; it used to jump
-          // to the despatch page instead). Falls back to the despatch wave
-          // when no plan is open today.
-          href={todayPlans.length > 0
-            ? `/plans/${todayPlans[0].id}/station/packing?from=dashboard`
-            : `/fulfilment?tag=${format(addDays(new Date(), 1), "yyyy-MM-dd")}`}
-          progress={todayIndex >= 0 && (currentWeekOrders![todayIndex].orderCount ?? 0) > 0 ? {
-            done: currentWeekOrders![todayIndex].fulfilledCount,
-            total: currentWeekOrders![todayIndex].orderCount,
-            label: "fulfilled",
+          href={stationHref("mixing")}
+          progress={!batchesLoading && (totalBatches?.calzoneBatches ?? 0) > 0 ? {
+            done: totalBatches!.calzoneMixed,
+            total: totalBatches!.calzoneBatches,
+            label: "mixed",
             barClass: "bg-blue-500",
+            hideDetail: true,
           } : undefined}
         />
         <StatCard
-          title="Deliveries Arriving"
-          value={formatProgressValue(todayDeliveriesCount?.arrived ?? 0, todayDeliveriesCount?.total ?? 0)}
-          icon={PackageCheck}
-          color="text-emerald-500"
-          bg="bg-emerald-500/10"
-          href="/deliveries"
-          progress={(todayDeliveriesCount?.total ?? 0) > 0 ? {
-            done: todayDeliveriesCount!.arrived,
-            total: todayDeliveriesCount!.total,
-            label: "arrived",
-            barClass: "bg-emerald-500",
+          title="Building"
+          value={batchesLoading ? "…" : formatProgressValue(totalBatches?.calzoneBuilt ?? 0, totalBatches?.calzoneBatches ?? 0)}
+          subtitle={batchesLoading ? undefined : [
+            teamBph > 0 ? `${teamBph.toFixed(1)} batches/hr` : null,
+            (totalBatches?.macPacks ?? 0) > 0 ? `+ ${totalBatches!.macPacks} mac packs` : null,
+          ].filter(Boolean).join(" · ") || "Tap, then pick your table"}
+          icon={ChefHat}
+          color="text-primary"
+          bg="bg-primary/10"
+          // One card for both tables: it asks which one you're at, so the
+          // two building-station buttons collapse into one.
+          onClick={todayPlanId ? () => setBuildChooserOpen(true) : undefined}
+          href={todayPlanId ? undefined : "/plans"}
+          progress={!batchesLoading && (totalBatches?.calzoneBatches ?? 0) > 0 ? {
+            done: totalBatches!.calzoneBuilt,
+            total: totalBatches!.calzoneBatches,
+            label: "built",
+            barClass: "bg-primary",
+            hideDetail: true,
+          } : undefined}
+        />
+        <StatCard
+          title="Ovens"
+          value={batchesLoading ? "…" : formatProgressValue(totalBatches?.ovensDone ?? 0, (totalBatches?.calzoneBatches ?? 0) + (totalBatches?.macPacks ?? 0))}
+          icon={Flame}
+          color="text-red-500"
+          bg="bg-red-500/10"
+          href={stationHref("ovens")}
+          progress={!batchesLoading && ((totalBatches?.calzoneBatches ?? 0) + (totalBatches?.macPacks ?? 0)) > 0 ? {
+            done: totalBatches!.ovensDone,
+            total: (totalBatches!.calzoneBatches) + (totalBatches!.macPacks),
+            label: "cooked",
+            barClass: "bg-red-500",
             hideDetail: true,
           } : undefined}
         />
@@ -826,8 +937,8 @@ export default function Dashboard() {
           bg="bg-cyan-500/10"
           // Straight into today's WRAPPING STATION (Graeme, 2026-09-12) — a
           // shortcut, not a detour through the production plan. The pack
-          // report has its own card next door.
-          href={todayPlans.length > 0 ? `/plans/${todayPlans[0].id}/station/wrapping?from=dashboard` : "/pack-report"}
+          // report has its own card in the row above.
+          href={todayPlanId ? stationHref("wrapping") : "/pack-report"}
           progress={!batchesLoading && (totalBatches?.packsTotal ?? 0) > 0 ? {
             done: totalBatches!.packsWrapped,
             total: totalBatches!.packsTotal,
@@ -837,24 +948,65 @@ export default function Dashboard() {
           } : undefined}
         />
         <StatCard
-          title="Pack Report"
-          value="→"
-          subtitle="Stock vs dispatch — today's pack"
-          icon={ClipboardList}
-          color="text-violet-500"
-          bg="bg-violet-500/10"
-          href="/pack-report"
-        />
-        <StatCard
-          title="Morning Meeting"
-          value="▶"
-          subtitle="10-min Two Second Lean"
-          icon={Sparkles}
-          color="text-amber-500"
-          bg="bg-amber-500/10"
-          href="/meeting"
+          title="Packing"
+          value={currentWeekLoading ? "…" : (todayShopifyOrderCount ?? todayDispatches.length).toString()}
+          subtitle={packingOph > 0 ? `${packingOph.toFixed(1)} orders/hr packed` : undefined}
+          icon={Truck}
+          color="text-blue-500"
+          bg="bg-blue-500/10"
+          // Straight into today's PACKING STATION — that's where the person
+          // tapping this card is headed (Graeme, 2026-08-19; it used to jump
+          // to the despatch page instead). Falls back to the despatch wave
+          // when no plan is open today.
+          href={todayPlanId
+            ? stationHref("packing")
+            : `/fulfilment?tag=${format(addDays(new Date(), 1), "yyyy-MM-dd")}`}
+          progress={todayIndex >= 0 && (currentWeekOrders![todayIndex].orderCount ?? 0) > 0 ? {
+            done: currentWeekOrders![todayIndex].fulfilledCount,
+            total: currentWeekOrders![todayIndex].orderCount,
+            label: "fulfilled",
+            barClass: "bg-blue-500",
+          } : undefined}
         />
       </div>
+
+      {/* Which building table? One card outside, two answers here. */}
+      {buildChooserOpen && (
+        <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" onClick={() => setBuildChooserOpen(false)}>
+          <div
+            className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md max-h-[92dvh] overflow-y-auto p-5 space-y-4"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <h2 className="font-display text-lg font-bold leading-tight">Which building table?</h2>
+              <button
+                onClick={() => setBuildChooserOpen(false)}
+                className="p-2 text-muted-foreground hover:text-foreground rounded-lg hover:bg-secondary/50 flex-shrink-0"
+                aria-label="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {([1, 2] as const).map(n => (
+                <button
+                  key={n}
+                  onClick={() => {
+                    setBuildChooserOpen(false);
+                    setLocation(`/plans/${todayPlanId}/station/building_${n}?from=dashboard`);
+                  }}
+                  className="flex flex-col items-center justify-center gap-3 p-6 min-h-[130px] rounded-2xl border-2 border-border hover:border-primary/60 hover:bg-secondary/40 active:scale-[0.97] transition-all"
+                >
+                  <div className="w-14 h-14 rounded-xl bg-orange-50 dark:bg-orange-900/20 text-orange-500 flex items-center justify-center">
+                    <ChefHat className="w-7 h-7" />
+                  </div>
+                  <span className="text-base font-bold">Table {n}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       <GoveeTempTile />
 
@@ -1258,12 +1410,11 @@ function renderBarLabel(props: any) {
   );
 }
 
-function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, progress }: any & { progress?: StatProgress }) {
+function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, onClick, progress }: any & { progress?: StatProgress }) {
   const pct = progress && progress.total > 0
     ? Math.min(100, Math.round((progress.done / progress.total) * 100))
     : 0;
-  return (
-    <Link href={href} className="h-full">
+  const card = (
       <div className="glass-panel rounded-2xl hover-lift cursor-pointer group h-full flex flex-col min-h-[150px] overflow-hidden">
         {/* The header IS the wayfinding: white-on-green (house rule for
             on-green text), big and top-of-card so the row scans at a
@@ -1298,6 +1449,10 @@ function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, progres
         )}
         </div>
       </div>
-    </Link>
   );
+  // Cards that open a chooser (Building's table question) pass onClick
+  // instead of href — same card, button semantics.
+  return onClick
+    ? <button type="button" onClick={onClick} className="h-full w-full text-left">{card}</button>
+    : <Link href={href} className="h-full">{card}</Link>;
 }
