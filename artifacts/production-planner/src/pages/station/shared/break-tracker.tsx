@@ -247,8 +247,7 @@ export function BreakTracker({ planId, stationType, onBreakChange, onBreakActive
     <>
       {breakOverlay}
       {!activeBreak && (
-        <div className="flex items-center gap-2 w-full">
-          <span className="text-xs text-muted-foreground flex-shrink-0">Breaks:</span>
+        <div className="flex items-center gap-2">
           <button
             onClick={() => startBreak("morning")}
             className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-break-action hover:opacity-90 text-break-action-foreground rounded-lg transition-colors font-medium flex-shrink-0"
