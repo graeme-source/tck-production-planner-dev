@@ -34,7 +34,9 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 // ExtraPackControl removed — replaced by inline PackAdjustment
 import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
-import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay } from "../shared/constants";
+import { createPortal } from "react-dom";
+import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay, STATION_VIEW_ROW_SLOT_ID } from "../shared/constants";
+import { QueueDock, QueueSheet } from "../shared/station-queue";
 import { packsPerBatch } from "../shared/recipe-completion";
 
 import {
@@ -354,9 +356,16 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     return () => { cancelled = true; };
   }, []);
 
-  // Accordion state
-  const [expandedItemId, setExpandedItemId] = useState<number | null>(null);
-  const userOverrideRef = useRef(false);
+  // ONE recipe on show at a time (the shared station-queue pattern, Graeme
+  // 2026-09-16): the pinned panel always shows the recipe this builder is on
+  // (currentItem), and the queue lives in a bottom sheet.
+  const [queueOpen, setQueueOpen] = useState(false);
+  // The toggle-row slot exists only after the parent's first commit, so
+  // look it up in an effect rather than during render.
+  const [viewRowSlot, setViewRowSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setViewRowSlot(document.getElementById(STATION_VIEW_ROW_SLOT_ID));
+  }, []);
 
   // Load timing standards for KPI color coding
   const { data: timingStandards } = useListTimingStandards();
@@ -706,7 +715,8 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     }
   }, [checkedItems, checkedItemsItemId, currentItem?.id, assemblyMap, checklistLockedForItem]);
 
-  // Detect recipe change — prompt for extra packs + auto-expand next
+  // Detect recipe change — prompt for extra packs. (The pinned panel follows
+  // currentItem by itself, so there's no expansion to advance any more.)
   useEffect(() => {
     const curId = currentItem?.id ?? null;
     if (prevCurrentItemId !== null && curId !== prevCurrentItemId) {
@@ -722,28 +732,9 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
         }
       }
       myLastBatchItemIdRef.current = null;
-      setExpandedItemId(curId);
-      userOverrideRef.current = false;
     }
     setPrevCurrentItemId(curId);
   }, [currentItem?.id]);
-
-  // Initialize expanded item
-  useEffect(() => {
-    if (expandedItemId === null && currentItem) {
-      setExpandedItemId(currentItem.id);
-    }
-  }, [currentItem?.id]);
-
-  const toggleExpanded = (itemId: number) => {
-    if (expandedItemId === itemId) {
-      setExpandedItemId(null);
-      userOverrideRef.current = false;
-    } else {
-      setExpandedItemId(itemId);
-      userOverrideRef.current = itemId !== currentItem?.id;
-    }
-  };
 
   const extraPromptItem = extraPromptItemId != null ? items.find(it => it.id === extraPromptItemId) : null;
   const editPromptItem = editPromptItemId != null ? items.find(it => it.id === editPromptItemId) : null;
@@ -860,7 +851,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   const selectRecipe = (itemId: number) => {
     if (isOnBreak) return;
     setSelectedItemId(itemId);
-    setExpandedItemId(itemId);
+    setQueueOpen(false);
   };
   const moveToNextRecipe = (item: ProductionPlanItem) => {
     if (isOnBreak) return;
@@ -1020,115 +1011,73 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   return (
     <div className="space-y-4">
       {sopViewer.dialog}
-      {/* Daily progress + KPI + break buttons */}
-      <div className="bg-card border border-border rounded-xl p-4">
-        <div className="flex items-center justify-between mb-2">
-          <div>
-            <h2 className="font-semibold text-lg">Today's Production</h2>
-            <p className="text-base text-muted-foreground">
-              {formatBatches(totalBatchesDone)} / {formatBatches(totalBatchesTarget)} batches
+      {/* Daily progress — a slim strip portalled into the slot beside the
+          Checklist/Production toggle so they share one line; batches, bar,
+          % and the team pace all in view without costing a band of height
+          (Graeme, 2026-09-16). Falls back inline when the toggle row isn't
+          rendered. The full pace tile, You/Target KPI, session stats and
+          the mid-day finish button live in the queue sheet. */}
+      {(() => {
+        const strip = (
+          <div className="flex items-center gap-3 min-w-0">
+            <p className="text-sm font-medium truncate">
+              {formatBatches(totalBatchesDone)}/{formatBatches(totalBatchesTarget)} batches
               {totalMacPacksTarget > 0 && (
-                <> · {totalMacPacksDone} / {totalMacPacksTarget} mac packs</>
+                <span className="text-xs font-normal text-muted-foreground"> · {totalMacPacksDone}/{totalMacPacksTarget} mac</span>
               )}
-              {" · Line "}{lineNumber}
+              <span className="text-xs font-normal text-muted-foreground"> · L{lineNumber}</span>
             </p>
-          </div>
-          <span className="text-3xl font-bold font-display">{overallProgress}%</span>
-        </div>
-        <div className="w-full h-3 bg-secondary rounded-full overflow-hidden">
-          <div
-            className={cn(
-              "h-full rounded-full transition-all",
-              overallProgress >= 100 ? "bg-emerald-500" : "bg-primary"
-            )}
-            style={{ width: `${Math.min(overallProgress, 100)}%` }}
-          />
-        </div>
-
-        {/* Pace tile — behind / on pace / ahead at a glance, mirroring the
-            packing strip. Hidden once building is finished (the green
-            confirmation below takes over) and until BPH means something. */}
-        {teamBand && !buildingFinishedAt && (
-          <div
-            className={cn(
-              "mt-3 rounded-xl px-4 py-2.5 flex items-center justify-between gap-3 transition-colors",
-              teamBand.tile,
-            )}
-            aria-label={`Building pace ${teamBph.toFixed(1)} batches per hour`}
-          >
-            <span className="text-2xl md:text-3xl font-extrabold tabular-nums leading-none">
-              {teamBph.toFixed(1)}
-              <span className="text-sm font-bold opacity-90 ml-1.5">batches/hr</span>
-            </span>
-            <span className="text-lg md:text-xl font-bold text-right leading-tight">{teamBand.label}</span>
-          </div>
-        )}
-
-        {/* KPI: Team batches/hr + You batches/hr — calzone only, standard method */}
-        {(teamBph > 0 || yourBph > 0) && (
-          <div className="flex items-center gap-4 mt-3 pt-3 border-t border-border/50 flex-wrap">
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground font-medium">Team:</span>
-              <span className={cn("text-lg font-bold tabular-nums", bphColor(teamBph))}>
-                {teamBph.toFixed(1)}/hr
-              </span>
+            <div className="flex-1 min-w-[60px] h-2 bg-secondary rounded-full overflow-hidden">
+              <div
+                className={cn("h-full rounded-full transition-all", overallProgress >= 100 ? "bg-emerald-500" : "bg-primary")}
+                style={{ width: `${Math.min(overallProgress, 100)}%` }}
+              />
             </div>
-            <div className="w-px h-5 bg-border/60" />
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground font-medium">You:</span>
-              <span className={cn("text-lg font-bold tabular-nums", bphColor(yourBph))}>
-                {yourBph.toFixed(1)}/hr
+            <span className="text-lg font-bold tabular-nums flex-shrink-0">{overallProgress}%</span>
+            {teamBand && !buildingFinishedAt && (
+              <span
+                className={cn("flex-shrink-0 rounded-lg px-2.5 py-1 text-sm font-extrabold tabular-nums leading-none", teamBand.tile)}
+                aria-label={`Building pace ${teamBph.toFixed(1)} batches per hour`}
+                title={teamBand.label}
+              >
+                {teamBph.toFixed(1)}<span className="font-bold opacity-90 text-xs">/hr</span>
               </span>
-            </div>
-            {targetBph != null && (
-              <>
-                <div className="w-px h-5 bg-border/60" />
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground font-medium">Target:</span>
-                  <span className="text-lg font-bold tabular-nums text-muted-foreground">{targetBph}/hr</span>
-                </div>
-              </>
             )}
           </div>
-        )}
+        );
+        return viewRowSlot ? createPortal(strip, viewRowSlot) : strip;
+      })()}
 
-        {/* Building-finished button: always available so a short day can still
-            be closed out. Unmissable pulsing green once everything is built;
-            mid-production it's a quieter outline and asks for confirmation. */}
-        {!buildingFinishedAt && (
+      {/* End-of-day states stay unmissable on the page itself: the pulsing
+          finish button once everything is built, and the finished banner.
+          The mid-production early-finish button lives in the queue sheet. */}
+      {!buildingFinishedAt && allBuiltOut && (
+        <button
+          onClick={() => markFinished.mutate({ id: plan.id })}
+          disabled={markFinished.isPending}
+          className="w-full h-16 rounded-xl font-bold text-xl flex items-center justify-center gap-3 transition-all bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg animate-pulse"
+        >
+          {markFinished.isPending
+            ? <Loader2 className="w-6 h-6 animate-spin" />
+            : <CheckCircle2 className="w-7 h-7" />}
+          Mark building finished
+        </button>
+      )}
+      {buildingFinishedAt && (
+        <div className="w-full rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 px-4 py-3 flex items-center gap-3">
+          <CheckCircle2 className="w-6 h-6 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+          <span className="font-semibold text-emerald-800 dark:text-emerald-200">
+            Building finished at {format(parseISO(buildingFinishedAt), "HH:mm")}
+          </span>
           <button
-            onClick={() => allBuiltOut ? markFinished.mutate({ id: plan.id }) : setConfirmEarlyFinish(true)}
-            disabled={markFinished.isPending}
-            className={cn(
-              "w-full mt-3 h-16 rounded-xl font-bold text-xl flex items-center justify-center gap-3 transition-all",
-              allBuiltOut
-                ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg animate-pulse"
-                : "border-2 border-emerald-600/60 text-emerald-700 dark:text-emerald-400 bg-background hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
-            )}
+            onClick={() => unmarkFinished.mutate({ id: plan.id })}
+            disabled={unmarkFinished.isPending}
+            className="ml-auto text-sm font-medium text-emerald-700 dark:text-emerald-300 underline underline-offset-2"
           >
-            {markFinished.isPending
-              ? <Loader2 className="w-6 h-6 animate-spin" />
-              : <CheckCircle2 className="w-7 h-7" />}
-            Mark building finished
+            Undo
           </button>
-        )}
-        {buildingFinishedAt && (
-          <div className="w-full mt-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 px-4 py-3 flex items-center gap-3">
-            <CheckCircle2 className="w-6 h-6 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
-            <span className="font-semibold text-emerald-800 dark:text-emerald-200">
-              Building finished at {format(parseISO(buildingFinishedAt), "HH:mm")}
-            </span>
-            <button
-              onClick={() => unmarkFinished.mutate({ id: plan.id })}
-              disabled={unmarkFinished.isPending}
-              className="ml-auto text-sm font-medium text-emerald-700 dark:text-emerald-300 underline underline-offset-2"
-            >
-              Undo
-            </button>
-          </div>
-        )}
-
-      </div>
+        </div>
+      )}
 
       {/* Finish prompt — appears the moment the last flavour is built so the
           builder can't carry on without confirming the day is done. */}
@@ -1364,27 +1313,14 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
         </DialogContent>
       </Dialog>
 
-      {/* All recipes complete */}
-
-      {/* Unified accordion queue */}
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <div>
-            <h3 className="font-semibold text-base">Production Queue — Line {lineNumber}</h3>
-          </div>
-          <div className="flex items-center gap-2">
-            {allDone && (
-              <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-sm font-medium">
-                <CheckCircle2 className="w-4 h-4" /> All done
-              </span>
-            )}
-          </div>
-        </div>
-
-        <div className="divide-y divide-border/50">
-          {items.map((item) => {
-            const isExpanded = expandedItemId === item.id;
-            const isCurrent = item.id === currentItem?.id;
+      {/* Pinned recipe panel — the recipe THIS builder is on, always on
+          show; the full queue lives behind the bottom dock (shared
+          station-queue pattern). Selecting a recipe = switching work to it,
+          same free-navigation semantics as before. */}
+      {(() => {
+            const item = currentItem;
+            if (!item) return null;
+            const isCurrent = true;
             const combinedCount = getCombinedBuildCount(item);
             const effTarget = getTargetRef(item); // reference target (planned)
             const targetReached = combinedCount >= effTarget;
@@ -1406,94 +1342,45 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
 
             const rowHasFilling = (asm?.fillingWeightPerBatch ?? 0) > 0;
             const showEditBtn = targetReached && rowHasFilling;
+            const panelIdx = items.findIndex(it => it.id === item.id);
             return (
-              <div key={item.id}>
-                {/* Collapsed summary row — toggle button + optional edit pencil as sibling */}
-                <div
-                  className={cn(
-                    "flex items-center transition-colors",
-                    isExpanded
-                      ? isCurrent
-                        ? "bg-primary/5"
-                        : "bg-blue-50/60 dark:bg-blue-900/15"
-                      : isCurrent
-                        ? "bg-primary/5"
-                        : itemDone
-                          ? "bg-emerald-50/30 dark:bg-emerald-900/10"
-                          : "hover:bg-secondary/20"
-                  )}
-                >
-                <button
-                  onClick={() => toggleExpanded(item.id)}
-                  className="flex-1 text-left px-3 py-2.5 flex items-center gap-2"
-                >
-                  {/* Position */}
-                  <span className="text-xs text-muted-foreground w-5 text-center flex-shrink-0">{item.orderPosition}</span>
-
-                  {/* Recipe name */}
-                  <span
-                    className={cn(
-                      "flex-1 font-bold text-sm truncate",
-                      itemDone && !isExpanded ? "line-through opacity-60" : ""
-                    )}
-                    style={{ color: item.recipeColor || undefined }}
-                  >
+              <div className="bg-card border-2 border-primary rounded-xl overflow-hidden">
+                {/* Where this recipe sits in the run + its name, one strip. */}
+                <div className="px-4 py-2 flex items-center gap-3 border-b bg-primary/5 border-primary/20">
+                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground tabular-nums flex-shrink-0">
+                    {panelIdx + 1} of {items.length}
+                  </span>
+                  <h2 className="font-display text-xl font-bold leading-tight truncate flex-1 min-w-0" style={{ color: item.recipeColor || undefined }}>
                     {item.recipeName ?? `Recipe #${item.recipeId}`}
-                    {isCurrent && !isExpanded && <span className="text-xs text-primary ml-1">← now</span>}
-                  </span>
-
-                  {/* Stats */}
-                  <span className="text-sm tabular-nums font-medium flex-shrink-0">
-                    {formatBatches(combinedCount)}/{formatBatches(item.batchesTarget ?? 0)}{" "}<span className="text-xs font-normal text-muted-foreground">({batchesToPacks(item.batchesTarget ?? 0, Math.max(1, Math.floor((item.portionsPerBatch ?? 10) / 2)))} packs)</span>
-                  </span>
+                  </h2>
                   {paceData[item.id] != null && (
-                    <span className="text-xs tabular-nums text-violet-600 dark:text-violet-400 font-medium flex-shrink-0">
+                    <span className="text-xs tabular-nums text-violet-600 dark:text-violet-400 font-medium flex-shrink-0" title="Time spent on this recipe">
                       {paceData[item.id]}m
                     </span>
                   )}
-
-                  {/* Status icon — emerald for a full build, amber for a
-                      builder-declared short finish (still DONE, but the
-                      colour flags that the day ended under target). */}
-                  {itemDone ? (
-                    <CheckCircle2 className={cn("w-4 h-4 flex-shrink-0", targetReached ? "text-emerald-500" : "text-amber-500")} />
-                  ) : (
-                    <ChevronDown className={cn(
-                      "w-4 h-4 text-muted-foreground flex-shrink-0 transition-transform",
-                      isExpanded ? "rotate-180" : ""
-                    )} />
+                  {itemDone && (
+                    <span className={cn(
+                      "flex items-center gap-1 text-xs font-bold uppercase tracking-wider flex-shrink-0",
+                      targetReached ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400",
+                    )}>
+                      <CheckCircle2 className="w-3.5 h-3.5" /> {targetReached ? "Complete" : "Finished short"}
+                    </span>
                   )}
-                </button>
-                {showEditBtn && (
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); setEditPromptItemId(item.id); }}
-                    title="Edit packs / leftover filling"
-                    className="pr-3 pl-1 py-2.5 text-muted-foreground hover:text-foreground flex-shrink-0"
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </button>
-                )}
+                  {showEditBtn && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setEditPromptItemId(item.id); }}
+                      title="Edit packs / leftover filling"
+                      className="text-muted-foreground hover:text-foreground flex-shrink-0"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
 
-                {/* Expanded panel */}
-                {isExpanded && (
-                  <div className={cn(
-                    "border-t-2 px-4 py-4 space-y-4",
-                    isCurrent
-                      ? "border-primary"
-                      : "border-blue-300 dark:border-blue-700"
-                  )}>
-                    {/* Header: recipe name + SOP */}
-                    <div className="flex items-center gap-2">
-                      <h2 className="font-display text-2xl font-bold leading-tight flex-1 truncate" style={{ color: item.recipeColor || undefined }}>
-                        {item.recipeName ?? `Recipe #${item.recipeId}`}
-                      </h2>
-                      {targetReached && (
-                        <span className="flex items-center gap-1 text-sm text-emerald-600 dark:text-emerald-400 font-medium">
-                          <CheckCircle2 className="w-4 h-4" /> Complete
-                        </span>
-                      )}
+                  <div className="px-4 py-3 space-y-3">
+                    {/* Legacy external SOP link (recipe SOP chips follow below) */}
+                    <div className="flex items-center gap-2 empty:hidden">
                       {item.sopUrl && (
                         <a
                           href={item.sopUrl}
@@ -1887,23 +1774,170 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                       </div>
                     )}
                   </div>
-                )}
               </div>
             );
-          })}
-        </div>
-      </div>
+      })()}
 
-      {/* KPI bar */}
-      <KpiBar
-        sessionBatches={sessionBatches}
-        sessionStartedAt={sessionStartedAt}
-        activeBreakMinutes={activeBreakMinutes}
-        totalBreakMinutes={totalBreakMinutes}
-        targetBph={targetBph}
-        minBph={minBph}
-        serverKpi={serverKpi}
+      {/* Bottom dock + queue sheet — the shared station-queue pattern.
+          Prev/Next switch which recipe THIS builder is on (free
+          navigation, persisted); the sheet carries the whole run plus the
+          pace tile, You/Target KPI, session stats and the mid-day finish
+          button. */}
+      <QueueDock
+        label={`Build Queue — Line ${lineNumber}`}
+        doneCount={items.filter(it => !!it.builderMarkedCompleteAt || getCombinedBuildCount(it) >= getTargetRef(it)).length}
+        total={items.length}
+        prevDisabled={isOnBreak || !currentItem || items.findIndex(it => it.id === currentItem.id) <= 0}
+        nextDisabled={isOnBreak || !currentItem || items.findIndex(it => it.id === currentItem.id) >= items.length - 1}
+        onPrev={() => {
+          const idx = currentItem ? items.findIndex(it => it.id === currentItem.id) : -1;
+          if (idx > 0) selectRecipe(items[idx - 1].id);
+        }}
+        onNext={() => {
+          const idx = currentItem ? items.findIndex(it => it.id === currentItem.id) : -1;
+          if (idx >= 0 && idx < items.length - 1) selectRecipe(items[idx + 1].id);
+        }}
+        onOpenQueue={() => setQueueOpen(true)}
       />
+
+      {queueOpen && (
+        <QueueSheet title={`Production Queue — Line ${lineNumber}`} allDone={allDone} onClose={() => setQueueOpen(false)}>
+          <div className="divide-y divide-border/50">
+            {items.map((item, idx) => {
+              const isSelected = item.id === currentItem?.id;
+              const combinedCount = getCombinedBuildCount(item);
+              const targetReached = combinedCount >= getTargetRef(item);
+              const itemDone = targetReached || !!item.builderMarkedCompleteAt;
+              const rowHasFilling = (assemblyMap[item.id]?.fillingWeightPerBatch ?? 0) > 0;
+              return (
+                <div
+                  key={item.id}
+                  className={cn(
+                    "flex items-center transition-colors",
+                    isSelected
+                      ? "bg-primary/5"
+                      : itemDone
+                        ? "bg-emerald-50/30 dark:bg-emerald-900/10"
+                        : "hover:bg-secondary/20"
+                  )}
+                >
+                  <button
+                    onClick={() => selectRecipe(item.id)}
+                    className="flex-1 text-left px-3 py-3 flex items-center gap-2"
+                  >
+                    <span className="w-5 text-xs font-bold text-muted-foreground tabular-nums text-right flex-shrink-0">{idx + 1}</span>
+                    <span
+                      className={cn(
+                        "flex-1 font-bold text-sm truncate",
+                        itemDone ? "line-through opacity-60" : ""
+                      )}
+                      style={{ color: item.recipeColor || undefined }}
+                    >
+                      {item.recipeName ?? `Recipe #${item.recipeId}`}
+                      {isSelected && <span className="text-xs text-primary ml-1 no-underline">← now</span>}
+                    </span>
+                    <span className="text-sm tabular-nums font-medium flex-shrink-0">
+                      {formatBatches(combinedCount)}/{formatBatches(item.batchesTarget ?? 0)}{" "}<span className="text-xs font-normal text-muted-foreground">({batchesToPacks(item.batchesTarget ?? 0, Math.max(1, Math.floor((item.portionsPerBatch ?? 10) / 2)))} packs)</span>
+                    </span>
+                    {paceData[item.id] != null && (
+                      <span className="text-xs tabular-nums text-violet-600 dark:text-violet-400 font-medium flex-shrink-0">
+                        {paceData[item.id]}m
+                      </span>
+                    )}
+                    {/* Emerald for a full build, amber for a builder-declared
+                        short finish (done, but ended under target). */}
+                    {itemDone && (
+                      <CheckCircle2 className={cn("w-4 h-4 flex-shrink-0", targetReached ? "text-emerald-500" : "text-amber-500")} />
+                    )}
+                  </button>
+                  {targetReached && rowHasFilling && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setQueueOpen(false); setEditPromptItemId(item.id); }}
+                      title="Edit packs / leftover filling"
+                      className="pr-3 pl-1 py-3 text-muted-foreground hover:text-foreground flex-shrink-0"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Pace + session KPIs + the mid-day finish button — the day's
+              supervisory numbers, always one tap away under the queue. */}
+          <div className="px-3 py-3 border-t border-border space-y-3">
+            {teamBand && !buildingFinishedAt && (
+              <div
+                className={cn(
+                  "rounded-xl px-4 py-2.5 flex items-center justify-between gap-3 transition-colors",
+                  teamBand.tile,
+                )}
+                aria-label={`Building pace ${teamBph.toFixed(1)} batches per hour`}
+              >
+                <span className="text-2xl md:text-3xl font-extrabold tabular-nums leading-none">
+                  {teamBph.toFixed(1)}
+                  <span className="text-sm font-bold opacity-90 ml-1.5">batches/hr</span>
+                </span>
+                <span className="text-lg md:text-xl font-bold text-right leading-tight">{teamBand.label}</span>
+              </div>
+            )}
+
+            {(teamBph > 0 || yourBph > 0) && (
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground font-medium">Team:</span>
+                  <span className={cn("text-lg font-bold tabular-nums", bphColor(teamBph))}>
+                    {teamBph.toFixed(1)}/hr
+                  </span>
+                </div>
+                <div className="w-px h-5 bg-border/60" />
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground font-medium">You:</span>
+                  <span className={cn("text-lg font-bold tabular-nums", bphColor(yourBph))}>
+                    {yourBph.toFixed(1)}/hr
+                  </span>
+                </div>
+                {targetBph != null && (
+                  <>
+                    <div className="w-px h-5 bg-border/60" />
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground font-medium">Target:</span>
+                      <span className="text-lg font-bold tabular-nums text-muted-foreground">{targetBph}/hr</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            <KpiBar
+              sessionBatches={sessionBatches}
+              sessionStartedAt={sessionStartedAt}
+              activeBreakMinutes={activeBreakMinutes}
+              totalBreakMinutes={totalBreakMinutes}
+              targetBph={targetBph}
+              minBph={minBph}
+              serverKpi={serverKpi}
+            />
+
+            {/* Early finish for a short day — the pulsing end-of-day button
+                lives on the page itself once everything is built. */}
+            {!buildingFinishedAt && !allBuiltOut && (
+              <button
+                onClick={() => { setQueueOpen(false); setConfirmEarlyFinish(true); }}
+                disabled={markFinished.isPending}
+                className="w-full h-14 rounded-xl font-bold text-lg flex items-center justify-center gap-3 transition-all border-2 border-emerald-600/60 text-emerald-700 dark:text-emerald-400 bg-background hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+              >
+                {markFinished.isPending
+                  ? <Loader2 className="w-6 h-6 animate-spin" />
+                  : <CheckCircle2 className="w-6 h-6" />}
+                Mark building finished
+              </button>
+            )}
+          </div>
+        </QueueSheet>
+      )}
     </div>
   );
 }

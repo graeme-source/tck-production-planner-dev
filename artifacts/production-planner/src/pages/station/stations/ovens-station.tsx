@@ -9,7 +9,7 @@ import { useAuth } from "@/contexts/auth-context";
 import {
   Loader2, CheckCircle2, Flame, RefreshCw, AlertCircle, BarChart2,
   Minus, Plus, Snowflake, X, Eye, Scale, ThermometerSnowflake,
-  Hammer, ArrowDown, ChevronLeft, ChevronRight, ListOrdered,
+  Hammer, ArrowDown,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -19,6 +19,7 @@ import { BreakTracker } from "../shared/break-tracker";
 import { useModalScrollKeeper, useNoScrollAutoFocus } from "@/hooks/use-modal-scroll";
 import { createPortal } from "react-dom";
 import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay, STATION_VIEW_ROW_SLOT_ID, type StationPlanItem } from "../shared/constants";
+import { QueueDock, QueueSheet } from "../shared/station-queue";
 import { effectiveBatchesTarget, netTwoPacks as computeNetTwoPacks, packsTargetForItem, packsDoneForItem, packsPerBatch } from "../shared/recipe-completion";
 import { RECIPE_RACK_COLOURS, WonkyColour, ChillerRackItem, ChillerRackVisual } from "./dough-sheeting-station";
 
@@ -1135,64 +1136,23 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
         );
       })()}
 
-      {/* Bottom dock — the fixed, always-in-the-same-place way around the
-          queue: Prev / Queue sheet / Next. Sits above StationLayout's
-          bottom padding so it never covers the panel's own buttons. */}
-      <div className="fixed bottom-0 left-0 right-0 z-30 border-t border-border bg-card/95 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto px-4 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] flex items-center gap-2">
-          <button
-            onClick={() => selectedIndex > 0 && selectRecipe(items[selectedIndex - 1].id)}
-            disabled={selectedIndex <= 0}
-            className="flex items-center gap-1 px-4 py-3 rounded-xl border border-border font-semibold text-sm hover:bg-secondary/60 disabled:opacity-30 transition-colors"
-          >
-            <ChevronLeft className="w-5 h-5" /> Prev
-          </button>
-          <button
-            onClick={() => setQueueOpen(true)}
-            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-primary text-primary-foreground font-bold text-sm hover:bg-primary/90 transition-colors"
-          >
-            <ListOrdered className="w-5 h-5" />
-            Oven Queue
-            <span className="tabular-nums font-normal opacity-90">
-              · {items.filter(it => { const t = effTarget(it); return t > 0 && getStationCount(it, "ovens") >= t; }).length}/{items.length} done
-            </span>
-          </button>
-          <button
-            onClick={() => selectedIndex >= 0 && selectedIndex < items.length - 1 && selectRecipe(items[selectedIndex + 1].id)}
-            disabled={selectedIndex < 0 || selectedIndex >= items.length - 1}
-            className="flex items-center gap-1 px-4 py-3 rounded-xl border border-border font-semibold text-sm hover:bg-secondary/60 disabled:opacity-30 transition-colors"
-          >
-            Next <ChevronRight className="w-5 h-5" />
-          </button>
-        </div>
-      </div>
+      {/* Bottom dock + queue sheet — the shared station-queue pattern. The
+          sheet carries the whole run in order plus the session totals and
+          chiller rack; tap a recipe to jump the pinned panel straight to
+          it. */}
+      <QueueDock
+        label="Oven Queue"
+        doneCount={items.filter(it => { const t = effTarget(it); return t > 0 && getStationCount(it, "ovens") >= t; }).length}
+        total={items.length}
+        prevDisabled={selectedIndex <= 0}
+        nextDisabled={selectedIndex < 0 || selectedIndex >= items.length - 1}
+        onPrev={() => selectedIndex > 0 && selectRecipe(items[selectedIndex - 1].id)}
+        onNext={() => selectedIndex >= 0 && selectedIndex < items.length - 1 && selectRecipe(items[selectedIndex + 1].id)}
+        onOpenQueue={() => setQueueOpen(true)}
+      />
 
-      {/* Queue sheet — the whole production run in order with batch numbers,
-          plus the session totals and chiller rack. Tap a recipe to jump the
-          pinned panel straight to it. */}
       {queueOpen && (
-        <>
-          <div className="fixed inset-0 z-40 bg-black/50" onClick={() => setQueueOpen(false)} />
-          <div className="fixed bottom-0 left-0 right-0 z-50 bg-card border-t border-border rounded-t-2xl shadow-2xl max-h-[85dvh] flex flex-col">
-            <div className="px-4 py-3 border-b border-border flex items-center justify-between flex-shrink-0">
-              <h3 className="font-semibold text-base">Oven Queue</h3>
-              <div className="flex items-center gap-3">
-                {!currentItem && (
-                  <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-sm font-medium">
-                    <CheckCircle2 className="w-4 h-4" /> All done
-                  </span>
-                )}
-                <button
-                  onClick={() => setQueueOpen(false)}
-                  className="p-2 rounded-lg hover:bg-secondary/60 text-muted-foreground"
-                  aria-label="Close the queue"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto">
+        <QueueSheet title="Oven Queue" allDone={!currentItem} onClose={() => setQueueOpen(false)}>
               <div className="divide-y divide-border/50">
                 {items.map((item, idx) => {
                   const isSelected = selectedItemId === item.id;
@@ -1289,9 +1249,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                 {/* Chiller Rack Visual */}
                 <ChillerRackVisual rackItems={rackItems} wonkyItems={wonkyItems} />
               </div>
-            </div>
-          </div>
-        </>
+        </QueueSheet>
       )}
     </div>
   );
