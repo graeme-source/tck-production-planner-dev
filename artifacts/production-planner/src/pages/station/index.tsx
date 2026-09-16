@@ -21,7 +21,7 @@ import { PrepBasesStation } from "./stations/prep-bases-station";
 import { PrepMeatStation } from "./stations/prep-meat-station";
 import { MacaroniCheeseStation } from "./stations/macaroni-cheese-station";
 import { FriedChickenStation } from "./stations/fried-chicken-station";
-import type { StationType } from "./shared/constants";
+import { STATION_VIEW_ROW_SLOT_ID, type StationType } from "./shared/constants";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
 
 // "prep" is only offered by stations that have a prep sheet of their own
@@ -216,9 +216,13 @@ export default function StationPage() {
 
   return (
     <StationLayout planId={planId} stationType={stationType} plan={plan} onBreakActiveChange={handleBreakActiveChange}>
-      {/* View toggle — only shown when checklists feature is enabled */}
+      {/* View toggle — only shown when checklists feature is enabled. It
+          shares its line with whatever a station portals into the slot
+          beside it (ovens' compact daily-progress strip), so the toggle
+          row doesn't cost a whole band of vertical space on its own. */}
       {checklistsEnabled && (
-        <div className="flex items-center gap-1 mb-4 p-1 bg-secondary/40 rounded-xl w-fit">
+        <div className="flex items-center gap-3 mb-3">
+        <div className="flex items-center gap-1 p-1 bg-secondary/40 rounded-xl w-fit flex-shrink-0">
           <button
             onClick={() => setActiveView("checklist")}
             className={cn(
@@ -261,6 +265,8 @@ export default function StationPage() {
             <Factory className="w-4 h-4" />
             Production
           </button>
+        </div>
+        <div id={STATION_VIEW_ROW_SLOT_ID} className="flex-1 min-w-0 empty:hidden" />
         </div>
       )}
 

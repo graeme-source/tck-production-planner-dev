@@ -17,7 +17,8 @@ import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { BreakTracker } from "../shared/break-tracker";
 import { useModalScrollKeeper, useNoScrollAutoFocus } from "@/hooks/use-modal-scroll";
-import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay, type StationPlanItem } from "../shared/constants";
+import { createPortal } from "react-dom";
+import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay, STATION_VIEW_ROW_SLOT_ID, type StationPlanItem } from "../shared/constants";
 import { effectiveBatchesTarget, netTwoPacks as computeNetTwoPacks, packsTargetForItem, packsDoneForItem, packsPerBatch } from "../shared/recipe-completion";
 import { RECIPE_RACK_COLOURS, WonkyColour, ChillerRackItem, ChillerRackVisual } from "./dough-sheeting-station";
 
@@ -164,6 +165,13 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
   const currentItem = items.find(it => getStationCount(it, "ovens") < effTarget(it));
   const selectedItem = items.find(i => i.id === selectedItemId) ?? null;
   const selectedIndex = selectedItem ? items.findIndex(i => i.id === selectedItem.id) : -1;
+
+  // The toggle-row slot exists only after the parent's first commit, so
+  // look it up in an effect rather than during render.
+  const [viewRowSlot, setViewRowSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setViewRowSlot(document.getElementById(STATION_VIEW_ROW_SLOT_ID));
+  }, []);
 
   // Auto-select the current recipe, and track when it changes
   useEffect(() => {
@@ -502,7 +510,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
   const weighingWithinTolerance = weighingValid && weighingVariance >= -tolUnder && weighingVariance <= tolOver;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Weight-input modal: blocks batch completion until the oven operator
           enters the actual pack weight (grams). Target = pack_size × portion
           cooked weight + tray weight. Mandatory per HACCP. */}
@@ -588,24 +596,30 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
         </div>
       )}
 
-      {/* Overall progress + breaks */}
-      <div className="bg-card border border-border rounded-xl p-4">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-base font-medium">
-            Daily Progress —{" "}
-            {calzoneTarget > 0 && <>{formatBatches(calzoneDone)} / {formatBatches(calzoneTarget)} batches{" "}<span className="text-sm font-normal text-muted-foreground">({batchesToPacks(calzoneDone)}/{batchesToPacks(calzoneTarget)} packs)</span></>}
-            {calzoneTarget > 0 && macTarget > 0 && " · "}
-            {macTarget > 0 && <>{macDone} / {macTarget} mac packs</>}
-          </p>
-          <span className="text-2xl font-bold">{overallPct}%</span>
-        </div>
-        <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
-          <div
-            className={cn("h-full rounded-full transition-all", overallPct >= 100 ? "bg-emerald-500" : "bg-red-500")}
-            style={{ width: `${Math.min(overallPct, 100)}%` }}
-          />
-        </div>
-      </div>
+      {/* Daily progress, compact: one slim strip that portals into the slot
+          beside the Checklist/Production toggle so the two share a line —
+          a full-width card here cost a whole band of vertical space
+          (Graeme, 2026-09-16). Falls back inline when the toggle row isn't
+          rendered (checklists feature off). */}
+      {(() => {
+        const strip = (
+          <div className="flex items-center gap-3 min-w-0">
+            <p className="text-sm font-medium truncate">
+              {calzoneTarget > 0 && <>{formatBatches(calzoneDone)}/{formatBatches(calzoneTarget)} batches{" "}<span className="text-xs font-normal text-muted-foreground">({batchesToPacks(calzoneDone)}/{batchesToPacks(calzoneTarget)} pk)</span></>}
+              {calzoneTarget > 0 && macTarget > 0 && " · "}
+              {macTarget > 0 && <>{macDone}/{macTarget} mac</>}
+            </p>
+            <div className="flex-1 min-w-[80px] h-2 bg-secondary rounded-full overflow-hidden">
+              <div
+                className={cn("h-full rounded-full transition-all", overallPct >= 100 ? "bg-emerald-500" : "bg-red-500")}
+                style={{ width: `${Math.min(overallPct, 100)}%` }}
+              />
+            </div>
+            <span className="text-lg font-bold tabular-nums flex-shrink-0">{overallPct}%</span>
+          </div>
+        );
+        return viewRowSlot ? createPortal(strip, viewRowSlot) : strip;
+      })()}
 
       {/* Wonky prompt — shown when a recipe just finished all batches */}
       {promptItem && (
@@ -685,50 +699,41 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
             isCurrent ? "border-red-400 dark:border-red-600" : "border-blue-300 dark:border-blue-700"
           )}>
             {/* Where this recipe sits in the run — no guessing whether the
-                rest of the queue is above or below. */}
+                rest of the queue is above or below. The recipe NAME lives on
+                this same strip: its own block below cost a whole band of
+                height (Graeme, 2026-09-16). */}
             <div className={cn(
-              "px-4 py-2 flex items-center gap-2 border-b",
+              "px-4 py-2 flex items-center gap-3 border-b",
               isCurrent
                 ? "bg-red-50/60 dark:bg-red-900/15 border-red-200 dark:border-red-800"
                 : "bg-blue-50/60 dark:bg-blue-900/15 border-blue-200 dark:border-blue-800"
             )}>
-              <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground tabular-nums">
-                Recipe {idx + 1} of {items.length}
+              <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground tabular-nums flex-shrink-0">
+                {idx + 1} of {items.length}
               </span>
+              <h2 className="font-display text-xl font-bold leading-tight truncate flex-1 min-w-0" style={{ color: recipeColour }}>
+                {item.recipeName ?? `Recipe #${item.recipeId}`}
+              </h2>
+              {isComplete && (
+                <span className="flex items-center gap-1 text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider flex-shrink-0">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Complete
+                </span>
+              )}
               {isCurrent && (
-                <span className="flex items-center gap-1 text-xs font-bold text-red-600 dark:text-red-400 uppercase tracking-wider">
+                <span className="flex items-center gap-1 text-xs font-bold text-red-600 dark:text-red-400 uppercase tracking-wider flex-shrink-0">
                   <Flame className="w-3.5 h-3.5" /> Cooking now
                 </span>
               )}
               {!isCurrent && currentItem && (
                 <button
                   onClick={() => selectRecipe(currentItem.id)}
-                  className="flex items-center gap-1 text-xs font-bold text-red-600 dark:text-red-400 uppercase tracking-wider hover:underline"
+                  className="flex items-center gap-1 text-xs font-bold text-red-600 dark:text-red-400 uppercase tracking-wider hover:underline flex-shrink-0"
                 >
                   <Flame className="w-3.5 h-3.5" /> Jump to current
                 </button>
               )}
-              {!currentItem && (
-                <span className="flex items-center gap-1 text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> All done
-                </span>
-              )}
             </div>
-            <div className="px-4 py-4 space-y-4">
-                    {/* Header: recipe name + built badge */}
-                    <div className="flex items-start gap-3">
-                      <div className="flex-1 min-w-0">
-                        <h2 className="font-display text-2xl font-bold leading-tight" style={{ color: recipeColour }}>
-                          {item.recipeName ?? `Recipe #${item.recipeId}`}
-                        </h2>
-                        {isComplete && (
-                          <p className="text-sm text-emerald-600 dark:text-emerald-400 font-medium mt-0.5 flex items-center gap-1">
-                            <CheckCircle2 className="w-4 h-4" /> Complete
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
+            <div className="px-4 py-3 space-y-3">
                     {/* Waiting for building alert */}
                     {isCurrent && getAvailableFromPrev(item, "ovens") <= 0 && (
                       <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg">
@@ -753,8 +758,8 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                           : "Waiting for building";
                       const undoLabel = blastUndo >= BLAST_TRAY_SIZE ? "−10" : blastUndo > 0 ? `−${blastUndo}` : "−10";
                       return (
-                        <div className="rounded-xl border border-border bg-secondary/20 p-4">
-                          <div className="flex items-center gap-2 text-base font-bold text-muted-foreground uppercase tracking-wider mb-3">
+                        <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                          <div className="flex items-center gap-2 text-base font-bold text-muted-foreground uppercase tracking-wider mb-2">
                             <Hammer className="w-5 h-5" /> From Building
                           </div>
                           <div className="flex items-center justify-center gap-6">
@@ -804,13 +809,12 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                                   </div>
                                 );
                               })()}
-                              <p className="text-sm text-muted-foreground mt-1 font-medium">{unitLabel}</p>
-                              {!itemIsMac && (
-                                <p className="text-lg text-foreground mt-1 tabular-nums font-semibold">
-                                  {ovenPacksDone(item)}
-                                  <span className="text-muted-foreground font-normal"> / {ovenPacksTarget(item)} packs</span>
-                                </p>
-                              )}
+                              <p className="text-sm text-muted-foreground mt-1 font-medium">
+                                {unitLabel}
+                                {!itemIsMac && (
+                                  <span className="text-foreground font-semibold tabular-nums"> · {ovenPacksDone(item)}<span className="text-muted-foreground font-normal">/{ovenPacksTarget(item)} packs</span></span>
+                                )}
+                              </p>
                             </div>
                             <button
                               onClick={(e) => { e.stopPropagation(); addBatch(item); }}
@@ -878,9 +882,15 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                     {(() => {
                       const showEightPackBreakdown = eightPacks > 0;
                       return (
-                        <div className="rounded-xl border border-cyan-300 dark:border-cyan-800 bg-cyan-50/40 dark:bg-cyan-950/20 p-4">
-                          <div className="flex items-center gap-2 text-base font-bold text-cyan-700 dark:text-cyan-300 uppercase tracking-wider mb-3">
+                        <div className="rounded-xl border border-cyan-300 dark:border-cyan-800 bg-cyan-50/40 dark:bg-cyan-950/20 p-3">
+                          <div className="flex items-center gap-2 text-base font-bold text-cyan-700 dark:text-cyan-300 uppercase tracking-wider mb-2">
                             <Snowflake className="w-5 h-5" /> Blast Chiller
+                            {trays > 0 && (
+                              <span className="ml-auto flex items-baseline gap-1.5 normal-case tracking-normal">
+                                <span className="text-xs text-muted-foreground font-medium">Chiller trays</span>
+                                <span className="text-lg font-bold tabular-nums text-cyan-600 dark:text-cyan-400">{trays}</span>
+                              </span>
+                            )}
                           </div>
 
                           {showEightPackBreakdown ? (
@@ -951,77 +961,76 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                             </div>
                           )}
 
-                          {trays > 0 && (
-                            <div className="mt-3 pt-3 border-t border-cyan-200 dark:border-cyan-800/60 flex items-center justify-center gap-6 text-sm">
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs text-muted-foreground font-medium">Chiller trays</span>
-                                <span className="text-lg font-bold tabular-nums text-cyan-600 dark:text-cyan-400">{trays}</span>
-                              </div>
-                            </div>
-                          )}
                         </div>
                       );
                     })()}
 
-                    {/* Wonky quality rejects */}
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-semibold text-muted-foreground">Quality Rejects (Wonky)</p>
-                        <p className="text-xs text-muted-foreground">Not counted in output</p>
+                    {/* Wonky + Extra Packs share a row on iPad landscape, as
+                        do Chill Timer + 8-Pack Bags below — four stacked
+                        full-width rows were most of the page's under-scroll
+                        (Graeme, 2026-09-16). Phones stack them again. */}
+                    <div className="grid md:grid-cols-2 gap-x-8 gap-y-3 border-t border-border pt-3">
+                      {/* Wonky quality rejects */}
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-muted-foreground">Quality Rejects (Wonky)</p>
+                          <p className="text-xs text-muted-foreground">Not counted in output</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); undoWonly(item); }}
+                            disabled={(item.wonlyCount ?? 0) === 0 || wonlyLoading === item.id || wonlyBusy || isOnBreak}
+                            className="w-10 h-10 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+                          >
+                            <Minus className="w-4 h-4" />
+                          </button>
+                          <span className="text-2xl font-bold tabular-nums w-9 text-center text-red-600 dark:text-red-400">
+                            {wonlyLoading === item.id ? "…" : wonlys}
+                          </span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); addWonly(item); }}
+                            disabled={wonlyLoading === item.id || wonlyBusy || isOnBreak}
+                            className="w-10 h-10 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
+                          >
+                            <Plus className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); undoWonly(item); }}
-                          disabled={(item.wonlyCount ?? 0) === 0 || wonlyLoading === item.id || wonlyBusy || isOnBreak}
-                          className="w-10 h-10 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
-                        >
-                          <Minus className="w-4 h-4" />
-                        </button>
-                        <span className="text-2xl font-bold tabular-nums w-9 text-center text-red-600 dark:text-red-400">
-                          {wonlyLoading === item.id ? "…" : wonlys}
-                        </span>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); addWonly(item); }}
-                          disabled={wonlyLoading === item.id || wonlyBusy || isOnBreak}
-                          className="w-10 h-10 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
-                        >
-                          <Plus className="w-4 h-4" />
-                        </button>
+
+                      {/* Extra packs */}
+                      <div className="flex items-center justify-between border-t md:border-t-0 md:border-l border-border pt-3 md:pt-0 md:pl-8">
+                        <div>
+                          <p className="text-sm font-semibold text-muted-foreground">Extra Packs</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); removeExtraPack(item); }}
+                            disabled={(item.extraPacksBuilt ?? 0) <= 0 || extraBusy || isOnBreak}
+                            className="w-10 h-10 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+                          >
+                            <Minus className="w-4 h-4" />
+                          </button>
+                          <span className="text-2xl font-bold tabular-nums w-9 text-center text-emerald-600 dark:text-emerald-400">
+                            {item.extraPacksBuilt ?? 0}
+                          </span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); addExtraPack(item); }}
+                            disabled={extraBusy || isOnBreak}
+                            className="w-10 h-10 flex items-center justify-center rounded-full bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50 transition-colors"
+                          >
+                            <Plus className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     </div>
 
-                    {/* Extra packs */}
-                    <div className="flex items-center justify-between border-t border-border pt-3">
-                      <div>
-                        <p className="text-sm font-semibold text-muted-foreground">Extra Packs</p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); removeExtraPack(item); }}
-                          disabled={(item.extraPacksBuilt ?? 0) <= 0 || extraBusy || isOnBreak}
-                          className="w-10 h-10 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
-                        >
-                          <Minus className="w-4 h-4" />
-                        </button>
-                        <span className="text-2xl font-bold tabular-nums w-9 text-center text-emerald-600 dark:text-emerald-400">
-                          {item.extraPacksBuilt ?? 0}
-                        </span>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); addExtraPack(item); }}
-                          disabled={extraBusy || isOnBreak}
-                          className="w-10 h-10 flex items-center justify-center rounded-full bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50 transition-colors"
-                        >
-                          <Plus className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Batch weight target + Mark as Chilled */}
+                    {/* Batch weight target + Mark as Chilled + 8-Pack Bags */}
                     {(() => {
                       const tgt = targetFor(item.recipeId);
                       const last = lastBatchRecord(item);
                       const canMarkChilled = !!last && !last.chillEndAt;
                       const alreadyChilled = !!last?.chillEndAt;
+                      const bagCount = (item as { eightPackBagCount?: number }).eightPackBagCount ?? 0;
                       return (
                         <div className="border-t border-border pt-3 space-y-3">
                           {tgt && (
@@ -1038,92 +1047,89 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                               </div>
                             </div>
                           )}
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
-                                <ThermometerSnowflake className="w-4 h-4 text-cyan-500" /> Chill Timer (HACCP)
+                          {/* What to physically DO with bag portions at this
+                              station: bags are assembled AFTER the blast chiller
+                              (at wrapping), so here the bag portions go into the
+                              chiller LOOSE, not as two-packs. Expressed per batch
+                              of 10 because that's what's in front of the operator.
+                              Deliberately says nothing about fridge vs freezer —
+                              that split is wrapping's concern, not ovens'. */}
+                          {bagCount > 0 && (
+                            <div className="rounded-lg border border-indigo-300 dark:border-indigo-700 bg-indigo-50/60 dark:bg-indigo-950/30 px-3 py-2.5">
+                              <p className="text-sm font-semibold text-indigo-800 dark:text-indigo-200">
+                                {bagCount} bag{bagCount === 1 ? "" : "s"} today = {bagCount * 8} portions loose into the chiller — don't two-pack them
                               </p>
-                              <p className="text-xs text-muted-foreground">
-                                {last
-                                  ? alreadyChilled
-                                    ? `Chilled ${new Date(last.chillEndAt!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${last.chilledVia?.replace(/_/g, " ") ?? "logged"}`
-                                    : `Started ${new Date(last.recordedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} — waiting to chill to ${weightData?.settings.chillTargetTempC ?? 4}°C`
-                                  : "Starts when the final batch for this recipe is logged"}
+                              <p className="text-xs text-indigo-700/90 dark:text-indigo-300/90 mt-0.5">
+                                Per batch of 10: <span className="font-semibold">8 portions loose</span> (1 bag's worth) + <span className="font-semibold">1 two-pack</span>. Bags are made up after chilling, at wrapping.
                               </p>
                             </div>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); markChilled(item); }}
-                              disabled={!canMarkChilled || chillingRecipeId === item.recipeId}
-                              className={cn(
-                                "px-3 py-2 rounded-lg font-semibold text-sm transition-colors flex items-center gap-1.5",
-                                alreadyChilled
-                                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800"
-                                  : canMarkChilled
-                                    ? "bg-cyan-600 text-white hover:bg-cyan-700"
-                                    : "bg-secondary text-muted-foreground cursor-not-allowed opacity-60",
-                              )}
-                            >
-                              {chillingRecipeId === item.recipeId ? <Loader2 className="w-4 h-4 animate-spin" /> : alreadyChilled ? <CheckCircle2 className="w-4 h-4" /> : <ThermometerSnowflake className="w-4 h-4" />}
-                              {alreadyChilled ? "Chilled" : "Mark as Chilled"}
-                            </button>
+                          )}
+                          <div className="grid md:grid-cols-2 gap-x-8 gap-y-3">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <p className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
+                                  <ThermometerSnowflake className="w-4 h-4 text-cyan-500" /> Chill Timer (HACCP)
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {last
+                                    ? alreadyChilled
+                                      ? `Chilled ${new Date(last.chillEndAt!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${last.chilledVia?.replace(/_/g, " ") ?? "logged"}`
+                                      : `Started ${new Date(last.recordedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} — waiting to chill to ${weightData?.settings.chillTargetTempC ?? 4}°C`
+                                    : "Starts when the final batch for this recipe is logged"}
+                                </p>
+                              </div>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); markChilled(item); }}
+                                disabled={!canMarkChilled || chillingRecipeId === item.recipeId}
+                                className={cn(
+                                  "px-3 py-2 rounded-lg font-semibold text-sm transition-colors flex items-center gap-1.5",
+                                  alreadyChilled
+                                    ? "bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800"
+                                    : canMarkChilled
+                                      ? "bg-cyan-600 text-white hover:bg-cyan-700"
+                                      : "bg-secondary text-muted-foreground cursor-not-allowed opacity-60",
+                                )}
+                              >
+                                {chillingRecipeId === item.recipeId ? <Loader2 className="w-4 h-4 animate-spin" /> : alreadyChilled ? <CheckCircle2 className="w-4 h-4" /> : <ThermometerSnowflake className="w-4 h-4" />}
+                                {alreadyChilled ? "Chilled" : "Mark as Chilled"}
+                              </button>
+                            </div>
+
+                            {/* 8-Pack Bags — each + click adds ONE bag. The counter
+                                shows the number of 8-pack bags being assembled. */}
+                            <div className="flex items-center justify-between border-t md:border-t-0 md:border-l border-border pt-3 md:pt-0 md:pl-8">
+                              <div>
+                                <p className="text-sm font-semibold text-foreground">8-Pack Bags assembled</p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); removeEightPackBag(item); }}
+                                  disabled={(item.eightPackBagCount ?? 0) <= 0 || eightPackBusy || isOnBreak}
+                                  className="w-10 h-10 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+                                  title="Remove a bag"
+                                >
+                                  <Minus className="w-4 h-4" />
+                                </button>
+                                <div className="flex items-baseline gap-1 min-w-[64px] justify-center">
+                                  <span className="text-2xl font-bold tabular-nums text-indigo-600 dark:text-indigo-400">
+                                    {item.eightPackBagCount ?? 0}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground">bag{(item.eightPackBagCount ?? 0) === 1 ? "" : "s"}</span>
+                                </div>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); addEightPackBag(item); }}
+                                  disabled={eightPackBusy || isOnBreak}
+                                  className="w-10 h-10 flex items-center justify-center rounded-full bg-indigo-500 text-white hover:bg-indigo-600 disabled:opacity-50 transition-colors"
+                                  title="Add a bag"
+                                >
+                                  <Plus className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       );
                     })()}
-
-                    {/* 8-Pack Bags — each + click adds ONE bag. The counter
-                        shows the number of 8-pack bags being assembled. */}
-                    <div className="border-t border-border pt-3">
-                      {/* What to physically DO with bag portions at this
-                          station: bags are assembled AFTER the blast chiller
-                          (at wrapping), so here the bag portions go into the
-                          chiller LOOSE, not as two-packs. Expressed per batch
-                          of 10 because that's what's in front of the operator.
-                          Deliberately says nothing about fridge vs freezer —
-                          that split is wrapping's concern, not ovens'. */}
-                      {((item as { eightPackBagCount?: number }).eightPackBagCount ?? 0) > 0 && (() => {
-                        const bagCount = (item as { eightPackBagCount?: number }).eightPackBagCount ?? 0;
-                        return (
-                        <div className="mb-3 rounded-lg border border-indigo-300 dark:border-indigo-700 bg-indigo-50/60 dark:bg-indigo-950/30 px-3 py-2.5">
-                          <p className="text-sm font-semibold text-indigo-800 dark:text-indigo-200">
-                            {bagCount} bag{bagCount === 1 ? "" : "s"} today = {bagCount * 8} portions loose into the chiller — don't two-pack them
-                          </p>
-                          <p className="text-xs text-indigo-700/90 dark:text-indigo-300/90 mt-0.5">
-                            Per batch of 10: <span className="font-semibold">8 portions loose</span> (1 bag's worth) + <span className="font-semibold">1 two-pack</span>. Bags are made up after chilling, at wrapping.
-                          </p>
-                        </div>
-                        );
-                      })()}
-                      <div className="flex items-center justify-between mb-2">
-                        <div>
-                          <p className="text-sm font-semibold text-foreground">8-Pack Bags assembled</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); removeEightPackBag(item); }}
-                            disabled={(item.eightPackBagCount ?? 0) <= 0 || eightPackBusy || isOnBreak}
-                            className="w-10 h-10 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
-                            title="Remove a bag"
-                          >
-                            <Minus className="w-4 h-4" />
-                          </button>
-                          <div className="flex items-baseline gap-1 min-w-[64px] justify-center">
-                            <span className="text-2xl font-bold tabular-nums text-indigo-600 dark:text-indigo-400">
-                              {item.eightPackBagCount ?? 0}
-                            </span>
-                            <span className="text-xs text-muted-foreground">bag{(item.eightPackBagCount ?? 0) === 1 ? "" : "s"}</span>
-                          </div>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); addEightPackBag(item); }}
-                            disabled={eightPackBusy || isOnBreak}
-                            className="w-10 h-10 flex items-center justify-center rounded-full bg-indigo-500 text-white hover:bg-indigo-600 disabled:opacity-50 transition-colors"
-                            title="Add a bag"
-                          >
-                            <Plus className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
             </div>
           </div>
         );

@@ -303,7 +303,11 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 pt-6 pb-[200px]">
+      {/* pt/pb kept tight — every band of padding here is vertical space the
+          recipe panel can't have on a 10.2" iPad (Graeme, 2026-09-16). The
+          banner wrappers use empty:hidden so a banner that renders nothing
+          costs no margin either. */}
+      <div className="max-w-7xl mx-auto px-4 pt-3 pb-20">
         {/* Station-scoped SOPs — the "any process on this station" anchor.
             Attach here for anything that isn't a specific recipe or
             ingredient; the linked SOPs render as "Show me how" buttons. */}
@@ -313,7 +317,7 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
         <StationSopRail stationType={stationType} stationLabel={meta.label} />
         <StationReminderBanner stationType={stationType} plan={plan} />
         {/* Messages sent to THIS station — banner until someone taps Got it. */}
-        <div className="mb-4">
+        <div className="mb-3 empty:hidden">
           <StationMessagesBanner stationType={stationType} />
         </div>
         {children}

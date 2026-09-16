@@ -20,6 +20,11 @@ export type StationPlanItem = ProductionPlanItem & {
   fridgeEightPackQty?: number;
 };
 
+/** DOM id of the flex slot beside the Checklist/Production toggle. A station
+ *  can portal a compact strip (ovens' daily progress) into it so the two
+ *  share one line instead of stacking (Graeme, 2026-09-16). */
+export const STATION_VIEW_ROW_SLOT_ID = "station-view-row-slot";
+
 export const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
 export const FRIED_CHICKEN_CATEGORY = "Fried Chicken";
 
