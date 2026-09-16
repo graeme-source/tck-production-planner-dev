@@ -1,5 +1,5 @@
 import { formatBatches, batchesToPacks } from "../shared/format-batches";
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   getGetProductionPlanQueryKey,
 } from "@workspace/api-client-react";
@@ -8,8 +8,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import {
   Loader2, CheckCircle2, Flame, RefreshCw, AlertCircle, BarChart2,
-  Minus, Plus, Snowflake, X, Eye, ChevronDown, Scale, ThermometerSnowflake,
-  Hammer, ArrowDown,
+  Minus, Plus, Snowflake, X, Eye, Scale, ThermometerSnowflake,
+  Hammer, ArrowDown, ChevronLeft, ChevronRight, ListOrdered,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -62,12 +62,14 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
   const { state } = useAuth();
   const isAdmin = state.status === "authenticated" && state.user.role === "admin";
   const [wonlyLoading, setWonlyLoading] = useState<number | null>(null);
-  const [expandedItemId, setExpandedItemId] = useState<number | null>(null);
+  // ONE recipe is on show at a time and it stays put — you can't scroll away
+  // from it and lose your place (Graeme, 2026-09-16). Navigation happens
+  // through Prev/Next on the bottom dock or by picking from the queue sheet.
+  const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
+  const [queueOpen, setQueueOpen] = useState(false);
   // Prompt state: when a recipe finishes all batches, prompt for wonky before moving on
   const [promptItemId, setPromptItemId] = useState<number | null>(null);
   const [prevCurrentId, setPrevCurrentId] = useState<number | null>(null);
-  // Track whether user manually selected a recipe (don't auto-switch until currentItem changes)
-  const userOverrideRef = useRef(false);
 
   // Weight-tracking state (target per recipe, existing weight records, app settings).
   const [weightData, setWeightData] = useState<WeightTargetsResponse | null>(null);
@@ -160,35 +162,32 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
   const ovenPacksDone = (it: ProductionPlanItem) =>
     packsDoneForItem(it, getStationCount(it, "ovens"), effTarget(it), combinedBuildingCount(it));
   const currentItem = items.find(it => getStationCount(it, "ovens") < effTarget(it));
+  const selectedItem = items.find(i => i.id === selectedItemId) ?? null;
+  const selectedIndex = selectedItem ? items.findIndex(i => i.id === selectedItem.id) : -1;
 
-  // Auto-expand current recipe, and track when it changes
+  // Auto-select the current recipe, and track when it changes
   useEffect(() => {
     const curId = currentItem?.id ?? null;
     if (prevCurrentId !== null && curId !== prevCurrentId) {
       // The previous recipe just completed — prompt for wonky
       setPromptItemId(prevCurrentId);
-      // Auto-expand the new current recipe
-      setExpandedItemId(curId);
-      userOverrideRef.current = false;
+      // Auto-advance to the new current recipe
+      setSelectedItemId(curId);
     }
     setPrevCurrentId(curId);
   }, [currentItem?.id]);
 
-  // Initialize expanded item on first render
+  // Initialise the selection: the recipe being cooked, or the first in the
+  // queue once everything's done (something is always on show).
   useEffect(() => {
-    if (expandedItemId === null && currentItem) {
-      setExpandedItemId(currentItem.id);
+    if (selectedItemId === null && items.length > 0) {
+      setSelectedItemId(currentItem?.id ?? items[0].id);
     }
-  }, [currentItem?.id]);
+  }, [currentItem?.id, items.length]);
 
-  const toggleExpanded = (itemId: number) => {
-    if (expandedItemId === itemId) {
-      setExpandedItemId(null);
-      userOverrideRef.current = false;
-    } else {
-      setExpandedItemId(itemId);
-      userOverrideRef.current = itemId !== currentItem?.id;
-    }
+  const selectRecipe = (itemId: number) => {
+    setSelectedItemId(itemId);
+    setQueueOpen(false);
   };
 
   // Oven batch completion goes through a weight-input modal for calzones:
@@ -660,102 +659,62 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
         </div>
       )}
 
-      {/* Unified accordion queue */}
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <h3 className="font-semibold text-base">Oven Queue</h3>
-          {!currentItem && (
-            <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-sm font-medium">
-              <CheckCircle2 className="w-4 h-4" /> All done
-            </span>
-          )}
-        </div>
+      {/* Pinned recipe panel — one recipe on show, it can't scroll out from
+          under you. Prev/Next + the Queue sheet on the bottom dock are the
+          only ways to move, so where you are in the run is always explicit. */}
+      {(() => {
+        const item = selectedItem;
+        if (!item) return null;
+        const idx = items.findIndex(i => i.id === item.id);
+        const isCurrent = item.id === currentItem?.id;
+        // effTarget = what's actually been BUILT (ovens process real output,
+        // not the plan). "Caught up" = cooked everything built so far; a
+        // recipe with nothing built yet is pending, not complete.
+        const builtSoFar = effTarget(item);
+        const isComplete = builtSoFar > 0 && getStationCount(item, "ovens") >= builtSoFar;
+        const gPacks = grossPacks(item);
+        const nTwoPacks = netTwoPacks(item);
+        const trays = chillerTrays(item);
+        const wonlys = item.wonlyCount ?? 0;
+        const eightPacks = item.eightPackBagCount ?? 0;
+        const recipeColour = item.recipeColor ?? RECIPE_RACK_COLOURS[idx % RECIPE_RACK_COLOURS.length];
 
-        <div className="divide-y divide-border/50">
-          {items.map((item, idx) => {
-            const isExpanded = expandedItemId === item.id;
-            const isCurrent = item.id === currentItem?.id;
-            // effTarget = what's actually been BUILT (ovens process real output,
-            // not the plan). "Caught up" = cooked everything built so far; a
-            // recipe with nothing built yet is pending, not complete.
-            const builtSoFar = effTarget(item);
-            const plannedTarget = item.batchesTarget ?? 0;
-            const isComplete = builtSoFar > 0 && getStationCount(item, "ovens") >= builtSoFar;
-            const gPacks = grossPacks(item);
-            const nTwoPacks = netTwoPacks(item);
-            const nPacks = netPacks(item);
-            const trays = chillerTrays(item);
-            const wonlys = item.wonlyCount ?? 0;
-            const eightPacks = item.eightPackBagCount ?? 0;
-            const recipeColour = item.recipeColor ?? RECIPE_RACK_COLOURS[idx % RECIPE_RACK_COLOURS.length];
-
-            return (
-              <div key={item.id}>
-                {/* Collapsed summary row */}
+        return (
+          <div className={cn(
+            "bg-card border-2 rounded-xl overflow-hidden",
+            isCurrent ? "border-red-400 dark:border-red-600" : "border-blue-300 dark:border-blue-700"
+          )}>
+            {/* Where this recipe sits in the run — no guessing whether the
+                rest of the queue is above or below. */}
+            <div className={cn(
+              "px-4 py-2 flex items-center gap-2 border-b",
+              isCurrent
+                ? "bg-red-50/60 dark:bg-red-900/15 border-red-200 dark:border-red-800"
+                : "bg-blue-50/60 dark:bg-blue-900/15 border-blue-200 dark:border-blue-800"
+            )}>
+              <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground tabular-nums">
+                Recipe {idx + 1} of {items.length}
+              </span>
+              {isCurrent && (
+                <span className="flex items-center gap-1 text-xs font-bold text-red-600 dark:text-red-400 uppercase tracking-wider">
+                  <Flame className="w-3.5 h-3.5" /> Cooking now
+                </span>
+              )}
+              {!isCurrent && currentItem && (
                 <button
-                  onClick={() => toggleExpanded(item.id)}
-                  className={cn(
-                    "w-full text-left px-3 py-2.5 flex items-center gap-2 transition-colors",
-                    isExpanded
-                      ? isCurrent
-                        ? "bg-red-50/60 dark:bg-red-900/15"
-                        : "bg-blue-50/60 dark:bg-blue-900/15"
-                      : isCurrent
-                        ? "bg-red-50/40 dark:bg-red-900/10"
-                        : isComplete
-                          ? "bg-emerald-50/30 dark:bg-emerald-900/10"
-                          : "hover:bg-secondary/20"
-                  )}
+                  onClick={() => selectRecipe(currentItem.id)}
+                  className="flex items-center gap-1 text-xs font-bold text-red-600 dark:text-red-400 uppercase tracking-wider hover:underline"
                 >
-                  {/* Colour dot */}
-                  <div className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: recipeColour }} />
-
-                  {/* Recipe name */}
-                  <span
-                    className={cn(
-                      "flex-1 font-bold text-sm truncate",
-                      isComplete && !isExpanded ? "line-through opacity-60" : ""
-                    )}
-                    style={{ color: recipeColour }}
-                  >
-                    {item.recipeName ?? `Recipe #${item.recipeId}`}
-                  </span>
-
-                  {/* Cooked / built so far — ovens track ACTUAL build output.
-                      The planned target rides alongside as a muted reference. */}
-                  <span className="text-sm tabular-nums font-medium flex-shrink-0 text-right">
-                    {isMacCheese(item as any) ? (
-                      <>{getStationCount(item, "ovens")}/{builtSoFar}</>
-                    ) : (
-                      <>
-                        {getStationCount(item, "ovens")}/{builtSoFar}
-                        <span className="text-muted-foreground ml-1.5">
-                          ({ovenPacksDone(item)}/{ovenPacksTarget(item)} pk)
-                        </span>
-                      </>
-                    )}
-                    <span className="text-muted-foreground/70 ml-1.5 font-normal">· plan {plannedTarget}</span>
-                  </span>
-
-                  {/* Status icon */}
-                  {isComplete ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                  ) : (
-                    <ChevronDown className={cn(
-                      "w-4 h-4 text-muted-foreground flex-shrink-0 transition-transform",
-                      isExpanded ? "rotate-180" : ""
-                    )} />
-                  )}
+                  <Flame className="w-3.5 h-3.5" /> Jump to current
                 </button>
-
-                {/* Expanded panel */}
-                {isExpanded && (
-                  <div className={cn(
-                    "border-t-2 px-4 py-4 space-y-4",
-                    isCurrent
-                      ? "border-red-400 dark:border-red-600"
-                      : "border-blue-300 dark:border-blue-700"
-                  )}>
+              )}
+              {!currentItem && (
+                <span className="flex items-center gap-1 text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> All done
+                </span>
+              )}
+            </div>
+            <div className="px-4 py-4 space-y-4">
                     {/* Header: recipe name + built badge */}
                     <div className="flex items-start gap-3">
                       <div className="flex-1 min-w-0">
@@ -1165,45 +1124,169 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                         </div>
                       </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Session totals */}
-      <div className={cn("grid gap-2", sessionEightPackBags > 0 ? "grid-cols-5" : "grid-cols-4")}>
-        <div className="bg-card border border-border rounded-xl p-3 text-center">
-          <p className="text-sm text-muted-foreground mb-1">Gross Packs</p>
-          <p className="text-2xl font-bold tabular-nums">{sessionGrossPacks}</p>
-        </div>
-        <div className="bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-xl p-3 text-center">
-          <p className="text-sm text-red-700 dark:text-red-300 mb-1">Wonky</p>
-          <p className="text-2xl font-bold tabular-nums text-red-600 dark:text-red-400">{sessionWonly}</p>
-        </div>
-        <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3 text-center">
-          <p className="text-sm text-emerald-700 dark:text-emerald-300 mb-1">Net 2-Pk</p>
-          <p className="text-2xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{sessionNetTwoPacks}</p>
-          {sessionExtraPacks > 0 && (
-            <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">+{sessionExtraPacks} extra</p>
-          )}
-        </div>
-        {sessionEightPackBags > 0 && (
-          <div className="bg-indigo-50 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-800 rounded-xl p-3 text-center">
-            <p className="text-sm text-indigo-700 dark:text-indigo-300 mb-1">8-Packs</p>
-            <p className="text-2xl font-bold tabular-nums text-indigo-600 dark:text-indigo-400">{sessionEightPackBags}</p>
+            </div>
           </div>
-        )}
-        <div className="bg-cyan-50 dark:bg-cyan-950/20 border border-cyan-200 dark:border-cyan-800 rounded-xl p-3 text-center">
-          <p className="text-sm text-cyan-700 dark:text-cyan-300 mb-1">Trays</p>
-          <p className="text-2xl font-bold tabular-nums text-cyan-600 dark:text-cyan-400">{sessionTotalTrays}</p>
+        );
+      })()}
+
+      {/* Bottom dock — the fixed, always-in-the-same-place way around the
+          queue: Prev / Queue sheet / Next. Sits above StationLayout's
+          bottom padding so it never covers the panel's own buttons. */}
+      <div className="fixed bottom-0 left-0 right-0 z-30 border-t border-border bg-card/95 backdrop-blur-sm">
+        <div className="max-w-7xl mx-auto px-4 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] flex items-center gap-2">
+          <button
+            onClick={() => selectedIndex > 0 && selectRecipe(items[selectedIndex - 1].id)}
+            disabled={selectedIndex <= 0}
+            className="flex items-center gap-1 px-4 py-3 rounded-xl border border-border font-semibold text-sm hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+          >
+            <ChevronLeft className="w-5 h-5" /> Prev
+          </button>
+          <button
+            onClick={() => setQueueOpen(true)}
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-primary text-primary-foreground font-bold text-sm hover:bg-primary/90 transition-colors"
+          >
+            <ListOrdered className="w-5 h-5" />
+            Oven Queue
+            <span className="tabular-nums font-normal opacity-90">
+              · {items.filter(it => { const t = effTarget(it); return t > 0 && getStationCount(it, "ovens") >= t; }).length}/{items.length} done
+            </span>
+          </button>
+          <button
+            onClick={() => selectedIndex >= 0 && selectedIndex < items.length - 1 && selectRecipe(items[selectedIndex + 1].id)}
+            disabled={selectedIndex < 0 || selectedIndex >= items.length - 1}
+            className="flex items-center gap-1 px-4 py-3 rounded-xl border border-border font-semibold text-sm hover:bg-secondary/60 disabled:opacity-30 transition-colors"
+          >
+            Next <ChevronRight className="w-5 h-5" />
+          </button>
         </div>
       </div>
 
-      {/* Chiller Rack Visual */}
-      <ChillerRackVisual rackItems={rackItems} wonkyItems={wonkyItems} />
+      {/* Queue sheet — the whole production run in order with batch numbers,
+          plus the session totals and chiller rack. Tap a recipe to jump the
+          pinned panel straight to it. */}
+      {queueOpen && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/50" onClick={() => setQueueOpen(false)} />
+          <div className="fixed bottom-0 left-0 right-0 z-50 bg-card border-t border-border rounded-t-2xl shadow-2xl max-h-[85dvh] flex flex-col">
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between flex-shrink-0">
+              <h3 className="font-semibold text-base">Oven Queue</h3>
+              <div className="flex items-center gap-3">
+                {!currentItem && (
+                  <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-sm font-medium">
+                    <CheckCircle2 className="w-4 h-4" /> All done
+                  </span>
+                )}
+                <button
+                  onClick={() => setQueueOpen(false)}
+                  className="p-2 rounded-lg hover:bg-secondary/60 text-muted-foreground"
+                  aria-label="Close the queue"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              <div className="divide-y divide-border/50">
+                {items.map((item, idx) => {
+                  const isSelected = selectedItemId === item.id;
+                  const isCurrent = item.id === currentItem?.id;
+                  const builtSoFar = effTarget(item);
+                  const plannedTarget = item.batchesTarget ?? 0;
+                  const isComplete = builtSoFar > 0 && getStationCount(item, "ovens") >= builtSoFar;
+                  const recipeColour = item.recipeColor ?? RECIPE_RACK_COLOURS[idx % RECIPE_RACK_COLOURS.length];
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => selectRecipe(item.id)}
+                      className={cn(
+                        "w-full text-left px-3 py-3 flex items-center gap-2 transition-colors",
+                        isSelected
+                          ? "bg-blue-50/60 dark:bg-blue-900/15"
+                          : isCurrent
+                            ? "bg-red-50/40 dark:bg-red-900/10"
+                            : isComplete
+                              ? "bg-emerald-50/30 dark:bg-emerald-900/10"
+                              : "hover:bg-secondary/20"
+                      )}
+                    >
+                      <span className="w-5 text-xs font-bold text-muted-foreground tabular-nums text-right flex-shrink-0">{idx + 1}</span>
+                      {/* Colour dot */}
+                      <div className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: recipeColour }} />
+
+                      {/* Recipe name */}
+                      <span
+                        className={cn(
+                          "flex-1 font-bold text-sm truncate",
+                          isComplete ? "line-through opacity-60" : ""
+                        )}
+                        style={{ color: recipeColour }}
+                      >
+                        {item.recipeName ?? `Recipe #${item.recipeId}`}
+                      </span>
+
+                      {isCurrent && <Flame className="w-4 h-4 text-red-500 flex-shrink-0" />}
+
+                      {/* Cooked / built so far — ovens track ACTUAL build output.
+                          The planned target rides alongside as a muted reference. */}
+                      <span className="text-sm tabular-nums font-medium flex-shrink-0 text-right">
+                        {isMacCheese(item as any) ? (
+                          <>{getStationCount(item, "ovens")}/{builtSoFar}</>
+                        ) : (
+                          <>
+                            {getStationCount(item, "ovens")}/{builtSoFar}
+                            <span className="text-muted-foreground ml-1.5">
+                              ({ovenPacksDone(item)}/{ovenPacksTarget(item)} pk)
+                            </span>
+                          </>
+                        )}
+                        <span className="text-muted-foreground/70 ml-1.5 font-normal">· plan {plannedTarget}</span>
+                      </span>
+
+                      {isComplete && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Session totals — live under the queue so the day's summary
+                  is always found in the same place. */}
+              <div className="px-3 py-3 border-t border-border space-y-3">
+                <div className={cn("grid gap-2", sessionEightPackBags > 0 ? "grid-cols-5" : "grid-cols-4")}>
+                  <div className="bg-card border border-border rounded-xl p-3 text-center">
+                    <p className="text-sm text-muted-foreground mb-1">Gross Packs</p>
+                    <p className="text-2xl font-bold tabular-nums">{sessionGrossPacks}</p>
+                  </div>
+                  <div className="bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-xl p-3 text-center">
+                    <p className="text-sm text-red-700 dark:text-red-300 mb-1">Wonky</p>
+                    <p className="text-2xl font-bold tabular-nums text-red-600 dark:text-red-400">{sessionWonly}</p>
+                  </div>
+                  <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3 text-center">
+                    <p className="text-sm text-emerald-700 dark:text-emerald-300 mb-1">Net 2-Pk</p>
+                    <p className="text-2xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{sessionNetTwoPacks}</p>
+                    {sessionExtraPacks > 0 && (
+                      <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">+{sessionExtraPacks} extra</p>
+                    )}
+                  </div>
+                  {sessionEightPackBags > 0 && (
+                    <div className="bg-indigo-50 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-800 rounded-xl p-3 text-center">
+                      <p className="text-sm text-indigo-700 dark:text-indigo-300 mb-1">8-Packs</p>
+                      <p className="text-2xl font-bold tabular-nums text-indigo-600 dark:text-indigo-400">{sessionEightPackBags}</p>
+                    </div>
+                  )}
+                  <div className="bg-cyan-50 dark:bg-cyan-950/20 border border-cyan-200 dark:border-cyan-800 rounded-xl p-3 text-center">
+                    <p className="text-sm text-cyan-700 dark:text-cyan-300 mb-1">Trays</p>
+                    <p className="text-2xl font-bold tabular-nums text-cyan-600 dark:text-cyan-400">{sessionTotalTrays}</p>
+                  </div>
+                </div>
+
+                {/* Chiller Rack Visual */}
+                <ChillerRackVisual rackItems={rackItems} wonkyItems={wonkyItems} />
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
