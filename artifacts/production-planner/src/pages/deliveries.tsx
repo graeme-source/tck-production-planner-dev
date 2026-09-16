@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
+import { VisitorCheckInButton } from "@/components/visitor-check-in-button";
 import {
   Truck, ChevronLeft, ChevronRight, Calendar, Package, Thermometer,
   Check, AlertTriangle, Loader2, ClipboardCheck, X,
@@ -1087,15 +1088,21 @@ export default function Deliveries() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Deliveries & Goods In"
-        description="Track expected deliveries and receive goods into storage."
+        title="Front Door — Deliveries"
+        description="Everything at the front door: deliveries in, collections out, visitors signing in."
         action={
-          <button
-            onClick={goToday}
-            className="px-4 py-2.5 border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors text-sm"
-          >
-            <Calendar className="w-4 h-4" /> Today
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Visitor check-in belongs to the doorstep, so it lives here
+                with the deliveries rather than on the dashboard header
+                (Graeme, 2026-09-16). */}
+            <VisitorCheckInButton />
+            <button
+              onClick={goToday}
+              className="px-4 py-2.5 border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors text-sm"
+            >
+              <Calendar className="w-4 h-4" /> Today
+            </button>
+          </div>
         }
       />
 

@@ -7,7 +7,7 @@ import { EightPackOrdersBanner } from "@/components/eight-pack-orders-banner";
 import { StockGateBanner } from "@/components/stock-gate-banner";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { format, isToday, startOfWeek, addWeeks, addDays } from "date-fns";
-import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X, Sparkles, Salad, UserPlus, ClipboardList, Layers, UtensilsCrossed, Drumstick, Waves, Flame } from "lucide-react";
+import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X, Sparkles, Salad, ClipboardList, Layers, UtensilsCrossed, Drumstick, Waves, Flame } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/contexts/auth-context";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from "recharts";
@@ -757,9 +757,9 @@ export default function Dashboard() {
         action={
           <div className="flex items-center gap-2">
             <SendStationMessageButton />
-            <VisitorCheckInButton />
-            {/* The founder entry moved to the top of the sidebar as
-                "The Business" (Graeme, 2026-09-11). */}
+            {/* Visitor Check-In lives on the Front Door — Deliveries page
+                now (Graeme, 2026-09-16); the founder entry moved to the
+                top of the sidebar as "The Business" (2026-09-11). */}
           </div>
         }
       />
@@ -776,8 +776,13 @@ export default function Dashboard() {
         <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Today's Admin</p>
         <div className="grid grid-cols-3 gap-4">
         <StatCard
-          title="Deliveries Arriving"
+          // Everything that happens at the front door in one place —
+          // deliveries in, collections out, visitors signing in
+          // (Graeme, 2026-09-16). The headline number is still today's
+          // deliveries arrived/expected.
+          title="Front Door — Deliveries"
           value={formatProgressValue(todayDeliveriesCount?.arrived ?? 0, todayDeliveriesCount?.total ?? 0)}
+          subtitle="Deliveries · collections · visitor check-in"
           icon={PackageCheck}
           color="text-slate-500"
           bg="bg-slate-500/10"
@@ -1290,37 +1295,6 @@ export default function Dashboard() {
 
       <UpcomingProductionPanel />
     </div>
-  );
-}
-
-/** Opens the visitor-book kiosk (/visitor-check-in) — press it, hand the iPad
- *  over. Carries a live count of visitors still signed in so the dashboard
- *  doubles as the fire roll-call prompt. */
-function VisitorCheckInButton() {
-  const { data: onSite } = useQuery<Array<{ id: number }>>({
-    queryKey: ["visitors-on-site"],
-    queryFn: async () => {
-      const res = await fetch(`${BASE}/api/visitors/on-site`, { credentials: "include" });
-      if (!res.ok) throw new Error("failed");
-      return res.json();
-    },
-    refetchInterval: 120_000,
-    retry: false,
-  });
-  const count = onSite?.length ?? 0;
-
-  return (
-    <Link href="/visitor-check-in">
-      <button className="flex items-center gap-1.5 text-xs font-medium text-primary border border-primary/30 bg-primary/10 rounded-lg px-3 py-2 hover:bg-primary/20 transition-colors">
-        <UserPlus className="w-3.5 h-3.5" />
-        Visitor Check-In
-        {count > 0 && (
-          <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold tabular-nums">
-            {count} on site
-          </span>
-        )}
-      </button>
-    </Link>
   );
 }
 
