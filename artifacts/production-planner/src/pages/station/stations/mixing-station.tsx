@@ -1,6 +1,6 @@
 import { formatBatches } from "../shared/format-batches";
 import React from "react";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   useUpdateProductionPlanOrder,
   getGetProductionPlanQueryKey,
@@ -852,6 +852,18 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
   const activateItem = (itemId: number) => {
     setActiveItemId(prev => (prev === itemId ? null : itemId));
   };
+
+  // Land on a recipe instead of an empty "pick one" prompt (Graeme,
+  // 2026-09-16): the first one still to mix, or the first in the queue once
+  // everything's done. Fires ONCE per load — activateItem is a toggle, so
+  // re-running this would make it impossible to collapse the open recipe.
+  const autoPickedRef = useRef(false);
+  useEffect(() => {
+    if (autoPickedRef.current || items.length === 0) return;
+    autoPickedRef.current = true;
+    const first = items.find(it => !isItemMixingComplete(it)) ?? items[0];
+    setActiveItemId(prev => prev ?? first.id);
+  }, [items]);
 
   const activeItem = activeItemId ? items.find(it => it.id === activeItemId) : null;
   const activeFilling = activeItemId ? getFillingForItem(activeItemId) : null;

@@ -487,11 +487,22 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                             ref={el => { itemRefs.current[ik] = el; }}
                             onClick={() => setSelectedItemKey(ik)}
                             className={cn(
-                              "w-full flex items-center gap-3 px-4 py-3 text-left transition-colors border-t border-border/30",
+                              "w-full flex items-center gap-3 px-4 py-3 text-left transition border-t border-border/30",
                               isSelected
                                 ? "bg-emerald-500/10 border-l-4 border-l-emerald-500"
                                 : "hover:bg-secondary/40 border-l-4 border-l-transparent",
-                              item.completed && !isSelected && "opacity-60",
+                              // With a task open, every other line fades right
+                              // back (Graeme, 2026-09-16): a prominent
+                              // neighbouring line reads as the one the
+                              // right-hand panel's Mark Complete would hit.
+                              // Hover/press brings it back so it stays
+                              // reachable. With nothing open, the list reads
+                              // normally and only done items are dimmed.
+                              !isSelected && (
+                                selectedItemKey
+                                  ? "opacity-30 hover:opacity-100"
+                                  : item.completed && "opacity-60"
+                              ),
                             )}
                           >
                             <div className="flex-shrink-0">
