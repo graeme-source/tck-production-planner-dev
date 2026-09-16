@@ -64,3 +64,38 @@ rm ~/Library/LaunchAgents/com.tck.dbbackup.plist
 ```
 
 The script itself and the existing dumps remain.
+
+## Daily local-DB refresh (added 2026-09-16)
+
+`refresh-local-db.sh` + `com.tck.dbrefresh.plist` go one step further than
+the backup: once a day they pull a FRESH dump from live and load it into
+the local `tck_live`, so the local planner always has this morning's real
+data. The Mac can't pull anything while it's shut down, so the job fires
+at **login/boot** and at **05:30** (covers Macs left on or asleep —
+whichever fires first wins, the script no-ops for the rest of the day).
+
+Flow: fresh dump via `backup.sh` (read-only on live, and it doubles as the
+day's off-Railway backup) → restore into `tck_live_fresh` → sanity checks →
+atomic swap keeping the previous copy as `tck_live_prev` → re-seed the
+local-only `claude-test` user → bounce the dev API on :3000. A failed pull
+leaves `tck_live` untouched on yesterday's data — it never swaps in a
+half-restored DB.
+
+The plist runs the INSTALLED copy so it survives branch switches. Install /
+update:
+
+```bash
+mkdir -p ~/TCK-Backups/bin
+cp tools/local-backup/refresh-local-db.sh ~/TCK-Backups/bin/
+cp tools/local-backup/com.tck.dbrefresh.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.tck.dbrefresh.plist
+```
+
+Force a re-run today (e.g. to pull the latest orders mid-afternoon):
+
+```bash
+rm ~/TCK-Backups/.last-local-refresh && bash ~/TCK-Backups/bin/refresh-local-db.sh
+```
+
+Log: `~/TCK-Backups/refresh.log`. Disable the same way as the backup job,
+with `com.tck.dbrefresh.plist` in place of the backup plist.

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tck.dbrefresh</string>
+
+    <!-- Runs the INSTALLED copy (~/TCK-Backups/bin), not the repo file, so
+         the job keeps working whatever branch or worktree the repo is on.
+         After changing the script in the repo, re-install with:
+           cp tools/local-backup/refresh-local-db.sh ~/TCK-Backups/bin/ -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/graemecarter/TCK-Backups/bin/refresh-local-db.sh</string>
+    </array>
+
+    <!-- Fire at login/boot AND at 05:30. The script itself runs at most
+         once per day (marker file), so whichever fires first wins:
+         - Mac on or asleep overnight -> 05:30 run (asleep = runs on wake),
+           refreshed before the workday starts.
+         - Mac shut down overnight -> the login trigger pulls it, ready
+           ~10 minutes after startup; local DB stays usable on yesterday's
+           data until the fresh copy swaps in atomically. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>5</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/graemecarter/TCK-Backups/dbrefresh.launchd.out</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/graemecarter/TCK-Backups/dbrefresh.launchd.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
