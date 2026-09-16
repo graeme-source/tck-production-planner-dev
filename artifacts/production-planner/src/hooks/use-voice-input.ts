@@ -36,16 +36,23 @@ type Mode = "replace" | "append";
 
 interface UseVoiceInputOptions {
   onTranscript: (text: string) => void;
+  /** Fired once when dictation stops, with the full dictated text. Lets a
+   *  caller tidy the transcript automatically instead of making the user
+   *  tap a second button — the whole point is that it's quick
+   *  (Graeme, 2026-09-16). Not called when nothing was heard. */
+  onFinished?: (text: string) => void;
   /** append merges new speech to existing text; replace swaps out current input. Default: append. */
   mode?: Mode;
   /** Value of the input when dictation starts (used for append mode). */
   getCurrentValue?: () => string;
 }
 
-export function useVoiceInput({ onTranscript, mode = "append", getCurrentValue }: UseVoiceInputOptions) {
+export function useVoiceInput({ onTranscript, onFinished, mode = "append", getCurrentValue }: UseVoiceInputOptions) {
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+  const onFinishedRef = useRef(onFinished);
+  onFinishedRef.current = onFinished;
   const supported = typeof window !== "undefined" && getSpeechRecognition() !== null;
 
   const stop = useCallback(() => {
@@ -102,6 +109,10 @@ export function useVoiceInput({ onTranscript, mode = "append", getCurrentValue }
     recognition.onend = () => {
       setListening(false);
       recognitionRef.current = null;
+      // Only when something was actually heard — onend also fires on abort
+      // and on a permission refusal, and there's nothing to tidy then.
+      const spoken = finalText.trim();
+      if (spoken.length > 0) onFinishedRef.current?.((prefix + finalText).trimStart());
     };
 
     recognitionRef.current = recognition;

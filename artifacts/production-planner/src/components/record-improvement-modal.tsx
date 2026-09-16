@@ -18,6 +18,7 @@ import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { Lightbulb, CheckCircle2, Camera, Loader2, X, ArrowRight, ListChecks, ThumbsUp } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DictateButton } from "@/components/dictate-button";
 import { toast } from "@/hooks/use-toast";
 import { summariseUploadFailures, type UploadAttempt } from "@/lib/upload-failures";
 
@@ -268,9 +269,16 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
         ) : (
           <>
             <div>
-              <label className="text-lg font-bold mb-2 block">
-                {isIdea ? "What could be better?" : "What did you improve?"}
-              </label>
+              {/* Dictate sits ON the label row: typing this on a shared iPad
+                  mid-shift is what stops improvements getting written down at
+                  all (Graeme, 2026-09-16). Tidying happens by itself when you
+                  stop talking. */}
+              <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                <label className="text-lg font-bold">
+                  {isIdea ? "What could be better?" : "What did you improve?"}
+                </label>
+                <DictateButton value={title} onChange={setTitle} context="title" />
+              </div>
               <input
                 value={title}
                 onChange={e => setTitle(e.target.value)}
@@ -281,9 +289,12 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
             </div>
 
             <div>
-              <label className="text-lg font-bold mb-2 block">
-                Anything to add? <span className="font-normal text-muted-foreground">(optional)</span>
-              </label>
+              <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                <label className="text-lg font-bold">
+                  Anything to add? <span className="font-normal text-muted-foreground">(optional)</span>
+                </label>
+                <DictateButton value={description} onChange={setDescription} context="note" />
+              </div>
               <textarea
                 value={description}
                 onChange={e => setDescription(e.target.value)}
