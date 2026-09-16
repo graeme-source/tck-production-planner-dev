@@ -69,6 +69,7 @@ import { useModalScrollKeeper, useNoScrollAutoFocus } from "@/hooks/use-modal-sc
 import { createPortal } from "react-dom";
 import { getStationCount, isMacCheese, STATION_VIEW_ROW_SLOT_ID } from "../shared/constants";
 import { tinsCompleteFrom } from "../shared/tin-math";
+import { QueueDock, QueueSheet } from "../shared/station-queue";
 import type { PrepRecipeDetail, PrepMarinadeDetail, PrepIngredientDetail } from "./prep-hub";
 
 // Weight the cooked meat filling should come to once every tray is out of the
@@ -128,6 +129,12 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
   const isAdmin = state.status === "authenticated" && state.user.role === "admin";
   const queryClient = useQueryClient();
   const [activeItemId, setActiveItemId] = useState<number | null>(null);
+  // One job on screen at a time, the rest behind the dock (Graeme,
+  // 2026-09-16) — the tins tab pins the ACTIVE recipe, the cooking tab pins
+  // whichever cook is selected. The draggable queue itself moves into the
+  // sheet, where the production order is still set by drag-and-drop.
+  const [queueOpen, setQueueOpen] = useState(false);
+  const [cookingRecipeId, setCookingRecipeId] = useState<number | null>(null);
   const [checkedIngredients, setCheckedIngredients] = useState<Record<string, boolean>>({});
   const [completing, setCompleting] = useState(false);
   const [completeFailed, setCompleteFailed] = useState(false);
@@ -878,6 +885,122 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
 
   const activeTinInfo = getActiveTinInfo();
 
+  /** One queue row, built in a single place so the pinned card and the queue
+   *  sheet can never drift apart. `compact` drops the expanded working
+   *  content, keeping the sheet's list short enough to drag-reorder. */
+  const renderTinRow = (
+    item: ProductionPlanItem,
+    opts: { compact?: boolean; draggable?: boolean; onPick?: () => void } = {},
+  ) => {
+    const mixingCount = getStationCount(item, "mixing");
+    const target = item.batchesTarget ?? 0;
+    const bpt = item.maxBatchesPerTin ?? 1;
+    const tinsTarget = item.mixingTinOverride ?? calcTins(target, bpt);
+    const batchesPerTinEven = tinsTarget > 0 ? Math.ceil(target / tinsTarget) : target;
+    let tinsComplete = tinsCompleteFrom(mixingCount, tinsTarget, batchesPerTinEven);
+    if (mixingCount >= target && target > 0) tinsComplete = tinsTarget;
+    const filling = getFillingForItem(item.id);
+    const hasFillingItems = filling && (filling.fillingIngredients.length > 0 || filling.fillingSubRecipes.length > 0);
+    const isActive = activeItemId === item.id;
+    return (
+      <MixingOverviewRow
+        key={item.id}
+        item={item}
+        compact={opts.compact}
+        sopLinks={item.recipeId != null ? (sopLinksByRecipe?.[item.recipeId] ?? []) : []}
+        onOpenSop={sopViewer.open}
+        sopQueryKey={mixSopKey}
+        isActive={isActive}
+        isComplete={mixingCount >= target && target > 0}
+        isDraggable={opts.draggable ?? false}
+        hasFillingItems={!!hasFillingItems}
+        tinsComplete={tinsComplete}
+        tinsTarget={tinsTarget}
+        allTinsDone={tinsComplete >= tinsTarget}
+        progress={tinsTarget > 0 ? Math.round((tinsComplete / tinsTarget) * 100) : 0}
+        mixingCount={mixingCount}
+        target={target}
+        batchesPerTinEven={batchesPerTinEven}
+        isOnBreak={isOnBreak}
+        isAdmin={isAdmin}
+        onActivate={() => { activateItem(item.id); opts.onPick?.(); }}
+        onAdd={() => addTin(item)}
+        onRemove={() => undoTin(item)}
+        tinPending={tinPending}
+        filling={filling ?? null}
+        checkedIngredients={checkedIngredients}
+        onToggleIngredient={(key) => toggleIngredient(item.id, key)}
+        completing={isActive && completing}
+        completeFailed={isActive && completeFailed}
+        onAutoComplete={() => handleAutoComplete(item)}
+        sched={schedByItem.get(item.id) ?? null}
+      />
+    );
+  };
+
+
+  // Finished cooks — a review log, so it lives in the queue sheet
+  // rather than under the job in hand (Graeme, 2026-09-16).
+  const cookingTimesTable = (() => {
+    const completed = ovenEvents.filter(e => e.ovenOutAt);
+    if (completed.length === 0) return null;
+    return (
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-border bg-secondary/30">
+          <p className="font-semibold text-lg">Cooking Times</p>
+          <p className="text-sm text-muted-foreground">Actual oven times and temperatures — tap Edit to correct a mistake</p>
+        </div>
+        <div className="divide-y divide-border/50">
+          {completed.map(ev => {
+            const inTime = new Date(ev.ovenInAt);
+            const outTime = new Date(ev.ovenOutAt!);
+            const durationMin = Math.round((outTime.getTime() - inTime.getTime()) / 60000);
+            const hours = Math.floor(durationMin / 60);
+            const mins = durationMin % 60;
+            const durationStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+            const formatTime = (d: Date) => d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+            const temp = matchingTempRecord(ev);
+            const tempC = temp ? Number(temp.temperatureC) : null;
+            const tempTime = temp ? new Date(temp.recordedAt) : null;
+            return (
+              <div key={ev.id} className="px-4 py-3 flex items-center justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-base truncate">{ev.recipeName}</p>
+                  <p className="text-sm text-muted-foreground truncate">
+                    {ev.ingredientName} — Tray {ev.trayIndex + 1}
+                  </p>
+                  {tempC !== null && (() => {
+                    const minTemp = minTempFor(ev.ingredientId);
+                    return (
+                      <p className={cn(
+                        "text-sm font-semibold tabular-nums mt-0.5",
+                        tempC >= minTemp ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400",
+                      )}>
+                        {tempC.toFixed(1)}°C {tempTime && <span className="text-muted-foreground font-normal">@ {formatTime(tempTime)}</span>}
+                      </p>
+                    );
+                  })()}
+                </div>
+                <div className="text-right flex-shrink-0 flex flex-col items-end gap-1">
+                  <p className="font-bold text-base tabular-nums">{durationStr}</p>
+                  <p className="text-sm text-muted-foreground tabular-nums">
+                    {formatTime(inTime)} → {formatTime(outTime)}
+                  </p>
+                  <button
+                    onClick={() => openEditRow(ev)}
+                    className="text-xs font-semibold text-primary hover:text-primary/80 underline-offset-2 hover:underline"
+                  >
+                    Edit
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  })();
+
   return (
     <>
     {/* Edit row dialog — correct oven times and temperature after the fact */}
@@ -1118,25 +1241,11 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
         const allCooking = cookingRecipes.filter(r => r.trayCount != null && r.trayCount > 0);
         const doneCooking = allCooking.filter(isCookingRecipeDone);
         const visibleCooking = showCompleted ? allCooking : allCooking.filter(r => !isCookingRecipeDone(r));
+        // One cook on screen; the rest live behind the dock. The done
+        // count and the show-completed toggle moved to the queue sheet.
+        const selectedCooking = visibleCooking.find(r => r.recipeId === cookingRecipeId) ?? visibleCooking[0] ?? null;
         return (
         <div className="space-y-3">
-          {/* List header — same shape as the tins tab: the show-completed
-              toggle sits INSIDE the list's own header row, top right, so it
-              stops costing a band of vertical space (Graeme, 2026-09-16). */}
-          <div className="flex items-center justify-between gap-2 px-1 flex-wrap">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              Meat Cooking — {doneCooking.length}/{allCooking.length} done
-            </h3>
-            {doneCooking.length > 0 && (
-              <button
-                onClick={toggleShowCompleted}
-                className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
-              >
-                {showCompleted ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                {showCompleted ? "Hide completed" : `Show completed (${doneCooking.length})`}
-              </button>
-            )}
-          </div>
           {allCooking.length === 0 ? (
             <div className="bg-card border border-border rounded-xl p-6 text-center text-muted-foreground text-sm">
               No raw meat trays for this plan — cooking settings not yet configured on ingredients.
@@ -1146,7 +1255,7 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
               ✓ All {allCooking.length} meat-cooking recipes done — use &ldquo;Show completed&rdquo; above to review them.
             </div>
           ) : (
-            visibleCooking
+            (selectedCooking ? [selectedCooking] : [])
               .map(recipe => {
                 const rawMeatIngs = recipe.ingredients.filter(i => i.isRawMeat && i.trayCount != null && i.trayCount > 0);
                 const marinades = recipe.marinades ?? [];
@@ -1418,168 +1527,146 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
               })
           )}
 
-          {(() => {
-            const completed = ovenEvents.filter(e => e.ovenOutAt);
-            if (completed.length === 0) return null;
-            return (
-              <div className="bg-card border border-border rounded-xl overflow-hidden">
-                <div className="px-4 py-3 border-b border-border bg-secondary/30">
-                  <p className="font-semibold text-lg">Cooking Times</p>
-                  <p className="text-sm text-muted-foreground">Actual oven times and temperatures — tap Edit to correct a mistake</p>
-                </div>
-                <div className="divide-y divide-border/50">
-                  {completed.map(ev => {
-                    const inTime = new Date(ev.ovenInAt);
-                    const outTime = new Date(ev.ovenOutAt!);
-                    const durationMin = Math.round((outTime.getTime() - inTime.getTime()) / 60000);
-                    const hours = Math.floor(durationMin / 60);
-                    const mins = durationMin % 60;
-                    const durationStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
-                    const formatTime = (d: Date) => d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-                    const temp = matchingTempRecord(ev);
-                    const tempC = temp ? Number(temp.temperatureC) : null;
-                    const tempTime = temp ? new Date(temp.recordedAt) : null;
-                    return (
-                      <div key={ev.id} className="px-4 py-3 flex items-center justify-between gap-3">
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-base truncate">{ev.recipeName}</p>
-                          <p className="text-sm text-muted-foreground truncate">
-                            {ev.ingredientName} — Tray {ev.trayIndex + 1}
-                          </p>
-                          {tempC !== null && (() => {
-                            const minTemp = minTempFor(ev.ingredientId);
-                            return (
-                              <p className={cn(
-                                "text-sm font-semibold tabular-nums mt-0.5",
-                                tempC >= minTemp ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400",
-                              )}>
-                                {tempC.toFixed(1)}°C {tempTime && <span className="text-muted-foreground font-normal">@ {formatTime(tempTime)}</span>}
-                              </p>
-                            );
-                          })()}
-                        </div>
-                        <div className="text-right flex-shrink-0 flex flex-col items-end gap-1">
-                          <p className="font-bold text-base tabular-nums">{durationStr}</p>
-                          <p className="text-sm text-muted-foreground tabular-nums">
-                            {formatTime(inTime)} → {formatTime(outTime)}
-                          </p>
-                          <button
-                            onClick={() => openEditRow(ev)}
-                            className="text-xs font-semibold text-primary hover:text-primary/80 underline-offset-2 hover:underline"
-                          >
-                            Edit
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })()}
         </div>
         );
       })()}
 
       {mixingTab === "tins" && (() => {
+        const activeItem = activeItemId != null ? items.find(i => i.id === activeItemId) ?? null : null;
+        return activeItem ? renderTinRow(activeItem) : (
+          <button
+            onClick={() => setQueueOpen(true)}
+            className="w-full bg-card border-2 border-dashed border-border rounded-xl p-6 text-center hover:border-primary/50 transition-colors"
+          >
+            <p className="font-semibold">Pick a recipe to start mixing</p>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Open the queue below — that's also where you drag to set the production order.
+            </p>
+          </button>
+        );
+      })()}
+
+      {/* Bottom dock + queue sheet — the shared station-queue pattern. The
+          production ORDER for every downstream station is set HERE by
+          dragging, so the queue list inside the sheet stays fully
+          draggable (Graeme, 2026-09-16). */}
+      {(() => {
+        const cookAll = cookingRecipes.filter(r => r.trayCount != null && r.trayCount > 0);
+        const cookDone = cookAll.filter(isCookingRecipeDone);
+        const cookVisible = showCompleted ? cookAll : cookAll.filter(r => !isCookingRecipeDone(r));
         const doneTinRows = tinRows.filter(r => r.kind === "recipe" && isItemMixingComplete(r.item));
         const visibleTinRows = showCompleted
           ? tinRows
           : tinRows.filter(r => r.kind === "break" || !isItemMixingComplete(r.item));
-        return (
-      <div>
-        <div className="flex items-center justify-between gap-2 mb-2 px-1 flex-wrap">
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            {activeItemId ? "All Recipes" : "Click a recipe to start mixing"}
-          </h3>
-          <div className="flex items-center gap-2">
-            {doneTinRows.length > 0 && (
-              <button
-                onClick={toggleShowCompleted}
-                className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
-              >
-                {showCompleted ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                {showCompleted ? "Hide completed" : `Show completed (${doneTinRows.length})`}
-              </button>
-            )}
-            {schedule && (
-              <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-primary/10 text-primary tabular-nums whitespace-nowrap">
-                {formatClock(schedule.startMinutes)} → finishes ~{formatClock(schedule.endMinutes)}
-              </span>
-            )}
-          </div>
-        </div>
-        {schedWarnings.length > 0 && (
-          <p className="text-xs text-amber-600 dark:text-amber-400 mb-2 px-1">
-            <AlertTriangle className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />
-            Times incomplete: {schedWarnings.join(" · ")}
-          </p>
-        )}
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          {/* Hidden completed rows stay in tinRows (handleDragEnd works on the
-              full list by id), only the render + sortable ids shrink. */}
-          <SortableContext items={visibleTinRows.map(rowId)} strategy={verticalListSortingStrategy}>
-            <div className="space-y-2">
-              {visibleTinRows.map(row => {
-                if (row.kind === "break") {
-                  return <SortableBreakCard key={`break-${row.br.id}`} br={row.br} />;
-                }
-                const item = row.item;
-                const mixingCount = getStationCount(item, "mixing");
-                const target = item.batchesTarget ?? 0;
-                const bpt = item.maxBatchesPerTin ?? 1;
-                const tinsTarget = item.mixingTinOverride ?? calcTins(target, bpt);
-                const batchesPerTinEven = tinsTarget > 0 ? Math.ceil(target / tinsTarget) : target;
-                let tinsComplete = tinsCompleteFrom(mixingCount, tinsTarget, batchesPerTinEven);
-                if (mixingCount >= target && target > 0) tinsComplete = tinsTarget;
-                const allTinsDone = tinsComplete >= tinsTarget;
-                const progress = tinsTarget > 0 ? Math.round((tinsComplete / tinsTarget) * 100) : 0;
-                const isComplete = mixingCount >= target && target > 0;
-                const filling = getFillingForItem(item.id);
-                const hasFillingItems = filling && (filling.fillingIngredients.length > 0 || filling.fillingSubRecipes.length > 0);
-                const isActive = activeItemId === item.id;
-                const isDraggable = !isOrderLocked(item);
 
-                return (
-                  <MixingOverviewRow
-                    key={item.id}
-                    item={item}
-                    sopLinks={item.recipeId != null ? (sopLinksByRecipe?.[item.recipeId] ?? []) : []}
-                    onOpenSop={sopViewer.open}
-                    sopQueryKey={mixSopKey}
-                    isActive={isActive}
-                    isComplete={isComplete}
-                    isDraggable={isDraggable}
-                    hasFillingItems={!!hasFillingItems}
-                    tinsComplete={tinsComplete}
-                    tinsTarget={tinsTarget}
-                    allTinsDone={allTinsDone}
-                    progress={progress}
-                    mixingCount={mixingCount}
-                    target={target}
-                    batchesPerTinEven={batchesPerTinEven}
-                    isOnBreak={isOnBreak}
-                    isAdmin={isAdmin}
-                    onActivate={() => activateItem(item.id)}
-                    onAdd={() => addTin(item)}
-                    onRemove={() => undoTin(item)}
-                    tinPending={tinPending}
-                    filling={filling ?? null}
-                    checkedIngredients={checkedIngredients}
-                    onToggleIngredient={(key) => toggleIngredient(item.id, key)}
-                    completing={isActive && completing}
-                    completeFailed={isActive && completeFailed}
-                    onAutoComplete={() => handleAutoComplete(item)}
-                    sched={schedByItem.get(item.id) ?? null}
-                  />
-                );
-              })}
-            </div>
-          </SortableContext>
-        </DndContext>
-      </div>
+        const isCooking = mixingTab === "cooking";
+        const cookIdx = cookVisible.findIndex(r => r.recipeId === (cookingRecipeId ?? cookVisible[0]?.recipeId));
+        const tinIdx = items.findIndex(i => i.id === activeItemId);
+        const doneCount = isCooking ? cookDone.length : items.filter(isItemMixingComplete).length;
+        const total = isCooking ? cookAll.length : items.length;
+
+        const pillCls = "flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors";
+        const completedToggle = (count: number) => count > 0 ? (
+          <button onClick={toggleShowCompleted} className={pillCls}>
+            {showCompleted ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            {showCompleted ? "Hide completed" : `Show completed (${count})`}
+          </button>
+        ) : null;
+
+        return (
+          <>
+            <QueueDock
+              label={isCooking ? "Cooking Queue" : "Mixing Queue"}
+              doneCount={doneCount}
+              total={total}
+              prevDisabled={isCooking ? cookIdx <= 0 : tinIdx <= 0}
+              nextDisabled={isCooking
+                ? (cookIdx < 0 || cookIdx >= cookVisible.length - 1)
+                : (tinIdx < 0 || tinIdx >= items.length - 1)}
+              onPrev={() => {
+                if (isCooking) { if (cookIdx > 0) setCookingRecipeId(cookVisible[cookIdx - 1].recipeId); }
+                else if (tinIdx > 0) activateItem(items[tinIdx - 1].id);
+              }}
+              onNext={() => {
+                if (isCooking) { if (cookIdx >= 0 && cookIdx < cookVisible.length - 1) setCookingRecipeId(cookVisible[cookIdx + 1].recipeId); }
+                else if (tinIdx >= 0 && tinIdx < items.length - 1) activateItem(items[tinIdx + 1].id);
+              }}
+              onOpenQueue={() => setQueueOpen(true)}
+            />
+
+            {queueOpen && (
+              <QueueSheet
+                title={isCooking ? "Meat Cooking Queue" : "Mixing Queue — drag to set today's order"}
+                allDone={total > 0 && doneCount >= total}
+                onClose={() => setQueueOpen(false)}
+              >
+                {isCooking ? (
+                  <>
+                    <div className="px-3 py-2 border-b border-border flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-sm text-muted-foreground tabular-nums">{cookDone.length}/{cookAll.length} done</span>
+                      {completedToggle(cookDone.length)}
+                    </div>
+                    <div className="divide-y divide-border/50">
+                      {cookVisible.map((r, i) => (
+                        <button
+                          key={r.recipeId}
+                          onClick={() => { setCookingRecipeId(r.recipeId); setQueueOpen(false); }}
+                          className={cn(
+                            "w-full text-left px-3 py-3 flex items-center gap-2 transition-colors",
+                            r.recipeId === (cookingRecipeId ?? cookVisible[0]?.recipeId)
+                              ? "bg-rose-50/60 dark:bg-rose-900/15"
+                              : isCookingRecipeDone(r) ? "bg-emerald-50/30 dark:bg-emerald-900/10" : "hover:bg-secondary/20",
+                          )}
+                        >
+                          <span className="w-5 text-xs font-bold text-muted-foreground tabular-nums text-right flex-shrink-0">{i + 1}</span>
+                          <span className={cn("flex-1 font-bold text-sm truncate", isCookingRecipeDone(r) && "line-through opacity-60")}>
+                            {r.recipeName}
+                          </span>
+                          {isCookingRecipeDone(r) && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
+                        </button>
+                      ))}
+                    </div>
+                    {cookingTimesTable && <div className="px-3 py-3 border-t border-border">{cookingTimesTable}</div>}
+                  </>
+                ) : (
+                  <>
+                    <div className="px-3 py-2 border-b border-border flex items-center justify-between gap-2 flex-wrap">
+                      {schedule && (
+                        <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-primary/10 text-primary tabular-nums whitespace-nowrap">
+                          {formatClock(schedule.startMinutes)} → finishes ~{formatClock(schedule.endMinutes)}
+                        </span>
+                      )}
+                      {completedToggle(doneTinRows.length)}
+                    </div>
+                    {schedWarnings.length > 0 && (
+                      <p className="text-xs text-amber-600 dark:text-amber-400 px-3 py-2">
+                        <AlertTriangle className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />
+                        Times incomplete: {schedWarnings.join(" · ")}
+                      </p>
+                    )}
+                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                      {/* Hidden completed rows stay in tinRows (handleDragEnd works
+                          on the full list by id); only the render + sortable ids shrink. */}
+                      <SortableContext items={visibleTinRows.map(rowId)} strategy={verticalListSortingStrategy}>
+                        <div className="space-y-2 p-3">
+                          {visibleTinRows.map(row => row.kind === "break"
+                            ? <SortableBreakCard key={`break-${row.br.id}`} br={row.br} />
+                            : renderTinRow(row.item, {
+                                compact: true,
+                                draggable: !isOrderLocked(row.item),
+                                onPick: () => setQueueOpen(false),
+                              }))}
+                        </div>
+                      </SortableContext>
+                    </DndContext>
+                  </>
+                )}
+              </QueueSheet>
+            )}
+          </>
         );
       })()}
+
     </div>
     </>
   );
@@ -1588,6 +1675,10 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
 interface MixingOverviewRowProps {
   item: ProductionPlanItem;
   isActive: boolean;
+  /** Queue-sheet mode: active styling stays, the expanded working content
+   *  (SOPs, filling checklist) is suppressed so the list stays short enough
+   *  to drag-reorder comfortably. */
+  compact?: boolean;
   isComplete: boolean;
   isDraggable: boolean;
   hasFillingItems: boolean;
@@ -1620,7 +1711,7 @@ interface MixingOverviewRowProps {
   sopQueryKey: unknown[];
 }
 
-function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFillingItems, tinsComplete, tinsTarget, allTinsDone, progress, mixingCount, target, batchesPerTinEven, isOnBreak, isAdmin, onActivate, onAdd, onRemove, tinPending, filling, checkedIngredients, onToggleIngredient, completing, completeFailed, onAutoComplete, sched, sopLinks, onOpenSop, sopQueryKey }: MixingOverviewRowProps) {
+function MixingOverviewRow({ item, isActive, compact = false, isComplete, isDraggable, hasFillingItems, tinsComplete, tinsTarget, allTinsDone, progress, mixingCount, target, batchesPerTinEven, isOnBreak, isAdmin, onActivate, onAdd, onRemove, tinPending, filling, checkedIngredients, onToggleIngredient, completing, completeFailed, onAutoComplete, sched, sopLinks, onOpenSop, sopQueryKey }: MixingOverviewRowProps) {
   const {
     attributes, listeners, setNodeRef,
     transform, transition, isDragging,
@@ -1776,7 +1867,7 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
 
       {/* This flavour's own SOPs — the mixing process for THIS tin,
           attachable right here (Graeme, 2026-09-09). */}
-      {isActive && item.recipeId != null && (
+      {isActive && !compact && item.recipeId != null && (
         <div className="px-4 py-2 border-t border-border/40">
           <SopChips
             links={sopLinks}
@@ -1787,7 +1878,7 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
         </div>
       )}
 
-      {isActive && hasFillingItems && filling && (() => {
+      {isActive && !compact && hasFillingItems && filling && (() => {
         const lineChecks = [
           ...filling.fillingIngredients.map(fi => ({
             key: `ing-${fi.ingredientId}`,
