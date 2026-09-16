@@ -39,6 +39,13 @@ export const subRecipeIngredientsTable = pgTable("sub_recipe_ingredients", {
   // the other ingredients correctly, but the prep team shouldn't see it
   // as an item to weigh out.
   hideFromPrep: boolean("hide_from_prep").notNull().default(false),
+  // Same marinade semantics as recipe components, one level down: this
+  // component preps WITH the named raw meat (raw-meat station marinade
+  // panel) rather than at its own category station. Lets a cooked-down
+  // component live in a sub-recipe without losing the grouping
+  // (migration 0111; Philly slow-cook beef restructure, 2026-09-17).
+  marinadeForIngredientId: integer("marinade_for_ingredient_id").references(() => ingredientsTable.id, { onDelete: "set null" }),
+  marinadeAddAtCooking: boolean("marinade_add_at_cooking").notNull().default(false),
 });
 
 export const subRecipeSubRecipesTable = pgTable("sub_recipe_sub_recipes", {
@@ -46,6 +53,10 @@ export const subRecipeSubRecipesTable = pgTable("sub_recipe_sub_recipes", {
   subRecipeId: integer("sub_recipe_id").notNull().references(() => subRecipesTable.id, { onDelete: "cascade" }),
   componentSubRecipeId: integer("component_sub_recipe_id").notNull().references(() => subRecipesTable.id, { onDelete: "restrict" }),
   quantity: numeric("quantity", { precision: 10, scale: 4 }).notNull(),
+  // A nested sub-recipe (a rub) can be a marinade for a meat in the parent
+  // sub-recipe — mirrors recipe_sub_recipes.marinade_for_ingredient_id.
+  marinadeForIngredientId: integer("marinade_for_ingredient_id").references(() => ingredientsTable.id, { onDelete: "set null" }),
+  marinadeAddAtCooking: boolean("marinade_add_at_cooking").notNull().default(false),
 });
 
 export const insertSubRecipeSchema = createInsertSchema(subRecipesTable).omit({ id: true, createdAt: true });

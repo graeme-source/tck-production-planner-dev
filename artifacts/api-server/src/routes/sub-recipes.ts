@@ -94,21 +94,25 @@ router.post("/", validate(CreateSubRecipeBody), async (req, res) => {
 
   if (ingredients?.length) {
     await db.insert(subRecipeIngredientsTable).values(
-      ingredients.map((i: { ingredientId: number; quantity: number; hideFromPrep?: boolean }) => ({
+      ingredients.map((i: { ingredientId: number; quantity: number; hideFromPrep?: boolean; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean }) => ({
         subRecipeId: subRecipe.id,
         ingredientId: i.ingredientId,
         quantity: String(i.quantity),
         hideFromPrep: i.hideFromPrep ?? false,
+        marinadeForIngredientId: i.marinadeForIngredientId ?? null,
+        marinadeAddAtCooking: i.marinadeAddAtCooking ?? false,
       }))
     );
   }
 
   if (subRecipeComponents?.length) {
     await db.insert(subRecipeSubRecipesTable).values(
-      subRecipeComponents.map((c: { componentSubRecipeId: number; quantity: number }) => ({
+      subRecipeComponents.map((c: { componentSubRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean }) => ({
         subRecipeId: subRecipe.id,
         componentSubRecipeId: c.componentSubRecipeId,
         quantity: String(c.quantity),
+        marinadeForIngredientId: c.marinadeForIngredientId ?? null,
+        marinadeAddAtCooking: c.marinadeAddAtCooking ?? false,
       }))
     );
   }
@@ -141,6 +145,8 @@ router.get("/:id", async (req, res) => {
       costPerPack: ingredientsTable.costPerPack,
       packWeight: ingredientsTable.packWeight,
       hideFromPrep: subRecipeIngredientsTable.hideFromPrep,
+      marinadeForIngredientId: subRecipeIngredientsTable.marinadeForIngredientId,
+      marinadeAddAtCooking: subRecipeIngredientsTable.marinadeAddAtCooking,
     })
     .from(subRecipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -161,6 +167,8 @@ router.get("/:id", async (req, res) => {
       componentSubRecipeName: subRecipesTable.name,
       componentYieldUnit: subRecipesTable.yieldUnit,
       quantity: subRecipeSubRecipesTable.quantity,
+      marinadeForIngredientId: subRecipeSubRecipesTable.marinadeForIngredientId,
+      marinadeAddAtCooking: subRecipeSubRecipesTable.marinadeAddAtCooking,
     })
     .from(subRecipeSubRecipesTable)
     .leftJoin(subRecipesTable, eq(subRecipeSubRecipesTable.componentSubRecipeId, subRecipesTable.id))
@@ -234,21 +242,25 @@ router.put("/:id", validate(UpdateSubRecipeBody), async (req, res) => {
 
   if (ingredients?.length) {
     await db.insert(subRecipeIngredientsTable).values(
-      ingredients.map((i: { ingredientId: number; quantity: number; hideFromPrep?: boolean }) => ({
+      ingredients.map((i: { ingredientId: number; quantity: number; hideFromPrep?: boolean; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean }) => ({
         subRecipeId: id,
         ingredientId: i.ingredientId,
         quantity: String(i.quantity),
         hideFromPrep: i.hideFromPrep ?? false,
+        marinadeForIngredientId: i.marinadeForIngredientId ?? null,
+        marinadeAddAtCooking: i.marinadeAddAtCooking ?? false,
       }))
     );
   }
 
   if (subRecipeComponents?.length) {
     await db.insert(subRecipeSubRecipesTable).values(
-      subRecipeComponents.map((c: { componentSubRecipeId: number; quantity: number }) => ({
+      subRecipeComponents.map((c: { componentSubRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean }) => ({
         subRecipeId: id,
         componentSubRecipeId: c.componentSubRecipeId,
         quantity: String(c.quantity),
+        marinadeForIngredientId: c.marinadeForIngredientId ?? null,
+        marinadeAddAtCooking: c.marinadeAddAtCooking ?? false,
       }))
     );
   }
