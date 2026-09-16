@@ -6,6 +6,7 @@ import { RecordIssueModal } from "@/components/record-issue-modal";
 import { PullKanbanModal } from "@/components/pull-kanban-modal";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
+import { useIsRtwManager } from "@/hooks/use-rtw-manager";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { FEATURE_REGISTRY } from "@workspace/feature-registry";
 import { usePageHeaderValue } from "@/contexts/page-header-context";
@@ -28,6 +29,7 @@ import {
   Menu,
   X,
   Lightbulb,
+  UsersRound,
   ShoppingBag,
   ChevronDown,
   Box,
@@ -227,6 +229,7 @@ export function NavLinks({
 }) {
   const fullPath = location + (search ? search : "");
   const unseenImprovements = useUnseenImprovementCount();
+  const isRtwManager = useIsRtwManager();
   const isOnProductPage = PRODUCT_PATHS.includes(location);
   const isOnDispatchPage = DISPATCH_PATHS.includes(location);
   const isOnInventoryPage = isInventoryRoute(location);
@@ -505,7 +508,10 @@ export function NavLinks({
       </nav>
 
       <div className="px-3 pb-2">
-        {(hideBottomNav ? [] : bottomNavItems).map((item) => {
+        {/* People — staff records front door, rendered ONLY for the named
+            RTW managers (Graeme + Lorna; server-verified flag). Not a role
+            check: ordinary admins/managers don't get the entry at all. */}
+        {(hideBottomNav ? [] : (isRtwManager ? [{ name: "People", href: "/people", icon: UsersRound } as NavItem] : [])).concat(hideBottomNav ? [] : bottomNavItems).map((item) => {
           const isActive = location === item.href;
           return (
             <Link

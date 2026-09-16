@@ -1004,14 +1004,22 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                             ) : null}
                           </div>
                         </button>
-                        {/* Linked ingredient sub-rows. Rows with a key are
-                            real tasks (pasta water/salt) and tick off like
-                            any other prep item; keyless rows stay
-                            display-only. */}
+                        {/* Linked ingredient sub-rows. The LEFT list only
+                            shows their state — ticking happens in the
+                            right-hand detail panel like every other prep
+                            item (Graeme, 2026-09-17: water and salt prep
+                            exactly like normal items; they just don't end
+                            up in the recipe). */}
                         {ingLinkedItems.map((li, liIdx) => {
                           const liDone = li.key != null && linkedDone.has(li.key);
-                          const rowInner = (
-                            <>
+                          return (
+                            <div
+                              key={`linked-${ing.ingredientId}-${liIdx}`}
+                              className={cn(
+                                "flex items-center justify-between pl-10 pr-4 py-1.5 border-t border-border/20 text-sm text-muted-foreground",
+                                liDone ? "bg-emerald-50/40 dark:bg-emerald-950/10" : "bg-secondary/10",
+                              )}
+                            >
                               <span className="flex items-center gap-2">
                                 {li.key != null ? (
                                   liDone
@@ -1025,25 +1033,6 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                               <span className={cn("tabular-nums font-medium", liDone ? "text-emerald-600 dark:text-emerald-400" : "text-foreground")}>
                                 {fmtQty(li.totalQty, li.unit)}
                               </span>
-                            </>
-                          );
-                          return li.key != null ? (
-                            <button
-                              key={`linked-${ing.ingredientId}-${liIdx}`}
-                              onClick={() => toggleLinked(li.key!)}
-                              className={cn(
-                                "w-full flex items-center justify-between pl-10 pr-4 py-1.5 border-t border-border/20 text-sm text-left transition-colors active:scale-[0.99]",
-                                liDone ? "text-muted-foreground bg-emerald-50/40 dark:bg-emerald-950/10" : "text-muted-foreground bg-secondary/10 hover:bg-secondary/30",
-                              )}
-                            >
-                              {rowInner}
-                            </button>
-                          ) : (
-                            <div
-                              key={`linked-${ing.ingredientId}-${liIdx}`}
-                              className="flex items-center justify-between pl-10 pr-4 py-1.5 border-t border-border/20 text-sm text-muted-foreground bg-secondary/10"
-                            >
-                              {rowInner}
                             </div>
                           );
                         })}
@@ -1179,6 +1168,43 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                             className={cn("h-full rounded-full transition-all", status.allTinsDone ? "bg-emerald-500" : "bg-emerald-400")}
                             style={{ width: `${status.totalTinCount > 0 ? Math.min((status.completedTinCount / status.totalTinCount) * 100, 100) : 0}%` }}
                           />
+                        </div>
+                      )}
+
+                      {/* Linked prep tasks (pasta cooking water + salt):
+                          ticked HERE like any other prep item. Same
+                          persisted per-plan completion as before. */}
+                      {(linkedItems[ing.ingredientId] ?? []).some(li => li.key != null) && (
+                        <div className="space-y-2 mb-4">
+                          {(linkedItems[ing.ingredientId] ?? []).filter(li => li.key != null).map(li => {
+                            const liDone = linkedDone.has(li.key!);
+                            return (
+                              <button
+                                key={li.key}
+                                onClick={() => toggleLinked(li.key!)}
+                                disabled={isOnBreak}
+                                className={cn(
+                                  "w-full flex items-center justify-between gap-3 border-2 rounded-2xl px-4 py-3.5 transition-all active:scale-95 text-left",
+                                  isOnBreak && "opacity-50 cursor-not-allowed",
+                                  liDone
+                                    ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/20"
+                                    : "border-border bg-secondary/20 hover:bg-secondary/40",
+                                )}
+                              >
+                                <span className="flex items-center gap-3 min-w-0">
+                                  {liDone
+                                    ? <CheckCircle2 className="w-6 h-6 text-emerald-500 flex-shrink-0" />
+                                    : <span className="w-6 h-6 rounded-full border-2 border-muted-foreground/40 flex-shrink-0" />}
+                                  <span className={cn("text-base font-semibold truncate", liDone && "line-through text-muted-foreground")}>
+                                    {li.ingredientName}
+                                  </span>
+                                </span>
+                                <span className={cn("text-lg font-bold tabular-nums flex-shrink-0", liDone ? "text-emerald-600 dark:text-emerald-400" : "text-foreground")}>
+                                  {fmtQty(li.totalQty, li.unit)}
+                                </span>
+                              </button>
+                            );
+                          })}
                         </div>
                       )}
 

@@ -36,10 +36,16 @@ const schema = z.object({
     ingredientId: z.coerce.number().min(1, "Select an ingredient"),
     quantity: z.coerce.number().min(0.001, "Must be > 0"),
     hideFromPrep: z.boolean().optional(),
+    // "" / 0 = not a marinade. Preprocessed to null so the API never sees
+    // a 0 foreign key.
+    marinadeForIngredientId: z.preprocess(v => (v === "" || v == null || Number(v) === 0 ? null : Number(v)), z.number().int().positive().nullable()).optional(),
+    marinadeAddAtCooking: z.boolean().optional(),
   })).min(0),
   subRecipeComponents: z.array(z.object({
     componentSubRecipeId: z.coerce.number().min(1, "Select a sub-recipe"),
     quantity: z.coerce.number().min(0.001, "Must be > 0"),
+    marinadeForIngredientId: z.preprocess(v => (v === "" || v == null || Number(v) === 0 ? null : Number(v)), z.number().int().positive().nullable()).optional(),
+    marinadeAddAtCooking: z.boolean().optional(),
   })).min(0),
 }).refine(
   (data) => data.ingredients.length > 0 || data.subRecipeComponents.length > 0,
@@ -53,6 +59,7 @@ type FormValues = z.infer<typeof schema>;
 type IngredientOption = Pick<Ingredient, "id" | "name" | "unit" | "processingRatio" | "novaClass" | "novaMarkers"> & {
   labelDeclaration: string | null;
   allergens: string[];
+  category?: string | null;
   // Same fields the recipe form's rows show — a sub-recipe is a recipe, so
   // the row should tell you as much (Graeme, 2026-08-28).
   supplierName?: string | null;
@@ -356,6 +363,13 @@ function SubRecipeForm({
   const [srDisplayUnits, setSrDisplayUnits] = useState<Record<number, "g" | "kg">>({});
 
   const watchedIngredients = watch("ingredients");
+
+  // Raw meats among this sub-recipe's own ingredient rows — the valid
+  // targets for a "marinade for" link (migration 0111: marinades inside
+  // sub-recipes, so a cooked-down component keeps its raw-meat grouping).
+  const rawMeatTargets = (watchedIngredients ?? [])
+    .map(row => localIngredients.find(i => i.id === Number(row?.ingredientId)))
+    .filter((i): i is IngredientOption => i != null && i.category === "raw_meat");
   const watchedSubRecipeComponents = watch("subRecipeComponents");
   const watchedLabelDeclaration = watch("labelDeclaration");
   const watchedYield = watch("yield");
@@ -687,6 +701,24 @@ function SubRecipeForm({
                       (keeps the quantity for ratio maths; doesn&rsquo;t show for prep)
                     </span>
                   </label>
+                  {rawMeatTargets.length > 0 && selectedIng?.category !== "raw_meat" && (
+                    <div className="ml-1 mt-1 flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
+                      <span>Marinade for</span>
+                      <select
+                        {...register(`ingredients.${index}.marinadeForIngredientId`)}
+                        className="px-2 py-1 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      >
+                        <option value="">— not a marinade —</option>
+                        {rawMeatTargets.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      </select>
+                      {Number(watchedIngredients?.[index]?.marinadeForIngredientId) > 0 && (
+                        <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                          <input type="checkbox" {...register(`ingredients.${index}.marinadeAddAtCooking`)} className="rounded border-border" />
+                          <span>Add at cooking (held back from prep day)</span>
+                        </label>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -740,7 +772,8 @@ function SubRecipeForm({
               const selectedSr = availableSubRecipes.find(sr => sr.id === selectedId);
               const unit = selectedSr?.yieldUnit ?? "";
               return (
-                <div key={field.id} className="grid grid-cols-[1fr_120px_32px] gap-2 items-center">
+                <div key={field.id}>
+                <div className="grid grid-cols-[1fr_120px_32px] gap-2 items-center">
                   <select
                     {...register(`subRecipeComponents.${index}.componentSubRecipeId`)}
                     className="px-2 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 truncate"
@@ -800,6 +833,25 @@ function SubRecipeForm({
                   >
                     <X className="w-4 h-4" />
                   </button>
+                </div>
+                {rawMeatTargets.length > 0 && (
+                  <div className="ml-1 mt-1 flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
+                    <span>Marinade for</span>
+                    <select
+                      {...register(`subRecipeComponents.${index}.marinadeForIngredientId`)}
+                      className="px-2 py-1 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    >
+                      <option value="">— not a marinade —</option>
+                      {rawMeatTargets.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                    {Number(watchedSubRecipeComponents?.[index]?.marinadeForIngredientId) > 0 && (
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                        <input type="checkbox" {...register(`subRecipeComponents.${index}.marinadeAddAtCooking`)} className="rounded border-border" />
+                        <span>Add at cooking (held back from prep day)</span>
+                      </label>
+                    )}
+                  </div>
+                )}
                 </div>
               );
             })}
@@ -904,10 +956,14 @@ function EditSubRecipeDialog({
           ingredientId: i.ingredientId,
           quantity: Number(i.quantity),
           hideFromPrep: i.hideFromPrep === true,
+          marinadeForIngredientId: (i as { marinadeForIngredientId?: number | null }).marinadeForIngredientId ?? null,
+          marinadeAddAtCooking: (i as { marinadeAddAtCooking?: boolean }).marinadeAddAtCooking === true,
         })),
         subRecipeComponents: (detail.subRecipeComponents ?? []).map(c => ({
           componentSubRecipeId: c.componentSubRecipeId,
           quantity: Number(c.quantity),
+          marinadeForIngredientId: (c as { marinadeForIngredientId?: number | null }).marinadeForIngredientId ?? null,
+          marinadeAddAtCooking: (c as { marinadeAddAtCooking?: boolean }).marinadeAddAtCooking === true,
         })),
       }
     : { name: "", description: "", yield: 1, yieldPercent: "", yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, expandInPrep: false, madeOnProductionDay: false, labelDeclaration: "", ingredients: [], subRecipeComponents: [] };
@@ -1323,6 +1379,8 @@ export default function SubRecipes() {
     supplierName: (i as unknown as { supplierName?: string | null }).supplierName ?? null,
     costPerPack: Number((i as unknown as { costPerPack?: number | string }).costPerPack ?? 0) || 0,
     packWeight: Number((i as unknown as { packWeight?: number | string }).packWeight ?? 0) || 0,
+    // Drives the "Marinade for" targets: only raw_meat rows qualify.
+    category: (i as unknown as { category?: string | null }).category ?? null,
   }));
 
   const subRecipeList: SubRecipeOption[] = (subRecipes ?? []).map(sr => ({

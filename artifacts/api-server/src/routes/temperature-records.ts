@@ -21,6 +21,9 @@ const insertSchema = z.object({
   ingredientName: z.string().optional(),
   trayIndex: z.number().int().min(0),
   temperatureC: z.number().min(-50).max(500),
+  // How long the temperature was held — for checks recorded against the FSA
+  // time/temperature equivalents (70°C for 2 min ≡ 75°C for 30 s).
+  heldForSeconds: z.number().int().min(1).max(6 * 60 * 60).optional(),
   recordType: z.string().default("cooked_core"),
 });
 
@@ -48,6 +51,7 @@ router.post("/", async (req, res) => {
     ingredientName: d.ingredientName ?? null,
     trayIndex: d.trayIndex,
     temperatureC: String(d.temperatureC),
+    heldForSeconds: d.heldForSeconds ?? null,
     recordType: d.recordType,
     userId,
     userName,

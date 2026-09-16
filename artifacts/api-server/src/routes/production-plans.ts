@@ -14,6 +14,8 @@ import { remainingFulfilmentPacks } from "../lib/remaining-fulfilment";
 import { getFactoryNumberCoreMenuOnly, getShopifyFreezerSyncEnabled } from "../lib/inventory-sync";
 import { logFridgeStockChange, type FridgeChangeSource } from "../lib/fridge-stock-log";
 import { londonDateString, londonStartOfDay } from "../lib/london-time";
+import { builtPortionWeightG } from "../lib/built-portion-weight";
+import { subMarinadeQtyPerPortion, subMarinadeTotalGrams, isMeatCookSubRecipe } from "../lib/sub-recipe-marinades";
 import { productionDateFromJulianBatch } from "../lib/julian-batch";
 import { loadMinShelfDaysRules, minShelfDaysFor } from "../lib/min-shelf-days";
 import { getStandardBreakConfig, computeBatchesPerHour } from "../lib/batches-per-hour";
@@ -3946,39 +3948,79 @@ function quantityToGrams(quantity: number, unit: string | null | undefined): num
  *  (cooked qty)" view in the recipe editor); each is normalized to grams via
  *  its ingredient.unit / sub_recipe.yield_unit. No further cooking-loss
  *  reduction — the stored values are already cooked quantities. */
+/**
+ * Per-portion weight on the BUILDER basis — what actually goes into a pack
+ * (Graeme, 2026-09-16): the made filling (filling-mix rows, whose recipe
+ * quantities are the filling's weight as made) less the builders' display
+ * trim, plus the pre-oven assembly items, plus the dough. Marinade rows are
+ * excluded (they cook into the filling), and so are post-oven finishes
+ * (garlic butter, icing — added at wrapping, after the scale). The old
+ * basis summed every RAW quantity, so recipes whose components reduce in
+ * cooking (Philly's stock and marinade) targeted ~50g/portion heavy.
+ */
 async function computePortionWeightG(recipeId: number): Promise<{ portionWeightG: number; portionsPerBatch: number; }> {
   const [recipe] = await db.select({
     portionsPerBatch: recipesTable.portionsPerBatch,
+    builderFillingDeductionGrams: recipesTable.builderFillingDeductionGrams,
   }).from(recipesTable).where(eq(recipesTable.id, recipeId));
   const portionsPerBatch = recipe?.portionsPerBatch ?? 10;
-
-  let perPortionG = 0;
 
   const directs = await db.select({
     quantity: recipeIngredientsTable.quantity,
     unit: ingredientsTable.unit,
+    name: ingredientsTable.name,
+    inFillingMix: recipeIngredientsTable.includeInFillingMix,
+    marinadeFor: recipeIngredientsTable.marinadeForIngredientId,
   })
     .from(recipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
     .where(eq(recipeIngredientsTable.recipeId, recipeId));
 
-  for (const d of directs) {
-    perPortionG += quantityToGrams(Number(d.quantity), d.unit);
-  }
-
   const subs = await db.select({
     quantity: recipeSubRecipesTable.quantity,
     yieldUnit: subRecipesTable.yieldUnit,
+    name: subRecipesTable.name,
+    isBase: subRecipesTable.isBase,
+    inFillingMix: recipeSubRecipesTable.includeInFillingMix,
+    marinadeFor: recipeSubRecipesTable.marinadeForIngredientId,
   })
     .from(recipeSubRecipesTable)
     .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
     .where(eq(recipeSubRecipesTable.recipeId, recipeId));
 
-  for (const s of subs) {
-    perPortionG += quantityToGrams(Number(s.quantity), s.yieldUnit);
+  // Same conventions as the building station's assembly-items endpoint.
+  const isPostOven = (name: string | null) => /garlic[\s\-]*butter|icing/i.test(name ?? "");
+  const isDough = (s: { name: string | null; isBase: boolean | null }) =>
+    s.isBase === true || /dough/i.test(s.name ?? "");
+
+  let fillingPerPortionG = 0;
+  let assemblyPerPortionG = 0;
+  let doughPerPortionG = 0;
+
+  for (const d of directs) {
+    if (d.marinadeFor != null) continue;
+    const g = quantityToGrams(Number(d.quantity), d.unit);
+    if (d.inFillingMix) fillingPerPortionG += g;
+    else if (!isPostOven(d.name)) assemblyPerPortionG += g;
   }
 
-  return { portionWeightG: Math.round(perPortionG), portionsPerBatch };
+  for (const s of subs) {
+    if (s.marinadeFor != null) continue;
+    const g = quantityToGrams(Number(s.quantity), s.yieldUnit);
+    if (isDough(s)) doughPerPortionG += g;
+    else if (s.inFillingMix) fillingPerPortionG += g;
+    else if (!isPostOven(s.name)) assemblyPerPortionG += g;
+  }
+
+  const portionWeightG = builtPortionWeightG({
+    fillingGramsPerBatch: fillingPerPortionG * portionsPerBatch,
+    builderFillingDeductionGrams: Number(recipe?.builderFillingDeductionGrams ?? 0),
+    assemblyGramsPerBatch: assemblyPerPortionG * portionsPerBatch,
+    doughGramsPerPortion: doughPerPortionG,
+    portionsPerBatch,
+  });
+
+  return { portionWeightG, portionsPerBatch };
 }
 
 // GET /:id/weight-targets — per-recipe target weight for oven-station batch
@@ -4517,6 +4559,51 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
           );
         }
       }
+
+      // Marinade components INSIDE sub-recipes used by this recipe (the
+      // Philly slow-cook beef pattern, migration 0111): they prep with the
+      // meat, so subtract them from their category stations the same way
+      // recipe-level marinade rows are.
+      const subUsageRows = await db
+        .select({
+          subRecipeId: recipeSubRecipesTable.subRecipeId,
+          quantity: recipeSubRecipesTable.quantity,
+          subYield: subRecipesTable.yield,
+        })
+        .from(recipeSubRecipesTable)
+        .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
+        .where(and(
+          eq(recipeSubRecipesTable.recipeId, planItem.recipeId),
+          isNull(recipeSubRecipesTable.marinadeForIngredientId),
+        ));
+      for (const su of subUsageRows) {
+        if (su.subRecipeId == null) continue;
+        const subYield = Number(su.subYield) || 0;
+        if (subYield <= 0) continue;
+        const compRows = await db
+          .select({
+            ingredientId: subRecipeIngredientsTable.ingredientId,
+            quantity: subRecipeIngredientsTable.quantity,
+          })
+          .from(subRecipeIngredientsTable)
+          .where(and(
+            eq(subRecipeIngredientsTable.subRecipeId, su.subRecipeId),
+            isNotNull(subRecipeIngredientsTable.marinadeForIngredientId),
+          ));
+        for (const c of compRows) {
+          if (c.ingredientId == null) continue;
+          const perPortion = subMarinadeQtyPerPortion({
+            componentQty: Number(c.quantity) || 0,
+            subUsagePerPortion: Number(su.quantity) || 0,
+            subYield,
+          });
+          if (perPortion <= 0) continue;
+          marinadeQtyPerPortion.set(
+            c.ingredientId,
+            (marinadeQtyPerPortion.get(c.ingredientId) ?? 0) + perPortion,
+          );
+        }
+      }
     }
 
     // Build a map of filling-mix-only quantity per ingredient (from direct recipe rows).
@@ -4693,6 +4780,101 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
         });
       }
 
+      // Marinades living INSIDE a sub-recipe this recipe uses (the Philly
+      // slow-cook beef pattern, migration 0111): the sub's marinade-flagged
+      // ingredient components and nested sub-recipes (rubs) group under
+      // their raw meat exactly like recipe-level rows, scaled by the
+      // recipe's usage of the sub over its yield.
+      {
+        const marinadeInnerTarget = alias(ingredientsTable, "marinadeInnerTarget");
+        const usedSubs = await db
+          .select({
+            subRecipeId: recipeSubRecipesTable.subRecipeId,
+            quantity: recipeSubRecipesTable.quantity,
+            subYield: subRecipesTable.yield,
+          })
+          .from(recipeSubRecipesTable)
+          .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
+          .where(and(
+            eq(recipeSubRecipesTable.recipeId, planItem.recipeId),
+            isNull(recipeSubRecipesTable.marinadeForIngredientId),
+          ));
+
+        for (const us of usedSubs) {
+          if (us.subRecipeId == null) continue;
+          const subYield = Number(us.subYield) || 0;
+          if (subYield <= 0) continue;
+          const scale = {
+            subUsagePerPortion: Number(us.quantity) || 0,
+            subYield,
+            portionsPerBatch,
+            batchesTarget,
+          };
+
+          const innerIngRows = await db
+            .select({
+              ingredientId: subRecipeIngredientsTable.ingredientId,
+              ingredientName: ingredientsTable.name,
+              quantity: subRecipeIngredientsTable.quantity,
+              unit: ingredientsTable.unit,
+              marinadeForIngredientId: subRecipeIngredientsTable.marinadeForIngredientId,
+              marinadeAddAtCooking: subRecipeIngredientsTable.marinadeAddAtCooking,
+              targetCategory: marinadeInnerTarget.category,
+            })
+            .from(subRecipeIngredientsTable)
+            .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
+            .leftJoin(marinadeInnerTarget, eq(subRecipeIngredientsTable.marinadeForIngredientId, marinadeInnerTarget.id))
+            .where(eq(subRecipeIngredientsTable.subRecipeId, us.subRecipeId));
+
+          for (const mr of innerIngRows) {
+            if (!mr.marinadeForIngredientId) continue;
+            if (mr.targetCategory !== "raw_meat") continue;
+            hasRelevantIngredients = true;
+            marinades.push({
+              rawMeatIngredientId: mr.marinadeForIngredientId,
+              marinadeIngredientId: mr.ingredientId,
+              marinadeIngredientName: mr.ingredientName ?? null,
+              marinadeSubRecipeId: null,
+              marinadeSubRecipeName: null,
+              totalGrams: subMarinadeTotalGrams({ ...scale, componentQty: Number(mr.quantity) || 0, unit: mr.unit }),
+              addAtCooking: mr.marinadeAddAtCooking ?? false,
+            });
+          }
+
+          const innerSubTarget = alias(ingredientsTable, "marinadeInnerSubTarget");
+          const innerSubAlias = alias(subRecipesTable, "marinadeInnerSub");
+          const innerSubRows = await db
+            .select({
+              componentSubRecipeId: subRecipeSubRecipesTable.componentSubRecipeId,
+              componentName: innerSubAlias.name,
+              componentYieldUnit: innerSubAlias.yieldUnit,
+              quantity: subRecipeSubRecipesTable.quantity,
+              marinadeForIngredientId: subRecipeSubRecipesTable.marinadeForIngredientId,
+              marinadeAddAtCooking: subRecipeSubRecipesTable.marinadeAddAtCooking,
+              targetCategory: innerSubTarget.category,
+            })
+            .from(subRecipeSubRecipesTable)
+            .leftJoin(innerSubAlias, eq(subRecipeSubRecipesTable.componentSubRecipeId, innerSubAlias.id))
+            .leftJoin(innerSubTarget, eq(subRecipeSubRecipesTable.marinadeForIngredientId, innerSubTarget.id))
+            .where(eq(subRecipeSubRecipesTable.subRecipeId, us.subRecipeId));
+
+          for (const mr of innerSubRows) {
+            if (!mr.marinadeForIngredientId) continue;
+            if (mr.targetCategory !== "raw_meat") continue;
+            hasRelevantIngredients = true;
+            marinades.push({
+              rawMeatIngredientId: mr.marinadeForIngredientId,
+              marinadeIngredientId: null,
+              marinadeIngredientName: null,
+              marinadeSubRecipeId: mr.componentSubRecipeId,
+              marinadeSubRecipeName: mr.componentName ?? null,
+              totalGrams: subMarinadeTotalGrams({ ...scale, componentQty: Number(mr.quantity) || 0, unit: mr.componentYieldUnit }),
+              addAtCooking: mr.marinadeAddAtCooking ?? false,
+            });
+          }
+        }
+      }
+
       if (marinades.length === 0) {
         const oldMarinadeIngAlias = alias(ingredientsTable, "marinadeIng");
         const oldMarinadeSubAlias = alias(subRecipesTable, "marinadeSub");
@@ -4838,10 +5020,21 @@ router.get("/:id/sub-recipe-requirements", async (req, res) => {
         unit: ingredientsTable.unit,
         quantity: subRecipeIngredientsTable.quantity,
         packWeight: ingredientsTable.packWeight,
+        category: ingredientsTable.category,
+        marinadeForIngredientId: subRecipeIngredientsTable.marinadeForIngredientId,
       })
       .from(subRecipeIngredientsTable)
       .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
       .where(eq(subRecipeIngredientsTable.subRecipeId, sr.id));
+
+    // A meat cook (raw meat + marinade-linked companions, e.g. the Philly
+    // slow-cook beef) is the mixing station's production-day job — the raw
+    // meat and marinades already flow through the raw-meat prep station.
+    // Listing it here would instruct the same cook twice.
+    if (isMeatCookSubRecipe({
+      hasRawMeatComponent: ingRows.some(i => i.category === "raw_meat"),
+      hasMarinadeLinkedComponent: ingRows.some(i => i.marinadeForIngredientId != null),
+    })) continue;
 
     const nestedRows = await db
       .select({
@@ -7646,6 +7839,7 @@ router.get("/:id/main-prep", async (req, res) => {
               stockInPacks: ingredientsTable.stockInPacks,
               packWeight: ingredientsTable.packWeight,
               hideFromPrep: subRecipeIngredientsTable.hideFromPrep,
+              marinadeForIngredientId: subRecipeIngredientsTable.marinadeForIngredientId,
               prepCountPerPortion: ingredientsTable.prepCountPerPortion,
               isPasta: ingredientsTable.isPasta,
             })
@@ -7658,6 +7852,9 @@ router.get("/:id/main-prep", async (req, res) => {
             // Hidden components stay in the sub-recipe data (so ratio maths
             // still scale correctly) but don't appear on the prep sheet.
             if (comp.hideFromPrep) continue;
+            // Marinade components prep WITH their meat on the raw-meat
+            // station (migration 0111) — not as main-prep lines.
+            if (comp.marinadeForIngredientId != null) continue;
             const compQty = Number(comp.quantity) || 0;
             const compUnit = comp.unit ?? "g";
             const rawScaled = compQty * scaleFactor;
@@ -7716,6 +7913,7 @@ router.get("/:id/main-prep", async (req, res) => {
             .select({
               componentSubRecipeId: subRecipeSubRecipesTable.componentSubRecipeId,
               quantity: subRecipeSubRecipesTable.quantity,
+              marinadeForIngredientId: subRecipeSubRecipesTable.marinadeForIngredientId,
               componentName: subRecipesTable.name,
               componentYieldUnit: subRecipesTable.yieldUnit,
             })
@@ -7725,6 +7923,9 @@ router.get("/:id/main-prep", async (req, res) => {
 
           for (const nested of nestedRows) {
             if (nested.componentSubRecipeId == null) continue;
+            // A nested marinade (a rub for the meat) preps on the raw-meat
+            // station, not as its own main-prep batch (migration 0111).
+            if (nested.marinadeForIngredientId != null) continue;
             const nestedQtyPerParent = Number(nested.quantity) || 0;
             const nestedTotalQty = nestedQtyPerParent * scaleFactor;
             const nestedUnit = nested.componentYieldUnit ?? "kg";

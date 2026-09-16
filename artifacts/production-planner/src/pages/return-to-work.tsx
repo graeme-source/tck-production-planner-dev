@@ -8,12 +8,14 @@
  * for RTW managers — from the sick-leave numbers on the Employee Records
  * report (?user=<id> works on that colleague's forms).
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearch } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, HeartPulse, CheckCircle2, ChevronLeft, Lock, PenLine } from "lucide-react";
+import { Loader2, HeartPulse, CheckCircle2, ChevronLeft, FileText, Lock, LockOpen, Paperclip, PenLine, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/auth-context";
+import { rtwFieldsLocked, rtwCanOfferAmend } from "@/lib/rtw-edit-rules";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -70,11 +72,146 @@ function useAutosave(formId: number | null) {
   return { state, save };
 }
 
-function FormEditor({ form, onDone, onBack }: { form: RtwForm; onDone: () => void; onBack: () => void }) {
+interface RtwAttachment {
+  id: number;
+  fileName: string | null;
+  mime: string;
+  uploadedByName: string | null;
+  uploadedByUserId: number | null;
+  createdAt: string;
+}
+
+/** Documentation filed against the form — fit notes, appointment letters,
+ *  photos. A draft accepts uploads from the colleague and the RTW managers;
+ *  a signed form accepts them from the RTW managers only (server-enforced,
+ *  the buttons just follow). */
+function FormAttachments({ formId, formStatus, isRtwManager }: { formId: number; formStatus: string; isRtwManager: boolean }) {
+  const queryClient = useQueryClient();
+  const { state: authState } = useAuth();
+  const myUserId = authState.status === "authenticated" ? authState.user.id : null;
+  const fileInput = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+
+  const key = ["rtw-attachments", formId];
+  const { data: attachments = [] } = useQuery<RtwAttachment[]>({
+    queryKey: key,
+    queryFn: async () => {
+      const r = await fetch(`${BASE}/api/return-to-work/${formId}/attachments`, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load documents");
+      return r.json();
+    },
+  });
+
+  const canAdd = isRtwManager || formStatus !== "complete";
+  const canDelete = (a: RtwAttachment) =>
+    isRtwManager || (formStatus !== "complete" && a.uploadedByUserId != null && a.uploadedByUserId === myUserId);
+
+  const upload = async (file: File) => {
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const r = await fetch(`${BASE}/api/return-to-work/${formId}/attachments`, {
+        method: "POST", credentials: "include", body: form,
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error ?? "Upload failed");
+      toast({ title: "Document filed", description: "It's on the form — same privacy as the form itself." });
+      void queryClient.invalidateQueries({ queryKey: key });
+    } catch (err) {
+      toast({ title: "Couldn't file it", description: err instanceof Error ? err.message : "Try again", variant: "destructive" });
+    } finally {
+      setUploading(false);
+      if (fileInput.current) fileInput.current.value = "";
+    }
+  };
+
+  const remove = async (id: number) => {
+    const r = await fetch(`${BASE}/api/return-to-work/attachments/${id}`, { method: "DELETE", credentials: "include" });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      toast({ title: "Couldn't remove it", description: d.error ?? "Try again", variant: "destructive" });
+      return;
+    }
+    setConfirmDeleteId(null);
+    void queryClient.invalidateQueries({ queryKey: key });
+  };
+
+  return (
+    <div className="space-y-2">
+      <label className="text-sm font-semibold flex items-center gap-1.5">
+        <Paperclip className="w-4 h-4" /> Documents — fit notes, appointment letters
+      </label>
+
+      {attachments.map(a => (
+        <div key={a.id} className="rounded-xl border-2 border-border bg-background px-3 py-2.5 flex items-center gap-3">
+          <FileText className="w-5 h-5 text-muted-foreground shrink-0" />
+          <a
+            href={`${BASE}/api/return-to-work/attachments/${a.id}`}
+            target="_blank"
+            rel="noreferrer"
+            className="flex-1 min-w-0 truncate text-base font-semibold underline underline-offset-2 hover:text-primary"
+          >
+            {a.fileName || (a.mime === "application/pdf" ? "Document.pdf" : "Photo")}
+          </a>
+          <span className="text-xs text-muted-foreground shrink-0 hidden sm:inline">
+            {a.uploadedByName ?? "Someone"} · {fmtRange(a.createdAt.slice(0, 10), null)}
+          </span>
+          {canDelete(a) && (confirmDeleteId === a.id ? (
+            <span className="flex items-center gap-1.5 shrink-0">
+              <button onClick={() => remove(a.id)} className="px-2 py-1 rounded-lg bg-destructive text-destructive-foreground text-xs font-bold">Delete</button>
+              <button onClick={() => setConfirmDeleteId(null)} className="px-2 py-1 rounded-lg border border-border text-xs font-bold"><X className="w-3.5 h-3.5" /></button>
+            </span>
+          ) : (
+            <button
+              onClick={() => setConfirmDeleteId(a.id)}
+              className="shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+              title="Remove this document"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          ))}
+        </div>
+      ))}
+
+      {attachments.length === 0 && (
+        <p className="text-sm text-muted-foreground">Nothing filed yet.</p>
+      )}
+
+      {canAdd && (
+        <>
+          <input
+            ref={fileInput}
+            type="file"
+            accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif"
+            className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) void upload(f); }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInput.current?.click()}
+            disabled={uploading}
+            className="w-full h-12 rounded-xl border-2 border-dashed border-border text-base font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 text-muted-foreground hover:text-foreground disabled:opacity-50"
+          >
+            {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
+            {uploading ? "Filing…" : "Add a document (PDF or photo)"}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function FormEditor({ form, isRtwManager, onDone, onBack }: { form: RtwForm; isRtwManager: boolean; onDone: () => void; onBack: () => void }) {
   const [f, setF] = useState(form);
   const { state: saveState, save } = useAutosave(form.id);
   const [signing, setSigning] = useState(false);
-  const readOnly = f.status === "complete";
+  // A signed form is a record and stays locked — but the named RTW managers
+  // can deliberately unlock it to add or correct something (the server has
+  // always allowed their edits; the page used to lock them out too).
+  const [amending, setAmending] = useState(false);
+  const readOnly = rtwFieldsLocked({ status: f.status, isRtwManager, amending });
 
   const set = <K extends keyof RtwForm>(key: K, value: RtwForm[K], patchKey: string) => {
     setF(prev => ({ ...prev, [key]: value }));
@@ -113,7 +250,31 @@ function FormEditor({ form, onDone, onBack }: { form: RtwForm; onDone: () => voi
             {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? "Not saved — check connection" : "."}
           </span>
         )}
+        {rtwCanOfferAmend({ status: f.status, isRtwManager }) && !amending && (
+          <button
+            onClick={() => setAmending(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border-2 border-border text-sm font-bold hover:bg-secondary/50"
+            title="Unlock this signed form to add or correct something — only Graeme and Lorna can"
+          >
+            <LockOpen className="w-4 h-4" /> Amend
+          </button>
+        )}
       </div>
+
+      {amending && f.status === "complete" && (
+        <div className="rounded-xl border-2 border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 flex items-center gap-3 flex-wrap">
+          <PenLine className="w-5 h-5 text-amber-600 shrink-0" />
+          <p className="flex-1 min-w-0 text-sm font-medium text-amber-900 dark:text-amber-200">
+            Amending a signed form — changes save as you type. It stays signed.
+          </p>
+          <button
+            onClick={() => setAmending(false)}
+            className="px-3 py-1.5 rounded-xl bg-amber-600 text-white text-sm font-bold hover:bg-amber-700"
+          >
+            Done amending
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
@@ -170,7 +331,9 @@ function FormEditor({ form, onDone, onBack }: { form: RtwForm; onDone: () => voi
           placeholder="e.g. Lorna" className={inputCls} />
       </div>
 
-      {!readOnly && (
+      <FormAttachments formId={f.id} formStatus={f.status} isRtwManager={isRtwManager} />
+
+      {f.status !== "complete" && (
         <button onClick={sign} disabled={signing}
           className="w-full h-14 rounded-xl bg-primary text-primary-foreground font-bold text-lg flex items-center justify-center gap-2 hover:bg-primary/90 disabled:opacity-50">
           {signing ? <Loader2 className="w-5 h-5 animate-spin" /> : <PenLine className="w-5 h-5" />} Sign & complete together
@@ -186,6 +349,15 @@ function FormEditor({ form, onDone, onBack }: { form: RtwForm; onDone: () => voi
 
 export default function ReturnToWorkPage() {
   const search = useSearch();
+  const { state: authState, requireSensitivePin } = useAuth();
+  // Health data on shared and personally-lent iPads: ask for the PIN on
+  // EVERY entry, admins included — same posture as the Employee Hub.
+  useEffect(() => {
+    if (authState.status === "authenticated") {
+      requireSensitivePin({ includeAdmins: true, fresh: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authState.status]);
   const params = new URLSearchParams(search);
   const forUser = params.get("user") != null ? Number(params.get("user")) : null;
   const queryClient = useQueryClient();
@@ -246,7 +418,7 @@ export default function ReturnToWorkPage() {
   if (openForm) {
     return (
       <div className="max-w-2xl mx-auto pb-24">
-        <FormEditor form={openForm} onBack={() => { setOpenForm(null); refreshAll(); }} onDone={() => { setOpenForm(null); refreshAll(); }} />
+        <FormEditor form={openForm} isRtwManager={mine?.isRtwManager === true} onBack={() => { setOpenForm(null); refreshAll(); }} onDone={() => { setOpenForm(null); refreshAll(); }} />
       </div>
     );
   }

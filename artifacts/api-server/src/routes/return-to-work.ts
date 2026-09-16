@@ -13,6 +13,8 @@ import { sql } from "drizzle-orm";
 import { validate } from "../middleware/validate";
 import { hasRtwManagerAccess, canAccessRtwUser } from "../middleware/rtw-access";
 import { sickSpellsForUser, dueSpells, attendanceEventsForUser } from "../lib/rtw-detect";
+import { singleFileUpload } from "../middleware/upload";
+import { canUploadRtwAttachment, canDeleteRtwAttachment } from "../lib/rtw-attachment-rules";
 
 const router: IRouter = Router();
 
@@ -234,6 +236,120 @@ router.post("/:id/complete", async (req: Request, res: Response) => {
     WHERE status <> 'done' AND url LIKE ${"/return-to-work%"} AND url LIKE ${`%spell=${row.user_id}:%`}
   `);
   res.json({ ok: true });
+});
+
+// ── Attachments: fit notes, appointment letters, photos ────────────────────
+// Same privacy boundary as the form. Bytes in Postgres (like the documents
+// repository) so backups carry them. Rules in lib/rtw-attachment-rules:
+// draft = colleague + managers can file; signed = managers only.
+
+const RTW_ATTACHMENT_MIMES = new Set([
+  "application/pdf",
+  "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif",
+]);
+
+async function loadFormForAttachment(req: Request, res: Response, formId: number):
+  Promise<{ userId: number; status: string } | null> {
+  if (!Number.isInteger(formId)) { res.status(400).json({ error: "Invalid form" }); return null; }
+  const rows = await db.execute<{ user_id: number; status: string }>(sql`
+    SELECT user_id, status FROM return_to_work_forms WHERE id = ${formId}
+  `);
+  const row = rows.rows[0];
+  if (!row) { res.status(404).json({ error: "Form not found" }); return null; }
+  if (!(await canAccessRtwUser(req, Number(row.user_id)))) {
+    res.status(403).json({ error: "Return-to-work records are private — the colleague and named RTW managers only." });
+    return null;
+  }
+  return { userId: Number(row.user_id), status: row.status };
+}
+
+// GET /:id/attachments — list (metadata only, no bytes).
+router.get("/:id/attachments", async (req: Request, res: Response) => {
+  const formId = Number(req.params.id);
+  const form = await loadFormForAttachment(req, res, formId);
+  if (!form) return;
+  const rows = await db.execute<{ id: number; file_name: string | null; mime: string; uploaded_by_name: string | null; uploaded_by_user_id: number | null; created_at: string }>(sql`
+    SELECT id, file_name, mime, uploaded_by_name, uploaded_by_user_id, created_at
+    FROM return_to_work_attachments WHERE form_id = ${formId} ORDER BY created_at ASC
+  `);
+  res.json(rows.rows.map(a => ({
+    id: Number(a.id),
+    fileName: a.file_name,
+    mime: a.mime,
+    uploadedByName: a.uploaded_by_name,
+    uploadedByUserId: a.uploaded_by_user_id == null ? null : Number(a.uploaded_by_user_id),
+    createdAt: a.created_at,
+  })));
+});
+
+// POST /:id/attachments — file one document (PDF or photo, 15MB).
+router.post("/:id/attachments", singleFileUpload("file", 15), async (req: Request, res: Response) => {
+  const formId = Number(req.params.id);
+  const form = await loadFormForAttachment(req, res, formId);
+  if (!form) return;
+  const isManager = await hasRtwManagerAccess(req);
+  if (!canUploadRtwAttachment({ formStatus: form.status, isRtwManager: isManager })) {
+    res.status(409).json({ error: "This form is signed — ask Graeme or Lorna to file the document." });
+    return;
+  }
+  if (!req.file) { res.status(400).json({ error: "No file uploaded" }); return; }
+  if (!RTW_ATTACHMENT_MIMES.has(req.file.mimetype)) {
+    res.status(400).json({ error: "PDFs and photos only (PDF, JPEG, PNG, WebP or HEIC)." });
+    return;
+  }
+  const me = await db.execute<{ name: string }>(sql`SELECT name FROM app_users WHERE id = ${req.session.userId}`);
+  const inserted = await db.execute<{ id: number }>(sql`
+    INSERT INTO return_to_work_attachments (form_id, file_name, mime, data, uploaded_by_user_id, uploaded_by_name)
+    VALUES (${formId}, ${req.file.originalname ?? null}, ${req.file.mimetype}, ${req.file.buffer},
+            ${req.session.userId}, ${me.rows[0]?.name ?? null})
+    RETURNING id
+  `);
+  res.status(201).json({ id: Number(inserted.rows[0]?.id) });
+});
+
+// GET /attachments/:attachmentId — the bytes, inline (view/print).
+router.get("/attachments/:attachmentId", async (req: Request, res: Response) => {
+  const attId = Number(req.params.attachmentId);
+  if (!Number.isInteger(attId)) { res.status(400).json({ error: "Invalid attachment" }); return; }
+  const rows = await db.execute<{ form_id: number; mime: string; file_name: string | null; data: Buffer }>(sql`
+    SELECT form_id, mime, file_name, data FROM return_to_work_attachments WHERE id = ${attId}
+  `);
+  const row = rows.rows[0];
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  const form = await loadFormForAttachment(req, res, Number(row.form_id));
+  if (!form) return;
+  res.setHeader("Content-Type", row.mime);
+  if (row.file_name) {
+    res.setHeader("Content-Disposition", `inline; filename="${row.file_name.replace(/[^\w.\- ]+/g, "_")}"`);
+  }
+  res.send(row.data);
+});
+
+// DELETE /attachments/:attachmentId — managers always; the colleague only
+// their own upload while the form is still a draft.
+router.delete("/attachments/:attachmentId", async (req: Request, res: Response) => {
+  const attId = Number(req.params.attachmentId);
+  if (!Number.isInteger(attId)) { res.status(400).json({ error: "Invalid attachment" }); return; }
+  const rows = await db.execute<{ form_id: number; uploaded_by_user_id: number | null }>(sql`
+    SELECT form_id, uploaded_by_user_id FROM return_to_work_attachments WHERE id = ${attId}
+  `);
+  const row = rows.rows[0];
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  const form = await loadFormForAttachment(req, res, Number(row.form_id));
+  if (!form) return;
+  const isManager = await hasRtwManagerAccess(req);
+  const allowed = canDeleteRtwAttachment({
+    formStatus: form.status,
+    isRtwManager: isManager,
+    uploadedByUserId: row.uploaded_by_user_id == null ? null : Number(row.uploaded_by_user_id),
+    viewerUserId: req.session.userId!,
+  });
+  if (!allowed) {
+    res.status(403).json({ error: "Only Graeme or Lorna can remove documents from a signed form." });
+    return;
+  }
+  await db.execute(sql`DELETE FROM return_to_work_attachments WHERE id = ${attId}`);
+  res.status(204).send();
 });
 
 export default router;
