@@ -14,6 +14,7 @@ import { remainingFulfilmentPacks } from "../lib/remaining-fulfilment";
 import { getFactoryNumberCoreMenuOnly, getShopifyFreezerSyncEnabled } from "../lib/inventory-sync";
 import { logFridgeStockChange, type FridgeChangeSource } from "../lib/fridge-stock-log";
 import { londonDateString, londonStartOfDay } from "../lib/london-time";
+import { builtPortionWeightG } from "../lib/built-portion-weight";
 import { productionDateFromJulianBatch } from "../lib/julian-batch";
 import { loadMinShelfDaysRules, minShelfDaysFor } from "../lib/min-shelf-days";
 import { getStandardBreakConfig, computeBatchesPerHour } from "../lib/batches-per-hour";
@@ -3946,39 +3947,79 @@ function quantityToGrams(quantity: number, unit: string | null | undefined): num
  *  (cooked qty)" view in the recipe editor); each is normalized to grams via
  *  its ingredient.unit / sub_recipe.yield_unit. No further cooking-loss
  *  reduction — the stored values are already cooked quantities. */
+/**
+ * Per-portion weight on the BUILDER basis — what actually goes into a pack
+ * (Graeme, 2026-09-16): the made filling (filling-mix rows, whose recipe
+ * quantities are the filling's weight as made) less the builders' display
+ * trim, plus the pre-oven assembly items, plus the dough. Marinade rows are
+ * excluded (they cook into the filling), and so are post-oven finishes
+ * (garlic butter, icing — added at wrapping, after the scale). The old
+ * basis summed every RAW quantity, so recipes whose components reduce in
+ * cooking (Philly's stock and marinade) targeted ~50g/portion heavy.
+ */
 async function computePortionWeightG(recipeId: number): Promise<{ portionWeightG: number; portionsPerBatch: number; }> {
   const [recipe] = await db.select({
     portionsPerBatch: recipesTable.portionsPerBatch,
+    builderFillingDeductionGrams: recipesTable.builderFillingDeductionGrams,
   }).from(recipesTable).where(eq(recipesTable.id, recipeId));
   const portionsPerBatch = recipe?.portionsPerBatch ?? 10;
-
-  let perPortionG = 0;
 
   const directs = await db.select({
     quantity: recipeIngredientsTable.quantity,
     unit: ingredientsTable.unit,
+    name: ingredientsTable.name,
+    inFillingMix: recipeIngredientsTable.includeInFillingMix,
+    marinadeFor: recipeIngredientsTable.marinadeForIngredientId,
   })
     .from(recipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
     .where(eq(recipeIngredientsTable.recipeId, recipeId));
 
-  for (const d of directs) {
-    perPortionG += quantityToGrams(Number(d.quantity), d.unit);
-  }
-
   const subs = await db.select({
     quantity: recipeSubRecipesTable.quantity,
     yieldUnit: subRecipesTable.yieldUnit,
+    name: subRecipesTable.name,
+    isBase: subRecipesTable.isBase,
+    inFillingMix: recipeSubRecipesTable.includeInFillingMix,
+    marinadeFor: recipeSubRecipesTable.marinadeForIngredientId,
   })
     .from(recipeSubRecipesTable)
     .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
     .where(eq(recipeSubRecipesTable.recipeId, recipeId));
 
-  for (const s of subs) {
-    perPortionG += quantityToGrams(Number(s.quantity), s.yieldUnit);
+  // Same conventions as the building station's assembly-items endpoint.
+  const isPostOven = (name: string | null) => /garlic[\s\-]*butter|icing/i.test(name ?? "");
+  const isDough = (s: { name: string | null; isBase: boolean | null }) =>
+    s.isBase === true || /dough/i.test(s.name ?? "");
+
+  let fillingPerPortionG = 0;
+  let assemblyPerPortionG = 0;
+  let doughPerPortionG = 0;
+
+  for (const d of directs) {
+    if (d.marinadeFor != null) continue;
+    const g = quantityToGrams(Number(d.quantity), d.unit);
+    if (d.inFillingMix) fillingPerPortionG += g;
+    else if (!isPostOven(d.name)) assemblyPerPortionG += g;
   }
 
-  return { portionWeightG: Math.round(perPortionG), portionsPerBatch };
+  for (const s of subs) {
+    if (s.marinadeFor != null) continue;
+    const g = quantityToGrams(Number(s.quantity), s.yieldUnit);
+    if (isDough(s)) doughPerPortionG += g;
+    else if (s.inFillingMix) fillingPerPortionG += g;
+    else if (!isPostOven(s.name)) assemblyPerPortionG += g;
+  }
+
+  const portionWeightG = builtPortionWeightG({
+    fillingGramsPerBatch: fillingPerPortionG * portionsPerBatch,
+    builderFillingDeductionGrams: Number(recipe?.builderFillingDeductionGrams ?? 0),
+    assemblyGramsPerBatch: assemblyPerPortionG * portionsPerBatch,
+    doughGramsPerPortion: doughPerPortionG,
+    portionsPerBatch,
+  });
+
+  return { portionWeightG, portionsPerBatch };
 }
 
 // GET /:id/weight-targets — per-recipe target weight for oven-station batch
