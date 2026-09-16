@@ -11,9 +11,10 @@
 import { useRef, useState } from "react";
 import { useSearch } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, HeartPulse, CheckCircle2, ChevronLeft, Lock, PenLine } from "lucide-react";
+import { Loader2, HeartPulse, CheckCircle2, ChevronLeft, Lock, LockOpen, PenLine } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { rtwFieldsLocked, rtwCanOfferAmend } from "@/lib/rtw-edit-rules";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -70,11 +71,15 @@ function useAutosave(formId: number | null) {
   return { state, save };
 }
 
-function FormEditor({ form, onDone, onBack }: { form: RtwForm; onDone: () => void; onBack: () => void }) {
+function FormEditor({ form, isRtwManager, onDone, onBack }: { form: RtwForm; isRtwManager: boolean; onDone: () => void; onBack: () => void }) {
   const [f, setF] = useState(form);
   const { state: saveState, save } = useAutosave(form.id);
   const [signing, setSigning] = useState(false);
-  const readOnly = f.status === "complete";
+  // A signed form is a record and stays locked — but the named RTW managers
+  // can deliberately unlock it to add or correct something (the server has
+  // always allowed their edits; the page used to lock them out too).
+  const [amending, setAmending] = useState(false);
+  const readOnly = rtwFieldsLocked({ status: f.status, isRtwManager, amending });
 
   const set = <K extends keyof RtwForm>(key: K, value: RtwForm[K], patchKey: string) => {
     setF(prev => ({ ...prev, [key]: value }));
@@ -113,7 +118,31 @@ function FormEditor({ form, onDone, onBack }: { form: RtwForm; onDone: () => voi
             {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? "Not saved — check connection" : "."}
           </span>
         )}
+        {rtwCanOfferAmend({ status: f.status, isRtwManager }) && !amending && (
+          <button
+            onClick={() => setAmending(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border-2 border-border text-sm font-bold hover:bg-secondary/50"
+            title="Unlock this signed form to add or correct something — only Graeme and Lorna can"
+          >
+            <LockOpen className="w-4 h-4" /> Amend
+          </button>
+        )}
       </div>
+
+      {amending && f.status === "complete" && (
+        <div className="rounded-xl border-2 border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 flex items-center gap-3 flex-wrap">
+          <PenLine className="w-5 h-5 text-amber-600 shrink-0" />
+          <p className="flex-1 min-w-0 text-sm font-medium text-amber-900 dark:text-amber-200">
+            Amending a signed form — changes save as you type. It stays signed.
+          </p>
+          <button
+            onClick={() => setAmending(false)}
+            className="px-3 py-1.5 rounded-xl bg-amber-600 text-white text-sm font-bold hover:bg-amber-700"
+          >
+            Done amending
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
@@ -170,7 +199,7 @@ function FormEditor({ form, onDone, onBack }: { form: RtwForm; onDone: () => voi
           placeholder="e.g. Lorna" className={inputCls} />
       </div>
 
-      {!readOnly && (
+      {f.status !== "complete" && (
         <button onClick={sign} disabled={signing}
           className="w-full h-14 rounded-xl bg-primary text-primary-foreground font-bold text-lg flex items-center justify-center gap-2 hover:bg-primary/90 disabled:opacity-50">
           {signing ? <Loader2 className="w-5 h-5 animate-spin" /> : <PenLine className="w-5 h-5" />} Sign & complete together
@@ -246,7 +275,7 @@ export default function ReturnToWorkPage() {
   if (openForm) {
     return (
       <div className="max-w-2xl mx-auto pb-24">
-        <FormEditor form={openForm} onBack={() => { setOpenForm(null); refreshAll(); }} onDone={() => { setOpenForm(null); refreshAll(); }} />
+        <FormEditor form={openForm} isRtwManager={mine?.isRtwManager === true} onBack={() => { setOpenForm(null); refreshAll(); }} onDone={() => { setOpenForm(null); refreshAll(); }} />
       </div>
     );
   }
