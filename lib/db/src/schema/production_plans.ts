@@ -260,6 +260,10 @@ export const temperatureRecordsTable = pgTable("temperature_records", {
   ingredientName: text("ingredient_name"),
   trayIndex: integer("tray_index").notNull(),
   temperatureC: numeric("temperature_c", { precision: 5, scale: 1 }).notNull(),
+  // How long the temperature was held, for checks recorded against the FSA
+  // time/temperature equivalents (70°C for 2 min ≡ 75°C for 30 s). Null on
+  // instant-reading checks. Migration 0110.
+  heldForSeconds: integer("held_for_seconds"),
   recordType: text("record_type").notNull().default("cooked_core"),
   userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
   userName: text("user_name"),

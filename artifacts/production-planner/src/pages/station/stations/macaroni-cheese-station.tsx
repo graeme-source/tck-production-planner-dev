@@ -13,16 +13,20 @@ import { useAuth } from "@/contexts/auth-context";
 import { isMacCheese, MAC_CHEESE_CATEGORY, type StationPlanItem } from "../shared/constants";
 import { NumberInput } from "@/components/ui/number-input";
 import { stockCellEdited, planStockWrite } from "@/lib/stock-override-guard";
+import { FSA_COOK_BANDS, defaultHoldSeconds, meetsCookStandard, formatHold } from "@/lib/cook-standards";
 import { DeferredPrepBanner } from "../shared/deferred-prep-banner";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Macaroni Cheese Station
 // ──────────────────────────────────────────────────────────────────────────────
 
+interface TempEntry { tempC: number; holdSeconds: number }
+
 interface TempRecord {
   id: number;
   recordType: string;
   temperatureC: string;
+  heldForSeconds: number | null;
   recordedAt: string;
   userName: string | null;
 }
@@ -497,9 +501,12 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
   const [editing, setEditing] = useState(false);
   const [removing, setRemoving] = useState(false);
 
-  // Temperature recording
+  // Temperature recording — temp + how long it was held, against the FSA
+  // time/temperature table (70°C for 2 min ≡ 75°C for 30 s). Defaults: 70°C
+  // with its 2-minute hold; moving the temperature resets the hold to that
+  // temperature's table default, and both stay editable.
   const [tempRecords, setTempRecords] = useState<TempRecord[]>([]);
-  const [tempInputs, setTempInputs] = useState<Record<string, string>>({});
+  const [tempEntries, setTempEntries] = useState<Record<string, TempEntry>>({});
   const [tempSaving, setTempSaving] = useState(false);
   const [runTempAction] = useGuardedAction();
 
@@ -519,9 +526,11 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
   }, [plan.id]);
 
   const handleRecordTemp = async (recordType: string, label: string) => {
-    const value = tempInputs[recordType];
-    const c = parseFloat(value);
-    if (isNaN(c)) { toast({ title: "Enter a valid temperature", variant: "destructive" }); return; }
+    const entry = tempEntries[recordType] ?? { tempC: 70, holdSeconds: 120 };
+    if (defaultHoldSeconds(entry.tempC) == null) {
+      toast({ title: "Below 60°C", description: "That's under the safe-cook table — keep heating before recording.", variant: "destructive" });
+      return;
+    }
     setTempSaving(true);
     try {
       await runTempAction(async (signal) => {
@@ -532,15 +541,15 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
             planId: plan.id,
             planName: plan.name,
             trayIndex: 0,
-            temperatureC: c,
+            temperatureC: entry.tempC,
+            heldForSeconds: Math.max(1, Math.round(entry.holdSeconds)),
             recordType,
           }),
           signal,
         });
         const record = await resp.json();
         setTempRecords(prev => [...prev, record]);
-        setTempInputs(prev => ({ ...prev, [recordType]: "" }));
-        toast({ title: "Temperature recorded", description: `${c}°C saved for ${label}` });
+        toast({ title: "Temperature recorded", description: `${entry.tempC}°C for ${formatHold(entry.holdSeconds)} saved for ${label}` });
       });
     } catch (err) {
       toast({ title: "Error", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
@@ -679,30 +688,30 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
           Cheese Sauce Temperature Record
         </h3>
         <p className="text-sm text-muted-foreground mb-4">
-          Check 1: 75°C prior to adding cheese. Check 2: 75°C after adding and melting cheese.
+          Record the temperature reached and how long it was held. Safe cooking follows the FSA
+          time/temperature table: <strong>70°C for 2 minutes</strong> is as safe as 75°C for 30 seconds
+          (or 65°C for 10 min, 60°C for 45 min). Check 1: before adding cheese. Check 2: after adding and melting cheese.
         </p>
 
         <div className="space-y-4">
           {/* Check 1: Pre-cheese */}
-          <TempCheckRow
+          <TempHoldCheckRow
             label="Check 1 — Before adding cheese"
-            targetTemp={75}
             recordType="mac_sauce_pre_cheese"
             records={preCheeseRecords}
-            inputValue={tempInputs["mac_sauce_pre_cheese"] ?? ""}
-            onInputChange={v => setTempInputs(prev => ({ ...prev, mac_sauce_pre_cheese: v }))}
+            entry={tempEntries["mac_sauce_pre_cheese"]}
+            onEntryChange={e => setTempEntries(prev => ({ ...prev, mac_sauce_pre_cheese: e }))}
             onRecord={() => handleRecordTemp("mac_sauce_pre_cheese", "Check 1 (pre-cheese)")}
             saving={tempSaving}
           />
 
           {/* Check 2: Post-cheese */}
-          <TempCheckRow
+          <TempHoldCheckRow
             label="Check 2 — After melting cheese"
-            targetTemp={75}
             recordType="mac_sauce_post_cheese"
             records={postCheeseRecords}
-            inputValue={tempInputs["mac_sauce_post_cheese"] ?? ""}
-            onInputChange={v => setTempInputs(prev => ({ ...prev, mac_sauce_post_cheese: v }))}
+            entry={tempEntries["mac_sauce_post_cheese"]}
+            onEntryChange={e => setTempEntries(prev => ({ ...prev, mac_sauce_post_cheese: e }))}
             onRecord={() => handleRecordTemp("mac_sauce_post_cheese", "Check 2 (post-cheese)")}
             saving={tempSaving}
           />
@@ -720,17 +729,17 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
             Pigs in Blankets Cook Temperature
           </h3>
           <p className="text-sm text-muted-foreground mb-4">
-            Record core temperature of the cooked sausage before adding to the mac cheese. Target: <strong>≥75°C</strong>.
+            Record the core temperature of the cooked sausage before adding to the mac cheese, and how long it
+            held — the same FSA table applies (<strong>70°C for 2 min</strong>, or 75°C for 30 sec).
           </p>
 
           <div className="space-y-4">
-            <TempCheckRow
+            <TempHoldCheckRow
               label="Sausage core temperature at cook-out"
-              targetTemp={75}
               recordType="mac_pigs_in_blankets_cook"
               records={pigsInBlanketsRecords}
-              inputValue={tempInputs["mac_pigs_in_blankets_cook"] ?? ""}
-              onInputChange={v => setTempInputs(prev => ({ ...prev, mac_pigs_in_blankets_cook: v }))}
+              entry={tempEntries["mac_pigs_in_blankets_cook"]}
+              onEntryChange={e => setTempEntries(prev => ({ ...prev, mac_pigs_in_blankets_cook: e }))}
               onRecord={() => handleRecordTemp("mac_pigs_in_blankets_cook", "Pigs in Blankets cook")}
               saving={tempSaving}
             />
@@ -741,33 +750,54 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
   );
 }
 
-function TempCheckRow({ label, targetTemp, recordType, records, inputValue, onInputChange, onRecord, saving }: {
+/** Temperature + hold-time check against the FSA time/temperature table.
+ *  Default 70°C for 2 minutes; sliding the temperature snaps the hold time
+ *  to that temperature's table default (75°C → 30 sec, 65°C → 10 min…) and
+ *  both stay editable. What gets recorded is what actually happened. */
+function TempHoldCheckRow({ label, recordType, records, entry, onEntryChange, onRecord, saving }: {
   label: string;
-  targetTemp: number;
   recordType: string;
   records: TempRecord[];
-  inputValue: string;
-  onInputChange: (v: string) => void;
+  entry: TempEntry | undefined;
+  onEntryChange: (e: TempEntry) => void;
   onRecord: () => void;
   saving: boolean;
 }) {
   const hasRecord = records.length > 0;
   const lastRecord = records[records.length - 1];
   const lastTemp = lastRecord ? Number(lastRecord.temperatureC) : null;
-  const isAboveTarget = lastTemp !== null && lastTemp >= targetTemp;
+  const lastHold = lastRecord?.heldForSeconds ?? null;
+  // Older records carry no hold time; judge those against the 75°C-instant
+  // convention they were recorded under rather than calling them failures.
+  const lastMeets = lastTemp !== null && (lastHold != null ? meetsCookStandard(lastTemp, lastHold) : lastTemp >= 75);
+
+  const e = entry ?? { tempC: 70, holdSeconds: 120 };
+  const requiredHold = defaultHoldSeconds(e.tempC);
+  const belowTable = requiredHold == null;
+  const holdMeets = requiredHold != null && e.holdSeconds >= requiredHold;
+
+  const setTemp = (tempC: number) => {
+    // Moving the temperature re-defaults the hold to the table's requirement
+    // for the new temperature; the operator can still edit it afterwards.
+    const def = defaultHoldSeconds(tempC);
+    onEntryChange({ tempC, holdSeconds: def ?? e.holdSeconds });
+  };
+
+  const holdUnit = e.holdSeconds >= 60 && e.holdSeconds % 30 === 0 ? "min" : "sec";
+  const holdValue = holdUnit === "min" ? e.holdSeconds / 60 : e.holdSeconds;
 
   return (
     <div className={cn(
       "p-4 rounded-lg border",
-      hasRecord && isAboveTarget ? "bg-emerald-50 dark:bg-emerald-900/10 border-emerald-200" :
-      hasRecord && !isAboveTarget ? "bg-amber-50 dark:bg-amber-900/10 border-amber-200" :
+      hasRecord && lastMeets ? "bg-emerald-50 dark:bg-emerald-900/10 border-emerald-200" :
+      hasRecord && !lastMeets ? "bg-amber-50 dark:bg-amber-900/10 border-amber-200" :
       "border-border",
     )}>
       <div className="flex items-center justify-between mb-2 gap-3">
         <span className="text-base font-semibold">{label}</span>
         {hasRecord && (
-          <span className={cn("text-lg font-bold tabular-nums flex-shrink-0", isAboveTarget ? "text-emerald-600" : "text-amber-600")}>
-            {lastTemp}°C {isAboveTarget ? "✓" : `(target: ${targetTemp}°C)`}
+          <span className={cn("text-lg font-bold tabular-nums flex-shrink-0", lastMeets ? "text-emerald-600" : "text-amber-600")}>
+            {lastTemp}°C{lastHold != null ? ` for ${formatHold(lastHold)}` : ""} {lastMeets ? "✓" : "(below the safe-cook table)"}
           </span>
         )}
       </div>
@@ -778,23 +808,63 @@ function TempCheckRow({ label, targetTemp, recordType, records, inputValue, onIn
           {lastRecord.userName && <span>by {lastRecord.userName}</span>}
         </div>
       ) : (
-        <div className="flex items-center gap-2">
-          <input
-            type="number"
-            step="0.1"
-            value={inputValue}
-            onChange={e => onInputChange(e.target.value)}
-            placeholder={`${targetTemp}°C`}
-            className="w-28 px-3 py-2 bg-background border border-border rounded text-base"
-          />
-          <button
-            onClick={onRecord}
-            disabled={saving || !inputValue}
-            className="px-4 py-2 bg-red-500 text-white rounded text-base font-semibold hover:bg-red-600 disabled:opacity-50 flex items-center gap-1.5"
-          >
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Thermometer className="w-4 h-4" />}
-            Record
-          </button>
+        <div className="space-y-3">
+          <div className="flex items-center gap-4">
+            <span className={cn("text-3xl font-bold tabular-nums w-28 flex-shrink-0", belowTable ? "text-red-600" : "text-foreground")}>
+              {e.tempC.toFixed(1).replace(/\.0$/, "")}°C
+            </span>
+            <input
+              type="range"
+              min={55}
+              max={95}
+              step={0.5}
+              value={e.tempC}
+              onChange={ev => setTemp(Number(ev.target.value))}
+              className="flex-1 h-2 accent-red-500 cursor-pointer"
+              aria-label={`${label} temperature`}
+            />
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {FSA_COOK_BANDS.slice().reverse().map(b => (
+              <button
+                key={b.tempC}
+                type="button"
+                onClick={() => setTemp(b.tempC)}
+                className={cn(
+                  "px-2.5 py-1.5 rounded-lg border text-sm font-semibold tabular-nums transition-colors",
+                  e.tempC === b.tempC ? "border-red-500 bg-red-500/10 text-red-600" : "border-border hover:bg-secondary/60 text-muted-foreground",
+                )}
+              >
+                {b.tempC}° / {formatHold(b.holdSeconds)}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-base font-semibold">held for</span>
+            <NumberInput
+              min={1}
+              value={holdValue}
+              onChange={n => onEntryChange({ ...e, holdSeconds: Math.max(1, holdUnit === "min" ? n * 60 : n) })}
+              className="w-20 px-3 py-2 bg-background border border-border rounded text-base text-right tabular-nums"
+            />
+            <span className="text-base font-semibold w-9">{holdUnit}</span>
+            <span className={cn("text-sm font-medium",
+              belowTable ? "text-red-600" : holdMeets ? "text-emerald-600" : "text-amber-600")}>
+              {belowTable
+                ? "Below 60°C — not on the safe-cook table, keep heating"
+                : holdMeets
+                  ? `Meets the standard (${e.tempC >= 75 ? "75°C / 30 sec" : e.tempC >= 70 ? "70°C / 2 min" : e.tempC >= 65 ? "65°C / 10 min" : "60°C / 45 min"} band)`
+                  : `Table needs ${formatHold(requiredHold)} at this temperature`}
+            </span>
+            <button
+              onClick={onRecord}
+              disabled={saving || belowTable}
+              className="ml-auto px-4 py-2 bg-red-500 text-white rounded text-base font-semibold hover:bg-red-600 disabled:opacity-50 flex items-center gap-1.5"
+            >
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Thermometer className="w-4 h-4" />}
+              Record
+            </button>
+          </div>
         </div>
       )}
     </div>
