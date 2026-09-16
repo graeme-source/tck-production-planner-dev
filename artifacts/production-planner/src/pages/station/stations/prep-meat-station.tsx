@@ -306,19 +306,6 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
 
       <StockCheckStatusPanel checkDate={nextPlan?.planDate ?? plan.planDate} />
 
-      {/* Stock checks for the marinade/linked ingredients on this station
-          (white onions attached to a raw meat — Graeme, 2026-09-10). The
-          meats themselves keep their existing inline stock-check card on
-          each recipe view; this covers only what that card can't see. */}
-      <StationStockChecks
-        checkDate={nextPlan?.planDate ?? plan.planDate}
-        isDraft={isDraft}
-        stationLabel="Raw Meat"
-        ingredientIds={recipes.flatMap(r =>
-          (r.marinades ?? []).map(m => m.marinadeIngredientId).filter((x): x is number => x != null),
-        )}
-      />
-
       {/* Summary bar */}
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
@@ -825,6 +812,21 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
         </div>
       </div>
 
+      {/* Stock checks for the marinade/linked ingredients on this station
+          (white onions attached to a raw meat — Graeme, 2026-09-10). The
+          meats themselves keep their inline stock-check card on each recipe
+          view; this covers only what that card can't see. Sits at the
+          BOTTOM, under the recipes, matching where every other ingredient's
+          stock check lives (Graeme, 2026-09-16 — it used to jump the queue
+          at the top of the page). */}
+      <StationStockChecks
+        checkDate={nextPlan?.planDate ?? plan.planDate}
+        isDraft={isDraft}
+        stationLabel="Raw Meat"
+        ingredientIds={recipes.flatMap(r =>
+          (r.marinades ?? []).map(m => m.marinadeIngredientId).filter((x): x is number => x != null),
+        )}
+      />
     </div>
   );
 }
