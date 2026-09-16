@@ -26,6 +26,16 @@ export function subMarinadeQtyPerPortion(s: SubMarinadeScale): number {
   return s.componentQty * (s.subUsagePerPortion / s.subYield);
 }
 
+/** A sub-recipe that is really a MEAT COOK — a raw meat plus its
+ *  marinade-linked companions (the Philly slow-cook beef) — is the mixing
+ *  station's production-day job, fed by the raw-meat prep flow. It must
+ *  NOT appear on the main-prep "sub-recipes to make" list, or the team
+ *  gets the same cook instructed twice. A meat-containing sub with no
+ *  marinade links (a plain chicken-strip prep) still lists normally. */
+export function isMeatCookSubRecipe(input: { hasRawMeatComponent: boolean; hasMarinadeLinkedComponent: boolean }): boolean {
+  return input.hasRawMeatComponent && input.hasMarinadeLinkedComponent;
+}
+
 /** Total grams across a run, converting kg-unit components. */
 export function subMarinadeTotalGrams(
   s: SubMarinadeScale & { unit: string | null; portionsPerBatch: number; batchesTarget: number },

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { subMarinadeQtyPerPortion, subMarinadeTotalGrams } from "./sub-recipe-marinades";
+import { subMarinadeQtyPerPortion, subMarinadeTotalGrams, isMeatCookSubRecipe } from "./sub-recipe-marinades";
 
 // The Philly slow-cook beef restructure: sub-recipe yields 0.97kg (yield %
 // 62.1 over 1.561kg of components), the recipe uses 0.097kg per portion —
@@ -19,6 +19,21 @@ describe("subMarinadeQtyPerPortion", () => {
 
   it("is zero when the sub has no yield (never divides by zero)", () => {
     expect(subMarinadeQtyPerPortion({ componentQty: 1, subUsagePerPortion: 1, subYield: 0 })).toBe(0);
+  });
+});
+
+describe("isMeatCookSubRecipe", () => {
+  it("classifies the Philly slow-cook beef as a cook, not a prep make-task", () => {
+    expect(isMeatCookSubRecipe({ hasRawMeatComponent: true, hasMarinadeLinkedComponent: true })).toBe(true);
+  });
+
+  it("leaves a plain meat prep (no marinade links) on the make list", () => {
+    expect(isMeatCookSubRecipe({ hasRawMeatComponent: true, hasMarinadeLinkedComponent: false })).toBe(false);
+  });
+
+  it("leaves meat-free sub-recipes (sauces, rubs, doughs) on the make list", () => {
+    expect(isMeatCookSubRecipe({ hasRawMeatComponent: false, hasMarinadeLinkedComponent: true })).toBe(false);
+    expect(isMeatCookSubRecipe({ hasRawMeatComponent: false, hasMarinadeLinkedComponent: false })).toBe(false);
   });
 });
 

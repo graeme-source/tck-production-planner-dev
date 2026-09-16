@@ -15,7 +15,7 @@ import { getFactoryNumberCoreMenuOnly, getShopifyFreezerSyncEnabled } from "../l
 import { logFridgeStockChange, type FridgeChangeSource } from "../lib/fridge-stock-log";
 import { londonDateString, londonStartOfDay } from "../lib/london-time";
 import { builtPortionWeightG } from "../lib/built-portion-weight";
-import { subMarinadeQtyPerPortion, subMarinadeTotalGrams } from "../lib/sub-recipe-marinades";
+import { subMarinadeQtyPerPortion, subMarinadeTotalGrams, isMeatCookSubRecipe } from "../lib/sub-recipe-marinades";
 import { productionDateFromJulianBatch } from "../lib/julian-batch";
 import { loadMinShelfDaysRules, minShelfDaysFor } from "../lib/min-shelf-days";
 import { getStandardBreakConfig, computeBatchesPerHour } from "../lib/batches-per-hour";
@@ -5020,10 +5020,21 @@ router.get("/:id/sub-recipe-requirements", async (req, res) => {
         unit: ingredientsTable.unit,
         quantity: subRecipeIngredientsTable.quantity,
         packWeight: ingredientsTable.packWeight,
+        category: ingredientsTable.category,
+        marinadeForIngredientId: subRecipeIngredientsTable.marinadeForIngredientId,
       })
       .from(subRecipeIngredientsTable)
       .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
       .where(eq(subRecipeIngredientsTable.subRecipeId, sr.id));
+
+    // A meat cook (raw meat + marinade-linked companions, e.g. the Philly
+    // slow-cook beef) is the mixing station's production-day job — the raw
+    // meat and marinades already flow through the raw-meat prep station.
+    // Listing it here would instruct the same cook twice.
+    if (isMeatCookSubRecipe({
+      hasRawMeatComponent: ingRows.some(i => i.category === "raw_meat"),
+      hasMarinadeLinkedComponent: ingRows.some(i => i.marinadeForIngredientId != null),
+    })) continue;
 
     const nestedRows = await db
       .select({
