@@ -906,12 +906,6 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     setSelectedItemId(itemId);
     setQueueOpen(false);
   };
-  const moveToNextRecipe = (item: ProductionPlanItem) => {
-    if (isOnBreak) return;
-    const idx = items.findIndex(it => it.id === item.id);
-    const next = idx >= 0 && idx < items.length - 1 ? items[idx + 1] : items[0];
-    if (next) selectRecipe(next.id);
-  };
 
   // A blast chiller tray is 10 packs. Mac cheese only. If fewer than 10 packs
   // of work are left, the button shows "Add Final N Packs" and advances the
@@ -1511,28 +1505,47 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                               <span className="italic">{item.notes}</span>
                             )}
                           </div>
+
+                          {/* Part-batch calculator — it's about THESE ingredients
+                              and their weights, so it lives under them rather than
+                              among the page controls (Graeme, 2026-09-16). */}
+                          {asm && (asm.fillingWeightPerBatch > 0 || asm.assemblyItems.length > 0) && (
+                            <button
+                              onClick={() => setCalcOpenItemId(item.id)}
+                              disabled={isOnBreak}
+                              className="w-full flex items-center justify-center gap-2 py-2 text-sm font-semibold border border-border rounded-lg text-foreground hover:bg-secondary/60 disabled:opacity-40 transition-colors"
+                            >
+                              <Scale className="w-4 h-4" />
+                              Part Batch Calculator
+                            </button>
+                          )}
                         </div>
 
                         {/* RIGHT — Batch counter + BATCH COMPLETE button */}
                         <div className="sm:w-1/3 flex flex-col items-center justify-between">
-                          {/* Batch counter */}
-                          <div className="text-center mb-3">
-                            <p className="text-5xl font-bold font-display tabular-nums text-primary leading-none">
-                              {combinedCount}
+                          {/* Batch counter — count and target share a baseline,
+                              tins and "mine" share the line under it. Three
+                              stacked lines of numbers was most of this column's
+                              height (Graeme, 2026-09-16). */}
+                          <div className="text-center mb-2">
+                            <p className="flex items-baseline justify-center gap-1.5 leading-none">
+                              <span className="text-5xl font-bold font-display tabular-nums text-primary">{combinedCount}</span>
+                              <span className="text-xl font-light text-muted-foreground tabular-nums">/ {effTarget}</span>
                             </p>
-                            <p className="text-lg font-light text-muted-foreground">/ {effTarget}</p>
-                            {item.maxBatchesPerTin && effTarget > 0 && (
-                              <p className={cn("text-xs font-semibold mt-0.5", item.mixingTinOverride ? "text-blue-600 dark:text-blue-400" : "text-amber-600 dark:text-amber-400")}>
-                                {item.mixingTinOverride ?? (() => { const raw = Math.ceil(effTarget / item.maxBatchesPerTin); return effTarget > 5 ? Math.max(2, raw) : raw; })()} tins
+                            {((item.maxBatchesPerTin && effTarget > 0) || itemMyCount > 0) && (
+                              <p className="flex items-center justify-center gap-2 text-xs mt-1">
+                                {item.maxBatchesPerTin && effTarget > 0 && (
+                                  <span className={cn("font-semibold", item.mixingTinOverride ? "text-blue-600 dark:text-blue-400" : "text-amber-600 dark:text-amber-400")}>
+                                    {item.mixingTinOverride ?? (() => { const raw = Math.ceil(effTarget / item.maxBatchesPerTin); return effTarget > 5 ? Math.max(2, raw) : raw; })()} tins
+                                  </span>
+                                )}
+                                {itemMyCount > 0 && <span className="text-muted-foreground">Mine: {itemMyCount}</span>}
                               </p>
-                            )}
-                            {itemMyCount > 0 && (
-                              <p className="text-xs text-muted-foreground mt-0.5">Mine: {itemMyCount}</p>
                             )}
                           </div>
 
                           {/* Progress bar */}
-                          <div className="w-full mb-3">
+                          <div className="w-full mb-2">
                             <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden">
                               <div
                                 className={cn(
@@ -1551,7 +1564,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                               blocked: the builder can keep tapping BATCH DONE to go
                               over, or press "Move to Next Recipe" when they're done. */}
                           {targetReached && (
-                            <div className="w-full flex items-center justify-center gap-1 px-2 py-1.5 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 rounded-lg mb-2">
+                            <div className="w-full flex items-center justify-center gap-1 px-2 py-1 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 rounded-lg mb-1.5">
                               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                               <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
                                 Target reached — build more or move on
@@ -1565,7 +1578,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                           onClick={isPartialMode ? handlePartialBatchComplete : handleBatchComplete}
                           disabled={busyWithTap || isOnBreak || checklistPending}
                           className={cn(
-                            "relative overflow-hidden w-full h-[200px] rounded-2xl text-xl sm:text-2xl font-bold transition-all select-none active:scale-95 flex flex-col items-center justify-center gap-1",
+                            "relative overflow-hidden w-full h-[140px] rounded-2xl text-xl sm:text-2xl font-bold transition-all select-none active:scale-95 flex flex-col items-center justify-center gap-1",
                             isOnBreak
                               ? "bg-amber-100 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 border-2 border-amber-300 cursor-not-allowed opacity-70"
                               : checklistPending
@@ -1711,28 +1724,6 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                             isOnBreak={isOnBreak}
                           />
 
-                          {/* Move to next recipe — a PER-BUILDER action, pure
-                              navigation. Advances THIS builder only; the other
-                              builder can keep building on this recipe. */}
-                          <MoveToNextRecipeButton
-                            item={item}
-                            combinedCount={combinedCount}
-                            isOnBreak={isOnBreak}
-                            onMoveOn={() => moveToNextRecipe(item)}
-                          />
-
-                          {/* Part-batch calculator shortcut — useful when short on packs
-                              and need to prepare a partial batch before the recipe wraps up */}
-                          {asm && (asm.fillingWeightPerBatch > 0 || asm.assemblyItems.length > 0) && (
-                            <button
-                              onClick={() => setCalcOpenItemId(item.id)}
-                              disabled={isOnBreak}
-                              className="w-full mt-2 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold border border-border rounded-lg text-foreground hover:bg-secondary/60 disabled:opacity-40 transition-colors"
-                            >
-                              <Scale className="w-4 h-4" />
-                              Part Batch Calculator
-                            </button>
-                          )}
                         </div>
                       </div>
                     ) : (
@@ -2179,49 +2170,6 @@ function BatchDivision({ assemblyData, portionsPerBatch }: { assemblyData: Assem
   );
 }
 
-function MoveToNextRecipeButton({
-  item,
-  combinedCount,
-  isOnBreak,
-  onMoveOn,
-}: {
-  item: ProductionPlanItem;
-  combinedCount: number;
-  isOnBreak: boolean;
-  onMoveOn: () => void;
-}) {
-  const target = item.batchesTarget ?? 0;
-  const isShort = combinedCount < target;
-
-  const handleClick = () => {
-    if (isOnBreak) return;
-    const built = `${combinedCount}/${target} batch${target === 1 ? "" : "es"} built so far (both builders combined)`;
-    const msg =
-      `Move on to your next recipe?\n\n` +
-      `${built}. Whatever's been built is logged to the oven station.\n\n` +
-      `This only moves YOU on — the other builder can keep building this recipe.`;
-    if (!window.confirm(msg)) return;
-    onMoveOn();
-  };
-
-  return (
-    <button
-      type="button"
-      onClick={handleClick}
-      disabled={isOnBreak}
-      className={cn(
-        "w-full mt-3 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold border-2 transition-colors disabled:opacity-40",
-        isShort
-          ? "border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40"
-          : "border-emerald-400 dark:border-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100 dark:hover:bg-emerald-900/40",
-      )}
-    >
-      {isShort ? <AlertTriangle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
-      Move to Next Recipe →
-    </button>
-  );
-}
-
 /**
  * Builder-facing "Recipe Finished" control. Sets/clears the item-level
  * builderMarkedCompleteAt flag: once set, ovens and wrapping work to the
@@ -2290,7 +2238,7 @@ function RecipeFinishedControls({
 
   if (finished) {
     return (
-      <div className="w-full mt-2 flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border-2 border-emerald-400 dark:border-emerald-600 bg-emerald-50 dark:bg-emerald-900/20">
+      <div className="w-full mt-1.5 flex items-center justify-between gap-2 px-3 py-1.5 rounded-xl border-2 border-emerald-400 dark:border-emerald-600 bg-emerald-50 dark:bg-emerald-900/20">
         <span className="flex items-center gap-2 text-sm font-semibold text-emerald-800 dark:text-emerald-200">
           <CheckCircle2 className="w-4 h-4" />
           Finished — ovens working to {combinedCount} batch{combinedCount === 1 ? "" : "es"}{extras > 0 ? ` + ${extras} pack${extras === 1 ? "" : "s"}` : ""}
