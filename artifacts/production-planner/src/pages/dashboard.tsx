@@ -15,6 +15,7 @@ import { compareItemsForDisplay } from "@/pages/station/shared/constants";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { FreshnessBadge } from "@/components/govee-freshness";
+import { useStationAssignment } from "@/hooks/use-station-assignment";
 
 interface AndonIssueSummary {
   id: number;
@@ -677,6 +678,11 @@ export default function Dashboard() {
   // working at (Graeme, 2026-09-16), instead of two cards or a detour
   // through the production plan.
   const [buildChooserOpen, setBuildChooserOpen] = useState(false);
+  // Who is already on each building table for today's plan — drives the
+  // chooser's "Jane is on this one" hint. A non-building stationType means
+  // this instance only READS; it never claims a table from the dashboard.
+  const { assignments: buildingAssignments } = useStationAssignment(todayPlans[0]?.id ?? 0, "dashboard");
+  const currentUserId = state.status === "authenticated" ? state.user.id : 0;
 
   // Station links land straight on today's plan's station screens — the
   // dashboard IS the station picker now, no production-plan detour.
@@ -1014,22 +1020,53 @@ export default function Dashboard() {
                 <X className="w-5 h-5" />
               </button>
             </div>
+            {/* Who's already on each table today — a hint, never a gate
+                (Graeme, 2026-09-16). Whoever opens a table first is recorded
+                against it for this plan, so the next person can see at a
+                glance which one to take. Both stay tappable. */}
             <div className="grid grid-cols-2 gap-3">
-              {([1, 2] as const).map(n => (
-                <button
-                  key={n}
-                  onClick={() => {
-                    setBuildChooserOpen(false);
-                    setLocation(`/plans/${todayPlanId}/station/building_${n}?from=dashboard`);
-                  }}
-                  className="flex flex-col items-center justify-center gap-3 p-6 min-h-[130px] rounded-2xl border-2 border-border hover:border-primary/60 hover:bg-secondary/40 active:scale-[0.97] transition-all"
-                >
-                  <div className="w-14 h-14 rounded-xl bg-orange-50 dark:bg-orange-900/20 text-orange-500 flex items-center justify-center">
-                    <ChefHat className="w-7 h-7" />
-                  </div>
-                  <span className="text-base font-bold">Table {n}</span>
-                </button>
-              ))}
+              {([1, 2] as const).map(n => {
+                const occupant = buildingAssignments[`building_${n}` as "building_1" | "building_2"];
+                const isMe = occupant != null && occupant.userId === currentUserId;
+                const firstName = occupant?.userName?.trim().split(/\s+/)[0] ?? "";
+                return (
+                  <button
+                    key={n}
+                    onClick={() => {
+                      setBuildChooserOpen(false);
+                      setLocation(`/plans/${todayPlanId}/station/building_${n}?from=dashboard`);
+                    }}
+                    className={cn(
+                      "flex flex-col items-center justify-center gap-2 p-5 min-h-[140px] rounded-2xl border-2 active:scale-[0.97] transition-all",
+                      occupant && !isMe
+                        ? "border-amber-300 dark:border-amber-700 bg-amber-50/60 dark:bg-amber-950/20 hover:border-amber-400"
+                        : "border-border hover:border-primary/60 hover:bg-secondary/40",
+                    )}
+                  >
+                    <div className={cn(
+                      "w-12 h-12 rounded-xl flex items-center justify-center",
+                      occupant && !isMe
+                        ? "bg-amber-100 dark:bg-amber-900/30 text-amber-600"
+                        : "bg-orange-50 dark:bg-orange-900/20 text-orange-500",
+                    )}>
+                      <ChefHat className="w-6 h-6" />
+                    </div>
+                    <span className="text-base font-bold">Table {n}</span>
+                    {occupant ? (
+                      <span className={cn(
+                        "text-xs font-semibold rounded-full px-2 py-0.5 text-center leading-tight",
+                        isMe
+                          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+                          : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
+                      )}>
+                        {isMe ? "You're on this one" : `${firstName} is on this one`}
+                      </span>
+                    ) : (
+                      <span className="text-xs font-medium text-muted-foreground">Free</span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>

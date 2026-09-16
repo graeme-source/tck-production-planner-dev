@@ -54,7 +54,11 @@ export function useStationAssignment(planId: number, stationType: string): Stati
         building_2: r2?.value ? (JSON.parse(r2.value) as Assignment) : null,
       };
     },
-    enabled: buildingStationLock && userId > 0,
+    // Presence is recorded and read REGARDLESS of the lock flag (Graeme,
+    // 2026-09-16): the building-table chooser shows who is already on a
+    // table so the next person picks the other one. Only the blocking
+    // below is gated by buildingStationLock — knowing is not gating.
+    enabled: userId > 0 && planId > 0,
     staleTime: 5_000,
     refetchInterval: 10_000,
     refetchOnWindowFocus: true,
@@ -90,7 +94,7 @@ export function useStationAssignment(planId: number, stationType: string): Stati
   }, [planId, userId, userName, queryClient]);
 
   useEffect(() => {
-    if (!buildingStationLock || !isBuilding || isLoading || !data || userId === 0) return;
+    if (!isBuilding || isLoading || !data || userId === 0) return;
     if (myAssignment !== null) return; // already assigned somewhere
     const station = stationType as "building_1" | "building_2";
     if (assignments[station] === null) {
@@ -99,7 +103,7 @@ export function useStationAssignment(planId: number, stationType: string): Stati
     }
   }, [buildingStationLock, isBuilding, isLoading, data, userId, myAssignment, stationType, assignments, assign]);
 
-  // Determine if blocked
+  // Blocking is still opt-in behind the flag — the chooser hint never gates.
   const isBlocked = (() => {
     if (!buildingStationLock || !isBuilding || isAdmin) return false;
     const station = stationType as "building_1" | "building_2";
