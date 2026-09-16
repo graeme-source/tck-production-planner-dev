@@ -16,7 +16,9 @@ import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import { BreakTracker } from "../shared/break-tracker";
 import { PaceKpiStrip, type PaceBands } from "../shared/pace-kpi-strip";
 import { useModalScrollKeeper } from "@/hooks/use-modal-scroll";
-import { getStationCount, getAvailableFromPrev, compareItemsForDisplay, type StationPlanItem } from "../shared/constants";
+import { createPortal } from "react-dom";
+import { getStationCount, getAvailableFromPrev, compareItemsForDisplay, STATION_VIEW_ROW_SLOT_ID, type StationPlanItem } from "../shared/constants";
+import { QueueDock, QueueSheet } from "../shared/station-queue";
 import { netTwoPacks as computeNetTwoPacks, effectiveBatchesTarget } from "../shared/recipe-completion";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
 import { fetchFridgeAvailability, computeFridgeAllocation, type GateOrder } from "@/lib/fridge-gate";
@@ -136,8 +138,17 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   useModalScrollKeeper(garlicReminderItem != null);
   const dismissedGarlicReminders = useRef<Set<number>>(new Set());
   const addingRef = useRef(false);
-  const [expandedItemId, setExpandedItemId] = useState<number | null>(null);
-  const userOverrideRef = useRef(false);
+  // ONE recipe on show at a time (the shared station-queue pattern, Graeme
+  // 2026-09-16): the pinned panel shows the selected flavour and the queue
+  // lives in a bottom sheet.
+  const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
+  const [queueOpen, setQueueOpen] = useState(false);
+  // The toggle-row slot exists only after the parent's first commit, so
+  // look it up in an effect rather than during render.
+  const [viewRowSlot, setViewRowSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setViewRowSlot(document.getElementById(STATION_VIEW_ROW_SLOT_ID));
+  }, []);
 
   // Recipe-level SOPs, shown as chips on the open recipe so the wrapper can
   // read the method at the bench — and attach one on the spot when a step
@@ -315,37 +326,33 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   const currentWrappingItem = useMemo(() =>
     items.find(it => !it.wrappingComplete && netPacks(it) > 0), [items]);
 
-  // Auto-expand
+  // Auto-advance the pinned panel when the current flavour changes
   const [prevCurrentWrappingId, setPrevCurrentWrappingId] = useState<number | null>(null);
   useEffect(() => {
     const curId = currentWrappingItem?.id ?? null;
     if (prevCurrentWrappingId !== null && curId !== prevCurrentWrappingId) {
-      setExpandedItemId(curId);
-      userOverrideRef.current = false;
+      setSelectedItemId(curId);
     }
     setPrevCurrentWrappingId(curId);
   }, [currentWrappingItem?.id]);
 
+  // Initialise the selection: the flavour being wrapped, or the first in
+  // the queue once everything's done (something is always on show).
   useEffect(() => {
-    if (expandedItemId === null && currentWrappingItem) {
-      setExpandedItemId(currentWrappingItem.id);
+    if (selectedItemId === null && items.length > 0) {
+      setSelectedItemId(currentWrappingItem?.id ?? items[0].id);
     }
-  }, [currentWrappingItem?.id]);
+  }, [currentWrappingItem?.id, items.length]);
 
-  const toggleExpanded = (itemId: number) => {
-    if (expandedItemId === itemId) {
-      setExpandedItemId(null);
-      userOverrideRef.current = false;
-    } else {
-      setExpandedItemId(itemId);
-      userOverrideRef.current = itemId !== currentWrappingItem?.id;
-      // Pop the post-oven reminder the first time this recipe is opened
-      // in the current session — surfaces garlic butter before wrapping
-      // starts, when it's still actionable.
-      if ((postOvenMap[itemId]?.length ?? 0) > 0 && !dismissedGarlicReminders.current.has(itemId)) {
-        const item = items.find(it => it.id === itemId);
-        if (item) setGarlicReminderItem(item);
-      }
+  const selectWrapItem = (itemId: number) => {
+    setSelectedItemId(itemId);
+    setQueueOpen(false);
+    // Pop the post-oven reminder the first time this recipe is opened
+    // in the current session — surfaces garlic butter before wrapping
+    // starts, when it's still actionable.
+    if ((postOvenMap[itemId]?.length ?? 0) > 0 && !dismissedGarlicReminders.current.has(itemId)) {
+      const item = items.find(it => it.id === itemId);
+      if (item) setGarlicReminderItem(item);
     }
   };
 
@@ -663,65 +670,40 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
         />
       )}
 
-      {/* Session summary */}
-      <div className="bg-card border border-border rounded-xl p-4">
-        <div className="flex items-center gap-3 mb-3">
-          <Gift className="w-6 h-6 text-purple-500" />
-          <div>
-            <h2 className="font-semibold text-lg">Wrapping Station</h2>
-            <p className="text-sm text-muted-foreground">
-              {wrappedCount} of {items.length} recipes wrapped · {totalNet} in chiller · {totalWonly} wonky
-              {totalShort > 0 && <span className="text-red-500"> · {totalShort} short</span>}
-              {totalEightPackBags > 0 && <span className="text-indigo-500"> · {totalEightPackBags} 8-packs</span>}
+      {/* Daily progress — a slim strip portalled beside the Checklist/
+          Production toggle so they share one line (Graeme, 2026-09-16).
+          The full pace strip and the Wonky Rack live in the queue sheet. */}
+      {(() => {
+        const strip = (
+          <div className="flex items-center gap-3 min-w-0">
+            <p className="text-sm font-medium truncate">
+              {wrappedCount}/{items.length} wrapped
+              <span className="text-xs font-normal text-muted-foreground"> · {totalFridge}/{totalNet} pk</span>
+              {totalWonly > 0 && <span className="text-xs font-normal text-red-500"> · {totalWonly} wonky</span>}
             </p>
-          </div>
-          {allWrapped && (
-            <div className="ml-auto flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-lg px-3 py-1.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-              <span className="text-xs font-medium text-emerald-700 dark:text-emerald-300">All wrapped!</span>
+            <div className="flex-1 min-w-[60px] h-2 bg-secondary rounded-full overflow-hidden">
+              <div
+                className={cn("h-full rounded-full transition-all", allWrapped ? "bg-emerald-500" : "bg-purple-500")}
+                style={{ width: `${allWrapped ? 100 : wrappingPct}%` }}
+              />
             </div>
-          )}
-        </div>
-        <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden mb-3">
-          <div
-            className={cn(
-              "h-full rounded-full transition-all",
-              allWrapped ? "bg-emerald-500" : "bg-purple-500"
+            <span className="text-lg font-bold tabular-nums flex-shrink-0">{allWrapped ? 100 : wrappingPct}%</span>
+            {(wrappingSpeed?.packsPerHour ?? 0) > 0 && (
+              <span className="flex-shrink-0 rounded-lg px-2.5 py-1 text-sm font-extrabold tabular-nums leading-none bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300" title="Packs wrapped per hour">
+                {wrappingSpeed!.packsPerHour!.toFixed(0)}<span className="font-bold opacity-90 text-xs">/hr</span>
+              </span>
             )}
-            style={{ width: `${allWrapped ? 100 : wrappingPct}%` }}
-          />
-        </div>
-        <PaceKpiStrip
-          className="pt-3 border-t border-border"
-          rate={wrappingSpeed?.packsPerHour ?? null}
-          rateUnit="Packs / hour"
-          count={wrappingSpeed?.packs ?? 0}
-          countLabel="Wrapped today"
-          activeMinutes={wrappingSpeed?.activeMinutes ?? null}
-          bands={WRAPPING_PACE_BANDS}
-          unitNoun="pack"
-        />
-      </div>
+          </div>
+        );
+        return viewRowSlot ? createPortal(strip, viewRowSlot) : strip;
+      })()}
 
-      {/* Unified accordion queue */}
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <h3 className="font-semibold text-base">Wrapping Queue</h3>
-          {allWrapped && (
-            totalWonly > 0 ? (
-              <span className="flex items-center gap-1.5 text-red-600 dark:text-red-400 text-sm font-medium">
-                <AlertCircle className="w-4 h-4" /> All wrapped — {totalWonly} wonky pack{totalWonly !== 1 ? "s" : ""} still on the rack below
-              </span>
-            ) : (
-              <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-sm font-medium">
-                <CheckCircle2 className="w-4 h-4" /> All wrapped
-              </span>
-            )
-          )}
-        </div>
-
-        <div className="divide-y divide-border/50">
-          {items.map(item => {
+      {/* Pinned recipe panel — one flavour on show at a time; the full
+          wrapping queue lives behind the bottom dock (shared station-queue
+          pattern). */}
+      {(() => {
+            const item = items.find(it => it.id === selectedItemId) ?? null;
+            if (!item) return null;
             const planned = plannedPacks(item);
             const gross = grossPacks(item);
             const net = netTwoPacks(item);
@@ -754,64 +736,46 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
             const customVal = customAmounts[item.id] ?? "";
             const customNum = parseInt(customVal, 10);
             const postOvenItems = postOvenMap[item.id] ?? [];
-            const isExpanded = expandedItemId === item.id;
             const isCurrent = item.id === currentWrappingItem?.id;
             const recipeColour = item.recipeColor || undefined;
+            const panelIdx = items.findIndex(it => it.id === item.id);
 
             return (
-              <div key={item.id}>
-                {/* Collapsed summary row */}
-                <button
-                  onClick={() => toggleExpanded(item.id)}
-                  className={cn(
-                    "w-full text-left px-3 py-2.5 flex items-center gap-2 transition-colors",
-                    isExpanded
-                      ? isCurrent
-                        ? "bg-purple-50/60 dark:bg-purple-900/15"
-                        : "bg-blue-50/60 dark:bg-blue-900/15"
-                      : isCurrent
-                        ? "bg-purple-50/40 dark:bg-purple-900/10"
-                        : isWrapped
-                          ? "bg-emerald-50/30 dark:bg-emerald-900/10"
-                          : "hover:bg-secondary/20"
+              <div className={cn(
+                "bg-card border-2 rounded-xl overflow-hidden",
+                isCurrent ? "border-purple-400 dark:border-purple-600" : "border-blue-300 dark:border-blue-700"
+              )}>
+                {/* Where this flavour sits in the run — no guessing whether
+                    the rest of the queue is above or below. */}
+                <div className={cn(
+                  "px-4 py-2 flex items-center gap-3 border-b",
+                  isCurrent
+                    ? "bg-purple-50/60 dark:bg-purple-900/15 border-purple-200 dark:border-purple-800"
+                    : "bg-blue-50/60 dark:bg-blue-900/15 border-blue-200 dark:border-blue-800"
+                )}>
+                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground tabular-nums flex-shrink-0">
+                    {panelIdx + 1} of {items.length}
+                  </span>
+                  {isCurrent && (
+                    <span className="flex items-center gap-1 text-xs font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider">
+                      <Gift className="w-3.5 h-3.5" /> Wrapping now
+                    </span>
                   )}
-                >
-                  <span
-                    className={cn(
-                      "flex-1 font-bold text-sm truncate",
-                      isWrapped && !isExpanded ? "line-through opacity-60" : ""
-                    )}
-                    style={{ color: recipeColour }}
-                  >
-                    {item.recipeName ?? `Recipe #${item.recipeId}`}
-                  </span>
-
-                  {/* Key stats */}
-                  <span className="text-xs tabular-nums text-purple-600 dark:text-purple-400 font-semibold flex-shrink-0">
-                    {net > 0 ? net : "—"}
-                  </span>
-                  <span className="text-xs tabular-nums text-primary font-semibold flex-shrink-0">
-                    {fridge > 0 ? fridge : "—"}
-                  </span>
-
-                  {isWrapped ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                  ) : (
-                    <ChevronDown className={cn(
-                      "w-4 h-4 text-muted-foreground flex-shrink-0 transition-transform",
-                      isExpanded ? "rotate-180" : ""
-                    )} />
+                  {!isCurrent && currentWrappingItem && (
+                    <button
+                      onClick={() => selectWrapItem(currentWrappingItem.id)}
+                      className="flex items-center gap-1 text-xs font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider hover:underline"
+                    >
+                      <Gift className="w-3.5 h-3.5" /> Jump to current
+                    </button>
                   )}
-                </button>
-
-                {/* Expanded panel */}
-                {isExpanded && (
-                  <div className={cn(
-                    "border-t-2 px-4 py-4 space-y-3",
-                    isCurrent
-                      ? "border-purple-400 dark:border-purple-600"
-                      : "border-blue-300 dark:border-blue-700"
-                  )}>
+                  {!currentWrappingItem && (
+                    <span className="flex items-center gap-1 text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> All wrapped
+                    </span>
+                  )}
+                </div>
+                  <div className="px-4 py-3 space-y-3">
                     {/* Header + wrapping toggle */}
                     <div className="flex items-center gap-3">
                       <div className="flex-1 min-w-0">
@@ -1204,14 +1168,83 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                       )}
                     </div>
                   </div>
-                )}
               </div>
             );
-          })}
-        </div>
-      </div>
+      })()}
 
-      {/* ── Bottom: Wonky Rack dedicated panel ── */}
+      {/* Bottom dock + queue sheet — the shared station-queue pattern. The
+          sheet carries the whole run, the pace strip and the Wonky Rack. */}
+      <QueueDock
+        label="Wrapping Queue"
+        doneCount={wrappedCount}
+        total={items.length}
+        prevDisabled={(() => { const i = items.findIndex(it => it.id === selectedItemId); return i <= 0; })()}
+        nextDisabled={(() => { const i = items.findIndex(it => it.id === selectedItemId); return i < 0 || i >= items.length - 1; })()}
+        onPrev={() => { const i = items.findIndex(it => it.id === selectedItemId); if (i > 0) selectWrapItem(items[i - 1].id); }}
+        onNext={() => { const i = items.findIndex(it => it.id === selectedItemId); if (i >= 0 && i < items.length - 1) selectWrapItem(items[i + 1].id); }}
+        onOpenQueue={() => setQueueOpen(true)}
+      />
+
+      {queueOpen && (
+        <QueueSheet title="Wrapping Queue" allDone={allWrapped} onClose={() => setQueueOpen(false)}>
+          <div className="divide-y divide-border/50">
+            {items.map((item, idx) => {
+              const isSelected = item.id === selectedItemId;
+              const isCurrent = item.id === currentWrappingItem?.id;
+              const isWrapped = item.wrappingComplete;
+              const net = netTwoPacks(item);
+              const fridge = item.fridgeQty ?? 0;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => selectWrapItem(item.id)}
+                  className={cn(
+                    "w-full text-left px-3 py-3 flex items-center gap-2 transition-colors",
+                    isSelected
+                      ? "bg-blue-50/60 dark:bg-blue-900/15"
+                      : isCurrent
+                        ? "bg-purple-50/40 dark:bg-purple-900/10"
+                        : isWrapped
+                          ? "bg-emerald-50/30 dark:bg-emerald-900/10"
+                          : "hover:bg-secondary/20"
+                  )}
+                >
+                  <span className="w-5 text-xs font-bold text-muted-foreground tabular-nums text-right flex-shrink-0">{idx + 1}</span>
+                  <span
+                    className={cn(
+                      "flex-1 font-bold text-sm truncate",
+                      isWrapped ? "line-through opacity-60" : ""
+                    )}
+                    style={{ color: item.recipeColor || undefined }}
+                  >
+                    {item.recipeName ?? `Recipe #${item.recipeId}`}
+                  </span>
+                  {isCurrent && <Gift className="w-4 h-4 text-purple-500 flex-shrink-0" />}
+                  {/* In chiller · in fridge */}
+                  <span className="text-xs tabular-nums text-purple-600 dark:text-purple-400 font-semibold flex-shrink-0" title="Net packs in chiller">
+                    {net > 0 ? net : "—"}
+                  </span>
+                  <span className="text-xs tabular-nums text-primary font-semibold flex-shrink-0" title="Packs in fridge">
+                    {fridge > 0 ? fridge : "—"}
+                  </span>
+                  {isWrapped && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="px-3 py-3 border-t border-border space-y-3">
+            <PaceKpiStrip
+              rate={wrappingSpeed?.packsPerHour ?? null}
+              rateUnit="Packs / hour"
+              count={wrappingSpeed?.packs ?? 0}
+              countLabel="Wrapped today"
+              activeMinutes={wrappingSpeed?.activeMinutes ?? null}
+              bands={WRAPPING_PACE_BANDS}
+              unitNoun="pack"
+            />
+
+      {/* ── Wonky Rack dedicated panel ── */}
       <div className="rounded-xl border-2 border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/30 overflow-hidden">
         <div className="flex items-center gap-3 px-4 py-3 bg-red-100 dark:bg-red-900/40 border-b border-red-200 dark:border-red-800">
           <div className="w-9 h-9 rounded-full bg-red-500 text-white flex items-center justify-center flex-shrink-0">
@@ -1293,6 +1326,9 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
           )}
         </div>
       </div>
+          </div>
+        </QueueSheet>
+      )}
 
       {/* One viewer for every chip on this screen, including the one inside
           the post-oven reminder modal. */}

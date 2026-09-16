@@ -12,7 +12,9 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { BreakTracker } from "../shared/break-tracker";
-import { getStationCount, compareItemsForDisplay, isMacCheese } from "../shared/constants";
+import { createPortal } from "react-dom";
+import { getStationCount, compareItemsForDisplay, isMacCheese, STATION_VIEW_ROW_SLOT_ID } from "../shared/constants";
+import { QueueDock, QueueSheet } from "../shared/station-queue";
 import { useDoughPrepData } from "./dough-prep-station";
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -21,8 +23,15 @@ import { useDoughPrepData } from "./dough-prep-station";
 export function DoughSheetingStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const queryClient = useQueryClient();
   const { data: doughData } = useDoughPrepData(plan.id, "current");
-  const [expandedItemId, setExpandedItemId] = useState<number | null>(null);
-  const userOverrideRef = useRef(false);
+  // ONE recipe on show at a time (the shared station-queue pattern, Graeme
+  // 2026-09-16): pinned panel + bottom dock + queue sheet.
+  const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
+  const [queueOpen, setQueueOpen] = useState(false);
+  // The toggle-row slot exists only after the parent's first commit.
+  const [viewRowSlot, setViewRowSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setViewRowSlot(document.getElementById(STATION_VIEW_ROW_SLOT_ID));
+  }, []);
 
   // Extra ball sheeting state — per-ball ticks in app_settings
   const extraSheetKey = `extra_balls_sheeted_${plan.id}`;
@@ -92,31 +101,27 @@ export function DoughSheetingStation({ plan, isOnBreak = false }: { plan: Produc
     return target > 0 && sheeted < target;
   });
 
-  // Auto-expand current recipe
+  // Auto-advance the pinned panel when the current recipe changes
   const [prevNextId, setPrevNextId] = useState<number | null>(null);
   useEffect(() => {
     const curId = nextItem?.id ?? null;
     if (prevNextId !== null && curId !== prevNextId) {
-      setExpandedItemId(curId);
-      userOverrideRef.current = false;
+      setSelectedItemId(curId);
     }
     setPrevNextId(curId);
   }, [nextItem?.id]);
 
+  // Initialise the selection: the recipe being sheeted, or the first once
+  // everything's done (something is always on show).
   useEffect(() => {
-    if (expandedItemId === null && nextItem) {
-      setExpandedItemId(nextItem.id);
+    if (selectedItemId === null && items.length > 0) {
+      setSelectedItemId(nextItem?.id ?? items[0].id);
     }
-  }, [nextItem?.id]);
+  }, [nextItem?.id, items.length]);
 
-  const toggleExpanded = (itemId: number) => {
-    if (expandedItemId === itemId) {
-      setExpandedItemId(null);
-      userOverrideRef.current = false;
-    } else {
-      setExpandedItemId(itemId);
-      userOverrideRef.current = itemId !== nextItem?.id;
-    }
+  const selectSheetItem = (itemId: number) => {
+    setSelectedItemId(itemId);
+    setQueueOpen(false);
   };
 
   const sheetBatch = (itemId: number) => {
@@ -146,20 +151,25 @@ export function DoughSheetingStation({ plan, isOnBreak = false }: { plan: Produc
   const allDone = totalTarget > 0 && totalSheeted >= totalTarget;
 
   return (
-    <div className="space-y-4">
-      {/* Progress + break tracker */}
-      <div className="bg-card border border-border rounded-xl p-4">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-base font-medium">Daily Progress — {totalSheeted} / {totalTarget} batches</p>
-          <span className="text-2xl font-bold">{overallProgress}%</span>
-        </div>
-        <div className="w-full bg-secondary rounded-full h-2.5 overflow-hidden">
-          <div
-            className={cn("h-full rounded-full transition-all", allDone ? "bg-emerald-500" : "bg-amber-500")}
-            style={{ width: `${Math.min(overallProgress, 100)}%` }}
-          />
-        </div>
-      </div>
+    <div className="space-y-3">
+      {/* Daily progress — slim strip beside the Checklist/Production toggle
+          (Graeme, 2026-09-16), falling back inline when the toggle row
+          isn't rendered. */}
+      {(() => {
+        const strip = (
+          <div className="flex items-center gap-3 min-w-0">
+            <p className="text-sm font-medium truncate">{totalSheeted}/{totalTarget} batches</p>
+            <div className="flex-1 min-w-[60px] h-2 bg-secondary rounded-full overflow-hidden">
+              <div
+                className={cn("h-full rounded-full transition-all", allDone ? "bg-emerald-500" : "bg-amber-500")}
+                style={{ width: `${Math.min(overallProgress, 100)}%` }}
+              />
+            </div>
+            <span className="text-lg font-bold tabular-nums flex-shrink-0">{overallProgress}%</span>
+          </div>
+        );
+        return viewRowSlot ? createPortal(strip, viewRowSlot) : strip;
+      })()}
 
       {/* Sheet Extra Balls — secondary collapsible */}
       {extraSheetLoaded && extraSheetItems.length > 0 && (
@@ -215,99 +225,68 @@ export function DoughSheetingStation({ plan, isOnBreak = false }: { plan: Produc
         </div>
       )}
 
-      {/* Unified accordion queue */}
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <h3 className="font-semibold text-base">Sheeting Queue</h3>
-          {allDone && (
-            <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-sm font-medium">
-              <CheckCircle2 className="w-4 h-4" /> All done
-            </span>
-          )}
-        </div>
-
-        <div className="divide-y divide-border/50">
-          {items.map(item => {
+      {/* Pinned recipe panel — one recipe on show at a time; the full
+          sheeting queue lives behind the bottom dock. */}
+      {(() => {
+            const item = items.find(it => it.id === selectedItemId) ?? null;
+            if (!item) return null;
             const target = item.batchesTarget ?? 0;
             const sheeted = getStationCount(item, "dough_sheeting");
             const isDone = sheeted >= target && target > 0;
             const isCurrent = item.id === nextItem?.id;
-            const isExpanded = expandedItemId === item.id;
             const ballWeight = doughData?.recipes.find(r => r.recipeId === item.recipeId)?.ballWeightG;
             const progress = target > 0 ? Math.round((sheeted / target) * 100) : 0;
             const recipeColour = item.recipeColor || undefined;
+            const panelIdx = items.findIndex(it => it.id === item.id);
 
             return (
-              <div key={item.id}>
-                {/* Collapsed summary row */}
-                <button
-                  onClick={() => toggleExpanded(item.id)}
-                  className={cn(
-                    "w-full text-left px-3 py-2.5 flex items-center gap-2 transition-colors",
-                    isExpanded
-                      ? isCurrent
-                        ? "bg-amber-50/60 dark:bg-amber-900/15"
-                        : "bg-blue-50/60 dark:bg-blue-900/15"
-                      : isCurrent
-                        ? "bg-amber-50/40 dark:bg-amber-900/10"
-                        : isDone
-                          ? "bg-emerald-50/30 dark:bg-emerald-900/10"
-                          : "hover:bg-secondary/20"
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "flex-1 font-bold text-sm truncate",
-                      isDone && !isExpanded ? "line-through opacity-60" : ""
-                    )}
-                    style={{ color: recipeColour }}
-                  >
+              <div className={cn(
+                "bg-card border-2 rounded-xl overflow-hidden",
+                isCurrent ? "border-amber-400 dark:border-amber-600" : "border-blue-300 dark:border-blue-700"
+              )}>
+                <div className={cn(
+                  "px-4 py-2 flex items-center gap-3 border-b",
+                  isCurrent
+                    ? "bg-amber-50/60 dark:bg-amber-900/15 border-amber-200 dark:border-amber-800"
+                    : "bg-blue-50/60 dark:bg-blue-900/15 border-blue-200 dark:border-blue-800"
+                )}>
+                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground tabular-nums flex-shrink-0">
+                    {panelIdx + 1} of {items.length}
+                  </span>
+                  <h2 className="font-display text-xl font-bold leading-tight truncate flex-1 min-w-0" style={{ color: recipeColour }}>
                     {item.recipeName ?? `Recipe #${item.recipeId}`}
-                  </span>
-
-                  <span className="text-sm tabular-nums font-medium flex-shrink-0">
-                    {sheeted}/{target}
-                  </span>
-                  {ballWeight && (
-                    <span className="text-xs tabular-nums text-muted-foreground flex-shrink-0">
-                      {ballWeight}g
+                  </h2>
+                  {isDone && (
+                    <span className="flex items-center gap-1 text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider flex-shrink-0">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Complete
                     </span>
                   )}
-
-                  {isDone ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                  ) : (
-                    <ChevronDown className={cn(
-                      "w-4 h-4 text-muted-foreground flex-shrink-0 transition-transform",
-                      isExpanded ? "rotate-180" : ""
-                    )} />
+                  {isCurrent && !isDone && (
+                    <span className="text-xs font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider flex-shrink-0">
+                      Sheeting now
+                    </span>
                   )}
-                </button>
+                  {!isCurrent && nextItem && (
+                    <button
+                      onClick={() => selectSheetItem(nextItem.id)}
+                      className="text-xs font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider hover:underline flex-shrink-0"
+                    >
+                      Jump to current
+                    </button>
+                  )}
+                </div>
 
-                {/* Expanded panel */}
-                {isExpanded && (
-                  <div className={cn(
-                    "border-t-2 px-4 py-4 space-y-3",
-                    isCurrent
-                      ? "border-amber-400 dark:border-amber-600"
-                      : "border-blue-300 dark:border-blue-700"
-                  )}>
+                  <div className="px-4 py-3 space-y-3">
                     <div className="flex items-center justify-between">
-                      <h2 className="font-display text-2xl font-bold leading-tight" style={{ color: recipeColour }}>
-                        {item.recipeName ?? `Recipe #${item.recipeId}`}
-                      </h2>
-                      <div className="text-right">
-                        <p className="text-3xl font-bold font-display tabular-nums">
-                          {sheeted} <span className="text-lg text-muted-foreground font-normal">/ {target}</span>
+                      {ballWeight ? (
+                        <p className="text-base text-muted-foreground">
+                          Ball weight: <span className="font-semibold text-amber-600 dark:text-amber-400">{ballWeight}g</span>
                         </p>
-                      </div>
-                    </div>
-
-                    {ballWeight && (
-                      <p className="text-base text-muted-foreground">
-                        Ball weight: <span className="font-semibold text-amber-600 dark:text-amber-400">{ballWeight}g</span>
+                      ) : <span />}
+                      <p className="text-3xl font-bold font-display tabular-nums">
+                        {sheeted} <span className="text-lg text-muted-foreground font-normal">/ {target}</span>
                       </p>
-                    )}
+                    </div>
 
                     {/* Progress bar */}
                     <div className="w-full bg-secondary rounded-full h-2">
@@ -316,12 +295,6 @@ export function DoughSheetingStation({ plan, isOnBreak = false }: { plan: Produc
                         style={{ width: `${Math.min(progress, 100)}%` }}
                       />
                     </div>
-
-                    {isDone && (
-                      <p className="text-sm text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
-                        <CheckCircle2 className="w-4 h-4" /> Complete
-                      </p>
-                    )}
 
                     {/* Sheet / Undo buttons */}
                     <div className="flex items-center gap-3">
@@ -343,35 +316,97 @@ export function DoughSheetingStation({ plan, isOnBreak = false }: { plan: Produc
                       </button>
                     </div>
                   </div>
-                )}
               </div>
             );
-          })}
-        </div>
-      </div>
-
-      {/* Mac cheese items — display only (no sheeting required) */}
-      {(() => {
-        const macItems = (plan.items ?? []).filter(it => (it as any).recipeCategory === "Macaroni Cheese");
-        if (macItems.length === 0) return null;
-        return (
-          <div className="bg-card border border-yellow-200 dark:border-yellow-800 rounded-xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20">
-              <h3 className="font-semibold text-base text-yellow-700 dark:text-yellow-400">Also on today's plan — No sheeting required</h3>
-            </div>
-            <div className="divide-y divide-border/40">
-              {macItems.map(it => (
-                <div key={it.id} className="flex items-center justify-between px-4 py-2.5 opacity-70">
-                  <span className="text-sm font-medium">{it.recipeName}</span>
-                  <span className="text-xs text-muted-foreground bg-yellow-100 dark:bg-yellow-900/30 px-2 py-0.5 rounded">
-                    {it.batchesTarget} batches — Mac Cheese
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        );
       })()}
+
+      {/* Bottom dock + queue sheet — the shared station-queue pattern. */}
+      <QueueDock
+        label="Sheeting Queue"
+        doneCount={items.filter(it => { const t = it.batchesTarget ?? 0; return t > 0 && getStationCount(it, "dough_sheeting") >= t; }).length}
+        total={items.length}
+        prevDisabled={(() => { const i = items.findIndex(it => it.id === selectedItemId); return i <= 0; })()}
+        nextDisabled={(() => { const i = items.findIndex(it => it.id === selectedItemId); return i < 0 || i >= items.length - 1; })()}
+        onPrev={() => { const i = items.findIndex(it => it.id === selectedItemId); if (i > 0) selectSheetItem(items[i - 1].id); }}
+        onNext={() => { const i = items.findIndex(it => it.id === selectedItemId); if (i >= 0 && i < items.length - 1) selectSheetItem(items[i + 1].id); }}
+        onOpenQueue={() => setQueueOpen(true)}
+      />
+
+      {queueOpen && (
+        <QueueSheet title="Sheeting Queue" allDone={allDone} onClose={() => setQueueOpen(false)}>
+          <div className="divide-y divide-border/50">
+            {items.map((item, idx) => {
+              const target = item.batchesTarget ?? 0;
+              const sheeted = getStationCount(item, "dough_sheeting");
+              const isDone = sheeted >= target && target > 0;
+              const isCurrent = item.id === nextItem?.id;
+              const isSelected = item.id === selectedItemId;
+              const ballWeight = doughData?.recipes.find(r => r.recipeId === item.recipeId)?.ballWeightG;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => selectSheetItem(item.id)}
+                  className={cn(
+                    "w-full text-left px-3 py-3 flex items-center gap-2 transition-colors",
+                    isSelected
+                      ? "bg-blue-50/60 dark:bg-blue-900/15"
+                      : isCurrent
+                        ? "bg-amber-50/40 dark:bg-amber-900/10"
+                        : isDone
+                          ? "bg-emerald-50/30 dark:bg-emerald-900/10"
+                          : "hover:bg-secondary/20"
+                  )}
+                >
+                  <span className="w-5 text-xs font-bold text-muted-foreground tabular-nums text-right flex-shrink-0">{idx + 1}</span>
+                  <span
+                    className={cn(
+                      "flex-1 font-bold text-sm truncate",
+                      isDone ? "line-through opacity-60" : ""
+                    )}
+                    style={{ color: item.recipeColor || undefined }}
+                  >
+                    {item.recipeName ?? `Recipe #${item.recipeId}`}
+                  </span>
+                  <span className="text-sm tabular-nums font-medium flex-shrink-0">
+                    {sheeted}/{target}
+                  </span>
+                  {ballWeight && (
+                    <span className="text-xs tabular-nums text-muted-foreground flex-shrink-0">
+                      {ballWeight}g
+                    </span>
+                  )}
+                  {isDone && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Mac cheese items — display only (no sheeting required) */}
+          {(() => {
+            const macItems = (plan.items ?? []).filter(it => (it as any).recipeCategory === "Macaroni Cheese");
+            if (macItems.length === 0) return null;
+            return (
+              <div className="px-3 py-3 border-t border-border">
+                <div className="bg-card border border-yellow-200 dark:border-yellow-800 rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 border-b border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20">
+                    <h3 className="font-semibold text-base text-yellow-700 dark:text-yellow-400">Also on today's plan — No sheeting required</h3>
+                  </div>
+                  <div className="divide-y divide-border/40">
+                    {macItems.map(it => (
+                      <div key={it.id} className="flex items-center justify-between px-4 py-2.5 opacity-70">
+                        <span className="text-sm font-medium">{it.recipeName}</span>
+                        <span className="text-xs text-muted-foreground bg-yellow-100 dark:bg-yellow-900/30 px-2 py-0.5 rounded">
+                          {it.batchesTarget} batches — Mac Cheese
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </QueueSheet>
+      )}
     </div>
   );
 }
