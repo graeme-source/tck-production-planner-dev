@@ -19,6 +19,7 @@ type PlanStatus = "draft" | "active" | "prep" | "building" | "complete";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
+import { MovePlanMenuAction } from "@/components/move-plan-dialog";
 import { ProcessFulfilledTodayButton } from "@/components/process-fulfilled-today-button";
 import {
   CalendarDays, Calendar, Plus, Trash2, ChevronLeft, ChevronRight,
@@ -4858,6 +4859,9 @@ function PlanDetailHeader({
                     {a.label}
                   </button>
                 ))}
+                {/* Move-to-another-date lives entirely in its own component
+                    (charter: this file must not grow) — one menu row here. */}
+                {canEditPlan && <MovePlanMenuAction plan={plan} buttonClassName={actionBtnClass} />}
               </div>
             </>
           )}

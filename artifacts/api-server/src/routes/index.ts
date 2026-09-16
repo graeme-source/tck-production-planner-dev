@@ -64,6 +64,7 @@ import systemUpdatesRouter from "./system-updates";
 import labelStockRouter from "./label-stock";
 import printJobsRouter from "./print-jobs";
 import prepLinkedCompletionsRouter from "./prep-linked-completions";
+import planMoveRouter from "./plan-move";
 import icePacksRouter from "./ice-packs";
 import wholesaleBagsRouter from "./wholesale-bags";
 import bundlesRouter from "./bundles";
@@ -232,6 +233,7 @@ router.use("/label-stock", labelStockRouter);
 // own token auth.
 router.use("/print-jobs", printJobsRouter);
 router.use("/prep-linked-completions", prepLinkedCompletionsRouter);
+router.use("/plan-move", planMoveRouter);
 router.use("/ice-packs", icePacksRouter);
 router.use("/wholesale-bags", requireAdminOrManager, wholesaleBagsRouter);
 router.use("/bundles", requireAdminOrManager, bundlesRouter);
