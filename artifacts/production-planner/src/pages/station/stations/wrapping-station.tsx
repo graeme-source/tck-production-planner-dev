@@ -21,6 +21,7 @@ import { netTwoPacks as computeNetTwoPacks, effectiveBatchesTarget } from "../sh
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
 import { fetchFridgeAvailability, computeFridgeAllocation, type GateOrder } from "@/lib/fridge-gate";
 import { isCollection, isDispatchTagged, isLocalDelivery } from "@/lib/dispatch-tagging";
+import { shouldShowPostOvenReminder } from "@/lib/post-oven-reminder";
 
 // Case-order freezer split — new columns not yet in the generated API client
 // (openapi.yaml codegen deliberately deferred; see project_api_spec_drift).
@@ -339,15 +340,24 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
     } else {
       setExpandedItemId(itemId);
       userOverrideRef.current = itemId !== currentWrappingItem?.id;
-      // Pop the post-oven reminder the first time this recipe is opened
-      // in the current session — surfaces garlic butter before wrapping
-      // starts, when it's still actionable.
-      if ((postOvenMap[itemId]?.length ?? 0) > 0 && !dismissedGarlicReminders.current.has(itemId)) {
-        const item = items.find(it => it.id === itemId);
-        if (item) setGarlicReminderItem(item);
-      }
     }
   };
+
+  // Pop the post-oven reminder the first time a recipe with post-oven items
+  // (garlic butter, icing) becomes the OPEN one this session — however it
+  // opened. It used to fire only from a manual tap, so whenever the garlic
+  // recipe led the queue and auto-expanded, the blocking modal never showed
+  // (missing two days running, reported 2026-09-17). Watching the expanded
+  // state also covers the async arrival of postOvenMap after auto-expand.
+  useEffect(() => {
+    if (!shouldShowPostOvenReminder({
+      expandedItemId,
+      postOvenCount: expandedItemId != null ? (postOvenMap[expandedItemId]?.length ?? 0) : 0,
+      dismissedItemIds: dismissedGarlicReminders.current,
+    })) return;
+    const item = items.find(it => it.id === expandedItemId);
+    if (item) setGarlicReminderItem(item);
+  }, [expandedItemId, postOvenMap, items]);
 
   // HACCP chill state for the Mark as Chilled button. One entry per recipe:
   // tracks whether the last-batch weight record exists (enables the button)
