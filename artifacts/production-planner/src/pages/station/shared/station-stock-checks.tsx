@@ -5,6 +5,13 @@
  * to record its count — and main prep never lists it because it only lives
  * on that station).
  *
+ * Two shapes (Graeme, 2026-09-16): the classic blue `panel` for anything
+ * that has no natural home, and a compact `row` that sits directly under
+ * the item it counts — white onions' count belongs under the white onions
+ * line inside the beef panel, not adrift at the bottom of the page. A row
+ * can also be held back with `ready={false}` until the meat it is linked to
+ * has actually been prepped, mirroring the meat's own stock check.
+ *
  * Self-contained: give it the ingredient ids visible on the station and a
  * check date; it looks up which of them are stock-check-enabled and due
  * (daily, or weekly on today's real day — the real day, not the plan
@@ -12,8 +19,8 @@
  * blue check card as main prep, and saves to the same endpoint. Values
  * poll every 5s so two iPads agree. Renders nothing when nothing is due.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Package, Loader2, Check, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -31,7 +38,10 @@ interface StockCheckIngredient {
   packWeight: number | null;
 }
 
-export function StationStockChecks({ checkDate, isDraft = false, ingredientIds, stationLabel }: {
+export function StationStockChecks({
+  checkDate, isDraft = false, ingredientIds, stationLabel,
+  variant = "panel", ready = true, notReadyHint,
+}: {
   /** The date stock checks are recorded against (the plan date, same as
    *  main prep's saves — one shared record per day across stations). */
   checkDate: string;
@@ -39,7 +49,15 @@ export function StationStockChecks({ checkDate, isDraft = false, ingredientIds, 
   /** Every ingredient id visible on this station, marinades included. */
   ingredientIds: number[];
   stationLabel: string;
+  /** "panel" = the standalone blue card. "row" = one compact line, styled to
+   *  sit inside a list directly beneath the item it counts. */
+  variant?: "panel" | "row";
+  /** Row variant only: false shows `notReadyHint` instead of the input, so
+   *  nobody counts what is left before they have finished using it. */
+  ready?: boolean;
+  notReadyHint?: string;
 }) {
+  const queryClient = useQueryClient();
   // Config comes from the ingredients list — the station payloads don't
   // carry stock-check fields for linked/marinade rows.
   const { data: allIngredients } = useQuery<StockCheckIngredient[]>({
@@ -67,34 +85,39 @@ export function StationStockChecks({ checkDate, isDraft = false, ingredientIds, 
   const [savedIds, setSavedIds] = useState<Set<number>>(new Set());
   const dirtyIds = useRef<Set<number>>(new Set());
 
-  const fetchSaved = useCallback(() => {
-    fetch(`/api/production-plans/stock-checks?date=${checkDate}`, { credentials: "include" })
-      .then(r => r.json())
-      .then(d => {
-        if (!d?.checks) return;
-        const serverVals: Record<number, string> = {};
-        const saved = new Set<number>();
-        for (const c of d.checks) {
-          if (c.quantity != null && c.quantity !== "") {
-            serverVals[c.ingredientId] = String(parseFloat(c.quantity));
-            saved.add(Number(c.ingredientId));
-          }
-        }
-        setSavedIds(saved);
-        setValues(prev => {
-          const merged = { ...serverVals };
-          for (const id of dirtyIds.current) if (id in prev) merged[id] = prev[id];
-          return merged;
-        });
-      })
-      .catch(() => { /* next poll */ });
-  }, [checkDate]);
+  // Saved values come through react-query on a shared key: several rows can
+  // be mounted at once (one under each linked ingredient) and they read one
+  // cache entry instead of each running its own 5s poll.
+  const savedKey = ["station-stock-checks", checkDate] as const;
+  const { data: savedData } = useQuery<{ checks?: Array<{ ingredientId: number; quantity: string | null }> }>({
+    queryKey: savedKey,
+    queryFn: async () => {
+      const r = await fetch(`/api/production-plans/stock-checks?date=${checkDate}`, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load stock checks");
+      return r.json();
+    },
+    refetchInterval: 5000,
+  });
+  const fetchSaved = () => { void queryClient.invalidateQueries({ queryKey: savedKey }); };
 
   useEffect(() => {
-    fetchSaved();
-    const t = setInterval(fetchSaved, 5000);
-    return () => clearInterval(t);
-  }, [fetchSaved]);
+    if (!savedData?.checks) return;
+    const serverVals: Record<number, string> = {};
+    const saved = new Set<number>();
+    for (const c of savedData.checks) {
+      if (c.quantity != null && c.quantity !== "") {
+        serverVals[c.ingredientId] = String(parseFloat(c.quantity));
+        saved.add(Number(c.ingredientId));
+      }
+    }
+    setSavedIds(saved);
+    // Whatever someone is mid-typing wins over the poll until it saves.
+    setValues(prev => {
+      const merged = { ...serverVals };
+      for (const id of dirtyIds.current) if (id in prev) merged[id] = prev[id];
+      return merged;
+    });
+  }, [savedData]);
 
   // Weekly checks key on the REAL day, not the plan date (dough-room
   // Sunday/Thursday lesson).
@@ -130,6 +153,97 @@ export function StationStockChecks({ checkDate, isDraft = false, ingredientIds, 
 
   if (due.length === 0) return null;
 
+  /** The input + unit + Save cluster — identical in both shapes, so a count
+   *  taken inline behaves exactly like one taken in the panel. */
+  const control = (ing: StockCheckIngredient) => {
+    const inPacks = ing.stockInPacks && (ing.packWeight ?? 0) > 0;
+    const nativeStr = values[ing.id] ?? "";
+    const display = inPacks && nativeStr !== ""
+      ? String(nativeToPackCount(Number(nativeStr), ing.packWeight) ?? "")
+      : nativeStr;
+    const isSaved = savedIds.has(ing.id) && !dirtyIds.current.has(ing.id);
+    const sizeHint = inPacks ? packSizeHint(ing.packWeight, ing.unit) : null;
+    return (
+      <>
+        <input
+          type="number"
+          step="any"
+          min="0"
+          inputMode="decimal"
+          placeholder={inPacks ? `Remaining ${packNoun(ing.unit, 0)}` : `Remaining ${ing.unit}`}
+          className="flex-1 max-w-[150px] text-base border-2 border-blue-300 dark:border-blue-600 rounded-lg px-3 py-2 text-right bg-background focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+          value={display}
+          onChange={e => {
+            dirtyIds.current.add(ing.id);
+            const v = e.target.value;
+            if (v === "") { setValues(prev => ({ ...prev, [ing.id]: "" })); return; }
+            const n = Number(v);
+            setValues(prev => ({
+              ...prev,
+              [ing.id]: inPacks && Number.isFinite(n) ? String(packsToNative(n, ing.packWeight)) : v,
+            }));
+          }}
+          onKeyDown={e => { if (e.key === "Enter") save(ing); }}
+        />
+        <span className="text-sm font-semibold">
+          {inPacks ? packNoun(ing.unit, Number(display) || 0) : ing.unit}
+          {sizeHint && <span className="block text-xs text-muted-foreground font-normal tabular-nums">({sizeHint})</span>}
+        </span>
+        <button
+          onClick={() => save(ing)}
+          disabled={!values[ing.id] || saving[ing.id]}
+          className={cn(
+            "px-4 py-2 rounded-lg text-base font-bold transition-all",
+            values[ing.id]
+              ? "bg-blue-600 text-white hover:bg-blue-700 shadow active:scale-95"
+              : "bg-blue-200 text-blue-400 cursor-not-allowed",
+          )}
+        >
+          {saving[ing.id] ? <Loader2 className="w-4 h-4 animate-spin" /> : isSaved ? <Check className="w-4 h-4" /> : "Save"}
+        </button>
+        {isSaved && (
+          <span className="text-sm text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+            <CheckCircle2 className="w-3 h-3" /> recorded
+          </span>
+        )}
+      </>
+    );
+  };
+
+  // Compact shape: one line per ingredient, in the host list's own rhythm,
+  // sitting directly beneath the item it counts.
+  if (variant === "row") {
+    return (
+      <>
+        {due.map(ing => {
+          const isSaved = savedIds.has(ing.id) && !dirtyIds.current.has(ing.id);
+          return (
+            <div
+              key={ing.id}
+              className={cn(
+                "flex items-center justify-between gap-3 px-4 py-2 border-t",
+                ready
+                  ? "border-blue-300 dark:border-blue-700 bg-blue-50/70 dark:bg-blue-950/30"
+                  : "border-blue-200/50 dark:border-blue-800/50 bg-blue-50/30 dark:bg-blue-950/10",
+              )}
+            >
+              <span className={cn(
+                "flex items-center gap-2 text-sm font-semibold",
+                ready ? "text-blue-800 dark:text-blue-200" : "text-blue-600 dark:text-blue-400 font-normal",
+              )}>
+                <Package className={cn("flex-shrink-0", ready ? "w-4 h-4" : "w-4 h-4 opacity-70")} />
+                {ready
+                  ? (isSaved ? `${ing.name} counted` : `Count the ${ing.name.toLowerCase()} left`)
+                  : (notReadyHint ?? "Stock check once this is prepped")}
+              </span>
+              {ready && <span className="flex items-center gap-2 flex-wrap justify-end">{control(ing)}</span>}
+            </div>
+          );
+        })}
+      </>
+    );
+  }
+
   return (
     <div className="bg-blue-50/70 dark:bg-blue-950/30 border-2 border-blue-400 dark:border-blue-600 rounded-xl p-4 shadow-md space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
@@ -138,57 +252,11 @@ export function StationStockChecks({ checkDate, isDraft = false, ingredientIds, 
         <p className="text-sm text-blue-600 dark:text-blue-400">count what's left while you're stood at it.</p>
       </div>
       {due.map(ing => {
-        const inPacks = ing.stockInPacks && (ing.packWeight ?? 0) > 0;
-        const nativeStr = values[ing.id] ?? "";
-        const display = inPacks && nativeStr !== ""
-          ? String(nativeToPackCount(Number(nativeStr), ing.packWeight) ?? "")
-          : nativeStr;
         const isSaved = savedIds.has(ing.id) && !dirtyIds.current.has(ing.id);
-        const sizeHint = inPacks ? packSizeHint(ing.packWeight, ing.unit) : null;
         return (
           <div key={ing.id} className="flex items-center gap-2 flex-wrap">
             <span className={cn("font-semibold min-w-[10rem]", isSaved && "text-emerald-700 dark:text-emerald-400")}>{ing.name}</span>
-            <input
-              type="number"
-              step="any"
-              min="0"
-              inputMode="decimal"
-              placeholder={inPacks ? `Remaining ${packNoun(ing.unit, 0)}` : `Remaining ${ing.unit}`}
-              className="flex-1 max-w-[150px] text-base border-2 border-blue-300 dark:border-blue-600 rounded-lg px-3 py-2 text-right bg-background focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
-              value={display}
-              onChange={e => {
-                dirtyIds.current.add(ing.id);
-                const v = e.target.value;
-                if (v === "") { setValues(prev => ({ ...prev, [ing.id]: "" })); return; }
-                const n = Number(v);
-                setValues(prev => ({
-                  ...prev,
-                  [ing.id]: inPacks && Number.isFinite(n) ? String(packsToNative(n, ing.packWeight)) : v,
-                }));
-              }}
-              onKeyDown={e => { if (e.key === "Enter") save(ing); }}
-            />
-            <span className="text-sm font-semibold">
-              {inPacks ? packNoun(ing.unit, Number(display) || 0) : ing.unit}
-              {sizeHint && <span className="block text-xs text-muted-foreground font-normal tabular-nums">({sizeHint})</span>}
-            </span>
-            <button
-              onClick={() => save(ing)}
-              disabled={!values[ing.id] || saving[ing.id]}
-              className={cn(
-                "px-4 py-2 rounded-lg text-base font-bold transition-all",
-                values[ing.id]
-                  ? "bg-blue-600 text-white hover:bg-blue-700 shadow active:scale-95"
-                  : "bg-blue-200 text-blue-400 cursor-not-allowed",
-              )}
-            >
-              {saving[ing.id] ? <Loader2 className="w-4 h-4 animate-spin" /> : isSaved ? <Check className="w-4 h-4" /> : "Save"}
-            </button>
-            {isSaved && (
-              <span className="text-sm text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" /> recorded
-              </span>
-            )}
+            {control(ing)}
           </div>
         );
       })}

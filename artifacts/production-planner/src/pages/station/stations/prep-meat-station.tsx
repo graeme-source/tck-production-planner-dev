@@ -640,6 +640,26 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                         </div>
                       );
                     })}
+                    {/* Stock check for the LINKED ingredients, right under the
+                        rows they belong to (Graeme, 2026-09-16) — white onions
+                        is counted here, inside the beef panel, not adrift at
+                        the bottom of the page. Held back until the meat's trays
+                        are done everywhere, mirroring the meat's own check
+                        below: counting what's left before you've used it is
+                        just a number you'll have to take again. */}
+                    <StationStockChecks
+                      variant="row"
+                      ready={isIngredientFullyDone(ing.ingredientId)}
+                      notReadyHint={`Stock check once the ${ing.ingredientName.toLowerCase()} trays are done`}
+                      checkDate={nextPlan?.planDate ?? plan.planDate}
+                      isDraft={isDraft}
+                      stationLabel="Raw Meat"
+                      ingredientIds={meatMarinades
+                        .filter(m => !m.addAtCooking)
+                        .map(m => m.marinadeIngredientId)
+                        .filter((x): x is number => x != null)}
+                    />
+
                     {meatMarinades.filter(m => m.addAtCooking).map((m, mi) => {
                       const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
                       return (
@@ -812,20 +832,25 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
         </div>
       </div>
 
-      {/* Stock checks for the marinade/linked ingredients on this station
-          (white onions attached to a raw meat — Graeme, 2026-09-10). The
-          meats themselves keep their inline stock-check card on each recipe
-          view; this covers only what that card can't see. Sits at the
-          BOTTOM, under the recipes, matching where every other ingredient's
-          stock check lives (Graeme, 2026-09-16 — it used to jump the queue
-          at the top of the page). */}
+      {/* Catch-all: any linked ingredient whose count ISN'T already offered
+          inline on the open recipe above — e.g. it belongs to a recipe
+          nobody has opened yet, or it's held back for cooking. Without this
+          a due check could have nowhere to live. */}
       <StationStockChecks
         checkDate={nextPlan?.planDate ?? plan.planDate}
         isDraft={isDraft}
         stationLabel="Raw Meat"
-        ingredientIds={recipes.flatMap(r =>
-          (r.marinades ?? []).map(m => m.marinadeIngredientId).filter((x): x is number => x != null),
-        )}
+        ingredientIds={(() => {
+          const shownInline = new Set(
+            selMarinades
+              .filter(m => !m.addAtCooking)
+              .map(m => m.marinadeIngredientId)
+              .filter((x): x is number => x != null),
+          );
+          return recipes
+            .flatMap(r => (r.marinades ?? []).map(m => m.marinadeIngredientId))
+            .filter((x): x is number => x != null && !shownInline.has(x));
+        })()}
       />
     </div>
   );
