@@ -769,21 +769,25 @@ export default function Dashboard() {
       <EightPackOrdersBanner userRole={userRole} />
       <StockGateBanner userRole={userRole} />
 
-      {/* Not-a-station row — the day's admin, above the stations so the
-          station grid below reads as one thing: "go to where you work". */}
-      <div className="grid grid-cols-3 gap-4">
+      {/* Not-a-station row — the day's admin, above the stations and in its
+          own colour so the green below means exactly one thing: the core
+          production line (Graeme, 2026-09-16). */}
+      <div>
+        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Today's Admin</p>
+        <div className="grid grid-cols-3 gap-4">
         <StatCard
           title="Deliveries Arriving"
           value={formatProgressValue(todayDeliveriesCount?.arrived ?? 0, todayDeliveriesCount?.total ?? 0)}
           icon={PackageCheck}
-          color="text-emerald-500"
-          bg="bg-emerald-500/10"
+          color="text-slate-500"
+          bg="bg-slate-500/10"
+          headerClass="bg-slate-500"
           href="/deliveries"
           progress={(todayDeliveriesCount?.total ?? 0) > 0 ? {
             done: todayDeliveriesCount!.arrived,
             total: todayDeliveriesCount!.total,
             label: "arrived",
-            barClass: "bg-emerald-500",
+            barClass: "bg-slate-500",
             hideDetail: true,
           } : undefined}
         />
@@ -792,8 +796,9 @@ export default function Dashboard() {
           value="→"
           subtitle="Stock vs dispatch — today's pack"
           icon={ClipboardList}
-          color="text-violet-500"
-          bg="bg-violet-500/10"
+          color="text-slate-500"
+          bg="bg-slate-500/10"
+          headerClass="bg-slate-500"
           href="/pack-report"
         />
         <StatCard
@@ -801,16 +806,22 @@ export default function Dashboard() {
           value="▶"
           subtitle="10-min Two Second Lean"
           icon={Sparkles}
-          color="text-amber-500"
-          bg="bg-amber-500/10"
+          color="text-slate-500"
+          bg="bg-slate-500/10"
+          headerClass="bg-slate-500"
           href="/meeting"
         />
+        </div>
       </div>
 
-      {/* Every station, in production-flow order — log in, tap where you
-          work, no production-plan detour (Graeme, 2026-09-16). Exit Station
-          brings everyone back here. */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+      {/* The core calzone line in production-flow order, all in brand green
+          — log in, tap where you work, no production-plan detour (Graeme,
+          2026-09-16). Exit Station brings everyone back here. Mac cheese
+          and fried chicken run as their own lines below in their own
+          colour, so this block reads as ONE line at a glance. */}
+      <div>
+        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Core Production</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard
           title="Dough Prep"
           value="→"
@@ -821,24 +832,6 @@ export default function Dashboard() {
           color="text-amber-600"
           bg="bg-amber-500/10"
           href={doughHref("dough_prep")}
-        />
-        <StatCard
-          title="Mac Cheese"
-          value={(totalBatches?.macPacks ?? 0) > 0 ? totalBatches!.macPacks.toString() : "→"}
-          subtitle={(totalBatches?.macPacks ?? 0) > 0 ? "packs today" : "Macaroni cheese station"}
-          icon={UtensilsCrossed}
-          color="text-yellow-600"
-          bg="bg-yellow-500/10"
-          href={stationHref("macaroni_cheese")}
-        />
-        <StatCard
-          title="Fried Chicken"
-          value="→"
-          subtitle="Fried chicken station"
-          icon={Drumstick}
-          color="text-orange-600"
-          bg="bg-orange-500/10"
-          href={stationHref("fried_chicken")}
         />
         <StatCard
           title="Sheeting"
@@ -968,6 +961,35 @@ export default function Dashboard() {
             barClass: "bg-blue-500",
           } : undefined}
         />
+        </div>
+      </div>
+
+      {/* The other lines — they run on their own days, separate from the
+          calzone flow, so they get their own colour and row. */}
+      <div>
+        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Other Lines</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatCard
+          title="Mac Cheese"
+          value={(totalBatches?.macPacks ?? 0) > 0 ? totalBatches!.macPacks.toString() : "→"}
+          subtitle={(totalBatches?.macPacks ?? 0) > 0 ? "packs today" : "Macaroni cheese station"}
+          icon={UtensilsCrossed}
+          color="text-amber-700"
+          bg="bg-amber-500/10"
+          headerClass="bg-amber-600"
+          href={stationHref("macaroni_cheese")}
+        />
+        <StatCard
+          title="Fried Chicken"
+          value="→"
+          subtitle="Fried chicken station"
+          icon={Drumstick}
+          color="text-amber-700"
+          bg="bg-amber-500/10"
+          headerClass="bg-amber-600"
+          href={stationHref("fried_chicken")}
+        />
+        </div>
       </div>
 
       {/* Which building table? One card outside, two answers here. */}
@@ -1410,16 +1432,19 @@ function renderBarLabel(props: any) {
   );
 }
 
-function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, onClick, progress }: any & { progress?: StatProgress }) {
+function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, onClick, progress, headerClass }: any & { progress?: StatProgress }) {
   const pct = progress && progress.total > 0
     ? Math.min(100, Math.round((progress.done / progress.total) * 100))
     : 0;
   const card = (
       <div className="glass-panel rounded-2xl hover-lift cursor-pointer group h-full flex flex-col min-h-[150px] overflow-hidden">
-        {/* The header IS the wayfinding: white-on-green (house rule for
-            on-green text), big and top-of-card so the row scans at a
-            glance (Graeme, 2026-08-18). */}
-        <div className="bg-primary px-2 py-2">
+        {/* The header IS the wayfinding: white-on-colour, big and
+            top-of-card so the row scans at a glance (Graeme, 2026-08-18).
+            The colour is the GROUP — green means core calzone line,
+            other groups pass their own headerClass — so the wall of
+            identical green panels stopped being a wall (Graeme,
+            2026-09-16). */}
+        <div className={cn("px-2 py-2", headerClass ?? "bg-primary")}>
           <p className="font-display font-bold text-white text-base lg:text-lg leading-tight text-center truncate">
             {title}
           </p>
