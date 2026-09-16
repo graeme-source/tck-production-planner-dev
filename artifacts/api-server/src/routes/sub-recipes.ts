@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { db, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, ingredientsTable, kanbanItemsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { CreateSubRecipeBody, UpdateSubRecipeBody } from "@workspace/api-zod";
-import { validate } from "../middleware/validate";
+import { validate, rawBody } from "../middleware/validate";
 import { computeSubRecipeCosts, getCyclicIds, wouldCreateCycle } from "../lib/sub-recipe-costs";
 import { generateQrCode } from "../lib/qr-code";
 import { kgOrNull } from "@workspace/units";
@@ -75,6 +75,12 @@ router.get("/", async (_req, res) => {
 
 router.post("/", validate(CreateSubRecipeBody), async (req, res) => {
   const { name, description, yield: yieldAmt, yieldUnit, notes, shelfLifeDays, isBase, expandInPrep, madeOnProductionDay, labelDeclaration, ingredients, subRecipeComponents } = req.body;
+  // The component arrays come from the RAW body: the generated zod's nested
+  // item schemas lag the marinade columns and validation strips them (the
+  // Philly rehearsal found saves silently losing marinade links, 2026-09-16).
+  const rawArrays = rawBody<{ ingredients?: typeof ingredients; subRecipeComponents?: typeof subRecipeComponents }>(req);
+  const rawIngredients = rawArrays.ingredients ?? ingredients;
+  const rawComponents = rawArrays.subRecipeComponents ?? subRecipeComponents;
 
   if (subRecipeComponents?.length) {
     const proposedIds = subRecipeComponents.map((c: { componentSubRecipeId: number }) => c.componentSubRecipeId);
@@ -92,9 +98,9 @@ router.post("/", validate(CreateSubRecipeBody), async (req, res) => {
     .values({ name, description, yield: String(yieldAmt), yieldUnit, notes, shelfLifeDays: shelfLifeDays ?? null, isBase: isBase ?? false, expandInPrep: expandInPrep ?? false, madeOnProductionDay: madeOnProductionDay ?? false, yieldPercent: yieldPercent != null ? String(yieldPercent) : null, labelDeclaration: labelDeclaration || null })
     .returning();
 
-  if (ingredients?.length) {
+  if (rawIngredients?.length) {
     await db.insert(subRecipeIngredientsTable).values(
-      ingredients.map((i: { ingredientId: number; quantity: number; hideFromPrep?: boolean; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean }) => ({
+      rawIngredients.map((i: { ingredientId: number; quantity: number; hideFromPrep?: boolean; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean }) => ({
         subRecipeId: subRecipe.id,
         ingredientId: i.ingredientId,
         quantity: String(i.quantity),
@@ -105,9 +111,9 @@ router.post("/", validate(CreateSubRecipeBody), async (req, res) => {
     );
   }
 
-  if (subRecipeComponents?.length) {
+  if (rawComponents?.length) {
     await db.insert(subRecipeSubRecipesTable).values(
-      subRecipeComponents.map((c: { componentSubRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean }) => ({
+      rawComponents.map((c: { componentSubRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean }) => ({
         subRecipeId: subRecipe.id,
         componentSubRecipeId: c.componentSubRecipeId,
         quantity: String(c.quantity),
@@ -218,6 +224,12 @@ router.get("/:id", async (req, res) => {
 router.put("/:id", validate(UpdateSubRecipeBody), async (req, res) => {
   const id = Number(req.params.id);
   const { name, description, yield: yieldAmt, yieldUnit, notes, shelfLifeDays, isBase, expandInPrep, madeOnProductionDay, labelDeclaration, ingredients, subRecipeComponents } = req.body;
+  // The component arrays come from the RAW body: the generated zod's nested
+  // item schemas lag the marinade columns and validation strips them (the
+  // Philly rehearsal found saves silently losing marinade links, 2026-09-16).
+  const rawArrays = rawBody<{ ingredients?: typeof ingredients; subRecipeComponents?: typeof subRecipeComponents }>(req);
+  const rawIngredients = rawArrays.ingredients ?? ingredients;
+  const rawComponents = rawArrays.subRecipeComponents ?? subRecipeComponents;
 
   if (subRecipeComponents?.length) {
     const proposedIds = subRecipeComponents.map((c: { componentSubRecipeId: number }) => c.componentSubRecipeId);
@@ -240,9 +252,9 @@ router.put("/:id", validate(UpdateSubRecipeBody), async (req, res) => {
   await db.delete(subRecipeIngredientsTable).where(eq(subRecipeIngredientsTable.subRecipeId, id));
   await db.delete(subRecipeSubRecipesTable).where(eq(subRecipeSubRecipesTable.subRecipeId, id));
 
-  if (ingredients?.length) {
+  if (rawIngredients?.length) {
     await db.insert(subRecipeIngredientsTable).values(
-      ingredients.map((i: { ingredientId: number; quantity: number; hideFromPrep?: boolean; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean }) => ({
+      rawIngredients.map((i: { ingredientId: number; quantity: number; hideFromPrep?: boolean; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean }) => ({
         subRecipeId: id,
         ingredientId: i.ingredientId,
         quantity: String(i.quantity),
@@ -253,9 +265,9 @@ router.put("/:id", validate(UpdateSubRecipeBody), async (req, res) => {
     );
   }
 
-  if (subRecipeComponents?.length) {
+  if (rawComponents?.length) {
     await db.insert(subRecipeSubRecipesTable).values(
-      subRecipeComponents.map((c: { componentSubRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean }) => ({
+      rawComponents.map((c: { componentSubRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean }) => ({
         subRecipeId: id,
         componentSubRecipeId: c.componentSubRecipeId,
         quantity: String(c.quantity),
