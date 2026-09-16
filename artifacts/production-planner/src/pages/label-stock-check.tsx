@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef, type ReactNode } from "react";
 import { Link } from "wouter";
 import { PageHeader } from "@/components/page-header";
-import { Loader2, Plus, Trash2, RefreshCw, ChevronLeft, Tag, Scale, Save, Search, Pencil, X as XIcon, Mail, Send } from "lucide-react";
+import { Loader2, Plus, Trash2, RefreshCw, ChevronLeft, Tag, Scale, Save, Search, Pencil, X as XIcon, Mail, Send, AlertTriangle, ClipboardCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 
@@ -192,6 +192,38 @@ export default function LabelStockCheckPage() {
     }
   }, [orderResult, settings]);
 
+  // ── Send for order approval ────────────────────────────────────────────────
+  // Hands the proposed order to Graeme as a HIGH to-do with a link back to
+  // this page (Graeme, 2026-09-16): a task like "do the label stock check"
+  // can be assigned out, completed here, and the numbers come back through
+  // the to-do system with the popup + bell.
+  const [sendingApproval, setSendingApproval] = useState(false);
+  const sendForApproval = useCallback(async () => {
+    if (!orderResult) return;
+    setSendingApproval(true);
+    try {
+      const res = await fetch("/api/label-stock/send-approval", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          totalToOrder,
+          items: orderResult.map(o => ({ recipeName: o.recipeName, orderQty: o.orderQty, currentStock: o.currentStock })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Send failed");
+      toast({
+        title: "Sent to Graeme for approval",
+        description: `${data.totalQty.toLocaleString()} labels proposed — it's on his to-do list with a link back to this page.`,
+      });
+    } catch (err) {
+      toast({ title: "Couldn't send for approval", description: String(err), variant: "destructive" });
+    } finally {
+      setSendingApproval(false);
+    }
+  }, [orderResult, totalToOrder]);
+
   // ── Per-row stock check save ────────────────────────────────────────────────
   // `silent` skips the success toast — used by auto-save-on-blur so the
   // operator doesn't get a barrage of toasts as they tab through rows.
@@ -316,6 +348,23 @@ export default function LabelStockCheckPage() {
         </button>
       </div>
 
+      {/* Setup gate — the per-label weight is the one number the whole
+          calculator hangs off. On live it sat at 0 since the tool shipped
+          and every stock-check save failed with a cryptic error (Graeme,
+          2026-09-16). Say so BEFORE anyone types a weight in. */}
+      {settings.labelWeight <= 0 && (
+        <div className="rounded-xl border-2 border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/20 px-4 py-3 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+          <div className="text-sm text-amber-800 dark:text-amber-200">
+            <p className="font-bold">Set “Weight per label” below before doing stock checks.</p>
+            <p className="mt-0.5">
+              It's currently 0, so the scale weight can't be turned into a label count — every save will be refused
+              until it's set. Weigh a strip of 10 labels and divide by 10 for a good number.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* ── Settings strip ────────────────────────────────────────────────── */}
       <div className="bg-card border border-border rounded-xl p-5">
         <h2 className="font-semibold text-lg flex items-center gap-2 mb-3">
@@ -410,6 +459,27 @@ export default function LabelStockCheckPage() {
                 summaryTotal === (totalToOrder ?? 0) ? "text-emerald-600" : "text-amber-600"
               )}>{summaryTotal.toLocaleString()}</span>
             </div>
+            {(() => {
+              // "All fields completed" = every recipe row carries a saved
+              // stock check — until then the rebalance is built on guesses.
+              const unchecked = (rows ?? []).filter(r => r.latestCheck == null).length;
+              const approvalReady = unchecked === 0 && !!orderResult && orderResult.some(o => o.orderQty > 0);
+              return (
+                <button
+                  onClick={sendForApproval}
+                  disabled={sendingApproval || !approvalReady}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+                  title={
+                    unchecked > 0
+                      ? `${unchecked} recipe${unchecked === 1 ? " still needs" : "s still need"} a stock check first`
+                      : "Puts this order on Graeme's to-do list for approval, with a link back to this page"
+                  }
+                >
+                  {sendingApproval ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />}
+                  Send for order approval
+                </button>
+              );
+            })()}
             <button
               onClick={sendOrderEmail}
               disabled={

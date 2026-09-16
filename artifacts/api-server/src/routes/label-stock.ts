@@ -424,7 +424,12 @@ router.post("/recipes/:id/check", async (req, res) => {
     readSetting(SETTINGS_KEYS.labelWeight, 0),
   ]);
   if (labelWeight <= 0) {
-    res.status(400).json({ error: "label_label_weight_g must be > 0 (set it in Settings first)" }); return;
+    // On live this sat at 0 from the day the tool shipped, and the raw
+    // settings-key error read like the OPERATOR'S weight was wrong
+    // (Graeme, 2026-09-16). Say what to actually do, in page terms.
+    res.status(400).json({
+      error: "Set “Weight of one label (g)” in Global Settings at the top of this page first — without it the scale weight can't be turned into a label count.",
+    }); return;
   }
   const rawCount = (body.totalWeightG - body.numRolls * emptyRollWeight) / labelWeight;
   const computedCount = Math.max(0, Math.round(rawCount));
@@ -657,6 +662,77 @@ ${labelSpec ? `<div style="white-space:pre-wrap;margin-bottom:16px;">${escapeHtm
     console.error("[label-stock] send-order failed:", err);
     res.status(502).json({ error: "Failed to send email", detail: String(err) });
   }
+});
+
+// POST /send-approval — "Send for order approval to Graeme" (2026-09-16).
+// Creates a to-do on the founder's list (same tables the todos feature
+// uses, so the popup, bell and list all fire) carrying the proposed order
+// quantities and a link back to this page. Body: { totalToOrder, items:
+// [{ recipeName, orderQty, currentStock }] }.
+const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
+
+router.post("/send-approval", async (req, res) => {
+  const sessionUserId = (req.session as { userId?: number }).userId ?? null;
+  const body = req.body as {
+    totalToOrder?: number;
+    items?: Array<{ recipeName?: string; orderQty?: number; currentStock?: number | null }>;
+  };
+  const items = (body.items ?? [])
+    .map(it => ({
+      recipeName: typeof it.recipeName === "string" ? it.recipeName.trim() : "",
+      orderQty: Number(it.orderQty) || 0,
+      currentStock: it.currentStock != null && Number.isFinite(Number(it.currentStock)) ? Number(it.currentStock) : null,
+    }))
+    .filter(it => it.recipeName !== "");
+  if (items.length === 0) {
+    res.status(400).json({ error: "Nothing to send — run the calculator first." });
+    return;
+  }
+
+  const [founder] = await db.select({ id: usersTable.id })
+    .from(usersTable)
+    .where(eq(usersTable.email, FOUNDER_EMAIL))
+    .limit(1);
+  if (!founder) {
+    res.status(500).json({ error: "Founder account not found — can't route the approval." });
+    return;
+  }
+
+  let senderName = "Someone";
+  if (sessionUserId != null) {
+    const [u] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, sessionUserId)).limit(1);
+    if (u?.name) senderName = u.name;
+  }
+
+  const totalQty = items.reduce((s, it) => s + it.orderQty, 0);
+  const lines = items
+    .filter(it => it.orderQty > 0)
+    .map(it => `${it.recipeName}: ${it.orderQty.toLocaleString()}${it.currentStock != null ? ` (stock ${it.currentStock.toLocaleString()})` : ""}`);
+  const title = `Label order for approval — ${totalQty.toLocaleString()} labels`;
+  const notes = [
+    `Stock check + proposed order from ${senderName}.`,
+    "",
+    ...lines,
+    "",
+    "Open the Label Stock Check page to review and send the order email.",
+  ].join("\n");
+
+  const rows = await db.execute<{ id: number }>(sql`
+    INSERT INTO todo_tasks (assignee_id, created_by, created_by_name, title, notes, url, priority)
+    VALUES (${founder.id}, ${sessionUserId}, ${senderName}, ${title}, ${notes}, ${"/inventory/tools/label-stock-check"}, ${"high"})
+    RETURNING id
+  `);
+  try {
+    await db.execute(sql`
+      INSERT INTO notifications (user_id, type, message, read)
+      VALUES (${founder.id}, ${"todo"}, ${`Label order ready for approval from ${senderName} — ${totalQty.toLocaleString()} labels`.slice(0, 500)}, false)
+    `);
+  } catch (err) {
+    // A missed bell must never fail the approval hand-off itself.
+    console.warn("[label-stock] approval notification insert failed:", err instanceof Error ? err.message : err);
+  }
+
+  res.status(201).json({ ok: true, taskId: rows.rows[0]?.id ?? null, totalQty });
 });
 
 function escapeHtml(s: string): string {
