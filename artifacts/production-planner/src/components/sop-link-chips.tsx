@@ -18,6 +18,7 @@
  * editor as an optional next step rather than a toll gate.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { BookOpen, Plus, X, Loader2, Search, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -185,8 +186,10 @@ export function SopChips({ links, onOpen, attach, size = "sm", queryKeysToInvali
 
 /** Station-level SOP rail — the catch-all anchor for processes that aren't
  *  keyed to a recipe or ingredient. Rendered once by StationLayout, so every
- *  station screen can attach and surface its own SOPs with no per-station
- *  wiring. Self-contained: brings its own viewer dialog. */
+ *  station screen surfaces its own SOPs with no per-station wiring.
+ *  Attaching/detaching moved to the top bar's ⋯ menu ("Add SOP to this
+ *  station", 2026-09-16), so with nothing attached the rail takes no space
+ *  at all. Self-contained: brings its own viewer dialog. */
 export function StationSopRail({ stationType, stationLabel }: { stationType: string; stationLabel: string }) {
   const sopViewer = useSopViewer(stationType);
   const queryKey = ["sop-links-station", stationType];
@@ -197,17 +200,107 @@ export function StationSopRail({ stationType, stationLabel }: { stationType: str
       return res.ok ? res.json() : [];
     },
   });
+  if (links.length === 0) return null;
   return (
-    <div className="flex items-start gap-2 flex-wrap">
+    <div className="flex items-start gap-2 flex-wrap mb-4">
       <span className="text-xs font-medium text-muted-foreground pt-1.5 flex-shrink-0">This station:</span>
       <SopChips
         links={links}
         onOpen={sopViewer.open}
-        attach={{ targetType: "station", text: stationType, label: stationLabel, subject: stationLabel, station: stationType }}
         queryKeysToInvalidate={[queryKey]}
       />
       {sopViewer.dialog}
     </div>
+  );
+}
+
+/** "Add SOP to this station" — the manage modal behind the station top bar's
+ *  ⋯ menu. Lists what's attached (open / detach) and embeds the same
+ *  SopPicker used everywhere else to attach or create-and-attach. Rendered =
+ *  open; unmount to close. Portalled to <body> so the sticky station header
+ *  can't trap it (same trap as the page-SOP modal). */
+export function StationSopManageModal({ stationType, stationLabel, onClose }: {
+  stationType: string;
+  stationLabel: string;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const queryKey = ["sop-links-station", stationType];
+  const { data: links = [] } = useQuery<SopLink[]>({
+    queryKey,
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/standards/links/for-station?station=${encodeURIComponent(stationType)}`, { credentials: "include" });
+      return res.ok ? res.json() : [];
+    },
+  });
+  const [viewSopId, setViewSopId] = useState<number | null>(null);
+  const [editSopId, setEditSopId] = useState<number | null>(null);
+  const invalidate = () => queryClient.invalidateQueries({ queryKey });
+
+  const detach = useMutation({
+    mutationFn: async (linkId: number) => {
+      const res = await fetch(`${BASE}/api/standards/links/${linkId}`, { method: "DELETE", credentials: "include" });
+      if (!res.ok) throw new Error("Failed to detach SOP");
+    },
+    onSuccess: invalidate,
+    onError: () => toast({ title: "Couldn't detach the SOP", variant: "destructive" }),
+  });
+
+  return createPortal(
+    <>
+      <div className="fixed inset-0 z-[60] flex items-start justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto" onClick={onClose}>
+        <div className="bg-card rounded-2xl border border-border shadow-2xl w-full max-w-lg max-h-[92dvh] overflow-y-auto p-5 space-y-4 mt-14" onClick={e => e.stopPropagation()}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="font-display text-lg font-bold leading-tight">SOPs on this station</h2>
+              <p className="text-sm text-muted-foreground">{stationLabel}</p>
+            </div>
+            <button onClick={onClose} className="p-2 text-muted-foreground hover:text-foreground rounded-lg hover:bg-secondary/50 flex-shrink-0">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {links.length > 0 && (
+            <div className="space-y-1.5">
+              {links.map(l => (
+                <div key={l.linkId} className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
+                  <BookOpen className="w-4 h-4 text-primary flex-shrink-0" />
+                  <button
+                    onClick={() => { if (l.stepCount === 0) setEditSopId(l.sopId); else setViewSopId(l.sopId); }}
+                    className="flex-1 min-w-0 truncate text-left text-sm font-medium hover:text-primary"
+                    title={l.title}
+                  >
+                    {l.title}
+                  </button>
+                  <button
+                    onClick={() => detach.mutate(l.linkId)}
+                    disabled={detach.isPending}
+                    className="p-1.5 text-muted-foreground hover:text-destructive rounded-md hover:bg-destructive/10 flex-shrink-0 disabled:opacity-50"
+                    title={`Detach ${l.title} from this station`}
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <SopPicker
+            targets={[{ targetType: "station", text: stationType, label: stationLabel, subject: stationLabel, station: stationType }]}
+            existingSopIds={new Set(links.map(l => l.sopId))}
+            onDone={invalidate}
+            onInvalidate={invalidate}
+            onEditSop={id => setEditSopId(id)}
+          />
+        </div>
+      </div>
+      {viewSopId != null && (
+        <StandardsSopsDialog open onClose={() => setViewSopId(null)} currentStationType={stationType} initialSopId={viewSopId} />
+      )}
+      {editSopId != null && (
+        <StandardsSopsDialog open onClose={() => { setEditSopId(null); invalidate(); }} initialEditSopId={editSopId} />
+      )}
+    </>,
+    document.body,
   );
 }
 

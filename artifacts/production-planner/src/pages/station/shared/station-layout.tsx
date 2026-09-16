@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useLocation, useSearch } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ChevronLeft, ChevronDown, ChevronUp, BarChart2, ClipboardList, Layers, Beef, Menu, X, LayoutGrid, BookOpen,
+  ChevronLeft, BarChart2, ClipboardList, Layers, Beef, Menu, X, BookOpen, MoreVertical, MessageSquare, BookPlus,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -11,7 +11,7 @@ import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import { STATIONS, type StationType } from "./constants";
 import { BreakTracker } from "./break-tracker";
 import { StationReminderBanner } from "./timed-reminders";
-import { StationMessagesBanner, SendStationMessageButton } from "@/components/station-messages";
+import { StationMessagesBanner, SendStationMessageDialog } from "@/components/station-messages";
 import {
   NavLinks,
   AccountButton,
@@ -21,9 +21,8 @@ import {
 } from "@/components/layout";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
-import { useStationAssignment } from "@/hooks/use-station-assignment";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
-import { StationSopRail } from "@/components/sop-link-chips";
+import { StationSopRail, StationSopManageModal } from "@/components/sop-link-chips";
 import { LeanWeeklyStrip } from "@/components/lean-weekly-review";
 import { QuickActionsDock } from "@/components/layout";
 import { CurrentUserBadge } from "@/components/current-user-badge";
@@ -82,20 +81,21 @@ interface StationLayoutProps {
 export function StationLayout({ planId, stationType, plan, children, headerSlot, onBreakActiveChange }: StationLayoutProps) {
   const [location, navigate] = useLocation();
   const search = useSearch();
-  // Arrived from the dashboard card? Then the exit button takes you back
-  // there, not to Production Plans you never came from (Graeme, 2026-09-14).
-  // The flag rides along when hopping stations or into prep sub-sections so
-  // the way back stays true however deep you go.
+  // Prep sub-sections keep the ?from flag while hopping so the Prep hub can
+  // pass it along; the exit itself now always lands on the Dashboard — the
+  // dashboard IS the station picker (Graeme, 2026-09-16).
   const fromDashboard = new URLSearchParams(search).get("from") === "dashboard";
   const fromSuffix = fromDashboard ? "?from=dashboard" : "";
   const [navOpen, setNavOpen] = useState(false);
-  const [stationNavOpen, setStationNavOpen] = useState(false);
   const [standardsOpen, setStandardsOpen] = useState(false);
+  // The ⋯ menu next to Exit Station: message a station, view the SOP
+  // library, attach an SOP to this station. Folded away so the top bar fits
+  // one line on iPad landscape (Graeme, 2026-09-16).
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [manageSopsOpen, setManageSopsOpen] = useState(false);
   const { state, logout, lockStation } = useAuth();
   const { canAccess } = usePagePermissions();
-  const { assignments, enabled: stationLockEnabled } = useStationAssignment(planId, stationType);
-  const currentUserId = state.status === "authenticated" ? state.user.id : 0;
-  const isAdmin = state.status === "authenticated" && state.user.role === "admin";
   const andonBadge = useAndonBadge(stationType);
 
   const user = state.status === "authenticated" ? state.user : null;
@@ -238,120 +238,69 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
             <div className="flex items-center gap-2 flex-wrap">
               {headerSlot}
               <BreakTracker planId={planId} stationType={stationType} onBreakActiveChange={onBreakActiveChange} />
-              <button
-                onClick={() => setStandardsOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg font-medium text-sm border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors"
-                title="Standards & SOPs"
-              >
-                <BookOpen className="w-4 h-4" />
-                <span className="hidden sm:inline">SOPs</span>
-              </button>
-              <button
-                onClick={() => setStationNavOpen(v => !v)}
-                className={cn(
-                  "flex items-center gap-1.5 px-3 py-2 rounded-lg font-medium text-sm transition-colors",
-                  stationNavOpen
-                    ? "bg-primary text-primary-foreground"
-                    : "border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+
+              {/* ⋯ menu — everything that used to be its own button (message
+                  a station, SOPs) lives here so the bar stays one line. */}
+              <div className="relative">
+                <button
+                  onClick={() => setMoreOpen(v => !v)}
+                  className={cn(
+                    "flex items-center justify-center w-9 h-9 rounded-lg transition-colors",
+                    moreOpen
+                      ? "bg-primary text-primary-foreground"
+                      : "border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+                  )}
+                  title="More"
+                  aria-label="More station actions"
+                >
+                  <MoreVertical className="w-4 h-4" />
+                </button>
+                {moreOpen && (
+                  <>
+                    <div className="fixed inset-0 z-30" onClick={() => setMoreOpen(false)} />
+                    <div className="absolute right-0 top-full mt-1.5 z-40 w-60 rounded-xl border border-border bg-card shadow-xl overflow-hidden py-1">
+                      <button
+                        onClick={() => { setMoreOpen(false); setComposeOpen(true); }}
+                        className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-medium text-left hover:bg-secondary/60 transition-colors"
+                      >
+                        <MessageSquare className="w-4 h-4 text-sky-600 flex-shrink-0" />
+                        Message a station
+                      </button>
+                      <button
+                        onClick={() => { setMoreOpen(false); setStandardsOpen(true); }}
+                        className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-medium text-left hover:bg-secondary/60 transition-colors"
+                      >
+                        <BookOpen className="w-4 h-4 text-primary flex-shrink-0" />
+                        View SOP library
+                      </button>
+                      <button
+                        onClick={() => { setMoreOpen(false); setManageSopsOpen(true); }}
+                        className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-medium text-left hover:bg-secondary/60 transition-colors"
+                      >
+                        <BookPlus className="w-4 h-4 text-primary flex-shrink-0" />
+                        Add SOP to this station
+                      </button>
+                    </div>
+                  </>
                 )}
-                title="Switch station"
-              >
-                <LayoutGrid className="w-4 h-4" />
-                <span className="hidden sm:inline">Stations</span>
-                {stationNavOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              </button>
+              </div>
 
               {(() => {
                 const prepSubKeys = ["main_prep", "prep_bases", "prep_meat"] as const;
                 const isInPrepSub = (prepSubKeys as readonly string[]).includes(stationType);
                 return (
-                  <>
-                    <SendStationMessageButton />
-                    <button
-                      onClick={() => navigate(isInPrepSub ? `/plans/${planId}/station/prep${fromSuffix}` : fromDashboard ? "/" : "/plans")}
-                      className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors border border-border rounded-lg px-3 py-1.5"
-                    >
-                      <ChevronLeft className="w-4 h-4" />
-                      {isInPrepSub ? "Prep Sections" : fromDashboard ? "Dashboard" : "Exit Station"}
-                    </button>
-                  </>
+                  <button
+                    onClick={() => navigate(isInPrepSub ? `/plans/${planId}/station/prep${fromSuffix}` : "/")}
+                    className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors border border-border rounded-lg px-3 py-1.5"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                    {isInPrepSub ? "Prep Sections" : "Exit Station"}
+                  </button>
                 );
               })()}
             </div>
           </div>
         </div>
-
-        {/* Collapsible station navigation grid — rendered INSIDE the sticky
-            top-bar so it appears at the current viewport top regardless of
-            scroll position. */}
-        <AnimatePresence>
-          {stationNavOpen && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: "auto", opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="border-t border-border bg-card overflow-hidden"
-            >
-              <div className="max-w-7xl mx-auto px-4 py-4">
-              <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-3">
-                {STATIONS.map(s => {
-                  const Icon = s.icon;
-                  const prepSubStations = ["main_prep", "prep_bases", "prep_meat"] as const;
-                  const isActive = s.key === stationType || (s.key === "prep" && prepSubStations.includes(stationType as typeof prepSubStations[number]));
-                  const bgColors: Record<string, string> = {
-                    dough_prep: "bg-amber-50 dark:bg-amber-900/20",
-                    dough_sheeting: "bg-amber-50 dark:bg-amber-900/20",
-                    prep: "bg-green-50 dark:bg-green-900/20",
-                    mixing: "bg-blue-50 dark:bg-blue-900/20",
-                    building_1: "bg-orange-50 dark:bg-orange-900/20",
-                    building_2: "bg-orange-50 dark:bg-orange-900/20",
-                    ovens: "bg-red-50 dark:bg-red-900/20",
-                    wrapping: "bg-purple-50 dark:bg-purple-900/20",
-                    packing: "bg-indigo-50 dark:bg-indigo-900/20",
-                  };
-
-                  // Station lock: check if this building station is assigned to someone else
-                  const isBuildingStation = s.key === "building_1" || s.key === "building_2";
-                  const stationAssignment = isBuildingStation ? assignments[s.key as "building_1" | "building_2"] : null;
-                  const isLockedToOther = stationLockEnabled && !isAdmin && isBuildingStation && stationAssignment !== null && stationAssignment.userId !== currentUserId;
-
-                  return (
-                    <button
-                      key={s.key}
-                      onClick={() => {
-                        if (isLockedToOther) return;
-                        navigate(`/plans/${planId}/station/${s.key}${fromSuffix}`);
-                        setStationNavOpen(false);
-                      }}
-                      disabled={isLockedToOther}
-                      className={cn(
-                        "flex flex-col items-center justify-center gap-3 p-4 min-h-[120px] rounded-2xl transition-all",
-                        isLockedToOther
-                          ? "border-2 border-border opacity-40 cursor-not-allowed"
-                          : "active:scale-[0.97]",
-                        !isLockedToOther && isActive
-                          ? "border-2 border-primary bg-primary/5 shadow-sm"
-                          : !isLockedToOther
-                            ? "border-2 border-border hover:border-primary/50 hover:bg-secondary/40"
-                            : ""
-                      )}
-                    >
-                      <div className={cn("w-16 h-16 rounded-xl flex items-center justify-center", bgColors[s.key] ?? "", s.color)}>
-                        <Icon className="w-8 h-8" />
-                      </div>
-                      <span className="text-sm font-bold text-center leading-tight">{s.short}</span>
-                      {isLockedToOther && stationAssignment && (
-                        <span className="text-xs text-muted-foreground leading-tight">Assigned to {stationAssignment.userName}</span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
       </div>
 
       <div className="max-w-7xl mx-auto px-4 pt-6 pb-[200px]">
@@ -361,9 +310,7 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
         <div className="mb-3 empty:hidden">
           <LeanWeeklyStrip />
         </div>
-        <div className="mb-4">
-          <StationSopRail stationType={stationType} stationLabel={meta.label} />
-        </div>
+        <StationSopRail stationType={stationType} stationLabel={meta.label} />
         <StationReminderBanner stationType={stationType} plan={plan} />
         {/* Messages sent to THIS station — banner until someone taps Got it. */}
         <div className="mb-4">
@@ -377,6 +324,17 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
         onClose={() => setStandardsOpen(false)}
         currentStationType={stationType}
       />
+
+      {composeOpen && (
+        <SendStationMessageDialog onClose={() => setComposeOpen(false)} />
+      )}
+      {manageSopsOpen && (
+        <StationSopManageModal
+          stationType={stationType}
+          stationLabel={meta.label}
+          onClose={() => setManageSopsOpen(false)}
+        />
+      )}
 
       {/* Station screens render outside Layout, so the quick-actions dock
           (My to-dos · Improvement · Report issue · Ask Caz) was missing
