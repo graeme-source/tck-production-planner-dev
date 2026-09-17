@@ -22,10 +22,10 @@ import { format, parseISO } from "date-fns";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
-import { groupRecordNotes } from "@/lib/employee-record-grouping";
+import { groupRecordNotes, currentObjectives } from "@/lib/employee-record-grouping";
 import {
   CalendarDays, ChevronLeft, ChevronRight, Eye, EyeOff, Loader2, Lock,
-  MessageSquare, Pencil, Plus, Target, CheckCircle2, Trash2, Users, X,
+  MessageSquare, Pencil, Plus, Target, CheckCircle2, Trash2, Users, X, Check,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
@@ -132,6 +132,11 @@ function RecordView({ userId, onBack }: { userId: number | "me"; onBack?: () => 
     data.notes,
     new Set(data.meetings.map(m => m.id)),
   );
+  // The summary carries the CURRENT objectives — the ones set at the most
+  // recent meeting. Each review restates what the person is working towards,
+  // so this must show the latest word rather than pile them up. The older
+  // ones stay visible under their own meeting in the record below.
+  const agreedNow = currentObjectives(openObjectives, data.meetings);
   const upcoming = data.meetings.filter(m => m.status === "booked");
   const past = data.meetings.filter(m => m.status !== "booked");
   const meetingCardProps = {
@@ -192,10 +197,15 @@ function RecordView({ userId, onBack }: { userId: number | "me"; onBack?: () => 
         </section>
       )}
 
-      {openObjectives.length > 0 && (
+      {agreedNow.length > 0 && (
         <section className="space-y-3">
-          <h3 className="text-lg font-bold flex items-center gap-2"><Target className="w-5 h-5 text-primary" /> What we agreed</h3>
-          {openObjectives.map(n => <NoteCard key={n.id} note={n} canManage={data.canManage} currentUserId={currentUserId} onChanged={refresh} />)}
+          <h3 className="text-lg font-bold flex items-center gap-2">
+            <Target className="w-5 h-5 text-primary" /> What we agreed
+          </h3>
+          <p className="text-sm text-muted-foreground -mt-1">
+            From the most recent review. They also stay on the meeting that set them.
+          </p>
+          {agreedNow.map(n => <NoteCard key={n.id} note={n} canManage={data.canManage} currentUserId={currentUserId} onChanged={refresh} />)}
         </section>
       )}
 
@@ -338,16 +348,78 @@ function MeetingCard({ meeting, notes, canManage, currentUserId, subjectId, subj
         </button>
       )}
 
+      {/* Publish the whole write-up in one act, rather than note by note. */}
+      {canManage && !writingNote && notes.some(n => n.visibility !== "shared") && (
+        <ShareWholeMeeting meetingId={meeting.id} subjectName={subjectName} onChanged={onChanged} />
+      )}
+
       {writingNote && (
-        <WriteNote
-          subjectId={subjectId}
-          subjectName={subjectName}
+        <MeetingWriteUp
           meetingId={meeting.id}
-          meetingLabel={`${meeting.title || MEETING_LABEL[meeting.kind]} · ${niceDate(meeting.scheduledFor)}`}
+          subjectName={subjectName}
           onDone={() => { setWritingNote(false); onChanged(); }}
           onCancel={() => setWritingNote(false)}
         />
       )}
+    </div>
+  );
+}
+
+/** Publish everything you wrote about a meeting in one act.
+ *
+ *  Only your OWN unshared notes go — the server enforces that too, because
+ *  "private" has to mean private from other managers as well. */
+function ShareWholeMeeting({ meetingId, subjectName, onChanged }: {
+  meetingId: number; subjectName: string; onChanged: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const share = useMutation({
+    mutationFn: () => api<{ shared: number }>(`/employee-reviews/meetings/${meetingId}/share`, { method: "POST" }),
+    onSuccess: (r) => {
+      toast({
+        title: r.shared > 0 ? "Shared with them" : "Nothing left to share",
+        description: r.shared > 0 ? `${subjectName} can read the whole write-up now.` : undefined,
+      });
+      setConfirming(false);
+      onChanged();
+    },
+    onError: (e: Error) => toast({ title: "Couldn't share it", description: e.message, variant: "destructive" }),
+  });
+
+  if (!confirming) {
+    return (
+      <button
+        onClick={() => setConfirming(true)}
+        className="w-full h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2 hover:opacity-90 transition-opacity"
+      >
+        <Eye className="w-5 h-5" /> Share this write-up with them
+      </button>
+    );
+  }
+  return (
+    <div className="rounded-2xl border-2 border-primary/40 bg-secondary/30 p-4 space-y-3">
+      <p className="text-base font-semibold">
+        Share the whole write-up with {subjectName}?
+      </p>
+      <p className="text-sm text-muted-foreground">
+        They will be able to read the feedback, objectives and notes you wrote for this meeting. This can't be undone.
+      </p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <button
+          onClick={() => setConfirming(false)}
+          disabled={share.isPending}
+          className="h-12 rounded-2xl border-2 border-border text-base font-bold disabled:opacity-50 sm:order-1"
+        >
+          Not yet
+        </button>
+        <button
+          onClick={() => share.mutate()}
+          disabled={share.isPending}
+          className="h-12 rounded-2xl bg-primary text-primary-foreground text-base font-bold flex items-center justify-center gap-2 disabled:opacity-50 sm:order-2"
+        >
+          {share.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />} Share it
+        </button>
+      </div>
     </div>
   );
 }
@@ -594,6 +666,147 @@ function BookMeeting({ subjectId, onDone, onCancel }: { subjectId: number; onDon
         </button>
         <button onClick={onCancel} className="h-16 rounded-2xl border-2 border-border text-xl font-bold flex items-center justify-center gap-3 hover:bg-secondary/50">
           <X className="w-6 h-6" /> Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Write a whole meeting up in one go.
+ *
+ * Feedback, objectives and notes together, saved as ONE entry and shared as
+ * one. Adding and publishing them one at a time turned a probation meeting
+ * into a handful of disconnected fragments for the colleague to piece
+ * together (Graeme, 2026-09-17).
+ *
+ * The order on screen is the order of the conversation: how it has been
+ * going, what we agreed you will work towards, then anything else.
+ */
+function MeetingWriteUp({ meetingId, subjectName, onDone, onCancel }: {
+  meetingId: number; subjectName: string; onDone: () => void; onCancel: () => void;
+}) {
+  const [feedback, setFeedback] = useState("");
+  const [objectives, setObjectives] = useState<string[]>([""]);
+  const [notes, setNotes] = useState("");
+  const [share, setShare] = useState(false);
+
+  const cleanObjectives = objectives.map(o => o.trim()).filter(Boolean);
+  const hasSomething = feedback.trim().length > 0 || notes.trim().length > 0 || cleanObjectives.length > 0;
+
+  const save = useMutation({
+    mutationFn: () => api(`/employee-reviews/meetings/${meetingId}/write-up`, {
+      method: "POST",
+      body: JSON.stringify({
+        feedback: feedback.trim() || undefined,
+        objectives: cleanObjectives.map(body => ({ body })),
+        notes: notes.trim() || undefined,
+        share,
+      }),
+    }),
+    onSuccess: () => {
+      toast({
+        title: share ? "Written up and shared" : "Written up — private to you",
+        description: share
+          ? `${subjectName} can read the whole meeting now.`
+          : "Share the whole write-up whenever you're ready.",
+      });
+      onDone();
+    },
+    onError: (e: Error) => toast({ title: "Couldn't save the write-up", description: e.message, variant: "destructive" }),
+  });
+
+  const box = "w-full px-4 py-3 rounded-2xl border-2 border-border bg-background text-lg leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 resize-y";
+
+  return (
+    <div className="rounded-2xl border-2 border-primary/40 bg-card p-4 space-y-5">
+      <div>
+        <h4 className="text-xl font-bold">Write this meeting up</h4>
+        <p className="text-base text-muted-foreground mt-0.5">
+          Fill in what applies — it all saves as one entry, and shares as one.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <label className="text-lg font-bold flex items-center gap-2">
+          <MessageSquare className="w-5 h-5 text-primary" /> Feedback
+        </label>
+        <p className="text-sm text-muted-foreground -mt-1">What is working well, and where we can improve.</p>
+        <textarea value={feedback} onChange={e => setFeedback(e.target.value)} rows={4} className={box}
+          placeholder="e.g. Speed has increased over the last 4–6 weeks — let's keep building towards the mixing prep standard." />
+      </div>
+
+      <div className="space-y-2">
+        <label className="text-lg font-bold flex items-center gap-2">
+          <Target className="w-5 h-5 text-primary" /> Objectives
+        </label>
+        <p className="text-sm text-muted-foreground -mt-1">
+          What they are working towards. These show at the top of their record until the next review replaces them.
+        </p>
+        {objectives.map((o, i) => (
+          <div key={i} className="flex items-start gap-2">
+            <textarea
+              value={o}
+              onChange={e => setObjectives(prev => prev.map((v, j) => (j === i ? e.target.value : v)))}
+              rows={2}
+              className={box}
+              placeholder={i === 0 ? "e.g. One posted improvement per day" : "Another objective"}
+            />
+            {objectives.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setObjectives(prev => prev.filter((_, j) => j !== i))}
+                className="mt-2 p-2 text-muted-foreground hover:text-destructive"
+                aria-label="Remove this objective"
+              >
+                <Trash2 className="w-5 h-5" />
+              </button>
+            )}
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={() => setObjectives(prev => [...prev, ""])}
+          className="text-base font-semibold text-primary hover:underline flex items-center gap-1.5"
+        >
+          <Plus className="w-4 h-4" /> Add another objective
+        </button>
+      </div>
+
+      <div className="space-y-2">
+        <label className="text-lg font-bold flex items-center gap-2">
+          <MessageSquare className="w-5 h-5 text-muted-foreground" /> Notes
+        </label>
+        <p className="text-sm text-muted-foreground -mt-1">Anything else worth recording about the meeting.</p>
+        <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} className={box}
+          placeholder="e.g. Probation passed. Fantastic reliability, no sickness." />
+      </div>
+
+      <label className="flex items-center gap-3 cursor-pointer rounded-2xl border-2 border-border px-4 py-3">
+        <input type="checkbox" checked={share} onChange={e => setShare(e.target.checked)} className="w-5 h-5 rounded border-border accent-emerald-600" />
+        <span className="text-base font-semibold">
+          Share it with {subjectName} as I save
+          <span className="block text-sm font-normal text-muted-foreground">
+            Otherwise it stays private to you and you can share it later.
+          </span>
+        </span>
+      </label>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <button
+          onClick={onCancel}
+          disabled={save.isPending}
+          className="h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 disabled:opacity-50 sm:order-1"
+        >
+          <X className="w-5 h-5" /> Cancel
+        </button>
+        <button
+          onClick={() => save.mutate()}
+          disabled={!hasSomething || save.isPending}
+          className="h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50 sm:order-2"
+        >
+          {save.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
+          {share ? "Save and share" : "Save write-up"}
         </button>
       </div>
     </div>

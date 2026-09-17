@@ -294,6 +294,133 @@ router.post("/:userId/notes", validate(NoteBody), async (req: Request, res: Resp
   }
 });
 
+/**
+ * Write a meeting up in ONE go: feedback, objectives and notes together,
+ * saved as a single entry on the record.
+ *
+ * Adding them one at a time, then publishing them one at a time, meant a
+ * probation meeting arrived at the colleague as a handful of disconnected
+ * fragments (Graeme, 2026-09-17). A write-up is one thing that happened, so
+ * it is written once and shared once.
+ *
+ * Every part is optional — a meeting may be all feedback and no objectives —
+ * but an empty write-up is rejected rather than silently doing nothing.
+ * Order is the order of the conversation: feedback, then what was agreed,
+ * then anything else.
+ */
+const WriteUpBody = z.object({
+  feedback: z.string().trim().max(10_000).optional(),
+  objectives: z.array(z.object({
+    body: z.string().trim().min(1).max(10_000),
+    dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  })).max(20).optional(),
+  notes: z.string().trim().max(10_000).optional(),
+  /** Publish the whole write-up to the colleague as it is saved. */
+  share: z.boolean().optional(),
+});
+
+router.post("/meetings/:id/write-up", validate(WriteUpBody), async (req: Request, res: Response) => {
+  const user = await sessionUser(req);
+  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  if (!canManageRecord(user)) { res.status(403).json({ error: "Employee records are restricted" }); return; }
+
+  const meetingId = Number(req.params.id);
+  if (!Number.isInteger(meetingId)) { res.status(400).json({ error: "Invalid meeting id" }); return; }
+
+  const [mtg] = await db
+    .select({ subjectUserId: employeeMeetingsTable.subjectUserId })
+    .from(employeeMeetingsTable)
+    .where(eq(employeeMeetingsTable.id, meetingId));
+  if (!mtg) { res.status(404).json({ error: "Meeting not found" }); return; }
+
+  const b = req.body as z.infer<typeof WriteUpBody>;
+  const objectives = (b.objectives ?? []).filter(o => o.body.trim().length > 0);
+  const feedback = b.feedback?.trim() ?? "";
+  const notes = b.notes?.trim() ?? "";
+  if (!feedback && !notes && objectives.length === 0) {
+    res.status(400).json({ error: "Write something first — feedback, an objective, or a note." });
+    return;
+  }
+
+  const visibility = b.share ? "shared" : "private";
+  const sharedAt = b.share ? new Date() : null;
+  const common = {
+    subjectUserId: mtg.subjectUserId,
+    meetingId,
+    visibility,
+    sharedAt,
+    authorId: user.id,
+    authorName: user.name,
+  };
+
+  // In the order the conversation runs: how it went, what was agreed, then
+  // anything else worth recording.
+  const rows: Array<typeof employeeNotesTable.$inferInsert> = [];
+  if (feedback) rows.push({ ...common, kind: "feedback", body: feedback });
+  for (const o of objectives) {
+    rows.push({ ...common, kind: "objective", body: o.body.trim(), dueDate: o.dueDate ?? null });
+  }
+  if (notes) rows.push({ ...common, kind: "note", body: notes });
+
+  try {
+    // One transaction: a half-saved write-up is worse than none, because the
+    // missing half is invisible.
+    const created = await db.transaction(async (tx) => {
+      const out = await tx.insert(employeeNotesTable).values(rows).returning();
+      await tx.update(employeeMeetingsTable)
+        .set({ status: "held", heldAt: new Date(), updatedAt: new Date() })
+        .where(eq(employeeMeetingsTable.id, meetingId));
+      return out;
+    });
+    if (b.share && mtg.subjectUserId !== user.id) {
+      await notify(mtg.subjectUserId, `${user.name} shared a meeting write-up on your record`);
+    }
+    res.status(201).json({ created: created.length, notes: created });
+  } catch (err) {
+    console.error("[EmployeeReviews] write-up error:", err);
+    res.status(500).json({ error: "Failed to save the write-up" });
+  }
+});
+
+/** Publish a whole meeting write-up at once.
+ *
+ *  Only the author's OWN notes are published — "private" has to mean private
+ *  from other managers too, so this cannot publish someone else's note as a
+ *  side effect of sharing the meeting. */
+router.post("/meetings/:id/share", async (req: Request, res: Response) => {
+  const user = await sessionUser(req);
+  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  if (!canManageRecord(user)) { res.status(403).json({ error: "Employee records are restricted" }); return; }
+
+  const meetingId = Number(req.params.id);
+  if (!Number.isInteger(meetingId)) { res.status(400).json({ error: "Invalid meeting id" }); return; }
+
+  const [mtg] = await db
+    .select({ subjectUserId: employeeMeetingsTable.subjectUserId })
+    .from(employeeMeetingsTable)
+    .where(eq(employeeMeetingsTable.id, meetingId));
+  if (!mtg) { res.status(404).json({ error: "Meeting not found" }); return; }
+
+  try {
+    const updated = await db.update(employeeNotesTable)
+      .set({ visibility: "shared", sharedAt: new Date(), updatedAt: new Date() })
+      .where(and(
+        eq(employeeNotesTable.meetingId, meetingId),
+        eq(employeeNotesTable.authorId, user.id),
+        eq(employeeNotesTable.visibility, "private"),
+      ))
+      .returning({ id: employeeNotesTable.id });
+
+    if (updated.length > 0 && mtg.subjectUserId !== user.id) {
+      await notify(mtg.subjectUserId, `${user.name} shared a meeting write-up on your record`);
+    }
+    res.json({ shared: updated.length });
+  } catch (err) {
+    console.error("[EmployeeReviews] share meeting error:", err);
+    res.status(500).json({ error: "Failed to share the write-up" });
+  }
+});
+
 const NotePatch = z.object({
   body: z.string().trim().min(1).max(10_000).optional(),
   visibility: z.enum(["private", "shared"]).optional(),
