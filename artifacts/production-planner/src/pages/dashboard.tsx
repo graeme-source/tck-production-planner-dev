@@ -7,7 +7,7 @@ import { EightPackOrdersBanner } from "@/components/eight-pack-orders-banner";
 import { StockGateBanner } from "@/components/stock-gate-banner";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { format, isToday, startOfWeek, addWeeks, addDays } from "date-fns";
-import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X, Sparkles, Salad, ClipboardList, Layers, UtensilsCrossed, Drumstick, Waves, Flame } from "lucide-react";
+import { ArrowRight, ChefHat, Truck, Package, RefreshCw, ChevronLeft, ChevronRight, PackageCheck, LineChart, Thermometer, AlertTriangle, CheckCircle, X, Sparkles, Salad, ClipboardList, Layers, UtensilsCrossed, Drumstick, Waves, Flame, MoonStar } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/contexts/auth-context";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from "recharts";
@@ -829,6 +829,19 @@ export default function Dashboard() {
           bg="bg-slate-500/10"
           headerClass="bg-slate-500"
           href="/meeting"
+        />
+        {/* The morning meeting reviews yesterday's three KPIs; this reviews
+            the same three for TODAY, before anyone goes home
+            (Graeme, 2026-09-17). */}
+        <StatCard
+          title="End-of-Day Meeting"
+          value="▶"
+          subtitle="Today's builder, packing and wonky numbers"
+          icon={MoonStar}
+          color="text-slate-500"
+          bg="bg-slate-500/10"
+          headerClass="bg-slate-500"
+          href="/end-of-day"
         />
         </div>
       </div>
