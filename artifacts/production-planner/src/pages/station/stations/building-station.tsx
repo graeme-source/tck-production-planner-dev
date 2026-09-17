@@ -1261,6 +1261,8 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
               assemblyData={assemblyMap[editPromptItem.id]}
               stationType={stationType}
               stationExtraPacks={getMyProgress(editPromptItem).extraPacks}
+              myCount={getStationCount(editPromptItem, stationType)}
+              combinedCount={getCombinedBuildCount(editPromptItem)}
               onDone={() => setEditPromptItemId(null)}
               mode="edit"
             />
@@ -1388,7 +1390,11 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
             const busyWithTap = pendingTap || (isPartialMode && partialCompletePending);
 
             const rowHasFilling = (asm?.fillingWeightPerBatch ?? 0) > 0;
-            const showEditBtn = targetReached && rowHasFilling;
+            // Correcting a count is needed MOST when the recipe was built short
+            // by mistake, and it was hidden in exactly that case: the old gate was
+            // targetReached && rowHasFilling. Now every recipe that has had any
+            // work recorded can be corrected (Graeme, 2026-09-17).
+            const showEditBtn = combinedCount > 0 || targetReached;
             const panelIdx = items.findIndex(it => it.id === item.id);
             return (
               <div className="bg-card border-2 border-primary rounded-xl overflow-hidden">
@@ -1417,7 +1423,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); setEditPromptItemId(item.id); }}
-                      title="Edit packs / leftover filling"
+                      title="Correct batches / packs"
                       className="text-muted-foreground hover:text-foreground flex-shrink-0"
                     >
                       <Pencil className="w-4 h-4" />
@@ -1894,11 +1900,11 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                       <CheckCircle2 className={cn("w-4 h-4 flex-shrink-0", targetReached ? "text-emerald-500" : "text-amber-500")} />
                     )}
                   </button>
-                  {targetReached && rowHasFilling && (
+                  {(combinedCount > 0 || targetReached) && (
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); setQueueOpen(false); setEditPromptItemId(item.id); }}
-                      title="Edit packs / leftover filling"
+                      title="Correct batches / packs"
                       className="pr-3 pl-1 py-3 text-muted-foreground hover:text-foreground flex-shrink-0"
                     >
                       <Pencil className="w-4 h-4" />
@@ -1986,7 +1992,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   );
 }
 
-function RecipeCompleteDialogBody({ planId, item, isOnBreak, hasFilling, assemblyData, stationType, stationExtraPacks, onDone, mode = "complete" }: {
+function RecipeCompleteDialogBody({ planId, item, isOnBreak, hasFilling, assemblyData, stationType, stationExtraPacks, myCount = 0, combinedCount = 0, onDone, mode = "complete" }: {
   planId: number;
   item: ProductionPlanItem;
   isOnBreak: boolean;
@@ -1994,6 +2000,8 @@ function RecipeCompleteDialogBody({ planId, item, isOnBreak, hasFilling, assembl
   assemblyData?: AssemblyData;
   stationType: "building_1" | "building_2";
   stationExtraPacks: number;
+  myCount?: number;
+  combinedCount?: number;
   onDone: () => void;
   mode?: "complete" | "edit";
 }) {
@@ -2043,10 +2051,20 @@ function RecipeCompleteDialogBody({ planId, item, isOnBreak, hasFilling, assembl
             {mode === "edit" ? `Edit — ${item.recipeName ?? "Recipe"}` : `${item.recipeName ?? "Recipe"} complete`}
           </h3>
           <p className="text-sm text-muted-foreground mt-1">
-            {mode === "edit" ? "Update pack count or leftover filling." : "Any extra packs to record before moving on?"}
+            {mode === "edit" ? "Correct the batches or packs recorded, or the leftover filling." : "Any extra packs to record before moving on?"}
           </p>
         </div>
       </div>
+      {mode === "edit" && (
+        <BatchCorrection
+          planId={planId}
+          item={item}
+          isOnBreak={isOnBreak}
+          stationType={stationType}
+          myCount={myCount}
+          combinedCount={combinedCount}
+        />
+      )}
       <PackAdjustment planId={planId} item={item} isOnBreak={isOnBreak} stationType={stationType} stationExtraPacks={stationExtraPacks} />
 
       {hasFilling && (
@@ -2270,6 +2288,87 @@ function RecipeFinishedControls({
       <CheckCircle2 className="w-4 h-4" />
       Recipe Finished — send built count to ovens
     </button>
+  );
+}
+
+/**
+ * Correct the BATCH count already recorded on this line.
+ *
+ * Recording a batch is a tap, so an accidental double-tap — or a batch
+ * counted that never got built — leaves the wrong number, and until now the
+ * only way back was the Undo button on the pinned recipe, which is gone the
+ * moment you move to another recipe. This is the way back for ANY recipe, at
+ * any time (Graeme, 2026-09-17: "we need to be able to edit the total amount
+ * that we submit ... available for all recipes").
+ *
+ * Deliberately built on the existing bulk endpoints rather than a new one:
+ * routes/production-plans.ts is closed to new code (charter rule 1).
+ *
+ * It adjusts THIS LINE's count. A recipe built across both lines shows the
+ * combined total underneath so the number being changed is never ambiguous.
+ */
+function BatchCorrection({ planId, item, isOnBreak, stationType, myCount, combinedCount }: {
+  planId: number;
+  item: ProductionPlanItem;
+  isOnBreak: boolean;
+  stationType: "building_1" | "building_2";
+  myCount: number;
+  combinedCount: number;
+}) {
+  const queryClient = useQueryClient();
+  const [runAction, busy] = useGuardedAction({
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(planId) }),
+  });
+
+  const adjust = (delta: 1 | -1) => {
+    if (isOnBreak) return;
+    if (delta === -1 && myCount <= 0) return;
+    runAction((signal) =>
+      guardedFetch(`/api/production-plans/${planId}/batch-completions/bulk`, {
+        method: delta === 1 ? "POST" : "DELETE",
+        signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planItemId: item.id, stationType, count: 1 }),
+      })
+    );
+  };
+
+  const otherLine = combinedCount - myCount;
+  return (
+    <div className="border border-border rounded-xl px-4 py-3 space-y-2">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-muted-foreground">Batches on this line</p>
+          {otherLine > 0 && (
+            <p className="text-xs text-muted-foreground/80">
+              The other line recorded {otherLine} — {combinedCount} in total
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => adjust(-1)}
+            disabled={busy || isOnBreak || myCount <= 0}
+            aria-label="One fewer batch on this line"
+            className="h-9 w-9 rounded-lg text-lg font-bold border border-border bg-background hover:bg-secondary/60 disabled:opacity-40 transition-all active:scale-95"
+          >
+            −
+          </button>
+          <span className="text-lg font-bold tabular-nums min-w-[2.5rem] text-center">{myCount}</span>
+          <button
+            onClick={() => adjust(1)}
+            disabled={busy || isOnBreak}
+            aria-label="One more batch on this line"
+            className="h-9 w-9 rounded-lg text-lg font-bold border border-border bg-background hover:bg-secondary/60 disabled:opacity-40 transition-all active:scale-95"
+          >
+            +
+          </button>
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Ovens and wrapping follow this number, so make it match what physically exists.
+      </p>
+    </div>
   );
 }
 
