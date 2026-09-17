@@ -788,7 +788,11 @@ export default function Dashboard() {
           production line (Graeme, 2026-09-16). */}
       <div>
         <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Today's Admin</p>
-        <div className="grid grid-cols-3 gap-4">
+        {/* Same grid as Core Production and Other Lines below, so the cards are
+            the same width and the four admin tiles sit on ONE row. It was a
+            fixed 3 columns, which pushed End-of-Day Meeting onto a second line
+            of its own (Graeme, 2026-09-17). */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard
           // Everything that happens at the front door in one place —
           // deliveries in, collections out, visitors signing in
