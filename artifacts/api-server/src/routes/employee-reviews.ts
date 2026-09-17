@@ -30,16 +30,18 @@ import { validate } from "../middleware/validate";
 
 const router: IRouter = Router();
 
-async function sessionUser(req: Request): Promise<{ id: number; role: string; name: string } | null> {
+async function sessionUser(req: Request): Promise<{ id: number; role: string; name: string; email: string | null } | null> {
   const id = req.session.userId;
   if (!id) return null;
   const [row] = await db
-    .select({ role: usersTable.role, name: usersTable.name })
+    // email, because who looks after people-data is decided by identity, not
+    // by role — see PEOPLE_DATA_EMAILS in employee-review-visibility.ts.
+    .select({ role: usersTable.role, name: usersTable.name, email: usersTable.email })
     .from(usersTable)
     .where(eq(usersTable.id, id));
   if (!row) return null;
   if (!req.session.userRole) req.session.userRole = row.role as "admin" | "manager" | "viewer";
-  return { id, role: row.role, name: row.name };
+  return { id, role: row.role, name: row.name, email: row.email ?? null };
 }
 
 /** Notify without ever letting a missed bell fail the action itself. */
@@ -61,7 +63,7 @@ async function notify(userId: number, message: string) {
 router.get("/people", async (req: Request, res: Response) => {
   const user = await sessionUser(req);
   if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
-  if (!canManageRecord(user)) { res.status(403).json({ error: "Managers only" }); return; }
+  if (!canManageRecord(user)) { res.status(403).json({ error: "Employee records are restricted" }); return; }
   try {
     const rows = await db
       .select({
@@ -141,7 +143,7 @@ const MeetingBody = z.object({
 router.post("/:userId/meetings", validate(MeetingBody), async (req: Request, res: Response) => {
   const user = await sessionUser(req);
   if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
-  if (!canManageRecord(user)) { res.status(403).json({ error: "Managers only" }); return; }
+  if (!canManageRecord(user)) { res.status(403).json({ error: "Employee records are restricted" }); return; }
 
   const subjectId = Number(req.params.userId);
   if (!Number.isInteger(subjectId)) { res.status(400).json({ error: "Invalid user id" }); return; }
@@ -178,7 +180,7 @@ const MeetingPatch = z.object({
 router.patch("/meetings/:id", validate(MeetingPatch), async (req: Request, res: Response) => {
   const user = await sessionUser(req);
   if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
-  if (!canManageRecord(user)) { res.status(403).json({ error: "Managers only" }); return; }
+  if (!canManageRecord(user)) { res.status(403).json({ error: "Employee records are restricted" }); return; }
 
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
@@ -212,7 +214,7 @@ router.patch("/meetings/:id", validate(MeetingPatch), async (req: Request, res: 
 router.delete("/meetings/:id", async (req: Request, res: Response) => {
   const user = await sessionUser(req);
   if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
-  if (!canManageRecord(user)) { res.status(403).json({ error: "Managers only" }); return; }
+  if (!canManageRecord(user)) { res.status(403).json({ error: "Employee records are restricted" }); return; }
 
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
@@ -249,7 +251,7 @@ const NoteBody = z.object({
 router.post("/:userId/notes", validate(NoteBody), async (req: Request, res: Response) => {
   const user = await sessionUser(req);
   if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
-  if (!canManageRecord(user)) { res.status(403).json({ error: "Managers only" }); return; }
+  if (!canManageRecord(user)) { res.status(403).json({ error: "Employee records are restricted" }); return; }
 
   const subjectId = Number(req.params.userId);
   if (!Number.isInteger(subjectId)) { res.status(400).json({ error: "Invalid user id" }); return; }

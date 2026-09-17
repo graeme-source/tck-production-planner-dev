@@ -16,6 +16,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import { useAuth } from "@/contexts/auth-context";
 import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
+import { useIsRtwManager } from "@/hooks/use-rtw-manager";
 import { PageHeader } from "@/components/page-header";
 import { EmployeeReviewsSection } from "@/components/employee-reviews";
 import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt, Camera, Upload, X, FileText, ScrollText, ChevronRight, ListTodo, ClipboardList, FileSignature } from "lucide-react";
@@ -1193,8 +1194,11 @@ export default function EmployeeHub() {
   // people-data page rather than each one remembering to.
   useSensitivePinGate({ includeAdmins: true, entryKey: "employee-hub" });
   // Managers write records for anyone; everyone else sees only their own.
-  const isManager = state.status === "authenticated"
-    && (state.user.role === "admin" || state.user.role === "manager");
+  // Who sees the "Whose record?" list rather than just their own record.
+  // Identity, not role: the server decides (PEOPLE_DATA_EMAILS) and this
+  // follows its flag, so a new admin or manager does NOT get the personnel
+  // files handed to them (Graeme, 2026-09-17: "me and Lorna only, strictly").
+  const isManager = useIsRtwManager();
   const [todosOpen, setTodosOpen] = useState(false);
   const openTodoCount = useMyOpenTodoCount();
 

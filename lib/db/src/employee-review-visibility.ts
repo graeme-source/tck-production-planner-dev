@@ -28,14 +28,38 @@ export interface ReviewNoteForVisibility {
 export interface ReviewViewer {
   id: number;
   role: string;
+  /** The account's email. Identity, not role, decides who looks after
+   *  people-data — see PEOPLE_DATA_EMAILS. */
+  email?: string | null;
   /** Explicitly switched on for this viewer, for this person's record.
    *  Defaults to false — being an admin does not grant it. */
   hasPrivateGrant?: boolean;
 }
 
+/**
+ * The only people who look after everyone else's record.
+ *
+ * Named accounts, NOT a role (Graeme, 2026-09-17: "me and Lorna only,
+ * strictly"). It was role-based, which quietly meant five people — every
+ * admin and every manager, so Jane Miles and Dave Bewsey could open anyone's
+ * probation meetings and feedback. Promoting somebody to manager must never
+ * hand them the personnel files as a side effect.
+ *
+ * Same list as the return-to-work managers, and deliberately so: it is one
+ * question — who looks after people-data — and it should have one answer.
+ * rtw-access.ts imports this rather than keeping a second copy.
+ */
+export const PEOPLE_DATA_EMAILS: ReadonlySet<string> = new Set([
+  "graeme@thecalzonekitchen.co.uk",
+  "lornabrown17@icloud.com",
+  // Local test account — no such user exists on live.
+  "claude-test@thecalzonekitchen.co.uk",
+]);
+
 /** Who can book meetings and write notes about someone else. */
-export function canManageRecord(viewer: { role: string }): boolean {
-  return viewer.role === "admin" || viewer.role === "manager";
+export function canManageRecord(viewer: { email?: string | null }): boolean {
+  const email = viewer.email?.trim().toLowerCase();
+  return email != null && email !== "" && PEOPLE_DATA_EMAILS.has(email);
 }
 
 /** Can this viewer open this person's record at all? */

@@ -4,11 +4,14 @@ import {
   type ReviewNoteForVisibility, type ReviewViewer,
 } from "./employee-review-visibility";
 
-const GRAEME: ReviewViewer = { id: 1, role: "admin" };
-const OTHER_ADMIN: ReviewViewer = { id: 2, role: "admin" };
-const LORNA: ReviewViewer = { id: 3, role: "manager" };
-const SUBJECT: ReviewViewer = { id: 9, role: "viewer" };
-const BYSTANDER: ReviewViewer = { id: 10, role: "viewer" };
+const GRAEME: ReviewViewer = { id: 1, role: "admin", email: "graeme@thecalzonekitchen.co.uk" };
+// A second admin who is NOT on the people-data list — Jane Miles on live.
+const OTHER_ADMIN: ReviewViewer = { id: 2, role: "admin", email: "jane@thecalzonekitchen.co.uk" };
+const LORNA: ReviewViewer = { id: 3, role: "manager", email: "lornabrown17@icloud.com" };
+// A manager who is NOT on the list — Dave Bewsey on live.
+const OTHER_MANAGER: ReviewViewer = { id: 4, role: "manager", email: "dave@thecalzonekitchen.co.uk" };
+const SUBJECT: ReviewViewer = { id: 9, role: "viewer", email: "subject@thecalzonekitchen.co.uk" };
+const BYSTANDER: ReviewViewer = { id: 10, role: "viewer", email: "bystander@thecalzonekitchen.co.uk" };
 
 const priv = (authorId: number | null = GRAEME.id): ReviewNoteForVisibility =>
   ({ authorId, visibility: "private" });
@@ -64,7 +67,15 @@ describe("shared notes", () => {
 
   it("are readable by whoever looks after the record", () => {
     expect(canReadNote(shared(), LORNA, SUBJECT.id)).toBe(true);
-    expect(canReadNote(shared(), OTHER_ADMIN, SUBJECT.id)).toBe(true);
+    expect(canReadNote(shared(), GRAEME, SUBJECT.id)).toBe(true);
+  });
+
+  it("are NOT readable by an admin or manager outside that pair", () => {
+    // Tightened 2026-09-17: this used to pass for any admin. "Shared" means
+    // shared with the person and the two who look after their record, not
+    // published to management.
+    expect(canReadNote(shared(), OTHER_ADMIN, SUBJECT.id)).toBe(false);
+    expect(canReadNote(shared(), OTHER_MANAGER, SUBJECT.id)).toBe(false);
   });
 
   it("are not readable by an unrelated colleague", () => {
@@ -77,9 +88,22 @@ describe("opening a record", () => {
     expect(canOpenRecord(SUBJECT, SUBJECT.id)).toBe(true);
   });
 
-  it("lets managers and admins open anyone's", () => {
+  it("lets the two people who look after records open anyone's", () => {
     expect(canOpenRecord(LORNA, SUBJECT.id)).toBe(true);
     expect(canOpenRecord(GRAEME, SUBJECT.id)).toBe(true);
+  });
+
+  it("REGRESSION: another admin or manager cannot open someone else's", () => {
+    // It was role-based, so every admin and manager could read anyone's
+    // probation meetings and feedback — five people on live, not two
+    // (Graeme, 2026-09-17: "me and Lorna only, strictly").
+    expect(canOpenRecord(OTHER_ADMIN, SUBJECT.id)).toBe(false);
+    expect(canOpenRecord(OTHER_MANAGER, SUBJECT.id)).toBe(false);
+  });
+
+  it("still lets anyone open their OWN record, whatever their role", () => {
+    expect(canOpenRecord(OTHER_MANAGER, OTHER_MANAGER.id)).toBe(true);
+    expect(canOpenRecord(BYSTANDER, BYSTANDER.id)).toBe(true);
   });
 
   it("keeps one team member out of another's", () => {
@@ -88,11 +112,26 @@ describe("opening a record", () => {
 });
 
 describe("canManageRecord", () => {
-  it("is managers and admins only", () => {
-    expect(canManageRecord({ role: "admin" })).toBe(true);
-    expect(canManageRecord({ role: "manager" })).toBe(true);
-    expect(canManageRecord({ role: "viewer" })).toBe(false);
-    expect(canManageRecord({ role: "" })).toBe(false);
+  it("is the two named people, by email", () => {
+    expect(canManageRecord(GRAEME)).toBe(true);
+    expect(canManageRecord(LORNA)).toBe(true);
+  });
+
+  it("is NOT granted by a role — promoting someone must not hand over the files", () => {
+    expect(canManageRecord(OTHER_ADMIN)).toBe(false);
+    expect(canManageRecord(OTHER_MANAGER)).toBe(false);
+    expect(canManageRecord(BYSTANDER)).toBe(false);
+  });
+
+  it("fails closed on a missing or empty email", () => {
+    expect(canManageRecord({ email: null })).toBe(false);
+    expect(canManageRecord({ email: undefined })).toBe(false);
+    expect(canManageRecord({ email: "" })).toBe(false);
+    expect(canManageRecord({ email: "   " })).toBe(false);
+  });
+
+  it("is not case- or whitespace-sensitive", () => {
+    expect(canManageRecord({ email: "  Graeme@TheCalzoneKitchen.co.uk " })).toBe(true);
   });
 });
 

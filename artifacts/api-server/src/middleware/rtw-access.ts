@@ -6,15 +6,14 @@
  * ordinary admin/manager account sees nothing.
  */
 import type { Request } from "express";
+import { PEOPLE_DATA_EMAILS } from "@workspace/db";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 
-const RTW_MANAGER_EMAILS = new Set([
-  "graeme@thecalzonekitchen.co.uk",
-  "lornabrown17@icloud.com",
-  // Local test account — no such user exists on live.
-  "claude-test@thecalzonekitchen.co.uk",
-]);
+// One list, not two: who looks after people-data is a single question, and a
+// second copy is a second thing to forget to update. Defined next to the
+// record-visibility rule it shares (Graeme, 2026-09-17).
+const RTW_MANAGER_EMAILS = PEOPLE_DATA_EMAILS;
 
 export async function hasRtwManagerAccess(req: Request): Promise<boolean> {
   const userId = req.session.userId;
