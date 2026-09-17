@@ -117,7 +117,10 @@ router.get("/:userId", async (req: Request, res: Response) => {
 
     // THE line that matters. Everything below this point has already been
     // filtered to what this person may see.
-    const notes = visibleNotes(allNotes, { id: user.id, role: user.role }, subjectId);
+    // email MUST be passed: canReadNote sends a SHARED note through
+    // canManageRecord, which is keyed on identity now, not role. Dropping it
+    // here made a shared note invisible to the very person who shared it.
+    const notes = visibleNotes(allNotes, { id: user.id, role: user.role, email: user.email }, subjectId);
 
     res.json({
       subject,
@@ -241,6 +244,8 @@ router.delete("/meetings/:id", async (req: Request, res: Response) => {
 
 const NoteBody = z.object({
   kind: z.enum(["note", "feedback", "objective"]).default("note"),
+  /** Optional bold headline above the body (migration 0114). */
+  title: z.string().trim().max(200).nullable().optional(),
   body: z.string().trim().min(1).max(10_000),
   // Private unless the author deliberately says otherwise, here or later.
   visibility: z.enum(["private", "shared"]).default("private"),
@@ -276,6 +281,7 @@ router.post("/:userId/notes", validate(NoteBody), async (req: Request, res: Resp
       subjectUserId: subjectId,
       meetingId: b.meetingId ?? null,
       kind: b.kind,
+      title: b.title ?? null,
       body: b.body,
       visibility: b.visibility,
       sharedAt: b.visibility === "shared" ? new Date() : null,
@@ -311,6 +317,8 @@ router.post("/:userId/notes", validate(NoteBody), async (req: Request, res: Resp
 const WriteUpBody = z.object({
   feedback: z.string().trim().max(10_000).optional(),
   objectives: z.array(z.object({
+    /** Bold headline — "Increase in output speed" — with the detail in body. */
+    title: z.string().trim().max(200).optional(),
     body: z.string().trim().min(1).max(10_000),
     dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   })).max(20).optional(),
@@ -358,7 +366,7 @@ router.post("/meetings/:id/write-up", validate(WriteUpBody), async (req: Request
   const rows: Array<typeof employeeNotesTable.$inferInsert> = [];
   if (feedback) rows.push({ ...common, kind: "feedback", body: feedback });
   for (const o of objectives) {
-    rows.push({ ...common, kind: "objective", body: o.body.trim(), dueDate: o.dueDate ?? null });
+    rows.push({ ...common, kind: "objective", title: o.title?.trim() || null, body: o.body.trim(), dueDate: o.dueDate ?? null });
   }
   if (notes) rows.push({ ...common, kind: "note", body: notes });
 
@@ -422,6 +430,7 @@ router.post("/meetings/:id/share", async (req: Request, res: Response) => {
 });
 
 const NotePatch = z.object({
+  title: z.string().trim().max(200).nullable().optional(),
   body: z.string().trim().min(1).max(10_000).optional(),
   visibility: z.enum(["private", "shared"]).optional(),
   done: z.boolean().optional(),
@@ -450,6 +459,7 @@ router.patch("/notes/:id", validate(NotePatch), async (req: Request, res: Respon
 
     const b = req.body as z.infer<typeof NotePatch>;
     const updates: Record<string, unknown> = { updatedAt: new Date() };
+    if (b.title !== undefined) updates.title = b.title;
     if (b.body !== undefined) updates.body = b.body;
     if (b.dueDate !== undefined) updates.dueDate = b.dueDate;
     if (b.done !== undefined) updates.doneAt = b.done ? new Date() : null;

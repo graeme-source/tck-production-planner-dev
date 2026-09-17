@@ -62,6 +62,8 @@ interface Note {
   id: number;
   kind: NoteKind;
   meetingId: number | null;
+  /** Bold headline above the body; objectives use it most (migration 0114). */
+  title: string | null;
   body: string;
   visibility: "private" | "shared";
   sharedAt: string | null;
@@ -205,7 +207,7 @@ function RecordView({ userId, onBack }: { userId: number | "me"; onBack?: () => 
           <p className="text-sm text-muted-foreground -mt-1">
             From the most recent review. They also stay on the meeting that set them.
           </p>
-          {agreedNow.map(n => <NoteCard key={n.id} note={n} canManage={data.canManage} currentUserId={currentUserId} onChanged={refresh} />)}
+          {agreedNow.map(n => <AgreedObjective key={n.id} note={n} canManage={data.canManage} currentUserId={currentUserId} onChanged={refresh} />)}
         </section>
       )}
 
@@ -316,7 +318,7 @@ function MeetingCard({ meeting, notes, canManage, currentUserId, subjectId, subj
           set — nested with the meeting so the story reads in one place. */}
       {notes.length > 0 && (
         <div className="space-y-3 pl-3 border-l-4 border-secondary">
-          {notes.map(n => <NoteCard key={n.id} note={n} canManage={canManage} currentUserId={currentUserId} onChanged={onChanged} />)}
+          {notes.map(n => <NoteCard key={n.id} note={n} canManage={canManage} currentUserId={currentUserId} onChanged={onChanged} inReport />)}
         </div>
       )}
 
@@ -424,8 +426,60 @@ function ShareWholeMeeting({ meetingId, subjectName, onChanged }: {
   );
 }
 
-function NoteCard({ note, canManage, currentUserId, onChanged }: {
+/**
+ * An objective in the "What we agreed" summary — deliberately collapsed.
+ *
+ * This is a reminder of what the person is working towards, not the place to
+ * act on it: the full card (edit, delete, mark done) lives under the meeting
+ * that set it. No share button either — objectives come out of a meeting, and
+ * a meeting is shared as one report (Graeme, 2026-09-17).
+ */
+function AgreedObjective({ note, canManage, currentUserId, onChanged }: {
   note: Note; canManage: boolean; currentUserId: number | null; onChanged: () => void;
+}) {
+  const isAuthor = currentUserId != null && note.authorId === currentUserId;
+  const done = useMutation({
+    mutationFn: () => api(`/employee-reviews/notes/${note.id}`, {
+      method: "PATCH", body: JSON.stringify({ done: true }),
+    }),
+    onSuccess: onChanged,
+    onError: (e: Error) => toast({ title: "Couldn't tick it off", description: e.message, variant: "destructive" }),
+  });
+
+  return (
+    <div className="rounded-2xl border-2 border-border bg-card px-4 py-3 flex items-start gap-3">
+      <Target className="w-5 h-5 text-primary shrink-0 mt-1" />
+      <div className="flex-1 min-w-0">
+        {note.title
+          ? <p className="text-lg font-bold leading-snug break-words">{note.title}</p>
+          : <p className="text-lg font-bold leading-snug break-words">{note.body}</p>}
+        {note.title && (
+          <p className="text-base text-muted-foreground leading-relaxed whitespace-pre-wrap break-words mt-0.5">{note.body}</p>
+        )}
+        {note.dueDate && (
+          <p className="text-sm text-muted-foreground mt-1">Due {niceDate(note.dueDate)}</p>
+        )}
+      </div>
+      {canManage && isAuthor && (
+        <button
+          onClick={() => done.mutate()}
+          disabled={done.isPending}
+          className="shrink-0 text-sm font-semibold text-muted-foreground hover:text-emerald-600 flex items-center gap-1.5 disabled:opacity-50"
+          title="Mark this objective done"
+        >
+          {done.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Done
+        </button>
+      )}
+    </div>
+  );
+}
+
+function NoteCard({ note, canManage, currentUserId, onChanged, inReport = false }: {
+  note: Note; canManage: boolean; currentUserId: number | null; onChanged: () => void;
+  /** Part of a meeting write-up. The write-up is shared as ONE report, so the
+   *  per-item share/unshare controls are hidden — sharing a probation meeting
+   *  a fragment at a time is what we moved away from (Graeme, 2026-09-17). */
+  inReport?: boolean;
 }) {
   const [confirmShare, setConfirmShare] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -502,7 +556,12 @@ function NoteCard({ note, canManage, currentUserId, onChanged }: {
               </div>
             </div>
           ) : (
-            <p className="text-xl leading-relaxed whitespace-pre-wrap break-words">{note.body}</p>
+            <div className="space-y-1">
+              {note.title && (
+                <p className="text-xl font-bold leading-snug break-words">{note.title}</p>
+              )}
+              <p className="text-xl leading-relaxed whitespace-pre-wrap break-words">{note.body}</p>
+            </div>
           )}
           <p className="text-base text-muted-foreground mt-2">
             {note.authorName ?? "Someone"} · {niceDate(note.createdAt.slice(0, 10))}
@@ -568,7 +627,7 @@ function NoteCard({ note, canManage, currentUserId, onChanged }: {
             </button>
           )}
 
-          {isPrivate && !confirmShare && (
+          {!inReport && isPrivate && !confirmShare && (
             <button
               onClick={() => setConfirmShare(true)}
               className="w-full h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2"
@@ -579,7 +638,7 @@ function NoteCard({ note, canManage, currentUserId, onChanged }: {
 
           {/* Publishing is the one action here the employee sees, so it asks
               once rather than firing off a stray tap. */}
-          {isPrivate && confirmShare && (
+          {!inReport && isPrivate && confirmShare && (
             <div className="rounded-2xl border-2 border-primary bg-primary/5 p-4 space-y-3">
               <p className="text-lg font-bold">Share this note?</p>
               <p className="text-base">
@@ -603,7 +662,7 @@ function NoteCard({ note, canManage, currentUserId, onChanged }: {
             </div>
           )}
 
-          {!isPrivate && (
+          {!inReport && !isPrivate && (
             <button
               onClick={() => update.mutate({ visibility: "private" })}
               disabled={update.isPending}
@@ -687,11 +746,19 @@ function MeetingWriteUp({ meetingId, subjectName, onDone, onCancel }: {
   meetingId: number; subjectName: string; onDone: () => void; onCancel: () => void;
 }) {
   const [feedback, setFeedback] = useState("");
-  const [objectives, setObjectives] = useState<string[]>([""]);
+  // Title + description per objective: a bold headline reads at a glance where
+  // a paragraph does not, and Graeme had started faking it by putting the
+  // title on the body's first line (2026-09-17).
+  const [objectives, setObjectives] = useState<Array<{ title: string; body: string }>>([{ title: "", body: "" }]);
   const [notes, setNotes] = useState("");
   const [share, setShare] = useState(false);
 
-  const cleanObjectives = objectives.map(o => o.trim()).filter(Boolean);
+  const cleanObjectives = objectives
+    .map(o => ({ title: o.title.trim(), body: o.body.trim() }))
+    .filter(o => o.body.length > 0 || o.title.length > 0)
+    // A title on its own is still an objective — it becomes the body so the
+    // record never holds a headline with nothing under it.
+    .map(o => (o.body ? o : { title: "", body: o.title }));
   const hasSomething = feedback.trim().length > 0 || notes.trim().length > 0 || cleanObjectives.length > 0;
 
   const save = useMutation({
@@ -699,7 +766,7 @@ function MeetingWriteUp({ meetingId, subjectName, onDone, onCancel }: {
       method: "POST",
       body: JSON.stringify({
         feedback: feedback.trim() || undefined,
-        objectives: cleanObjectives.map(body => ({ body })),
+        objectives: cleanObjectives.map(o => ({ title: o.title || undefined, body: o.body })),
         notes: notes.trim() || undefined,
         share,
       }),
@@ -744,29 +811,37 @@ function MeetingWriteUp({ meetingId, subjectName, onDone, onCancel }: {
           What they are working towards. These show at the top of their record until the next review replaces them.
         </p>
         {objectives.map((o, i) => (
-          <div key={i} className="flex items-start gap-2">
+          <div key={i} className="rounded-2xl border-2 border-border p-3 space-y-2">
+            <div className="flex items-start gap-2">
+              <input
+                value={o.title}
+                onChange={e => setObjectives(prev => prev.map((v, j) => (j === i ? { ...v, title: e.target.value } : v)))}
+                className="flex-1 px-4 py-2.5 rounded-xl border-2 border-border bg-background text-lg font-bold focus:outline-none focus:ring-2 focus:ring-primary/30"
+                placeholder={i === 0 ? "Title — e.g. Increase in output speed" : "Title"}
+              />
+              {objectives.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setObjectives(prev => prev.filter((_, j) => j !== i))}
+                  className="p-2 text-muted-foreground hover:text-destructive"
+                  aria-label="Remove this objective"
+                >
+                  <Trash2 className="w-5 h-5" />
+                </button>
+              )}
+            </div>
             <textarea
-              value={o}
-              onChange={e => setObjectives(prev => prev.map((v, j) => (j === i ? e.target.value : v)))}
+              value={o.body}
+              onChange={e => setObjectives(prev => prev.map((v, j) => (j === i ? { ...v, body: e.target.value } : v)))}
               rows={2}
               className={box}
-              placeholder={i === 0 ? "e.g. One posted improvement per day" : "Another objective"}
+              placeholder="What it means in practice, and how we'll know it's happening"
             />
-            {objectives.length > 1 && (
-              <button
-                type="button"
-                onClick={() => setObjectives(prev => prev.filter((_, j) => j !== i))}
-                className="mt-2 p-2 text-muted-foreground hover:text-destructive"
-                aria-label="Remove this objective"
-              >
-                <Trash2 className="w-5 h-5" />
-              </button>
-            )}
           </div>
         ))}
         <button
           type="button"
-          onClick={() => setObjectives(prev => [...prev, ""])}
+          onClick={() => setObjectives(prev => [...prev, { title: "", body: "" }])}
           className="text-base font-semibold text-primary hover:underline flex items-center gap-1.5"
         >
           <Plus className="w-4 h-4" /> Add another objective

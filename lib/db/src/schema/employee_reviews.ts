@@ -35,6 +35,10 @@ export const employeeNotesTable = pgTable("employee_notes", {
   meetingId: integer("meeting_id").references(() => employeeMeetingsTable.id, { onDelete: "set null" }),
   /** 'note' | 'feedback' | 'objective' */
   kind: text("kind").notNull().default("note"),
+  /** Optional headline, rendered bold above the body. Objectives use it most:
+   *  "Increase in output speed" reads at a glance where the paragraph under
+   *  it does not (migration 0114). */
+  title: text("title"),
   body: text("body").notNull(),
   /** 'private' | 'shared' — private until deliberately published. */
   visibility: text("visibility").notNull().default("private"),

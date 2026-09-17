@@ -176,3 +176,21 @@ describe("unexpected data fails closed", () => {
     expect(canReadNote(odd, GRAEME, SUBJECT.id)).toBe(true);
   });
 });
+
+describe("shared notes stay visible to whoever shared them", () => {
+  const sharedByGraeme: ReviewNoteForVisibility = { authorId: 1, visibility: "shared" };
+
+  it("REGRESSION: a viewer built without an email loses sight of shared notes", () => {
+    // canReadNote sends a SHARED note through canManageRecord, which became
+    // identity-based on 2026-09-17. A call site that built the viewer as
+    // { id, role } — dropping email — therefore hid a note from the person
+    // who had just shared it. Caught same day, before anyone hit it.
+    const noEmail = { id: GRAEME.id, role: GRAEME.role } as ReviewViewer;
+    expect(canReadNote(sharedByGraeme, noEmail, SUBJECT.id)).toBe(false);
+    expect(canReadNote(sharedByGraeme, GRAEME, SUBJECT.id)).toBe(true);
+  });
+
+  it("the person it is about reads it whatever their role or email", () => {
+    expect(canReadNote(sharedByGraeme, SUBJECT, SUBJECT.id)).toBe(true);
+  });
+});
