@@ -27,6 +27,7 @@ import { toast } from "@/hooks/use-toast";
 import { STATIONS } from "@/pages/station/shared/constants";
 import { feedTimestamp } from "@/lib/feed-time";
 import { routeStationMessages } from "@/lib/station-message-rules";
+import { useAuth } from "@/contexts/auth-context";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -122,6 +123,97 @@ export function StationMessagesBanner({ stationType }: { stationType: string }) 
         </div>
       ))}
     </div>
+  );
+}
+
+/**
+ * App-wide takeover for a must-confirm station message.
+ *
+ * The blocking overlay used to render only on that station's own screen, so
+ * an urgent message reached nobody who was on the dashboard or the production
+ * plans — the moment it matters most (Graeme, 2026-09-17). Mounted alongside
+ * TodoInterstitial in the quick-actions dock, which is on every page
+ * including the full-screen station screens.
+ *
+ * It is a PORTAL over whatever is on screen, never a navigation: confirming
+ * it puts you back exactly where you were, mid-edit and all, because you
+ * never left. Same reason there is no "go to the station" button here.
+ *
+ * No X and no backdrop close, by design — confirming IS the way out. Ordinary
+ * messages are untouched and still appear as a banner on their station.
+ */
+export function StationMessageInterstitial() {
+  const { state } = useAuth();
+  const loggedIn = state.status === "authenticated";
+  const queryClient = useQueryClient();
+  const [acking, setAcking] = useState(false);
+
+  const { data } = useQuery<{ messages: Array<StationMessage & { stationType: string }> }>({
+    queryKey: ["station-messages", "must-confirm"],
+    queryFn: async () => {
+      const r = await fetch(`${BASE}/api/station-messages/must-confirm`, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed");
+      return r.json();
+    },
+    enabled: loggedIn,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
+    staleTime: 15_000,
+  });
+
+  const queue = data?.messages ?? [];
+  const message = queue[0] ?? null;
+  if (!loggedIn || !message) return null;
+
+  const confirm = async () => {
+    setAcking(true);
+    try {
+      await fetch(`${BASE}/api/station-messages/${message.id}/dismiss`, { method: "POST", credentials: "include" });
+      await queryClient.invalidateQueries({ queryKey: ["station-messages"] });
+    } finally {
+      setAcking(false);
+    }
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[300] bg-black/80 flex items-center justify-center p-4 md:p-8">
+      <div className="bg-card border-4 border-red-500 rounded-2xl shadow-2xl w-full max-w-xl max-h-[92dvh] flex flex-col overflow-hidden">
+        <div className="flex items-center gap-3 px-5 py-4 bg-red-500/10 border-b border-red-500/40">
+          <ShieldAlert className="w-6 h-6 text-red-600 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <h2 className="font-display font-bold text-lg">Read this before carrying on</h2>
+            <p className="text-sm text-muted-foreground capitalize">
+              To {message.stationType.replace(/_/g, " ")}
+            </p>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5 space-y-3">
+          <p className="text-xl font-semibold whitespace-pre-wrap">{message.body}</p>
+          <p className="text-sm text-muted-foreground">
+            {message.fromName ?? "Someone"} · {feedTimestamp(message.createdAt)}
+          </p>
+          {queue.length > 1 && (
+            <p className="text-xs text-muted-foreground">
+              {queue.length - 1} more message{queue.length - 1 === 1 ? "" : "s"} to confirm after this one.
+            </p>
+          )}
+        </div>
+        <div className="p-5 pt-0 space-y-2">
+          <button
+            onClick={confirm}
+            disabled={acking}
+            className="w-full h-14 rounded-xl bg-red-600 text-white text-base font-bold flex items-center justify-center gap-2 hover:bg-red-700 disabled:opacity-50"
+          >
+            {acking && <Loader2 className="w-5 h-5 animate-spin" />}
+            Yes — I understand and will action this
+          </button>
+          <p className="text-xs text-center text-muted-foreground">
+            You'll go straight back to what you were doing. Nothing is lost.
+          </p>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

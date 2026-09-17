@@ -58,6 +58,7 @@ import { ImprovementCelebration } from "@/components/improvement-celebration";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assistant";
 import { TodoSheet, TodoInterstitial, useMyOpenTodoCount } from "@/components/todo-lists";
+import { StationMessageInterstitial } from "@/components/station-messages";
 import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
 import { Banknote, BookOpen, Bot, GraduationCap, ChevronLeft, ChevronRight, ListTodo, ScanLine } from "lucide-react";
 
@@ -829,6 +830,10 @@ export function QuickActionsDock() {
       <PullKanbanModal open={kanbanOpen} onClose={() => setKanbanOpen(false)} />
       <TodoSheet open={todosOpen} onClose={() => setTodosOpen(false)} />
       <TodoInterstitial />
+      {/* Urgent station messages take over the whole app, same as an
+          unacknowledged to-do — a message sent to packing has to reach the
+          person even when they're on another page (Graeme, 2026-09-17). */}
+      <StationMessageInterstitial />
     </>
   );
 }
