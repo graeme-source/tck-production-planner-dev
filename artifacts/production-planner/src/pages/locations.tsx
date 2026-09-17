@@ -18,7 +18,7 @@ import { PageHeader } from "@/components/page-header";
 import { toast } from "@/hooks/use-toast";
 import {
   MapPin, Loader2, AlertCircle, RefreshCw, PackageSearch, Barcode,
-  GripVertical, X, Plus, Footprints, Snowflake, Refrigerator, Package, Settings2,
+  GripVertical, X, Footprints, Snowflake, Refrigerator, Package, Settings2,
 } from "lucide-react";
 import {
   DndContext, DragOverlay, PointerSensor, useSensor, useSensors,
@@ -33,8 +33,8 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 type ZoneValue = "fridge" | "freezer" | "ambient";
 
-interface SkuLocation {
-  sku: string;
+interface BinLocation {
+  variantId: string;
   zone: ZoneValue;
   locationLabel: string;
   door: number | null;
@@ -42,11 +42,31 @@ interface SkuLocation {
   updatedAt: string;
 }
 
-interface RecentSku {
-  sku: string;
-  title: string;
-  orderCount: number;
-  location: SkuLocation | null;
+/** One Shopify variant and where (if anywhere) it lives. The map is keyed by
+ *  VARIANT, not SKU: a TCK SKU is a shelf label shared by many products, so
+ *  the old SKU-keyed map could only ever hold one product per label and
+ *  silently hid the rest (Graeme, 2026-09-17 — Big Nanny's Macaroni Cheese
+ *  was invisible because Garlic Cheese had claimed "4a"). */
+interface VariantRow {
+  variantId: string;
+  sku: string | null;
+  productTitle: string | null;
+  variantTitle: string | null;
+  imageUrl: string | null;
+  /** "Product · Variant" — what the chip shows, and the sort key. */
+  name: string;
+  location: BinLocation | null;
+}
+
+/** A variant that has a bin, flattened for the map components. */
+interface PlacedVariant {
+  variantId: string;
+  sku: string | null;
+  name: string;
+  zone: ZoneValue;
+  locationLabel: string;
+  door: number | null;
+  shelf: string | null;
 }
 
 interface PickConfig {
@@ -96,24 +116,17 @@ const shelfLetter = (i: number) => String.fromCharCode(65 + i); // 0 → A
 export default function Locations() {
   const queryClient = useQueryClient();
 
-  const { data: locations = [], isLoading } = useQuery<SkuLocation[]>({
-    queryKey: ["sku-locations"],
+  // ONE query now: every variant, alphabetical by name, each with its bin if
+  // it has one. The server sorts, so the two Garlic Cheese products always
+  // land next to each other in the tray.
+  const { data: variants = [], isLoading } = useQuery<VariantRow[]>({
+    queryKey: ["variant-locations"],
     queryFn: async () => {
-      const res = await fetch(`${BASE}/api/fulfilment/sku-locations`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch locations");
+      const res = await fetch(`${BASE}/api/fulfilment/variant-locations`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch the fridge map");
       return res.json();
     },
     staleTime: 60_000,
-  });
-
-  const { data: recentSkus = [] } = useQuery<RecentSku[]>({
-    queryKey: ["sku-locations-recent"],
-    queryFn: async () => {
-      const res = await fetch(`${BASE}/api/fulfilment/sku-locations/recent-skus`, { credentials: "include" });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "Failed to fetch recent SKUs");
-      return res.json();
-    },
-    staleTime: 2 * 60_000,
   });
 
   const { data: barcodes = [] } = useQuery<BarcodeRow[]>({
@@ -136,44 +149,23 @@ export default function Locations() {
     staleTime: 60_000,
   });
 
-  // Product names per SKU. Several products legitimately share a shelf-label
-  // SKU (BBQ Sauce and Buffalo Hot Sauce are both "3d"; the buttermilk
-  // chicken variants are all "1"), so the chip joins EVERY distinct product
-  // title on the SKU — showing just one name made the others look missing
-  // from the map (Graeme, 2026-09-11).
-  const titlesBySku = useMemo(() => {
-    const sets = new Map<string, Set<string>>();
-    const add = (sku: string | null, title: string | null) => {
-      if (!sku || !title) return;
-      const s = sets.get(sku) ?? new Set<string>();
-      s.add(title);
-      sets.set(sku, s);
-    };
-    for (const s of recentSkus) add(s.sku, s.title);
-    for (const b of barcodes) add(b.sku, b.productTitle);
-    const m = new Map<string, string>();
-    for (const [sku, s] of sets) m.set(sku, [...s].join(" · "));
-    return m;
-  }, [recentSkus, barcodes]);
-
   const [saving, setSaving] = useState<Set<string>>(new Set());
-  const markSaving = (sku: string, on: boolean) => setSaving(prev => {
+  const markSaving = (variantId: string, on: boolean) => setSaving(prev => {
     const next = new Set(prev);
-    if (on) next.add(sku); else next.delete(sku);
+    if (on) next.add(variantId); else next.delete(variantId);
     return next;
   });
 
   const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ["sku-locations"] });
-    queryClient.invalidateQueries({ queryKey: ["sku-locations-recent"] });
+    queryClient.invalidateQueries({ queryKey: ["variant-locations"] });
   };
 
   const moveMutation = useMutation({
-    mutationFn: async (input: { sku: string; zone: ZoneValue; door?: number; shelf?: string }) => {
+    mutationFn: async (input: { variantId: string; zone: ZoneValue; door?: number; shelf?: string }) => {
       const body = input.zone === "ambient"
         ? { zone: "ambient", locationLabel: "Ambient" }
         : { zone: input.zone, door: input.door, shelf: input.shelf };
-      const res = await fetch(`${BASE}/api/fulfilment/sku-locations/${encodeURIComponent(input.sku)}`, {
+      const res = await fetch(`${BASE}/api/fulfilment/variant-locations/${encodeURIComponent(input.variantId)}`, {
         method: "PUT", credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -181,19 +173,19 @@ export default function Locations() {
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "Failed to save");
       return res.json();
     },
-    onMutate: ({ sku }) => markSaving(sku, true),
-    onSettled: (_d, _e, { sku }) => markSaving(sku, false),
+    onMutate: ({ variantId }) => markSaving(variantId, true),
+    onSettled: (_d, _e, { variantId }) => markSaving(variantId, false),
     onSuccess: invalidate,
     onError: (e) => toast({ title: "Couldn't move that product", description: e instanceof Error ? e.message : String(e), variant: "destructive" }),
   });
 
   const removeMutation = useMutation({
-    mutationFn: async (sku: string) => {
-      const res = await fetch(`${BASE}/api/fulfilment/sku-locations/${encodeURIComponent(sku)}`, { method: "DELETE", credentials: "include" });
+    mutationFn: async (variantId: string) => {
+      const res = await fetch(`${BASE}/api/fulfilment/variant-locations/${encodeURIComponent(variantId)}`, { method: "DELETE", credentials: "include" });
       if (!res.ok) throw new Error("Failed to remove");
     },
-    onMutate: (sku) => markSaving(sku, true),
-    onSettled: (_d, _e, sku) => markSaving(sku, false),
+    onMutate: (variantId) => markSaving(variantId, true),
+    onSettled: (_d, _e, variantId) => markSaving(variantId, false),
     onSuccess: invalidate,
     onError: (e) => toast({ title: "Couldn't remove that", description: e instanceof Error ? e.message : String(e), variant: "destructive" }),
   });
@@ -218,28 +210,28 @@ export default function Locations() {
 
   // ── Drag state ──────────────────────────────────────────────────────
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
-  const [dragSku, setDragSku] = useState<string | null>(null);
+  const [dragVariantId, setDragVariantId] = useState<string | null>(null);
 
   const onDragStart = (e: DragStartEvent) => {
     const id = String(e.active.id);
-    if (id.startsWith("sku:")) setDragSku(id.slice(4));
+    if (id.startsWith("variant:")) setDragVariantId(id.slice(8));
   };
 
   const onDragEnd = (e: DragEndEvent) => {
-    setDragSku(null);
+    setDragVariantId(null);
     const { active, over } = e;
     if (!over) return;
     const activeId = String(active.id);
-    if (!activeId.startsWith("sku:")) return;
-    const sku = activeId.slice(4);
+    if (!activeId.startsWith("variant:")) return;
+    const variantId = activeId.slice(8);
     const target = String(over.id);
     if (target === "ambient") {
-      moveMutation.mutate({ sku, zone: "ambient" });
+      moveMutation.mutate({ variantId, zone: "ambient" });
       return;
     }
     const m = /^bin:(fridge|freezer):(\d+):([A-Z])$/.exec(target);
     if (m) {
-      moveMutation.mutate({ sku, zone: m[1] as ZoneValue, door: Number(m[2]), shelf: m[3] });
+      moveMutation.mutate({ variantId, zone: m[1] as ZoneValue, door: Number(m[2]), shelf: m[3] });
     }
   };
 
@@ -250,60 +242,60 @@ export default function Locations() {
     freezer: { doors: 2, shelves: 5, firstDoor: 8 },
   };
 
-  const locationsBySku = useMemo(() => new Map(locations.map(l => [l.sku, l])), [locations]);
+  // Everything that has a bin, flattened so the map components get the name
+  // and the bin in one object.
+  const placed = useMemo<PlacedVariant[]>(
+    () => variants
+      .filter((v): v is VariantRow & { location: BinLocation } => v.location != null)
+      .map(v => ({
+        variantId: v.variantId,
+        sku: v.sku,
+        name: v.name,
+        zone: v.location.zone,
+        locationLabel: v.location.locationLabel,
+        door: v.location.door,
+        shelf: v.location.shelf,
+      })),
+    [variants],
+  );
+
+  // Several products sharing one bin is deliberate — that is how the fridge
+  // actually works (Graeme, 2026-09-17). Within a bin they read alphabetically.
+  const byName = (a: PlacedVariant, b: PlacedVariant) =>
+    a.name.localeCompare(b.name, "en-GB", { numeric: true, sensitivity: "base" });
+
   const binned = useMemo(() => {
-    const m = new Map<string, SkuLocation[]>();
-    for (const l of locations) {
+    const m = new Map<string, PlacedVariant[]>();
+    for (const l of placed) {
       if (l.door == null || !l.shelf) continue;
       const key = `${l.zone}:${l.door}:${l.shelf}`;
       const list = m.get(key) ?? [];
       list.push(l);
       m.set(key, list);
     }
-    for (const list of m.values()) list.sort((a, b) => a.sku.localeCompare(b.sku, undefined, { numeric: true }));
+    for (const list of m.values()) list.sort(byName);
     return m;
-  }, [locations]);
+  }, [placed]);
 
   const ambientRows = useMemo(
-    () => locations.filter(l => l.zone === "ambient").sort((a, b) => a.sku.localeCompare(b.sku, undefined, { numeric: true })),
-    [locations],
+    () => placed.filter(l => l.zone === "ambient").sort(byName),
+    [placed],
   );
   // Pre-map rows: a zone but no door/shelf — drag them into a real bin.
   const needsRefiling = useMemo(
-    () => locations.filter(l => l.zone !== "ambient" && (l.door == null || !l.shelf)).sort((a, b) => a.sku.localeCompare(b.sku, undefined, { numeric: true })),
-    [locations],
+    () => placed.filter(l => l.zone !== "ambient" && (l.door == null || !l.shelf)).sort(byName),
+    [placed],
   );
-  const unassigned = useMemo(
-    () => recentSkus.filter(s => !locationsBySku.has(s.sku)).sort((a, b) => a.sku.localeCompare(b.sku, undefined, { numeric: true })),
-    [recentSkus, locationsBySku],
-  );
-  // The rest of the catalogue: SKUs the Shopify barcode cache knows about
-  // that have no bin yet and no recent order — so the tray shows every
-  // mappable product, not just what happened to be ordered in the last
-  // fortnight. (Variants with NO SKU in Shopify can't appear anywhere on
-  // this page — a bin is keyed by SKU; give them one in Shopify and
-  // re-sync.)
-  const catalogueUnassigned = useMemo(() => {
-    const seen = new Set(unassigned.map(u => u.sku));
-    const out: string[] = [];
-    for (const b of barcodes) {
-      if (!b.sku || seen.has(b.sku) || locationsBySku.has(b.sku) || out.includes(b.sku)) continue;
-      out.push(b.sku);
-    }
-    return out.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  }, [barcodes, unassigned, locationsBySku]);
-
-  // Extra SKU typed by hand (not on any recent order) — joins the tray.
-  const [extraSkus, setExtraSkus] = useState<string[]>([]);
-  const [newSku, setNewSku] = useState("");
-  const trayExtra = extraSkus.filter(s => !locationsBySku.has(s) && !unassigned.some(u => u.sku === s));
+  // The tray: every variant with no bin yet. The server already sorted them
+  // by name, so related products sit together.
+  const unassigned = useMemo(() => variants.filter(v => v.location == null), [variants]);
 
   // The flattened walk — exactly the order Order Packing Live will pick in.
   const walkOrder = useMemo(() => {
-    const rows: Array<{ label: string; zone: ZoneValue; sku: string }> = [];
+    const rows: Array<{ label: string; zone: ZoneValue; sku: string | null; name: string }> = [];
     for (const zone of zoneOrder) {
       if (zone === "ambient") {
-        for (const l of ambientRows) rows.push({ label: "Ambient", zone, sku: l.sku });
+        for (const l of ambientRows) rows.push({ label: "Ambient", zone, sku: l.sku, name: l.name });
         continue;
       }
       const zl = layout[zone];
@@ -313,19 +305,19 @@ export default function Locations() {
         for (let s = 0; s < zl.shelves; s++) {
           const shelf = shelfLetter(s);
           for (const l of binned.get(`${zone}:${door}:${shelf}`) ?? []) {
-            rows.push({ label: `${door}${shelf}`, zone, sku: l.sku });
+            rows.push({ label: `${door}${shelf}`, zone, sku: l.sku, name: l.name });
           }
         }
       }
       // Legacy free-text rows in this zone walk after its bins (same rule
       // as the pick sort: no door sorts last within the zone).
-      for (const l of needsRefiling.filter(r => r.zone === zone)) rows.push({ label: l.locationLabel, zone, sku: l.sku });
+      for (const l of needsRefiling.filter(r => r.zone === zone)) rows.push({ label: l.locationLabel, zone, sku: l.sku, name: l.name });
     }
     return rows;
   }, [zoneOrder, layout, binned, ambientRows, needsRefiling]);
 
-  const chipTitle = (sku: string) => titlesBySku.get(sku) ?? null;
-  const isSaving = (sku: string) => saving.has(sku);
+  const nameByVariantId = useMemo(() => new Map(variants.map(v => [v.variantId, v.name])), [variants]);
+  const isSaving = (variantId: string) => saving.has(variantId);
 
   // ── Layout editor (doors/shelves counts) ───────────────────────────
   const [editingLayout, setEditingLayout] = useState(false);
@@ -412,7 +404,7 @@ export default function Locations() {
           {zoneOrder.map(zone => {
             if (zone === "ambient") {
               return (
-                <AmbientTray key="ambient" rows={ambientRows} chipTitle={chipTitle} isSaving={isSaving} onRemove={(sku) => removeMutation.mutate(sku)} />
+                <AmbientTray key="ambient" rows={ambientRows} isSaving={isSaving} onRemove={(id) => removeMutation.mutate(id)} />
               );
             }
             const zl = layout[zone];
@@ -423,9 +415,8 @@ export default function Locations() {
                 zone={zone}
                 layout={zl}
                 binned={binned}
-                chipTitle={chipTitle}
                 isSaving={isSaving}
-                onRemove={(sku) => removeMutation.mutate(sku)}
+                onRemove={(id) => removeMutation.mutate(id)}
               />
             );
           })}
@@ -441,54 +432,37 @@ export default function Locations() {
               </p>
               <div className="flex flex-wrap gap-2">
                 {needsRefiling.map(l => (
-                  <ProductChip key={l.sku} sku={l.sku} title={chipTitle(l.sku)} note={`${ZONE_META[l.zone].label} · “${l.locationLabel}”`} saving={isSaving(l.sku)} />
+                  <ProductChip key={l.variantId} variantId={l.variantId} sku={l.sku} name={l.name} note={`${ZONE_META[l.zone].label} · “${l.locationLabel}”`} saving={isSaving(l.variantId)} />
                 ))}
               </div>
             </div>
           )}
 
-          <div className="rounded-2xl border border-border bg-card p-5 space-y-3 sticky bottom-2 z-20 shadow-lg">
+          <div className="rounded-2xl border border-border bg-card p-5 space-y-3">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <h2 className="text-sm font-semibold flex items-center gap-2">
                 <PackageSearch className="w-4 h-4 text-primary" /> Not on the map yet
-                <span className="text-xs font-normal text-muted-foreground">({unassigned.length + catalogueUnassigned.length + trayExtra.length}) — drag onto a shelf</span>
+                <span className="text-xs font-normal text-muted-foreground">({unassigned.length}) — drag onto a shelf</span>
               </h2>
-              <div className="flex items-center gap-1.5">
-                <input
-                  value={newSku}
-                  onChange={e => setNewSku(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter" && newSku.trim()) { setExtraSkus(x => [...x, newSku.trim()]); setNewSku(""); } }}
-                  placeholder="Add a SKU by hand"
-                  className="px-2.5 py-1.5 bg-background border border-border rounded-lg text-xs font-mono w-36"
-                />
-                <button
-                  onClick={() => { if (newSku.trim()) { setExtraSkus(x => [...x, newSku.trim()]); setNewSku(""); } }}
-                  className="p-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground"
-                  aria-label="Add SKU"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                </button>
-              </div>
+              <p className="text-xs text-muted-foreground">A–Z, so the same product's sizes sit together</p>
             </div>
-            {unassigned.length + catalogueUnassigned.length + trayExtra.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Every SKU Shopify knows about is on the map. 🎉</p>
+            {unassigned.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Every product is on the map. 🎉</p>
             ) : (
-              <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto">
-                {unassigned.map(s => (
-                  <ProductChip key={s.sku} sku={s.sku} title={chipTitle(s.sku) ?? s.title} note={`${s.orderCount} order${s.orderCount === 1 ? "" : "s"}`} saving={isSaving(s.sku)} />
-                ))}
-                {catalogueUnassigned.map(sku => (
-                  <ProductChip key={sku} sku={sku} title={chipTitle(sku)} saving={isSaving(sku)} />
-                ))}
-                {trayExtra.map(sku => (
-                  <ProductChip key={sku} sku={sku} title={chipTitle(sku)} note="added by hand" saving={isSaving(sku)} />
+              /* Full names, one per row — this is a setup screen, not an
+                 everyday one, so readability beats compactness and a
+                 truncated name you can't identify is useless
+                 (Graeme, 2026-09-17). */
+              <div className="flex flex-col gap-1.5">
+                {unassigned.map(v => (
+                  <ProductChip key={v.variantId} variantId={v.variantId} sku={v.sku} name={v.name} saving={isSaving(v.variantId)} block />
                 ))}
               </div>
             )}
           </div>
 
           <DragOverlay>
-            {dragSku && <ChipBody sku={dragSku} title={chipTitle(dragSku)} dragging />}
+            {dragVariantId && <ChipBody sku={null} name={nameByVariantId.get(dragVariantId) ?? ""} dragging />}
           </DragOverlay>
         </DndContext>
       )}
@@ -506,11 +480,10 @@ export default function Locations() {
         ) : (
           <ol className="space-y-1">
             {walkOrder.map((r, i) => (
-              <li key={r.sku} className="flex items-center gap-3 text-sm px-3 py-1.5 rounded-lg bg-secondary/20">
+              <li key={`${r.zone}:${r.label}:${r.name}`} className="flex items-center gap-3 text-sm px-3 py-1.5 rounded-lg bg-secondary/20">
                 <span className="w-6 text-right tabular-nums text-muted-foreground">{i + 1}.</span>
                 <span className={cn("px-2 py-0.5 rounded-full text-xs font-semibold tabular-nums", ZONE_META[r.zone].chip)}>{r.label}</span>
-                <span className="font-mono font-semibold">{r.sku}</span>
-                <span className="text-muted-foreground truncate">{chipTitle(r.sku) ?? ""}</span>
+                <span className="font-medium">{r.name}</span>
               </li>
             ))}
           </ol>
@@ -521,13 +494,12 @@ export default function Locations() {
 }
 
 // ── One zone drawn as doors × shelves ───────────────────────────────────────
-function ZoneMap({ zone, layout, binned, chipTitle, isSaving, onRemove }: {
+function ZoneMap({ zone, layout, binned, isSaving, onRemove }: {
   zone: "fridge" | "freezer";
   layout: { doors: number; shelves: number; firstDoor: number };
-  binned: Map<string, SkuLocation[]>;
-  chipTitle: (sku: string) => string | null;
-  isSaving: (sku: string) => boolean;
-  onRemove: (sku: string) => void;
+  binned: Map<string, PlacedVariant[]>;
+  isSaving: (variantId: string) => boolean;
+  onRemove: (variantId: string) => void;
 }) {
   const meta = ZONE_META[zone];
   const Icon = meta.icon;
@@ -556,7 +528,6 @@ function ZoneMap({ zone, layout, binned, chipTitle, isSaving, onRemove }: {
                       shelf={shelf}
                       rows={binned.get(`${zone}:${door}:${shelf}`) ?? []}
                       cellClass={meta.cell}
-                      chipTitle={chipTitle}
                       isSaving={isSaving}
                       onRemove={onRemove}
                     />
@@ -571,13 +542,12 @@ function ZoneMap({ zone, layout, binned, chipTitle, isSaving, onRemove }: {
   );
 }
 
-function ShelfCell({ zone, door, shelf, rows, cellClass, chipTitle, isSaving, onRemove }: {
+function ShelfCell({ zone, door, shelf, rows, cellClass, isSaving, onRemove }: {
   zone: string;
   door: number;
   shelf: string;
-  rows: SkuLocation[];
+  rows: PlacedVariant[];
   cellClass: string;
-  chipTitle: (sku: string) => string | null;
   isSaving: (sku: string) => boolean;
   onRemove: (sku: string) => void;
 }) {
@@ -593,9 +563,9 @@ function ShelfCell({ zone, door, shelf, rows, cellClass, chipTitle, isSaving, on
     >
       <div className="flex items-start gap-1">
         <span className="text-[10px] font-bold text-muted-foreground/70 tabular-nums flex-shrink-0 pt-0.5">{door}{shelf}</span>
-        <div className="flex flex-wrap gap-1 min-w-0">
+        <div className="flex flex-col gap-1 min-w-0 flex-1">
           {rows.map(l => (
-            <ProductChip key={l.sku} sku={l.sku} title={chipTitle(l.sku)} small saving={isSaving(l.sku)} onRemove={() => onRemove(l.sku)} />
+            <ProductChip key={l.variantId} variantId={l.variantId} sku={l.sku} name={l.name} small block saving={isSaving(l.variantId)} onRemove={() => onRemove(l.variantId)} />
           ))}
         </div>
       </div>
@@ -603,11 +573,10 @@ function ShelfCell({ zone, door, shelf, rows, cellClass, chipTitle, isSaving, on
   );
 }
 
-function AmbientTray({ rows, chipTitle, isSaving, onRemove }: {
-  rows: SkuLocation[];
-  chipTitle: (sku: string) => string | null;
-  isSaving: (sku: string) => boolean;
-  onRemove: (sku: string) => void;
+function AmbientTray({ rows, isSaving, onRemove }: {
+  rows: PlacedVariant[];
+  isSaving: (variantId: string) => boolean;
+  onRemove: (variantId: string) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: "ambient" });
   const meta = ZONE_META.ambient;
@@ -626,7 +595,7 @@ function AmbientTray({ rows, chipTitle, isSaving, onRemove }: {
       <div className="flex flex-wrap gap-2 min-h-[2.5rem]">
         {rows.length === 0 && <p className="text-xs text-muted-foreground">Drop products here for ambient storage.</p>}
         {rows.map(l => (
-          <ProductChip key={l.sku} sku={l.sku} title={chipTitle(l.sku)} saving={isSaving(l.sku)} onRemove={() => onRemove(l.sku)} />
+          <ProductChip key={l.variantId} variantId={l.variantId} sku={l.sku} name={l.name} saving={isSaving(l.variantId)} onRemove={() => onRemove(l.variantId)} />
         ))}
       </div>
     </div>
@@ -634,24 +603,30 @@ function AmbientTray({ rows, chipTitle, isSaving, onRemove }: {
 }
 
 // ── Product chip (draggable) ────────────────────────────────────────────────
-function ChipBody({ sku, title, small = false, saving = false, dragging = false, onRemove }: {
-  sku: string; title: string | null; small?: boolean; saving?: boolean; dragging?: boolean; onRemove?: () => void;
+function ChipBody({ sku, name, small = false, saving = false, dragging = false, block = false, onRemove }: {
+  sku: string | null; name: string; small?: boolean; saving?: boolean; dragging?: boolean; block?: boolean; onRemove?: () => void;
 }) {
   return (
     <span className={cn(
-      "inline-flex items-center gap-1.5 rounded-lg border border-border bg-background shadow-sm max-w-full",
+      "inline-flex items-center gap-1.5 rounded-lg border border-border bg-background shadow-sm",
+      block ? "w-full" : "max-w-full",
       small ? "px-1.5 py-1" : "px-2.5 py-1.5",
       dragging && "shadow-xl ring-2 ring-primary rotate-2",
     )}>
-      <span className={cn("font-mono font-bold tabular-nums flex-shrink-0", small ? "text-xs" : "text-sm")}>{sku}</span>
-      {title && <span className={cn("text-muted-foreground truncate", small ? "text-[10px] max-w-[6rem]" : "text-xs max-w-[10rem]")}>{title}</span>}
-      {saving && <Loader2 className="w-3 h-3 animate-spin text-primary flex-shrink-0" />}
+      {sku && (
+        <span className={cn("font-mono font-bold tabular-nums flex-shrink-0 text-muted-foreground/70", small ? "text-[10px]" : "text-xs")}>{sku}</span>
+      )}
+      {/* NOT truncated. A half-shown name can't be identified, which is the
+          whole job of this screen (Graeme, 2026-09-17). Long names wrap and
+          the row gets taller. `title` still gives a hover tooltip. */}
+      <span className={cn("font-medium leading-snug", small ? "text-[11px]" : "text-sm")} title={name}>{name}</span>
+      {saving && <Loader2 className="w-3 h-3 animate-spin text-primary flex-shrink-0 ml-auto" />}
       {onRemove && !saving && (
         <button
-          onClick={(e) => { e.stopPropagation(); if (confirm(`Take ${sku} off the map?`)) onRemove(); }}
+          onClick={(e) => { e.stopPropagation(); if (confirm(`Take ${name} off the map?`)) onRemove(); }}
           onPointerDown={(e) => e.stopPropagation()}
-          className="text-muted-foreground/50 hover:text-destructive flex-shrink-0"
-          aria-label={`Remove ${sku}`}
+          className="text-muted-foreground/50 hover:text-destructive flex-shrink-0 ml-auto"
+          aria-label={`Remove ${name}`}
         >
           <X className="w-3 h-3" />
         </button>
@@ -660,19 +635,19 @@ function ChipBody({ sku, title, small = false, saving = false, dragging = false,
   );
 }
 
-function ProductChip({ sku, title, note, small = false, saving = false, onRemove }: {
-  sku: string; title: string | null; note?: string; small?: boolean; saving?: boolean; onRemove?: () => void;
+function ProductChip({ variantId, sku, name, note, small = false, saving = false, block = false, onRemove }: {
+  variantId: string; sku: string | null; name: string; note?: string; small?: boolean; saving?: boolean; block?: boolean; onRemove?: () => void;
 }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `sku:${sku}` });
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `variant:${variantId}` });
   return (
     <span
       ref={setNodeRef}
       {...attributes}
       {...listeners}
-      className={cn("touch-none cursor-grab active:cursor-grabbing", isDragging && "opacity-30")}
-      title={title ?? sku}
+      className={cn("touch-none cursor-grab active:cursor-grabbing", block && "block", isDragging && "opacity-30")}
+      title={note ? `${name} — ${note}` : name}
     >
-      <ChipBody sku={sku} title={title ?? note ?? null} small={small} saving={saving} onRemove={onRemove} />
+      <ChipBody sku={sku} name={name} small={small} saving={saving} block={block} onRemove={onRemove} />
     </span>
   );
 }

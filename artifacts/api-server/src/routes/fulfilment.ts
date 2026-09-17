@@ -1,5 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { db, skuLocationsTable, skuBarcodesTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable, apcConsignmentsTable, pagePermissionsTable } from "@workspace/db";
+import { db, skuLocationsTable, variantLocationsTable, skuBarcodesTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable, apcConsignmentsTable, pagePermissionsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
 import { postcodeServiceFor } from "../services/apc-postinfo";
@@ -429,8 +429,9 @@ router.get("/orders", requireFulfilmentAccess, async (req: Request, res: Respons
         : await getUnfulfilledOrdersByTag(tag),
     );
 
-    const [allLocations, allBarcodes, recipeMappings] = await Promise.all([
+    const [allLocations, allVariantLocations, allBarcodes, recipeMappings] = await Promise.all([
       db.select().from(skuLocationsTable),
+      db.select().from(variantLocationsTable),
       db.select().from(skuBarcodesTable),
       // recipe_shopify_mappings has no Drizzle schema — raw SQL. Pull
       // every mapping row joined to its recipe colour, then build lookup
@@ -444,6 +445,13 @@ router.get("/orders", requireFulfilmentAccess, async (req: Request, res: Respons
       `),
     ]);
     const locationBySku = new Map(allLocations.map(l => [l.sku, l]));
+    // Bins are keyed by VARIANT (migration 0112) for the same reason the
+    // barcode lookup below is: a TCK SKU is a shelf label shared by many
+    // products, so a SKU-keyed bin can only ever describe one of them. The
+    // SKU map stays as a fallback for a variant the barcode cache hasn't
+    // seen yet — it can only ever preserve the old behaviour, never worsen
+    // it, and it drops out once the cache is complete.
+    const locationByVariantId = new Map(allVariantLocations.map(l => [l.variantId, l]));
     // Barcode/image are matched by variant id ONLY. SKUs here are shelf
     // labels shared by many products ("1" covers buttermilk AND korean
     // strips), so a SKU-keyed lookup can attach the wrong product's barcode
@@ -469,7 +477,10 @@ router.get("/orders", requireFulfilmentAccess, async (req: Request, res: Respons
         const barcodeRow = variantKey ? (barcodeRowByVariantId.get(variantKey) ?? null) : null;
         return {
           ...item,
-          location: item.sku ? (locationBySku.get(item.sku) ?? null) : null,
+          location:
+            (variantKey ? locationByVariantId.get(variantKey) : undefined)
+            ?? (item.sku ? locationBySku.get(item.sku) : undefined)
+            ?? null,
           barcode: barcodeRow?.barcode ?? null,
           imageUrl: barcodeRow?.imageUrl ?? null,
           recipeColor,
@@ -2834,6 +2845,78 @@ router.put("/sku-locations/:sku", requireAdmin, async (req: Request<{ sku: strin
       })
       .returning();
     res.json(row);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Bin locations, keyed by VARIANT (migration 0112).
+//
+// The sku-locations routes above are the previous generation and are no
+// longer read by the app. They stay for one deploy as the rollback path;
+// a later change can delete them along with the table.
+// ---------------------------------------------------------------------------
+
+/** Everything the fridge map needs: one row per Shopify variant, with its
+ *  bin if it has one. Every variant appears — the whole point of the move
+ *  off SKUs is that nothing gets hidden behind a shared shelf label. */
+router.get("/variant-locations", requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const [variants, placed] = await Promise.all([
+      db.select().from(skuBarcodesTable),
+      db.select().from(variantLocationsTable),
+    ]);
+    const byVariant = new Map(placed.map(l => [l.variantId, l]));
+    const rows = variants.map(v => ({
+      variantId: v.variantId,
+      sku: v.sku,
+      productTitle: v.productTitle,
+      variantTitle: v.variantTitle,
+      imageUrl: v.imageUrl,
+      name: [v.productTitle, v.variantTitle].filter(Boolean).join(" · "),
+      location: byVariant.get(v.variantId) ?? null,
+    }));
+    // Alphabetical by the name shown on the chip, so the two Garlic Cheese
+    // products always sit together and the tray is scannable by eye
+    // (Graeme, 2026-09-17).
+    rows.sort((a, b) => a.name.localeCompare(b.name, "en-GB", { numeric: true, sensitivity: "base" }));
+    res.json(rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put(
+  "/variant-locations/:variantId",
+  requireAdmin,
+  validate(UpsertLocationBody),
+  async (req: Request<{ variantId: string }>, res: Response) => {
+    const variantId = decodeURIComponent(req.params.variantId);
+    const body = req.body as z.infer<typeof UpsertLocationBody>;
+    const { zone, door = null, shelf = null } = body;
+    const locationLabel = door != null && shelf ? `${door}${shelf}` : body.locationLabel!;
+    try {
+      const [row] = await db
+        .insert(variantLocationsTable)
+        .values({ variantId, zone, locationLabel, door, shelf })
+        .onConflictDoUpdate({
+          target: variantLocationsTable.variantId,
+          set: { zone, locationLabel, door, shelf, updatedAt: new Date() },
+        })
+        .returning();
+      res.json(row);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
+
+router.delete("/variant-locations/:variantId", requireAdmin, async (req: Request<{ variantId: string }>, res: Response) => {
+  const variantId = decodeURIComponent(req.params.variantId);
+  try {
+    await db.delete(variantLocationsTable).where(eq(variantLocationsTable.variantId, variantId));
+    res.json({ ok: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
