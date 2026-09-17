@@ -393,6 +393,7 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
                   <option value="ice_packs">Ice Packs (today's counts)</option>
                   <option value="first_pack_batch_numbers">First Pack Batch Numbers</option>
                   <option value="last_pack_batch_numbers">Last Pack Batch Numbers</option>
+                  <option value="outstanding_dispatch_orders">Outstanding Orders (hides itself when none)</option>
                   <option value="fridge_freezer_temps_opening">Fridge/Freezer Temps (Opening)</option>
                   <option value="fridge_freezer_temps_closing">Fridge/Freezer Temps (Closing)</option>
                   <option value="closing_fridge_check">Closing Fridge Check (freeze out-of-life packs)</option>

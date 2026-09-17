@@ -27,6 +27,7 @@ import { loadMinShelfDaysRules, minShelfDaysFor } from "../lib/min-shelf-days";
 import { productionDateFromJulianBatch } from "../lib/julian-batch";
 import { adjustFridgeStock, addRecipeFreezerStock } from "../lib/fridge-stock";
 import { resolveRecipeIngredients } from "../lib/ingredient-resolver";
+import { getOutstandingDispatch, OUTSTANDING_DISPATCH_TYPE, showOutstandingCheck } from "../lib/outstanding-dispatch";
 
 type ChecklistCompletion = typeof checklistCompletionsTable.$inferSelect;
 
@@ -258,7 +259,26 @@ router.get("/station/:stationType/plan/:planId", async (req: Request<{ stationTy
   // Thursday check never showed on Thursday, and Sunday checks could never
   // show at all because no plan is ever dated Sunday. A check scheduled for
   // a day is due on that real day, whichever plan the station is anchored to.
-  const filtered = templates.filter((t: { schedule: string; scheduleDays: string | null }) => templateMatchesDay(t, londonDateString()));
+  let filtered = templates.filter((t: { schedule: string; scheduleDays: string | null }) => templateMatchesDay(t, londonDateString()));
+
+  // A check that is usually a no-op teaches people to tick without reading,
+  // which is the last thing you want on a closing list. So the outstanding-
+  // orders check only exists on days when orders are actually outstanding
+  // (Graeme, 2026-09-17). Hidden SERVER-side on purpose: dropping it in the
+  // client would leave the done/total count stuck one short forever.
+  if (filtered.some((t: { dynamicDataType: string | null }) => t.dynamicDataType === OUTSTANDING_DISPATCH_TYPE)) {
+    let outstanding: number | null = null;
+    try {
+      outstanding = (await getOutstandingDispatch()).count;
+    } catch (err) {
+      // null → showOutstandingCheck keeps it visible. Hiding on an error
+      // would quietly tell the team there is nothing left to send.
+      console.warn("[checklists] outstanding dispatch lookup failed, showing the check:", err);
+    }
+    if (!showOutstandingCheck(outstanding)) {
+      filtered = filtered.filter((t: { dynamicDataType: string | null }) => t.dynamicDataType !== OUTSTANDING_DISPATCH_TYPE);
+    }
+  }
 
   // Get completions for this plan (use canonical station so both views see same completions)
   const completions = await db.select().from(checklistCompletionsTable)
@@ -779,6 +799,11 @@ router.delete("/oneoff/:id", async (req: Request, res: Response) => {
 router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) => {
   const planId = Number(req.params.planId);
   const type = req.params.type;
+
+  if (type === OUTSTANDING_DISPATCH_TYPE) {
+    res.json(await getOutstandingDispatch());
+    return;
+  }
 
   if (type === "temperature_records") {
     const rows = await db.select().from(temperatureRecordsTable)

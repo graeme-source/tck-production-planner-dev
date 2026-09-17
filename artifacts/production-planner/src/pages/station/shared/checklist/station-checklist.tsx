@@ -1739,6 +1739,44 @@ function DynamicDataDisplay({ type, data, loading, planId }: { type: string; dat
     );
   }
 
+  if (type === "outstanding_dispatch_orders") {
+    const d = data as { tag?: string; count?: number; orders?: Array<{ id: number; name: string; customer: string | null; itemCount: number }> } | null;
+    const orders = d?.orders ?? [];
+    // The server only serves this item on days when something IS outstanding,
+    // so an empty list here means the last one went out while the checklist
+    // was open — say so plainly rather than showing an empty box.
+    if (orders.length === 0) {
+      return (
+        <div className="rounded-xl border-2 border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 px-4 py-3">
+          <p className="text-base font-semibold text-emerald-800 dark:text-emerald-200">
+            All clear — everything for {d?.tag ?? "tomorrow"} has gone out.
+          </p>
+        </div>
+      );
+    }
+    return (
+      <div className="rounded-xl border-2 border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 p-3 space-y-2">
+        <p className="text-base font-bold text-amber-900 dark:text-amber-100">
+          {orders.length} order{orders.length === 1 ? "" : "s"} still to go out for {d?.tag ?? "tomorrow"}
+        </p>
+        <ul className="space-y-1">
+          {orders.map(o => (
+            <li key={o.id} className="flex items-center gap-2 text-sm bg-background/70 rounded-lg px-3 py-2">
+              <span className="font-mono font-bold">{o.name}</span>
+              {o.customer && <span className="text-muted-foreground truncate">{o.customer}</span>}
+              <span className="ml-auto text-muted-foreground tabular-nums flex-shrink-0">
+                {o.itemCount} item{o.itemCount === 1 ? "" : "s"}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <p className="text-xs text-amber-800/80 dark:text-amber-200/80">
+          Don't close down until these are packed, or the reason is written in the notes.
+        </p>
+      </div>
+    );
+  }
+
   if (type === "first_pack_batch_numbers" || type === "last_pack_batch_numbers") {
     if (loading) {
       return (
