@@ -13,6 +13,7 @@ import { Link } from "wouter";
 import { Loader2, HeartPulse, UserCog, ClipboardList, ChevronRight, Lock } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useIsRtwManager } from "@/hooks/use-rtw-manager";
+import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
 
 const CARDS = [
   {
@@ -38,9 +39,16 @@ const CARDS = [
 export default function PeopleRecordsPage() {
   const { state } = useAuth();
   const isRtwManager = useIsRtwManager();
-  // No PIN prompt HERE on purpose: this page shows nothing but three links,
-  // and each destination asks for the PIN itself on entry — prompting on the
-  // signpost too would mean typing it twice in a row.
+  // The PIN is asked for HERE, at the front door of the people area: the
+  // scenario is picking up Lorna's logged-in tablet and tapping People, and
+  // the signpost itself already names who has records on file. `fresh`, so
+  // it asks on every entry however recently the PIN was typed elsewhere
+  // (Graeme, 2026-09-17). The three destinations keep their own gates on the
+  // 5-minute unlock window, so walking through from here is one PIN, not two,
+  // while deep-linking straight to one of them still asks.
+  // Waits for the access flag so nobody who is about to be turned away is
+  // asked for a PIN first.
+  useSensitivePinGate({ enabled: isRtwManager, includeAdmins: true, fresh: true, entryKey: "people-records" });
 
   if (state.status !== "authenticated") {
     return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;

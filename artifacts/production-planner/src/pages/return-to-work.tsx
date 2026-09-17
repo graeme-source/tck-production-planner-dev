@@ -8,13 +8,14 @@
  * for RTW managers — from the sick-leave numbers on the Employee Records
  * report (?user=<id> works on that colleague's forms).
  */
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useSearch } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, HeartPulse, CheckCircle2, ChevronLeft, FileText, Lock, LockOpen, Paperclip, PenLine, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
+import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
 import { rtwFieldsLocked, rtwCanOfferAmend } from "@/lib/rtw-edit-rules";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -349,15 +350,12 @@ function FormEditor({ form, isRtwManager, onDone, onBack }: { form: RtwForm; isR
 
 export default function ReturnToWorkPage() {
   const search = useSearch();
-  const { state: authState, requireSensitivePin } = useAuth();
+  const { state: authState } = useAuth();
   // Health data on shared and personally-lent iPads: ask for the PIN on
-  // EVERY entry, admins included — same posture as the Employee Hub.
-  useEffect(() => {
-    if (authState.status === "authenticated") {
-      requireSensitivePin({ includeAdmins: true, fresh: true });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authState.status]);
+  // entry, admins included — same posture as the Employee Hub. The People
+  // page asks on the way in, so the unlock window covers arriving from
+  // there instead of demanding the same PIN twice in a row.
+  useSensitivePinGate({ includeAdmins: true, entryKey: "return-to-work" });
   const params = new URLSearchParams(search);
   const forUser = params.get("user") != null ? Number(params.get("user")) : null;
   const queryClient = useQueryClient();

@@ -11,10 +11,11 @@
  * email to the accountant. No DB writes — the source of truth is the
  * PDF in their email trail.
  */
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import { useAuth } from "@/contexts/auth-context";
+import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
 import { PageHeader } from "@/components/page-header";
 import { EmployeeReviewsSection } from "@/components/employee-reviews";
 import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt, Camera, Upload, X, FileText, ScrollText, ChevronRight, ListTodo, ClipboardList, FileSignature } from "lucide-react";
@@ -1180,23 +1181,17 @@ export default function EmployeeHub() {
     return raw != null && (HUB_SECTIONS as string[]).includes(raw) ? (raw as HubSection) : "todos";
   })();
   const [active, setActive] = useState<HubSection>(initialSection);
-  const { state, requireSensitivePin } = useAuth();
+  const { state } = useAuth();
   const userId = state.status === "authenticated" ? state.user.id : null;
 
-  // PIN re-entry on EVERY entry to the hub — contracts, reviews and recorded
+  // PIN re-entry on entry to the hub — contracts, reviews and recorded
   // feedback live here, and the scenario is a logged-in iPad left on a
   // counter. Admins are NOT exempt (an admin's iPad is the one holding
-  // everyone's records), and `fresh` ignores the recent-unlock window:
-  // leaving and coming straight back still asks (Graeme, 2026-09-07).
-  // Once per mount — section moves inside the hub never re-ask, and asking
-  // again after each unlock would loop the prompt forever.
-  const pinAskedRef = useRef(false);
-  useEffect(() => {
-    if (state.status === "authenticated" && !pinAskedRef.current) {
-      pinAskedRef.current = true;
-      requireSensitivePin({ includeAdmins: true, fresh: true });
-    }
-  }, [state.status, requireSensitivePin]);
+  // everyone's records). Once per entry: section moves inside the hub never
+  // re-ask, and asking again after each unlock would loop the prompt
+  // forever (Graeme, 2026-09-07) — the hook now enforces that for every
+  // people-data page rather than each one remembering to.
+  useSensitivePinGate({ includeAdmins: true, entryKey: "employee-hub" });
   // Managers write records for anyone; everyone else sees only their own.
   const isManager = state.status === "authenticated"
     && (state.user.role === "admin" || state.user.role === "manager");

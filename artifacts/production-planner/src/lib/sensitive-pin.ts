@@ -29,3 +29,30 @@ export function shouldPromptForSensitivePin(input: {
   if (input.fresh) return true;
   return input.msSinceUnlock >= input.ttlMs;
 }
+
+/**
+ * Has this page already demanded the PIN for the visit the user is on?
+ *
+ * The companion rule to the one above, and the reason it exists: the
+ * `requireSensitivePin` callback changes identity whenever the lock state
+ * changes, so a page effect that depends on it re-runs the instant the PIN
+ * is accepted. Paired with `fresh` — which always prompts — that re-locks
+ * the screen immediately and the page can never be opened at all. Graeme
+ * hit that on People -> Employee Records and could only escape by signing
+ * out (2026-09-17).
+ *
+ * `demandedFor` is what the page last asked for, `entryKey` is what it
+ * wants now. Equal means "already asked on this visit, don't ask again";
+ * different means a genuinely new entry (a new mount, or a move to another
+ * sensitive tab) and the PIN is demanded afresh.
+ */
+export function shouldDemandPinOnEntry(input: {
+  authenticated: boolean;
+  enabled: boolean;
+  demandedFor: string | null;
+  entryKey: string;
+}): boolean {
+  if (!input.authenticated) return false;
+  if (!input.enabled) return false;
+  return input.demandedFor !== input.entryKey;
+}

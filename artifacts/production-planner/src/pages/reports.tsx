@@ -19,6 +19,7 @@ import {
 import { cn } from "@/lib/utils";
 import { IssueAttachments } from "@/components/issue-attachments";
 import { useAuth } from "@/contexts/auth-context";
+import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { FreshnessBadge } from "@/components/govee-freshness";
 import { IncidentDiaryTab } from "@/components/incident-diary";
@@ -312,21 +313,21 @@ const ADMIN_ONLY_TABS: TabId[] = [];
 export default function Reports() {
   const search = useSearch();
   const [, navigate] = useLocation();
-  const { state, requireSensitivePin } = useAuth();
+  const { state } = useAuth();
   const userRole = state.status === "authenticated" ? state.user.role : "viewer";
   const isManagerOrAdmin = userRole === "admin" || userRole === "manager";
 
   // Require PIN re-entry on entering Analytics (5-min unlock window).
-  // The Employee Records tab is people-data: it prompts EVERYONE on every
-  // entry, admins included — same posture as the Employee Hub and the
-  // return-to-work forms (Graeme, 2026-09-16). Charter note: this extends
-  // the page's EXISTING pin hook rather than adding a feature to this file.
+  // The Employee Records tab is people-data, so it prompts EVERYONE, admins
+  // included (Graeme, 2026-09-16). Both go through useSensitivePinGate: the
+  // hand-rolled effect that used to live here listed requireSensitivePin as
+  // a dependency, so accepting the PIN re-ran it and `fresh` re-locked the
+  // tab on the spot — Employee Records could not be opened at all
+  // (Graeme, 2026-09-17). The People page asks on entry, so arriving from
+  // there is covered by the unlock window rather than a second prompt.
   const onEmployeesTab = new URLSearchParams(search).get("tab") === "employees";
-  useEffect(() => {
-    if (state.status !== "authenticated") return;
-    if (onEmployeesTab) requireSensitivePin({ includeAdmins: true, fresh: true });
-    else if (isManagerOrAdmin) requireSensitivePin();
-  }, [state.status, isManagerOrAdmin, onEmployeesTab, requireSensitivePin]);
+  useSensitivePinGate({ enabled: onEmployeesTab, includeAdmins: true, entryKey: "employees" });
+  useSensitivePinGate({ enabled: !onEmployeesTab && isManagerOrAdmin, entryKey: "analytics" });
 
   // Viewers only see the Issue Log tab; managers see everything except admin-only tabs; admins see everything.
   const isAdmin = userRole === "admin";
