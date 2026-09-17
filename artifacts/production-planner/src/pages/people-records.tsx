@@ -29,10 +29,13 @@ const CARDS = [
     blurb: "Sick-leave forms and their documents — fit notes, appointment letters. You and Lorna only.",
   },
   {
-    href: "/hub",
+    // ?section=reviews, NOT bare /hub: the hub opens on My To-dos by default,
+    // so this card used to land on your own to-do list and the "Whose record?"
+    // people list was never reached (Graeme, 2026-09-17).
+    href: "/hub?section=reviews",
     icon: ClipboardList,
     title: "Reviews & Record",
-    blurb: "Probation meetings, reviews and the running record — in the Employee Hub.",
+    blurb: "Pick a person and see their whole record — probation meetings, reviews, 1:1s and notes.",
   },
 ];
 
