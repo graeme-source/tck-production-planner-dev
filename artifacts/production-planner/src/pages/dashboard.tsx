@@ -14,6 +14,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { compareItemsForDisplay } from "@/pages/station/shared/constants";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
+import { planTargetForStation, pinsPlan } from "@/lib/station-plan-target";
 import { FreshnessBadge } from "@/components/govee-freshness";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
 
@@ -660,9 +661,11 @@ export default function Dashboard() {
   });
   const prepPlanId = prepTarget?.planId ?? null;
 
-  // Dough card — dough (and sheeting) also work ahead of production, so
-  // resolve the plan whose dough is due the same way the dough stations do
-  // (/next-active walking the dough_date column).
+  // Dough card — dough MIXING works ahead of production, so resolve the plan
+  // whose dough is due the same way the dough station does (/next-active
+  // walking the dough_date column). NOT sheeting: that happens on the
+  // production day and follows today's plan like every other station. Only
+  // dough prep and main prep look forward.
   const { data: doughTarget } = useQuery({
     queryKey: ["dashboard-next-dough", todayStr],
     refetchInterval: 60000,
@@ -687,10 +690,15 @@ export default function Dashboard() {
   // Station links land straight on today's plan's station screens — the
   // dashboard IS the station picker now, no production-plan detour.
   const todayPlanId = todayPlans[0]?.id ?? null;
-  const stationHref = (key: string) =>
-    todayPlanId ? `/plans/${todayPlanId}/station/${key}?from=dashboard` : "/plans";
-  const doughHref = (key: string) =>
-    doughPlanId ? `/plans/${doughPlanId}/station/${key}?direct=1&from=dashboard` : "/plans";
+  // ONE rule for which plan a station card opens — lib/station-plan-target.ts,
+  // with tests. Cards must not each decide for themselves: sheeting borrowing
+  // the dough lookup is exactly how it ended up opening tomorrow's sheet.
+  const stationHref = (key: string) => {
+    const target = planTargetForStation(key);
+    const planId = target === "today" ? todayPlanId : target === "next-dough" ? doughPlanId : prepPlanId;
+    if (!planId) return "/plans";
+    return `/plans/${planId}/station/${key}?${pinsPlan(key) ? "direct=1&" : ""}from=dashboard`;
+  };
   const { data: prepBatches } = useQuery({
     queryKey: ["dashboard-prep-batches", prepPlanId],
     enabled: prepPlanId != null,
@@ -842,18 +850,24 @@ export default function Dashboard() {
           icon={Layers}
           color="text-amber-600"
           bg="bg-amber-500/10"
-          href={doughHref("dough_prep")}
+          href={stationHref("dough_prep")}
         />
         <StatCard
           title="Sheeting"
           value="→"
-          subtitle={doughTarget?.planDate
-            ? `dough for ${format(new Date(doughTarget.planDate + "T00:00:00"), "EEE d MMM")}`
-            : "no upcoming plan"}
+          // Sheeting happens ON the production day — only dough prep and main
+          // prep work a day ahead. This card used to borrow the dough card's
+          // next-active lookup and opened TOMORROW's sheet, with direct=1
+          // stopping the station from correcting itself (Graeme, 2026-09-17).
+          // Today's plan, no direct flag: exactly what the production-plan
+          // page's own Enter Station button has always done.
+          subtitle={todayPlanId
+            ? `today · ${format(new Date(todayPlans[0].planDate), "EEE d MMM")}`
+            : "no plan today"}
           icon={Layers}
           color="text-amber-500"
           bg="bg-amber-500/10"
-          href={doughHref("dough_sheeting")}
+          href={stationHref("dough_sheeting")}
         />
         <StatCard
           title="Prepping For"
@@ -870,7 +884,7 @@ export default function Dashboard() {
           // plan's own plan_date and hops one prep day further ahead
           // (tomorrow's prep), which is only wanted when arriving from a
           // production plan's page, not from this date-based card.
-          href={prepPlanId ? `/plans/${prepPlanId}/station/prep?direct=1&from=dashboard` : "/plans"}
+          href={stationHref("prep")}
           progress={prepProgress && prepProgress.totalTins > 0 ? {
             done: prepProgress.completedTins,
             total: prepProgress.totalTins,
