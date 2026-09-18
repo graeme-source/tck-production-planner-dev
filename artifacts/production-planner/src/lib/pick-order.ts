@@ -27,6 +27,9 @@ export interface PickBin {
   zone: string;
   door?: number | null;
   shelf?: string | null;
+  /** How the bin reads on screen ("3B"). Display only — the walk is decided
+   *  by zone/door/shelf, never by this string. */
+  locationLabel?: string | null;
 }
 
 export type ZoneOrder = readonly string[];
