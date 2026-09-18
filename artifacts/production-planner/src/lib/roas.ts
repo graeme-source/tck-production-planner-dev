@@ -89,6 +89,134 @@ export function yesterdayLondon(now: number | Date): DayString {
   return addDays(londonDayString(now), -1);
 }
 
+// ── Month arithmetic on date strings ───────────────────────────────────────
+// Done on the YYYY-MM-DD text rather than a Date so it can't be nudged by a
+// clock change, and so "six months back from the 31st" lands on a real day.
+
+/** First day of the month a date falls in. */
+export function startOfMonth(date: DayString): DayString {
+  return `${date.slice(0, 7)}-01`;
+}
+
+/** Last day of the month a date falls in. */
+export function endOfMonth(date: DayString): DayString {
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(5, 7));
+  // Day 0 of the next month is the last day of this one.
+  return new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+}
+
+/** Add (or subtract) whole months, clamping to the last day when the target
+ *  month is shorter — 31 Aug minus six months is 28/29 Feb, not 3 March. */
+export function addMonths(date: DayString, months: number): DayString {
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(5, 7));
+  const day = Number(date.slice(8, 10));
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    throw new Error(`Not a date: ${date}`);
+  }
+  const target = new Date(Date.UTC(year, month - 1 + months, 1));
+  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  target.setUTCDate(Math.min(day, lastDay));
+  return target.toISOString().slice(0, 10);
+}
+
+// ── The period selector ────────────────────────────────────────────────────
+
+export type PeriodPresetId =
+  | "yesterday"
+  | "today"
+  | "last7"
+  | "monthToDate"
+  | "lastMonth"
+  | "last6Months"
+  | "last12Months";
+
+export interface PeriodPreset {
+  id: PeriodPresetId;
+  label: string;
+}
+
+/**
+ * The selector's options, in the order they appear.
+ *
+ * Yesterday and Today come first — Graeme calls them the precursor to the
+ * longer ranges, and Yesterday is the default because it is the most recent
+ * period that is actually finished.
+ */
+export const PERIOD_PRESETS: readonly PeriodPreset[] = [
+  { id: "yesterday", label: "Yesterday" },
+  { id: "today", label: "Today" },
+  { id: "last7", label: "Last 7 days" },
+  { id: "monthToDate", label: "Month to date" },
+  { id: "lastMonth", label: "Last month" },
+  { id: "last6Months", label: "Last 6 months" },
+  { id: "last12Months", label: "Last 12 months" },
+] as const;
+
+export const DEFAULT_PERIOD: PeriodPresetId = "yesterday";
+
+export interface PeriodWindow extends RoasWindow {
+  /** The preset this came from, or "custom" for hand-typed dates. */
+  id: PeriodPresetId | "custom";
+  label: string;
+  /** True only for Today — every other period is finished days. */
+  includesToday: boolean;
+  /** True when the period contains no days at all (see monthToDate on the
+   *  1st of a month: the month has not had a complete day yet). */
+  empty: boolean;
+}
+
+function windowFrom(id: PeriodWindow["id"], label: string, from: DayString, to: DayString, includesToday: boolean): PeriodWindow {
+  const days = daysBetween(from, to);
+  return { id, label, from, to, days, dayCount: days.length, includesToday, empty: days.length === 0 };
+}
+
+/**
+ * The days a selected period covers, in London.
+ *
+ * Every period except Today is made of FULL days ending yesterday. Today is
+ * still running — its orders are still arriving and Meta has reported only
+ * part of its spend — so a period that quietly included it would report a
+ * number that says more about the time of day than about the business.
+ * Today is offered as its own option, clearly, rather than smuggled into
+ * the others.
+ */
+export function periodWindow(id: PeriodPresetId, now: number | Date): PeriodWindow {
+  const todayStr = londonDayString(now);
+  const yesterday = addDays(todayStr, -1);
+  const label = PERIOD_PRESETS.find((p) => p.id === id)?.label ?? id;
+
+  switch (id) {
+    case "today":
+      return windowFrom(id, label, todayStr, todayStr, true);
+    case "yesterday":
+      return windowFrom(id, label, yesterday, yesterday, false);
+    case "last7":
+      return windowFrom(id, label, addDays(yesterday, -6), yesterday, false);
+    case "monthToDate":
+      // On the 1st, this month has not had a complete day yet, so `from`
+      // lands after `to` and the window is honestly empty.
+      return windowFrom(id, label, startOfMonth(todayStr), yesterday, false);
+    case "lastMonth": {
+      const inLastMonth = addMonths(startOfMonth(todayStr), -1);
+      return windowFrom(id, label, startOfMonth(inLastMonth), endOfMonth(inLastMonth), false);
+    }
+    case "last6Months":
+      return windowFrom(id, label, addMonths(yesterday, -6), yesterday, false);
+    case "last12Months":
+      return windowFrom(id, label, addMonths(yesterday, -12), yesterday, false);
+  }
+}
+
+/** A hand-typed range from the two date inputs. Taken literally — the
+ *  founder picked these days on purpose — but still told whether it reaches
+ *  into today, so the tiles can say the period is not finished. */
+export function customWindow(from: DayString, to: DayString, now: number | Date): PeriodWindow {
+  const todayStr = londonDayString(now);
+  return windowFrom("custom", `${from} to ${to}`, from, to, from <= todayStr && to >= todayStr);
+}
+
 export type RoasResult =
   | {
       available: true;
@@ -151,11 +279,25 @@ export function windowRoas(input: {
 }): RoasResult {
   const { window: win, revenue, spendDays } = input;
 
+  // A period with no days at all — "month to date" on the 1st, or a range
+  // typed backwards. There is nothing to divide, and saying so is kinder
+  // than a 0% that looks like a measurement.
+  if (win.days.length === 0) {
+    return { available: false, reason: "No complete days in this period yet" };
+  }
+
   const byDate = new Map<DayString, number>();
   for (const row of spendDays) {
     const amount = finiteOrNull(row.amount);
     if (amount === null) continue;
     if (!byDate.has(row.date)) byDate.set(row.date, amount);
+  }
+
+  // A one-day period is exactly the daily sum, and says so in the daily
+  // wording — "waiting on 1 day of spend" would be a clumsy way to tell
+  // Graeme that yesterday's figure hasn't landed.
+  if (win.days.length === 1) {
+    return dayRoas(revenue, byDate.get(win.days[0]) ?? null);
   }
 
   const missing = win.days.filter((d) => !byDate.has(d));
