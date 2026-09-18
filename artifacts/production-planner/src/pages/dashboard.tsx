@@ -468,7 +468,9 @@ export default function Dashboard() {
   useEffect(() => {
     if (isFounder && !sessionStorage.getItem("founderFocusAutoOpened")) {
       sessionStorage.setItem("founderFocusAutoOpened", "1");
-      setLocation("/founder/focus");
+      // Numbers, not the Schedule — the same landing rule as the /founder
+      // redirect and the sidebar (2026-09-18).
+      setLocation("/founder/numbers");
     }
   }, [isFounder, setLocation]);
   const { data: plans } = useListProductionPlans();

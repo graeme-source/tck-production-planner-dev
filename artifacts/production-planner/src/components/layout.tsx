@@ -637,7 +637,10 @@ export function Layout({ children }: { children: ReactNode }) {
   // surface; the /founder pages also guard themselves server-side. This
   // replaces the old "Founder Focus" button on the dashboard header.
   if (user?.email === "graeme@thecalzonekitchen.co.uk") {
-    navForUser = [{ name: "The Business", href: "/founder/focus", icon: Briefcase }, ...navForUser];
+    // Lands on Numbers — Graeme reviews the numbers first and navigates to
+    // the Schedule when he wants it (2026-09-18). Keep in step with the
+    // /founder redirect in App.tsx and the dashboard auto-open.
+    navForUser = [{ name: "The Business", href: "/founder/numbers", icon: Briefcase }, ...navForUser];
   }
   const productForUser = accountantOnly ? [] : visibleProductItems;
   const inventoryForUser = accountantOnly ? [] : visibleInventoryItems;
