@@ -12,8 +12,8 @@ import { Calendar, LineChart, Calculator, Megaphone, FileSignature } from "lucid
 import { cn } from "@/lib/utils";
 
 const TABS = [
-  { href: "/founder/focus", label: "Schedule", icon: Calendar },
   { href: "/founder/numbers", label: "Numbers", icon: LineChart },
+  { href: "/founder/focus", label: "Schedule", icon: Calendar },
   { href: "/founder/pnl", label: "P&L", icon: Calculator },
   { href: "/founder/sales", label: "Sales & Marketing", icon: Megaphone },
   { href: "/founder/contracts", label: "Contracts", icon: FileSignature },

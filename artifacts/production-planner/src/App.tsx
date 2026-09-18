@@ -202,7 +202,10 @@ function Router() {
               {/* Founder area — a site within a site. The schedule is home:
                   /founder always lands there, and FounderNav (shared tab
                   strip on every founder page) covers the side-trips. */}
-              <Route path="/founder">{() => <Redirect to="/founder/focus" />}</Route>
+              {/* Numbers first: Graeme wants the business's numbers in front of
+                  him the moment he lands, and navigates to the Schedule when he
+                  wants it, not the other way round (2026-09-18). */}
+              <Route path="/founder">{() => <Redirect to="/founder/numbers" />}</Route>
               <Route path="/founder/numbers" component={FounderView} />
               <Route path="/founder/pnl" component={FounderPnL} />
               <Route path="/founder/focus" component={FounderFocus} />
