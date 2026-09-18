@@ -100,12 +100,12 @@ export default function FounderFocus() {
           type="button"
           onClick={() => setPlanningOpen(o => !o)}
           aria-expanded={planningOpen}
-          className="w-full flex items-center gap-2 px-4 py-3 rounded-xl text-base text-muted-foreground hover:bg-secondary/40 transition-colors"
+          className="w-full max-w-lg flex items-center gap-2 px-4 py-3 rounded-xl text-base text-muted-foreground hover:bg-secondary/40 transition-colors"
         >
-          <Settings2 className="w-5 h-5" />
-          Planning tools
-          <span className="text-sm">— pillars, goals, time blocks, template, parking lot</span>
-          <ChevronDown className={cn("w-5 h-5 ml-auto transition-transform", planningOpen && "rotate-180")} />
+          <Settings2 className="w-5 h-5 flex-shrink-0" />
+          <span className="whitespace-nowrap">Planning tools</span>
+          <span className="text-sm truncate min-w-0">— pillars, goals, time blocks</span>
+          <ChevronDown className={cn("w-5 h-5 ml-auto flex-shrink-0 transition-transform", planningOpen && "rotate-180")} />
         </button>
         {/* Mounted only when opened: the overview and iCloud calls behind
             these tools shouldn't run for a section nobody is looking at. */}

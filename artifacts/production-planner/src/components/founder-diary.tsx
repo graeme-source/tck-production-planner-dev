@@ -139,21 +139,25 @@ function DiaryRow({ event, now, isToday }: { event: CalEvent; now: number; isTod
           )}
         </p>
       </div>
+      {/* Narrow (iPad portrait, phones): the button takes its own line under
+          the title rather than squeezing it into three. */}
       {event.joinUrl && (
-        <a
-          href={event.joinUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className={cn(
-            "inline-flex items-center gap-2 rounded-xl px-5 py-3 text-base font-semibold",
-            event.joinIsCall
-              ? "bg-primary text-primary-foreground hover:bg-primary/90"
-              : "border border-border text-muted-foreground hover:bg-secondary/50",
-          )}
-        >
-          {event.joinIsCall ? <Video className="w-5 h-5" /> : <ExternalLink className="w-5 h-5" />}
-          {event.joinIsCall ? "Join" : "Open link"}
-        </a>
+        <div className="basis-full pl-[5.5rem] lg:basis-auto lg:pl-0 lg:ml-auto lg:self-center">
+          <a
+            href={event.joinUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(
+              "inline-flex items-center gap-2 rounded-xl px-5 py-3 text-base font-semibold",
+              event.joinIsCall
+                ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                : "border border-border text-muted-foreground hover:bg-secondary/50",
+            )}
+          >
+            {event.joinIsCall ? <Video className="w-5 h-5" /> : <ExternalLink className="w-5 h-5" />}
+            {event.joinIsCall ? "Join" : "Open link"}
+          </a>
+        </div>
       )}
     </div>
   );
