@@ -30,9 +30,13 @@ import {
   Percent,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { dayRoas, rollingWindow, windowRoas, yesterdayLondon, type RoasResult } from "@/lib/roas";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
+
+/** The rolling ROAS window: seven full London days ending yesterday. */
+const ROAS_WINDOW_DAYS = 7;
 
 const CUSTOMER_TYPES = [
   { tag: "new-customer", label: "New Customers", icon: UserPlus, color: "text-blue-500", bg: "bg-blue-500/10" },
@@ -113,6 +117,30 @@ async function fetchAdSpend(date: string) {
     amount: number | null;
     source: "manual" | "meta" | null;
     syncedAt: string | null;
+  }>;
+}
+
+/** Every recorded day of ad spend across a span. Days with nothing recorded
+ *  are ABSENT from `days` — not returned as zero — so the rolling ROAS can
+ *  tell "we spent nothing" from "nobody has told us yet". */
+async function fetchAdSpendRange(from: string, to: string) {
+  const res = await fetch(
+    `${BASE}/api/founder-focus/ad-spend/range?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    { credentials: "include" },
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{
+    from: string;
+    to: string;
+    days: Array<{
+      date: string;
+      amount: number | null;
+      source: "manual" | "meta" | null;
+      syncedAt: string | null;
+    }>;
   }>;
 }
 
@@ -197,6 +225,56 @@ async function fetchOrdersByType(from: string, to: string) {
       }>;
     }>;
   }>;
+}
+
+/**
+ * One ROAS figure, in the same shape as the other tiles in the block.
+ *
+ * The whole point of this component is the unavailable branch. It shows an
+ * em-dash and the reason, never a 0% — "the ads made nothing" and "nobody
+ * has told us what we spent" look identical as a number and could not be
+ * further apart as a decision.
+ */
+function RoasTile({
+  title,
+  result,
+  loading,
+  windowLabel,
+}: {
+  title: string;
+  result: RoasResult;
+  loading?: boolean;
+  /** e.g. "11 Sep – 17 Sep", shown so the window is never in doubt. */
+  windowLabel?: string;
+}) {
+  return (
+    <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
+      <div className="p-3 rounded-xl bg-pink-500/10 text-pink-500 shrink-0">
+        <Percent className="w-5 h-5" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-muted-foreground truncate">{title}</p>
+        {loading ? (
+          <Skeleton className="h-7 w-16 mt-1" />
+        ) : result.available ? (
+          <>
+            <p className="text-2xl font-display font-bold">{result.percent}%</p>
+            <p className="text-xs text-muted-foreground mt-0.5 truncate">
+              {formatGBP(result.revenue)} ÷ {formatGBP(result.spend)} spend
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-2xl font-display font-bold text-muted-foreground">—</p>
+            <p className="text-xs text-muted-foreground mt-0.5 truncate" title={result.reason}>
+              {result.reason}
+            </p>
+          </>
+        )}
+        {windowLabel && <p className="text-xs text-muted-foreground/70 mt-0.5 truncate">{windowLabel}</p>}
+      </div>
+    </div>
+  );
 }
 
 function KpiCard({
@@ -608,7 +686,11 @@ function FounderDashboard() {
   const founderRefresh = useRefreshSpin();
   const today = new Date();
   const todayStr = format(today, "yyyy-MM-dd");
-  const yesterdayStr = format(subDays(today, 1), "yyyy-MM-dd");
+  // Yesterday and the rolling window are London days, not the tablet's own
+  // timezone — the kitchen runs on wall-clock days, and an iPad that has
+  // wandered onto another zone must not shift which day these tiles mean.
+  const yesterdayStr = yesterdayLondon(today);
+  const roasWindow = useMemo(() => rollingWindow(today, ROAS_WINDOW_DAYS), [yesterdayStr]);
   const monthStart = format(startOfMonth(today), "yyyy-MM-dd");
 
   // ── Fixed date range: always this month → today ──────────────────────────
@@ -711,11 +793,42 @@ function FounderDashboard() {
     queryFn: () => fetchAdSpend(yesterdayStr),
     staleTime: 5 * 60 * 1000,
   });
+  // ── The rolling seven-day ROAS ────────────────────────────────────────────
+  // Two reads over the SAME window: the new-customer revenue (the same
+  // orders-by-type source the daily tiles use, just over seven days) and
+  // every recorded day of spend. One day of orders is noisy — a single big
+  // order swings it — so the week is the figure that actually tells Graeme
+  // whether the advertising is paying.
+  const {
+    data: windowOrderTypes,
+    isLoading: windowOrdersLoading,
+    isFetching: windowOrdersFetching,
+    refetch: refetchWindowOrders,
+  } = useQuery({
+    queryKey: ["founder-orders-by-type-roas-window", roasWindow.from, roasWindow.to],
+    queryFn: () => fetchOrdersByType(roasWindow.from, roasWindow.to),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const {
+    data: windowSpend,
+    isLoading: windowSpendLoading,
+    isFetching: windowSpendFetching,
+    refetch: refetchWindowSpend,
+  } = useQuery({
+    queryKey: ["founder-ad-spend-range", roasWindow.from, roasWindow.to],
+    queryFn: () => fetchAdSpendRange(roasWindow.from, roasWindow.to),
+    staleTime: 5 * 60 * 1000,
+  });
+
   const [editingSpend, setEditingSpend] = useState(false);
   const [spendInput, setSpendInput] = useState("");
   const adSpendMutation = useMutation({
     mutationFn: (amount: number | null) => saveAdSpend(yesterdayStr, amount),
-    onSuccess: () => { setEditingSpend(false); refetchAdSpend(); },
+    // Yesterday is inside the rolling window, so typing a figure here can
+    // complete the week — re-read the window too, or the 7-day tile would
+    // keep saying it is waiting on a day that has just arrived.
+    onSuccess: () => { setEditingSpend(false); refetchAdSpend(); refetchWindowSpend(); },
   });
 
   // Is Meta connected? Until the credentials exist in Railway this stays
@@ -728,7 +841,8 @@ function FounderDashboard() {
   });
   const metaRefresh = useMutation({
     mutationFn: refreshFromMeta,
-    onSuccess: () => { refetchAdSpend(); refetchMetaStatus(); },
+    // A sync writes several days at once, so the whole window is stale.
+    onSuccess: () => { refetchAdSpend(); refetchMetaStatus(); refetchWindowSpend(); },
   });
   const lastSync = metaRefresh.data ?? metaStatus?.lastSync ?? null;
 
@@ -804,7 +918,7 @@ function FounderDashboard() {
   const isAnyLoading = monthLoading || periodLoading || orderTypesLoading || yesterdayLoading || conversionLoading;
   const tagSummaryFetching = useIsFetching({ queryKey: ["tag-summary"] });
   const customPanelsFetching = useIsFetching({ queryKey: ["founder-custom-panels"] });
-  const isAnyFetching = monthFetching || periodFetching || orderTypesFetching || yesterdayFetching || conversionFetching || tagSummaryFetching > 0 || customPanelsFetching > 0;
+  const isAnyFetching = monthFetching || periodFetching || orderTypesFetching || yesterdayFetching || conversionFetching || windowOrdersFetching || windowSpendFetching || tagSummaryFetching > 0 || customPanelsFetching > 0;
   const [, setTick] = useState(0);
 
   useEffect(() => {
@@ -825,10 +939,12 @@ function FounderDashboard() {
       refetchYesterday(),
       refetchConversion(),
       refetchAdSpend(),
+      refetchWindowOrders(),
+      refetchWindowSpend(),
       queryClient.invalidateQueries({ queryKey: ["tag-summary"] }),
       queryClient.invalidateQueries({ queryKey: ["founder-custom-panels"] }),
     ]);
-  }, [refetchMonth, refetchPeriod, refetchOrderTypes, refetchYesterday, refetchConversion, refetchAdSpend, queryClient]);
+  }, [refetchMonth, refetchPeriod, refetchOrderTypes, refetchYesterday, refetchConversion, refetchAdSpend, refetchWindowOrders, refetchWindowSpend, queryClient]);
 
   function getGroupCount(tag: string) {
     return orderTypes?.groups.find((g) => g.tag === tag)?.count ?? 0;
@@ -844,6 +960,34 @@ function FounderDashboard() {
     if (!group) return 0;
     return group.orders.reduce((sum, o) => sum + (o.total ?? 0), 0);
   }
+
+  // ── ROAS ──────────────────────────────────────────────────────────────────
+  // Both figures come out of lib/roas, which is where the divide-by-zero and
+  // missing-spend rules are tested. Neither ever prints a 0% it hasn't earned.
+  const newCustomerRevenueYesterday = yesterdayOrderTypes
+    ? getYesterdayRevenue("new-customer")
+    : null;
+  const yesterdayRoas = useMemo(
+    () => dayRoas(newCustomerRevenueYesterday, adSpendData?.amount ?? null),
+    [newCustomerRevenueYesterday, adSpendData?.amount],
+  );
+
+  const windowNewCustomerRevenue = useMemo(() => {
+    if (!windowOrderTypes) return null;
+    const group = windowOrderTypes.groups.find((g) => g.tag === "new-customer");
+    if (!group) return 0;
+    return group.orders.reduce((sum, o) => sum + (o.total ?? 0), 0);
+  }, [windowOrderTypes]);
+
+  const weekRoas = useMemo(
+    () => windowRoas({
+      window: roasWindow,
+      revenue: windowNewCustomerRevenue,
+      spendDays: windowSpend?.days ?? [],
+    }),
+    [roasWindow, windowNewCustomerRevenue, windowSpend],
+  );
+  const weekRoasLoading = windowOrdersLoading || windowSpendLoading;
 
   const presets = useMemo(() => buildPresets(), [todayStr]);
 
@@ -932,7 +1076,7 @@ function FounderDashboard() {
 
       {/* ── Yesterday's Order Analysis (fixed, independent of date picker) ─── */}
       <section>
-        {sectionHeading("Yesterday's Order Analysis — " + format(subDays(today, 1), "EEEE d MMMM"))}
+        {sectionHeading("Yesterday's Order Analysis — " + format(new Date(`${yesterdayStr}T12:00:00`), "EEEE d MMMM"))}
         {(yesterdayError || conversionError) && (
           <div className="glass-panel rounded-2xl p-5 flex items-center gap-3 text-destructive mb-4">
             <AlertCircle className="w-5 h-5 shrink-0" />
@@ -1052,32 +1196,26 @@ function FounderDashboard() {
           </div>
 
           {/* New Customer ROAS — new-customer revenue ÷ ad spend, as a
-              percentage: £600 spend returning £2,000 reads 333%. */}
-          <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-pink-500/10 text-pink-500 shrink-0">
-              <Percent className="w-5 h-5" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-muted-foreground truncate">New Customer ROAS</p>
-              {yesterdayLoading || adSpendLoading ? (
-                <Skeleton className="h-7 w-16 mt-1" />
-              ) : adSpendData?.amount != null && adSpendData.amount > 0 ? (
-                <>
-                  <p className="text-2xl font-display font-bold">
-                    {Math.round((getYesterdayRevenue("new-customer") / adSpendData.amount) * 100)}%
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                    {formatGBP(getYesterdayRevenue("new-customer"))} ÷ {formatGBP(adSpendData.amount)} spend
-                  </p>
-                </>
-              ) : (
-                <>
-                  <p className="text-2xl font-display font-bold text-muted-foreground">—</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Enter ad spend to see it</p>
-                </>
-              )}
-            </div>
-          </div>
+              percentage: £600 spend returning £2,000 reads 333%. Worked out
+              on its own now that ad spend syncs from Meta; the "—" states
+              come from lib/roas and never print a 0% we haven't earned. */}
+          <RoasTile
+            title="New Customer ROAS"
+            result={yesterdayRoas}
+            loading={yesterdayLoading || adSpendLoading}
+          />
+
+          {/* The same sum over the last seven FULL days, ending yesterday —
+              today is half-finished, so it is never counted. One day of
+              orders is noisy; the week is the number to steer by. It only
+              appears when all seven days have a spend figure: five days of
+              spend against seven days of revenue would flatter it. */}
+          <RoasTile
+            title={`${ROAS_WINDOW_DAYS}-Day New Customer ROAS`}
+            result={weekRoas}
+            loading={weekRoasLoading}
+            windowLabel={`${format(new Date(`${roasWindow.from}T12:00:00`), "d MMM")} – ${format(new Date(`${roasWindow.to}T12:00:00`), "d MMM")}`}
+          />
 
           {/* Conversion Rate — Shopify's own online-store metric via ShopifyQL.
               Session-based, so subscription renewals are inherently excluded. */}
