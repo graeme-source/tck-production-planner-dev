@@ -97,7 +97,8 @@ async function fetchConversion(from: string, to: string) {
   }>;
 }
 
-/** Yesterday's ad spend — hand-entered on this page, one figure per day. */
+/** Yesterday's ad spend. Either synced from Meta or typed here — `source`
+ *  says which, and a typed figure is never overwritten by a sync. */
 async function fetchAdSpend(date: string) {
   const res = await fetch(
     `${BASE}/api/founder-focus/ad-spend?date=${encodeURIComponent(date)}`,
@@ -107,7 +108,54 @@ async function fetchAdSpend(date: string) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error ?? `HTTP ${res.status}`);
   }
-  return res.json() as Promise<{ date: string; amount: number | null }>;
+  return res.json() as Promise<{
+    date: string;
+    amount: number | null;
+    source: "manual" | "meta" | null;
+    syncedAt: string | null;
+  }>;
+}
+
+interface MetaSyncRecord {
+  ok: boolean;
+  ranAt: string;
+  message: string;
+  error: string | null;
+  inserted: number;
+  updated: number;
+  skippedManual: number;
+  timezone: { aligned: boolean; warning: string | null } | null;
+}
+
+/** Whether the Meta ad account is wired up, and what the last sync did.
+ *  Always 200 — "not connected" is a state to show, not an error. */
+async function fetchMetaStatus() {
+  const res = await fetch(`${BASE}/api/meta-ads/status`, { credentials: "include" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{
+    connected: boolean;
+    accountId: string | null;
+    message: string | null;
+    reportingTimezone: string;
+    lastSync: MetaSyncRecord | null;
+  }>;
+}
+
+async function refreshFromMeta() {
+  const res = await fetch(`${BASE}/api/meta-ads/refresh`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<MetaSyncRecord & { connected: boolean }>;
 }
 
 async function saveAdSpend(date: string, amount: number | null) {
@@ -669,6 +717,53 @@ function FounderDashboard() {
     mutationFn: (amount: number | null) => saveAdSpend(yesterdayStr, amount),
     onSuccess: () => { setEditingSpend(false); refetchAdSpend(); },
   });
+
+  // Is Meta connected? Until the credentials exist in Railway this stays
+  // false and the panel says so — it must never show a £0, which would read
+  // as "we spent nothing" rather than "nobody has told us yet".
+  const { data: metaStatus, refetch: refetchMetaStatus } = useQuery({
+    queryKey: ["meta-ads-status"],
+    queryFn: fetchMetaStatus,
+    staleTime: 5 * 60 * 1000,
+  });
+  const metaRefresh = useMutation({
+    mutationFn: refreshFromMeta,
+    onSuccess: () => { refetchAdSpend(); refetchMetaStatus(); },
+  });
+  const lastSync = metaRefresh.data ?? metaStatus?.lastSync ?? null;
+
+  // The one line under the Ad Spend figure. Every branch has to be true
+  // without a number to lean on — "not connected" and "sync failed" are
+  // real states, and saying nothing would leave a stale figure looking live.
+  const metaSpendNote = useMemo((): { text: string; title?: string; warning?: string | null } => {
+    if (metaRefresh.isPending) return { text: "Refreshing from Meta…" };
+    if (metaRefresh.isError) {
+      return { text: "Tap the arrows to try Meta again", warning: "Couldn't reach Meta just now — the figure shown is the last one we had." };
+    }
+    if (!metaStatus) return { text: "Typed in by hand" };
+    if (!metaStatus.connected) {
+      return {
+        text: "Not connected to Meta yet — typed in by hand",
+        title: metaStatus.message ?? undefined,
+      };
+    }
+    const warning = lastSync?.ok === false
+      ? "Last sync with Meta failed, so this may be out of date."
+      : lastSync?.timezone && !lastSync.timezone.aligned
+        ? lastSync.timezone.warning
+        : null;
+
+    if (adSpendData?.source === "manual") {
+      return { text: "Typed in by you — Meta won't overwrite it", warning };
+    }
+    if (adSpendData?.source === "meta") {
+      const when = adSpendData.syncedAt
+        ? `${formatDistanceToNow(new Date(adSpendData.syncedAt))} ago`
+        : "just now";
+      return { text: `From Meta, ${when}`, title: lastSync?.message, warning };
+    }
+    return { text: "No figure from Meta for this day yet", warning };
+  }, [metaRefresh.isPending, metaRefresh.isError, metaStatus, lastSync, adSpendData]);
   function submitAdSpend() {
     const trimmed = spendInput.trim();
     if (trimmed === "") { adSpendMutation.mutate(null); return; }
@@ -882,14 +977,30 @@ function FounderDashboard() {
             </div>
           </div>
 
-          {/* Ad Spend — typed in by Graeme each morning, one figure a day.
-              No ads-platform integration behind it; the pencil IS the API. */}
+          {/* Ad Spend — synced from the Meta Marketing API when it's
+              connected, typed in with the pencil when it isn't. A typed
+              figure always wins: it pins the day and no sync overwrites it.
+              With Meta not connected this shows "Set…", never a £0 — a zero
+              here would claim we spent nothing. */}
           <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
             <div className="p-3 rounded-xl bg-orange-500/10 text-orange-500 shrink-0">
               <Megaphone className="w-5 h-5" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-muted-foreground truncate">Ad Spend</p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-medium text-muted-foreground truncate">Ad Spend</p>
+                {metaStatus?.connected && (
+                  <button
+                    onClick={() => metaRefresh.mutate()}
+                    disabled={metaRefresh.isPending}
+                    className="shrink-0 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-50"
+                    title="Refresh from Meta"
+                    aria-label="Refresh from Meta"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${metaRefresh.isPending ? "animate-spin" : ""}`} />
+                  </button>
+                )}
+              </div>
               {adSpendLoading ? (
                 <Skeleton className="h-7 w-16 mt-1" />
               ) : editingSpend ? (
@@ -913,16 +1024,29 @@ function FounderDashboard() {
                   </button>
                 </div>
               ) : (
-                <button
-                  onClick={() => { setSpendInput(adSpendData?.amount != null ? String(adSpendData.amount) : ""); setEditingSpend(true); }}
-                  className="group flex items-center gap-2 text-left"
-                  title="Enter yesterday's ad spend"
-                >
-                  <span className={`text-2xl font-display font-bold ${adSpendData?.amount == null ? "text-muted-foreground" : ""}`}>
-                    {adSpendData?.amount != null ? formatGBP(adSpendData.amount) : "Set…"}
-                  </span>
-                  <Pencil className="w-3.5 h-3.5 text-muted-foreground opacity-60 group-hover:opacity-100" />
-                </button>
+                <>
+                  <button
+                    onClick={() => { setSpendInput(adSpendData?.amount != null ? String(adSpendData.amount) : ""); setEditingSpend(true); }}
+                    className="group flex items-center gap-2 text-left"
+                    title="Enter yesterday's ad spend"
+                  >
+                    <span className={`text-2xl font-display font-bold ${adSpendData?.amount == null ? "text-muted-foreground" : ""}`}>
+                      {adSpendData?.amount != null ? formatGBP(adSpendData.amount) : "Set…"}
+                    </span>
+                    <Pencil className="w-3.5 h-3.5 text-muted-foreground opacity-60 group-hover:opacity-100" />
+                  </button>
+                  {/* One honest line about where this number came from. It
+                      never fills in a figure the app doesn't actually have. */}
+                  <p className="text-xs text-muted-foreground mt-0.5 truncate" title={metaSpendNote.title}>
+                    {metaSpendNote.text}
+                  </p>
+                  {metaSpendNote.warning && (
+                    <p className="text-xs text-amber-600 dark:text-amber-500 mt-0.5 flex items-start gap-1">
+                      <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
+                      <span>{metaSpendNote.warning}</span>
+                    </p>
+                  )}
+                </>
               )}
             </div>
           </div>
