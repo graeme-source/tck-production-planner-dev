@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/page-header";
 import { FounderNav } from "@/components/founder-nav";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
-import { format, startOfMonth, getDaysInMonth, subDays, subMonths, endOfMonth, formatDistanceToNow } from "date-fns";
+import { format, startOfMonth, getDaysInMonth, formatDistanceToNow } from "date-fns";
 import {
   TrendingUp,
   Calendar,
@@ -30,20 +30,44 @@ import {
   Percent,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { dayRoas, rollingWindow, windowRoas, yesterdayLondon, type RoasResult } from "@/lib/roas";
+import {
+  customWindow,
+  DEFAULT_PERIOD,
+  PERIOD_PRESETS,
+  periodWindow,
+  windowRoas,
+  type PeriodPresetId,
+  type PeriodWindow,
+  type RoasResult,
+} from "@/lib/roas";
+import { revenueForTags } from "@/lib/order-type-totals";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
 
-/** The rolling ROAS window: seven full London days ending yesterday. */
-const ROAS_WINDOW_DAYS = 7;
-
 const CUSTOMER_TYPES = [
-  { tag: "new-customer", label: "New Customers", icon: UserPlus, color: "text-blue-500", bg: "bg-blue-500/10" },
-  { tag: "Subscription Recurring Order", label: "Recurring Subscriptions", icon: Repeat, color: "text-violet-500", bg: "bg-violet-500/10" },
-  { tag: "Subscription New Order", label: "New Subscriptions", icon: ShoppingBag, color: "text-emerald-500", bg: "bg-emerald-500/10" },
-  { tag: "wholesale", label: "Wholesale", icon: Package, color: "text-amber-500", bg: "bg-amber-500/10" },
+  { id: "newCustomer", tag: "new-customer", label: "New Customers", icon: UserPlus, color: "text-blue-500", bg: "bg-blue-500/10" },
+  { id: "recurringSub", tag: "Subscription Recurring Order", label: "Recurring Subscriptions", icon: Repeat, color: "text-violet-500", bg: "bg-violet-500/10" },
+  { id: "newSub", tag: "Subscription New Order", label: "New Subscriptions", icon: ShoppingBag, color: "text-emerald-500", bg: "bg-emerald-500/10" },
+  { id: "wholesale", tag: "wholesale", label: "Wholesale", icon: Package, color: "text-amber-500", bg: "bg-amber-500/10" },
 ] as const;
+
+type CustomerTypeId = (typeof CUSTOMER_TYPES)[number]["id"];
+
+function customerType(id: CustomerTypeId): (typeof CUSTOMER_TYPES)[number] {
+  const found = CUSTOMER_TYPES.find((t) => t.id === id);
+  if (!found) throw new Error(`Unknown customer type: ${id}`);
+  return found;
+}
+
+/** The two tags that together make up "subscription revenue". Named here
+ *  once so the tile and any future use can't drift apart. */
+const SUBSCRIPTION_TAGS = [customerType("recurringSub").tag, customerType("newSub").tag] as const;
+
+// Wholesale has no tile of its own (Graeme, 2026-09-18 — "not interested in
+// it for now"), but it stays in CUSTOMER_TYPES: it is still fetched, still
+// counted, and still reachable as a tab in the order breakdown, so putting
+// the tile back is a one-line change rather than a re-import.
 
 function formatGBP(amount: number): string {
   return new Intl.NumberFormat("en-GB", {
@@ -98,25 +122,6 @@ async function fetchConversion(from: string, to: string) {
     sessions: number | null;
     orderCount: number | null;
     conversionRate: number | null;
-  }>;
-}
-
-/** Yesterday's ad spend. Either synced from Meta or typed here — `source`
- *  says which, and a typed figure is never overwritten by a sync. */
-async function fetchAdSpend(date: string) {
-  const res = await fetch(
-    `${BASE}/api/founder-focus/ad-spend?date=${encodeURIComponent(date)}`,
-    { credentials: "include" },
-  );
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error ?? `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<{
-    date: string;
-    amount: number | null;
-    source: "manual" | "meta" | null;
-    syncedAt: string | null;
   }>;
 }
 
@@ -272,6 +277,50 @@ function RoasTile({
           </>
         )}
         {windowLabel && <p className="text-xs text-muted-foreground/70 mt-0.5 truncate">{windowLabel}</p>}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A money figure for the selected period, in the same shape as the tiles
+ * around it. `null` means the orders haven't loaded — shown as a dash, not
+ * as £0.00, for the same reason the ROAS tile refuses to print a 0%.
+ */
+function MoneyTile({
+  title,
+  value,
+  sub,
+  icon: Icon,
+  color,
+  bg,
+  loading,
+}: {
+  title: string;
+  value: number | null;
+  sub?: string;
+  icon: React.ElementType;
+  color: string;
+  bg: string;
+  loading?: boolean;
+}) {
+  return (
+    <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
+      <div className={`p-3 rounded-xl ${bg} ${color} shrink-0`}>
+        <Icon className="w-5 h-5" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-muted-foreground truncate">{title}</p>
+        {loading ? (
+          <Skeleton className="h-7 w-20 mt-1" />
+        ) : (
+          <>
+            <p className={`text-2xl font-display font-bold ${value == null ? "text-muted-foreground" : ""}`}>
+              {value == null ? "—" : formatGBP(value)}
+            </p>
+            {sub && <p className="text-xs text-muted-foreground mt-0.5 truncate">{sub}</p>}
+          </>
+        )}
       </div>
     </div>
   );
@@ -660,18 +709,12 @@ export default function FounderView() {
   return <FounderDashboard />;
 }
 
-// Build preset ranges at call time so they're always relative to now
-function buildPresets() {
-  const today = new Date();
-  const todayStr = format(today, "yyyy-MM-dd");
-  return [
-    { label: "Today",          from: todayStr,                                              to: todayStr },
-    { label: "Last 7 days",    from: format(subDays(today, 6), "yyyy-MM-dd"),               to: todayStr },
-    { label: "Month to date",  from: format(startOfMonth(today), "yyyy-MM-dd"),             to: todayStr },
-    { label: "Last month",     from: format(startOfMonth(subMonths(today, 1)), "yyyy-MM-dd"), to: format(endOfMonth(subMonths(today, 1)), "yyyy-MM-dd") },
-    { label: "Last 6 months",  from: format(subMonths(today, 6), "yyyy-MM-dd"),             to: todayStr },
-    { label: "Last 12 months", from: format(subMonths(today, 12), "yyyy-MM-dd"),            to: todayStr },
-  ] as const;
+/** A period's days spelled out for a human — "Wed 17 Sep", or a range. */
+function describePeriod(period: PeriodWindow): string {
+  if (period.empty) return "No complete days yet";
+  const day = (d: string) => format(new Date(`${d}T12:00:00`), "EEE d MMM");
+  if (period.dayCount === 1) return day(period.from);
+  return `${day(period.from)} – ${day(period.to)} · ${period.dayCount} days`;
 }
 
 function sectionHeading(text: string) {
@@ -686,11 +729,6 @@ function FounderDashboard() {
   const founderRefresh = useRefreshSpin();
   const today = new Date();
   const todayStr = format(today, "yyyy-MM-dd");
-  // Yesterday and the rolling window are London days, not the tablet's own
-  // timezone — the kitchen runs on wall-clock days, and an iPad that has
-  // wandered onto another zone must not shift which day these tiles mean.
-  const yesterdayStr = yesterdayLondon(today);
-  const roasWindow = useMemo(() => rollingWindow(today, ROAS_WINDOW_DAYS), [yesterdayStr]);
   const monthStart = format(startOfMonth(today), "yyyy-MM-dd");
 
   // ── Fixed date range: always this month → today ──────────────────────────
@@ -707,24 +745,43 @@ function FounderDashboard() {
     staleTime: 5 * 60 * 1000,
   });
 
-  // ── Period state: default to Today ───────────────────────────────────────
-  const [from, setFrom] = useState(todayStr);
-  const [to, setTo]     = useState(todayStr);
-  const [activePreset, setActivePreset] = useState("Today");
+  // ── Period state — ONE selection drives every tile below ─────────────────
+  // Yesterday is the default: it is the most recent period that has actually
+  // finished, so it is the first honest read of the day. Today is offered
+  // next to it, clearly labelled as still running.
+  const [periodId, setPeriodId] = useState<PeriodPresetId | "custom">(DEFAULT_PERIOD);
+  const [customFrom, setCustomFrom] = useState(() => periodWindow(DEFAULT_PERIOD, new Date()).from);
+  const [customTo, setCustomTo] = useState(() => periodWindow(DEFAULT_PERIOD, new Date()).to);
 
-  function applyPreset(p: { label: string; from: string; to: string }) {
-    setFrom(p.from);
-    setTo(p.to);
-    setActivePreset(p.label);
+  const period = useMemo(
+    () => (periodId === "custom" ? customWindow(customFrom, customTo, today) : periodWindow(periodId, today)),
+    // todayStr, not `today`: a new Date() every render would rebuild this
+    // constantly, but the window only moves when the London day does.
+    [periodId, customFrom, customTo, todayStr],
+  );
+  const from = period.from;
+  const to = period.to;
+
+  function applyPreset(id: PeriodPresetId) {
+    const win = periodWindow(id, new Date());
+    setCustomFrom(win.from);
+    setCustomTo(win.to);
+    setPeriodId(id);
   }
 
   function handleManualDateChange(field: "from" | "to", val: string) {
-    if (field === "from") setFrom(val);
-    else setTo(val);
-    setActivePreset("custom");
+    if (field === "from") setCustomFrom(val);
+    else setCustomTo(val);
+    setPeriodId("custom");
   }
 
-  // ── Period queries ────────────────────────────────────────────────────────
+  // ── Period queries — all four keyed on the SAME window ───────────────────
+  // There used to be two sets of these: one pinned to yesterday for the
+  // "Yesterday's Order Analysis" block and one driven by the picker, saying
+  // much the same thing twice (Graeme, 2026-09-18). One window now feeds
+  // every tile. An empty period (month-to-date on the 1st) fetches nothing.
+  const periodEnabled = !period.empty;
+
   const {
     data: periodSummary,
     isLoading: periodLoading,
@@ -736,6 +793,7 @@ function FounderDashboard() {
     queryKey: ["founder-period-summary", from, to],
     queryFn: () => fetchSalesSummary(from, to),
     staleTime: 5 * 60 * 1000,
+    enabled: periodEnabled,
   });
 
   const {
@@ -749,86 +807,74 @@ function FounderDashboard() {
     queryKey: ["founder-orders-by-type", from, to],
     queryFn: () => fetchOrdersByType(from, to),
     staleTime: 5 * 60 * 1000,
+    enabled: periodEnabled,
   });
 
-  // Fixed to yesterday — independent of the dynamic date picker so the
-  // "Yesterday's Order Analysis" section always shows the previous day's
-  // numbers.
-  const {
-    data: yesterdayOrderTypes,
-    isLoading: yesterdayLoading,
-    isFetching: yesterdayFetching,
-    error: yesterdayError,
-    refetch: refetchYesterday,
-    dataUpdatedAt: yesterdayUpdatedAt,
-  } = useQuery({
-    queryKey: ["founder-orders-by-type-yesterday", yesterdayStr],
-    queryFn: () => fetchOrdersByType(yesterdayStr, yesterdayStr),
-    staleTime: 5 * 60 * 1000,
-  });
-
-  // Yesterday's storefront conversion (sessions → orders) via ShopifyQL.
-  // Returns conversionRate = orderCount / sessions, matching what Shopify
+  // Storefront conversion (sessions → orders) via ShopifyQL, over the same
+  // period. conversionRate = orderCount / sessions, matching what Shopify
   // Admin's online-store conversion report shows.
   const {
-    data: yesterdayConversion,
+    data: periodConversion,
     isLoading: conversionLoading,
     isFetching: conversionFetching,
     error: conversionError,
     refetch: refetchConversion,
     dataUpdatedAt: conversionUpdatedAt,
   } = useQuery({
-    queryKey: ["founder-conversion-yesterday", yesterdayStr],
-    queryFn: () => fetchConversion(yesterdayStr, yesterdayStr),
+    queryKey: ["founder-conversion", from, to],
+    queryFn: () => fetchConversion(from, to),
     staleTime: 5 * 60 * 1000,
+    enabled: periodEnabled,
   });
 
-  // Yesterday's ad spend — entered right on the panel, saved per date.
+  // Ad spend for every day of the period. Days with nothing recorded are
+  // absent rather than zero, which is what lets the ROAS tile tell "we spent
+  // nothing" from "nobody has told us yet".
   const {
-    data: adSpendData,
+    data: periodSpend,
     isLoading: adSpendLoading,
+    isFetching: adSpendFetching,
     refetch: refetchAdSpend,
   } = useQuery({
-    queryKey: ["founder-ad-spend", yesterdayStr],
-    queryFn: () => fetchAdSpend(yesterdayStr),
+    queryKey: ["founder-ad-spend-range", from, to],
+    queryFn: () => fetchAdSpendRange(from, to),
     staleTime: 5 * 60 * 1000,
-  });
-  // ── The rolling seven-day ROAS ────────────────────────────────────────────
-  // Two reads over the SAME window: the new-customer revenue (the same
-  // orders-by-type source the daily tiles use, just over seven days) and
-  // every recorded day of spend. One day of orders is noisy — a single big
-  // order swings it — so the week is the figure that actually tells Graeme
-  // whether the advertising is paying.
-  const {
-    data: windowOrderTypes,
-    isLoading: windowOrdersLoading,
-    isFetching: windowOrdersFetching,
-    refetch: refetchWindowOrders,
-  } = useQuery({
-    queryKey: ["founder-orders-by-type-roas-window", roasWindow.from, roasWindow.to],
-    queryFn: () => fetchOrdersByType(roasWindow.from, roasWindow.to),
-    staleTime: 5 * 60 * 1000,
+    enabled: periodEnabled,
   });
 
-  const {
-    data: windowSpend,
-    isLoading: windowSpendLoading,
-    isFetching: windowSpendFetching,
-    refetch: refetchWindowSpend,
-  } = useQuery({
-    queryKey: ["founder-ad-spend-range", roasWindow.from, roasWindow.to],
-    queryFn: () => fetchAdSpendRange(roasWindow.from, roasWindow.to),
-    staleTime: 5 * 60 * 1000,
-  });
+  // ── Ad spend for the period ──────────────────────────────────────────────
+  const spendRows = useMemo(() => periodSpend?.days ?? [], [periodSpend]);
+  const spendByDate = useMemo(() => {
+    const m = new Map<string, (typeof spendRows)[number]>();
+    for (const row of spendRows) if (row.amount != null) m.set(row.date, row);
+    return m;
+  }, [spendRows]);
+  const recordedDays = useMemo(
+    () => period.days.filter((d) => spendByDate.has(d)).length,
+    [period, spendByDate],
+  );
+  const missingSpendDays = period.dayCount - recordedDays;
+  /** Total of the days we actually have. null when we have none, so the tile
+   *  shows "Set…" rather than a £0.00 that would read as "we spent nothing". */
+  const periodSpendTotal = useMemo(() => {
+    if (recordedDays === 0) return null;
+    return period.days.reduce((sum, d) => sum + (spendByDate.get(d)?.amount ?? 0), 0);
+  }, [period, spendByDate, recordedDays]);
+
+  // Typing a figure only makes sense for one day at a time, so the pencil
+  // appears only on a single-day period. Multi-day periods are read-only —
+  // pick Yesterday (or a single custom day) to correct a figure.
+  const editableDay = period.dayCount === 1 ? period.days[0] : null;
+  const editableRow = editableDay ? spendRows.find((r) => r.date === editableDay) ?? null : null;
 
   const [editingSpend, setEditingSpend] = useState(false);
   const [spendInput, setSpendInput] = useState("");
   const adSpendMutation = useMutation({
-    mutationFn: (amount: number | null) => saveAdSpend(yesterdayStr, amount),
-    // Yesterday is inside the rolling window, so typing a figure here can
-    // complete the week — re-read the window too, or the 7-day tile would
-    // keep saying it is waiting on a day that has just arrived.
-    onSuccess: () => { setEditingSpend(false); refetchAdSpend(); refetchWindowSpend(); },
+    mutationFn: (amount: number | null) => {
+      if (!editableDay) throw new Error("Pick a single day to edit its ad spend");
+      return saveAdSpend(editableDay, amount);
+    },
+    onSuccess: () => { setEditingSpend(false); refetchAdSpend(); },
   });
 
   // Is Meta connected? Until the credentials exist in Railway this stays
@@ -841,8 +887,8 @@ function FounderDashboard() {
   });
   const metaRefresh = useMutation({
     mutationFn: refreshFromMeta,
-    // A sync writes several days at once, so the whole window is stale.
-    onSuccess: () => { refetchAdSpend(); refetchMetaStatus(); refetchWindowSpend(); },
+    // A sync writes several days at once, so the whole period is stale.
+    onSuccess: () => { refetchAdSpend(); refetchMetaStatus(); },
   });
   const lastSync = metaRefresh.data ?? metaStatus?.lastSync ?? null;
 
@@ -867,17 +913,39 @@ function FounderDashboard() {
         ? lastSync.timezone.warning
         : null;
 
-    if (adSpendData?.source === "manual") {
-      return { text: "Typed in by you — Meta won't overwrite it", warning };
+    // One day: say exactly where that day's figure came from.
+    if (editableDay) {
+      if (editableRow?.source === "manual") {
+        return { text: "Typed in by you — Meta won't overwrite it", warning };
+      }
+      if (editableRow?.source === "meta") {
+        const when = editableRow.syncedAt
+          ? `${formatDistanceToNow(new Date(editableRow.syncedAt))} ago`
+          : "just now";
+        return { text: `From Meta, ${when}`, title: lastSync?.message, warning };
+      }
+      return { text: "No figure from Meta for this day yet", warning };
     }
-    if (adSpendData?.source === "meta") {
-      const when = adSpendData.syncedAt
-        ? `${formatDistanceToNow(new Date(adSpendData.syncedAt))} ago`
-        : "just now";
-      return { text: `From Meta, ${when}`, title: lastSync?.message, warning };
+
+    // Several days: how much of the period we actually have, and how it got
+    // here. A total over four of seven days must never look like a week.
+    if (recordedDays === 0) {
+      return { text: `No ad spend recorded for these ${period.dayCount} days`, warning };
     }
-    return { text: "No figure from Meta for this day yet", warning };
-  }, [metaRefresh.isPending, metaRefresh.isError, metaStatus, lastSync, adSpendData]);
+    const typed = period.days.filter((d) => spendByDate.get(d)?.source === "manual").length;
+    const provenance = typed === 0
+      ? "all from Meta"
+      : typed === recordedDays
+        ? "all typed in by you"
+        : `${typed} typed in by you`;
+    return {
+      text: `${recordedDays} of ${period.dayCount} days recorded · ${provenance}`,
+      warning: missingSpendDays > 0
+        ? `${missingSpendDays} day${missingSpendDays === 1 ? "" : "s"} in this period have no spend figure, so this total is only part of the story.`
+        : warning,
+    };
+  }, [metaRefresh.isPending, metaRefresh.isError, metaStatus, lastSync, editableDay, editableRow, recordedDays, missingSpendDays, period, spendByDate]);
+
   function submitAdSpend() {
     const trimmed = spendInput.trim();
     if (trimmed === "") { adSpendMutation.mutate(null); return; }
@@ -915,10 +983,9 @@ function FounderDashboard() {
   });
 
   // ── Helpers ───────────────────────────────────────────────────────────────
-  const isAnyLoading = monthLoading || periodLoading || orderTypesLoading || yesterdayLoading || conversionLoading;
   const tagSummaryFetching = useIsFetching({ queryKey: ["tag-summary"] });
   const customPanelsFetching = useIsFetching({ queryKey: ["founder-custom-panels"] });
-  const isAnyFetching = monthFetching || periodFetching || orderTypesFetching || yesterdayFetching || conversionFetching || windowOrdersFetching || windowSpendFetching || tagSummaryFetching > 0 || customPanelsFetching > 0;
+  const isAnyFetching = monthFetching || periodFetching || orderTypesFetching || conversionFetching || adSpendFetching || tagSummaryFetching > 0 || customPanelsFetching > 0;
   const [, setTick] = useState(0);
 
   useEffect(() => {
@@ -927,24 +994,21 @@ function FounderDashboard() {
   }, []);
 
   const latestDataUpdate = useMemo(() => {
-    const timestamps = [monthUpdatedAt, periodUpdatedAt, orderTypesUpdatedAt, yesterdayUpdatedAt, conversionUpdatedAt].filter(Boolean);
+    const timestamps = [monthUpdatedAt, periodUpdatedAt, orderTypesUpdatedAt, conversionUpdatedAt].filter(Boolean);
     return timestamps.length > 0 ? new Date(Math.max(...timestamps)) : null;
-  }, [monthUpdatedAt, periodUpdatedAt, orderTypesUpdatedAt, yesterdayUpdatedAt, conversionUpdatedAt]);
+  }, [monthUpdatedAt, periodUpdatedAt, orderTypesUpdatedAt, conversionUpdatedAt]);
 
   const handleRefresh = useCallback(async () => {
     await Promise.all([
       refetchMonth(),
       refetchPeriod(),
       refetchOrderTypes(),
-      refetchYesterday(),
       refetchConversion(),
       refetchAdSpend(),
-      refetchWindowOrders(),
-      refetchWindowSpend(),
       queryClient.invalidateQueries({ queryKey: ["tag-summary"] }),
       queryClient.invalidateQueries({ queryKey: ["founder-custom-panels"] }),
     ]);
-  }, [refetchMonth, refetchPeriod, refetchOrderTypes, refetchYesterday, refetchConversion, refetchAdSpend, refetchWindowOrders, refetchWindowSpend, queryClient]);
+  }, [refetchMonth, refetchPeriod, refetchOrderTypes, refetchConversion, refetchAdSpend, queryClient]);
 
   function getGroupCount(tag: string) {
     return orderTypes?.groups.find((g) => g.tag === tag)?.count ?? 0;
@@ -952,44 +1016,25 @@ function FounderDashboard() {
   function getGroupOrders(tag: string) {
     return orderTypes?.groups.find((g) => g.tag === tag)?.orders ?? [];
   }
-  function getYesterdayCount(tag: string) {
-    return yesterdayOrderTypes?.groups.find((g) => g.tag === tag)?.count ?? 0;
-  }
-  function getYesterdayRevenue(tag: string) {
-    const group = yesterdayOrderTypes?.groups.find((g) => g.tag === tag);
-    if (!group) return 0;
-    return group.orders.reduce((sum, o) => sum + (o.total ?? 0), 0);
-  }
 
-  // ── ROAS ──────────────────────────────────────────────────────────────────
-  // Both figures come out of lib/roas, which is where the divide-by-zero and
-  // missing-spend rules are tested. Neither ever prints a 0% it hasn't earned.
-  const newCustomerRevenueYesterday = yesterdayOrderTypes
-    ? getYesterdayRevenue("new-customer")
-    : null;
-  const yesterdayRoas = useMemo(
-    () => dayRoas(newCustomerRevenueYesterday, adSpendData?.amount ?? null),
-    [newCustomerRevenueYesterday, adSpendData?.amount],
+  // ── Period revenue and ROAS ───────────────────────────────────────────────
+  // All of it from the one orders-by-type read for the selected period.
+  // revenueForTags dedupes by order id, so the combined subscription figure
+  // can't double-count an order that carries both subscription tags.
+  const newCustomerRevenue = useMemo(
+    () => revenueForTags(orderTypes?.groups, [customerType("newCustomer").tag]),
+    [orderTypes],
+  );
+  const subscriptionRevenue = useMemo(
+    () => revenueForTags(orderTypes?.groups, SUBSCRIPTION_TAGS),
+    [orderTypes],
   );
 
-  const windowNewCustomerRevenue = useMemo(() => {
-    if (!windowOrderTypes) return null;
-    const group = windowOrderTypes.groups.find((g) => g.tag === "new-customer");
-    if (!group) return 0;
-    return group.orders.reduce((sum, o) => sum + (o.total ?? 0), 0);
-  }, [windowOrderTypes]);
-
-  const weekRoas = useMemo(
-    () => windowRoas({
-      window: roasWindow,
-      revenue: windowNewCustomerRevenue,
-      spendDays: windowSpend?.days ?? [],
-    }),
-    [roasWindow, windowNewCustomerRevenue, windowSpend],
+  const periodRoas = useMemo(
+    () => windowRoas({ window: period, revenue: newCustomerRevenue, spendDays: spendRows }),
+    [period, newCustomerRevenue, spendRows],
   );
-  const weekRoasLoading = windowOrdersLoading || windowSpendLoading;
-
-  const presets = useMemo(() => buildPresets(), [todayStr]);
+  const roasLoading = orderTypesLoading || adSpendLoading;
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -1074,190 +1119,26 @@ function FounderDashboard() {
         </div>
       </section>
 
-      {/* ── Yesterday's Order Analysis (fixed, independent of date picker) ─── */}
+      {/* ── Order Analysis — ONE period drives every tile ──────────────────
+          This used to be two blocks: a fixed "Yesterday's Order Analysis"
+          and a "Period Analysis" below it, saying much the same thing twice
+          (Graeme, 2026-09-18). They are now one section on one selector,
+          with Yesterday as the default because it is the most recent period
+          that has actually finished. */}
       <section>
-        {sectionHeading("Yesterday's Order Analysis — " + format(new Date(`${yesterdayStr}T12:00:00`), "EEEE d MMMM"))}
-        {(yesterdayError || conversionError) && (
-          <div className="glass-panel rounded-2xl p-5 flex items-center gap-3 text-destructive mb-4">
-            <AlertCircle className="w-5 h-5 shrink-0" />
-            <p className="text-sm">{((yesterdayError ?? conversionError) as Error).message}</p>
-          </div>
-        )}
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6 gap-4">
-          {CUSTOMER_TYPES.map((type) => {
-            const { label, icon: Icon, color, bg } = type;
-            return (
-              <div
-                key={type.tag}
-                className="glass-panel p-5 rounded-2xl flex items-center gap-4"
-              >
-                <div className={`p-3 rounded-xl ${bg} ${color} shrink-0`}>
-                  <Icon className="w-5 h-5" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-muted-foreground truncate">{label}</p>
-                  {yesterdayLoading ? (
-                    <Skeleton className="h-7 w-12 mt-1" />
-                  ) : (
-                    <p className="text-2xl font-display font-bold">{getYesterdayCount(type.tag)}</p>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-
-          {/* New Customer Revenue — sum of order totals tagged new-customer */}
-          <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-blue-500/10 text-blue-500 shrink-0">
-              <TrendingUp className="w-5 h-5" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-muted-foreground truncate">New Customer Revenue</p>
-              {yesterdayLoading ? (
-                <Skeleton className="h-7 w-20 mt-1" />
-              ) : (
-                <p className="text-2xl font-display font-bold">{formatGBP(getYesterdayRevenue("new-customer"))}</p>
-              )}
-            </div>
-          </div>
-
-          {/* Ad Spend — synced from the Meta Marketing API when it's
-              connected, typed in with the pencil when it isn't. A typed
-              figure always wins: it pins the day and no sync overwrites it.
-              With Meta not connected this shows "Set…", never a £0 — a zero
-              here would claim we spent nothing. */}
-          <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-orange-500/10 text-orange-500 shrink-0">
-              <Megaphone className="w-5 h-5" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <p className="text-sm font-medium text-muted-foreground truncate">Ad Spend</p>
-                {metaStatus?.connected && (
-                  <button
-                    onClick={() => metaRefresh.mutate()}
-                    disabled={metaRefresh.isPending}
-                    className="shrink-0 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-50"
-                    title="Refresh from Meta"
-                    aria-label="Refresh from Meta"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${metaRefresh.isPending ? "animate-spin" : ""}`} />
-                  </button>
-                )}
-              </div>
-              {adSpendLoading ? (
-                <Skeleton className="h-7 w-16 mt-1" />
-              ) : editingSpend ? (
-                <div className="flex items-center gap-1.5 mt-1">
-                  <input
-                    autoFocus
-                    inputMode="decimal"
-                    value={spendInput}
-                    onChange={(e) => setSpendInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") submitAdSpend(); if (e.key === "Escape") setEditingSpend(false); }}
-                    placeholder="£0.00"
-                    className="w-24 px-2 py-1 rounded-lg border border-border bg-background text-lg font-display font-bold focus:outline-none focus:ring-2 focus:ring-primary/40"
-                  />
-                  <button
-                    onClick={submitAdSpend}
-                    disabled={adSpendMutation.isPending}
-                    className="p-1.5 rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
-                    aria-label="Save ad spend"
-                  >
-                    <Check className="w-4 h-4" />
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <button
-                    onClick={() => { setSpendInput(adSpendData?.amount != null ? String(adSpendData.amount) : ""); setEditingSpend(true); }}
-                    className="group flex items-center gap-2 text-left"
-                    title="Enter yesterday's ad spend"
-                  >
-                    <span className={`text-2xl font-display font-bold ${adSpendData?.amount == null ? "text-muted-foreground" : ""}`}>
-                      {adSpendData?.amount != null ? formatGBP(adSpendData.amount) : "Set…"}
-                    </span>
-                    <Pencil className="w-3.5 h-3.5 text-muted-foreground opacity-60 group-hover:opacity-100" />
-                  </button>
-                  {/* One honest line about where this number came from. It
-                      never fills in a figure the app doesn't actually have. */}
-                  <p className="text-xs text-muted-foreground mt-0.5 truncate" title={metaSpendNote.title}>
-                    {metaSpendNote.text}
-                  </p>
-                  {metaSpendNote.warning && (
-                    <p className="text-xs text-amber-600 dark:text-amber-500 mt-0.5 flex items-start gap-1">
-                      <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
-                      <span>{metaSpendNote.warning}</span>
-                    </p>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* New Customer ROAS — new-customer revenue ÷ ad spend, as a
-              percentage: £600 spend returning £2,000 reads 333%. Worked out
-              on its own now that ad spend syncs from Meta; the "—" states
-              come from lib/roas and never print a 0% we haven't earned. */}
-          <RoasTile
-            title="New Customer ROAS"
-            result={yesterdayRoas}
-            loading={yesterdayLoading || adSpendLoading}
-          />
-
-          {/* The same sum over the last seven FULL days, ending yesterday —
-              today is half-finished, so it is never counted. One day of
-              orders is noisy; the week is the number to steer by. It only
-              appears when all seven days have a spend figure: five days of
-              spend against seven days of revenue would flatter it. */}
-          <RoasTile
-            title={`${ROAS_WINDOW_DAYS}-Day New Customer ROAS`}
-            result={weekRoas}
-            loading={weekRoasLoading}
-            windowLabel={`${format(new Date(`${roasWindow.from}T12:00:00`), "d MMM")} – ${format(new Date(`${roasWindow.to}T12:00:00`), "d MMM")}`}
-          />
-
-          {/* Conversion Rate — Shopify's own online-store metric via ShopifyQL.
-              Session-based, so subscription renewals are inherently excluded. */}
-          <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-emerald-500/10 text-emerald-500 shrink-0">
-              <BarChart2 className="w-5 h-5" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-muted-foreground truncate">Conversion Rate</p>
-              {conversionLoading ? (
-                <Skeleton className="h-7 w-16 mt-1" />
-              ) : yesterdayConversion?.conversionRate != null ? (
-                <>
-                  <p className="text-2xl font-display font-bold">{(yesterdayConversion.conversionRate * 100).toFixed(2)}%</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {yesterdayConversion.orderCount != null && yesterdayConversion.sessions != null
-                      ? `${yesterdayConversion.orderCount} of ${yesterdayConversion.sessions} sessions · Shopify metric`
-                      : "Shopify metric"}
-                  </p>
-                </>
-              ) : (
-                <p className="text-2xl font-display font-bold text-muted-foreground">—</p>
-              )}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Section 2: Period Picker + Period Sales ─────────────────────────── */}
-      <section>
-        {sectionHeading("Period Analysis")}
+        {sectionHeading("Order Analysis — " + period.label)}
 
         {/* Picker row */}
         <div className="glass-panel p-4 rounded-2xl space-y-3 mb-5">
-          {/* Preset buttons */}
+          {/* Presets. Yesterday and Today lead — the precursor to the longer
+              ranges — and the rest follow in increasing length. */}
           <div className="flex flex-wrap gap-2">
-            {presets.map((p) => (
+            {PERIOD_PRESETS.map((p) => (
               <button
-                key={p.label}
-                onClick={() => applyPreset(p)}
+                key={p.id}
+                onClick={() => applyPreset(p.id)}
                 className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-all border ${
-                  activePreset === p.label
+                  periodId === p.id
                     ? "bg-primary text-primary-foreground border-primary"
                     : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary"
                 }`}
@@ -1297,88 +1178,259 @@ function FounderDashboard() {
               </p>
             )}
           </div>
+          {/* Exactly which days are being counted, always spelled out. */}
+          <p className="text-xs text-muted-foreground">
+            {describePeriod(period)}
+            {period.includesToday && " · today is still running, so these figures are partial"}
+          </p>
         </div>
 
-        {/* Period total sales */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-          <KpiCard
-            title={`Total Sales — ${activePreset === "custom" ? `${from} to ${to}` : activePreset}`}
-            value={periodSummary ? formatGBP(periodSummary.totalRevenue) : "—"}
-            sub={periodSummary ? `${periodSummary.orderCount} orders` : undefined}
-            icon={BarChart2}
-            color="text-blue-500"
-            bg="bg-blue-500/10"
-            loading={periodLoading}
-            error={!!periodError}
-          />
-          <KpiCard
-            title={`AOV — ${activePreset === "custom" ? `${from} to ${to}` : activePreset}`}
-            value={periodSummary && periodSummary.orderCount > 0 ? formatGBP(periodSummary.totalRevenue / periodSummary.orderCount) : "—"}
-            sub={periodSummary && periodSummary.orderCount > 0 ? `Across ${periodSummary.orderCount} order${periodSummary.orderCount !== 1 ? "s" : ""}` : "No orders in this period"}
-            icon={ShoppingBag}
-            color="text-emerald-500"
-            bg="bg-emerald-500/10"
-            loading={periodLoading}
-            error={!!periodError}
-          />
-        </div>
-
-        {/* Order breakdown */}
-        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Order Breakdown</h3>
-        {orderTypesError && (
-          <div className="glass-panel rounded-2xl p-5 flex items-center gap-3 text-destructive mb-4">
-            <AlertCircle className="w-5 h-5 shrink-0" />
-            <p className="text-sm">{(orderTypesError as Error).message}</p>
+        {period.empty ? (
+          <div className="glass-panel rounded-2xl p-6 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 shrink-0 text-muted-foreground mt-0.5" />
+            <div>
+              <p className="text-sm font-medium">No complete days in this period yet</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Every period except Today is made of finished days, and this one has none so far.
+                Pick Today to see the day in progress.
+              </p>
+            </div>
           </div>
-        )}
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-          {CUSTOMER_TYPES.map((type) => (
-            <OrderTypeCard
-              key={type.tag}
-              type={type}
-              count={getGroupCount(type.tag)}
-              dayCount={periodSummary?.dayCount ?? 1}
-              isActive={activeTab === type.tag && expandedPanel}
-              onClick={() => handleTypeClick(type.tag)}
-              loading={orderTypesLoading}
-            />
-          ))}
-        </div>
-
-        {expandedPanel && activeTab && (
-          <div className="glass-panel rounded-2xl mt-4 overflow-hidden">
-            <Tabs value={activeTab} onValueChange={setActiveTab}>
-              <div className="border-b border-border px-4 pt-4">
-                <TabsList className="bg-transparent gap-1 flex-wrap h-auto">
-                  {CUSTOMER_TYPES.map((type) => (
-                    <TabsTrigger
-                      key={type.tag}
-                      value={type.tag}
-                      className="text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-lg"
-                    >
-                      {type.label}
-                      <span className="ml-1.5 tabular-nums text-[10px] opacity-70">
-                        ({getGroupCount(type.tag)})
-                      </span>
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
+        ) : (
+          <>
+            {(orderTypesError || conversionError) && (
+              <div className="glass-panel rounded-2xl p-5 flex items-center gap-3 text-destructive mb-4">
+                <AlertCircle className="w-5 h-5 shrink-0" />
+                <p className="text-sm">{((orderTypesError ?? conversionError) as Error).message}</p>
               </div>
-              {CUSTOMER_TYPES.map((type) => (
-                <TabsContent key={type.tag} value={type.tag} className="m-0">
-                  {orderTypesLoading ? (
-                    <div className="p-6 space-y-3">
-                      {Array.from({ length: 5 }).map((_, i) => (
-                        <Skeleton key={i} className="h-10 w-full" />
-                      ))}
+            )}
+
+            {/* Period totals */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+              <KpiCard
+                title={`Total Sales — ${period.label}`}
+                value={periodSummary ? formatGBP(periodSummary.totalRevenue) : "—"}
+                sub={periodSummary ? `${periodSummary.orderCount} orders` : undefined}
+                icon={BarChart2}
+                color="text-blue-500"
+                bg="bg-blue-500/10"
+                loading={periodLoading}
+                error={!!periodError}
+              />
+              <KpiCard
+                title={`AOV — ${period.label}`}
+                value={periodSummary && periodSummary.orderCount > 0 ? formatGBP(periodSummary.totalRevenue / periodSummary.orderCount) : "—"}
+                sub={periodSummary && periodSummary.orderCount > 0 ? `Across ${periodSummary.orderCount} order${periodSummary.orderCount !== 1 ? "s" : ""}` : "No orders in this period"}
+                icon={ShoppingBag}
+                color="text-emerald-500"
+                bg="bg-emerald-500/10"
+                loading={periodLoading}
+                error={!!periodError}
+              />
+            </div>
+
+            {/* Row 1 — new customers, and what they cost.
+                The count tile is also the drill-down: tap it for the orders. */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
+              <OrderTypeCard
+                type={customerType("newCustomer")}
+                count={getGroupCount(customerType("newCustomer").tag)}
+                dayCount={period.dayCount}
+                isActive={activeTab === customerType("newCustomer").tag && expandedPanel}
+                onClick={() => handleTypeClick(customerType("newCustomer").tag)}
+                loading={orderTypesLoading}
+              />
+              <MoneyTile
+                title="New Customer Revenue"
+                value={newCustomerRevenue}
+                icon={TrendingUp}
+                color="text-blue-500"
+                bg="bg-blue-500/10"
+                loading={orderTypesLoading}
+              />
+              <RoasTile
+                title="New Customer ROAS"
+                result={periodRoas}
+                loading={roasLoading}
+              />
+
+              {/* Ad Spend — synced from the Meta Marketing API when it's
+                  connected, typed in with the pencil when it isn't. A typed
+                  figure always wins: it pins the day and no sync overwrites
+                  it. Typing is offered only on a single-day period, because
+                  spend is stored per day; multi-day periods show the total
+                  of the days we have, and say how many that is. It never
+                  shows a £0 for "nobody has told us yet". */}
+              <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
+                <div className="p-3 rounded-xl bg-orange-500/10 text-orange-500 shrink-0">
+                  <Megaphone className="w-5 h-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-muted-foreground truncate">Ad Spend</p>
+                    {metaStatus?.connected && (
+                      <button
+                        onClick={() => metaRefresh.mutate()}
+                        disabled={metaRefresh.isPending}
+                        className="shrink-0 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-50"
+                        title="Refresh from Meta"
+                        aria-label="Refresh from Meta"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${metaRefresh.isPending ? "animate-spin" : ""}`} />
+                      </button>
+                    )}
+                  </div>
+                  {adSpendLoading ? (
+                    <Skeleton className="h-7 w-16 mt-1" />
+                  ) : editingSpend && editableDay ? (
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <input
+                        autoFocus
+                        inputMode="decimal"
+                        value={spendInput}
+                        onChange={(e) => setSpendInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") submitAdSpend(); if (e.key === "Escape") setEditingSpend(false); }}
+                        placeholder="£0.00"
+                        className="w-24 px-2 py-1 rounded-lg border border-border bg-background text-lg font-display font-bold focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      />
+                      <button
+                        onClick={submitAdSpend}
+                        disabled={adSpendMutation.isPending}
+                        className="p-1.5 rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                        aria-label="Save ad spend"
+                      >
+                        <Check className="w-4 h-4" />
+                      </button>
                     </div>
                   ) : (
-                    <OrderTable orders={getGroupOrders(type.tag)} />
+                    <>
+                      {editableDay ? (
+                        <button
+                          onClick={() => { setSpendInput(editableRow?.amount != null ? String(editableRow.amount) : ""); setEditingSpend(true); }}
+                          className="group flex items-center gap-2 text-left"
+                          title="Enter this day's ad spend"
+                        >
+                          <span className={`text-2xl font-display font-bold ${periodSpendTotal == null ? "text-muted-foreground" : ""}`}>
+                            {periodSpendTotal != null ? formatGBP(periodSpendTotal) : "Set…"}
+                          </span>
+                          <Pencil className="w-3.5 h-3.5 text-muted-foreground opacity-60 group-hover:opacity-100" />
+                        </button>
+                      ) : (
+                        <p className={`text-2xl font-display font-bold ${periodSpendTotal == null ? "text-muted-foreground" : ""}`}>
+                          {periodSpendTotal != null ? formatGBP(periodSpendTotal) : "—"}
+                        </p>
+                      )}
+                      {/* One honest line about where this number came from. It
+                          never fills in a figure the app doesn't actually have. */}
+                      <p className="text-xs text-muted-foreground mt-0.5 truncate" title={metaSpendNote.title}>
+                        {metaSpendNote.text}
+                      </p>
+                      {metaSpendNote.warning && (
+                        <p className="text-xs text-amber-600 dark:text-amber-500 mt-0.5 flex items-start gap-1">
+                          <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
+                          <span>{metaSpendNote.warning}</span>
+                        </p>
+                      )}
+                    </>
                   )}
-                </TabsContent>
+                </div>
+              </div>
+            </div>
+
+            {/* Row 2 — subscriptions, and the storefront's own conversion. */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+              {(["recurringSub", "newSub"] as const).map((id) => (
+                <OrderTypeCard
+                  key={id}
+                  type={customerType(id)}
+                  count={getGroupCount(customerType(id).tag)}
+                  dayCount={period.dayCount}
+                  isActive={activeTab === customerType(id).tag && expandedPanel}
+                  onClick={() => handleTypeClick(customerType(id).tag)}
+                  loading={orderTypesLoading}
+                />
               ))}
-            </Tabs>
-          </div>
+              {/* Recurring and new subscription orders combined, deduped by
+                  order id so an order carrying both tags is counted once. */}
+              <MoneyTile
+                title="Total Subscription Revenue"
+                value={subscriptionRevenue}
+                sub="Recurring and new combined"
+                icon={Repeat}
+                color="text-violet-500"
+                bg="bg-violet-500/10"
+                loading={orderTypesLoading}
+              />
+
+              {/* Conversion Rate — Shopify's own online-store metric via
+                  ShopifyQL. Session-based, so subscription renewals are
+                  inherently excluded. */}
+              <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
+                <div className="p-3 rounded-xl bg-emerald-500/10 text-emerald-500 shrink-0">
+                  <BarChart2 className="w-5 h-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-muted-foreground truncate">Conversion Rate</p>
+                  {conversionLoading ? (
+                    <Skeleton className="h-7 w-16 mt-1" />
+                  ) : periodConversion?.conversionRate != null ? (
+                    <>
+                      <p className="text-2xl font-display font-bold">{(periodConversion.conversionRate * 100).toFixed(2)}%</p>
+                      <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                        {periodConversion.orderCount != null && periodConversion.sessions != null
+                          ? `${periodConversion.orderCount} of ${periodConversion.sessions} sessions · Shopify metric`
+                          : "Shopify metric"}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-2xl font-display font-bold text-muted-foreground">—</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">No Shopify session data for this period</p>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Drill-down. Tap any count tile above to open the orders behind
+                it; the tab strip then reaches every order type, wholesale
+                included — it has no tile of its own but is not lost. */}
+            {expandedPanel && activeTab && (
+              <div className="glass-panel rounded-2xl mt-4 overflow-hidden">
+                <Tabs value={activeTab} onValueChange={setActiveTab}>
+                  <div className="border-b border-border px-4 pt-4">
+                    <TabsList className="bg-transparent gap-1 flex-wrap h-auto">
+                      {CUSTOMER_TYPES.map((type) => (
+                        <TabsTrigger
+                          key={type.tag}
+                          value={type.tag}
+                          className="text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-lg"
+                        >
+                          {type.label}
+                          <span className="ml-1.5 tabular-nums text-[10px] opacity-70">
+                            ({getGroupCount(type.tag)})
+                          </span>
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                  </div>
+                  {CUSTOMER_TYPES.map((type) => (
+                    <TabsContent key={type.tag} value={type.tag} className="m-0">
+                      {orderTypesLoading ? (
+                        <div className="p-6 space-y-3">
+                          {Array.from({ length: 5 }).map((_, i) => (
+                            <Skeleton key={i} className="h-10 w-full" />
+                          ))}
+                        </div>
+                      ) : (
+                        <OrderTable orders={getGroupOrders(type.tag)} />
+                      )}
+                    </TabsContent>
+                  ))}
+                </Tabs>
+              </div>
+            )}
+          </>
         )}
       </section>
 
