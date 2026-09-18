@@ -1198,7 +1198,7 @@ So when something works, don't just celebrate — capture it. Update the SOP, re
 const DEFAULT_TEMPLATE_SLIDES = [
   { kind: "special_prep",        title: "Special Prep" },
   { kind: "stretches",           title: "Stretches" },
-  { kind: "yesterday_kpis",      title: "Yesterday's Numbers", config: { kpis: ["builder_rate", "packing_rate", "wonkies"] } },
+  { kind: "yesterday_kpis",      title: "Yesterday's Numbers", config: { kpis: ["builder_rate", "packing_rate", "wonkies", "improvements"] } },
   { kind: "order_of_production", title: "Order of Production" },
   { kind: "local_delivery",      title: "Local Delivery" },
   { kind: "bag_orders",          title: "Bag Orders" },

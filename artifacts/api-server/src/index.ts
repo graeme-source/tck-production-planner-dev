@@ -2742,6 +2742,35 @@ async function runStartupMigrations() {
       END $$;
     `);
 
+    // Fourth daily KPI — improvements COMPLETED (Graeme, 2026-09-18): the
+    // Yesterday's Numbers slide gains "improvements" alongside builder rate,
+    // packing rate and wonkies. The KPI list is stored per-slide in
+    // config_json.kpis (host-editable), so the stored lists need the new key
+    // appended once — default template + meetings not yet held; meetings
+    // already run keep their slides as a historical record. Guarded one-shot,
+    // same pattern as the slide add/removals above: if the host later pulls
+    // the KPI from a slide's config, deploys won't resurrect it.
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM _migrations_done WHERE key = 'add_improvements_kpi_v1') THEN
+          UPDATE template_slides
+          SET config_json = jsonb_set(config_json, '{kpis}', (config_json->'kpis') || '"improvements"'::jsonb)
+          WHERE kind = 'yesterday_kpis'
+            AND template_id IN (SELECT id FROM meeting_templates WHERE is_default = true)
+            AND jsonb_typeof(config_json->'kpis') = 'array'
+            AND NOT (config_json->'kpis') @> '"improvements"'::jsonb;
+          UPDATE meeting_slides
+          SET config_json = jsonb_set(config_json, '{kpis}', (config_json->'kpis') || '"improvements"'::jsonb)
+          WHERE kind = 'yesterday_kpis'
+            AND meeting_id IN (SELECT id FROM morning_meetings WHERE ended_at IS NULL)
+            AND jsonb_typeof(config_json->'kpis') = 'array'
+            AND NOT (config_json->'kpis') @> '"improvements"'::jsonb;
+          INSERT INTO _migrations_done (key) VALUES ('add_improvements_kpi_v1');
+        END IF;
+      END $$;
+    `);
+
     // Retire the standalone "Short on the Pack" slide — its stock data is
     // now folded into the Order of Production slide (colour-coded Have/Need
     // columns). Drop any lingering short_on_pack slides from the default

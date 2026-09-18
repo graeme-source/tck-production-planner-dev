@@ -16,13 +16,18 @@
 import {
   db,
   batchCompletionsTable,
+  improvementSubmissionsTable,
   productionPlanItemsTable,
   productionPlansTable,
   recipesTable,
 } from "@workspace/db";
-import { and, eq, gte, lte, sql, ne } from "drizzle-orm";
+import { and, eq, gte, lte, sql, ne, inArray, isNotNull } from "drizzle-orm";
 import { londonStartOfDay, londonEndOfDay } from "./london-time";
 import { getStandardBreakConfig, computeBatchesPerHour } from "./batches-per-hour";
+import {
+  countImprovementsCompletedInWindow,
+  IMPROVEMENT_DONE_STATUSES,
+} from "./improvements-completed";
 import { getOrdersByTag } from "../services/shopify";
 
 const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
@@ -132,4 +137,34 @@ export async function computePackingOrdersPerHourForDay(dispatchDateIso: string)
   const activeMinutes = Math.round(activeMs / 60_000);
   const ordersPerHour = Math.round((fulfilled.length / (activeMs / 3_600_000)) * 10) / 10;
   return { totalOrders: fulfilled.length, activeMinutes, ordersPerHour };
+}
+
+/**
+ * Improvements COMPLETED on a single London day — the fourth meeting KPI
+ * (Graeme, 2026-09-18: completed improvements, never ideas). The definition
+ * lives in lib/improvements-completed.ts: status awaiting_approval or
+ * complete, bucketed by done_at (the doing), never approved_at (the later
+ * sign-off). Both the morning meeting (yesterday) and the end-of-day page
+ * (today) call this, so the two meetings can never disagree on the number.
+ */
+export async function countImprovementsCompletedForDay(dateIso: string): Promise<number> {
+  // Noon UTC is unambiguously the right London date in both GMT and BST.
+  const anchor = new Date(`${dateIso}T12:00:00Z`);
+  const dayStart = londonStartOfDay(anchor);
+  const dayEnd = londonEndOfDay(anchor);
+
+  // The window filter lives in the pure, tested function; SQL just narrows
+  // to rows that could possibly count (done statuses with a done_at stamp).
+  const rows = await db
+    .select({
+      progressStatus: improvementSubmissionsTable.progressStatus,
+      doneAt: improvementSubmissionsTable.doneAt,
+    })
+    .from(improvementSubmissionsTable)
+    .where(and(
+      inArray(improvementSubmissionsTable.progressStatus, [...IMPROVEMENT_DONE_STATUSES]),
+      isNotNull(improvementSubmissionsTable.doneAt),
+    ));
+
+  return countImprovementsCompletedInWindow(rows, dayStart, dayEnd);
 }

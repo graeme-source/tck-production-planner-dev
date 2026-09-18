@@ -45,6 +45,7 @@ import { validate } from "../middleware/validate";
 import {
   computeBuilderBatchesPerHourForDay,
   computePackingOrdersPerHourForDay,
+  countImprovementsCompletedForDay,
 } from "../lib/yesterday-kpis";
 import { getPreviousDispatchDayAsync, getNextDispatchDayAsync } from "./production-plans";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
@@ -482,7 +483,12 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
     // maths (no break subtraction) for building, and read local
     // batch_completions for packing — which is empty because packing
     // is logged via Shopify fulfilment timestamps, not locally.
-    const [builderKpi, packingKpi] = await Promise.all([
+    // The fourth KPI (Graeme, 2026-09-18): improvements COMPLETED on the
+    // last production day — done work bucketed by done_at, never ideas,
+    // never the later approval. Same shared helper the end-of-day page
+    // uses, so the two meetings can't disagree. Zero is a real zero;
+    // null only means the lookup itself failed.
+    const [builderKpi, packingKpi, improvementsCompleted] = await Promise.all([
       computeBuilderBatchesPerHourForDay(yesterday).catch(err => {
         console.warn("[morning-meeting] builder BPH calc failed:", err);
         return { totalBatches: 0, activeMinutes: 0, batchesPerHour: null };
@@ -490,6 +496,10 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       computePackingOrdersPerHourForDay(yesterday).catch(err => {
         console.warn("[morning-meeting] packing orders/hr calc failed:", err);
         return { totalOrders: 0, activeMinutes: 0, ordersPerHour: null };
+      }),
+      countImprovementsCompletedForDay(yesterday).catch(err => {
+        console.warn("[morning-meeting] improvements completed calc failed:", err);
+        return null;
       }),
     ]);
     builderBatchesPerHour = builderKpi.batchesPerHour;
@@ -729,6 +739,7 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
         leftoverFillingGrams,
         builderBatchesPerHour,
         packingBatchesPerHour,
+        improvementsCompleted,
         batchesTarget: yesterdayBatchesTotal,
       },
       dayNumbers,
