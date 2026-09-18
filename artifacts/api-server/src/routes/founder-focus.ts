@@ -1112,6 +1112,47 @@ router.get("/ad-spend", async (req: Request, res: Response) => {
   });
 });
 
+// Spend for a span of days, for the rolling seven-day ROAS on the Numbers
+// page. Days with no figure recorded are simply absent from `days` — the
+// caller must be able to tell "nothing recorded" from "recorded as £0",
+// because only the second one can honestly be divided by.
+const AD_SPEND_RANGE_QUERY = z.object({
+  from: z.string().regex(DATE_RE),
+  to: z.string().regex(DATE_RE),
+});
+// A generous ceiling that still stops a typo asking for a decade of rows.
+const AD_SPEND_RANGE_MAX_DAYS = 400;
+
+router.get("/ad-spend/range", async (req: Request, res: Response) => {
+  const parsed = AD_SPEND_RANGE_QUERY.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: "from and to (YYYY-MM-DD) are required" }); return; }
+  const { from, to } = parsed.data;
+  if (from > to) { res.status(400).json({ error: "from must not be after to" }); return; }
+  const spanDays = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
+  if (spanDays > AD_SPEND_RANGE_MAX_DAYS) {
+    res.status(400).json({ error: `Range too long — ${AD_SPEND_RANGE_MAX_DAYS} days maximum` });
+    return;
+  }
+  const rows = await db.execute<{ spend_date: string | Date; amount: string; source: string; synced_at: Date | null }>(sql`
+    SELECT spend_date, amount, source, synced_at
+    FROM founder_ad_spend
+    WHERE spend_date >= ${from} AND spend_date <= ${to}
+    ORDER BY spend_date ASC
+  `);
+  res.json({
+    from,
+    to,
+    days: rows.rows.map((row) => ({
+      // spend_date is a DATE column; node-postgres may hand it back as a
+      // Date object depending on its parser, so normalise to YYYY-MM-DD.
+      date: typeof row.spend_date === "string" ? row.spend_date.slice(0, 10) : new Date(row.spend_date).toISOString().slice(0, 10),
+      amount: row.amount != null ? Number(row.amount) : null,
+      source: row.source ?? null,
+      syncedAt: row.synced_at ? new Date(row.synced_at).toISOString() : null,
+    })),
+  });
+});
+
 router.put("/ad-spend", async (req: Request, res: Response) => {
   const parsed = z.object({
     date: z.string().regex(DATE_RE),
