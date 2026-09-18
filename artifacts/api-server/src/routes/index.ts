@@ -81,6 +81,7 @@ import recipeCollectionsRouter from "./recipe-collections";
 import queuedProductionRouter from "./queued-production";
 import caseOrdersRouter from "./case-orders";
 import founderFocusRouter from "./founder-focus";
+import metaAdsRouter from "./meta-ads";
 import todosRouter from "./todos";
 import founderSalesRouter from "./founder-sales";
 import surveysRouter from "./surveys";
@@ -193,6 +194,10 @@ router.use("/features", featuresRouter);
 // is a separate unauthenticated router mounted directly in app.ts.
 router.use("/surveys", requireAdmin, surveysRouter);
 router.use("/founder-focus", founderFocusRouter);
+// Meta Marketing API ad-spend sync — status + manual refresh for the
+// Numbers page. Founder-gated inside the router; a no-op until the
+// META_ADS_TOKEN / META_AD_ACCOUNT_ID env vars exist.
+router.use("/meta-ads", metaAdsRouter);
 // Employment contracts: founder-only surfaces guard themselves per-route
 // inside the router; /mine and /:id are owner-scoped there too.
 router.use("/contracts", contractsRouter);

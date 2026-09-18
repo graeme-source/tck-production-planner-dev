@@ -1,4 +1,4 @@
-import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import {
   db,
   founderPillarsTable,
@@ -12,6 +12,7 @@ import {
 } from "@workspace/db";
 import { and, asc, desc, eq, gte, isNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
+import { requireFounder } from "../middleware/founder-access";
 import { verifyCaldav, getDayEvents, resetCaldavCache, type CalendarEvent } from "../lib/caldav";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 
@@ -55,19 +56,9 @@ async function deleteFounderSetting(key: string): Promise<void> {
   await db.execute(sql`DELETE FROM founder_settings WHERE key = ${key}`);
 }
 
-// Same founder gate as founder-panels: these tables hold the founder's
-// personal plan, so role checks aren't enough — the account itself must be
-// the founder's.
-const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
-
-async function requireFounder(req: Request, res: Response, next: NextFunction) {
-  const userId = req.session.userId;
-  if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const rows = await db.execute<{ email: string }>(sql`SELECT email FROM app_users WHERE id = ${userId} LIMIT 1`);
-  if (rows.rows[0]?.email !== FOUNDER_EMAIL) { res.status(403).json({ error: "Founder only" }); return; }
-  next();
-}
-
+// These tables hold the founder's personal plan, so role checks aren't
+// enough — the account itself must be the founder's. The gate is shared
+// (middleware/founder-access.ts); it used to be copy-pasted per router.
 router.use(requireFounder);
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;

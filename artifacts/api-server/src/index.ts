@@ -3429,6 +3429,15 @@ async function startup() {
     setTimeout(() => void syncSpecialToShopify().catch(err => console.error("[special-sync] startup run failed:", err)), 30_000).unref();
     setInterval(() => void syncSpecialToShopify().catch(err => console.error("[special-sync] run failed:", err)), 5 * 60_000).unref();
 
+    // Meta ad-spend sync — fills the Numbers page's Ad Spend figure from the
+    // Meta Marketing API instead of Graeme typing it each morning. Self-
+    // gating: every tick is a no-op until META_ADS_TOKEN and
+    // META_AD_ACCOUNT_ID are set, so this is safe to register before the
+    // credentials exist. Re-reads the trailing 48 hours each run, because
+    // Meta's spend figures settle late.
+    const { startMetaAdsScheduler } = await import("./lib/meta-ads");
+    startMetaAdsScheduler();
+
     // Finance / VAT reconciliation — one-time backlog seed (guarded) and the
     // hourly mailbox sync (no-op until a mailbox is configured in the app).
     const { seedFinanceBacklogIfNeeded, startFinanceMailboxTimer } = await import("./lib/finance/startup");
