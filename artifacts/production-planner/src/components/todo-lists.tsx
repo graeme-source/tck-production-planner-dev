@@ -79,7 +79,7 @@ interface TodoComment {
 
 interface AppUserRow { id: number; name: string; role: string; isActive: boolean }
 
-const PRIORITY_META: Record<TodoPriority, { label: string; bar: string; chip: string; solid: string }> = {
+export const PRIORITY_META: Record<TodoPriority, { label: string; bar: string; chip: string; solid: string }> = {
   urgent: {
     label: "Urgent",
     bar: "bg-red-500",
@@ -142,23 +142,27 @@ function parseTs(s: string): Date {
   return new Date(s.replace(" ", "T"));
 }
 
-function dayLabel(iso: string): string {
+export function dayLabel(iso: string): string {
   const d = parseISO(iso);
   if (isToday(d)) return "Today";
   return format(d, "EEE d MMM");
 }
 
-function isOverdue(task: TodoTask): boolean {
+export function isOverdue(task: TodoTask): boolean {
   if (task.status !== "open" || !task.due_date) return false;
   const d = parseISO(task.due_date);
   return isBefore(d, new Date()) && !isToday(d);
 }
 
-/** Open-task count for the current user — feeds button badges. */
-export function useMyOpenTodoCount(): number {
+/**
+ * The signed-in user's own list. ONE definition of the query so every
+ * surface that shows "my to-dos" (the station strip, the badge count, the
+ * founder's Schedule page) shares a single cache entry and refresh rhythm.
+ */
+export function useMyTodos() {
   const { state } = useAuth();
   const meId = state.status === "authenticated" ? state.user.id : null;
-  const { data } = useQuery({
+  return useQuery({
     // Keyed by user id (like every "mine" query here): the station PCs are
     // shared, and a cache entry keyed the same for everyone briefly shows the
     // previous person's data after a PIN switch — see lib/session-identity.ts.
@@ -168,7 +172,21 @@ export function useMyOpenTodoCount(): number {
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
   });
-  return data?.open.length ?? 0;
+}
+
+/** Tick a to-do off, with the same visible failure everywhere it's offered. */
+export function useCompleteTodo() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => post(`/api/todos/${id}/complete`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["todos"] }),
+    onError: (e: Error) => toast({ title: "Couldn't mark it done", description: e.message, variant: "destructive" }),
+  });
+}
+
+/** Open-task count for the current user — feeds button badges. */
+export function useMyOpenTodoCount(): number {
+  return useMyTodos().data?.open.length ?? 0;
 }
 
 // ── Shared big-chip bits ────────────────────────────────────────────────────
@@ -981,29 +999,18 @@ function TodoEditor({ meId, canManage, defaultAssigneeId, task, onDone }: {
 export function PersonalTodosStrip() {
   const { state } = useAuth();
   const me = state.status === "authenticated" ? state.user : null;
-  const qc = useQueryClient();
   // taskId set = the sheet opens straight onto that task's notes/comments.
   const [sheet, setSheet] = useState<{ open: boolean; taskId: number | null }>({ open: false, taskId: null });
 
-  const { data } = useQuery({
-    // Keyed by user id: this strip sits on the shared station screens, where
-    // people swap in by PIN all day — a shared cache entry is exactly how
-    // Lorna's to-dos rendered under Major's name (2026-09-04).
-    queryKey: ["todos", "mine", me?.id],
-    queryFn: () => fetchList("mine"),
-    enabled: !!me,
-    staleTime: 60_000,
-    refetchInterval: 5 * 60_000,
-  });
+  // Keyed by user id inside useMyTodos: this strip sits on the shared station
+  // screens, where people swap in by PIN all day — a shared cache entry is
+  // exactly how Lorna's to-dos rendered under Major's name (2026-09-04).
+  const { data } = useMyTodos();
 
   const todayIso = format(new Date(), "yyyy-MM-dd");
   const todays = (data?.open ?? []).filter(t => !t.scheduled_for || t.scheduled_for <= todayIso);
 
-  const completeMut = useMutation({
-    mutationFn: (id: number) => post(`/api/todos/${id}/complete`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["todos"] }),
-    onError: (e: Error) => toast({ title: "Couldn't mark it done", description: e.message, variant: "destructive" }),
-  });
+  const completeMut = useCompleteTodo();
 
   if (!me || todays.length === 0) {
     // Even with nothing due, managers/users may want the sheet from here —

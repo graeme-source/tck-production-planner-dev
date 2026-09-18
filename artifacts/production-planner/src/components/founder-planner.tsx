@@ -24,8 +24,15 @@ import {
   LineChart, Calculator, Megaphone, Link2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  founderFocusApi as api,
+  minToTime,
+  readCachedFocus,
+  writeCachedFocus,
+  type CalEvent,
+  type DayEvents,
+} from "@/lib/founder-focus-api";
 
-const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
 
 // ── Types (mirror the founder-focus API) ────────────────────────────────────
@@ -76,16 +83,6 @@ interface ParkingItem {
   id: number;
   text: string;
   createdAt: string;
-}
-
-interface CalEvent {
-  title: string;
-  calendar: string;
-  startMin: number;
-  endMin: number;
-  allDay: boolean;
-  joinUrl: string | null;
-  joinIsCall: boolean;
 }
 
 interface RecurringItem {
@@ -164,14 +161,6 @@ interface Overview {
   calendarConfigured: boolean;
 }
 
-// Apple Calendar payload — its own query since 2026-08-18: a cold iCloud
-// fetch takes seconds, and split out it can't hold up the rest of the page.
-interface DayEvents {
-  calendarConfigured: boolean;
-  events: CalEvent[];
-  calendarError: string | null;
-}
-
 interface CaldavCalendar {
   url: string;
   name: string;
@@ -186,12 +175,6 @@ interface CaldavStatus {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-function minToTime(min: number): string {
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
-
 function timeToMin(t: string): number | null {
   const m = /^(\d{1,2}):(\d{2})$/.exec(t);
   if (!m) return null;
@@ -204,39 +187,6 @@ function nowMinutes(): number {
 }
 
 const DEFAULT_PILLAR_COLOR = "#9ca3af";
-
-// Last-known copies on the device, so returning to the page paints
-// instantly (stale) while the fresh fetch runs — instead of a blank screen.
-// Only ever used as react-query placeholderData; real data replaces it.
-const FOCUS_CACHE_PREFIX = "founder-focus-cache:";
-function readCachedFocus<T>(key: string): T | undefined {
-  try {
-    const raw = localStorage.getItem(FOCUS_CACHE_PREFIX + key);
-    return raw ? (JSON.parse(raw) as T) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-function writeCachedFocus(key: string, value: unknown): void {
-  try {
-    localStorage.setItem(FOCUS_CACHE_PREFIX + key, JSON.stringify(value));
-  } catch {
-    // Quota/private-mode failures just lose the instant paint, nothing else.
-  }
-}
-
-async function api(path: string, init?: RequestInit) {
-  const res = await fetch(`${BASE}/api/founder-focus${path}`, {
-    credentials: "include",
-    headers: init?.body ? { "Content-Type": "application/json" } : undefined,
-    ...init,
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as { error?: string }).error ?? `HTTP ${res.status}`);
-  }
-  return res.json();
-}
 
 // ── Page ───────────────────────────────────────────────────────────────────
 export function FounderPlanner() {
@@ -634,9 +584,9 @@ export function FounderPlanner() {
         </div>
       )}
 
-      {/* ── Two columns on wide screens: the day on the left, planning
-             tools on the right; stacked on tablet/mobile. ─────────────── */}
-      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_400px] gap-6 items-start">
+      {/* One column: these tools now sit inside a deliberately narrow
+          disclosure on the Schedule page, so a side rail has nowhere to go. */}
+      <div className="space-y-6">
       <div className="space-y-6 min-w-0">
 
       {/* ── Day blocks ──────────────────────────────────────────────────── */}
