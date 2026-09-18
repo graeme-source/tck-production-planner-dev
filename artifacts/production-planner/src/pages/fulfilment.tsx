@@ -31,6 +31,7 @@ import {
   ClipboardCheck, Factory, ShoppingBag, Refrigerator, Flame,
 } from "lucide-react";
 import { shouldPromptShrinkWrap, printDialogLikelyShown } from "@/lib/packing-alerts";
+import { comparePickWalk, FALLBACK_ZONE_ORDER } from "@/lib/pick-order";
 import { fetchFridgeAvailability, computeFridgeAllocation } from "@/lib/fridge-gate";
 import { ShopifyOrderNumber } from "@/components/shopify-order-link";
 import { StationMessagesBanner } from "@/components/station-messages";
@@ -2191,29 +2192,15 @@ export default function Fulfilment() {
   }
 
   // Pick walk order — the zones in the order set on the Bin Locations page
-  // (drag the zone cards there to do the fridge or the freezer first). Falls
-  // back to the historic fridge → freezer → ambient until the config loads.
-  const zonePickOrder: string[] = pickConfig?.zoneOrder ?? ["fridge", "freezer", "ambient"];
-  const sortedLineItems = activeOrder ? [...activeOrder.line_items].sort((a, b) => {
-    const idxA = a.location ? zonePickOrder.indexOf(a.location.zone) : zonePickOrder.length;
-    const idxB = b.location ? zonePickOrder.indexOf(b.location.zone) : zonePickOrder.length;
-    if (idxA !== idxB) return idxA - idxB;
-    // Within a zone the walk is door by door, shelf by shelf (A at the top)
-    // — the fridge map on Bin Locations IS the pick order. Bins beat
-    // legacy free-text locations; those fall back to SKU order below.
-    const doorA = a.location?.door ?? Number.MAX_SAFE_INTEGER;
-    const doorB = b.location?.door ?? Number.MAX_SAFE_INTEGER;
-    if (doorA !== doorB) return doorA - doorB;
-    const shelfA = a.location?.shelf ?? "ZZ";
-    const shelfB = b.location?.shelf ?? "ZZ";
-    if (shelfA !== shelfB) return shelfA.localeCompare(shelfB);
-    // Same bin (or no bin): SKU natural sort keeps the kitchen's label
-    // numbering (1, 3c, 5b, 5c); items with no SKU sort last.
-    if (a.sku && !b.sku) return -1;
-    if (!a.sku && b.sku) return 1;
-    if (a.sku && b.sku) return a.sku.localeCompare(b.sku, undefined, { numeric: true });
-    return a.title.localeCompare(b.title);
-  }) : [];
+  // (drag the zone cards there to do the fridge or the freezer first), then
+  // door, then shelf. The walk itself lives in lib/pick-order so the packing
+  // station's batch-number checks follow the identical order rather than a
+  // copy of it. Falls back to fridge → freezer → ambient until the config
+  // loads.
+  const zonePickOrder: string[] = pickConfig?.zoneOrder ?? [...FALLBACK_ZONE_ORDER];
+  const sortedLineItems = activeOrder
+    ? [...activeOrder.line_items].sort((a, b) => comparePickWalk(a, b, zonePickOrder))
+    : [];
 
   // Collapse multiple line items of the same VARIANT into one row so a packer
   // sees "Chicken & Chorizo ×2" instead of two identical rows. Quantity adds

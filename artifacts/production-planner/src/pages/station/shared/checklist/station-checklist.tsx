@@ -16,6 +16,7 @@ import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { useAuth } from "@/contexts/auth-context";
 import { useStationChecklist, useDynamicData, type ChecklistItem } from "./use-station-checklist";
 import { batchDispatchVerdict } from "@/lib/julian-batch";
+import { sortByPickOrder, earliestBin, FALLBACK_ZONE_ORDER, type PickBin } from "@/lib/pick-order";
 import { ChecklistAdminPanel, DispatchShelfRulesCard } from "./checklist-admin-panel";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -832,6 +833,11 @@ interface PackBatchRow {
   category?: string | null;
   shelfLifeDays?: number | null;
   earliestOkUseBy?: string | null;
+  /** Every bin on the fridge map this recipe's packs live in — a recipe can
+   *  map to several Shopify variants (2-pack, 8-pack bag, wonky) sitting in
+   *  different bins. Used to walk the list in picking order; empty means no
+   *  bin, which sorts last. */
+  pickBins?: PickBin[];
 }
 
 /** "2026-09-06" → "Sun 6 Sep" — the way a use-by reads off a label. */
@@ -848,8 +854,35 @@ function shortDate(iso: string): string {
  * remainder. "Other…" keeps a manual entry for a number we didn't predict.
  */
 function PackBatchNumbers({ data, planId, kind }: { data: unknown[]; planId: number; kind: "first" | "last" }) {
-  const items = (data as PackBatchRow[]).filter(i => i.recipeId != null);
   const isLast = kind === "last";
+
+  // Walk the recipes the way the picker walks the fridge, instead of
+  // door-to-door-and-back (Graeme, 2026-09-18). The zone order is read LIVE
+  // from the same pick-config the Order Packing Live picking screen uses —
+  // same query key, so the two share a cache and can never disagree — and
+  // the walk itself is the shared lib/pick-order comparator, not a copy.
+  const { data: pickConfig } = useQuery<{ zoneOrder: string[] }>({
+    queryKey: ["fulfilment-pick-config"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/fulfilment/pick-config`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load pick config");
+      return res.json();
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const zonePickOrder = pickConfig?.zoneOrder ?? [...FALLBACK_ZONE_ORDER];
+
+  // A recipe sits at the EARLIEST bin among its variants — you meet it at
+  // the first door where any of its packs live. Recipes with no bin keep
+  // their existing (SKU) order at the end; none are hidden.
+  const items = sortByPickOrder(
+    (data as PackBatchRow[]).filter(i => i.recipeId != null),
+    row => row.pickBins,
+    zonePickOrder,
+  );
+  /** The door a recipe is met at — the same bin that decided its place. */
+  const binLabel = (row: PackBatchRow): string | null =>
+    earliestBin(row.pickBins, zonePickOrder)?.locationLabel ?? null;
 
   // Locally-confirmed saves layered over what the server sent — the row
   // moves to Recorded the moment its POST succeeds, no refetch needed.
@@ -929,10 +962,20 @@ function PackBatchNumbers({ data, planId, kind }: { data: unknown[]; planId: num
         // the real pack.
         const candidates = (item.candidateBatchNumbers ?? []).slice(0, 6);
         const current = recordedNumber(item);
+        const bin = binLabel(item);
         return (
           <div key={item.recipeId} className="p-3 rounded-xl border bg-secondary/20 border-border space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold truncate">{item.recipeName}</p>
+              <div className="flex items-center gap-1.5 min-w-0">
+                {/* The door you're standing at. Without it the new ordering
+                    looks arbitrary; with it the list reads as the walk. */}
+                {bin && (
+                  <span className="shrink-0 px-1.5 py-0.5 rounded-md bg-primary/10 text-primary text-[11px] font-bold font-mono tabular-nums">
+                    {bin}
+                  </span>
+                )}
+                <p className="text-sm font-semibold truncate">{item.recipeName}</p>
+              </div>
               <p className="text-xs text-muted-foreground shrink-0">
                 {item.fridgeQty != null ? `${Math.round(item.fridgeQty)} packs in fridge` : ""}
                 {isLast && item.recordedFirstBatchNumber != null ? ` · first today #${item.recordedFirstBatchNumber}` : ""}
