@@ -17,6 +17,8 @@ import {
   stockEntriesTable,
   storageLocationsTable,
   locationTemperatureRecordsTable,
+  variantLocationsTable,
+  skuLocationsTable,
 } from "@workspace/db";
 import { eq, and, or, gt, asc, desc, gte, lte, sql, isNull, inArray } from "drizzle-orm";
 import * as z from "zod";
@@ -28,6 +30,7 @@ import { productionDateFromJulianBatch } from "../lib/julian-batch";
 import { adjustFridgeStock, addRecipeFreezerStock } from "../lib/fridge-stock";
 import { resolveRecipeIngredients } from "../lib/ingredient-resolver";
 import { getOutstandingDispatch, OUTSTANDING_DISPATCH_TYPE, showOutstandingCheck } from "../lib/outstanding-dispatch";
+import { resolveRecipeBins, type RecipeBin } from "../lib/recipe-bins";
 
 type ChecklistCompletion = typeof checklistCompletionsTable.$inferSelect;
 
@@ -1185,6 +1188,46 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
     const minShelfRules = await loadMinShelfDaysRules();
     const todayLondon = londonDateString();
 
+    // Where each recipe lives on the fridge map, so the checklist can walk
+    // the recipes in the same order the picking screen walks the orders
+    // (Graeme, 2026-09-18: "we're constantly going up and down from door to
+    // door"). Bins are keyed by VARIANT and a recipe has several, so we send
+    // every bin its packs live in and let the client pick the earliest using
+    // the live zone order from pick-config — one copy of the walk, always
+    // the current one. Recipes with no bin get an empty list and sort last.
+    const recipeBins = new Map<number, RecipeBin[]>();
+    if (fridgeRecipeIds.length > 0) {
+      const [variantLocs, skuLocs, mappingRows] = await Promise.all([
+        db.select().from(variantLocationsTable),
+        db.select().from(skuLocationsTable),
+        // recipe_shopify_mappings has no Drizzle schema — raw SQL, as
+        // everywhere else that touches it.
+        db.execute<{
+          recipe_id: number;
+          shopify_variant_id: string | null;
+          wonky_variant_id: string | null;
+          eight_pack_variant_id: string | null;
+          shopify_sku: string | null;
+        }>(sql`
+          SELECT recipe_id, shopify_variant_id, wonky_variant_id, eight_pack_variant_id, shopify_sku
+          FROM recipe_shopify_mappings
+          WHERE recipe_id IN (${sql.join(fridgeRecipeIds.map(id => sql`${id}`), sql`, `)})
+        `),
+      ]);
+      const toBin = (l: { zone: string; locationLabel: string; door: number | null; shelf: string | null }): RecipeBin =>
+        ({ zone: l.zone, locationLabel: l.locationLabel, door: l.door, shelf: l.shelf });
+      const binByVariantId = new Map(variantLocs.map(l => [l.variantId, toBin(l)]));
+      const binBySku = new Map(skuLocs.map(l => [l.sku, toBin(l)]));
+      const mappings = (mappingRows.rows ?? mappingRows).map(m => ({
+        recipeId: Number(m.recipe_id),
+        variantIds: [m.shopify_variant_id, m.wonky_variant_id, m.eight_pack_variant_id],
+        sku: m.shopify_sku,
+      }));
+      for (const [recipeId, bins] of resolveRecipeBins(mappings, binByVariantId, binBySku)) {
+        recipeBins.set(recipeId, bins);
+      }
+    }
+
     const result = fridgeRecipeIds.map(recipeId => {
       const recipe = fridgeRecipes.get(recipeId)!;
       const suggested = oldestBatch.get(recipeId);
@@ -1212,6 +1255,9 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
         recordedLastBatchNumber: recorded?.lastBatchNumber ?? null,
         firstRecordedAt: recorded?.firstRecordedAt ?? null,
         lastRecordedAt: recorded?.lastRecordedAt ?? null,
+        // Every bin this recipe's packs live in. The client walks these
+        // through lib/pick-order; empty means no bin, which sorts last.
+        pickBins: recipeBins.get(recipeId) ?? [],
       };
     });
 
