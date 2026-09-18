@@ -110,6 +110,10 @@ export interface DashboardData {
     leftoverFillingGrams: number;
     builderBatchesPerHour: number | null;
     packingBatchesPerHour: number | null;
+    /** Improvements COMPLETED on the last production day — done work only,
+     *  never ideas (Graeme, 2026-09-18). 0 is a real zero; null means the
+     *  lookup failed. Optional so a cached older server payload still renders. */
+    improvementsCompleted?: number | null;
     batchesTarget: number;
   };
   todayDeliveries: Array<{ id: number; supplierName: string; status: string }>;
@@ -2052,12 +2056,17 @@ const KPI_CATALOG = {
   builder_rate: { label: "Builder batches/hr", get: (k: DashboardData["yesterdayKpis"]) => k.builderBatchesPerHour != null ? k.builderBatchesPerHour.toFixed(1) : "—", warn: () => false },
   packing_rate: { label: "Packing boxes/hr",   get: (k: DashboardData["yesterdayKpis"]) => k.packingBatchesPerHour != null ? k.packingBatchesPerHour.toFixed(1) : "—", warn: () => false },
   wonkies:      { label: "Wonkies",            get: (k: DashboardData["yesterdayKpis"]) => k.wonkyCount.toString(), warn: (k: DashboardData["yesterdayKpis"]) => k.wonkyCount > 20 },
+  // Completed improvements only, bucketed by when the work was marked done —
+  // never ideas, never the later approval (Graeme, 2026-09-18). Unlike the
+  // rates, 0 is a real zero and renders as 0; "—" only when the server
+  // couldn't count (null) or is an older cached build (undefined).
+  improvements: { label: "Improvements done",  get: (k: DashboardData["yesterdayKpis"]) => k.improvementsCompleted == null ? "—" : k.improvementsCompleted.toString(), warn: () => false },
   batches:      { label: "Batches",            get: (k: DashboardData["yesterdayKpis"]) => k.batchesTarget.toString(), warn: () => false },
   shorts:       { label: "Short on pack",      get: (k: DashboardData["yesterdayKpis"]) => k.shortCount.toString(), warn: (k: DashboardData["yesterdayKpis"]) => k.shortCount > 0 },
   leftover:     { label: "Leftover filling (g)", get: (k: DashboardData["yesterdayKpis"]) => k.leftoverFillingGrams.toString(), warn: () => false },
 } as const;
 type KpiKey = keyof typeof KPI_CATALOG;
-const DEFAULT_KPIS: KpiKey[] = ["builder_rate", "packing_rate", "wonkies"];
+const DEFAULT_KPIS: KpiKey[] = ["builder_rate", "packing_rate", "wonkies", "improvements"];
 
 function YesterdayKpisSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
   const k = data.yesterdayKpis;
