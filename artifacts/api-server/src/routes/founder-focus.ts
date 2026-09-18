@@ -1098,37 +1098,50 @@ router.delete("/parking-lot/:id", async (req: Request, res: Response) => {
 });
 
 // ── Daily ad spend (Numbers page) ──────────────────────────────────────────
-// Hand-entered, one figure per day. Feeds the new-customer ROAS panel:
-// yesterday's new-customer revenue ÷ this number.
+// One figure per day, feeding the new-customer ROAS panel: yesterday's
+// new-customer revenue ÷ this number.
+//
+// Two ways in. Graeme types it here, or the Meta Marketing API sync writes
+// it (lib/meta-ads-sync.ts). `source` says which, and the rule is absolute:
+// a hand-entered figure always wins — the sync will not touch a row this
+// endpoint wrote. Typing over a synced figure therefore also PINS the day,
+// because the row flips to 'manual' and the next sync leaves it alone.
 router.get("/ad-spend", async (req: Request, res: Response) => {
   const date = typeof req.query.date === "string" ? req.query.date : "";
   if (!DATE_RE.test(date)) { res.status(400).json({ error: "date=YYYY-MM-DD required" }); return; }
-  const rows = await db.execute<{ amount: string }>(sql`
-    SELECT amount FROM founder_ad_spend WHERE spend_date = ${date} LIMIT 1
+  const rows = await db.execute<{ amount: string; source: string; synced_at: Date | null }>(sql`
+    SELECT amount, source, synced_at FROM founder_ad_spend WHERE spend_date = ${date} LIMIT 1
   `);
-  const raw = rows.rows[0]?.amount;
-  res.json({ date, amount: raw != null ? Number(raw) : null });
+  const row = rows.rows[0];
+  res.json({
+    date,
+    amount: row?.amount != null ? Number(row.amount) : null,
+    source: row?.source ?? null,
+    syncedAt: row?.synced_at ? new Date(row.synced_at).toISOString() : null,
+  });
 });
 
 router.put("/ad-spend", async (req: Request, res: Response) => {
   const parsed = z.object({
     date: z.string().regex(DATE_RE),
-    // null clears the day's entry (typo recovery).
+    // null clears the day's entry (typo recovery). A cleared day is no
+    // longer pinned, so a later sync is free to fill it in again.
     amount: z.number().min(0).max(1_000_000).nullable(),
   }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "date and a non-negative amount are required" }); return; }
   const { date, amount } = parsed.data;
   if (amount === null) {
     await db.execute(sql`DELETE FROM founder_ad_spend WHERE spend_date = ${date}`);
-    res.json({ date, amount: null });
+    res.json({ date, amount: null, source: null, syncedAt: null });
     return;
   }
   await db.execute(sql`
-    INSERT INTO founder_ad_spend (spend_date, amount, updated_at)
-    VALUES (${date}, ${amount}, NOW())
-    ON CONFLICT (spend_date) DO UPDATE SET amount = ${amount}, updated_at = NOW()
+    INSERT INTO founder_ad_spend (spend_date, amount, updated_at, source, synced_at)
+    VALUES (${date}, ${amount}, NOW(), 'manual', NULL)
+    ON CONFLICT (spend_date) DO UPDATE
+      SET amount = ${amount}, updated_at = NOW(), source = 'manual', synced_at = NULL
   `);
-  res.json({ date, amount });
+  res.json({ date, amount, source: "manual", syncedAt: null });
 });
 
 export default router;
