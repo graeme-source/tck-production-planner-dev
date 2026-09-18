@@ -144,9 +144,12 @@ export interface PeriodPreset {
  * longer ranges, and Yesterday is the default because it is the most recent
  * period that is actually finished.
  */
+// Today leads so the row reads chronologically — each option one step
+// further back in time. The DEFAULT stays Yesterday: that's the settled day
+// Graeme actually reviews; Today is there for a live glance (2026-09-18).
 export const PERIOD_PRESETS: readonly PeriodPreset[] = [
-  { id: "yesterday", label: "Yesterday" },
   { id: "today", label: "Today" },
+  { id: "yesterday", label: "Yesterday" },
   { id: "last7", label: "Last 7 days" },
   { id: "monthToDate", label: "Month to date" },
   { id: "lastMonth", label: "Last month" },

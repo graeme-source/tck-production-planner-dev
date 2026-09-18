@@ -306,9 +306,16 @@ describe("month arithmetic", () => {
 });
 
 describe("PERIOD_PRESETS", () => {
-  it("offers Yesterday and Today first, as the precursor to the longer ranges", () => {
-    expect(PERIOD_PRESETS[0].id).toBe("yesterday");
-    expect(PERIOD_PRESETS[1].id).toBe("today");
+  it("reads chronologically — Today, then Yesterday, then the longer ranges", () => {
+    // Revised 2026-09-18: Graeme wants the row in time order, each option one
+    // step further back. The DEFAULT stays Yesterday — order and default are
+    // separate decisions, and the next test pins the default.
+    expect(PERIOD_PRESETS[0].id).toBe("today");
+    expect(PERIOD_PRESETS[1].id).toBe("yesterday");
+  });
+
+  it("still defaults to Yesterday — the settled day, not the running one", () => {
+    expect(DEFAULT_PERIOD).toBe("yesterday");
   });
 
   it("keeps all the ranges the page offered before", () => {
