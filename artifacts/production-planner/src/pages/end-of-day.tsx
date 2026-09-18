@@ -1,18 +1,18 @@
 /**
- * End-of-day meeting — the three numbers reviewed before everyone goes home
- * (Graeme, 2026-09-17).
+ * End-of-day meeting — the numbers reviewed before everyone goes home
+ * (Graeme, 2026-09-17; improvements completed added 2026-09-18).
  *
  * The morning meeting asks "how did yesterday go?". This asks "how did TODAY
  * go?", while the people who can explain the number are still on site. Same
- * three KPIs, same server-side helpers — deliberately not re-derived here,
+ * KPIs, same server-side helpers — deliberately not re-derived here,
  * because a second way of working out a rate is how the meeting and the
  * Analytics page came to disagree once before.
  *
- * Kept deliberately bare: three numbers, big enough to read from across the
+ * Kept deliberately bare: four numbers, big enough to read from across the
  * room, and nothing else to click.
  */
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Hammer, PackageCheck, AlertTriangle } from "lucide-react";
+import { Loader2, Hammer, PackageCheck, AlertTriangle, Trophy } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 
@@ -24,6 +24,10 @@ interface EndOfDay {
   builder: { batchesPerHour: number | null; totalBatches: number; activeMinutes: number };
   packing: { boxesPerHour: number | null; totalBoxes: number; activeMinutes: number };
   wonkies: { count: number; batchesTarget: number };
+  /** Completed improvements only — done work bucketed by when it was marked
+   *  done, never ideas. 0 is a real zero; null means the lookup failed.
+   *  Optional so a cached older server payload doesn't crash the page. */
+  improvements?: { completed: number | null };
 }
 
 const hours = (mins: number) => (mins / 60).toFixed(1);
@@ -34,12 +38,13 @@ function KpiCard({ label, value, unit, sub, icon: Icon, tone }: {
   unit?: string;
   sub: string;
   icon: typeof Hammer;
-  tone: "green" | "blue" | "amber";
+  tone: "green" | "blue" | "amber" | "violet";
 }) {
   const tones = {
     green: "border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-300",
     blue: "border-blue-300 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/20 text-blue-700 dark:text-blue-300",
     amber: "border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 text-amber-700 dark:text-amber-300",
+    violet: "border-violet-300 dark:border-violet-800 bg-violet-50/60 dark:bg-violet-950/20 text-violet-700 dark:text-violet-300",
   } as const;
   return (
     <div className={cn("rounded-3xl border-2 p-6 sm:p-8 flex flex-col gap-2", tones[tone])}>
@@ -94,7 +99,7 @@ export default function EndOfDayMeeting() {
         </p>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2">
         <KpiCard
           label="Builders — batches per hour"
           icon={Hammer}
@@ -125,10 +130,24 @@ export default function EndOfDayMeeting() {
             ? `Across ${data.wonkies.batchesTarget} batches planned`
             : "No batches planned today"}
         />
+        <KpiCard
+          label="Improvements completed"
+          icon={Trophy}
+          tone="violet"
+          // 0 is a real zero — the team completed nothing today — so it
+          // shows as 0, never a dash. Only a failed lookup shows "—".
+          value={data.improvements?.completed == null ? "—" : String(data.improvements.completed)}
+          unit={data.improvements?.completed == null ? undefined : "today"}
+          sub={data.improvements?.completed == null
+            ? "Couldn't count today's improvements."
+            : data.improvements.completed === 0
+              ? "Finished improvements only — ideas don't count until they're done."
+              : `Finished and in the feed — ideas don't count until they're done.`}
+        />
       </div>
 
       <p className="text-sm text-muted-foreground">
-        The same three numbers the morning meeting reviews — these are today's, while everyone who can explain them is still here.
+        The same four numbers the morning meeting reviews — these are today's, while everyone who can explain them is still here.
       </p>
     </div>
   );

@@ -1,12 +1,13 @@
 /**
- * End-of-day meeting — the three numbers the team reviews before going home
- * (Graeme, 2026-09-17):
+ * End-of-day meeting — the numbers the team reviews before going home
+ * (Graeme, 2026-09-17; improvements added 2026-09-18):
  *
  *   • builders batches per hour
  *   • packing boxes per hour
  *   • wonkies
+ *   • improvements completed (done work only, never ideas)
  *
- * These are the SAME three the morning meeting shows, but for TODAY rather
+ * These are the SAME four the morning meeting shows, but for TODAY rather
  * than the last production day. The morning meeting asks "how did yesterday
  * go?"; this asks "how did today go?" while everyone is still on site and
  * can say why.
@@ -25,6 +26,7 @@ import { londonDateString } from "../lib/london-time";
 import {
   computeBuilderBatchesPerHourForDay,
   computePackingOrdersPerHourForDay,
+  countImprovementsCompletedForDay,
 } from "../lib/yesterday-kpis";
 
 const router: IRouter = Router();
@@ -70,7 +72,10 @@ router.get("/", async (req: Request, res: Response) => {
 
     // A KPI that can't be worked out yet must come back as null and say so on
     // screen, never as a zero — a zero reads as "we did nothing today".
-    const [builder, packing] = await Promise.all([
+    // Improvements completed is different: zero really means "the team
+    // completed nothing today" and must show as 0. Only a failed lookup
+    // comes back null (rendered as "—"), never as a fake zero.
+    const [builder, packing, improvementsCompleted] = await Promise.all([
       computeBuilderBatchesPerHourForDay(day).catch(err => {
         console.warn("[end-of-day] builder BPH failed:", err);
         return { totalBatches: 0, activeMinutes: 0, batchesPerHour: null };
@@ -78,6 +83,10 @@ router.get("/", async (req: Request, res: Response) => {
       computePackingOrdersPerHourForDay(day).catch(err => {
         console.warn("[end-of-day] packing orders/hr failed:", err);
         return { totalOrders: 0, activeMinutes: 0, ordersPerHour: null };
+      }),
+      countImprovementsCompletedForDay(day).catch(err => {
+        console.warn("[end-of-day] improvements completed failed:", err);
+        return null;
       }),
     ]);
 
@@ -95,6 +104,9 @@ router.get("/", async (req: Request, res: Response) => {
         activeMinutes: packing.activeMinutes,
       },
       wonkies: { count: wonkyCount, batchesTarget },
+      // Completed improvements only, bucketed by when the person marked the
+      // work done (lib/improvements-completed.ts has the full definition).
+      improvements: { completed: improvementsCompleted },
     });
   } catch (err) {
     console.error("[end-of-day] failed:", err);
