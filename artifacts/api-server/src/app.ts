@@ -6,6 +6,7 @@ import connectPgSimple from "connect-pg-simple";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import path from "path";
 import router from "./routes";
+import { BIG_BODY_JSON_ROUTES } from "./lib/big-body-routes";
 import publicSurveysRouter from "./routes/public-surveys";
 
 const sessionSecret = process.env["SESSION_SECRET"];
@@ -92,12 +93,14 @@ app.use(helmet({
   },
 }));
 
-// Label photos arrive as base64 JSON (up to 4 re-encoded JPEGs), which the
-// 1 MB global cap would reject. Give that ONE path a bigger parser, mounted
-// BEFORE the global one — express.json skips a body another parser already
-// consumed, so this is the only place a per-route limit actually works. The
-// route itself still enforces a per-image decoded-size cap.
-app.use("/api/ingredients/scrape-photo", express.json({ limit: "10mb" }));
+// Some routes take base64 images as JSON and need more than the global 1 MB
+// cap. Their bigger parsers MUST mount here, path-scoped, BEFORE the global
+// one — express.json skips a body another parser already consumed, so a
+// router-level parser never runs. The map (and the regression test guarding
+// this trap) lives in lib/big-body-routes.ts.
+for (const [path, limit] of Object.entries(BIG_BODY_JSON_ROUTES)) {
+  app.use(path, express.json({ limit }));
+}
 app.use(express.json({ limit: "1mb" }));
 app.use(express.text({ limit: "10mb", type: "text/plain" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));

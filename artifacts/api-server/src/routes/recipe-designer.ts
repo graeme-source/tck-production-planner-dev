@@ -1,4 +1,4 @@
-import express, { Router, type IRouter, type Request, type Response } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { db, appSettingsTable, usersTable } from "@workspace/db";
@@ -154,9 +154,9 @@ For allergen questions, use get_recipe_allergens (one call — it walks the whol
 
 Really — do not narrate ("let me pull up…", "I need to check…"). Call the tool and give the answer.`;
 
-// Allow image attachments — bump the json body limit on this router only.
-const largeJson = express.json({ limit: "30mb" });
-
+// Image attachments make /chat bodies big. The 30 MB json limit for that
+// path lives in app.ts via lib/big-body-routes.ts — a parser attached here
+// would be dead code, because the app-level parser consumes the body first.
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const MAX_IMAGES_PER_MESSAGE = 10;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB per image (Anthropic limit)
@@ -352,7 +352,7 @@ async function maybeAutoTitleThread(threadId: number, firstUserMessage: string):
 
 // ─── Chat endpoint ─────────────────────────────────────────────────────────
 
-router.post("/chat", largeJson, async (req: Request, res: Response) => {
+router.post("/chat", async (req: Request, res: Response) => {
   if (!isClaudeConfigured()) {
     res.status(503).json({ error: "Recipe Designer is not configured (missing ANTHROPIC_API_KEY)." });
     return;
