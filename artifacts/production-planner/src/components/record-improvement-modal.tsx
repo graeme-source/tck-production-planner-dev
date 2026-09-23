@@ -36,6 +36,12 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
   const [duplicates, setDuplicates] = useState<Array<{ id: number; title: string }>>([]);
   const [beforeTaken, setBeforeTaken] = useState(false);
   const [afterTaken, setAfterTaken] = useState(false);
+  // Guided-flow state (Graeme, 2026-09-23): the form walks one step at a
+  // time — title, before photo, after photo — so there's only ever one
+  // obvious thing to do. Steps are "done" by doing them or by the small skip.
+  const [titleConfirmed, setTitleConfirmed] = useState(false);
+  const [beforeSkipped, setBeforeSkipped] = useState(false);
+  const [afterSkipped, setAfterSkipped] = useState(false);
   const beforeFile = useRef<File | null>(null);
   const afterFile = useRef<File | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -46,12 +52,94 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
   const reset = () => {
     setMode("choose"); setTitle(""); setDescription("");
     setBeforeTaken(false); setAfterTaken(false);
+    setTitleConfirmed(false); setBeforeSkipped(false); setAfterSkipped(false);
     beforeFile.current = null; afterFile.current = null; setBusy(false);
     setDuplicates([]);
   };
   const close = () => { reset(); onClose(); };
 
   const isIdea = mode === "idea";
+
+  // Which step is up next. "ready" = everything required is done (or
+  // skipped) and the note + submit come alive.
+  const stepDone = {
+    title: titleConfirmed && title.trim().length > 0,
+    before: beforeTaken || beforeSkipped,
+    after: afterTaken || afterSkipped,
+  };
+  const currentStep: "title" | "before" | "after" | "ready" =
+    !stepDone.title ? "title"
+    : !stepDone.before ? "before"
+    : !isIdea && !stepDone.after ? "after"
+    : "ready";
+
+  /** One photo step: dimmed header while locked, green header + big green
+   *  button while it's the step to do, emerald "ready" once done, quiet
+   *  "skipped" row that still lets you add the photo after all. */
+  const photoStep = (opts: {
+    n: number;
+    label: string;
+    readyLabel: string;
+    skipLabel: string;
+    helper: string;
+    taken: boolean;
+    skipped: boolean;
+    state: "locked" | "active" | "done";
+    onPick: () => void;
+    onSkip: () => void;
+  }) => {
+    if (opts.state === "locked") {
+      return (
+        <div className="rounded-2xl bg-secondary/50 px-4 py-3 opacity-50">
+          <p className="text-lg font-bold text-muted-foreground">{opts.n} · {opts.label}</p>
+        </div>
+      );
+    }
+    if (opts.taken) {
+      return (
+        <button
+          onClick={opts.onPick}
+          className="w-full rounded-2xl border-2 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 p-4 text-left flex items-center gap-3 active:scale-[0.99] transition-all"
+        >
+          <CheckCircle2 className="w-6 h-6 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+          <span className="text-base font-bold">{opts.readyLabel}</span>
+        </button>
+      );
+    }
+    if (opts.skipped) {
+      return (
+        <button
+          onClick={opts.onPick}
+          className="w-full rounded-2xl border-2 border-dashed border-border p-4 text-left flex items-center gap-3 text-muted-foreground"
+        >
+          <Camera className="w-5 h-5 flex-shrink-0" />
+          <span className="text-base font-medium">{opts.label} — skipped. Tap to add one after all.</span>
+        </button>
+      );
+    }
+    return (
+      <div className="space-y-2">
+        <div className="rounded-2xl bg-primary text-primary-foreground px-4 py-3">
+          <p className="text-lg font-bold">{opts.n} · {opts.label}</p>
+        </div>
+        <button
+          onClick={opts.onPick}
+          className="w-full h-16 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-3 shadow-lg shadow-primary/20 active:scale-[0.99] transition-all"
+        >
+          <Camera className="w-6 h-6" /> {opts.label}
+        </button>
+        <p className="text-sm text-muted-foreground text-center">{opts.helper}</p>
+        <div className="text-center">
+          <button
+            onClick={opts.onSkip}
+            className="text-sm font-medium text-muted-foreground underline underline-offset-2 px-3 py-2"
+          >
+            {opts.skipLabel}
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   /**
    * Before saving an idea, check whether someone has already reported it.
@@ -268,41 +356,51 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
           </>
         ) : (
           <>
-            <div>
-              {/* Dictate sits ON the label row: typing this on a shared iPad
-                  mid-shift is what stops improvements getting written down at
-                  all (Graeme, 2026-09-16). Tidying happens by itself when you
-                  stop talking. */}
-              <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-                <label className="text-lg font-bold">
-                  {isIdea ? "What could be better?" : "What did you improve?"}
-                </label>
-                <DictateButton value={title} onChange={setTitle} context="title" />
-              </div>
-              <input
-                value={title}
-                onChange={e => setTitle(e.target.value)}
-                autoFocus
-                placeholder={isIdea ? "e.g. The tape gun is never where you need it" : "e.g. Moved the tape gun to the wrapping bench"}
-                className="w-full h-16 px-4 rounded-2xl border-2 border-border bg-card text-lg font-bold focus:outline-none focus:ring-2 focus:ring-primary/40"
-              />
-            </div>
+            {/* One thing at a time (Graeme, 2026-09-23): the form walks
+                title → before photo → after photo. The step to do NOW wears
+                brand green; later steps sit dimmed until it's their turn,
+                and each photo step has a small skip. The optional note lives
+                quietly at the bottom and only comes alive at the end. */}
 
-            <div>
-              <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-                <label className="text-lg font-bold">
-                  Anything to add? <span className="font-normal text-muted-foreground">(optional)</span>
-                </label>
-                <DictateButton value={description} onChange={setDescription} context="note" />
+            {/* Step 1 — the title. Dictate sits ON the header row: typing
+                this on a shared iPad mid-shift is what stops improvements
+                getting written down at all (Graeme, 2026-09-16). Tidying
+                happens by itself when you stop talking. */}
+            {stepDone.title ? (
+              <button
+                onClick={() => setTitleConfirmed(false)}
+                className="w-full rounded-2xl border-2 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 p-4 text-left flex items-center gap-3 active:scale-[0.99] transition-all"
+              >
+                <CheckCircle2 className="w-6 h-6 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+                <span className="min-w-0">
+                  <span className="block text-base font-bold truncate">{title}</span>
+                  <span className="block text-sm text-muted-foreground">Tap to change it</span>
+                </span>
+              </button>
+            ) : (
+              <div className="space-y-3">
+                <div className="rounded-2xl bg-primary text-primary-foreground px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-lg font-bold">
+                    1 · {isIdea ? "What could be better?" : "What did you improve?"}
+                  </span>
+                  <DictateButton value={title} onChange={setTitle} context="title" />
+                </div>
+                <input
+                  value={title}
+                  onChange={e => setTitle(e.target.value)}
+                  autoFocus
+                  placeholder={isIdea ? "e.g. The tape gun is never where you need it" : "e.g. Moved the tape gun to the wrapping bench"}
+                  className="w-full h-16 px-4 rounded-2xl border-2 border-border bg-card text-lg font-bold focus:outline-none focus:ring-2 focus:ring-primary/40"
+                />
+                <button
+                  onClick={() => setTitleConfirmed(true)}
+                  disabled={!title.trim()}
+                  className="w-full h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-40 active:scale-[0.99] transition-all"
+                >
+                  Next <ArrowRight className="w-5 h-5" />
+                </button>
               </div>
-              <textarea
-                value={description}
-                onChange={e => setDescription(e.target.value)}
-                rows={2}
-                placeholder={isIdea ? "Why it's a problem" : "What was wrong before, and what's better now"}
-                className="w-full px-4 py-3 rounded-2xl border-2 border-border bg-card text-lg focus:outline-none focus:ring-2 focus:ring-primary/40 resize-y"
-              />
-            </div>
+            )}
 
             {/* The main shot — the before for an idea, the after for finished
                 work. Deliberately NO capture attribute: forcing the camera
@@ -339,43 +437,55 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
               }}
             />
 
-            {!isIdea && (
-              <button
-                onClick={() => beforeLibraryRef.current?.click()}
-                className={cn(
-                  "w-full h-16 rounded-2xl border-2 text-lg font-bold flex items-center justify-center gap-3 transition-colors",
-                  beforeTaken
-                    ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400"
-                    : "border-dashed border-border hover:bg-secondary/50",
-                )}
-              >
-                {beforeTaken ? <CheckCircle2 className="w-6 h-6" /> : <Camera className="w-6 h-6" />}
-                {beforeTaken ? "Before photo ready — tap to change" : "Add the before photo"}
-              </button>
-            )}
-            {!isIdea && !beforeTaken && (
-              <p className="text-sm text-muted-foreground text-center -mt-1">
-                From your camera roll if you snapped one earlier — skip it if there isn't one.
-              </p>
-            )}
+            {/* Step 2 — the before photo. For an idea it's the camera, now,
+                stood in front of the problem; for finished work it's the
+                camera roll, if a before exists at all. */}
+            {photoStep({
+              n: 2,
+              label: "Add the before photo",
+              readyLabel: "Before photo ready — tap to change",
+              skipLabel: isIdea ? "Skip for now" : "Skip — there isn't one",
+              helper: isIdea
+                ? "Take it now, while you're stood in front of it. A photo is fine — a short video is even better."
+                : "From your camera roll if you snapped one earlier.",
+              taken: beforeTaken,
+              skipped: beforeSkipped,
+              state: currentStep === "title" ? "locked" : currentStep === "before" ? "active" : "done",
+              onPick: () => (isIdea ? cameraRef : beforeLibraryRef).current?.click(),
+              onSkip: () => setBeforeSkipped(true),
+            })}
 
-            <button
-              onClick={() => cameraRef.current?.click()}
-              className={cn(
-                "w-full h-16 rounded-2xl border-2 text-lg font-bold flex items-center justify-center gap-3 transition-colors",
-                (isIdea ? beforeTaken : afterTaken)
-                  ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400"
-                  : "border-dashed border-border hover:bg-secondary/50",
-              )}
-            >
-              {(isIdea ? beforeTaken : afterTaken) ? <CheckCircle2 className="w-6 h-6" /> : <Camera className="w-6 h-6" />}
-              {isIdea
-                ? (beforeTaken ? "Before photo ready — tap to change" : "Add the before photo")
-                : (afterTaken ? "After photo ready — tap to change" : "Add the after photo")}
-            </button>
-            <p className="text-sm text-muted-foreground text-center -mt-1">
-              Take it now or pick it from the camera roll. A photo is fine — a short video is even better.
-            </p>
+            {/* Step 3 — the after photo (finished work only). */}
+            {!isIdea && photoStep({
+              n: 3,
+              label: "Add the after photo",
+              readyLabel: "After photo ready — tap to change",
+              skipLabel: "Skip for now",
+              helper: "Take it now or pick it from the camera roll. A photo is fine — a short video is even better.",
+              taken: afterTaken,
+              skipped: afterSkipped,
+              state: currentStep === "title" || currentStep === "before" ? "locked" : currentStep === "after" ? "active" : "done",
+              onPick: () => cameraRef.current?.click(),
+              onSkip: () => setAfterSkipped(true),
+            })}
+
+            {/* The note — optional, quiet, at the bottom, and only alive once
+                the steps are done so it never competes with them. */}
+            <div className={cn(currentStep !== "ready" && "opacity-40 pointer-events-none")}>
+              <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                <label className="text-sm font-medium text-muted-foreground">
+                  Anything to add? (optional)
+                </label>
+                <DictateButton value={description} onChange={setDescription} context="note" />
+              </div>
+              <textarea
+                value={description}
+                onChange={e => setDescription(e.target.value)}
+                rows={2}
+                placeholder={isIdea ? "Why it's a problem" : "What was wrong before, and what's better now"}
+                className="w-full px-4 py-3 rounded-2xl border-2 border-border bg-card text-base focus:outline-none focus:ring-2 focus:ring-primary/40 resize-y"
+              />
+            </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button
@@ -386,8 +496,11 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
               </button>
               <button
                 onClick={checkThenSubmit}
-                disabled={!title.trim() || busy}
-                className="h-16 sm:h-14 rounded-2xl bg-primary text-primary-foreground text-xl sm:text-lg font-bold flex items-center justify-center gap-3 disabled:opacity-50 active:scale-[0.99] transition-all shadow-lg shadow-primary/20 sm:order-2"
+                disabled={currentStep !== "ready" || busy}
+                className={cn(
+                  "h-16 sm:h-14 rounded-2xl bg-primary text-primary-foreground text-xl sm:text-lg font-bold flex items-center justify-center gap-3 disabled:opacity-40 active:scale-[0.99] transition-all sm:order-2",
+                  currentStep === "ready" && "shadow-lg shadow-primary/20",
+                )}
               >
                 {busy ? <Loader2 className="w-6 h-6 animate-spin" /> : <ArrowRight className="w-6 h-6" />}
                 {isIdea ? "Log the idea" : "Send for sign-off"}
