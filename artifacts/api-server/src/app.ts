@@ -92,6 +92,12 @@ app.use(helmet({
   },
 }));
 
+// Label photos arrive as base64 JSON (up to 4 re-encoded JPEGs), which the
+// 1 MB global cap would reject. Give that ONE path a bigger parser, mounted
+// BEFORE the global one — express.json skips a body another parser already
+// consumed, so this is the only place a per-route limit actually works. The
+// route itself still enforces a per-image decoded-size cap.
+app.use("/api/ingredients/scrape-photo", express.json({ limit: "10mb" }));
 app.use(express.json({ limit: "1mb" }));
 app.use(express.text({ limit: "10mb", type: "text/plain" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
