@@ -15,6 +15,8 @@
  * download at 3 MB, and time out after 45 s.
  */
 import { Router, type IRouter, type Request, type Response } from "express";
+import type Anthropic from "@anthropic-ai/sdk";
+import { z } from "zod/v4";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 
 const router: IRouter = Router();
@@ -231,6 +233,63 @@ export function normaliseScrapedFields(raw: unknown): ScrapedFields {
   };
 }
 
+/** A UK nutrition declaration only has to list what's present — fibre (and
+ *  occasionally others) are simply omitted when there's none to declare. So
+ *  when the source clearly has a per-100g nutrition listing (energy plus at
+ *  least a few more values), any nutrient it doesn't mention is 0, not
+ *  unknown — otherwise the ingredient sits in Data Health flagged as
+ *  incomplete forever. No listing at all → everything stays null.
+ *
+ *  Shared by /scrape-url and /scrape-photo so the two extraction paths can't
+ *  drift. Pure — returns a new object, never mutates the input. */
+const NUTRIENT_KEYS = ["energyKj", "energyKcal", "fat", "saturates", "carbohydrate", "sugars", "protein", "fibre", "salt"] as const;
+
+export function applyMissingNutrientZeros(extracted: ScrapedFields): ScrapedFields {
+  const present = NUTRIENT_KEYS.filter(k => extracted[k] != null).length;
+  const hasEnergy = extracted.energyKj != null || extracted.energyKcal != null;
+  if (!hasEnergy || present < 4) return { ...extracted };
+  const out = { ...extracted };
+  for (const k of NUTRIENT_KEYS) if (out[k] == null) out[k] = 0;
+  return out;
+}
+
+/** One tool definition shared by /scrape-url and /scrape-photo — both must
+ *  hand the client the exact same ScrapedFields shape, so a single const
+ *  keeps the two prompts from drifting apart. */
+const EXTRACT_INGREDIENT_FIELDS_TOOL: Anthropic.Tool = {
+  name: "extract_ingredient_fields",
+  description: "Extract structured ingredient/product data from a product page or label, including the per-100g nutritional values when present.",
+  input_schema: {
+    type: "object",
+    properties: {
+      name: { type: ["string", "null"], description: "Short product name. Strip brand if it's a separate field. Keep variant info (e.g. 'Plain Flour')." },
+      brand: { type: ["string", "null"], description: "Brand / manufacturer (e.g. Caputo, Heinz)." },
+      packSize: { type: ["number", "null"], description: "Numeric pack size in the packUnit. e.g. 15 for a 15kg bag." },
+      packUnit: { type: ["string", "null"], enum: ["kg", "g", "l", "ml", "pieces", "each", "box", "bag", "tub", "roll", "sheet", null], description: "Native unit." },
+      costPerPack: { type: ["number", "null"], description: "Price in GBP for ONE pack at the given pack size. Strip currency symbols." },
+      supplierPartNumber: { type: ["string", "null"], description: "SKU / product code / supplier part number." },
+      ingredients: { type: ["string", "null"], description: "Ingredient declaration as written on the label." },
+      allergens: { type: "array", items: { type: "string" }, description: "Allergen names (e.g. 'wheat', 'eggs'). Empty if none stated." },
+      notes: { type: ["string", "null"], description: "Anything useful that doesn't fit the other fields — storage, shelf life hint, certifications. One short line max." },
+      energyKj:     { type: ["number", "null"], description: "Energy per 100g/100ml in kJ. Null if only per-portion is shown." },
+      energyKcal:   { type: ["number", "null"], description: "Energy per 100g/100ml in kcal. Null if only per-portion is shown." },
+      fat:          { type: ["number", "null"], description: "Total fat per 100g/100ml in grams." },
+      saturates:    { type: ["number", "null"], description: "Saturated fat (of which saturates) per 100g/100ml in grams." },
+      carbohydrate: { type: ["number", "null"], description: "Total carbohydrate per 100g/100ml in grams." },
+      sugars:       { type: ["number", "null"], description: "Sugars (of which sugars) per 100g/100ml in grams." },
+      protein:      { type: ["number", "null"], description: "Protein per 100g/100ml in grams." },
+      fibre:        { type: ["number", "null"], description: "Fibre per 100g/100ml in grams." },
+      salt:         { type: ["number", "null"], description: "Salt per 100g/100ml in grams. If only sodium is given, convert to salt by multiplying sodium (g) by 2.5." },
+    },
+    required: [
+      "name", "brand", "packSize", "packUnit", "costPerPack",
+      "supplierPartNumber", "ingredients", "allergens", "notes",
+      "energyKj", "energyKcal", "fat", "saturates", "carbohydrate",
+      "sugars", "protein", "fibre", "salt",
+    ],
+  },
+};
+
 router.post("/scrape-url", async (req: Request, res: Response) => {
   if (!isClaudeConfigured()) {
     res.status(503).json({ error: "Scraping requires the Anthropic API key. Ask an admin to set ANTHROPIC_API_KEY." });
@@ -266,39 +325,7 @@ router.post("/scrape-url", async (req: Request, res: Response) => {
       model: CLAUDE_MODELS.haiku,
       max_tokens: 1536,
       tool_choice: { type: "tool", name: "extract_ingredient_fields" },
-      tools: [{
-        name: "extract_ingredient_fields",
-        description: "Extract structured ingredient/product data from a product page, including the per-100g nutritional values when present.",
-        input_schema: {
-          type: "object",
-          properties: {
-            name: { type: ["string", "null"], description: "Short product name. Strip brand if it's a separate field. Keep variant info (e.g. 'Plain Flour')." },
-            brand: { type: ["string", "null"], description: "Brand / manufacturer (e.g. Caputo, Heinz)." },
-            packSize: { type: ["number", "null"], description: "Numeric pack size in the packUnit. e.g. 15 for a 15kg bag." },
-            packUnit: { type: ["string", "null"], enum: ["kg", "g", "l", "ml", "pieces", "each", "box", "bag", "tub", "roll", "sheet", null], description: "Native unit." },
-            costPerPack: { type: ["number", "null"], description: "Price in GBP for ONE pack at the given pack size. Strip currency symbols." },
-            supplierPartNumber: { type: ["string", "null"], description: "SKU / product code / supplier part number." },
-            ingredients: { type: ["string", "null"], description: "Ingredient declaration as written on the label." },
-            allergens: { type: "array", items: { type: "string" }, description: "Allergen names (e.g. 'wheat', 'eggs'). Empty if none stated." },
-            notes: { type: ["string", "null"], description: "Anything useful that doesn't fit the other fields — storage, shelf life hint, certifications. One short line max." },
-            energyKj:     { type: ["number", "null"], description: "Energy per 100g/100ml in kJ. Null if only per-portion is shown." },
-            energyKcal:   { type: ["number", "null"], description: "Energy per 100g/100ml in kcal. Null if only per-portion is shown." },
-            fat:          { type: ["number", "null"], description: "Total fat per 100g/100ml in grams." },
-            saturates:    { type: ["number", "null"], description: "Saturated fat (of which saturates) per 100g/100ml in grams." },
-            carbohydrate: { type: ["number", "null"], description: "Total carbohydrate per 100g/100ml in grams." },
-            sugars:       { type: ["number", "null"], description: "Sugars (of which sugars) per 100g/100ml in grams." },
-            protein:      { type: ["number", "null"], description: "Protein per 100g/100ml in grams." },
-            fibre:        { type: ["number", "null"], description: "Fibre per 100g/100ml in grams." },
-            salt:         { type: ["number", "null"], description: "Salt per 100g/100ml in grams. If only sodium is given, convert to salt by multiplying sodium (g) by 2.5." },
-          },
-          required: [
-            "name", "brand", "packSize", "packUnit", "costPerPack",
-            "supplierPartNumber", "ingredients", "allergens", "notes",
-            "energyKj", "energyKcal", "fat", "saturates", "carbohydrate",
-            "sugars", "protein", "fibre", "salt",
-          ],
-        },
-      }],
+      tools: [EXTRACT_INGREDIENT_FIELDS_TOOL],
       messages: [{
         role: "user",
         content: `Extract the ingredient fields for the form. Source URL: ${check.url.toString()}
@@ -321,25 +348,113 @@ ${distilled}`,
     return;
   }
 
-  // A UK nutrition declaration only has to list what's present — fibre (and
-  // occasionally others) are simply omitted when there's none to declare. So
-  // when the page clearly has a per-100g nutrition listing (energy plus at
-  // least a few more values), any nutrient it doesn't mention is 0, not
-  // unknown — otherwise the ingredient sits in Data Health flagged as
-  // incomplete forever. No listing at all → everything stays null.
-  {
-    const NUTRIENTS = ["energyKj", "energyKcal", "fat", "saturates", "carbohydrate", "sugars", "protein", "fibre", "salt"] as const;
-    const present = NUTRIENTS.filter(k => extracted[k] != null).length;
-    const hasEnergy = extracted.energyKj != null || extracted.energyKcal != null;
-    if (hasEnergy && present >= 4) {
-      for (const k of NUTRIENTS) if (extracted[k] == null) extracted[k] = 0;
-    }
-  }
-
   res.json({
     url: check.url.toString(),
-    extracted,
+    extracted: applyMissingNutrientZeros(extracted),
   });
+});
+
+// ── Scrape from photos of the physical label ────────────────────────────────
+//
+// The operator photographs the pack (front, back, nutrition panel close-up)
+// on the iPad and the app fills the same ScrapedFields preview the URL
+// scrape uses. The client re-encodes every photo to JPEG ≤2000px before
+// upload, so payloads stay well inside the caps below.
+
+const SCRAPE_PHOTO_MAX_IMAGES = 4;
+/** Decoded (binary) size cap per image — generous for a 2000px JPEG. */
+const SCRAPE_PHOTO_MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+
+/** Approximate decoded byte count of a base64 string without decoding it. */
+export function base64DecodedBytes(data: string): number {
+  const len = data.length;
+  if (len === 0) return 0;
+  let padding = 0;
+  if (data.endsWith("==")) padding = 2;
+  else if (data.endsWith("=")) padding = 1;
+  return Math.floor((len * 3) / 4) - padding;
+}
+
+export const scrapePhotoBodySchema = z.object({
+  images: z
+    .array(
+      z.object({
+        /** Base64 image bytes, WITHOUT any `data:image/...;base64,` prefix. */
+        data: z
+          .string()
+          .min(1, "Image data is empty")
+          .refine(d => base64DecodedBytes(d) <= SCRAPE_PHOTO_MAX_IMAGE_BYTES, {
+            message: "Each photo must be under 4 MB — retake or crop it",
+          }),
+        mediaType: z.enum(["image/jpeg", "image/png", "image/webp"], {
+          message: "Unsupported image type — use JPEG, PNG or WebP",
+        }),
+      }),
+    )
+    .min(1, "At least one photo is required")
+    .max(SCRAPE_PHOTO_MAX_IMAGES, `At most ${SCRAPE_PHOTO_MAX_IMAGES} photos per read`),
+});
+
+router.post("/scrape-photo", async (req: Request, res: Response) => {
+  if (!isClaudeConfigured()) {
+    res.status(503).json({ error: "Reading labels requires the Anthropic API key. Ask an admin to set ANTHROPIC_API_KEY." });
+    return;
+  }
+  // Direct safeParse rather than the shared validate() middleware: validate()
+  // re-builds nested array items through the schema, and this body is nothing
+  // BUT a nested array — safeParse keeps the verdict identical with no
+  // stripping subtleties (see validate.ts's rawBody note).
+  const parsed = scrapePhotoBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Validation failed", details: z.flattenError(parsed.error) });
+    return;
+  }
+  const { images } = parsed.data;
+
+  const client = getClaudeClient();
+  let extracted: ScrapedFields;
+  try {
+    const response = await client.messages.create({
+      model: CLAUDE_MODELS.haiku,
+      max_tokens: 1536,
+      tool_choice: { type: "tool", name: "extract_ingredient_fields" },
+      tools: [EXTRACT_INGREDIENT_FIELDS_TOOL],
+      messages: [{
+        role: "user",
+        content: [
+          ...images.map((img): Anthropic.ImageBlockParam => ({
+            type: "image",
+            source: { type: "base64", media_type: img.mediaType, data: img.data },
+          })),
+          {
+            type: "text",
+            text: `These are photos of a physical UK food product label (front of pack, back of pack and/or a nutrition panel close-up — possibly several angles of the same product). Extract the ingredient fields for the form.
+
+Transcribe the ingredients declaration EXACTLY as printed — preserve the capitalisation the label uses. UK labels print allergens in capitals or bold; keep the capitals as printed.
+
+Nutritional values: per-100g column ONLY. If the panel shows both per-100g and per-portion, use per-100g. If ONLY per-portion values are printed, leave every nutritional field null — do NOT back-calculate. If only sodium is printed, salt = sodium × 2.5.
+
+costPerPack and supplierPartNumber are usually not on a label — null is fine.
+
+If the photos are unreadable/blurry, or aren't a food label at all, return null for every field and put a short explanation in notes.`,
+          },
+        ],
+      }],
+    });
+
+    const toolUse = response.content.find(b => b.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") {
+      throw new Error("Claude did not return a tool_use block");
+    }
+    extracted = normaliseScrapedFields(toolUse.input);
+  } catch (err) {
+    console.error("[ingredient-scrape] photo extraction failed:", err);
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(502).json({ error: `Extraction failed: ${msg}` });
+    return;
+  }
+
+  res.json({ extracted: applyMissingNutrientZeros(extracted) });
 });
 
 interface EstimatedNutrition {
