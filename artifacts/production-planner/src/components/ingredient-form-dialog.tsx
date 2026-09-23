@@ -9,13 +9,13 @@
  * Schema, value-shaping and payload-building helpers all live in
  * lib/ingredient-form.ts so this file is purely UI + wiring.
  */
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useForm, type UseFormRegister, type UseFormWatch, type UseFormSetValue } from "react-hook-form";
 import { detectAllergens, ALLERGEN_DISPLAY } from "@workspace/allergens";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Carrot, Box, ChevronDown, Sparkles, ShoppingBag, X, Loader2 } from "lucide-react";
+import { Carrot, Box, Camera, ChevronDown, Images, Sparkles, ShoppingBag, X, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Ingredient } from "@workspace/api-client-react";
 import { getGetUpfSummaryQueryKey } from "@workspace/api-client-react";
@@ -299,6 +299,124 @@ export function IngredientFormDialog({
     }
   };
 
+  // Photo-of-label scrape — the operator photographs the physical pack
+  // (front, back, nutrition close-up) and Claude reads the label. Feeds the
+  // SAME `scraped` preview/apply flow as the URL scrape, so the operator
+  // reviews and ticks fields exactly as they would after a URL scrape.
+  // Separate loading/error state from the URL scrape so a photo failure
+  // never reads as a URL failure. A real label photo is authoritative, so
+  // (unlike the AI estimate) applying it does NOT set nutritionalsAiEstimated.
+  const MAX_LABEL_PHOTOS = 4;
+  type LabelPhoto = { id: string; dataUrl: string };
+  const [labelPhotos, setLabelPhotos] = useState<LabelPhoto[]>([]);
+  const [photoProcessing, setPhotoProcessing] = useState(false);
+  const [photoScrapeLoading, setPhotoScrapeLoading] = useState(false);
+  const [photoScrapeError, setPhotoScrapeError] = useState<string | null>(null);
+  const libraryInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  if (!open && (labelPhotos.length > 0 || photoScrapeError)) {
+    setLabelPhotos([]);
+    setPhotoScrapeError(null);
+  }
+
+  /** Re-encode a photo to JPEG via canvas, capped at 2000px on the long
+   *  edge. This normalises whatever the iPad hands us (HEIC included, as
+   *  long as the browser can decode it into an <img>) into a small JPEG so
+   *  the upload stays well inside the server's per-image cap. */
+  const reencodeLabelPhoto = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const objectUrl = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const longEdge = Math.max(img.naturalWidth, img.naturalHeight);
+          if (!longEdge) throw new Error("Empty image");
+          const scale = Math.min(1, 2000 / longEdge);
+          const w = Math.max(1, Math.round(img.naturalWidth * scale));
+          const h = Math.max(1, Math.round(img.naturalHeight * scale));
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) throw new Error("Canvas unavailable");
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL("image/jpeg", 0.85));
+        } catch (e) {
+          reject(e instanceof Error ? e : new Error(String(e)));
+        } finally {
+          URL.revokeObjectURL(objectUrl);
+        }
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error("Could not decode image"));
+      };
+      img.src = objectUrl;
+    });
+
+  const addLabelPhotos = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setPhotoScrapeError(null);
+    setPhotoProcessing(true);
+    let failed = 0;
+    try {
+      for (const file of Array.from(files)) {
+        try {
+          const dataUrl = await reencodeLabelPhoto(file);
+          const id = typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          // Functional update with a hard cap — extra selections are dropped.
+          setLabelPhotos(prev => (prev.length >= MAX_LABEL_PHOTOS ? prev : [...prev, { id, dataUrl }]));
+        } catch {
+          failed += 1;
+        }
+      }
+    } finally {
+      setPhotoProcessing(false);
+    }
+    if (failed > 0) {
+      setPhotoScrapeError(
+        failed === 1
+          ? "Couldn't read one of those photos. Try taking it again with the camera."
+          : `Couldn't read ${failed} of those photos. Try taking them again with the camera.`,
+      );
+    }
+  };
+
+  const runPhotoScrape = async () => {
+    if (labelPhotos.length === 0) {
+      setPhotoScrapeError("Add at least one photo of the label first.");
+      return;
+    }
+    setPhotoScrapeError(null);
+    setPhotoScrapeLoading(true);
+    setScraped(null);
+    try {
+      const images = labelPhotos.map(p => ({
+        data: p.dataUrl.slice(p.dataUrl.indexOf(",") + 1),
+        mediaType: "image/jpeg" as const,
+      }));
+      const res = await fetch("/api/ingredients/scrape-photo", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ images }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
+      const extracted = data.extracted as Omit<ScrapedFields, "supplierId" | "supplierName">;
+      // No URL to match a supplier from — leave supplier unset, like the URL
+      // flow does when the hostname doesn't match anyone.
+      setScraped({ ...extracted, supplierId: null, supplierName: null });
+      setLabelPhotos([]);
+    } catch (err) {
+      setPhotoScrapeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPhotoScrapeLoading(false);
+    }
+  };
+
   // AI-only nutrition estimate. Mirrors the scrape preview pattern but
   // sourced from the ingredient name (+ brand + category) alone, with
   // no supplier URL. Result is per-100g nutritionals and UK14
@@ -556,6 +674,83 @@ export function IngredientFormDialog({
             </button>
           </div>
           {scrapeError && <p className="text-xs text-destructive mt-2">{scrapeError}</p>}
+
+          {/* Photo of label — the no-URL path. Photograph the pack and the
+              same fields land in the same review panel below. */}
+          <div className="mt-3 pt-3 border-t border-primary/20">
+            <p className="text-xs text-muted-foreground mb-2">
+              …or photograph the physical label — front, back and nutrition panel (up to {MAX_LABEL_PHOTOS} photos).
+            </p>
+            <input
+              ref={libraryInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={e => { void addLabelPhotos(e.target.files); e.target.value = ""; }}
+            />
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={e => { void addLabelPhotos(e.target.files); e.target.value = ""; }}
+            />
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => libraryInputRef.current?.click()}
+                disabled={photoProcessing || photoScrapeLoading || labelPhotos.length >= MAX_LABEL_PHOTOS}
+                className="px-4 py-2.5 rounded-lg border border-border bg-background text-sm font-semibold hover:bg-secondary/40 disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <Images className="w-4 h-4" /> Library
+              </button>
+              <button
+                type="button"
+                onClick={() => cameraInputRef.current?.click()}
+                disabled={photoProcessing || photoScrapeLoading || labelPhotos.length >= MAX_LABEL_PHOTOS}
+                className="px-4 py-2.5 rounded-lg border border-border bg-background text-sm font-semibold hover:bg-secondary/40 disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <Camera className="w-4 h-4" /> Take photo
+              </button>
+              {labelPhotos.length > 0 && (
+                <button
+                  type="button"
+                  onClick={runPhotoScrape}
+                  disabled={photoScrapeLoading || photoProcessing}
+                  className="px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {photoScrapeLoading ? <span className="inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" /> : null}
+                  {photoScrapeLoading ? "Reading…" : `Read label (${labelPhotos.length} photo${labelPhotos.length > 1 ? "s" : ""})`}
+                </button>
+              )}
+            </div>
+            {labelPhotos.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-2">
+                {labelPhotos.map(p => (
+                  <div key={p.id} className="relative">
+                    <img
+                      src={p.dataUrl}
+                      alt="Label photo"
+                      className="w-16 h-16 object-cover rounded-lg border border-border"
+                    />
+                    <button
+                      type="button"
+                      aria-label="Remove photo"
+                      onClick={() => setLabelPhotos(prev => prev.filter(x => x.id !== p.id))}
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-foreground text-background flex items-center justify-center shadow"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {photoProcessing && <p className="text-xs text-muted-foreground mt-2">Preparing photos…</p>}
+            {photoScrapeError && <p className="text-xs text-destructive mt-2">{photoScrapeError}</p>}
+          </div>
+
           {scraped && (
             <div className="mt-3 rounded-lg border border-border bg-background p-3 space-y-2">
               <div className="flex items-center justify-between">
