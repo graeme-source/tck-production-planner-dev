@@ -633,6 +633,20 @@ export default function Dashboard() {
   });
   const packingOph = packingSpeed?.ordersPerHour ?? 0;
 
+  // Wrapping pace — the same packs/hr the wrapping station's traffic-light
+  // strip shows (idle gaps excluded server-side), so the Wrapping island
+  // carries its pace just like Building and Packing carry theirs.
+  const { data: wrappingSpeed } = useQuery({
+    queryKey: ["dashboard-wrapping-speed"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/reports/wrapping-speed`, { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json() as Promise<{ packsPerHour: number | null }>;
+    },
+    refetchInterval: 60000,
+  });
+  const wrappingPph = wrappingSpeed?.packsPerHour ?? 0;
+
   // The "Packing" card is pinned to the REAL current week, not the
   // weekly panel's selection — getDefaultWeekOffset rolls the panel to next
   // week from Friday 3pm, which used to blank this card for the rest of the
@@ -966,9 +980,10 @@ export default function Dashboard() {
         <StatCard
           title="Wrapping"
           value={batchesLoading ? "…" : formatProgressValue(totalBatches?.packsWrapped ?? 0, totalBatches?.packsTotal ?? 0)}
-          subtitle={stockControlData == null
-            ? "Tap for the wrapping station"
-            : `Factory #${(stockControlData.productionFridgeTotal ?? 0).toLocaleString()}`}
+          subtitle={[
+            wrappingPph > 0 ? `${wrappingPph.toFixed(0)} packs/hr` : null,
+            stockControlData != null ? `Factory #${(stockControlData.productionFridgeTotal ?? 0).toLocaleString()}` : null,
+          ].filter(Boolean).join(" · ") || "Tap for the wrapping station"}
           icon={Thermometer}
           color="text-cyan-500"
           bg="bg-cyan-500/10"
