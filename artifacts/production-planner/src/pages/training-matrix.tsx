@@ -1,15 +1,20 @@
-// Training matrix — onboarding & training sign-off.
+// Training — /training and /training/stations/:station.
 //
-// List view: cards of each matrix. Detail view: a grid of enrolled users (rows)
-// × items (columns) with a per-cell trained sign-off (date + who signed off).
-// Items can be free-text or linked to a live document (Documents →
-// assessment_type 'sop' or 'policy'); linked columns open the canonical
-// reader at /documents/:id (which renders markdown or serves the PDF).
-// Whole feature is gated to admins/managers (page permission /training +
-// API requireAdminOrManager).
+// Two kinds of matrix live here (Graeme, 2026-09-24):
+//  1. Station matrices — one per station, built live from the SOPs on the
+//     front of that station (components/station-training/…). Self-service
+//     for EVERY colleague; open one at /training/stations/:station.
+//  2. Stored matrices — onboarding & training sign-off. List view: cards of
+//     each matrix. Detail view: a grid of enrolled users × items with a
+//     per-cell trained sign-off (date + who signed off). Items can be
+//     free-text or linked to a live document (Documents → assessment_type
+//     'sop' or 'policy'); linked columns open /documents/:id.
+//     Manager-only: the API is requireAdminOrManager, and the page never
+//     calls it for anyone else (lib/training-sections.ts decides).
+// The page itself (permission /training) defaults to everyone.
 
 import { useState } from "react";
-import { Link } from "wouter";
+import { Link, useRoute } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -17,6 +22,9 @@ import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
+import { trainingSectionsFor } from "@/lib/training-sections";
+import { StationMatrixList } from "@/components/station-training/station-matrix-list";
+import { StationMatrixView } from "@/components/station-training/station-matrix-view";
 import {
   Plus, Trash2, GraduationCap, FileText, ChevronLeft, Pencil, Users, BookOpen,
   Loader2, ExternalLink, Check, X, ClipboardList, MoreVertical,
@@ -74,13 +82,18 @@ function formatDate(iso: string | null): string {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function TrainingMatrixPage() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [onStation, stationParams] = useRoute<{ station: string }>("/training/stations/:station");
+  const { state } = useAuth();
+  const sections = trainingSectionsFor(state.status === "authenticated" ? state.user.role : null);
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Training"
-        description="Onboarding & training sign-off matrices."
-        action={
+        description={sections.storedMatrices
+          ? "Station SOP matrices and onboarding & training sign-off matrices."
+          : "Your station training — review each station's SOPs here."}
+        action={sections.storedMatrices ? (
           // The lean matrix is a reflection of the curriculum, so the place
           // to change it is the curriculum itself — reachable from here,
           // always, rather than buried in the morning-meeting screens.
@@ -89,11 +102,37 @@ export default function TrainingMatrixPage() {
               <BookOpen className="w-3.5 h-3.5" /> Lean curriculum
             </span>
           </Link>
-        }
+        ) : undefined}
       />
-      {selectedId == null
-        ? <MatrixList onOpen={setSelectedId} />
-        : <MatrixDetailView matrixId={selectedId} onBack={() => setSelectedId(null)} />}
+      {onStation && stationParams ? (
+        <div className="max-w-6xl mx-auto">
+          <StationMatrixView station={stationParams.station} backHref="/training" />
+        </div>
+      ) : selectedId != null && sections.storedMatrices ? (
+        <MatrixDetailView matrixId={selectedId} onBack={() => setSelectedId(null)} />
+      ) : (
+        <div className="space-y-10">
+          <section className="space-y-3">
+            <div>
+              <h2 className="text-xl font-bold">Station matrices</h2>
+              <p className="text-sm text-muted-foreground">
+                One per station, built from the SOPs on its front screen. Review them here or at the station —
+                when an SOP changes, you'll be asked to review it again.
+              </p>
+            </div>
+            <StationMatrixList showEnforceSwitch={sections.enforceSwitch} />
+          </section>
+          {sections.storedMatrices && (
+            <section className="space-y-3">
+              <div>
+                <h2 className="text-xl font-bold">Onboarding & sign-off matrices</h2>
+                <p className="text-sm text-muted-foreground">Built and signed off by managers.</p>
+              </div>
+              <MatrixList onOpen={setSelectedId} />
+            </section>
+          )}
+        </div>
+      )}
     </div>
   );
 }

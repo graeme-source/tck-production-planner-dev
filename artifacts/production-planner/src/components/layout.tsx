@@ -72,7 +72,6 @@ export const navItems: NavItem[] = [
   { name: "Suppliers", href: "/suppliers", icon: Building2 },
   { name: "Improvements", href: "/improvements", icon: TrendingUp },
   { name: "Training", href: "/training", icon: GraduationCap },
-  { name: "Station training", href: "/station-training", icon: GraduationCap },
   { name: "Analytics", href: "/reports", icon: BarChart2 },
 ];
 
@@ -657,8 +656,8 @@ export function Layout({ children }: { children: ReactNode }) {
     ? "Bin Locations"
     : location === "/inventory"
       ? "Inventory"
-      : location.startsWith("/station-training")
-        ? "Station training"
+      : location.startsWith("/training/")
+        ? "Training"
       : (allNavItems.find(n => n.href.split("?")[0] === location)?.name || "Dashboard");
 
   return (
