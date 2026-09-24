@@ -1032,14 +1032,28 @@ export function IngredientFormDialog({
                 </div>
               </div>
               <div>
-                <label className="text-sm font-medium mb-1 block">Cook + Process Time <span className="text-xs font-normal text-muted-foreground">(minutes)</span></label>
+                <label className="text-sm font-medium mb-1 block">Estimated Process Time <span className="text-xs font-normal text-muted-foreground">(minutes)</span></label>
                 <div className="relative max-w-[160px]">
-                  <input type="number" step="1" min="1" {...register("meatProcessMinutes")} className={cn(numInputClass, "pr-12")} placeholder="e.g. 40" />
+                  <input type="number" step="1" min="0" {...register("meatProcessMinutes")} className={cn(numInputClass, "pr-12")} placeholder="e.g. 15" />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">min</span>
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Total lead time before this meat can go into a build — cooking <em>plus</em> processing (e.g. 25 min cook + 15 min processing = 40). The day schedule uses this to tell the mixing-prep station the latest &ldquo;get it in by&rdquo; time for each recipe.
+                  Time after cooking to process it (pull, shred, cool, portion) before it can go into a build. The app adds it to the cook time for the day schedule&rsquo;s &ldquo;start cooking by&rdquo; time.
                 </p>
+                {(() => {
+                  // Cook + process, as the schedule will use it (Graeme, 2026-09-24).
+                  const cook = Number(watch("estimatedCookTimeMin"));
+                  const proc = Number(watch("meatProcessMinutes"));
+                  const hasCook = Number.isFinite(cook) && cook > 0;
+                  const hasProc = Number.isFinite(proc) && proc >= 0 && String(watch("meatProcessMinutes") ?? "") !== "";
+                  if (!hasCook && !hasProc) return null;
+                  return (
+                    <p className="text-sm font-semibold mt-1.5">
+                      Goes in {(hasCook ? cook : 0) + (hasProc ? proc : 0)} min before building
+                      <span className="font-normal text-muted-foreground"> ({hasCook ? `${cook} cook` : "no cook time"} + {hasProc ? `${proc} process` : "no process time"})</span>
+                    </p>
+                  );
+                })()}
               </div>
               <div>
                 <label className="text-sm font-medium mb-1 block">Oven Temperature <span className="text-xs font-normal text-muted-foreground">(°C)</span></label>

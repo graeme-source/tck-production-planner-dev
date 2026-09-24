@@ -44,7 +44,8 @@ export const ingredientFormSchema = z.object({
   rawMeatTrayCapacityKg: nullableNumber((n) => n.positive()),
   minCookingTempC: nullableNumber((n) => n.min(0).max(300)),
   estimatedCookTimeMin: nullableNumber((n) => n.int().min(1)),
-  meatProcessMinutes: nullableNumber((n) => n.int().min(1)),
+  // Processing only (after cooking); the schedule adds the cook time. 0 is valid.
+  meatProcessMinutes: nullableNumber((n) => n.int().min(0)),
   ovenTempC: nullableNumber((n) => n.int().min(0).max(500)),
   steamPct: nullableNumber((n) => n.int().min(0).max(100)),
 

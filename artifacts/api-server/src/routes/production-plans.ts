@@ -19,6 +19,7 @@ import { subMarinadeQtyPerPortion, subMarinadeTotalGrams, isMeatCookSubRecipe } 
 import { productionDateFromJulianBatch } from "../lib/julian-batch";
 import { loadMinShelfDaysRules, minShelfDaysFor } from "../lib/min-shelf-days";
 import { getStandardBreakConfig, computeBatchesPerHour } from "../lib/batches-per-hour";
+import { meatLeadMinutes, meatLeadWarning } from "../lib/meat-lead-time";
 import { computeDaySchedule, parseClock, formatClock, DEFAULT_START_TIME, DEFAULT_CHANGEOVER_SECONDS, DEFAULT_BUILDERS } from "@workspace/production-schedule";
 // Type-only import — purely compile-time, no runtime cost. The actual
 // PDF renderer (and the heavy @react-pdf/renderer dep tree it pulls in)
@@ -5796,11 +5797,12 @@ router.get("/:id/schedule", async (req, res) => {
   }
   const meatInfoRows = allMeatIds.size
     ? await db
-        .select({ id: ingredientsTable.id, meatProcessMinutes: ingredientsTable.meatProcessMinutes })
+        .select({ id: ingredientsTable.id, cook: ingredientsTable.estimatedCookTimeMin, process: ingredientsTable.meatProcessMinutes })
         .from(ingredientsTable)
         .where(inArray(ingredientsTable.id, [...allMeatIds]))
     : [];
-  const processMinutesById = new Map(meatInfoRows.map(r => [r.id, r.meatProcessMinutes]));
+  // Lead time = cook + process (lib/meat-lead-time.ts, migration 0124).
+  const leadById = new Map(meatInfoRows.map(r => [r.id, meatLeadMinutes(r.cook, r.process)]));
 
   // Settings.
   const settingRows = await db
@@ -5843,16 +5845,15 @@ router.get("/:id/schedule", async (req, res) => {
     if (i.targetBuildSeconds == null) warnings.push(`${i.name}: no build time set — shown as 0 min`);
     const meats = (meatsByRecipe.get(i.recipeId) ?? [])
       .filter(m => {
-        if (processMinutesById.get(m.rawMeatIngredientId) == null) {
-          warnings.push(`${i.name}: ${m.rawMeatName} has no cook+process time set`);
-          return false;
-        }
-        return true;
+        const lead = leadById.get(m.rawMeatIngredientId) ?? meatLeadMinutes(null, null);
+        const warning = meatLeadWarning(i.name, m.rawMeatName, lead);
+        if (warning) warnings.push(warning);
+        return lead.minutes != null;
       })
       .map(m => ({
         rawMeatIngredientId: m.rawMeatIngredientId,
         rawMeatName: m.rawMeatName,
-        processMinutes: processMinutesById.get(m.rawMeatIngredientId) as number,
+        processMinutes: leadById.get(m.rawMeatIngredientId)!.minutes as number,
       }));
     return {
       planItemId: i.planItemId,
