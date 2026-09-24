@@ -21,7 +21,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Loader2, Camera, CheckCircle2, Clock, ThumbsUp, RotateCcw,
   Trophy, ChevronLeft, X, AlertCircle, Settings2, Clapperboard, Trash2, ArrowBigUp, HandHelping, BookOpen,
-  Lightbulb, Eye,
+  Lightbulb, Eye, EyeOff,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/contexts/auth-context";
@@ -499,6 +499,37 @@ function VoteButton({ item, variant }: { item: Improvement; variant: "feed" | "d
   );
 }
 
+/** "I've seen this" — review a new improvement straight from the timeline
+ *  (Graeme, 2026-09-24). Opening one just to clear it, then coming back, was
+ *  pointless when the card already shows what you need. Same record as
+ *  opening it (improvement_views), so the NEW badge, the To review tab and
+ *  the nav count all move on together. Open to everyone. */
+function SeenButton({ item }: { item: Improvement }) {
+  const queryClient = useQueryClient();
+  const markSeen = useMarkImprovementSeen();
+  const [saving, setSaving] = useState(false);
+  return (
+    <button
+      onClick={async e => {
+        e.stopPropagation();
+        setSaving(true);
+        // Tick it off at once; the refetch confirms.
+        queryClient.setQueryData<Improvement[]>(["improvements"], old =>
+          old?.map(i => (i.id === item.id ? { ...i, seenByMe: true } : i)));
+        await markSeen(item.id);
+        setSaving(false);
+        queryClient.invalidateQueries({ queryKey: ["improvements"] });
+      }}
+      disabled={saving}
+      title="Mark as reviewed without opening it"
+      className="h-14 px-5 rounded-2xl border-2 border-blue-600/40 text-blue-700 dark:text-blue-300 text-lg font-bold flex items-center justify-center gap-2 hover:bg-blue-600/10 disabled:opacity-50 whitespace-nowrap"
+    >
+      {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <EyeOff className="w-5 h-5" />}
+      I've seen this
+    </button>
+  );
+}
+
 function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
   // A feed post, not a button: the header and metadata open the item, but
   // videos play right here in the feed — nesting a player inside a button
@@ -552,9 +583,14 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
       <div className="mt-3">
         <ReactionBar item={item} />
       </div>
-      {item.stage === "todo" && (
-        <div className="mt-3">
-          <VoteButton item={item} variant="feed" />
+      {(item.stage === "todo" || (!item.seenByMe && !item.isMine)) && (
+        <div className="mt-3 flex gap-2 flex-wrap">
+          {item.stage === "todo" && (
+            <div className="flex-1 min-w-[220px]">
+              <VoteButton item={item} variant="feed" />
+            </div>
+          )}
+          {!item.seenByMe && !item.isMine && <SeenButton item={item} />}
         </div>
       )}
     </div>
