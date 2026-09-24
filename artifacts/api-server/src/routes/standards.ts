@@ -16,6 +16,7 @@ import { sql } from "drizzle-orm";
 import { validate } from "../middleware/validate";
 import { buildSopFromVideo, buildSopFromMedia, ffmpegAvailable, type SuppliedPhoto } from "../lib/sop-video";
 import { isClaudeConfigured } from "../lib/ai/claude";
+import { markSopContentChanged, sopIdForStep } from "../lib/sop-content-version";
 
 const router: IRouter = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -285,7 +286,7 @@ router.post("/:id/steps", requireAuth, async (req, res) => {
     VALUES (${id}, ${nextPos}, ${description})
     RETURNING id
   `);
-  await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = ${id}`);
+  await markSopContentChanged(id, req.session.userId);
   const newStep = ((inserted.rows ?? inserted) as { id: number }[])[0];
   res.status(201).json({ id: newStep.id, position: nextPos, description, hasImage: false, hasVideo: false, videoMime: null });
 });
@@ -302,8 +303,15 @@ router.put("/steps/:stepId", requireAuth, async (req, res) => {
     res.status(400).json({ error: "description required" });
     return;
   }
-  await db.execute(sql`UPDATE sop_steps SET description = ${description}, updated_at = NOW() WHERE id = ${stepId}`);
-  await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = (SELECT sop_id FROM sop_steps WHERE id = ${stepId})`);
+  // Autosave can re-send identical text; only a real change bumps the
+  // SOP's version (and flags everyone for a refresher).
+  const changed = await db.execute<{ sop_id: number }>(sql`
+    UPDATE sop_steps SET description = ${description}, updated_at = NOW()
+    WHERE id = ${stepId} AND description IS DISTINCT FROM ${description}
+    RETURNING sop_id
+  `);
+  const changedSopId = (changed.rows ?? [])[0]?.sop_id;
+  if (changedSopId) await markSopContentChanged(changedSopId, req.session.userId);
   res.json({ ok: true });
 });
 
@@ -316,7 +324,7 @@ router.delete("/steps/:stepId", requireAuth, async (req, res) => {
   const sopRows = await db.execute<{ sop_id: number }>(sql`SELECT sop_id FROM sop_steps WHERE id = ${stepId}`);
   const sopId = ((sopRows.rows ?? sopRows) as { sop_id: number }[])[0]?.sop_id;
   await db.execute(sql`DELETE FROM sop_steps WHERE id = ${stepId}`);
-  if (sopId) await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = ${sopId}`);
+  await markSopContentChanged(sopId, req.session.userId);
   res.json({ ok: true });
 });
 
@@ -341,7 +349,7 @@ router.post("/steps/:stepId/image", requireAuth, upload.single("image"), async (
     SET image_mime = ${req.file.mimetype}, image_data = ${req.file.buffer}, updated_at = NOW()
     WHERE id = ${stepId}
   `);
-  await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = (SELECT sop_id FROM sop_steps WHERE id = ${stepId})`);
+  await markSopContentChanged(await sopIdForStep(stepId), req.session.userId);
   res.json({ ok: true, hasImage: true });
 });
 
@@ -357,6 +365,7 @@ router.delete("/steps/:stepId/image", requireAuth, async (req, res) => {
     SET image_mime = NULL, image_data = NULL, updated_at = NOW()
     WHERE id = ${stepId}
   `);
+  await markSopContentChanged(await sopIdForStep(stepId), req.session.userId);
   res.json({ ok: true });
 });
 
@@ -384,7 +393,7 @@ router.post("/steps/:stepId/video", requireAuth, videoUpload.single("video"), as
     SET video_mime = ${req.file.mimetype}, video_data = ${req.file.buffer}, updated_at = NOW()
     WHERE id = ${stepId}
   `);
-  await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = (SELECT sop_id FROM sop_steps WHERE id = ${stepId})`);
+  await markSopContentChanged(await sopIdForStep(stepId), req.session.userId);
   res.json({ ok: true, hasVideo: true, videoMime: req.file.mimetype });
 });
 
@@ -400,6 +409,7 @@ router.delete("/steps/:stepId/video", requireAuth, async (req, res) => {
     SET video_mime = NULL, video_data = NULL, updated_at = NOW()
     WHERE id = ${stepId}
   `);
+  await markSopContentChanged(await sopIdForStep(stepId), req.session.userId);
   res.json({ ok: true });
 });
 
@@ -461,10 +471,16 @@ router.patch("/:id/reorder", requireAuth, async (req, res) => {
     res.status(400).json({ error: "stepIds array required" });
     return;
   }
+  let moved = 0;
   for (let i = 0; i < stepIds.length; i++) {
-    await db.execute(sql`UPDATE sop_steps SET position = ${i}, updated_at = NOW() WHERE id = ${stepIds[i]} AND sop_id = ${id}`);
+    const r = await db.execute(sql`
+      UPDATE sop_steps SET position = ${i}, updated_at = NOW()
+      WHERE id = ${stepIds[i]} AND sop_id = ${id} AND position IS DISTINCT FROM ${i}
+    `);
+    moved += r.rowCount ?? 0;
   }
-  await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = ${id}`);
+  if (moved > 0) await markSopContentChanged(id, req.session.userId);
+  else await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = ${id}`);
   res.json({ ok: true });
 });
 
@@ -537,7 +553,7 @@ router.post("/:id/steps/:stepId/build-from-video", requireAuth, async (req, res)
       `);
       createdIds.push((((inserted.rows ?? inserted) as { id: number }[])[0]).id);
     }
-    await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = ${sopId}`);
+    await markSopContentChanged(sopId, req.session.userId);
 
     res.json({
       ok: true,
@@ -637,7 +653,7 @@ ${steps.map(st => `[id ${st.id}]\n${st.description}`).join("\n\n")}`,
       `);
       updated++;
     }
-    await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = ${sopId}`);
+    if (updated > 0) await markSopContentChanged(sopId, req.session.userId);
     res.json({ ok: true, polished: updated, unchanged: steps.length - updated });
   } catch (err) {
     console.error("[standards] polish failed:", err);
@@ -737,7 +753,7 @@ router.post("/:id/build-from-media", requireAuth, mediaBuildUpload, async (req, 
         WHERE id = ${sopId} AND (title = 'Untitled SOP' OR title = '' OR title IS NULL)
       `);
     }
-    await db.execute(sql`UPDATE standards_sops SET updated_at = NOW() WHERE id = ${sopId}`);
+    await markSopContentChanged(sopId, req.session.userId);
 
     res.json({ ok: true, stepsCreated: result.steps.length, createdStepIds: createdIds, suggestedTitle: result.suggestedTitle });
   } catch (err) {
