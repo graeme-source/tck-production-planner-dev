@@ -8,6 +8,7 @@ import {
   canReviewMove,
   canReply,
   canMessageReporter,
+  pipelineMayHandle,
   machineMoveVerdict,
   resolveIssueVerdict,
   validateTestPath,
@@ -207,5 +208,19 @@ describe("noticeAckVerdict", () => {
   });
   it("acknowledges once", () => {
     expect(noticeAckVerdict({ userId: 7, acknowledgedAt: new Date() }, 7)).toMatchObject({ ok: false, status: 409 });
+  });
+});
+
+describe("pipelineMayHandle — safety and physical reports stay with people", () => {
+  it("refuses safety reports whatever their area", () => {
+    expect(pipelineMayHandle({ category: "safety", area: null }).ok).toBe(false);
+    expect(pipelineMayHandle({ category: "safety", area: "system" }).ok).toBe(false);
+  });
+  it("refuses factory-area reports", () => {
+    expect(pipelineMayHandle({ category: "equipment", area: "factory" }).ok).toBe(false);
+  });
+  it("handles app reports and older reports with no area", () => {
+    expect(pipelineMayHandle({ category: "other", area: "system" }).ok).toBe(true);
+    expect(pipelineMayHandle({ category: "equipment", area: null }).ok).toBe(true);
   });
 });

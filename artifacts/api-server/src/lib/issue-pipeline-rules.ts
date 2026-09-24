@@ -138,6 +138,23 @@ export function canMessageReporter(from: TriageStatus, close: boolean): boolean 
   return from === "proposed" || from === "approved" || from === "rejected" || from === "wont_fix";
 }
 
+/**
+ * Reports the pipeline must never touch (Graeme, 2026-09-24). Safety reports
+ * and physical factory issues stay on the andon log — and on the morning
+ * meeting's safety slides — until someone has actually sorted them out in the
+ * room. Claude can't see the room, so it may not triage them or close them,
+ * however they're worded. Only people resolve these, in the andon log.
+ */
+export function pipelineMayHandle(issue: { category: string; area: string | null | undefined }): { ok: true } | { ok: false; error: string } {
+  if (issue.category === "safety") {
+    return { ok: false, error: "Safety reports stay on the log until they're physically resolved — the pipeline never handles them." };
+  }
+  if (issue.area === "factory") {
+    return { ok: false, error: "Factory (physical) reports are resolved in the room, not by the pipeline." };
+  }
+  return { ok: true };
+}
+
 export const NOTICE_KINDS = ["fixed", "message"] as const;
 export type NoticeKind = (typeof NOTICE_KINDS)[number];
 

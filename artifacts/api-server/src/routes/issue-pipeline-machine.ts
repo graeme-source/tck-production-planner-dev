@@ -30,6 +30,7 @@ import {
   machineMoveVerdict,
   matchesAreaFilter,
   parseBearer,
+  pipelineMayHandle,
   resolveIssueVerdict,
   retriageVerdict,
   validateTestPath,
@@ -166,8 +167,11 @@ const triageBody = z.object({
 router.post("/triage", validate(triageBody), async (req, res) => {
   const b = req.body as z.infer<typeof triageBody>;
   try {
-    const [issue] = await db.select({ id: andonIssuesTable.id }).from(andonIssuesTable).where(eq(andonIssuesTable.id, b.andonIssueId));
+    const [issue] = await db.select({ id: andonIssuesTable.id, category: andonIssuesTable.category, area: andonIssuesTable.area })
+      .from(andonIssuesTable).where(eq(andonIssuesTable.id, b.andonIssueId));
     if (!issue) { res.status(404).json({ error: `Andon issue ${b.andonIssueId} not found` }); return; }
+    const eligible = pipelineMayHandle(issue);
+    if (!eligible.ok) { res.status(422).json({ error: eligible.error }); return; }
 
     const fields = {
       lane: b.lane,
@@ -323,6 +327,8 @@ router.post("/triage/:id/resolve-issue", validate(resolveBody), async (req, res)
 
       const [issue] = await tx.select().from(andonIssuesTable).where(eq(andonIssuesTable.id, current.andonIssueId));
       if (!issue) return { status: 404 as const, error: "Andon issue not found" };
+      const eligible = pipelineMayHandle(issue);
+      if (!eligible.ok) return { status: 422 as const, error: eligible.error, triage: current };
       const outcomes: ResolveOutcome[] = [await resolveIssueWithNotice(tx, issue, opts)];
 
       // Duplicates the session clustered under this fix. One that carries
@@ -340,6 +346,8 @@ router.post("/triage/:id/resolve-issue", validate(resolveBody), async (req, res)
           if (!r) { skippedRelated.push({ issueId: rid, reason: "not found" }); continue; }
           if (hasOwn.has(rid)) { skippedRelated.push({ issueId: rid, reason: "has its own triage row — resolve it through that recommendation" }); continue; }
           if (r.resolvedAt) { skippedRelated.push({ issueId: rid, reason: "already resolved" }); continue; }
+          const relEligible = pipelineMayHandle(r);
+          if (!relEligible.ok) { skippedRelated.push({ issueId: rid, reason: relEligible.error }); continue; }
           outcomes.push(await resolveIssueWithNotice(tx, r, opts));
         }
       }
