@@ -32,6 +32,7 @@ import { feedTimestamp } from "@/lib/feed-time";
 import { ImprovementFeedMedia } from "@/components/improvement-feed-media";
 import { toast } from "@/hooks/use-toast";
 import { useMarkImprovementSeen } from "@/hooks/use-unseen-improvements";
+import { isIdea, needsReview } from "@/lib/improvement-review";
 import { scrollAppToTop } from "@/lib/scroll";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 
@@ -136,11 +137,6 @@ function ReactionBar({ item }: { item: Improvement }) {
   );
 }
 
-/** An idea is work not yet done; everything past that is an improvement.
- *  The two words were blurring together on the page (Graeme, 2026-09-10). */
-function isIdea(item: Pick<Improvement, "stage">): boolean {
-  return item.stage === "todo";
-}
 
 // Feed media rendering lives in components/improvement-feed-media.tsx —
 // shared with the meeting's Recent Improvements slide so both tell the
@@ -204,7 +200,7 @@ export default function Improvements() {
   // when the unread list drains while the review view is open, hand the
   // page back to the feed rather than leaving an empty room.
   useEffect(() => {
-    if (tab === "review" && items.length > 0 && items.filter(i => !i.seenByMe && !i.isMine).length === 0) {
+    if (tab === "review" && items.length > 0 && items.filter(needsReview).length === 0) {
       setTab("feed");
     }
   }, [items, tab]);
@@ -265,7 +261,7 @@ export default function Improvements() {
   const feedStamp = (i: Improvement) => (isIdea(i) ? i.createdAt : (i.doneAt ?? i.approvedAt ?? i.createdAt));
   const byFeedNewest = (a: Improvement, b: Improvement) => feedStamp(b).localeCompare(feedStamp(a));
   const waiting = items.filter(i => i.stage === "waiting").sort(byNewest);
-  const toReview = items.filter(i => !i.seenByMe && !i.isMine).sort(byNewest);
+  const toReview = items.filter(needsReview).sort(byNewest);
 
   return (
     <div className="max-w-3xl mx-auto pb-24 space-y-6">
@@ -535,7 +531,12 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
   // videos play right here in the feed — nesting a player inside a button
   // would fight every tap (Graeme, 2026-08-28: "like a WhatsApp group").
   return (
-    <div className="w-full text-left rounded-2xl border-2 border-border bg-card hover:border-primary/50 transition-all p-4 shadow-sm">
+    <div className={cn(
+      // A thick coloured edge — amber for ideas, green for improvements — so
+      // the two read apart at a glance while scrolling (Graeme, 2026-09-24).
+      "w-full text-left rounded-2xl border-2 border-l-[10px] bg-card hover:border-primary/50 transition-all p-4 shadow-sm",
+      isIdea(item) ? "border-border border-l-amber-400" : "border-border border-l-emerald-600",
+    )}>
       <button onClick={onOpen} className="w-full text-left">
       <div className="flex items-start justify-between gap-3">
         <p className="text-xl font-bold leading-snug break-words flex-1">{item.title}</p>
@@ -543,18 +544,18 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
           {/* What this IS: an idea (not done yet) or an improvement (done).
               The two were indistinguishable at a glance (Graeme, 2026-09-10). */}
           {isIdea(item) ? (
-            <span className="text-xs px-2.5 py-1 rounded-lg font-bold whitespace-nowrap bg-amber-500/15 text-amber-700 dark:text-amber-400 inline-flex items-center gap-1">
-              <Lightbulb className="w-3.5 h-3.5" /> Idea
+            <span className="text-sm px-3.5 py-1.5 rounded-full font-extrabold uppercase tracking-wide whitespace-nowrap bg-amber-400 text-amber-950 inline-flex items-center gap-1.5 shadow-sm">
+              <Lightbulb className="w-4 h-4" /> Idea
             </span>
           ) : (
-            <span className="text-xs px-2.5 py-1 rounded-lg font-bold whitespace-nowrap bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Improvement
+            <span className="text-sm px-3.5 py-1.5 rounded-full font-extrabold uppercase tracking-wide whitespace-nowrap bg-emerald-600 text-white inline-flex items-center gap-1.5 shadow-sm">
+              <CheckCircle2 className="w-4 h-4" /> Improvement
             </span>
           )}
           <span className={cn("text-xs px-2.5 py-1 rounded-lg font-bold whitespace-nowrap", STAGE_STYLE[item.stage])}>
             {stageChipText(item)}
           </span>
-          {!item.seenByMe && !item.isMine && (
+          {needsReview(item) && (
             <span className="text-xs px-2 py-1 rounded-lg font-bold bg-blue-600 text-white" title="You haven't opened this yet">NEW</span>
           )}
         </span>
@@ -583,14 +584,14 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
       <div className="mt-3">
         <ReactionBar item={item} />
       </div>
-      {(item.stage === "todo" || (!item.seenByMe && !item.isMine)) && (
+      {(item.stage === "todo" || needsReview(item)) && (
         <div className="mt-3 flex gap-2 flex-wrap">
           {item.stage === "todo" && (
             <div className="flex-1 min-w-[220px]">
               <VoteButton item={item} variant="feed" />
             </div>
           )}
-          {!item.seenByMe && !item.isMine && <SeenButton item={item} />}
+          {needsReview(item) && <SeenButton item={item} />}
         </div>
       )}
     </div>

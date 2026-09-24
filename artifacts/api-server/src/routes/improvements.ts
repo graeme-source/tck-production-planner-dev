@@ -105,9 +105,16 @@ router.get("/unseen-count", async (req: Request, res: Response) => {
       SELECT COUNT(*)::int AS count
       FROM improvement_submissions i
       WHERE (i.submitted_by IS DISTINCT FROM ${userId})
+        -- Finished improvements only: ideas go straight into the feed and
+        -- never need reviewing (Graeme, 2026-09-24). Mirrors stageOf():
+        -- anything past 'To do' is an improvement.
+        AND i.progress_status IN ('complete', 'awaiting_approval', 'rejected')
+        -- Seen means seen SINCE it was finished — having opened it back when
+        -- it was an idea doesn't count as reviewing the finished work.
         AND NOT EXISTS (
           SELECT 1 FROM improvement_views v
           WHERE v.improvement_id = i.id AND v.user_id = ${userId}
+            AND (i.done_at IS NULL OR v.viewed_at >= i.done_at)
         )
     `);
     res.json({ count: rows.rows[0]?.count ?? 0 });
@@ -118,8 +125,9 @@ router.get("/unseen-count", async (req: Request, res: Response) => {
   }
 });
 
-/** Mark one improvement as opened by this person. Idempotent — opening the
- *  same one twice is not an error, it just keeps the first timestamp. */
+/** Mark one improvement as opened by this person. Idempotent. Keeps the
+ *  LATEST look: an idea opened before it was finished must count as unseen
+ *  once it's done, and seeing the finished version clears it again. */
 router.post("/:id/seen", async (req: Request, res: Response) => {
   const userId = req.session.userId;
   if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
@@ -129,7 +137,7 @@ router.post("/:id/seen", async (req: Request, res: Response) => {
     await db.execute(sql`
       INSERT INTO improvement_views (improvement_id, user_id)
       VALUES (${id}, ${userId})
-      ON CONFLICT (improvement_id, user_id) DO NOTHING
+      ON CONFLICT (improvement_id, user_id) DO UPDATE SET viewed_at = NOW()
     `);
     res.status(204).send();
   } catch (err) {
@@ -185,9 +193,12 @@ router.get("/", async (req: Request, res: Response) => {
     // and the NEW markers (Graeme, 2026-09-10: the nav badge said there
     // were unseen ones, but nothing on the page said which).
     const seenRows = ids.length === 0 || viewer.id == null ? { rows: [] } : await db.execute<{ improvement_id: number }>(sql`
-      SELECT improvement_id FROM improvement_views
-       WHERE user_id = ${viewer.id}
-         AND improvement_id = ANY(${intArrayLiteral(ids)}::int[])
+      SELECT v.improvement_id FROM improvement_views v
+        JOIN improvement_submissions i ON i.id = v.improvement_id
+       WHERE v.user_id = ${viewer.id}
+         AND v.improvement_id = ANY(${intArrayLiteral(ids)}::int[])
+         -- Seen since it was finished (see unseen-count).
+         AND (i.done_at IS NULL OR v.viewed_at >= i.done_at)
     `);
     const seenIds = new Set((seenRows.rows ?? []).map(r => Number(r.improvement_id)));
 
