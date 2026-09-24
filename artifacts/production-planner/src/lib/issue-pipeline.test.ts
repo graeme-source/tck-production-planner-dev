@@ -20,17 +20,21 @@ describe("safeTestPath", () => {
 describe("tabCount", () => {
   const counts = { proposed: 3, approved: 1, rejected: 2, in_progress: 0, fixed: 4, wont_fix: 1, awaitingReply: 1 };
   it("reads each tab's count, folding won't-fix into Rejected", () => {
-    expect(tabCount(counts, "proposed")).toBe(2);
-    expect(tabCount(counts, "rejected")).toBe(3);
+    expect(tabCount({ counts: counts }, "proposed")).toBe(2);
+    expect(tabCount({ counts: counts }, "rejected")).toBe(3);
     expect(tabCount(undefined, "fixed")).toBe(0);
   });
   it("Done counts fixed and answered-by-message together", () => {
-    expect(tabCount({ ...counts, fixed: 4, answered: 2 } as typeof counts & { answered: number }, "fixed")).toBe(6);
-    expect(tabCount({ ...counts, fixed: 1, answered: 1, dismissed: 3 } as typeof counts & { answered: number; dismissed: number }, "fixed")).toBe(5);
+    expect(tabCount({ counts: { ...counts, fixed: 4, answered: 2 } as typeof counts & { answered: number } }, "fixed")).toBe(6);
+    expect(tabCount({ counts: { ...counts, fixed: 1, answered: 1, dismissed: 3 } as typeof counts & { answered: number; dismissed: number } }, "fixed")).toBe(5);
+  });
+  it("prefers the server's per-tab counts", () => {
+    expect(tabCount({ counts, tabCounts: { proposed: 4, in_progress: 5, snoozed: 2 } }, "in_progress")).toBe(5);
+    expect(tabCount({ counts, tabCounts: { snoozed: 2 } }, "snoozed")).toBe(2);
   });
   it("To review leaves out cards waiting on Claude's answer to a reply", () => {
-    expect(tabCount({ ...counts, proposed: 2, awaitingReply: 2 }, "proposed")).toBe(0);
-    expect(tabCount({ ...counts, proposed: 0, awaitingReply: 1 }, "proposed")).toBe(0);
+    expect(tabCount({ counts: { ...counts, proposed: 2, awaitingReply: 2 } }, "proposed")).toBe(0);
+    expect(tabCount({ counts: { ...counts, proposed: 0, awaitingReply: 1 } }, "proposed")).toBe(0);
   });
 });
 

@@ -6,7 +6,7 @@
 
 export type TriageLane = "defect" | "data_fix" | "understanding" | "improvement" | "needs_info" | "not_app";
 export type TriageStatus = "proposed" | "approved" | "rejected" | "in_progress" | "fixed" | "wont_fix" | "answered" | "dismissed";
-export type FixQueueTab = "proposed" | "approved" | "in_progress" | "fixed" | "rejected";
+export type FixQueueTab = "proposed" | "in_progress" | "snoozed" | "approved" | "fixed" | "rejected";
 
 export interface Triage {
   id: number;
@@ -26,6 +26,12 @@ export interface Triage {
   /** Claude verified nothing needs doing (already fixed/built, withdrawn,
    *  not a problem) — the card offers Dismiss instead of Approve. */
   noActionNeeded: boolean;
+  /** "Not now" — off To review until then (null = not snoozed). */
+  snoozedUntil: string | null;
+  /** The day the fix/feature went live. */
+  completedOn: string | null;
+  /** The improvement credited to the reporter when this closed. */
+  improvementId: number | null;
   relatedIssueIds: number[];
   causeTag: string | null;
   status: TriageStatus;
@@ -75,6 +81,8 @@ export interface FixQueueItem {
 export interface FixQueueResponse {
   tab: FixQueueTab;
   counts: Record<TriageStatus, number> & { awaitingReply: number };
+  /** Cards per tab, bucketed server-side by the same rule as the lists. */
+  tabCounts?: Partial<Record<FixQueueTab, number>>;
   items: FixQueueItem[];
 }
 
@@ -101,14 +109,17 @@ export const LANE_LABELS: Record<TriageLane, string> = {
 };
 
 /** Count shown on each Fix queue tab. Rejected also holds won't-fix. */
-export function tabCount(counts: FixQueueResponse["counts"] | undefined, tab: FixQueueTab): number {
-  if (!counts) return 0;
+export function tabCount(data: Pick<FixQueueResponse, "counts" | "tabCounts"> | undefined, tab: FixQueueTab): number {
+  if (!data) return 0;
+  // The server buckets every card by one rule (waiting-on-Claude → In
+  // progress, snoozed → Snoozed); use its numbers when present.
+  const fromServer = data.tabCounts?.[tab];
+  if (fromServer != null) return fromServer;
+  const counts = data.counts;
   if (tab === "rejected") return (counts.rejected ?? 0) + (counts.wont_fix ?? 0);
-  // The Done tab: fixed in code, or answered with a message to the reporter.
   if (tab === "fixed") return (counts.fixed ?? 0) + (counts.answered ?? 0) + (counts.dismissed ?? 0);
-  // "To review" counts only what needs Graeme: a card he has replied to is
-  // waiting on Claude, not on him (Graeme, 2026-09-24).
   if (tab === "proposed") return Math.max(0, (counts.proposed ?? 0) - (counts.awaitingReply ?? 0));
+  if (tab === "snoozed") return 0;
   return counts[tab] ?? 0;
 }
 

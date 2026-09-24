@@ -15,7 +15,7 @@ import { useState } from "react";
 import { Link, Redirect } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, HelpCircle, Loader2,
+  AlertTriangle, AlarmClock, Award, Check, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, HelpCircle, Loader2,
   MessageCircleQuestion, MessageSquareText, OctagonAlert, Scale, Send, Video, Wrench, X, XCircle,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
@@ -35,11 +35,22 @@ const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
 
 const TABS: Array<{ key: FixQueueTab; label: string }> = [
   { key: "proposed", label: "To review" },
-  { key: "approved", label: "Approved" },
   { key: "in_progress", label: "In progress" },
+  { key: "snoozed", label: "Snoozed" },
+  { key: "approved", label: "Approved" },
   { key: "fixed", label: "Done" },
   { key: "rejected", label: "Rejected" },
 ];
+
+const SNOOZE_OPTIONS: Array<{ days: number; label: string }> = [
+  { days: 1, label: "1 day" }, { days: 3, label: "3 days" }, { days: 7, label: "1 week" },
+  { days: 14, label: "2 weeks" }, { days: 30, label: "1 month" },
+];
+
+const TAB_HINTS: Partial<Record<FixQueueTab, string>> = {
+  in_progress: "Waiting on Claude's answer to your reply, or being fixed. They come back to To review by themselves once Claude answers.",
+  snoozed: "Out of sight until the date shown, then back in To review by themselves.",
+};
 
 const LANE_STYLES: Record<TriageLane, string> = {
   defect: "bg-red-100 text-red-800 dark:bg-red-950/50 dark:text-red-200",
@@ -198,16 +209,20 @@ function Chip({ children, className }: { children: React.ReactNode; className?: 
   return <span className={cn("inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold", className)}>{children}</span>;
 }
 
-function FixCard({ item, onDecide, onMessage, onDismiss, saving }: {
+function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, saving }: {
   item: FixQueueItem;
   onDecide: (action: DecisionAction, note?: string) => void;
   onMessage: (message: string, close: boolean) => void;
   onDismiss: () => void;
+  /** days = null brings a snoozed card back now. */
+  onSnooze: (days: number | null) => void;
   saving: boolean;
 }) {
   const { triage: t, issue } = item;
   const [whyOpen, setWhyOpen] = useState(false);
   const [dialog, setDialog] = useState<null | "reject" | "reply" | "message">(null);
+  const [snoozeOpen, setSnoozeOpen] = useState(false);
+  const snoozedUntil = t.snoozedUntil && new Date(t.snoozedUntil).getTime() > Date.now() ? new Date(t.snoozedUntil) : null;
   const status = t.status;
   const images = issue?.attachments.filter(a => a.kind === "image") ?? [];
   const videos = issue?.attachments.filter(a => a.kind !== "image") ?? [];
@@ -225,6 +240,9 @@ function FixCard({ item, onDecide, onMessage, onDismiss, saving }: {
         )}
         {t.noActionNeeded && (status === "proposed" || status === "approved" || status === "rejected") && (
           <Chip className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200"><CheckCircle2 className="w-3.5 h-3.5" /> Already done — no action needed</Chip>
+        )}
+        {snoozedUntil && status === "proposed" && (
+          <Chip className="bg-secondary text-foreground"><AlarmClock className="w-3.5 h-3.5" /> Snoozed until {snoozedUntil.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}</Chip>
         )}
         {t.awaitingRetriage && (
           <Chip className="bg-sky-100 text-sky-800 dark:bg-sky-950/50 dark:text-sky-200"><MessageCircleQuestion className="w-3.5 h-3.5" /> Waiting for Claude to reply</Chip>
@@ -347,7 +365,7 @@ function FixCard({ item, onDecide, onMessage, onDismiss, saving }: {
       )}
 
       {/* Decision / progress trail */}
-      {(t.decidedAt || t.fixRef || item.notices.length > 0) && (
+      {(t.decidedAt || t.fixRef || item.notices.length > 0 || t.improvementId != null) && (
         <div className="space-y-1 text-sm text-muted-foreground border-t border-border pt-3">
           {t.decidedAt && (
             <p>
@@ -360,6 +378,11 @@ function FixCard({ item, onDecide, onMessage, onDismiss, saving }: {
                   : `${status === "rejected" ? "Rejected" : "Approved"} by ${t.decidedBy ?? "you"}`}
               {" · "}{feedTimestamp(t.decidedAt)}
               {t.decisionNote && <span className="block text-foreground">“{t.decisionNote}”</span>}
+            </p>
+          )}
+          {t.improvementId != null && (
+            <p className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 font-medium">
+              <Award className="w-4 h-4" /> Improvement credited to {issue?.reporter.name ?? "the reporter"}
             </p>
           )}
           {t.fixRef && <p>Fix: <span className="font-mono text-foreground break-all">{t.fixRef}</span>{t.fixedAt ? ` · ${feedTimestamp(t.fixedAt)}` : ""}</p>}
@@ -410,6 +433,31 @@ function FixCard({ item, onDecide, onMessage, onDismiss, saving }: {
             <MessageSquareText className="w-5 h-5" /> Message {issue.reporter.name?.split(" ")[0] ?? "the reporter"}
           </button>
         )}
+        {status === "proposed" && !t.awaitingRetriage && !snoozedUntil && (
+          <div className="relative">
+            <button onClick={() => setSnoozeOpen(o => !o)} disabled={saving}
+              className="h-14 px-5 rounded-2xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/60 disabled:opacity-50">
+              <AlarmClock className="w-5 h-5" /> Not now
+            </button>
+            {snoozeOpen && (
+              <div className="absolute z-20 bottom-full mb-2 left-0 w-44 rounded-2xl border border-border bg-card shadow-xl p-1.5">
+                <p className="px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">Snooze for</p>
+                {SNOOZE_OPTIONS.map(o => (
+                  <button key={o.days} onClick={() => { setSnoozeOpen(false); onSnooze(o.days); }}
+                    className="w-full text-left px-3 py-2.5 rounded-xl text-base font-medium hover:bg-secondary/60">
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {snoozedUntil && status === "proposed" && (
+          <button onClick={() => onSnooze(null)} disabled={saving}
+            className="h-14 px-5 rounded-2xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/60 disabled:opacity-50">
+            <AlarmClock className="w-5 h-5" /> Bring back now
+          </button>
+        )}
         <Link href={`/reports?tab=issues&issueId=${t.andonIssueId}`}
           className="ml-auto text-sm font-medium text-muted-foreground hover:text-foreground flex items-center gap-1.5 px-2 py-2">
           Open in the issue log <ExternalLink className="w-4 h-4" />
@@ -433,47 +481,6 @@ function FixCard({ item, onDecide, onMessage, onDismiss, saving }: {
         />
       )}
     </article>
-  );
-}
-
-/** A card Graeme has replied to, folded to one line: nothing for him to do
- *  until Claude answers, so it shouldn't look like it needs him. Tap to
- *  open the full card (e.g. to reject it while waiting). */
-function WaitingRow({ item, onDecide, onMessage, onDismiss, saving }: {
-  item: FixQueueItem;
-  onDecide: (action: DecisionAction, note?: string) => void;
-  onMessage: (message: string, close: boolean) => void;
-  onDismiss: () => void;
-  saving: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const { triage: t, issue } = item;
-  if (open) {
-    return (
-      <div className="space-y-2">
-        <button onClick={() => setOpen(false)} className="text-sm font-semibold text-muted-foreground hover:text-foreground flex items-center gap-1.5">
-          <ChevronDown className="w-4 h-4" /> Fold it back up
-        </button>
-        <FixCard item={item} onDecide={onDecide} onMessage={onMessage} onDismiss={onDismiss} saving={saving} />
-      </div>
-    );
-  }
-  return (
-    <button
-      onClick={() => setOpen(true)}
-      className="w-full text-left rounded-2xl border border-sky-200 dark:border-sky-900 bg-sky-50/60 dark:bg-sky-950/20 px-4 py-3 flex items-center gap-3 hover:bg-sky-50 dark:hover:bg-sky-950/40"
-    >
-      <MessageCircleQuestion className="w-5 h-5 text-sky-600 flex-shrink-0" />
-      <span className="flex-1 min-w-0">
-        <span className="block text-sm font-semibold truncate">
-          #{t.andonIssueId} · {issue?.description?.trim() || t.verdictSummary}
-        </span>
-        <span className="block text-xs text-muted-foreground truncate">
-          You replied {t.decidedAt ? feedTimestamp(t.decidedAt) : ""}{t.decisionNote ? ` — “${t.decisionNote}”` : ""}
-        </span>
-      </span>
-      <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-    </button>
   );
 }
 
@@ -516,9 +523,8 @@ export default function FounderFixQueue() {
           const counts = { ...previous.counts };
           let items = previous.items;
           if (action === "reply") {
-            items = items.map(i => i.triage.id === id
-              ? { ...i, triage: { ...i.triage, awaitingRetriage: true, decisionNote: note ?? null, decidedAt: new Date().toISOString() } }
-              : i);
+            // Now waiting on Claude: it moves to In progress, off To review.
+            items = items.filter(i => i.triage.id !== id);
             if (!item.triage.awaitingRetriage) counts.awaitingReply += 1;
           } else {
             const to = ACTION_TO_STATUS[action];
@@ -567,6 +573,35 @@ export default function FounderFixQueue() {
     },
   });
 
+  const snooze = useMutation({
+    mutationFn: async ({ id, days }: { id: number; days: number | null }) =>
+      fetch(`${BASE}/api/issue-pipeline/review/${id}/${days == null ? "unsnooze" : "snooze"}`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(days == null ? {} : { days }),
+      }).then(jsonOrThrow),
+    onMutate: async ({ id }) => {
+      setSavingIds(s => new Set(s).add(id));
+      await qc.cancelQueries({ queryKey });
+      const previous = qc.getQueryData<FixQueueResponse>(queryKey);
+      if (previous) qc.setQueryData<FixQueueResponse>(queryKey, { ...previous, items: previous.items.filter(i => i.triage.id !== id) });
+      return { previous };
+    },
+    onError: (err: Error, _v, ctx) => {
+      if (ctx?.previous) qc.setQueryData(queryKey, ctx.previous);
+      toast({ title: "Not saved", description: err.message, variant: "destructive" });
+    },
+    onSuccess: (_d, { days }) => toast({
+      title: days == null ? "Back in To review" : `Snoozed for ${SNOOZE_OPTIONS.find(o => o.days === days)?.label ?? `${days} days`}`,
+      description: days == null ? undefined : "It comes back to To review by itself.",
+    }),
+    onSettled: (_d, _e, { id }) => {
+      setSavingIds(s => { const n = new Set(s); n.delete(id); return n; });
+      void qc.invalidateQueries({ queryKey: ["issue-pipeline", "review"] });
+    },
+  });
+
   const dismiss = useMutation({
     mutationFn: async ({ id }: { id: number }) =>
       fetch(`${BASE}/api/issue-pipeline/review/${id}/dismiss`, { method: "POST", credentials: "include" }).then(jsonOrThrow),
@@ -607,8 +642,7 @@ export default function FounderFixQueue() {
   const saving = savingIds.size > 0;
   // On To review, cards Graeme has replied to fold away below — they're
   // waiting on Claude, not him.
-  const waitingOnClaude = tab === "proposed" ? items.filter(i => i.triage.awaitingRetriage) : [];
-  const needsYou = tab === "proposed" ? items.filter(i => !i.triage.awaitingRetriage) : items;
+  const needsYou = items;
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -624,9 +658,9 @@ export default function FounderFixQueue() {
       </p>
 
       {/* Status tabs with counts */}
-      <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
+      <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
         {TABS.map(t => {
-          const n = tabCount(data?.counts, t.key);
+          const n = tabCount(data, t.key);
           const active = t.key === tab;
           return (
             <button key={t.key} onClick={() => setTab(t.key)}
@@ -646,9 +680,7 @@ export default function FounderFixQueue() {
           ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving your decision…</>
           : decide.isSuccess
             ? <><CheckCircle2 className="w-4 h-4 text-emerald-600" /> All decisions saved</>
-            : tab === "proposed" && (data?.counts.awaitingReply ?? 0) > 0
-              ? <>{data!.counts.awaitingReply} waiting for Claude to answer your reply</>
-              : null}
+            : TAB_HINTS[tab] ?? null}
       </div>
 
       {isLoading && <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}
@@ -664,7 +696,9 @@ export default function FounderFixQueue() {
           <p className="text-lg font-semibold text-foreground">Nothing here</p>
           <p className="text-sm mt-1">
             {tab === "proposed"
-              ? (waitingOnClaude.length > 0 ? "Nothing needs you right now — the rest are waiting on Claude." : "No recommendations waiting for you. New ones appear as Claude reviews the issue log.")
+              ? ((data?.tabCounts?.in_progress ?? 0) > 0
+                ? "Nothing needs you right now — the rest are waiting on Claude (see In progress)."
+                : "No recommendations waiting for you. New ones appear as Claude reviews the issue log.")
               : "No items in this list."}
           </p>
         </div>
@@ -679,32 +713,11 @@ export default function FounderFixQueue() {
             onDecide={(action, note) => decide.mutate({ id: item.triage.id, action, note })}
             onMessage={(message, close) => sendMessage.mutate({ id: item.triage.id, message, close })}
             onDismiss={() => dismiss.mutate({ id: item.triage.id })}
+            onSnooze={days => snooze.mutate({ id: item.triage.id, days })}
           />
         ))}
       </div>
 
-      {waitingOnClaude.length > 0 && (
-        <section className="space-y-2 pt-2">
-          <h2 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">
-            Waiting for Claude — nothing for you to do ({waitingOnClaude.length})
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            You've replied to these. Claude picks replies up on its next review and the card comes back up top, updated.
-          </p>
-          <div className="space-y-2">
-            {waitingOnClaude.map(item => (
-              <WaitingRow
-                key={item.triage.id}
-                item={item}
-                saving={savingIds.has(item.triage.id)}
-                onDecide={(action, note) => decide.mutate({ id: item.triage.id, action, note })}
-                onMessage={(message, close) => sendMessage.mutate({ id: item.triage.id, message, close })}
-                onDismiss={() => dismiss.mutate({ id: item.triage.id })}
-              />
-            ))}
-          </div>
-        </section>
-      )}
     </div>
   );
 }
