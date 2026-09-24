@@ -52,7 +52,7 @@ const LANE_STYLES: Record<TriageLane, string> = {
 
 const STATUS_LABELS: Record<TriageStatus, string> = {
   proposed: "To review", approved: "Approved", rejected: "Rejected",
-  in_progress: "In progress", fixed: "Fixed", wont_fix: "Won't fix", answered: "Answered",
+  in_progress: "In progress", fixed: "Fixed", wont_fix: "Won't fix", answered: "Answered", dismissed: "Dismissed — already done",
 };
 
 const SEVERITY_DOT: Record<string, string> = { red: "bg-red-500", yellow: "bg-amber-400", green: "bg-emerald-500" };
@@ -198,10 +198,11 @@ function Chip({ children, className }: { children: React.ReactNode; className?: 
   return <span className={cn("inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold", className)}>{children}</span>;
 }
 
-function FixCard({ item, onDecide, onMessage, saving }: {
+function FixCard({ item, onDecide, onMessage, onDismiss, saving }: {
   item: FixQueueItem;
   onDecide: (action: DecisionAction, note?: string) => void;
   onMessage: (message: string, close: boolean) => void;
+  onDismiss: () => void;
   saving: boolean;
 }) {
   const { triage: t, issue } = item;
@@ -221,6 +222,9 @@ function FixCard({ item, onDecide, onMessage, saving }: {
         )}
         {t.behaviourChange && (
           <Chip className="bg-amber-500 text-white"><Scale className="w-3.5 h-3.5" /> Changes agreed behaviour — your call first</Chip>
+        )}
+        {t.noActionNeeded && (status === "proposed" || status === "approved" || status === "rejected") && (
+          <Chip className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200"><CheckCircle2 className="w-3.5 h-3.5" /> Already done — no action needed</Chip>
         )}
         {t.awaitingRetriage && (
           <Chip className="bg-sky-100 text-sky-800 dark:bg-sky-950/50 dark:text-sky-200"><MessageCircleQuestion className="w-3.5 h-3.5" /> Waiting for Claude to reply</Chip>
@@ -351,6 +355,8 @@ function FixCard({ item, onDecide, onMessage, saving }: {
                 ? (t.awaitingRetriage ? "You replied" : "You replied — Claude has updated the recommendation")
                 : status === "answered"
                   ? `Answered with a message by ${t.decidedBy ?? "you"}`
+                  : status === "dismissed"
+                  ? `Dismissed as already done by ${t.decidedBy ?? "you"}`
                   : `${status === "rejected" ? "Rejected" : "Approved"} by ${t.decidedBy ?? "you"}`}
               {" · "}{feedTimestamp(t.decidedAt)}
               {t.decisionNote && <span className="block text-foreground">“{t.decisionNote}”</span>}
@@ -370,7 +376,16 @@ function FixCard({ item, onDecide, onMessage, saving }: {
 
       {/* Actions */}
       <div className="flex flex-wrap items-center gap-2 pt-1">
-        {(status === "proposed" || status === "rejected") && (
+        {/* Nothing to build: the green button closes it instead of approving
+            work that isn't coming (Graeme, 2026-09-24). */}
+        {t.noActionNeeded && (status === "proposed" || status === "approved" || status === "rejected") && (
+          <button onClick={onDismiss} disabled={saving}
+            className="h-14 px-6 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center gap-2 hover:bg-primary/90 disabled:opacity-50 flex-1 sm:flex-none justify-center">
+            {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
+            Dismiss — already done
+          </button>
+        )}
+        {!t.noActionNeeded && (status === "proposed" || status === "rejected") && (
           <button onClick={() => onDecide("approve")} disabled={saving}
             className="h-14 px-6 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center gap-2 hover:bg-primary/90 disabled:opacity-50 flex-1 sm:flex-none justify-center">
             {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
@@ -424,10 +439,11 @@ function FixCard({ item, onDecide, onMessage, saving }: {
 /** A card Graeme has replied to, folded to one line: nothing for him to do
  *  until Claude answers, so it shouldn't look like it needs him. Tap to
  *  open the full card (e.g. to reject it while waiting). */
-function WaitingRow({ item, onDecide, onMessage, saving }: {
+function WaitingRow({ item, onDecide, onMessage, onDismiss, saving }: {
   item: FixQueueItem;
   onDecide: (action: DecisionAction, note?: string) => void;
   onMessage: (message: string, close: boolean) => void;
+  onDismiss: () => void;
   saving: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -438,7 +454,7 @@ function WaitingRow({ item, onDecide, onMessage, saving }: {
         <button onClick={() => setOpen(false)} className="text-sm font-semibold text-muted-foreground hover:text-foreground flex items-center gap-1.5">
           <ChevronDown className="w-4 h-4" /> Fold it back up
         </button>
-        <FixCard item={item} onDecide={onDecide} onMessage={onMessage} saving={saving} />
+        <FixCard item={item} onDecide={onDecide} onMessage={onMessage} onDismiss={onDismiss} saving={saving} />
       </div>
     );
   }
@@ -551,6 +567,39 @@ export default function FounderFixQueue() {
     },
   });
 
+  const dismiss = useMutation({
+    mutationFn: async ({ id }: { id: number }) =>
+      fetch(`${BASE}/api/issue-pipeline/review/${id}/dismiss`, { method: "POST", credentials: "include" }).then(jsonOrThrow),
+    // Optimistic: the card leaves the list the moment he taps.
+    onMutate: async ({ id }) => {
+      setSavingIds(s => new Set(s).add(id));
+      await qc.cancelQueries({ queryKey });
+      const previous = qc.getQueryData<FixQueueResponse>(queryKey);
+      if (previous) {
+        const item = previous.items.find(i => i.triage.id === id);
+        if (item) {
+          const counts = { ...previous.counts };
+          counts[item.triage.status] = Math.max(0, counts[item.triage.status] - 1);
+          counts.dismissed = (counts.dismissed ?? 0) + 1;
+          qc.setQueryData<FixQueueResponse>(queryKey, { ...previous, counts, items: previous.items.filter(i => i.triage.id !== id) });
+        }
+      }
+      return { previous };
+    },
+    onError: (err: Error, _v, ctx) => {
+      if (ctx?.previous) qc.setQueryData(queryKey, ctx.previous);
+      toast({ title: "Not dismissed", description: err.message, variant: "destructive" });
+    },
+    onSuccess: (data: { notified?: boolean }) => toast({
+      title: "Dismissed — off the issue log",
+      description: data?.notified ? "The reporter gets a note saying it's done." : undefined,
+    }),
+    onSettled: (_d, _e, { id }) => {
+      setSavingIds(s => { const n = new Set(s); n.delete(id); return n; });
+      void qc.invalidateQueries({ queryKey: ["issue-pipeline", "review"] });
+    },
+  });
+
   if (state.status === "authenticated" && !isFounder) return <Redirect to="/" />;
   if (state.status !== "authenticated") return null;
 
@@ -629,6 +678,7 @@ export default function FounderFixQueue() {
             saving={savingIds.has(item.triage.id)}
             onDecide={(action, note) => decide.mutate({ id: item.triage.id, action, note })}
             onMessage={(message, close) => sendMessage.mutate({ id: item.triage.id, message, close })}
+            onDismiss={() => dismiss.mutate({ id: item.triage.id })}
           />
         ))}
       </div>
@@ -649,6 +699,7 @@ export default function FounderFixQueue() {
                 saving={savingIds.has(item.triage.id)}
                 onDecide={(action, note) => decide.mutate({ id: item.triage.id, action, note })}
                 onMessage={(message, close) => sendMessage.mutate({ id: item.triage.id, message, close })}
+                onDismiss={() => dismiss.mutate({ id: item.triage.id })}
               />
             ))}
           </div>

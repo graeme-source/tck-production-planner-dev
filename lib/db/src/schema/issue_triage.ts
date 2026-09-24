@@ -23,6 +23,9 @@ export const issueTriageTable = pgTable("issue_triage", {
   /** Claude's draft message to the reporter (migration 0120) — pre-fills
    *  Graeme's "Message the reporter" box. */
   suggestedReply: text("suggested_reply"),
+  /** Already fixed / withdrawn / not a problem — the Fix queue offers
+   *  Dismiss instead of Approve (migration 0121). */
+  noActionNeeded: boolean("no_action_needed").notNull().default(false),
   relatedIssueIds: integer("related_issue_ids").array().notNull().default(sql`'{}'::integer[]`),
   causeTag: text("cause_tag"),
   status: text("status").notNull().default("proposed"), // proposed | approved | rejected | in_progress | fixed | wont_fix

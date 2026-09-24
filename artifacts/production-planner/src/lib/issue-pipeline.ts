@@ -5,7 +5,7 @@
  */
 
 export type TriageLane = "defect" | "data_fix" | "understanding" | "improvement" | "needs_info" | "not_app";
-export type TriageStatus = "proposed" | "approved" | "rejected" | "in_progress" | "fixed" | "wont_fix" | "answered";
+export type TriageStatus = "proposed" | "approved" | "rejected" | "in_progress" | "fixed" | "wont_fix" | "answered" | "dismissed";
 export type FixQueueTab = "proposed" | "approved" | "in_progress" | "fixed" | "rejected";
 
 export interface Triage {
@@ -23,6 +23,9 @@ export interface Triage {
   questionForGraeme: string | null;
   /** Claude's draft message to the reporter — pre-fills "Message the reporter". */
   suggestedReply: string | null;
+  /** Claude verified nothing needs doing (already fixed/built, withdrawn,
+   *  not a problem) — the card offers Dismiss instead of Approve. */
+  noActionNeeded: boolean;
   relatedIssueIds: number[];
   causeTag: string | null;
   status: TriageStatus;
@@ -102,7 +105,7 @@ export function tabCount(counts: FixQueueResponse["counts"] | undefined, tab: Fi
   if (!counts) return 0;
   if (tab === "rejected") return (counts.rejected ?? 0) + (counts.wont_fix ?? 0);
   // The Done tab: fixed in code, or answered with a message to the reporter.
-  if (tab === "fixed") return (counts.fixed ?? 0) + (counts.answered ?? 0);
+  if (tab === "fixed") return (counts.fixed ?? 0) + (counts.answered ?? 0) + (counts.dismissed ?? 0);
   // "To review" counts only what needs Graeme: a card he has replied to is
   // waiting on Claude, not on him (Graeme, 2026-09-24).
   if (tab === "proposed") return Math.max(0, (counts.proposed ?? 0) - (counts.awaitingReply ?? 0));

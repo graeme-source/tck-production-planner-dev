@@ -21,7 +21,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 export const TRIAGE_LANES = ["defect", "data_fix", "understanding", "improvement", "needs_info", "not_app"] as const;
 export type TriageLane = (typeof TRIAGE_LANES)[number];
 
-export const TRIAGE_STATUSES = ["proposed", "approved", "rejected", "in_progress", "fixed", "wont_fix", "answered"] as const;
+export const TRIAGE_STATUSES = ["proposed", "approved", "rejected", "in_progress", "fixed", "wont_fix", "answered", "dismissed"] as const;
 export type TriageStatus = (typeof TRIAGE_STATUSES)[number];
 
 export const LEVELS = ["low", "medium", "high"] as const;
@@ -117,6 +117,7 @@ const REVIEW_MOVES: Record<TriageStatus, readonly TriageStatus[]> = {
   fixed: [],
   wont_fix: [],
   answered: [],
+  dismissed: [],
 };
 
 export function canReviewMove(from: TriageStatus, to: TriageStatus): boolean {
@@ -155,6 +156,13 @@ export function pipelineMayHandle(issue: { category: string; area: string | null
   return { ok: true };
 }
 
+/** "Dismiss — already done": closes a report nobody needs to act on. Only
+ *  for reports still open to a decision — never one already closed or with
+ *  work under way. */
+export function canDismiss(from: TriageStatus): boolean {
+  return from === "proposed" || from === "approved" || from === "rejected" || from === "wont_fix";
+}
+
 export const NOTICE_KINDS = ["fixed", "message"] as const;
 export type NoticeKind = (typeof NOTICE_KINDS)[number];
 
@@ -172,8 +180,9 @@ const MACHINE_MOVES: Record<TriageStatus, readonly MachineTarget[]> = {
   in_progress: ["in_progress", "fixed", "wont_fix"],
   fixed: ["fixed", "in_progress"],
   wont_fix: [],
-  // Closed by Graeme's message — nothing left for the session to do.
+  // Closed by Graeme's message or dismissal — nothing left for the session.
   answered: [],
+  dismissed: [],
 };
 
 export type MachineMoveVerdict = { ok: true } | { ok: false; error: string };

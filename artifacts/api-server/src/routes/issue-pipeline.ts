@@ -20,6 +20,7 @@ import { requireFounder } from "../middleware/founder-access";
 import {
   NOTICE_ACK_ACTIONS,
   TRIAGE_STATUSES,
+  canDismiss,
   canMessageReporter,
   canReply,
   canReviewMove,
@@ -61,7 +62,7 @@ router.get("/review", requireFounder, async (req, res) => {
   if (!parsed.success) { res.status(400).json({ error: "Validation failed", details: parsed.error.flatten() }); return; }
   const tab = parsed.data.tab ?? "proposed";
   // "fixed" is the Done tab: fixed in code, or answered by a message.
-  const statuses: TriageStatus[] = tab === "rejected" ? ["rejected", "wont_fix"] : tab === "fixed" ? ["fixed", "answered"] : [tab];
+  const statuses: TriageStatus[] = tab === "rejected" ? ["rejected", "wont_fix"] : tab === "fixed" ? ["fixed", "answered", "dismissed"] : [tab];
   try {
     const countRows = await db.execute<{ status: string; n: number; awaiting: number }>(sql`
       SELECT status, COUNT(*)::int AS n, COUNT(*) FILTER (WHERE awaiting_retriage)::int AS awaiting
@@ -152,6 +153,52 @@ async function decide(req: Request, res: Response, action: "approve" | "reject" 
 router.post("/review/:id/approve", requireFounder, validate(decisionBody), (req, res) => decide(req, res, "approve"));
 router.post("/review/:id/reject", requireFounder, validate(decisionBody), (req, res) => decide(req, res, "reject"));
 router.post("/review/:id/reply", requireFounder, validate(replyBody), (req, res) => decide(req, res, "reply"));
+
+// ── POST /review/:id/dismiss — "Dismiss — already done" ─────────────────────
+// For reports Claude has verified need no action (already fixed or built,
+// withdrawn, not a problem). One tap closes the report on the andon log; if
+// Claude drafted a reply, the reporter gets it as "A reply to your report",
+// so they learn it's done and where to find it.
+router.post("/review/:id/dismiss", requireFounder, async (req, res) => {
+  const id = parseId(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
+  const userId = req.session.userId!;
+  try {
+    const name = await sessionUserName(userId);
+    const out = await db.transaction(async (tx) => {
+      const [current] = await tx.select().from(issueTriageTable).where(eq(issueTriageTable.id, id)).for("update");
+      if (!current) return { status: 404 as const, error: "Recommendation not found" };
+      if (!canDismiss(current.status as TriageStatus)) {
+        return { status: 409 as const, error: `This report is already ${current.status === "in_progress" ? "being fixed" : "closed"}.` };
+      }
+      const [issue] = await tx.select().from(andonIssuesTable).where(eq(andonIssuesTable.id, current.andonIssueId));
+      if (!issue) return { status: 404 as const, error: "The report no longer exists" };
+
+      const reply = current.suggestedReply?.trim();
+      let notified = false;
+      if (reply) {
+        const sent = await messageReporter(tx, issue, { triageId: current.id, senderUserId: userId, senderName: name, message: reply, close: true });
+        notified = sent.noticeQueued;
+      } else if (!issue.resolvedAt) {
+        await tx.update(andonIssuesTable)
+          .set({ resolvedBy: userId, resolvedByName: name, resolvedAt: new Date() })
+          .where(eq(andonIssuesTable.id, issue.id));
+      }
+      const [row] = await tx.update(issueTriageTable).set({
+        status: "dismissed", awaitingRetriage: false, decidedBy: name, decidedByUserId: userId,
+        decidedAt: new Date(), issueResolvedAt: new Date(), updatedAt: new Date(),
+      }).where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
+      await recordEvent(tx, row, "dismissed", name, reply ? "Dismissed — reply sent to the reporter" : "Dismissed — already done");
+      return { status: 200 as const, triage: row, notified };
+    });
+    if (out.status !== 200) { const { status, ...body } = out; res.status(status).json(body); return; }
+    const { status: _s, ...body } = out;
+    res.json(body);
+  } catch (err) {
+    console.error("[issue-pipeline] dismiss failed:", err instanceof Error ? err.message : String(err));
+    res.status(500).json({ error: "Failed to dismiss" });
+  }
+});
 
 // ── POST /review/:id/message — "Message the reporter" ───────────────────────
 // Graeme's words go to the person who reported it (issue comment, bell, and

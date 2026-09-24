@@ -8,6 +8,7 @@ import {
   canReviewMove,
   canReply,
   canMessageReporter,
+  canDismiss,
   pipelineMayHandle,
   machineMoveVerdict,
   resolveIssueVerdict,
@@ -222,5 +223,14 @@ describe("pipelineMayHandle — safety and physical reports stay with people", (
   it("handles app reports and older reports with no area", () => {
     expect(pipelineMayHandle({ category: "other", area: "system" }).ok).toBe(true);
     expect(pipelineMayHandle({ category: "equipment", area: null }).ok).toBe(true);
+  });
+});
+
+describe("canDismiss — 'already done' closes only reports still awaiting a decision", () => {
+  it("dismisses open recommendations", () => {
+    for (const s of ["proposed", "approved", "rejected", "wont_fix"] as const) expect(canDismiss(s)).toBe(true);
+  });
+  it("never re-closes or interrupts work", () => {
+    for (const s of ["in_progress", "fixed", "answered", "dismissed"] as const) expect(canDismiss(s)).toBe(false);
   });
 });

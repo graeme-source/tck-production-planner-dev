@@ -26,6 +26,7 @@ describe("tabCount", () => {
   });
   it("Done counts fixed and answered-by-message together", () => {
     expect(tabCount({ ...counts, fixed: 4, answered: 2 } as typeof counts & { answered: number }, "fixed")).toBe(6);
+    expect(tabCount({ ...counts, fixed: 1, answered: 1, dismissed: 3 } as typeof counts & { answered: number; dismissed: number }, "fixed")).toBe(5);
   });
   it("To review leaves out cards waiting on Claude's answer to a reply", () => {
     expect(tabCount({ ...counts, proposed: 2, awaitingReply: 2 }, "proposed")).toBe(0);
