@@ -38,6 +38,7 @@ import { createPortal } from "react-dom";
 import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay, STATION_VIEW_ROW_SLOT_ID } from "../shared/constants";
 import { QueueDock, QueueSheet } from "../shared/station-queue";
 import { packsPerBatch } from "../shared/recipe-completion";
+import { isBuildingComplete, buildProgressPercent, stillToBuild, type BuildProgressItem } from "../shared/building-complete";
 
 import {
   DndContext,
@@ -648,12 +649,17 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   // remaining = planned batches still to build toward the reference target
   // (purely informational; building is never blocked when it reaches 0).
   const remaining = currentItem ? Math.max(0, targetRef - buildingCount) : 0;
-  // A recipe counts as done when it hit the planned target OR the builder
+  // A recipe counts as done when it hit ITS OWN planned target OR the builder
   // marked it finished for the day (short builds included — what was built
-  // is the day's output). Building is complete once every recipe is done.
-  const allDone = items.length > 0 && items.every(it =>
-    !!it.builderMarkedCompleteAt || getCombinedBuildCount(it) >= getTargetRef(it)
-  );
+  // is the day's output). Building is complete once every recipe is done;
+  // extras on one recipe never cover another's shortfall (shared rule in
+  // shared/building-complete.ts — also drives the finish pop-up below).
+  const buildProgressItems: BuildProgressItem[] = items.map(it => ({
+    target: getTargetRef(it),
+    built: getCombinedBuildCount(it),
+    markedComplete: !!it.builderMarkedCompleteAt,
+  }));
+  const allDone = isBuildingComplete(buildProgressItems);
 
   // checklistPending is computed below but we need it here for the timer.
   // Inline the same logic to avoid forward-reference issues.
@@ -984,9 +990,12 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   const totalBatchesDone = calzoneItems.reduce((s, it) => s + getCombinedBuildCount(it), 0);
   const totalMacPacksTarget = macItems.reduce((s, it) => s + getTargetRef(it), 0);
   const totalMacPacksDone = macItems.reduce((s, it) => s + getCombinedBuildCount(it), 0);
-  const combinedTarget = totalBatchesTarget + totalMacPacksTarget;
-  const combinedDone = totalBatchesDone + totalMacPacksDone;
-  const overallProgress = combinedTarget > 0 ? Math.round((combinedDone / combinedTarget) * 100) : 0;
+  // Per-item capped: 2 extra mac packs must not push the bar to 100% while a
+  // calzone is still short.
+  const overallProgress = buildProgressPercent(buildProgressItems);
+  // Outstanding work per category (batches vs packs are different units).
+  const calzoneStillToBuild = stillToBuild(buildProgressItems.filter((_, i) => !isMacCheese(items[i] as any)));
+  const macStillToBuild = stillToBuild(buildProgressItems.filter((_, i) => isMacCheese(items[i] as any)));
 
   // Team and per-user BPH both come from /api/production-plans/:id/kpi
   // (polled every 5s) — the one standard calculation in the server's
@@ -1000,7 +1009,10 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   // the number decays after the last batch; pressing it pins the finish
   // time and decides whether the lunch break gets deducted.
   const buildingFinishedAt = plan.buildingFinishedAt ?? serverKpi?.buildingFinishedAt ?? null;
-  const allBuiltOut = combinedTarget > 0 && combinedDone >= combinedTarget;
+  // Every item at its own target (see allDone above). Never a combined
+  // total: that let extra mac cheese fire the pop-up with calzones still to
+  // build (plan 172, 18 Sep 2026).
+  const allBuiltOut = allDone;
   const [finishPromptDismissed, setFinishPromptDismissed] = useState(false);
   // Confirmation gate for finishing while batches are still outstanding —
   // e.g. a short day where the last flavour ran out of filling. The button is
@@ -1198,11 +1210,19 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                   <span className="font-bold tabular-nums">{totalMacPacksDone} / {totalMacPacksTarget}</span>
                 </div>
               )}
-              {combinedTarget - combinedDone > 0 && (
+              {calzoneStillToBuild > 0 && (
                 <div className="flex justify-between text-base">
-                  <span className="text-muted-foreground">Still to build</span>
+                  <span className="text-muted-foreground">Calzone batches still to build</span>
                   <span className="font-bold tabular-nums text-amber-600 dark:text-amber-400">
-                    {combinedTarget - combinedDone}
+                    {formatBatches(calzoneStillToBuild)}
+                  </span>
+                </div>
+              )}
+              {macStillToBuild > 0 && (
+                <div className="flex justify-between text-base">
+                  <span className="text-muted-foreground">Mac packs still to build</span>
+                  <span className="font-bold tabular-nums text-amber-600 dark:text-amber-400">
+                    {macStillToBuild}
                   </span>
                 </div>
               )}
