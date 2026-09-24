@@ -71,10 +71,19 @@ export interface FixNoticeSummary {
   createdAt: string;
 }
 
+export interface ThreadEntry {
+  at: string;
+  who: "claude" | "you" | "reporter";
+  kind: "question" | "recommendation" | "reply" | "message" | "decision";
+  text: string;
+}
+
 export interface FixQueueItem {
   triage: Triage;
   issue: IssueView | null;
   notices: FixNoticeSummary[];
+  /** The back-and-forth on this card, oldest first. */
+  thread?: ThreadEntry[];
   related: Array<{ id: number; description: string | null; station: string | null; reporterName: string | null; createdAt: string | null; resolvedAt: string | null; triageStatus: TriageStatus | null }>;
 }
 
@@ -160,4 +169,28 @@ export function batchedNoticeCopy(notices: Array<Pick<MyFixedNotice, "kind">>): 
       : `Updates on ${notices.length} of your reports`;
   const button = fixes > 0 ? (fixes === 1 ? "Got it — I'll test it" : "Got it — I'll test them") : "Got it";
   return { heading, button };
+}
+
+/**
+ * Which actions a Fix queue card offers, and where (Graeme, 2026-09-24).
+ * Each action sits inside the thing it affects — Reply on Claude's question,
+ * Approve/Dismiss on the proposed fix, Message on the suggested reply — and
+ * Approve is NOT offered while Claude is still asking something or working
+ * on his reply: there's a conversation to finish before there's a plan.
+ */
+export function cardActions(t: Pick<Triage, "status" | "questionForGraeme" | "awaitingRetriage" | "noActionNeeded">) {
+  const open = t.status === "proposed" || t.status === "approved" || t.status === "rejected";
+  const waitingOnClaude = t.status === "proposed" && t.awaitingRetriage;
+  const openQuestion = t.status === "proposed" && !!t.questionForGraeme && !t.awaitingRetriage;
+  return {
+    /** Talk to Claude (answer its question, or ask something). */
+    canReply: t.status === "proposed" && !t.awaitingRetriage,
+    openQuestion,
+    waitingOnClaude,
+    canDismiss: open && t.noActionNeeded && !openQuestion && !waitingOnClaude,
+    canApprove: (t.status === "proposed" || t.status === "rejected") && !t.noActionNeeded && !openQuestion && !waitingOnClaude,
+    /** Approve is held back because a conversation isn't finished. */
+    approveBlocked: t.status === "proposed" && !t.noActionNeeded && (openQuestion || waitingOnClaude),
+    canReject: t.status === "proposed" || t.status === "approved",
+  };
 }

@@ -26,7 +26,7 @@ import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { feedTimestamp } from "@/lib/feed-time";
 import {
-  LANE_LABELS, noticeStatusLine, tabCount,
+  LANE_LABELS, cardActions, noticeStatusLine, tabCount,
   type FixQueueItem, type FixQueueResponse, type FixQueueTab, type TriageLane, type TriageStatus,
 } from "@/lib/issue-pipeline";
 
@@ -223,6 +223,9 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, saving }: {
   const [dialog, setDialog] = useState<null | "reject" | "reply" | "message">(null);
   const [snoozeOpen, setSnoozeOpen] = useState(false);
   const snoozedUntil = t.snoozedUntil && new Date(t.snoozedUntil).getTime() > Date.now() ? new Date(t.snoozedUntil) : null;
+  const actions = cardActions(t);
+  const thread = item.thread ?? [];
+  const firstName = issue?.reporter.name?.split(" ")[0] ?? "the reporter";
   const status = t.status;
   const images = issue?.attachments.filter(a => a.kind === "image") ?? [];
   const videos = issue?.attachments.filter(a => a.kind !== "image") ?? [];
@@ -251,14 +254,29 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, saving }: {
         <span className="ml-auto text-xs text-muted-foreground">Issue #{t.andonIssueId} · triaged {feedTimestamp(t.triagedAt)}</span>
       </div>
 
-      {/* Claude's question, up top where it can't be missed */}
-      {t.questionForGraeme && (
-        <div className="rounded-2xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/30 p-4 flex gap-3">
-          <HelpCircle className="w-6 h-6 text-amber-600 flex-shrink-0" />
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300">Claude asks you</p>
-            <p className="text-lg font-semibold whitespace-pre-wrap">{t.questionForGraeme}</p>
+      {/* Claude's question — the conversation to finish before there's a
+          plan. Reply lives right here, on the thing it answers. */}
+      {t.questionForGraeme && status === "proposed" && (
+        <div className="rounded-2xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/30 p-4 space-y-3">
+          <div className="flex gap-3">
+            <HelpCircle className="w-6 h-6 text-amber-600 flex-shrink-0" />
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300">Claude asks you</p>
+              <p className="text-lg font-semibold whitespace-pre-wrap">{t.questionForGraeme}</p>
+            </div>
           </div>
+          {actions.canReply && (
+            <button onClick={() => setDialog("reply")} disabled={saving}
+              className="h-12 px-5 rounded-xl bg-amber-500 text-white font-bold flex items-center gap-2 hover:bg-amber-600 disabled:opacity-50">
+              <MessageCircleQuestion className="w-5 h-5" /> Answer Claude
+            </button>
+          )}
+        </div>
+      )}
+      {actions.waitingOnClaude && (
+        <div className="rounded-2xl border-2 border-sky-300 bg-sky-50 dark:bg-sky-950/30 p-4 flex gap-3">
+          <MessageCircleQuestion className="w-6 h-6 text-sky-600 flex-shrink-0" />
+          <p className="text-base"><span className="font-bold">You replied — Claude is working on it.</span> The card comes back to To review once it has answered. Nothing for you to do yet.</p>
         </div>
       )}
 
@@ -318,24 +336,92 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, saving }: {
         </div>
       )}
 
-      {/* Proposed fix */}
-      {t.proposedFix.trim() && (
-        <div className="rounded-2xl border border-border p-4">
-          <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1">
-            <Wrench className="w-4 h-4" /> Proposed fix
-          </p>
-          <p className="text-base whitespace-pre-wrap">{t.proposedFix}</p>
+      {/* The back-and-forth so far — only worth showing once there's more
+          than Claude's first word. */}
+      {thread.length > 1 && (
+        <div className="rounded-2xl border border-border p-4 space-y-2.5">
+          <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Conversation</p>
+          {thread.map((m, i) => (
+            <div key={i} className={cn("flex", m.who === "claude" ? "justify-start" : "justify-end")}>
+              <div className={cn(
+                "max-w-[85%] rounded-2xl px-3.5 py-2 text-sm",
+                m.who === "claude" ? "bg-secondary/60" : m.who === "reporter" ? "bg-emerald-50 dark:bg-emerald-950/30" : "bg-primary/10",
+              )}>
+                <p className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                  {m.who === "claude" ? (m.kind === "question" ? "Claude asked" : "Claude") : m.who === "reporter" ? issue?.reporter.name ?? "Reporter" : m.kind === "message" ? `You → ${issue?.reporter.name?.split(" ")[0] ?? "reporter"}` : "You"}
+                  {" · "}{feedTimestamp(m.at)}
+                </p>
+                <p className="whitespace-pre-wrap">{m.text}</p>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
-      {/* Claude's draft to the reporter — the training moment when they can
-          fix it themselves from the app's own settings. */}
-      {t.suggestedReply?.trim() && (
-        <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4">
-          <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-primary mb-1">
-            <MessageSquareText className="w-4 h-4" /> Suggested reply to {issue?.reporter.name ?? "the reporter"}
-          </p>
-          <p className="text-base whitespace-pre-wrap">{t.suggestedReply}</p>
+      {/* Proposed fix — Approve / Dismiss live here, on what they act on.
+          Held back while there's still a conversation to finish. */}
+      {(t.proposedFix.trim() || actions.canApprove || actions.canDismiss || actions.approveBlocked) && (
+        <div className="rounded-2xl border border-border p-4 space-y-3">
+          {t.proposedFix.trim() && (
+            <div>
+              <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1">
+                <Wrench className="w-4 h-4" /> Proposed fix
+              </p>
+              <p className="text-base whitespace-pre-wrap">{t.proposedFix}</p>
+            </div>
+          )}
+          {actions.canDismiss && (
+            <div className="space-y-1.5">
+              <button onClick={onDismiss} disabled={saving}
+                className="h-14 px-6 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center gap-2 hover:bg-primary/90 disabled:opacity-50">
+                {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
+                Dismiss — already done
+              </button>
+              <p className="text-sm text-muted-foreground">Closes the report{t.suggestedReply?.trim() ? ` and sends ${firstName} the reply below` : ""}. Nothing gets built.</p>
+            </div>
+          )}
+          {actions.canApprove && (
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <button onClick={() => onDecide("approve")} disabled={saving}
+                  className="h-14 px-6 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center gap-2 hover:bg-primary/90 disabled:opacity-50">
+                  {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
+                  {status === "rejected" ? "Approve this fix after all" : "Approve this fix"}
+                </button>
+                {actions.canReply && !t.questionForGraeme && (
+                  <button onClick={() => setDialog("reply")} disabled={saving}
+                    className="h-14 px-5 rounded-2xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/60 disabled:opacity-50">
+                    <MessageCircleQuestion className="w-5 h-5" /> Ask Claude first
+                  </button>
+                )}
+              </div>
+              <p className="text-sm text-muted-foreground">Approving tells Claude to go ahead and build this with you. It doesn't message {firstName} — use the reply below for that.</p>
+            </div>
+          )}
+          {actions.approveBlocked && (
+            <p className="text-sm font-medium text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 rounded-xl px-3 py-2.5">
+              {actions.waitingOnClaude
+                ? "Approve comes back once Claude has answered your reply."
+                : "Answer Claude's question above first — once the plan is agreed, you can approve it here."}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Claude's draft to the reporter — Message lives here. Sending it
+          never approves or closes anything unless you choose to. */}
+      {t.suggestedReply?.trim() && issue?.reporter.id != null && (
+        <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4 space-y-3">
+          <div>
+            <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-primary mb-1">
+              <MessageSquareText className="w-4 h-4" /> Suggested reply to {issue.reporter.name ?? "the reporter"}
+            </p>
+            <p className="text-base whitespace-pre-wrap">{t.suggestedReply}</p>
+          </div>
+          <button onClick={() => setDialog("message")} disabled={saving}
+            className="h-12 px-5 rounded-xl border-2 border-primary/40 bg-background text-primary font-bold flex items-center gap-2 hover:bg-primary/10 disabled:opacity-50">
+            <Send className="w-4 h-4" /> Send to {firstName}…
+          </button>
         </div>
       )}
 
@@ -397,46 +483,18 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, saving }: {
         </div>
       )}
 
-      {/* Actions */}
-      <div className="flex flex-wrap items-center gap-2 pt-1">
-        {/* Nothing to build: the green button closes it instead of approving
-            work that isn't coming (Graeme, 2026-09-24). */}
-        {t.noActionNeeded && (status === "proposed" || status === "approved" || status === "rejected") && (
-          <button onClick={onDismiss} disabled={saving}
-            className="h-14 px-6 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center gap-2 hover:bg-primary/90 disabled:opacity-50 flex-1 sm:flex-none justify-center">
-            {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
-            Dismiss — already done
-          </button>
-        )}
-        {!t.noActionNeeded && (status === "proposed" || status === "rejected") && (
-          <button onClick={() => onDecide("approve")} disabled={saving}
-            className="h-14 px-6 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center gap-2 hover:bg-primary/90 disabled:opacity-50 flex-1 sm:flex-none justify-center">
-            {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
-            {status === "rejected" ? "Approve after all" : "Approve"}
-          </button>
-        )}
-        {(status === "proposed" || status === "approved") && (
+      {/* Housekeeping */}
+      <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-border">
+        {actions.canReject && (
           <button onClick={() => setDialog("reject")} disabled={saving}
-            className="h-14 px-5 rounded-2xl border-2 border-red-300 dark:border-red-900 text-red-700 dark:text-red-300 font-bold flex items-center gap-2 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-50">
+            className="h-12 px-4 rounded-xl border-2 border-red-300 dark:border-red-900 text-red-700 dark:text-red-300 font-bold flex items-center gap-2 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-50">
             <XCircle className="w-5 h-5" /> Reject
-          </button>
-        )}
-        {status === "proposed" && (
-          <button onClick={() => setDialog("reply")} disabled={saving}
-            className="h-14 px-5 rounded-2xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/60 disabled:opacity-50">
-            <MessageCircleQuestion className="w-5 h-5" /> Reply / ask Claude
-          </button>
-        )}
-        {issue?.reporter.id != null && (
-          <button onClick={() => setDialog("message")} disabled={saving}
-            className="h-14 px-5 rounded-2xl border-2 border-primary/40 text-primary font-bold flex items-center gap-2 hover:bg-primary/10 disabled:opacity-50">
-            <MessageSquareText className="w-5 h-5" /> Message {issue.reporter.name?.split(" ")[0] ?? "the reporter"}
           </button>
         )}
         {status === "proposed" && !t.awaitingRetriage && !snoozedUntil && (
           <div className="relative">
             <button onClick={() => setSnoozeOpen(o => !o)} disabled={saving}
-              className="h-14 px-5 rounded-2xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/60 disabled:opacity-50">
+              className="h-12 px-4 rounded-xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/60 disabled:opacity-50">
               <AlarmClock className="w-5 h-5" /> Not now
             </button>
             {snoozeOpen && (
@@ -454,8 +512,14 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, saving }: {
         )}
         {snoozedUntil && status === "proposed" && (
           <button onClick={() => onSnooze(null)} disabled={saving}
-            className="h-14 px-5 rounded-2xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/60 disabled:opacity-50">
+            className="h-12 px-4 rounded-xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/60 disabled:opacity-50">
             <AlarmClock className="w-5 h-5" /> Bring back now
+          </button>
+        )}
+        {!t.suggestedReply?.trim() && issue?.reporter.id != null && (
+          <button onClick={() => setDialog("message")} disabled={saving}
+            className="h-12 px-4 rounded-xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/60 disabled:opacity-50">
+            <MessageSquareText className="w-5 h-5" /> Message {firstName}
           </button>
         )}
         <Link href={`/reports?tab=issues&issueId=${t.andonIssueId}`}

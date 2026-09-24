@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { safeTestPath, tabCount, noticeStatusLine, batchedNoticeCopy } from "./issue-pipeline";
+import { safeTestPath, tabCount, noticeStatusLine, batchedNoticeCopy, cardActions } from "./issue-pipeline";
 
 describe("safeTestPath", () => {
   it("keeps in-app paths", () => {
@@ -59,5 +59,37 @@ describe("batchedNoticeCopy", () => {
   });
   it("a mix", () => {
     expect(batchedNoticeCopy([{ kind: "message" }, { kind: "fixed" }])).toEqual({ heading: "Updates on 2 of your reports", button: "Got it — I'll test it" });
+  });
+});
+
+describe("cardActions — the right action in the right place", () => {
+  const base = { status: "proposed" as const, questionForGraeme: null, awaitingRetriage: false, noActionNeeded: false };
+  it("a settled proposal can be approved", () => {
+    const a = cardActions(base);
+    expect(a.canApprove).toBe(true);
+    expect(a.approveBlocked).toBe(false);
+  });
+  it("no Approve while Claude is still asking — reply instead", () => {
+    const a = cardActions({ ...base, questionForGraeme: "Fixed or tapped?" });
+    expect(a.canApprove).toBe(false);
+    expect(a.approveBlocked).toBe(true);
+    expect(a.openQuestion).toBe(true);
+    expect(a.canReply).toBe(true);
+  });
+  it("no Approve or Reply while Claude is working on your reply", () => {
+    const a = cardActions({ ...base, awaitingRetriage: true });
+    expect(a.canApprove).toBe(false);
+    expect(a.canReply).toBe(false);
+    expect(a.waitingOnClaude).toBe(true);
+  });
+  it("already done offers Dismiss, never Approve", () => {
+    const a = cardActions({ ...base, noActionNeeded: true });
+    expect(a.canDismiss).toBe(true);
+    expect(a.canApprove).toBe(false);
+    expect(a.approveBlocked).toBe(false);
+  });
+  it("closed cards offer nothing", () => {
+    const a = cardActions({ ...base, status: "fixed" as never });
+    expect([a.canApprove, a.canDismiss, a.canReply, a.canReject]).toEqual([false, false, false, false]);
   });
 });
