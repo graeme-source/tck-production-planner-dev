@@ -17,6 +17,7 @@ import {
 } from "@workspace/db";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { classifyIssueArea, improvementDoneAt, isImprovementDue, noticeQuote, type IssueAreaClass, type TriageStatus } from "./issue-pipeline-rules";
+import { pinLeadCredit } from "./improvement-credits-data";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Db = typeof db | Tx;
@@ -253,10 +254,14 @@ export async function creditImprovementIfDue(tx: Tx, triage: IssueTriage, approv
 
   let improvementId: number | null = null;
   if (issue.improvementId) {
+    // The reporter becomes the lead name, and anyone ALREADY credited on
+    // the improvement keeps their credit (migration 0125) — pin the current
+    // lead as a row before it's replaced. With no known reporter the
+    // existing credit is left as it is rather than wiped.
+    await pinLeadCredit(tx, issue.improvementId);
     const [row] = await tx.update(improvementSubmissionsTable).set({
       progressStatus: "complete",
-      creditedTo: issue.reportedBy,
-      creditedToName: issue.reportedByName,
+      ...(issue.reportedBy != null ? { creditedTo: issue.reportedBy, creditedToName: issue.reportedByName } : {}),
       doneAt: sql`COALESCE(${improvementSubmissionsTable.doneAt}, ${doneAt})`,
       ...approval,
       updatedAt: now,
@@ -286,6 +291,9 @@ export async function creditImprovementIfDue(tx: Tx, triage: IssueTriage, approv
     improvementId = row.id;
     await tx.update(andonIssuesTable).set({ improvementId }).where(eq(andonIssuesTable.id, issue.id));
   }
+  // The reporter's own credit row — they count on the scoreboard alongside
+  // everyone else credited on it.
+  await pinLeadCredit(tx, improvementId);
   await tx.update(issueTriageTable).set({ improvementId, updatedAt: now }).where(eq(issueTriageTable.id, triage.id));
   await recordEvent(tx, { ...triage, improvementId }, "improvement_credited", approverName,
     `Improvement #${improvementId} credited to ${issue.reportedByName ?? "the reporter"}`);
