@@ -183,15 +183,64 @@ export async function resolveIssueWithNotice(
   return { issueId: issue.id, resolvedNow, noticeQueued, reporterId: issue.reportedBy };
 }
 
+/**
+ * Graeme's "Message the reporter" (2026-09-24): his own words to the person
+ * who reported it — often "no fix needed, here's how to do it yourself" —
+ * as a comment on the issue, a bell notification and a full-screen "A reply
+ * to your report" notice. With `close`, the issue is resolved too (the same
+ * stamp the andon log uses). If an earlier notice for this issue is still
+ * unread, the new message replaces it, so they only ever see the latest.
+ */
+export async function messageReporter(
+  tx: Tx,
+  issue: AndonRow,
+  opts: { triageId: number; senderUserId: number; senderName: string; message: string; close: boolean },
+): Promise<{ resolvedNow: boolean; noticeQueued: boolean }> {
+  let resolvedNow = false;
+  if (opts.close && !issue.resolvedAt) {
+    await tx.update(andonIssuesTable)
+      .set({ resolvedBy: opts.senderUserId, resolvedByName: opts.senderName, resolvedAt: new Date() })
+      .where(eq(andonIssuesTable.id, issue.id));
+    resolvedNow = true;
+  }
+  await tx.insert(andonCommentsTable).values({ andonId: issue.id, userId: opts.senderUserId, userName: opts.senderName, comment: opts.message });
+
+  if (!issue.reportedBy) return { resolvedNow, noticeQueued: false };
+  const label = CATEGORY_LABELS[issue.category] ?? issue.category;
+  await tx.insert(notificationsTable).values({
+    userId: issue.reportedBy,
+    type: opts.close ? "resolved" : "comment",
+    message: `${opts.senderName} replied to your report: ${label} - ${issue.station}`,
+    andonIssueId: issue.id,
+  });
+  const values = {
+    andonIssueId: issue.id,
+    triageId: opts.triageId,
+    userId: issue.reportedBy,
+    kind: "message",
+    quote: noticeQuote(issue.description, `${label} issue at ${issue.station}`),
+    whatChanged: opts.message,
+    testPath: null,
+  };
+  const inserted = await tx.insert(issueFixNoticesTable).values(values).onConflictDoNothing().returning({ id: issueFixNoticesTable.id });
+  if (inserted.length === 0) {
+    await tx.update(issueFixNoticesTable)
+      .set({ kind: "message", whatChanged: opts.message, testPath: null, createdAt: new Date() })
+      .where(and(eq(issueFixNoticesTable.andonIssueId, issue.id), isNull(issueFixNoticesTable.acknowledgedAt)));
+  }
+  return { resolvedNow, noticeQueued: true };
+}
+
 /** Latest notices per triage row, for the Fix queue's "reporter notified" line. */
 export async function noticesByTriageId(triageIds: number[]) {
-  const map = new Map<number, Array<{ id: number; andonIssueId: number; userId: number; ackAction: string | null; acknowledgedAt: Date | null; createdAt: Date }>>();
+  const map = new Map<number, Array<{ id: number; andonIssueId: number; userId: number; kind: string; ackAction: string | null; acknowledgedAt: Date | null; createdAt: Date }>>();
   if (triageIds.length === 0) return map;
   const rows = await db.select({
     id: issueFixNoticesTable.id,
     triageId: issueFixNoticesTable.triageId,
     andonIssueId: issueFixNoticesTable.andonIssueId,
     userId: issueFixNoticesTable.userId,
+    kind: issueFixNoticesTable.kind,
     ackAction: issueFixNoticesTable.ackAction,
     acknowledgedAt: issueFixNoticesTable.acknowledgedAt,
     createdAt: issueFixNoticesTable.createdAt,
@@ -211,6 +260,7 @@ export async function pendingNoticesFor(userId: number) {
   return db.select({
     id: issueFixNoticesTable.id,
     andonIssueId: issueFixNoticesTable.andonIssueId,
+    kind: issueFixNoticesTable.kind,
     quote: issueFixNoticesTable.quote,
     whatChanged: issueFixNoticesTable.whatChanged,
     testPath: issueFixNoticesTable.testPath,

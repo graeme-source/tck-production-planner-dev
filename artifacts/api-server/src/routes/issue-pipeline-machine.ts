@@ -154,6 +154,9 @@ const triageBody = z.object({
   noGoZone: z.boolean(),
   behaviourChange: z.boolean(),
   questionForGraeme: z.string().trim().max(2000).nullable().optional(),
+  /** Draft message to the reporter — step-by-step instructions when they can
+   *  fix it themselves in the app. Pre-fills Graeme's "Message the reporter". */
+  suggestedReply: z.string().trim().max(4000).nullable().optional(),
   relatedIssueIds: z.array(z.number().int().positive()).max(100).default([]),
   causeTag: z.string().trim().max(100).nullable().optional(),
   triagedBy: z.string().trim().min(1).max(60).default("claude-code"),
@@ -177,6 +180,7 @@ router.post("/triage", validate(triageBody), async (req, res) => {
       noGoZone: b.noGoZone,
       behaviourChange: b.behaviourChange,
       questionForGraeme: b.questionForGraeme || null,
+      suggestedReply: b.suggestedReply || null,
       relatedIssueIds: [...new Set(b.relatedIssueIds.filter(id => id !== b.andonIssueId))],
       causeTag: b.causeTag || null,
       triagedBy: b.triagedBy,

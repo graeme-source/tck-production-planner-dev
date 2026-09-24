@@ -20,6 +20,7 @@ import { requireFounder } from "../middleware/founder-access";
 import {
   NOTICE_ACK_ACTIONS,
   TRIAGE_STATUSES,
+  canMessageReporter,
   canReply,
   canReviewMove,
   noticeAckVerdict,
@@ -28,6 +29,7 @@ import {
 import {
   buildIssueViews,
   loadAndonRows,
+  messageReporter,
   noticesByTriageId,
   pendingNoticesFor,
   recordEvent,
@@ -58,7 +60,8 @@ router.get("/review", requireFounder, async (req, res) => {
   const parsed = reviewQuery.safeParse(req.query);
   if (!parsed.success) { res.status(400).json({ error: "Validation failed", details: parsed.error.flatten() }); return; }
   const tab = parsed.data.tab ?? "proposed";
-  const statuses: TriageStatus[] = tab === "rejected" ? ["rejected", "wont_fix"] : [tab];
+  // "fixed" is the Done tab: fixed in code, or answered by a message.
+  const statuses: TriageStatus[] = tab === "rejected" ? ["rejected", "wont_fix"] : tab === "fixed" ? ["fixed", "answered"] : [tab];
   try {
     const countRows = await db.execute<{ status: string; n: number; awaiting: number }>(sql`
       SELECT status, COUNT(*)::int AS n, COUNT(*) FILTER (WHERE awaiting_retriage)::int AS awaiting
@@ -149,6 +152,52 @@ async function decide(req: Request, res: Response, action: "approve" | "reject" 
 router.post("/review/:id/approve", requireFounder, validate(decisionBody), (req, res) => decide(req, res, "approve"));
 router.post("/review/:id/reject", requireFounder, validate(decisionBody), (req, res) => decide(req, res, "reject"));
 router.post("/review/:id/reply", requireFounder, validate(replyBody), (req, res) => decide(req, res, "reply"));
+
+// ── POST /review/:id/message — "Message the reporter" ───────────────────────
+// Graeme's words go to the person who reported it (issue comment, bell, and
+// a full-screen "A reply to your report"). close=true means "this answers
+// it": the report is resolved and the recommendation marked 'answered' —
+// e.g. no fix needed, they can set it themselves on the recipe form.
+const messageBody = z.object({
+  message: z.string().trim().min(1).max(4000),
+  close: z.boolean(),
+});
+
+router.post("/review/:id/message", requireFounder, validate(messageBody), async (req, res) => {
+  const id = parseId(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
+  const userId = req.session.userId!;
+  const { message, close } = req.body as z.infer<typeof messageBody>;
+  try {
+    const name = await sessionUserName(userId);
+    const out = await db.transaction(async (tx) => {
+      const [current] = await tx.select().from(issueTriageTable).where(eq(issueTriageTable.id, id)).for("update");
+      if (!current) return { status: 404 as const, error: "Recommendation not found" };
+      const from = current.status as TriageStatus;
+      if (!canMessageReporter(from, close)) {
+        return { status: 409 as const, error: `This report is already ${from === "in_progress" ? "being fixed" : "closed"} — send the message without closing it.` };
+      }
+      const [issue] = await tx.select().from(andonIssuesTable).where(eq(andonIssuesTable.id, current.andonIssueId));
+      if (!issue) return { status: 404 as const, error: "The report no longer exists" };
+      const sent = await messageReporter(tx, issue, { triageId: current.id, senderUserId: userId, senderName: name, message, close });
+      let row = current;
+      if (close) {
+        [row] = await tx.update(issueTriageTable).set({
+          status: "answered", awaitingRetriage: false, decisionNote: message, decidedBy: name, decidedByUserId: userId,
+          decidedAt: new Date(), issueResolvedAt: new Date(), updatedAt: new Date(),
+        }).where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
+      }
+      await recordEvent(tx, row, close ? "answered" : "messaged", name, message);
+      return { status: 200 as const, triage: row, ...sent };
+    });
+    if (out.status !== 200) { const { status, ...body } = out; res.status(status).json(body); return; }
+    const { status: _s, ...body } = out;
+    res.json(body);
+  } catch (err) {
+    console.error("[issue-pipeline] message failed:", err instanceof Error ? err.message : String(err));
+    res.status(500).json({ error: "Failed to send the message" });
+  }
+});
 
 // ── Reporter: "Your report has been fixed" ─────────────────────────────────
 router.get("/my-fixed-notices", async (req, res) => {

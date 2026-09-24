@@ -7,6 +7,7 @@ import {
   retriageVerdict,
   canReviewMove,
   canReply,
+  canMessageReporter,
   machineMoveVerdict,
   resolveIssueVerdict,
   validateTestPath,
@@ -94,6 +95,24 @@ describe("review moves (Graeme)", () => {
   it("replies only while an item is waiting on him", () => {
     expect(canReply("proposed")).toBe(true);
     expect(canReply("approved")).toBe(false);
+  });
+});
+
+describe("canMessageReporter", () => {
+  it("a plain message can go at any stage", () => {
+    for (const s of ["proposed", "approved", "rejected", "in_progress", "fixed", "wont_fix", "answered"] as const) {
+      expect(canMessageReporter(s, false)).toBe(true);
+    }
+  });
+  it("'this answers it' closes reports still open to a decision", () => {
+    expect(canMessageReporter("proposed", true)).toBe(true);
+    expect(canMessageReporter("approved", true)).toBe(true);
+    expect(canMessageReporter("rejected", true)).toBe(true);
+  });
+  it("never closes one already fixed/answered or with work under way", () => {
+    expect(canMessageReporter("fixed", true)).toBe(false);
+    expect(canMessageReporter("answered", true)).toBe(false);
+    expect(canMessageReporter("in_progress", true)).toBe(false);
   });
 });
 

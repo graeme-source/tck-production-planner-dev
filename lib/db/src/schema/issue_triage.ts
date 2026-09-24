@@ -20,6 +20,9 @@ export const issueTriageTable = pgTable("issue_triage", {
   noGoZone: boolean("no_go_zone").notNull().default(false),
   behaviourChange: boolean("behaviour_change").notNull().default(false),
   questionForGraeme: text("question_for_graeme"),
+  /** Claude's draft message to the reporter (migration 0120) — pre-fills
+   *  Graeme's "Message the reporter" box. */
+  suggestedReply: text("suggested_reply"),
   relatedIssueIds: integer("related_issue_ids").array().notNull().default(sql`'{}'::integer[]`),
   causeTag: text("cause_tag"),
   status: text("status").notNull().default("proposed"), // proposed | approved | rejected | in_progress | fixed | wont_fix
@@ -63,6 +66,8 @@ export const issueFixNoticesTable = pgTable("issue_fix_notices", {
   triageId: integer("triage_id").references(() => issueTriageTable.id, { onDelete: "cascade" }),
   userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
   quote: text("quote").notNull(),
+  /** 'fixed' = "your report has been fixed"; 'message' = a reply from Graeme. */
+  kind: text("kind").notNull().default("fixed"),
   whatChanged: text("what_changed").notNull(),
   testPath: text("test_path"),
   createdAt: timestamp("created_at").notNull().defaultNow(),

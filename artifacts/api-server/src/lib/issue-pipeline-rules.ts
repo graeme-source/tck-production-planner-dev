@@ -21,7 +21,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 export const TRIAGE_LANES = ["defect", "data_fix", "understanding", "improvement", "needs_info", "not_app"] as const;
 export type TriageLane = (typeof TRIAGE_LANES)[number];
 
-export const TRIAGE_STATUSES = ["proposed", "approved", "rejected", "in_progress", "fixed", "wont_fix"] as const;
+export const TRIAGE_STATUSES = ["proposed", "approved", "rejected", "in_progress", "fixed", "wont_fix", "answered"] as const;
 export type TriageStatus = (typeof TRIAGE_STATUSES)[number];
 
 export const LEVELS = ["low", "medium", "high"] as const;
@@ -116,6 +116,7 @@ const REVIEW_MOVES: Record<TriageStatus, readonly TriageStatus[]> = {
   in_progress: [],
   fixed: [],
   wont_fix: [],
+  answered: [],
 };
 
 export function canReviewMove(from: TriageStatus, to: TriageStatus): boolean {
@@ -127,6 +128,18 @@ export function canReviewMove(from: TriageStatus, to: TriageStatus): boolean {
 export function canReply(from: TriageStatus): boolean {
   return from === "proposed";
 }
+
+/** "Message the reporter" (Graeme, 2026-09-24). A message on its own can go
+ *  at any time. Closing the report with it ("this answers it") is only for
+ *  reports not already closed by a fix or an earlier answer, and never once
+ *  work is under way — then the fix itself closes it. */
+export function canMessageReporter(from: TriageStatus, close: boolean): boolean {
+  if (!close) return true;
+  return from === "proposed" || from === "approved" || from === "rejected" || from === "wont_fix";
+}
+
+export const NOTICE_KINDS = ["fixed", "message"] as const;
+export type NoticeKind = (typeof NOTICE_KINDS)[number];
 
 export const MACHINE_TARGETS = ["in_progress", "fixed", "wont_fix"] as const;
 export type MachineTarget = (typeof MACHINE_TARGETS)[number];
@@ -142,6 +155,8 @@ const MACHINE_MOVES: Record<TriageStatus, readonly MachineTarget[]> = {
   in_progress: ["in_progress", "fixed", "wont_fix"],
   fixed: ["fixed", "in_progress"],
   wont_fix: [],
+  // Closed by Graeme's message — nothing left for the session to do.
+  answered: [],
 };
 
 export type MachineMoveVerdict = { ok: true } | { ok: false; error: string };
