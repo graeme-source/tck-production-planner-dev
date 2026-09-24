@@ -48,6 +48,7 @@ import employeesRouter from "./employees";
 import returnToWorkRouter from "./return-to-work";
 import stationMessagesRouter from "./station-messages";
 import employeeReviewsRouter from "./employee-reviews";
+import { requirePeopleUnlock } from "../middleware/people-unlock";
 import friedChickenRouter from "./fried-chicken";
 import riskAssessmentsRouter from "./risk-assessments";
 import complianceActionsRouter from "./compliance-actions";
@@ -229,7 +230,9 @@ router.use("/employees", employeesRouter);
 // per-route inside via middleware/rtw-access.ts.
 router.use("/return-to-work", returnToWorkRouter);
 router.use("/station-messages", stationMessagesRouter);
-router.use("/employee-reviews", employeeReviewsRouter);
+// People section: a private-PIN holder must have unlocked People with it
+// (middleware/people-unlock.ts); everyone else passes straight through.
+router.use("/employee-reviews", requirePeopleUnlock, employeeReviewsRouter);
 router.use("/fried-chicken", friedChickenRouter);
 router.use("/risk-assessments", riskAssessmentsRouter);
 router.use("/compliance-actions", complianceActionsRouter);

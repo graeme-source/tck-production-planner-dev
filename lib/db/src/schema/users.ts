@@ -16,6 +16,11 @@ export const usersTable = pgTable("app_users", {
   pinHash: text("pin_hash"),
   pinAttempts: integer("pin_attempts").notNull().default(0),
   pinLockedUntil: timestamp("pin_locked_until"),
+  // Private PIN for the People gate only (migration 0123). NULL = none; the
+  // People gate then uses the normal PIN as before. Own attempt counter.
+  privatePinHash: text("private_pin_hash"),
+  privatePinAttempts: integer("private_pin_attempts").notNull().default(0),
+  privatePinLockedUntil: timestamp("private_pin_locked_until"),
   avatarUrl: text("avatar_url"),
   plandayEmployeeId: integer("planday_employee_id"),
   // Set true when a user is created by accepting an invite, so they're gated

@@ -137,6 +137,7 @@ router.post("/login", loginLimiter, validate(LoginBody), async (req, res) => {
       role: user.role,
       avatarUrl: user.avatarUrl ?? null,
       hasPin: !!user.pinHash,
+      hasPrivatePin: !!user.privatePinHash,
       isProductionPlanner: user.isProductionPlanner ?? false,
       isBookkeeper: user.isBookkeeper ?? false,
       features,
@@ -181,6 +182,7 @@ router.get("/me", async (req, res) => {
     role: user.role,
     avatarUrl: user.avatarUrl ?? null,
     hasPin: !!user.pinHash,
+    hasPrivatePin: !!user.privatePinHash,
     isProductionPlanner: user.isProductionPlanner ?? false,
     isBookkeeper: user.isBookkeeper ?? false,
     features: await allowedFeatureKeys(user.id),
@@ -372,6 +374,7 @@ router.post("/pin/login", loginLimiter, async (req, res) => {
       role: user.role,
       avatarUrl: user.avatarUrl ?? null,
       hasPin: true,
+      hasPrivatePin: !!user.privatePinHash,
       isProductionPlanner: user.isProductionPlanner ?? false,
       isBookkeeper: user.isBookkeeper ?? false,
       features: featuresForPinUnlock,
@@ -471,6 +474,110 @@ router.post("/pin/verify", loginLimiter, async (req, res) => {
   });
 });
 
+// ── People section private PIN (Graeme, 2026-09-24) ─────────────────────────
+// A second PIN, used only by the People gate, so the PIN someone types in
+// front of others at a station can't open employee records. Opt-in: with no
+// private PIN the People gate takes the normal PIN, exactly as before.
+// Separate attempt counter + lockout from the station PIN. See
+// lib/people-unlock.ts and middleware/people-unlock.ts.
+
+const PeoplePinBody = z.object({ pin: z.string().regex(/^\d{4}$/, "PIN must be 4 digits") });
+
+router.post("/people-pin/verify", loginLimiter, async (req, res) => {
+  const userId = req.session.userId;
+  if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const parsed = PeoplePinBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "PIN must be 4 digits" }); return; }
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
+  if (!user || !user.isActive) { res.status(401).json({ error: "Not authenticated" }); return; }
+
+  const usesPrivate = !!user.privatePinHash;
+  const hash = usesPrivate ? user.privatePinHash : user.pinHash;
+  if (!hash) { res.status(400).json({ error: "No PIN set" }); return; }
+  const lockedUntil = usesPrivate ? user.privatePinLockedUntil : user.pinLockedUntil;
+  if (lockedUntil && lockedUntil > new Date()) {
+    res.status(429).json({
+      error: "Too many failed attempts. Try again in a few minutes.",
+      lockedUntil: lockedUntil.toISOString(),
+      remainingSeconds: Math.ceil((lockedUntil.getTime() - Date.now()) / 1000),
+    });
+    return;
+  }
+
+  if (!(await bcrypt.compare(parsed.data.pin, hash))) {
+    const attempts = (usesPrivate ? user.privatePinAttempts : user.pinAttempts) + 1;
+    const lock = attempts >= PIN_MAX_ATTEMPTS ? new Date(Date.now() + PIN_LOCKOUT_MS) : null;
+    await db.update(usersTable).set(usesPrivate
+      ? { privatePinAttempts: attempts, privatePinLockedUntil: lock }
+      : { pinAttempts: attempts, pinLockedUntil: lock },
+    ).where(eq(usersTable.id, userId));
+    const left = PIN_MAX_ATTEMPTS - attempts;
+    if (left <= 0) {
+      res.status(429).json({ error: "Too many failed attempts. Locked for 15 minutes.", lockedUntil: lock?.toISOString(), remainingSeconds: Math.ceil(PIN_LOCKOUT_MS / 1000) });
+    } else {
+      res.status(401).json({ error: `Incorrect PIN. ${left} attempt${left === 1 ? "" : "s"} remaining.`, attemptsLeft: left });
+    }
+    return;
+  }
+
+  await db.update(usersTable).set(usesPrivate
+    ? { privatePinAttempts: 0, privatePinLockedUntil: null }
+    : { pinAttempts: 0, pinLockedUntil: null },
+  ).where(eq(usersTable.id, userId));
+  req.session.peopleUnlockedAt = new Date().toISOString();
+  req.session.save(err => {
+    if (err) { res.status(500).json({ error: "Failed to save session" }); return; }
+    res.json({ ok: true });
+  });
+});
+
+const PrivatePinSetBody = z.object({
+  currentPassword: z.string().min(1),
+  pin: z.string().regex(/^\d{4}$/, "PIN must be 4 digits"),
+});
+
+// Set or change the private PIN. Needs the account password, and must not be
+// the same as the station PIN (that would defeat the point).
+router.post("/private-pin/set", loginLimiter, async (req, res) => {
+  const userId = req.session.userId;
+  if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const parsed = PrivatePinSetBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "PIN must be 4 digits" }); return; }
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
+  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  if (!(await bcrypt.compare(parsed.data.currentPassword, user.passwordHash))) {
+    res.status(403).json({ error: "That password isn't right" }); return;
+  }
+  if (user.pinHash && (await bcrypt.compare(parsed.data.pin, user.pinHash))) {
+    res.status(400).json({ error: "Choose a different PIN from the one you use at the stations" }); return;
+  }
+  await db.update(usersTable).set({
+    privatePinHash: await bcrypt.hash(parsed.data.pin, 10),
+    privatePinAttempts: 0,
+    privatePinLockedUntil: null,
+  }).where(eq(usersTable.id, userId));
+  // A fresh private PIN re-locks People until it's used.
+  delete req.session.peopleUnlockedAt;
+  req.session.save(() => res.json({ ok: true, hasPrivatePin: true }));
+});
+
+const PrivatePinClearBody = z.object({ currentPassword: z.string().min(1) });
+
+router.post("/private-pin/clear", loginLimiter, async (req, res) => {
+  const userId = req.session.userId;
+  if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const parsed = PrivatePinClearBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Password required" }); return; }
+  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
+  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  if (!(await bcrypt.compare(parsed.data.currentPassword, user.passwordHash))) {
+    res.status(403).json({ error: "That password isn't right" }); return;
+  }
+  await db.update(usersTable).set({ privatePinHash: null, privatePinAttempts: 0, privatePinLockedUntil: null })
+    .where(eq(usersTable.id, userId));
+  res.json({ ok: true, hasPrivatePin: false });
+});
+
 // Manual PIN lock — clears pinVerifiedAt so the overlay appears on next render.
 // Available to all authenticated users (e.g. "Lock station" button).
 router.post("/pin/lock", (req, res) => {
@@ -480,6 +587,8 @@ router.post("/pin/lock", (req, res) => {
   }
 
   req.session.pinVerifiedAt = undefined;
+  // Locking the station locks People too.
+  delete req.session.peopleUnlockedAt;
   req.session.save((err) => {
     if (err) {
       res.status(500).json({ error: "Failed to lock session" });
