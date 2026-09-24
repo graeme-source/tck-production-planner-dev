@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { RunRateAllowanceSetting } from "@/components/run-rate-allowance-setting";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { useListUsers, useListCategoryDefaults, useListDptSettings, useListTimingStandards, useListRecipes, useListIngredients } from "@workspace/api-client-react";
@@ -1666,6 +1667,7 @@ export default function Settings() {
               {canSection("production") && <ExtraTomatoBaseSection />}
               {canSection("production") && <PastaCookingSection />}
               {canSection("production") && <BreakDefaultsSection />}
+              {canSection("production") && <RunRateAllowanceSetting />}
               {canSection("production") && <ScheduleDefaultsSection />}
             </div>
           )}
