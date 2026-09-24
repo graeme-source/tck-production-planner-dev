@@ -13,7 +13,7 @@
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { db, usersTable, issueTriageTable, issueFixNoticesTable, andonIssuesTable, type IssueTriage } from "@workspace/db";
+import { db, usersTable, issueTriageTable, issueTriageEventsTable, issueFixNoticesTable, andonIssuesTable, type IssueTriage } from "@workspace/db";
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import { validate } from "../middleware/validate";
 import { requireFounder } from "../middleware/founder-access";
@@ -21,6 +21,7 @@ import {
   NOTICE_ACK_ACTIONS,
   TRIAGE_STATUSES,
   canDismiss,
+  buildThread,
   canMessageReporter,
   canSnooze,
   queueTabFor,
@@ -84,6 +85,23 @@ router.get("/review", requireFounder, async (req, res) => {
     const rows = all.filter(r => queueTabFor({ ...r, status: r.status as TriageStatus }, now) === tab).slice(0, 200);
 
     const relatedIds = [...new Set(rows.flatMap(r => r.relatedIssueIds))];
+    // The back-and-forth on each card, oldest first (buildThread).
+    const eventRows = rows.length === 0 ? [] : await db.select({
+      triageId: issueTriageEventsTable.triageId,
+      event: issueTriageEventsTable.event,
+      note: issueTriageEventsTable.note,
+      createdAt: issueTriageEventsTable.createdAt,
+      snapshot: issueTriageEventsTable.snapshot,
+    }).from(issueTriageEventsTable)
+      .where(inArray(issueTriageEventsTable.triageId, rows.map(r => r.id)))
+      .orderBy(issueTriageEventsTable.createdAt);
+    const eventsByTriage = new Map<number, typeof eventRows>();
+    for (const e of eventRows) {
+      const list = eventsByTriage.get(e.triageId) ?? [];
+      list.push(e);
+      eventsByTriage.set(e.triageId, list);
+    }
+
     const [issues, relatedRows, relatedTriage, notices] = await Promise.all([
       loadAndonRows(rows.map(r => r.andonIssueId)).then(r => buildIssueViews(r, reviewAttachmentUrl)),
       loadAndonRows(relatedIds),
@@ -101,6 +119,7 @@ router.get("/review", requireFounder, async (req, res) => {
         triage: t,
         issue: issueById.get(t.andonIssueId) ?? null,
         notices: notices.get(t.id) ?? [],
+        thread: buildThread(eventsByTriage.get(t.id) ?? []),
         related: t.relatedIssueIds.map(id => {
           const r = relatedById.get(id);
           return r

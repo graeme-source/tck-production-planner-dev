@@ -8,6 +8,7 @@ import {
   canReviewMove,
   canReply,
   canMessageReporter,
+  buildThread,
   queueTabFor,
   canSnooze,
   isImprovementDue,
@@ -287,5 +288,34 @@ describe("improvementDoneAt", () => {
     expect(improvementDoneAt(null, now)).toEqual(now);
     expect(improvementDoneAt("12 June", now)).toEqual(now);
     expect(improvementDoneAt("2026-12-01", now)).toEqual(now);
+  });
+});
+
+describe("buildThread — the back-and-forth on a card", () => {
+  const ev = (event: string, note: string | null, snapshot: unknown = {}, t = "2026-09-24T10:00:00Z") => ({ event, note, createdAt: t, snapshot });
+  it("tells the story in order: Claude asks, you reply, Claude answers, you decide", () => {
+    const thread = buildThread([
+      ev("triaged", null, { verdictSummary: "Jane is right", questionForGraeme: "Fixed allowance or tapped times?" }),
+      ev("replied", "Standardise it"),
+      ev("retriaged", null, { verdictSummary: "Decided: a standard allowance", questionForGraeme: null }),
+      ev("approved", null),
+    ]);
+    expect(thread.map(t => [t.who, t.kind, t.text])).toEqual([
+      ["claude", "question", "Fixed allowance or tapped times?"],
+      ["you", "reply", "Standardise it"],
+      ["claude", "recommendation", "Decided: a standard allowance"],
+      ["you", "decision", "Approved"],
+    ]);
+  });
+  it("doesn't double up a decision note that already says it", () => {
+    expect(buildThread([ev("snoozed", "Snoozed for 3 days")])[0].text).toBe("Snoozed for 3 days");
+    expect(buildThread([ev("rejected", "Training point")])[0].text).toBe("Rejected — Training point");
+  });
+  it("drops a repeated identical Claude line", () => {
+    expect(buildThread([ev("triaged", null, { verdictSummary: "Same" }), ev("retriaged", null, { verdictSummary: "Same" })])).toHaveLength(1);
+  });
+  it("shows messages to the reporter and ignores internal bookkeeping", () => {
+    const thread = buildThread([ev("messaged", "Hi Jane"), ev("improvement_credited", "credited"), ev("status:fixed", null)]);
+    expect(thread).toEqual([{ at: "2026-09-24T10:00:00Z", who: "you", kind: "message", text: "Hi Jane" }]);
   });
 });

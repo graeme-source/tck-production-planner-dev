@@ -217,6 +217,58 @@ export function improvementDoneAt(completedOn: string | null | undefined, now: D
   return now;
 }
 
+// ── The conversation on a card (Graeme, 2026-09-24) ─────────────────────────
+// Each report is a back-and-forth: Claude's recommendation or question, his
+// replies, Claude's updated answers, then the decision. Built from the
+// append-only issue_triage_events history so nothing new is stored.
+export interface ThreadEntry {
+  at: string;
+  who: "claude" | "you" | "reporter";
+  kind: "question" | "recommendation" | "reply" | "message" | "decision";
+  text: string;
+}
+
+interface EventLike {
+  event: string;
+  note: string | null;
+  createdAt: Date | string;
+  snapshot: unknown;
+}
+
+const DECISION_WORDS: Record<string, string> = {
+  approved: "Approved",
+  rejected: "Rejected",
+  dismissed: "Dismissed — already done",
+  snoozed: "Snoozed",
+};
+
+export function buildThread(events: EventLike[]): ThreadEntry[] {
+  const out: ThreadEntry[] = [];
+  for (const e of events) {
+    const at = typeof e.createdAt === "string" ? e.createdAt : e.createdAt.toISOString();
+    const snap = (e.snapshot ?? {}) as { verdictSummary?: string; questionForGraeme?: string | null };
+    if (e.event === "triaged" || e.event === "retriaged") {
+      if (snap.questionForGraeme) out.push({ at, who: "claude", kind: "question", text: snap.questionForGraeme });
+      else if (snap.verdictSummary) out.push({ at, who: "claude", kind: "recommendation", text: snap.verdictSummary });
+    } else if (e.event === "replied" && e.note) {
+      out.push({ at, who: "you", kind: "reply", text: e.note });
+    } else if ((e.event === "messaged" || e.event === "answered") && e.note) {
+      out.push({ at, who: "you", kind: "message", text: e.note });
+    } else if (DECISION_WORDS[e.event]) {
+      const word = DECISION_WORDS[e.event];
+      // Some notes already say it ("Snoozed for 3 days") — don't double up.
+      const first = word.split(" ")[0].toLowerCase();
+      const text = !e.note ? word : e.note.toLowerCase().startsWith(first) ? e.note : `${word} — ${e.note}`;
+      out.push({ at, who: "you", kind: "decision", text });
+    } else if (e.event === "notice_ack" && e.note) {
+      out.push({ at, who: "reporter", kind: "decision", text: e.note });
+    }
+  }
+  // Consecutive identical Claude lines (a refine that didn't change the
+  // headline) add nothing.
+  return out.filter((x, i) => !(i > 0 && x.who === "claude" && out[i - 1].who === "claude" && out[i - 1].text === x.text));
+}
+
 export const NOTICE_KINDS = ["fixed", "message"] as const;
 export type NoticeKind = (typeof NOTICE_KINDS)[number];
 
