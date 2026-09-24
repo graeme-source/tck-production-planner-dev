@@ -60,7 +60,7 @@ import StockControl from "@/pages/stock-control";
 import ProductHub from "@/pages/product-hub";
 import Surveys from "@/pages/surveys";
 import TrainingMatrix from "@/pages/training-matrix";
-import StationTraining from "@/pages/station-training";
+import { stationTrainingPath } from "@/lib/training-sections";
 import LeanCurriculum from "@/pages/lean-curriculum";
 import ScanPage from "@/pages/scan";
 import Onboarding from "@/pages/onboarding";
@@ -217,10 +217,13 @@ function Router() {
               <Route path="/founder/contracts" component={FounderContracts} />
               <Route path="/founder/fix-queue" component={FounderFixQueue} />
               <Route path="/reports">{() => <ProtectedRoute component={Reports} pageKey="/reports" />}</Route>
+              {/* Training is for everyone: station matrices are self-service;
+                  the stored matrices inside are manager-only (lib/training-sections). */}
               <Route path="/training">{() => <ProtectedRoute component={TrainingMatrix} pageKey="/training" />}</Route>
-              {/* Station training is for everyone — people train themselves. */}
-              <Route path="/station-training" component={StationTraining} />
-              <Route path="/station-training/:station" component={StationTraining} />
+              <Route path="/training/stations/:station">{() => <ProtectedRoute component={TrainingMatrix} pageKey="/training" />}</Route>
+              {/* Station training used to be its own page — keep old links working. */}
+              <Route path="/station-training">{() => <Redirect to={stationTrainingPath()} />}</Route>
+              <Route path="/station-training/:station">{(p: { station: string }) => <Redirect to={stationTrainingPath(p.station)} />}</Route>
               <Route path="/lean-curriculum">{() => <ProtectedRoute component={LeanCurriculum} pageKey="/lean-curriculum" />}</Route>
               <Route path="/lean-cave" component={LeanCave} />
               <Route path="/lean-review" component={LeanReviewPage} />

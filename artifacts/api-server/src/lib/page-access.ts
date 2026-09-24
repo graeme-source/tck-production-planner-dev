@@ -17,7 +17,9 @@ const DEFAULT_MIN_ROLE: Record<string, Role> = {
   "/locations": "admin",
   "/dispatch-tag": "manager",
   "/deliveries/receive": "viewer",
-  "/training": "manager",
+  // Everyone: station training matrices are self-service (2026-09-24). The
+  // stored matrices inside stay manager-only via /api/training.
+  "/training": "viewer",
   "/stock": "manager",
   "/suppliers": "manager",
 };

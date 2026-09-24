@@ -49,7 +49,7 @@ export const FEATURE_REGISTRY: FeatureDef[] = [
   { key: "page.kanbans", name: "Kanbans", description: "Kanban cards and the shelf-edge reorder loop.", area: "Pages", kind: "page", page: "/kanbans", minRole: "viewer" },
   { key: "page.product_hub", name: "Product Hub", description: "Product listings, decks and Shopify.", area: "Pages", kind: "page", page: "/product-hub", minRole: "viewer" },
   { key: "page.deliveries_receive", name: "Receive Deliveries (front door)", description: "Booking goods in at the door.", area: "Pages", kind: "page", page: "/deliveries/receive", minRole: "viewer" },
-  { key: "page.training", name: "Training Matrix", description: "Who's trained on what.", area: "Pages", kind: "page", page: "/training", minRole: "manager" },
+  { key: "page.training", name: "Training", description: "Station SOP matrices for everyone; onboarding sign-off matrices for managers.", area: "Pages", kind: "page", page: "/training", minRole: "viewer" },
   { key: "page.lean_curriculum", name: "Lean Curriculum planner", description: "The weekly lesson plan behind the morning meeting.", area: "Pages", kind: "page", page: "/lean-curriculum", minRole: "manager" },
   { key: "page.surveys", name: "Customer Surveys", description: "Building and sending customer surveys.", area: "Pages", kind: "page", page: "/surveys", minRole: "admin" },
 
