@@ -38,6 +38,7 @@ import { createPortal } from "react-dom";
 import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay, STATION_VIEW_ROW_SLOT_ID } from "../shared/constants";
 import { QueueDock, QueueSheet } from "../shared/station-queue";
 import { packsPerBatch } from "../shared/recipe-completion";
+import { splitToppings, isToppingEntry, toppingQuantities } from "../shared/assembly-groups";
 import { isBuildingComplete, buildProgressPercent, stillToBuild, type BuildProgressItem } from "../shared/building-complete";
 
 import {
@@ -56,38 +57,79 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
-/** Little "goes ON TOP" marker for topping rows — new starters otherwise
- *  read "Sprinkle" as just another filling step (Graeme, 2026-09-16). */
-function ToppingChip() {
+/** Slim label over the "inside" rows, shown only when the recipe also has
+ *  an On top section below — it's a divider, not a section. */
+function InsideLabel() {
   return (
-    <span className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 flex-shrink-0">
-      <ArrowUp className="w-3 h-3" /> Topping
-    </span>
-  );
-}
-
-/** Slim group label splitting the checklist into "inside" vs "on top".
- *  A few px tall on purpose — it's a divider, not a section. */
-function AssemblyGroupLabel({ label, tone }: { label: string; tone: "inside" | "top" }) {
-  return (
-    <div className={cn(
-      "px-3 pt-1.5 pb-1 text-[11px] font-bold uppercase tracking-wider",
-      tone === "top"
-        ? "text-amber-700 dark:text-amber-300 bg-amber-50/70 dark:bg-amber-900/20"
-        : "text-slate-500 dark:text-slate-400",
-    )}>
-      {label}
+    <div className="px-3 pt-2 pb-1 text-sm font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+      Inside
     </div>
   );
 }
 
-/** Index where a contiguous run of toppings starts at the END of the list —
- *  the normal shape, since toppings go on last. -1 when there are no
- *  toppings or they're interleaved (each row's chip still marks them). */
-function toppingTailStart(entries: Array<{ isFilling: boolean; ai?: { isTopping?: boolean } }>): number {
-  const first = entries.findIndex(e => !e.isFilling && e.ai?.isTopping);
-  if (first <= 0) return -1; // none, or nothing "inside" before them
-  return entries.slice(first).every(e => !e.isFilling && e.ai?.isTopping) ? first : -1;
+/** The "On top" section: every recipe line flagged as a topping, split out
+ *  below everything that goes inside and styled so it can't be mistaken for
+ *  a filling at arm's length (Graeme, 2026-09-16 / 2026-09-24). Driven only
+ *  by the topping flag — see shared/assembly-groups.ts. Rows stay tickable
+ *  in the live checklist so the "Ready" lock still needs them. */
+function OnTopSection({
+  rows, portionsPerBatch, compact = false, checkedItems, locked = false, onToggle,
+}: {
+  rows: Array<{ key: string; ai?: AssemblyItemData }>;
+  portionsPerBatch: number;
+  compact?: boolean;
+  checkedItems?: Record<string, boolean>;
+  locked?: boolean;
+  onToggle?: (key: string) => void;
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="border-t-4 border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/30">
+      <div className="flex items-center gap-2 px-3 py-2 bg-amber-400 text-amber-950 dark:bg-amber-600 dark:text-amber-50">
+        <ArrowUp className={compact ? "w-5 h-5" : "w-6 h-6"} strokeWidth={3} />
+        <span className={cn("font-extrabold uppercase tracking-wide", compact ? "text-lg" : "text-xl")}>On top</span>
+        <span className="text-sm font-semibold opacity-90">add last</span>
+      </div>
+      <div className="divide-y divide-amber-200 dark:divide-amber-800/60">
+        {rows.map(({ key, ai }) => {
+          if (!ai) return null;
+          const q = toppingQuantities(ai.weightPerBatch, portionsPerBatch);
+          const checked = !!checkedItems?.[key];
+          const body = (
+            <>
+              {onToggle && (locked || checked
+                ? <CheckSquare className="w-6 h-6 text-emerald-600 flex-shrink-0" />
+                : <Square className="w-6 h-6 text-amber-600 dark:text-amber-400 flex-shrink-0" />)}
+              <span className="flex-1 min-w-0">
+                <span className={cn("block font-bold leading-tight", compact ? "text-xl" : "text-2xl")}>{ai.name}</span>
+                <span className="block text-sm font-semibold text-amber-800 dark:text-amber-300 tabular-nums">{q.perBatch} per batch</span>
+              </span>
+              <span className="flex-shrink-0 text-right">
+                <span className={cn("block font-extrabold tabular-nums text-amber-900 dark:text-amber-100 leading-tight", compact ? "text-xl" : "text-2xl")}>{q.perItem}</span>
+                <span className="block text-xs font-bold uppercase tracking-wider text-amber-700 dark:text-amber-300">on each</span>
+              </span>
+            </>
+          );
+          return onToggle ? (
+            <button
+              key={key}
+              type="button"
+              onClick={() => onToggle(key)}
+              disabled={locked}
+              className={cn(
+                "w-full flex items-center gap-3 px-3 py-3 text-left transition-colors",
+                !locked && "active:bg-amber-100 dark:active:bg-amber-900/40",
+              )}
+            >
+              {body}
+            </button>
+          ) : (
+            <div key={key} className="flex items-center gap-3 px-3 py-3">{body}</div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function SortableAssemblyRow({
@@ -99,7 +141,7 @@ function SortableAssemblyRow({
   onToggle,
 }: {
   id: string;
-  ai: { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number; isTopping?: boolean };
+  ai: { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number };
   checked: boolean;
   locked: boolean;
   showHandle: boolean;
@@ -139,10 +181,7 @@ function SortableAssemblyRow({
           ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
           : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
         <span className="text-2xl font-bold flex-1 leading-tight">{ai.name}</span>
-        {ai.isTopping
-          ? <span className="flex items-center gap-2 flex-shrink-0"><ToppingChip /><span className="text-2xl font-bold font-mono text-slate-500 dark:text-slate-400">Sprinkle</span></span>
-          : <span className="text-2xl font-bold font-mono tabular-nums flex-shrink-0">{Math.round(ai.weightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(ai.weightHalfBatch)}g</span></span>
-        }
+        <span className="text-2xl font-bold font-mono tabular-nums flex-shrink-0">{Math.round(ai.weightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(ai.weightHalfBatch)}g</span></span>
       </button>
     </div>
   );
@@ -225,10 +264,11 @@ type AssemblyItemData = { name: string; unit: string; weightPerBatch: number; we
 type AssemblyData = { itemId: number; recipeId: number; fillingWeightPerBatch: number; fillingWeightHalfBatch: number; builderFillingDeductionGrams: number; builderWeightPerBatch: number; builderWeightHalfBatch: number; fillingAssemblyOrder: number; assemblyItems: AssemblyItemData[]; postOvenItems?: AssemblyItemData[] };
 
 function ChecklistItems({
-  asm, hasFilling, isLocked, checkedItems, toggleCheck, dndSensors, onDragEnd,
+  asm, hasFilling, portionsPerBatch, isLocked, checkedItems, toggleCheck, dndSensors, onDragEnd,
 }: {
   asm: AssemblyData;
   hasFilling: boolean;
+  portionsPerBatch: number;
   isLocked: boolean;
   checkedItems: Record<string, boolean>;
   toggleCheck: (key: string) => void;
@@ -244,64 +284,59 @@ function ChecklistItems({
     allItems.splice(pos, 0, { key: "filling", isFilling: true });
   }
 
-  // Two visible groups when the toppings sit together at the end (their
-  // natural order): "inside the calzone" then "on top" — so a new starter
-  // can't mistake the pepper for a filling (Graeme, 2026-09-16). Dragging a
-  // topping into the middle drops the dividers; the amber chip on each
-  // topping row still marks it.
-  const topStart = toppingTailStart(allItems);
+  // Everything inside first (drag-sortable, in the saved order), then every
+  // topping-flagged line in its own On top section — whatever order the
+  // toppings were saved in.
+  const { inside, onTop } = splitToppings(allItems);
 
   // Drag-and-drop reorder is always available to all builders, regardless of
   // whether the checklist has been marked "Ready" (isLocked). Locked state still
   // disables the checkbox toggles via the `locked` prop below.
   return (
-    <div className="divide-y divide-slate-100 dark:divide-slate-800">
-      <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-        <SortableContext items={allItems.map(a => a.key)} strategy={verticalListSortingStrategy}>
-          {topStart > 0 && <AssemblyGroupLabel label="Inside the calzone" tone="inside" />}
-          {allItems.map((entry, i) => {
-            const divider = i === topStart
-              ? <AssemblyGroupLabel key="on-top-label" label="On top of the calzone" tone="top" />
-              : null;
-            if (entry.isFilling) {
-              return (
-                <React.Fragment key="filling">
-                  {divider}
-                  <SortableFillingRow
-                    id="filling"
-                    weightPerBatch={asm.builderWeightPerBatch}
-                    weightHalfBatch={asm.builderWeightHalfBatch}
-                    deductionGrams={asm.builderFillingDeductionGrams}
-                    checked={!!checkedItems["filling"]}
-                    locked={isLocked}
-                    showHandle={true}
-                    onToggle={() => toggleCheck("filling")}
-                  />
-                </React.Fragment>
-              );
-            }
-            return (
-              <React.Fragment key={entry.key}>
-                {divider}
-                <SortableAssemblyRow
-                  id={entry.key}
-                  ai={entry.ai!}
-                  checked={!!checkedItems[entry.key]}
-                  locked={isLocked}
-                  showHandle={true}
-                  onToggle={() => toggleCheck(entry.key)}
-                />
-              </React.Fragment>
-            );
-          })}
-        </SortableContext>
-      </DndContext>
+    <div>
+      {onTop.length > 0 && inside.length > 0 && <InsideLabel />}
+      <div className="divide-y divide-slate-100 dark:divide-slate-800">
+        <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+          <SortableContext items={inside.map(a => a.key)} strategy={verticalListSortingStrategy}>
+            {inside.map(entry => entry.isFilling ? (
+              <SortableFillingRow
+                key="filling"
+                id="filling"
+                weightPerBatch={asm.builderWeightPerBatch}
+                weightHalfBatch={asm.builderWeightHalfBatch}
+                deductionGrams={asm.builderFillingDeductionGrams}
+                checked={!!checkedItems["filling"]}
+                locked={isLocked}
+                showHandle={true}
+                onToggle={() => toggleCheck("filling")}
+              />
+            ) : (
+              <SortableAssemblyRow
+                key={entry.key}
+                id={entry.key}
+                ai={entry.ai!}
+                checked={!!checkedItems[entry.key]}
+                locked={isLocked}
+                showHandle={true}
+                onToggle={() => toggleCheck(entry.key)}
+              />
+            ))}
+          </SortableContext>
+        </DndContext>
+      </div>
+      <OnTopSection
+        rows={onTop}
+        portionsPerBatch={portionsPerBatch}
+        checkedItems={checkedItems}
+        locked={isLocked}
+        onToggle={toggleCheck}
+      />
     </div>
   );
 }
 
 /** Read-only assembly list for viewing non-current recipes */
-function ReadOnlyAssemblyList({ asm }: { asm: AssemblyData }) {
+function ReadOnlyAssemblyList({ asm, portionsPerBatch }: { asm: AssemblyData; portionsPerBatch: number }) {
   const hasFilling = asm.fillingWeightPerBatch > 0;
   const hasItems = asm.assemblyItems.length > 0;
   if (!hasFilling && !hasItems) {
@@ -316,6 +351,7 @@ function ReadOnlyAssemblyList({ asm }: { asm: AssemblyData }) {
     const pos = Math.min(asm.fillingAssemblyOrder ?? 0, allItems.length);
     allItems.splice(pos, 0, { key: "filling", isFilling: true });
   }
+  const { inside, onTop } = splitToppings(allItems);
 
   return (
     <div className="bg-slate-50 dark:bg-slate-900/30 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
@@ -325,25 +361,20 @@ function ReadOnlyAssemblyList({ asm }: { asm: AssemblyData }) {
           Assembly Items
         </span>
       </div>
+      {onTop.length > 0 && inside.length > 0 && <InsideLabel />}
       <div className="divide-y divide-slate-100 dark:divide-slate-800">
-        {(() => { const topStart = toppingTailStart(allItems); return allItems.map((entry, i) => (
-          <React.Fragment key={entry.key}>
-            {topStart > 0 && i === 0 && <AssemblyGroupLabel label="Inside the calzone" tone="inside" />}
-            {i === topStart && <AssemblyGroupLabel label="On top of the calzone" tone="top" />}
-            <div className="flex items-center gap-3 px-3 py-3">
-              <span className={cn("text-xl font-bold flex-1 leading-tight", entry.isFilling && "text-blue-700 dark:text-blue-400")}>
-                {entry.isFilling ? "Filling" : entry.ai!.name}
-              </span>
-              {!entry.isFilling && entry.ai!.isTopping
-                ? <span className="flex items-center gap-2 flex-shrink-0"><ToppingChip /><span className="text-xl font-bold font-mono text-slate-500 dark:text-slate-400">Sprinkle</span></span>
-                : <span className="text-xl font-bold font-mono tabular-nums flex-shrink-0">
-                    {Math.round(entry.isFilling ? asm.builderWeightPerBatch : entry.ai!.weightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(entry.isFilling ? asm.builderWeightHalfBatch : entry.ai!.weightHalfBatch)}g</span>
-                  </span>
-              }
-            </div>
-          </React.Fragment>
-        )); })()}
+        {inside.map(entry => (
+          <div key={entry.key} className="flex items-center gap-3 px-3 py-3">
+            <span className={cn("text-xl font-bold flex-1 leading-tight", entry.isFilling && "text-blue-700 dark:text-blue-400")}>
+              {entry.isFilling ? "Filling" : entry.ai!.name}
+            </span>
+            <span className="text-xl font-bold font-mono tabular-nums flex-shrink-0">
+              {Math.round(entry.isFilling ? asm.builderWeightPerBatch : entry.ai!.weightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(entry.isFilling ? asm.builderWeightHalfBatch : entry.ai!.weightHalfBatch)}g</span>
+            </span>
+          </div>
+        ))}
       </div>
+      <OnTopSection rows={onTop} portionsPerBatch={portionsPerBatch} compact />
     </div>
   );
 }
@@ -1504,6 +1535,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                                 <ChecklistItems
                                   asm={asm}
                                   hasFilling={hasFilling}
+                                  portionsPerBatch={item.portionsPerBatch}
                                   isLocked={isLocked}
                                   checkedItems={checkedItems}
                                   toggleCheck={toggleCheck}
@@ -1755,7 +1787,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                     ) : (
                       <>
                       {/* Non-current: assembly list (read-only) */}
-                      {asm && <ReadOnlyAssemblyList asm={asm} />}
+                      {asm && <ReadOnlyAssemblyList asm={asm} portionsPerBatch={item.portionsPerBatch} />}
 
                       {/* Compact meta row */}
                       <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
@@ -2185,18 +2217,22 @@ function BatchDivision({ assemblyData, portionsPerBatch }: { assemblyData: Assem
       </div>
       {selected != null && (
         <div className="divide-y divide-border/50 -mx-1">
-          {allItems.map((entry) => {
-            const isTopping = !entry.isFilling && entry.ai?.isTopping;
+          {(() => { const { inside, onTop } = splitToppings(allItems); return [...inside, ...onTop]; })().map((entry) => {
+            const isTopping = isToppingEntry(entry);
             const weight = entry.isFilling
               ? assemblyData.builderWeightPerBatch * scale
               : (entry.ai?.weightPerBatch ?? 0) * scale;
             return (
-              <div key={entry.key} className="flex items-center justify-between px-1 py-2">
+              <div key={entry.key} className={cn("flex items-center justify-between px-1 py-2", isTopping && "bg-amber-50 dark:bg-amber-950/30")}>
                 <span className={cn("text-base font-bold", entry.isFilling && "text-blue-700 dark:text-blue-400")}>
                   {entry.isFilling ? "Filling" : entry.ai!.name}
                 </span>
                 {isTopping
-                  ? <span className="flex items-center gap-2"><ToppingChip /><span className="text-base font-bold font-mono text-slate-500 dark:text-slate-400">Sprinkle</span></span>
+                  // A topping is per item, so a part batch doesn't change it.
+                  ? <span className="flex items-center gap-2 text-base font-bold text-amber-800 dark:text-amber-300">
+                      <ArrowUp className="w-4 h-4" strokeWidth={3} />
+                      On top · {toppingQuantities(entry.ai?.weightPerBatch ?? 0, portionsPerBatch).perItem} each
+                    </span>
                   : <span className="text-base font-bold font-mono tabular-nums">{Math.round(weight)}g</span>
                 }
               </div>
