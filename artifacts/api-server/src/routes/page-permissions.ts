@@ -21,7 +21,7 @@ const KNOWN_PAGES = [
   { pageKey: "/kanbans", label: "Kanbans" },
   { pageKey: "/product-hub", label: "Product Hub" },
   { pageKey: "/deliveries/receive", label: "Receive Deliveries (front door)" },
-  { pageKey: "/training", label: "Training Matrix" },
+  { pageKey: "/training", label: "Training (station matrices — keep at Viewer so staff can train)" },
   { pageKey: "/lean-curriculum", label: "Lean Curriculum planner" },
   { pageKey: "/surveys", label: "Customer Surveys" },
 ];
@@ -33,7 +33,10 @@ const DEFAULT_PERMISSIONS: Record<string, string> = {
   "/locations": "admin",
   "/dispatch-tag": "manager",
   "/deliveries/receive": "viewer",
-  "/training": "manager",
+  // Everyone: station training matrices are self-service (2026-09-24). The
+  // stored matrices inside stay manager-only via /api/training. Keep in step
+  // with lib/page-access.ts and page.training in @workspace/feature-registry.
+  "/training": "viewer",
   "/lean-curriculum": "manager",
   "/surveys": "admin",
 };
