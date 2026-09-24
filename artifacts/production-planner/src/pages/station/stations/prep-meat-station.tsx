@@ -18,6 +18,7 @@ import type { PrepRecipeDetail, PrepIngredientDetail } from "./prep-hub";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
 import { StationStockChecks } from "../shared/station-stock-checks";
+import { linkedStockChecksForRecipe } from "@/lib/linked-stock-checks";
 
 interface PrepTrayCompletion {
   id: number;
@@ -267,6 +268,9 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   const selected = recipes.find(r => r.recipeId === selectedRecipeId) ?? recipes[0];
   const selRawMeat = selected.ingredients.filter(i => i.isRawMeat);
   const selMarinades = selected.marinades ?? [];
+  // Linked-ingredient stock checks belong to THIS recipe's meat panels only —
+  // another recipe's links never render here (Graeme, 2026-09-24).
+  const selLinkedChecks = linkedStockChecksForRecipe(selRawMeat.map(i => i.ingredientId), selMarinades);
   const selTotalRawKg = selRawMeat.reduce((sum, i) => sum + toKg(i.rawQty, i.unit), 0);
   const selTotalMarinadeG = selMarinades.reduce((sum, m) => sum + m.totalGrams, 0);
   const selTrayCapKg = selRawMeat.find(i => i.rawMeatTrayCapacityKg)?.rawMeatTrayCapacityKg ?? null;
@@ -654,10 +658,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                       checkDate={nextPlan?.planDate ?? plan.planDate}
                       isDraft={isDraft}
                       stationLabel="Raw Meat"
-                      ingredientIds={meatMarinades
-                        .filter(m => !m.addAtCooking)
-                        .map(m => m.marinadeIngredientId)
-                        .filter((x): x is number => x != null)}
+                      ingredientIds={selLinkedChecks.byMeat.get(ing.ingredientId)?.afterPrep ?? []}
                     />
 
                     {meatMarinades.filter(m => m.addAtCooking).map((m, mi) => {
@@ -687,6 +688,16 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                         </div>
                       );
                     })}
+                    {/* Held-back items are counted beside their hold-back row:
+                        nothing on this station uses them, so there's nothing to
+                        wait for. Still inside this meat's panel, never adrift. */}
+                    <StationStockChecks
+                      variant="row"
+                      checkDate={nextPlan?.planDate ?? plan.planDate}
+                      isDraft={isDraft}
+                      stationLabel="Raw Meat"
+                      ingredientIds={selLinkedChecks.byMeat.get(ing.ingredientId)?.heldBack ?? []}
+                    />
 
                     {/* Clickable tray buttons */}
                     {trayNums.length > 0 && (
@@ -827,31 +838,23 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                   </div>
                 );
               })}
+
+              {/* A link in THIS recipe whose meat isn't one of its raw-meat
+                  rows (a stale link) has no meat panel — count it at the foot
+                  of this recipe's card rather than lose it. There is no
+                  page-level catch-all any more: that one took every recipe's
+                  links, so opening any other recipe showed them at the bottom
+                  of the page (Graeme, 2026-09-24). */}
+              <StationStockChecks
+                checkDate={nextPlan?.planDate ?? plan.planDate}
+                isDraft={isDraft}
+                stationLabel={selected.recipeName}
+                ingredientIds={selLinkedChecks.unplaced}
+              />
             </div>
           </div>
         </div>
       </div>
-
-      {/* Catch-all: any linked ingredient whose count ISN'T already offered
-          inline on the open recipe above — e.g. it belongs to a recipe
-          nobody has opened yet, or it's held back for cooking. Without this
-          a due check could have nowhere to live. */}
-      <StationStockChecks
-        checkDate={nextPlan?.planDate ?? plan.planDate}
-        isDraft={isDraft}
-        stationLabel="Raw Meat"
-        ingredientIds={(() => {
-          const shownInline = new Set(
-            selMarinades
-              .filter(m => !m.addAtCooking)
-              .map(m => m.marinadeIngredientId)
-              .filter((x): x is number => x != null),
-          );
-          return recipes
-            .flatMap(r => (r.marinades ?? []).map(m => m.marinadeIngredientId))
-            .filter((x): x is number => x != null && !shownInline.has(x));
-        })()}
-      />
     </div>
   );
 }
