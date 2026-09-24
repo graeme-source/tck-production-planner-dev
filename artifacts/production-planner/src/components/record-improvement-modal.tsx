@@ -13,7 +13,7 @@
 // Photos are enough. Video is better and the camera offers it, but the point
 // is engagement — a picture people actually take beats a clip they don't.
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { Lightbulb, CheckCircle2, Camera, Loader2, X, ArrowRight, ListChecks, ThumbsUp } from "lucide-react";
@@ -21,6 +21,8 @@ import { cn } from "@/lib/utils";
 import { DictateButton } from "@/components/dictate-button";
 import { toast } from "@/hooks/use-toast";
 import { summariseUploadFailures, type UploadAttempt } from "@/lib/upload-failures";
+import { useAuth } from "@/contexts/auth-context";
+import { CreditPeoplePicker } from "@/components/credit-people-picker";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -46,11 +48,19 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
   const afterFile = useRef<File | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const beforeLibraryRef = useRef<HTMLInputElement>(null);
+  // "Done with…" (Graeme, 2026-09-24): everyone who did it gets the credit.
+  // The recorder is ticked by default and the last tick can't be removed.
+  const { state: auth } = useAuth();
+  const meId = auth.status === "authenticated" ? auth.user.id : null;
+  const [credited, setCredited] = useState<number[]>(meId != null ? [meId] : []);
+  // A shared iPad changes hands — the default tick follows whoever's signed in.
+  useEffect(() => { setCredited(meId != null ? [meId] : []); }, [meId]);
 
   if (!open) return null;
 
   const reset = () => {
     setMode("choose"); setTitle(""); setDescription("");
+    setCredited(meId != null ? [meId] : []);
     setBeforeTaken(false); setAfterTaken(false);
     setTitleConfirmed(false); setBeforeSkipped(false); setAfterSkipped(false);
     beforeFile.current = null; afterFile.current = null; setBusy(false);
@@ -199,6 +209,8 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
           station: "general",
           // An idea is for whoever picks it up; something you've done is yours.
           claim: !isIdea,
+          // …and everyone you did it with. Ideas are credited when done.
+          ...(!isIdea && credited.length > 0 ? { creditUserIds: credited } : {}),
         }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Couldn't save it");
@@ -262,7 +274,7 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
   return (
     <div className="fixed inset-0 z-[150] bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={close}>
       <div
-        className="bg-background w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl p-5 space-y-4 max-h-[92vh] overflow-y-auto"
+        className="bg-background w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl p-5 space-y-4 max-h-[92dvh] overflow-y-auto overscroll-contain"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3">
@@ -468,6 +480,18 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
               onPick: () => cameraRef.current?.click(),
               onSkip: () => setAfterSkipped(true),
             })}
+
+            {/* Who did it — finished work only (an idea is credited when it's
+                done). Alive with the note once the steps are done. You're
+                ticked already; tap anyone who helped (Graeme, 2026-09-24). */}
+            {!isIdea && (
+              <div className={cn(currentStep !== "ready" && "opacity-40 pointer-events-none")}>
+                <p className="text-sm font-medium text-muted-foreground mb-2">
+                  Who did it? Tap anyone who helped — they all get the credit.
+                </p>
+                <CreditPeoplePicker selected={credited} onChange={setCredited} meId={meId} />
+              </div>
+            )}
 
             {/* The note — optional, quiet, at the bottom, and only alive once
                 the steps are done so it never competes with them. */}
