@@ -6,7 +6,7 @@ import {
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import {
-  Loader2, Plus, Minus, CheckCircle2, Snowflake, AlertCircle, Gift, Flame, ChevronDown, ThermometerSnowflake, ArrowDown, ClipboardList, PackageCheck,
+  Loader2, Plus, Minus, CheckCircle2, Snowflake, AlertCircle, Gift, Flame, ChevronDown, ThermometerSnowflake, ArrowDown, ClipboardList, PackageCheck, X,
 } from "lucide-react";
 import { Link } from "wouter";
 import { cn } from "@/lib/utils";
@@ -23,7 +23,7 @@ import { netTwoPacks as computeNetTwoPacks, effectiveBatchesTarget } from "../sh
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
 import { fetchFridgeAvailability, computeFridgeAllocation, type GateOrder } from "@/lib/fridge-gate";
 import { isCollection, isDispatchTagged, isLocalDelivery } from "@/lib/dispatch-tagging";
-import { shouldShowPostOvenReminder } from "@/lib/post-oven-reminder";
+import { decidePostOvenReminder } from "@/lib/post-oven-reminder";
 
 // Case-order freezer split — new columns not yet in the generated API client
 // (openapi.yaml codegen deliberately deferred; see project_api_spec_drift).
@@ -129,15 +129,15 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
     totalQty: number;
   } | null>(null);
   const [postOvenMap, setPostOvenMap] = useState<PostOvenMap>({});
-  // One-shot reminder shown the first time a recipe with post-oven items
-  // (e.g. garlic butter) is opened in this session, so wrappers don't forget
-  // to brush before sealing. Tracked in-memory so it resets per page load,
-  // dismissed per item via the modal's Complete button.
+  // Reminder shown every time the wrapper lands on a recipe with post-oven
+  // items (e.g. garlic butter), so they don't forget to brush before sealing.
   const [garlicReminderItem, setGarlicReminderItem] = useState<ProductionPlanItem | null>(null);
   // Keep the queue where the wrapper left it while the garlic reminder
   // overlay is up (Graeme, 2026-09-07 — the station modal scroll bug).
   useModalScrollKeeper(garlicReminderItem != null);
-  const dismissedGarlicReminders = useRef<Set<number>>(new Set());
+  // The item the reminder already showed for during the CURRENT stay on it —
+  // cleared as soon as another recipe comes on show (see post-oven-reminder).
+  const postOvenRemindedForId = useRef<number | null>(null);
   const addingRef = useRef(false);
   // ONE recipe on show at a time (the shared station-queue pattern, Graeme
   // 2026-09-16): the pinned panel shows the selected flavour and the queue
@@ -350,20 +350,22 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
     setQueueOpen(false);
   };
 
-  // Pop the post-oven reminder the first time a recipe with post-oven items
-  // (garlic butter, icing) becomes the one ON SHOW this session — however
-  // it got there. It used to fire only from a manual tap, so whenever the
-  // garlic recipe led the queue and auto-selected, the blocking modal never
-  // showed (missing two days running, reported 2026-09-17). Watching the
-  // selection state also covers the async arrival of postOvenMap after the
-  // auto-select. (In the pinned-panel UI, "selected" is what "expanded" was
-  // in the accordion — the shared rule keeps its original param name.)
+  // Pop the post-oven reminder each time a recipe with post-oven items
+  // (garlic butter, icing) comes ON SHOW — however it got there (auto-select,
+  // Next, Prev, tapping it in the queue, returning to the station) — and only
+  // once per stay, so re-renders and refetches don't re-pop it. It used to
+  // be remembered per item for the whole session, so skipping past the
+  // garlic recipe and pressing Prev never reminded again (Jane Miles,
+  // 2026-09-17). Watching the selection state also covers the async arrival
+  // of postOvenMap after the auto-select.
   useEffect(() => {
-    if (!shouldShowPostOvenReminder({
-      expandedItemId: selectedItemId,
+    const decision = decidePostOvenReminder({
+      selectedItemId,
       postOvenCount: selectedItemId != null ? (postOvenMap[selectedItemId]?.length ?? 0) : 0,
-      dismissedItemIds: dismissedGarlicReminders.current,
-    })) return;
+      remindedForId: postOvenRemindedForId.current,
+    });
+    postOvenRemindedForId.current = decision.remindedForId;
+    if (!decision.show) return;
     const item = items.find(it => it.id === selectedItemId);
     if (item) setGarlicReminderItem(item);
   }, [selectedItemId, postOvenMap, items]);
@@ -596,8 +598,16 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
 
       {garlicReminderItem && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4">
-          <div className="bg-card border-2 border-amber-500 rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
-            <div className="flex items-start gap-3">
+          <div role="dialog" aria-modal="true" className="relative bg-card border-2 border-amber-500 rounded-2xl shadow-2xl w-full max-w-md max-h-[92dvh] overflow-y-auto p-6 space-y-4">
+            <button
+              type="button"
+              aria-label="Close reminder"
+              onClick={() => setGarlicReminderItem(null)}
+              className="absolute top-3 right-3 w-11 h-11 flex items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div className="flex items-start gap-3 pr-10">
               <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/40 flex items-center justify-center flex-shrink-0">
                 <Flame className="w-5 h-5 text-amber-600" />
               </div>
@@ -650,10 +660,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
               </div>
             </div>
             <button
-              onClick={() => {
-                if (garlicReminderItem) dismissedGarlicReminders.current.add(garlicReminderItem.id);
-                setGarlicReminderItem(null);
-              }}
+              onClick={() => setGarlicReminderItem(null)}
               className="w-full py-3 rounded-xl text-base font-bold bg-amber-600 text-white hover:bg-amber-700 active:scale-95 transition-colors"
             >
               Complete
