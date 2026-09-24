@@ -144,3 +144,20 @@ export function noticeStatusLine(n: Pick<FixNoticeSummary, "ackAction" | "acknow
   if (!n.acknowledgedAt) return "Reporter notified — not seen yet";
   return n.ackAction === "test_now" ? "Reporter notified — testing it now" : "Reporter notified — will test later";
 }
+
+/**
+ * Batched reporter pop-up (Graeme, 2026-09-24): when several updates are
+ * waiting, one pop-up lists them all instead of a string of separate ones.
+ * Wording depends on what's in the batch — fixes to test, replies to read.
+ */
+export function batchedNoticeCopy(notices: Array<Pick<MyFixedNotice, "kind">>): { heading: string; button: string } {
+  const fixes = notices.filter(n => n.kind !== "message").length;
+  const replies = notices.length - fixes;
+  const heading = fixes > 0 && replies === 0
+    ? `${fixes} of your reports ${fixes === 1 ? "has" : "have"} been fixed`
+    : replies > 0 && fixes === 0
+      ? `${replies} ${replies === 1 ? "reply" : "replies"} to your reports`
+      : `Updates on ${notices.length} of your reports`;
+  const button = fixes > 0 ? (fixes === 1 ? "Got it — I'll test it" : "Got it — I'll test them") : "Got it";
+  return { heading, button };
+}

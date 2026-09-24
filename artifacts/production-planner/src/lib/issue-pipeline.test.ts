@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { safeTestPath, tabCount, noticeStatusLine } from "./issue-pipeline";
+import { safeTestPath, tabCount, noticeStatusLine, batchedNoticeCopy } from "./issue-pipeline";
 
 describe("safeTestPath", () => {
   it("keeps in-app paths", () => {
@@ -47,5 +47,17 @@ describe("noticeStatusLine", () => {
   it("a message to the reporter says whether they've read it", () => {
     expect(noticeStatusLine({ kind: "message", ackAction: null, acknowledgedAt: null })).toMatch(/Your message — not seen yet/);
     expect(noticeStatusLine({ kind: "message", ackAction: "later", acknowledgedAt: "2026-09-24T10:00:00Z" })).toMatch(/has read it/);
+  });
+});
+
+describe("batchedNoticeCopy", () => {
+  it("all fixes", () => {
+    expect(batchedNoticeCopy([{ kind: "fixed" }, { kind: "fixed" }, { kind: "fixed" }])).toEqual({ heading: "3 of your reports have been fixed", button: "Got it — I'll test them" });
+  });
+  it("all replies", () => {
+    expect(batchedNoticeCopy([{ kind: "message" }, { kind: "message" }])).toEqual({ heading: "2 replies to your reports", button: "Got it" });
+  });
+  it("a mix", () => {
+    expect(batchedNoticeCopy([{ kind: "message" }, { kind: "fixed" }])).toEqual({ heading: "Updates on 2 of your reports", button: "Got it — I'll test it" });
   });
 });
