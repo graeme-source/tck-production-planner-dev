@@ -368,8 +368,13 @@ export function NavLinks({
     );
   }
 
-  const beforeProduct = visibleNavItems.filter(i => i.href === "/" || i.href === "/plans");
-  const afterProduct = visibleNavItems.filter(i => i.href !== "/" && i.href !== "/plans");
+  // Items above the Product section, in list order: The Business (the
+  // founder's own entry, prepended only for him) sits at the very top, then
+  // Dashboard and Production Plans (Graeme, 2026-09-24 — it was being swept
+  // below Product with everything else).
+  const ABOVE_PRODUCT = new Set(["/founder/numbers", "/", "/plans"]);
+  const beforeProduct = visibleNavItems.filter(i => ABOVE_PRODUCT.has(i.href));
+  const afterProduct = visibleNavItems.filter(i => !ABOVE_PRODUCT.has(i.href));
   const beforeInventory = afterProduct.filter(i => i.href === "/suppliers");
   const afterInventory = afterProduct.filter(i => i.href !== "/suppliers");
 

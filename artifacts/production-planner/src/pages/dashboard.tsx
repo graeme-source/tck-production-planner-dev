@@ -310,8 +310,6 @@ async function fetchTodayDeliveriesCount(): Promise<{ total: number; arrived: nu
   return { total: todays.length, arrived };
 }
 
-const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
-
 type UpcomingPlan = {
   id: number;
   planDate: string;
@@ -457,22 +455,8 @@ function UpcomingProductionPanel() {
 export default function Dashboard() {
   const dashRefresh = useRefreshSpin();
   const { state } = useAuth();
-  const isFounder = state.status === "authenticated" && state.user.email === FOUNDER_EMAIL;
   const [, setLocation] = useLocation();
 
-  // The founder's day starts on Founder Focus, not the kitchen dashboard:
-  // the first "/" load of each app session redirects there (his user only).
-  // sessionStorage scopes the flag to the window session, so relaunching
-  // the installed app redirects again, while deliberately navigating back
-  // to the Dashboard mid-session stays put.
-  useEffect(() => {
-    if (isFounder && !sessionStorage.getItem("founderFocusAutoOpened")) {
-      sessionStorage.setItem("founderFocusAutoOpened", "1");
-      // Numbers, not the Schedule — the same landing rule as the /founder
-      // redirect and the sidebar (2026-09-18).
-      setLocation("/founder/numbers");
-    }
-  }, [isFounder, setLocation]);
   const { data: plans } = useListProductionPlans();
   const { data: dispatches } = useListDispatchOrders();
   const { roles: bannerRoles, loaded: bannerRolesLoaded } = useBannerRoles();
