@@ -40,6 +40,7 @@ import {
   buildIssueViews,
   loadAndonRows,
   recordEvent,
+  creditImprovementIfDue,
   resolveIssueWithNotice,
   triageByIssueId,
   type ResolveOutcome,
@@ -161,6 +162,9 @@ const triageBody = z.object({
   /** Already fixed / built / withdrawn / not a problem: the Fix queue shows
    *  "Dismiss — already done" instead of Approve. */
   noActionNeeded: z.boolean().optional(),
+  /** The day the fix/feature went live (YYYY-MM-DD) — the credited
+   *  improvement's done date when this report closes. */
+  completedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   relatedIssueIds: z.array(z.number().int().positive()).max(100).default([]),
   causeTag: z.string().trim().max(100).nullable().optional(),
   triagedBy: z.string().trim().min(1).max(60).default("claude-code"),
@@ -189,6 +193,7 @@ router.post("/triage", validate(triageBody), async (req, res) => {
       questionForGraeme: b.questionForGraeme || null,
       suggestedReply: b.suggestedReply || null,
       noActionNeeded: b.noActionNeeded ?? false,
+      completedOn: b.completedOn ?? null,
       relatedIssueIds: [...new Set(b.relatedIssueIds.filter(id => id !== b.andonIssueId))],
       causeTag: b.causeTag || null,
       triagedBy: b.triagedBy,
@@ -360,6 +365,8 @@ router.post("/triage/:id/resolve-issue", validate(resolveBody), async (req, res)
         .set({ issueResolvedAt: new Date(), updatedAt: new Date() })
         .where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
       await recordEvent(tx, row, "issue_resolved", b.actor, b.whatChanged);
+      // An improvement to the system, now live: credit the reporter.
+      await creditImprovementIfDue(tx, row, current.decidedBy ?? "Graeme");
       return { status: 200 as const, triage: row, outcomes, skippedRelated };
     });
     if (out.status !== 200) { const { status, ...body } = out; res.status(status).json(body); return; }
@@ -367,6 +374,40 @@ router.post("/triage/:id/resolve-issue", validate(resolveBody), async (req, res)
   } catch (err) {
     console.error("[issue-pipeline] resolve-issue failed:", err instanceof Error ? err.message : String(err));
     res.status(500).json({ error: "Failed to resolve the issue" });
+  }
+});
+
+// ── POST /triage/:id/completed-on {completedOn} ────────────────────────────
+// Record the day a fix/feature went live, at any status — so an improvement
+// credited for an old report is dated when it was really built.
+const completedOnBody = z.object({ completedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) });
+router.post("/triage/:id/completed-on", validate(completedOnBody), async (req, res) => {
+  const id = parseId(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
+  const [row] = await db.update(issueTriageTable)
+    .set({ completedOn: (req.body as z.infer<typeof completedOnBody>).completedOn, updatedAt: new Date() })
+    .where(eq(issueTriageTable.id, id)).returning();
+  if (!row) { res.status(404).json({ error: "Triage not found" }); return; }
+  res.json({ triage: row });
+});
+
+// ── POST /credit-improvements ────────────────────────────────────────────────
+// Catch-up sweep, safe to call every run: any closed improvement-lane report
+// not yet credited gets its completed improvement in the reporter's name.
+router.post("/credit-improvements", async (_req, res) => {
+  try {
+    const rows = await db.select().from(issueTriageTable)
+      .where(sql`${issueTriageTable.lane} = 'improvement' AND ${issueTriageTable.improvementId} IS NULL
+        AND ${issueTriageTable.status} IN ('fixed', 'answered', 'dismissed')`);
+    const credited: Array<{ andonIssueId: number; improvementId: number }> = [];
+    for (const r of rows) {
+      const improvementId = await db.transaction(tx => creditImprovementIfDue(tx, r, r.decidedBy ?? "Graeme"));
+      if (improvementId) credited.push({ andonIssueId: r.andonIssueId, improvementId });
+    }
+    res.json({ checked: rows.length, credited });
+  } catch (err) {
+    console.error("[issue-pipeline] credit sweep failed:", err instanceof Error ? err.message : String(err));
+    res.status(500).json({ error: "Credit sweep failed" });
   }
 });
 

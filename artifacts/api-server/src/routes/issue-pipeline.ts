@@ -22,6 +22,10 @@ import {
   TRIAGE_STATUSES,
   canDismiss,
   canMessageReporter,
+  canSnooze,
+  queueTabFor,
+  QUEUE_TABS,
+  SNOOZE_DAYS,
   canReply,
   canReviewMove,
   noticeAckVerdict,
@@ -30,6 +34,7 @@ import {
 import {
   buildIssueViews,
   loadAndonRows,
+  creditImprovementIfDue,
   messageReporter,
   noticesByTriageId,
   pendingNoticesFor,
@@ -54,15 +59,12 @@ async function sessionUserName(userId: number): Promise<string> {
 // ── GET /review — the Fix queue ─────────────────────────────────────────────
 // Tabs: proposed | approved | in_progress | fixed | rejected (rejected also
 // shows wont_fix — both are "not being built").
-const TABS = ["proposed", "approved", "in_progress", "fixed", "rejected"] as const;
-const reviewQuery = z.object({ tab: z.enum(TABS).optional() });
+const reviewQuery = z.object({ tab: z.enum(QUEUE_TABS).optional() });
 
 router.get("/review", requireFounder, async (req, res) => {
   const parsed = reviewQuery.safeParse(req.query);
   if (!parsed.success) { res.status(400).json({ error: "Validation failed", details: parsed.error.flatten() }); return; }
   const tab = parsed.data.tab ?? "proposed";
-  // "fixed" is the Done tab: fixed in code, or answered by a message.
-  const statuses: TriageStatus[] = tab === "rejected" ? ["rejected", "wont_fix"] : tab === "fixed" ? ["fixed", "answered", "dismissed"] : [tab];
   try {
     const countRows = await db.execute<{ status: string; n: number; awaiting: number }>(sql`
       SELECT status, COUNT(*)::int AS n, COUNT(*) FILTER (WHERE awaiting_retriage)::int AS awaiting
@@ -72,10 +74,14 @@ router.get("/review", requireFounder, async (req, res) => {
     let awaitingReply = 0;
     for (const r of countRows.rows) { counts[r.status] = r.n; awaitingReply += r.awaiting; }
 
-    const rows = await db.select().from(issueTriageTable)
-      .where(inArray(issueTriageTable.status, statuses))
-      .orderBy(desc(issueTriageTable.triagedAt))
-      .limit(200);
+    // Every card is bucketed by one rule (queueTabFor): To review is only
+    // what needs Graeme NOW — waiting-on-Claude goes to In progress, snoozed
+    // to Snoozed — and both come back by themselves.
+    const now = new Date();
+    const all = await db.select().from(issueTriageTable).orderBy(desc(issueTriageTable.triagedAt)).limit(1000);
+    const tabCounts: Record<string, number> = Object.fromEntries(QUEUE_TABS.map(t => [t, 0]));
+    for (const r of all) tabCounts[queueTabFor({ ...r, status: r.status as TriageStatus }, now)]++;
+    const rows = all.filter(r => queueTabFor({ ...r, status: r.status as TriageStatus }, now) === tab).slice(0, 200);
 
     const relatedIds = [...new Set(rows.flatMap(r => r.relatedIssueIds))];
     const [issues, relatedRows, relatedTriage, notices] = await Promise.all([
@@ -90,6 +96,7 @@ router.get("/review", requireFounder, async (req, res) => {
     res.json({
       tab,
       counts: { ...counts, awaitingReply },
+      tabCounts,
       items: rows.map(t => ({
         triage: t,
         issue: issueById.get(t.andonIssueId) ?? null,
@@ -154,6 +161,36 @@ router.post("/review/:id/approve", requireFounder, validate(decisionBody), (req,
 router.post("/review/:id/reject", requireFounder, validate(decisionBody), (req, res) => decide(req, res, "reject"));
 router.post("/review/:id/reply", requireFounder, validate(replyBody), (req, res) => decide(req, res, "reply"));
 
+// ── POST /review/:id/snooze {days} | /unsnooze ──────────────────────────────
+// "Not now": the card leaves To review for a while and comes back by itself.
+const snoozeBody = z.object({
+  days: z.number().int().refine(d => (SNOOZE_DAYS as readonly number[]).includes(d), { message: `days must be one of ${SNOOZE_DAYS.join(", ")}` }),
+});
+router.post("/review/:id/snooze", requireFounder, validate(snoozeBody), async (req, res) => {
+  const id = parseId(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
+  const days = (req.body as { days: number }).days;
+  const [current] = await db.select().from(issueTriageTable).where(eq(issueTriageTable.id, id));
+  if (!current) { res.status(404).json({ error: "Recommendation not found" }); return; }
+  if (!canSnooze({ status: current.status as TriageStatus, awaitingRetriage: current.awaitingRetriage })) {
+    res.status(409).json({ error: "Only a card waiting on you can be snoozed" }); return;
+  }
+  const until = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+  const [row] = await db.update(issueTriageTable).set({ snoozedUntil: until, updatedAt: new Date() })
+    .where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
+  await recordEvent(db, row, "snoozed", await sessionUserName(req.session.userId!), `Snoozed for ${days} day${days === 1 ? "" : "s"}`);
+  res.json({ triage: row });
+});
+
+router.post("/review/:id/unsnooze", requireFounder, async (req, res) => {
+  const id = parseId(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
+  const [row] = await db.update(issueTriageTable).set({ snoozedUntil: null, updatedAt: new Date() })
+    .where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
+  if (!row) { res.status(404).json({ error: "Recommendation not found" }); return; }
+  res.json({ triage: row });
+});
+
 // ── POST /review/:id/dismiss — "Dismiss — already done" ─────────────────────
 // For reports Claude has verified need no action (already fixed or built,
 // withdrawn, not a problem). One tap closes the report on the andon log; if
@@ -189,6 +226,7 @@ router.post("/review/:id/dismiss", requireFounder, async (req, res) => {
         decidedAt: new Date(), issueResolvedAt: new Date(), updatedAt: new Date(),
       }).where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
       await recordEvent(tx, row, "dismissed", name, reply ? "Dismissed — reply sent to the reporter" : "Dismissed — already done");
+      await creditImprovementIfDue(tx, row, name);
       return { status: 200 as const, triage: row, notified };
     });
     if (out.status !== 200) { const { status, ...body } = out; res.status(status).json(body); return; }
@@ -235,6 +273,7 @@ router.post("/review/:id/message", requireFounder, validate(messageBody), async 
         }).where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
       }
       await recordEvent(tx, row, close ? "answered" : "messaged", name, message);
+      if (close) await creditImprovementIfDue(tx, row, name);
       return { status: 200 as const, triage: row, ...sent };
     });
     if (out.status !== 200) { const { status, ...body } = out; res.status(status).json(body); return; }

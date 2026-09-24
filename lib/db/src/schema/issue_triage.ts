@@ -1,4 +1,4 @@
-import { pgTable, serial, text, timestamp, boolean, integer, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, timestamp, boolean, integer, jsonb, index, uniqueIndex, date } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { usersTable } from "./users";
 import { andonIssuesTable } from "./improvements_and_andon";
@@ -26,6 +26,12 @@ export const issueTriageTable = pgTable("issue_triage", {
   /** Already fixed / withdrawn / not a problem — the Fix queue offers
    *  Dismiss instead of Approve (migration 0121). */
   noActionNeeded: boolean("no_action_needed").notNull().default(false),
+  /** Snoozed off To review until this moment (migration 0122). */
+  snoozedUntil: timestamp("snoozed_until", { withTimezone: true }),
+  /** The day the fix/feature went live — the credited improvement's done date. */
+  completedOn: date("completed_on"),
+  /** The improvement credited to the reporter when this closed. */
+  improvementId: integer("improvement_id"),
   relatedIssueIds: integer("related_issue_ids").array().notNull().default(sql`'{}'::integer[]`),
   causeTag: text("cause_tag"),
   status: text("status").notNull().default("proposed"), // proposed | approved | rejected | in_progress | fixed | wont_fix

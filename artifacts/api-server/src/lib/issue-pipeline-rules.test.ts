@@ -8,6 +8,10 @@ import {
   canReviewMove,
   canReply,
   canMessageReporter,
+  queueTabFor,
+  canSnooze,
+  isImprovementDue,
+  improvementDoneAt,
   canDismiss,
   pipelineMayHandle,
   machineMoveVerdict,
@@ -232,5 +236,56 @@ describe("canDismiss — 'already done' closes only reports still awaiting a dec
   });
   it("never re-closes or interrupts work", () => {
     for (const s of ["in_progress", "fixed", "answered", "dismissed"] as const) expect(canDismiss(s)).toBe(false);
+  });
+});
+
+describe("queueTabFor — To review only shows what needs Graeme now", () => {
+  const now = new Date("2026-09-24T10:00:00Z");
+  const base = { status: "proposed" as const, awaitingRetriage: false, snoozedUntil: null };
+  it("a fresh proposal is To review", () => expect(queueTabFor(base, now)).toBe("proposed"));
+  it("waiting on Claude's answer is In progress", () => expect(queueTabFor({ ...base, awaitingRetriage: true }, now)).toBe("in_progress"));
+  it("snoozed into the future is Snoozed", () => expect(queueTabFor({ ...base, snoozedUntil: "2026-09-25T10:00:00Z" }, now)).toBe("snoozed"));
+  it("a snooze that has run out is back in To review", () => expect(queueTabFor({ ...base, snoozedUntil: "2026-09-24T09:00:00Z" }, now)).toBe("proposed"));
+  it("fixed, answered and dismissed are all Done", () => {
+    for (const s of ["fixed", "answered", "dismissed"] as const) expect(queueTabFor({ ...base, status: s }, now)).toBe("fixed");
+  });
+  it("work under way is In progress; won't fix sits with Rejected", () => {
+    expect(queueTabFor({ ...base, status: "in_progress" }, now)).toBe("in_progress");
+    expect(queueTabFor({ ...base, status: "wont_fix" }, now)).toBe("rejected");
+  });
+});
+
+describe("canSnooze", () => {
+  it("only cards waiting on Graeme", () => {
+    expect(canSnooze({ status: "proposed", awaitingRetriage: false })).toBe(true);
+    expect(canSnooze({ status: "proposed", awaitingRetriage: true })).toBe(false);
+    expect(canSnooze({ status: "approved", awaitingRetriage: false })).toBe(false);
+  });
+});
+
+describe("isImprovementDue — credit completed improvements once", () => {
+  const t = { lane: "improvement", status: "dismissed" as const, issueResolvedAt: null, improvementId: null };
+  it("credits a dismissed or answered improvement", () => {
+    expect(isImprovementDue(t)).toBe(true);
+    expect(isImprovementDue({ ...t, status: "answered" })).toBe(true);
+  });
+  it("credits a fix only once its report is closed", () => {
+    expect(isImprovementDue({ ...t, status: "fixed" })).toBe(false);
+    expect(isImprovementDue({ ...t, status: "fixed", issueResolvedAt: "2026-09-24T10:00:00Z" })).toBe(true);
+  });
+  it("never for defects, open items, or twice", () => {
+    expect(isImprovementDue({ ...t, lane: "defect" })).toBe(false);
+    expect(isImprovementDue({ ...t, status: "approved" })).toBe(false);
+    expect(isImprovementDue({ ...t, improvementId: 12 })).toBe(false);
+  });
+});
+
+describe("improvementDoneAt", () => {
+  const now = new Date("2026-09-24T10:00:00Z");
+  it("uses the day it went live", () => expect(improvementDoneAt("2026-06-12", now).toISOString().slice(0, 10)).toBe("2026-06-12"));
+  it("falls back to now when unknown, malformed or in the future", () => {
+    expect(improvementDoneAt(null, now)).toEqual(now);
+    expect(improvementDoneAt("12 June", now)).toEqual(now);
+    expect(improvementDoneAt("2026-12-01", now)).toEqual(now);
   });
 });

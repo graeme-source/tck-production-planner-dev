@@ -12,10 +12,11 @@ import {
   issueTriageTable,
   issueTriageEventsTable,
   issueFixNoticesTable,
+  improvementSubmissionsTable,
   type IssueTriage,
 } from "@workspace/db";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { classifyIssueArea, noticeQuote, type IssueAreaClass } from "./issue-pipeline-rules";
+import { classifyIssueArea, improvementDoneAt, isImprovementDue, noticeQuote, type IssueAreaClass, type TriageStatus } from "./issue-pipeline-rules";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Db = typeof db | Tx;
@@ -229,6 +230,66 @@ export async function messageReporter(
       .where(and(eq(issueFixNoticesTable.andonIssueId, issue.id), isNull(issueFixNoticesTable.acknowledgedAt)));
   }
   return { resolvedNow, noticeQueued: true };
+}
+
+/**
+ * Credit a completed improvement to the person who reported it (Graeme,
+ * 2026-09-24). Called whenever a report closes — fixed and resolved,
+ * answered, or dismissed as already done — and a no-op unless the report
+ * was an improvement to the system (lane 'improvement') not yet credited.
+ *
+ * If the report already raised an improvement (andon_issues.improvement_id),
+ * that one is completed and credited; otherwise a new completed improvement
+ * is created in the reporter's name, dated the day it actually went live
+ * (completed_on) so old reports don't inflate today's KPI.
+ */
+export async function creditImprovementIfDue(tx: Tx, triage: IssueTriage, approverName: string): Promise<number | null> {
+  if (!isImprovementDue({ ...triage, status: triage.status as TriageStatus })) return null;
+  const [issue] = await tx.select().from(andonIssuesTable).where(eq(andonIssuesTable.id, triage.andonIssueId));
+  if (!issue) return null;
+  const now = new Date();
+  const doneAt = improvementDoneAt(triage.completedOn, now);
+  const approval = { approvedBy: triage.decidedByUserId, approvedByName: approverName, approvedAt: now };
+
+  let improvementId: number | null = null;
+  if (issue.improvementId) {
+    const [row] = await tx.update(improvementSubmissionsTable).set({
+      progressStatus: "complete",
+      creditedTo: issue.reportedBy,
+      creditedToName: issue.reportedByName,
+      doneAt: sql`COALESCE(${improvementSubmissionsTable.doneAt}, ${doneAt})`,
+      ...approval,
+      updatedAt: now,
+    }).where(eq(improvementSubmissionsTable.id, issue.improvementId)).returning({ id: improvementSubmissionsTable.id });
+    improvementId = row?.id ?? null;
+  }
+  if (improvementId == null) {
+    const words = (issue.description ?? "").trim() || `Improvement from issue #${issue.id}`;
+    const title = words.length > 120 ? `${words.slice(0, 117).trimEnd()}…` : words;
+    const [row] = await tx.insert(improvementSubmissionsTable).values({
+      title,
+      description: `${words}\n\nReported as issue #${issue.id} and completed through the Fix queue.`,
+      station: issue.station,
+      type: "improvement",
+      submittedBy: issue.reportedBy,
+      submittedByName: issue.reportedByName,
+      creditedTo: issue.reportedBy,
+      creditedToName: issue.reportedByName,
+      progressStatus: "complete",
+      doneAt,
+      ...approval,
+      // Linked back through andon_issues.improvement_id and
+      // issue_triage.improvement_id (subject_id belongs to lean subjects).
+      createdAt: issue.createdAt,
+      updatedAt: now,
+    }).returning({ id: improvementSubmissionsTable.id });
+    improvementId = row.id;
+    await tx.update(andonIssuesTable).set({ improvementId }).where(eq(andonIssuesTable.id, issue.id));
+  }
+  await tx.update(issueTriageTable).set({ improvementId, updatedAt: now }).where(eq(issueTriageTable.id, triage.id));
+  await recordEvent(tx, { ...triage, improvementId }, "improvement_credited", approverName,
+    `Improvement #${improvementId} credited to ${issue.reportedByName ?? "the reporter"}`);
+  return improvementId;
 }
 
 /** Latest notices per triage row, for the Fix queue's "reporter notified" line. */

@@ -163,6 +163,60 @@ export function canDismiss(from: TriageStatus): boolean {
   return from === "proposed" || from === "approved" || from === "rejected" || from === "wont_fix";
 }
 
+// ── Fix queue tabs (Graeme, 2026-09-24) ─────────────────────────────────────
+// To review is a LIVE list of what needs Graeme right now: a card he has
+// replied to is waiting on Claude (In progress) and one he snoozed is out of
+// sight (Snoozed) until its time is up — both come back by themselves.
+export const QUEUE_TABS = ["proposed", "in_progress", "snoozed", "approved", "fixed", "rejected"] as const;
+export type QueueTab = (typeof QUEUE_TABS)[number];
+
+export function queueTabFor(
+  t: { status: TriageStatus; awaitingRetriage: boolean; snoozedUntil: Date | string | null },
+  now: Date,
+): QueueTab {
+  switch (t.status) {
+    case "proposed":
+      if (t.awaitingRetriage) return "in_progress";
+      if (t.snoozedUntil && new Date(t.snoozedUntil).getTime() > now.getTime()) return "snoozed";
+      return "proposed";
+    case "in_progress": return "in_progress";
+    case "approved": return "approved";
+    case "fixed": case "answered": case "dismissed": return "fixed";
+    case "rejected": case "wont_fix": return "rejected";
+  }
+}
+
+/** "Not now": snooze lengths offered, in days. */
+export const SNOOZE_DAYS = [1, 3, 7, 14, 30] as const;
+
+/** Only a card waiting on Graeme can be snoozed. */
+export function canSnooze(t: { status: TriageStatus; awaitingRetriage: boolean }): boolean {
+  return t.status === "proposed" && !t.awaitingRetriage;
+}
+
+// ── Crediting completed improvements (Graeme, 2026-09-24) ──────────────────
+// A report that was clearly an improvement to the system (lane
+// 'improvement'), once it's done, becomes a completed improvement credited
+// to the person who reported it — once only.
+export function isImprovementDue(t: {
+  lane: string; status: TriageStatus; issueResolvedAt: Date | string | null; improvementId: number | null;
+}): boolean {
+  if (t.lane !== "improvement" || t.improvementId != null) return false;
+  if (t.status === "dismissed" || t.status === "answered") return true;
+  return t.status === "fixed" && t.issueResolvedAt != null;
+}
+
+/** When the credited improvement counts as done: the day it actually went
+ *  live (midday, so it lands on that London day), else now. Keeps old
+ *  reports from piling onto today's "improvements completed". */
+export function improvementDoneAt(completedOn: string | null | undefined, now: Date): Date {
+  if (completedOn && /^\d{4}-\d{2}-\d{2}$/.test(completedOn)) {
+    const d = new Date(`${completedOn}T12:00:00`);
+    if (!Number.isNaN(d.getTime()) && d.getTime() <= now.getTime()) return d;
+  }
+  return now;
+}
+
 export const NOTICE_KINDS = ["fixed", "message"] as const;
 export type NoticeKind = (typeof NOTICE_KINDS)[number];
 
