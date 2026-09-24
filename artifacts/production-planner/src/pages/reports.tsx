@@ -326,7 +326,7 @@ export default function Reports() {
   // (Graeme, 2026-09-17). The People page asks on entry, so arriving from
   // there is covered by the unlock window rather than a second prompt.
   const onEmployeesTab = new URLSearchParams(search).get("tab") === "employees";
-  useSensitivePinGate({ enabled: onEmployeesTab, includeAdmins: true, entryKey: "employees" });
+  useSensitivePinGate({ enabled: onEmployeesTab, includeAdmins: true, entryKey: "employees", scope: "people" });
   useSensitivePinGate({ enabled: !onEmployeesTab && isManagerOrAdmin, entryKey: "analytics" });
 
   // Viewers only see the Issue Log tab; managers see everything except admin-only tabs; admins see everything.

@@ -56,3 +56,13 @@ export function shouldDemandPinOnEntry(input: {
   if (!input.enabled) return false;
   return input.demandedFor !== input.entryKey;
 }
+
+/** Which PIN a sensitive gate asks for (Graeme, 2026-09-24). The People
+ *  section asks for the PRIVATE PIN when the person has set one — so the PIN
+ *  they type in front of others at a station can't open employee records.
+ *  Everything else (and anyone without a private PIN) uses the normal PIN. */
+export type SensitiveScope = "general" | "people";
+
+export function gateUsesPrivatePin(scope: SensitiveScope, hasPrivatePin: boolean | undefined): boolean {
+  return scope === "people" && !!hasPrivatePin;
+}

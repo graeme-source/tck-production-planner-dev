@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shouldPromptForSensitivePin, shouldDemandPinOnEntry } from "./sensitive-pin";
+import { shouldPromptForSensitivePin, shouldDemandPinOnEntry, gateUsesPrivatePin } from "./sensitive-pin";
 
 const TTL = 5 * 60 * 1000;
 
@@ -68,5 +68,16 @@ describe("shouldDemandPinOnEntry", () => {
 
   it("never prompts before the user is signed in", () => {
     expect(shouldDemandPinOnEntry({ ...base, authenticated: false, demandedFor: null, entryKey: "employees" })).toBe(false);
+  });
+});
+
+describe("gateUsesPrivatePin", () => {
+  it("People pages ask for the private PIN once one is set", () => {
+    expect(gateUsesPrivatePin("people", true)).toBe(true);
+  });
+  it("otherwise the normal PIN — no private PIN, or not a People page", () => {
+    expect(gateUsesPrivatePin("people", false)).toBe(false);
+    expect(gateUsesPrivatePin("people", undefined)).toBe(false);
+    expect(gateUsesPrivatePin("general", true)).toBe(false);
   });
 });

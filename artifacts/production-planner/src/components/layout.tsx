@@ -128,6 +128,8 @@ export function AccountButton({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  // Only people who can open the People section get the private-PIN option.
+  const canSeePeople = useIsRtwManager();
 
   useEffect(() => {
     if (!open) return;
@@ -187,6 +189,16 @@ export function AccountButton({
               <KeyRound className="w-4 h-4 text-muted-foreground" />
               Change PIN
             </Link>
+            {canSeePeople && (
+              <Link
+                href="/account/people-pin"
+                onClick={() => { setOpen(false); onNavigate?.(); }}
+                className="flex items-center gap-3 px-4 py-3 text-sm text-foreground hover:bg-secondary/50 transition-colors"
+              >
+                <KeyRound className="w-4 h-4 text-muted-foreground" />
+                Private PIN for People
+              </Link>
+            )}
             <div className="border-t border-border" />
             <button
               onClick={() => { setOpen(false); lockStation(); }}

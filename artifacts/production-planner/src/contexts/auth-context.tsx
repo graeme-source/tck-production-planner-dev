@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { shouldResetCachesOnIdentityChange } from "@/lib/session-identity";
-import { shouldPromptForSensitivePin } from "@/lib/sensitive-pin";
+import { shouldPromptForSensitivePin, gateUsesPrivatePin, type SensitiveScope } from "@/lib/sensitive-pin";
 import { addDeviceUserId } from "@/lib/device-users";
 import { toast } from "@/hooks/use-toast";
 import { idleTimeoutMs, type IdleTimeoutSettings } from "@/lib/idle-timeout";
@@ -14,6 +14,8 @@ export type AuthUser = {
   role: "admin" | "manager" | "viewer";
   avatarUrl: string | null;
   hasPin: boolean;
+  /** Has a private PIN for the People section (migration 0123). */
+  hasPrivatePin?: boolean;
   isProductionPlanner?: boolean;
   isBookkeeper?: boolean;
   /** Feature keys this user can use right now (grants + optional SOP gate). */
@@ -41,8 +43,14 @@ type AuthContextValue = {
   lockStation: () => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
-  /** Prompt for PIN if the sensitive-unlock window has expired. Idempotent — safe to call on every mount. */
-  requireSensitivePin: (opts?: { includeAdmins?: boolean; fresh?: boolean }) => void;
+  /** Prompt for PIN if the sensitive-unlock window has expired. Idempotent — safe to call on every mount.
+   *  scope "people" asks for the private PIN when the person has set one. */
+  requireSensitivePin: (opts?: { includeAdmins?: boolean; fresh?: boolean; scope?: SensitiveScope }) => void;
+  /** The People section's private-PIN prompt is showing. */
+  peoplePinPrompt: boolean;
+  verifyPeoplePin: (pin: string) => Promise<PinResult>;
+  /** "Not now" on the People PIN prompt — closes it; the page sends them away. */
+  cancelPeoplePin: () => void;
 };
 
 // How long a PIN entry grants access to sensitive pages before re-prompting.
@@ -181,6 +189,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // (Analytics, Settings) so that leaving a device unattended doesn't expose
   // HR / config data even within an authenticated session.
   const sensitiveUnlockedAtRef = useRef<number>(0);
+  // People section unlocked with the PRIVATE PIN (only used by people who
+  // have one). Station PIN logins/unlocks deliberately don't touch it.
+  const peopleUnlockedAtRef = useRef<number>(0);
+  const [peoplePinPrompt, setPeoplePinPrompt] = useState(false);
 
   const consecutiveFailsRef = useRef(0);
   const offlineToastedRef = useRef(false);
@@ -547,18 +559,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // recorded feedback) prompt EVERYONE — an admin's left-behind iPad is the
   // one with every employee's records on it. The default keeps the admin
   // exemption for analytics-style pages. Rule + tests: lib/sensitive-pin.ts.
-  const requireSensitivePin = useCallback((opts?: { includeAdmins?: boolean; fresh?: boolean }) => {
+  const requireSensitivePin = useCallback((opts?: { includeAdmins?: boolean; fresh?: boolean; scope?: SensitiveScope }) => {
     if (state.status !== "authenticated") return;
-    if (pinLocked) return; // already prompting
+    if (pinLocked || peoplePinPrompt) return; // already prompting
+    // People pages ask for the private PIN once one is set (Graeme,
+    // 2026-09-24): its own unlock window, never opened by a station PIN.
+    const privatePin = gateUsesPrivatePin(opts?.scope ?? "general", state.user.hasPrivatePin);
     const prompt = shouldPromptForSensitivePin({
       role: state.user.role,
       includeAdmins: opts?.includeAdmins ?? false,
-      msSinceUnlock: Date.now() - sensitiveUnlockedAtRef.current,
+      msSinceUnlock: Date.now() - (privatePin ? peopleUnlockedAtRef.current : sensitiveUnlockedAtRef.current),
       ttlMs: SENSITIVE_UNLOCK_TTL_MS,
       fresh: opts?.fresh ?? false,
     });
-    if (prompt) setPinLocked(true);
-  }, [state, pinLocked]);
+    if (!prompt) return;
+    if (privatePin) setPeoplePinPrompt(true);
+    else setPinLocked(true);
+  }, [state, pinLocked, peoplePinPrompt]);
+
+  const verifyPeoplePin = useCallback(async (pin: string): Promise<PinResult> => {
+    try {
+      const res = await fetch("/api/auth/people-pin/verify", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin }),
+      });
+      if (res.ok) {
+        peopleUnlockedAtRef.current = Date.now();
+        setPeoplePinPrompt(false);
+        return {};
+      }
+      const data = await res.json().catch(() => ({}));
+      return { error: data.error ?? "Incorrect PIN", attemptsLeft: data.attemptsLeft, lockedUntil: data.lockedUntil, remainingSeconds: data.remainingSeconds };
+    } catch (err) {
+      console.warn("[Auth] People PIN verify network error:", err);
+      return { error: "Network error — please try again" };
+    }
+  }, []);
+
+  const cancelPeoplePin = useCallback(() => setPeoplePinPrompt(false), []);
 
   // Manually lock the station — clears pinVerifiedAt server-side and locally.
   // We lock the UI regardless of the server response (security-first): if the
@@ -578,19 +618,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setPinLocked(true);
     markPinLockApplied();
-    // Manual lock also invalidates the sensitive unlock window.
+    // Manual lock also invalidates the sensitive unlock windows.
     sensitiveUnlockedAtRef.current = 0;
+    peopleUnlockedAtRef.current = 0;
   }, []);
 
   const logout = useCallback(async () => {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     setState({ status: "unauthenticated" });
     setPinLocked(false);
+    setPeoplePinPrompt(false);
     sensitiveUnlockedAtRef.current = 0;
+    peopleUnlockedAtRef.current = 0;
   }, []);
 
   return (
-    <AuthContext.Provider value={{ state, pinLocked, login, pinLogin, verifyPin, lockStation, logout, refreshUser, requireSensitivePin }}>
+    <AuthContext.Provider value={{ state, pinLocked, login, pinLogin, verifyPin, lockStation, logout, refreshUser, requireSensitivePin, peoplePinPrompt, verifyPeoplePin, cancelPeoplePin }}>
       {children}
     </AuthContext.Provider>
   );

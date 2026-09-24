@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useAuth } from "@/contexts/auth-context";
-import { shouldDemandPinOnEntry } from "@/lib/sensitive-pin";
+import { shouldDemandPinOnEntry, type SensitiveScope } from "@/lib/sensitive-pin";
 
 /**
  * Demand the sensitive-page PIN once per ENTRY to a page.
@@ -21,8 +21,10 @@ export function useSensitivePinGate(opts: {
   includeAdmins?: boolean;
   fresh?: boolean;
   entryKey?: string;
+  /** "people" = the People section: asks for the private PIN if set. */
+  scope?: SensitiveScope;
 }) {
-  const { enabled = true, includeAdmins = false, fresh = false, entryKey = "page" } = opts;
+  const { enabled = true, includeAdmins = false, fresh = false, entryKey = "page", scope = "general" } = opts;
   const { state, requireSensitivePin } = useAuth();
   const demandedFor = useRef<string | null>(null);
 
@@ -35,6 +37,6 @@ export function useSensitivePinGate(opts: {
     }
     if (!shouldDemandPinOnEntry({ authenticated, enabled, demandedFor: demandedFor.current, entryKey })) return;
     demandedFor.current = entryKey;
-    requireSensitivePin({ includeAdmins, fresh });
-  }, [state.status, enabled, entryKey, includeAdmins, fresh, requireSensitivePin]);
+    requireSensitivePin({ includeAdmins, fresh, scope });
+  }, [state.status, enabled, entryKey, includeAdmins, fresh, scope, requireSensitivePin]);
 }

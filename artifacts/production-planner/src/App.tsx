@@ -40,6 +40,7 @@ import Settings from "@/pages/settings";
 import LeanCave from "@/pages/lean-cave";
 import LeanStart from "@/pages/lean-start";
 import ReturnToWorkPage from "@/pages/return-to-work";
+import PeoplePinPage from "@/pages/people-pin";
 import PeopleRecordsPage from "@/pages/people-records";
 import Reports from "@/pages/reports";
 import Improvements from "@/pages/improvements";
@@ -74,6 +75,7 @@ import ForgotPassword from "@/pages/forgot-password";
 import ResetPassword from "@/pages/reset-password";
 import { Loader2 } from "lucide-react";
 import { PinLockOverlay } from "@/components/pin-lock-overlay";
+import { PeoplePinOverlay } from "@/components/people-pin-overlay";
 import { PasswordResetGate } from "@/components/password-reset-gate";
 import { LeanReviewPage } from "@/components/lean-weekly-review";
 import { toast } from "@/hooks/use-toast";
@@ -224,6 +226,7 @@ function Router() {
               <Route path="/lean-review" component={LeanReviewPage} />
               <Route path="/lean-start" component={LeanStart} />
               <Route path="/return-to-work" component={ReturnToWorkPage} />
+              <Route path="/account/people-pin" component={PeoplePinPage} />
               <Route path="/people" component={PeopleRecordsPage} />
               <Route path="/hub" component={EmployeeHub} />
               <Route path="/documents/:id" component={DocumentViewer} />
@@ -238,7 +241,7 @@ function Router() {
 }
 
 function AuthGate() {
-  const { state, pinLocked, refreshUser } = useAuth();
+  const { state, pinLocked, peoplePinPrompt, refreshUser } = useAuth();
   const [location] = useLocation();
 
   const isPublicPath = PUBLIC_PATHS.some(p => location.startsWith(p));
@@ -289,6 +292,7 @@ function AuthGate() {
       <PasswordResetGate />
       <Router />
       {pinLocked && <PinLockOverlay />}
+      {!pinLocked && peoplePinPrompt && <PeoplePinOverlay />}
     </>
   );
 }

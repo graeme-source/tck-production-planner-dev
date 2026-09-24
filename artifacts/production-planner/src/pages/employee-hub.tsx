@@ -1192,7 +1192,7 @@ export default function EmployeeHub() {
   // re-ask, and asking again after each unlock would loop the prompt
   // forever (Graeme, 2026-09-07) — the hook now enforces that for every
   // people-data page rather than each one remembering to.
-  useSensitivePinGate({ includeAdmins: true, entryKey: "employee-hub" });
+  useSensitivePinGate({ includeAdmins: true, entryKey: "employee-hub", scope: "people" });
   // Managers write records for anyone; everyone else sees only their own.
   // Who sees the "Whose record?" list rather than just their own record.
   // Identity, not role: the server decides (PEOPLE_DATA_EMAILS) and this

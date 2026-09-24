@@ -51,7 +51,7 @@ export default function PeopleRecordsPage() {
   // while deep-linking straight to one of them still asks.
   // Waits for the access flag so nobody who is about to be turned away is
   // asked for a PIN first.
-  useSensitivePinGate({ enabled: isRtwManager, includeAdmins: true, fresh: true, entryKey: "people-records" });
+  useSensitivePinGate({ enabled: isRtwManager, includeAdmins: true, fresh: true, entryKey: "people-records", scope: "people" });
 
   if (state.status !== "authenticated") {
     return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;

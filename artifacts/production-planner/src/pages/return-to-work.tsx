@@ -355,7 +355,7 @@ export default function ReturnToWorkPage() {
   // entry, admins included — same posture as the Employee Hub. The People
   // page asks on the way in, so the unlock window covers arriving from
   // there instead of demanding the same PIN twice in a row.
-  useSensitivePinGate({ includeAdmins: true, entryKey: "return-to-work" });
+  useSensitivePinGate({ includeAdmins: true, entryKey: "return-to-work", scope: "people" });
   const params = new URLSearchParams(search);
   const forUser = params.get("user") != null ? Number(params.get("user")) : null;
   const queryClient = useQueryClient();
