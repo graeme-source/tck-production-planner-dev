@@ -48,7 +48,11 @@ interface StationSop {
 async function stationSops(station: string): Promise<StationSop[]> {
   const r = await db.execute<{ sop_id: number; title: string; step_count: number; content_version: number; changed_at: string }>(sql`
     SELECT s.id AS sop_id, s.title, s.content_version,
-           to_char(s.content_changed_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS changed_at,
+           -- A naive timestamp written by NOW() in the session's zone; cast
+           -- back through that zone so the browser gets a real offset (the
+           -- live database runs on UTC, so a bare value would read an hour
+           -- out in BST).
+           s.content_changed_at::timestamptz::text AS changed_at,
            (SELECT COUNT(*)::int FROM sop_steps st WHERE st.sop_id = s.id) AS step_count
     FROM sop_links l JOIN standards_sops s ON s.id = l.sop_id
     WHERE l.target_type = 'station' AND l.target_text = ${station}
