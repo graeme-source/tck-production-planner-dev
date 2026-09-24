@@ -7,6 +7,7 @@ import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import path from "path";
 import router from "./routes";
 import { BIG_BODY_JSON_ROUTES } from "./lib/big-body-routes";
+import { CSP_DIRECTIVES } from "./lib/csp";
 import publicSurveysRouter from "./routes/public-surveys";
 
 const sessionSecret = process.env["SESSION_SECRET"];
@@ -69,28 +70,7 @@ app.use(helmet({
   // told the origin (https://…), never the path, so nothing about which
   // meeting or which page anyone is on leaves the building.
   referrerPolicy: { policy: "strict-origin-when-cross-origin" },
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-      fontSrc: ["'self'", "https://fonts.gstatic.com"],
-      imgSrc: ["'self'", "data:", "https:"],
-      connectSrc: ["'self'", "https:"],
-      // Allow YouTube + Vimeo iframes — used by:
-      //   - Lean Cave "Video Learning" section (Lean Made Simple shorts)
-      //   - SOP step descriptions that contain a YouTube/Vimeo URL, which
-      //     the SOP viewer auto-embeds (see detectVideoEmbed in
-      //     standards-sops-dialog.tsx). Without this, both surfaces render
-      //     blocked-frame placeholders on production.
-      frameSrc: [
-        "'self'",
-        "https://www.youtube.com",
-        "https://www.youtube-nocookie.com",
-        "https://player.vimeo.com",
-      ],
-    },
-  },
+  contentSecurityPolicy: { directives: CSP_DIRECTIVES },
 }));
 
 // Some routes take base64 images as JSON and need more than the global 1 MB
