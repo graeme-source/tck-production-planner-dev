@@ -20,9 +20,13 @@ describe("safeTestPath", () => {
 describe("tabCount", () => {
   const counts = { proposed: 3, approved: 1, rejected: 2, in_progress: 0, fixed: 4, wont_fix: 1, awaitingReply: 1 };
   it("reads each tab's count, folding won't-fix into Rejected", () => {
-    expect(tabCount(counts, "proposed")).toBe(3);
+    expect(tabCount(counts, "proposed")).toBe(2);
     expect(tabCount(counts, "rejected")).toBe(3);
     expect(tabCount(undefined, "fixed")).toBe(0);
+  });
+  it("To review leaves out cards waiting on Claude's answer to a reply", () => {
+    expect(tabCount({ ...counts, proposed: 2, awaitingReply: 2 }, "proposed")).toBe(0);
+    expect(tabCount({ ...counts, proposed: 0, awaitingReply: 1 }, "proposed")).toBe(0);
   });
 });
 

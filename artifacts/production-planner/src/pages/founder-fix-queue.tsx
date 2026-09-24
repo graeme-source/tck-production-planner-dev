@@ -323,6 +323,45 @@ function FixCard({ item, onDecide, saving }: {
   );
 }
 
+/** A card Graeme has replied to, folded to one line: nothing for him to do
+ *  until Claude answers, so it shouldn't look like it needs him. Tap to
+ *  open the full card (e.g. to reject it while waiting). */
+function WaitingRow({ item, onDecide, saving }: {
+  item: FixQueueItem;
+  onDecide: (action: DecisionAction, note?: string) => void;
+  saving: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const { triage: t, issue } = item;
+  if (open) {
+    return (
+      <div className="space-y-2">
+        <button onClick={() => setOpen(false)} className="text-sm font-semibold text-muted-foreground hover:text-foreground flex items-center gap-1.5">
+          <ChevronDown className="w-4 h-4" /> Fold it back up
+        </button>
+        <FixCard item={item} onDecide={onDecide} saving={saving} />
+      </div>
+    );
+  }
+  return (
+    <button
+      onClick={() => setOpen(true)}
+      className="w-full text-left rounded-2xl border border-sky-200 dark:border-sky-900 bg-sky-50/60 dark:bg-sky-950/20 px-4 py-3 flex items-center gap-3 hover:bg-sky-50 dark:hover:bg-sky-950/40"
+    >
+      <MessageCircleQuestion className="w-5 h-5 text-sky-600 flex-shrink-0" />
+      <span className="flex-1 min-w-0">
+        <span className="block text-sm font-semibold truncate">
+          #{t.andonIssueId} · {issue?.description?.trim() || t.verdictSummary}
+        </span>
+        <span className="block text-xs text-muted-foreground truncate">
+          You replied {t.decidedAt ? feedTimestamp(t.decidedAt) : ""}{t.decisionNote ? ` — “${t.decisionNote}”` : ""}
+        </span>
+      </span>
+      <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+    </button>
+  );
+}
+
 // ── Page ────────────────────────────────────────────────────────────────────
 
 export default function FounderFixQueue() {
@@ -398,6 +437,10 @@ export default function FounderFixQueue() {
 
   const items = data?.items ?? [];
   const saving = savingIds.size > 0;
+  // On To review, cards Graeme has replied to fold away below — they're
+  // waiting on Claude, not him.
+  const waitingOnClaude = tab === "proposed" ? items.filter(i => i.triage.awaitingRetriage) : [];
+  const needsYou = tab === "proposed" ? items.filter(i => !i.triage.awaitingRetriage) : items;
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -447,18 +490,20 @@ export default function FounderFixQueue() {
           <p className="text-sm">{(error as Error).message}</p>
         </div>
       )}
-      {!isLoading && !error && items.length === 0 && (
+      {!isLoading && !error && needsYou.length === 0 && (
         <div className="rounded-3xl border-2 border-dashed border-border p-10 text-center text-muted-foreground">
           <CheckCircle2 className="w-10 h-10 mx-auto mb-3 text-emerald-600" />
           <p className="text-lg font-semibold text-foreground">Nothing here</p>
           <p className="text-sm mt-1">
-            {tab === "proposed" ? "No recommendations waiting for you. New ones appear as Claude reviews the issue log." : "No items in this list."}
+            {tab === "proposed"
+              ? (waitingOnClaude.length > 0 ? "Nothing needs you right now — the rest are waiting on Claude." : "No recommendations waiting for you. New ones appear as Claude reviews the issue log.")
+              : "No items in this list."}
           </p>
         </div>
       )}
 
       <div className="space-y-5">
-        {items.map(item => (
+        {needsYou.map(item => (
           <FixCard
             key={item.triage.id}
             item={item}
@@ -467,6 +512,27 @@ export default function FounderFixQueue() {
           />
         ))}
       </div>
+
+      {waitingOnClaude.length > 0 && (
+        <section className="space-y-2 pt-2">
+          <h2 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">
+            Waiting for Claude — nothing for you to do ({waitingOnClaude.length})
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            You've replied to these. Claude picks replies up on its next review and the card comes back up top, updated.
+          </p>
+          <div className="space-y-2">
+            {waitingOnClaude.map(item => (
+              <WaitingRow
+                key={item.triage.id}
+                item={item}
+                saving={savingIds.has(item.triage.id)}
+                onDecide={(action, note) => decide.mutate({ id: item.triage.id, action, note })}
+              />
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

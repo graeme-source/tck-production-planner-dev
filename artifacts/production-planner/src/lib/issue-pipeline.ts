@@ -95,7 +95,11 @@ export const LANE_LABELS: Record<TriageLane, string> = {
 /** Count shown on each Fix queue tab. Rejected also holds won't-fix. */
 export function tabCount(counts: FixQueueResponse["counts"] | undefined, tab: FixQueueTab): number {
   if (!counts) return 0;
-  return tab === "rejected" ? (counts.rejected ?? 0) + (counts.wont_fix ?? 0) : (counts[tab] ?? 0);
+  if (tab === "rejected") return (counts.rejected ?? 0) + (counts.wont_fix ?? 0);
+  // "To review" counts only what needs Graeme: a card he has replied to is
+  // waiting on Claude, not on him (Graeme, 2026-09-24).
+  if (tab === "proposed") return Math.max(0, (counts.proposed ?? 0) - (counts.awaitingReply ?? 0));
+  return counts[tab] ?? 0;
 }
 
 /**
