@@ -42,3 +42,4 @@ export * from "./features";
 export * from "./contracts";
 export * from "./starter_forms";
 export * from "./incidents";
+export * from "./issue_triage";
