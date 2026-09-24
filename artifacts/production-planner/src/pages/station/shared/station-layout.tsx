@@ -23,6 +23,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { StationSopRail, StationSopManageModal } from "@/components/sop-link-chips";
+import { StationSopGate } from "@/components/station-sop-gate";
 import { LeanWeeklyStrip } from "@/components/lean-weekly-review";
 import { QuickActionsDock } from "@/components/layout";
 import { CurrentUserBadge } from "@/components/current-user-badge";
@@ -315,6 +316,9 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
           <LeanWeeklyStrip />
         </div>
         <StationSopRail stationType={stationType} stationLabel={meta.label} />
+        {/* Station training: the SOPs above must be reviewed (and re-reviewed
+            after they change) by whoever works this station on its live plan. */}
+        <StationSopGate stationType={stationType} stationLabel={meta.label} planDate={plan?.planDate} />
         <StationReminderBanner stationType={stationType} plan={plan} />
         {/* Messages sent to THIS station — banner until someone taps Got it. */}
         <div className="mb-3 empty:hidden">

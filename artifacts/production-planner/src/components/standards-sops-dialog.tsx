@@ -127,7 +127,7 @@ type EmbeddedVideo =
   | { kind: "iframe"; src: string; title: string }
   | { kind: "file"; src: string; mime?: string };
 
-function detectVideoEmbed(description: string): EmbeddedVideo | null {
+export function detectVideoEmbed(description: string): EmbeddedVideo | null {
   const trimmed = description.trim();
   // The entire description must be a single URL with optional surrounding
   // whitespace. Multi-line / sentence-with-link descriptions fall through
