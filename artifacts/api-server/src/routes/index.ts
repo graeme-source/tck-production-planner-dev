@@ -72,6 +72,7 @@ import wholesaleBagsRouter from "./wholesale-bags";
 import bundlesRouter from "./bundles";
 import trainingRouter from "./training";
 import trainingAcknowledgeRouter from "./training-acknowledge";
+import stationTrainingRouter from "./station-training";
 import incidentsRouter from "./incidents";
 import onboardingRouter from "./onboarding";
 import goveeRouter from "./govee";
@@ -253,6 +254,10 @@ router.use("/incidents", requireAdminOrManager, incidentsRouter);
 // colleague confirms their own reading, so no manager guard; the router
 // scopes everything to the session user.
 router.use("/training-ack", trainingAcknowledgeRouter);
+// Station SOP training — every colleague reviews the SOPs on the front of
+// the stations they work, from the station gate or the matrix. Writes are
+// scoped to the session user; the kill switch inside is admin-only.
+router.use("/station-training", stationTrainingRouter);
 router.use("/govee", goveeRouter);
 // Visitor book. Open to all logged-in staff — anyone on the floor may be the
 // one who greets a visitor and hands them the iPad.
