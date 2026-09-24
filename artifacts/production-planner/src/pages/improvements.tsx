@@ -35,6 +35,8 @@ import { useMarkImprovementSeen } from "@/hooks/use-unseen-improvements";
 import { isIdea, needsReview } from "@/lib/improvement-review";
 import { scrollAppToTop } from "@/lib/scroll";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
+import { CreditPeoplePicker, ImprovementCreditEditor } from "@/components/credit-people-picker";
+import { creditIds, creditLabel, isCreditedTo } from "@/lib/improvement-credits";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -66,12 +68,18 @@ type Improvement = {
   canMarkDone: boolean;
   markDoneBlocker: string | null;
   canReview: boolean;
+  submittedBy: number | null;
   submittedByName: string | null;
   /** Whose list it is on. Null means nobody's — it sits in "Up for grabs"
    *  until someone picks it up. */
   assignedTo: number | null;
   assignedToName: string | null;
+  /** The lead credited person only — show creditNames instead. */
   creditedToName: string | null;
+  /** Everyone credited, lead first (migration 0125). */
+  credits?: Array<{ userId: number; name: string | null }>;
+  /** Everyone credited, joined for display: "Graeme & Bodan". */
+  creditNames?: string | null;
   approvedByName: string | null;
   reviewNote: string | null;
   createdAt: string;
@@ -146,8 +154,9 @@ type ScoreRow = { userId: number | null; name: string; count: number; signedOff:
 
 /** A done improvement's chip carries the doer's name — "To do" on finished
  *  work read as nonsense (Graeme, 2026-09-02). */
-function stageChipText(item: Pick<Improvement, "stage" | "stageLabel" | "creditedToName" | "submittedByName">): string {
-  const who = item.creditedToName || item.submittedByName;
+function stageChipText(item: Pick<Improvement, "stage" | "stageLabel" | "creditNames" | "creditedToName" | "submittedByName">): string {
+  // Everyone credited — "Graeme & Bodan ✓" — never just the first.
+  const who = creditLabel(item);
   if (!who) return item.stageLabel;
   if (item.stage === "waiting") return `Done — ${who}`;
   if (item.stage === "approved") return `${who} ✓`;
@@ -567,7 +576,7 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
         {item.mediaCount > 0 && (
           <span className="flex items-center gap-1.5"><Camera className="w-4 h-4" /> {item.mediaCount}</span>
         )}
-        {item.creditedToName && <span>{item.creditedToName}</span>}
+        {(item.creditNames ?? item.creditedToName) && <span>{item.creditNames ?? item.creditedToName}</span>}
         {item.subjectTitle && (
           <span className="text-sm px-2 py-0.5 rounded-lg bg-secondary font-semibold">
             {item.subjectTitle}{item.subjectConfirmed ? "" : "?"}
@@ -613,6 +622,10 @@ function LogImprovement({ onDone, onCancel }: { onDone: (id: number) => void; on
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [alreadyDone, setAlreadyDone] = useState(true);
+  // "Done with…" (Graeme, 2026-09-24) — you're ticked; add whoever helped.
+  const { state: auth } = useAuth();
+  const meId = auth.status === "authenticated" ? auth.user.id : null;
+  const [credited, setCredited] = useState<number[]>(meId != null ? [meId] : []);
 
   const create = useMutation({
     mutationFn: () => api<{ id: number }>("/improvements", {
@@ -624,6 +637,9 @@ function LogImprovement({ onDone, onCancel }: { onDone: (id: number) => void; on
         // "It needs doing" leaves it unassigned, so it shows up for grabs
         // instead of landing on the reporter's own list.
         claim: alreadyDone,
+        // Done work is credited to everyone ticked; an idea is credited
+        // when it's done.
+        ...(alreadyDone && credited.length > 0 ? { creditUserIds: credited } : {}),
       }),
     }),
     onSuccess: (row) => {
@@ -680,6 +696,14 @@ function LogImprovement({ onDone, onCancel }: { onDone: (id: number) => void; on
           className="w-full px-4 py-3 rounded-2xl border-2 border-border bg-card text-lg focus:outline-none focus:ring-2 focus:ring-primary/40 resize-y"
         />
       </div>
+
+      {alreadyDone && (
+        <div>
+          <label className="text-lg font-bold mb-1 block">Who did it?</label>
+          <p className="text-base text-muted-foreground mb-3">Tap anyone who helped — they all get the credit.</p>
+          <CreditPeoplePicker selected={credited} onChange={setCredited} meId={meId} />
+        </div>
+      )}
 
       <div className="rounded-2xl bg-secondary/40 p-4">
         <p className="text-base font-semibold">
@@ -783,32 +807,6 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
     onError: (e: Error) => toast({ title: "Couldn't save your vote", description: e.message, variant: "destructive" }),
   });
 
-  // Who gets the credit — the reporter deserves it even when someone else
-  // (usually Graeme, for app changes) did the fixing (2026-09-10).
-  const { data: creditUsers = [] } = useQuery<Array<{ id: number; name: string }>>({
-    queryKey: ["users-for-credit"],
-    enabled: isManager,
-    staleTime: 5 * 60_000,
-    queryFn: async () => {
-      const res = await fetch(`${BASE}/api/users`, { credentials: "include" });
-      if (!res.ok) return [];
-      const rows = (await res.json()) as Array<{ id: number; name: string; isActive?: boolean }>;
-      return rows.filter(u => u.isActive !== false).map(u => ({ id: u.id, name: u.name }));
-    },
-  });
-  const changeCredit = useMutation({
-    mutationFn: (userId: number) => api(`/improvements/${id}/credit`, {
-      method: "PATCH", body: JSON.stringify({ userId }),
-    }),
-    onSuccess: () => {
-      refresh();
-      queryClient.invalidateQueries({ queryKey: ["improvements"] });
-      queryClient.invalidateQueries({ queryKey: ["improvement-scoreboard"] });
-      toast({ title: "Credit moved", description: "The feed and the scoreboard now show them." });
-    },
-    onError: (e: Error) => toast({ title: "Couldn't move the credit", description: e.message, variant: "destructive" }),
-  });
-
   const markDone = useMutation({
     mutationFn: () => api(`/improvements/${id}/done`, { method: "POST" }),
     onSuccess: () => {
@@ -871,7 +869,10 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
         )}
         <p className="text-base text-muted-foreground mt-3">
           Logged by {item.submittedByName ?? "someone"}
-          {item.creditedToName && item.creditedToName !== item.submittedByName && ` · credited to ${item.creditedToName}`}
+          {(() => {
+            const names = item.creditNames ?? item.creditedToName;
+            return names && names !== item.submittedByName ? ` · credited to ${names}` : null;
+          })()}
         </p>
         {/* Whose job it is now — the thing the board is actually sorted by,
             and it was nowhere on this screen. */}
@@ -907,30 +908,23 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
         )
       )}
 
-      {/* Credit — who this improvement belongs to. Reporter-first: the
-          person who spotted it keeps the credit even when someone else made
-          the technical change. */}
-      {isManager && (
-        <div className="rounded-2xl border-2 border-border bg-card p-4 flex items-center gap-3 flex-wrap">
-          <div className="min-w-0 flex-1">
-            <p className="text-base font-bold">Credited to</p>
-            <p className="text-sm text-muted-foreground">
-              {item.creditedToName ?? item.submittedByName ?? "Nobody yet"} — counts on their scoreboard and shows on the feed.
-            </p>
-          </div>
-          <select
-            value=""
-            onChange={e => {
-              const uid = Number(e.target.value);
-              if (Number.isInteger(uid) && uid > 0) changeCredit.mutate(uid);
-            }}
-            disabled={changeCredit.isPending}
-            className="h-11 rounded-xl border-2 border-border bg-background px-3 text-base font-semibold disabled:opacity-50"
-          >
-            <option value="">{changeCredit.isPending ? "Saving…" : "Give credit to…"}</option>
-            {creditUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-          </select>
-        </div>
+      {/* Credit — everyone this improvement belongs to (Graeme, 2026-09-24:
+          "I did an improvement with Bodan … I can only assign it to me").
+          Reporter-first by default: the person who spotted it keeps the
+          credit even when someone else made the technical change, and
+          anyone who helped is ticked alongside. A manager, whoever logged
+          it, or anyone already credited can change it. */}
+      {(isManager
+        || (currentUserId != null && item.submittedBy === currentUserId)
+        || isCreditedTo(item, currentUserId)) && (
+        <ImprovementCreditEditor
+          improvementId={item.id}
+          initial={creditIds(item).length > 0
+            ? creditIds(item)
+            : item.submittedBy != null ? [item.submittedBy] : []}
+          stageIsTodo={item.stage === "todo"}
+          meId={currentUserId}
+        />
       )}
 
       {item.stage === "sent_back" && item.reviewNote && (
@@ -1033,7 +1027,7 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
       {item.stage === "approved" && (
         <div className="rounded-2xl bg-emerald-500/10 p-5 text-center">
           <Trophy className="w-8 h-8 mx-auto text-emerald-500 mb-2" />
-          <p className="text-xl font-bold">Approved{item.creditedToName ? ` — nice one, ${item.creditedToName}` : ""}</p>
+          <p className="text-xl font-bold">Approved{(item.creditNames ?? item.creditedToName) ? ` — nice one, ${item.creditNames ?? item.creditedToName}` : ""}</p>
           {item.approvedByName && <p className="text-base text-muted-foreground mt-1">Signed off by {item.approvedByName}</p>}
         </div>
       )}
@@ -1136,7 +1130,9 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
               {item.stage === "approved" && (
                 <p className="text-base font-semibold">
                   It's approved, so it stops counting towards
-                  {item.creditedToName ? ` ${item.creditedToName}'s` : " anyone's"} total.
+                  {(item.creditNames ?? item.creditedToName)
+                    ? ` ${item.creditNames ?? item.creditedToName}'s ${(item.credits?.length ?? 1) > 1 ? "totals" : "total"}.`
+                    : " anyone's total."}
                 </p>
               )}
               <p className="text-sm text-muted-foreground">

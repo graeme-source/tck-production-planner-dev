@@ -160,3 +160,19 @@ export const improvementViewsTable = pgTable("improvement_views", {
 ]);
 
 export type ImprovementView = typeof improvementViewsTable.$inferSelect;
+
+// Everyone an improvement is credited to (migration 0125). credited_to on
+// improvement_submissions stays as the lead name; the credited set is the
+// union of the two (lib/db/src/improvement-credits.ts has the rules).
+export const improvementCreditsTable = pgTable("improvement_credits", {
+  id: serial("id").primaryKey(),
+  improvementId: integer("improvement_id").notNull().references(() => improvementSubmissionsTable.id, { onDelete: "cascade" }),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  userName: text("user_name"),
+  position: integer("position").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => [
+  unique("uq_improvement_credit").on(table.improvementId, table.userId),
+]);
+
+export type ImprovementCredit = typeof improvementCreditsTable.$inferSelect;

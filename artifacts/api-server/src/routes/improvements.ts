@@ -3,6 +3,7 @@ import {
   db, improvementSubmissionsTable, improvementCommentsTable, usersTable,
   notificationsTable,
   stageOf, STAGE_LABEL, canMarkDone, markDoneBlocker, canReview, shouldAutoSubmit,
+  formatCreditNames, isCredited, withLead, MAX_CREDITED_PEOPLE, type CreditPerson,
 } from "@workspace/db";
 import { eq, desc, asc, sql, inArray } from "drizzle-orm";
 import { z } from "zod";
@@ -19,6 +20,7 @@ import { ffmpegAvailable } from "../lib/sop-video";
 import { singleFileUpload } from "../middleware/upload";
 import { sendPushToUsers } from "../services/push";
 import { queueReviewTodo } from "../lib/improvement-review-todo";
+import { CREDIT_PAIRS, creditsFor, setImprovementCredits, pinLeadCredit } from "../lib/improvement-credits-data";
 
 const router: IRouter = Router();
 
@@ -53,11 +55,17 @@ function decorate(
   viewer: { id?: number; isManager: boolean },
   votes: { count: number; mine: boolean } = { count: 0, mine: false },
   subjectTitle: string | null = null,
+  credits: CreditPerson[] = row.creditedTo != null ? [{ userId: row.creditedTo, name: row.creditedToName }] : [],
 ) {
   const stage = stageOf(row.progressStatus);
   return {
     ...row,
     stage,
+    // Everyone credited, lead first, and how the card says it — "Graeme &
+    // Bodan" (Graeme, 2026-09-24). Screens show creditNames rather than the
+    // lead-only creditedToName.
+    credits,
+    creditNames: formatCreditNames(credits.map(c => c.name)),
     stageLabel: STAGE_LABEL[stage],
     mediaCount,
     voteCount: votes.count,
@@ -69,7 +77,7 @@ function decorate(
     // "Mine" means work I'm carrying, not everything I've ever typed in — an
     // idea logged for someone else belongs in "up for grabs", so this keys on
     // credit and assignment rather than who submitted it.
-    isMine: !!viewer.id && (row.creditedTo === viewer.id || row.assignedTo === viewer.id),
+    isMine: !!viewer.id && (isCredited(credits, viewer.id) || row.assignedTo === viewer.id),
     canMarkDone: canMarkDone(row.progressStatus, mediaCount),
     markDoneBlocker: markDoneBlocker(row.progressStatus, mediaCount),
     canReview: viewer.isManager && canReview(row.progressStatus),
@@ -202,6 +210,9 @@ router.get("/", async (req: Request, res: Response) => {
     `);
     const seenIds = new Set((seenRows.rows ?? []).map(r => Number(r.improvement_id)));
 
+    // Everyone credited on each one — the card names them all.
+    const creditsById = await creditsFor(rows);
+
     // Emoji reactions, aggregated per improvement with "did I press this one".
     const reactionRows = ids.length === 0 ? { rows: [] } : await db.execute<{ improvement_id: number; emoji: string; n: number; mine: boolean }>(sql`
       SELECT improvement_id, emoji,
@@ -225,6 +236,7 @@ router.get("/", async (req: Request, res: Response) => {
         viewer,
         votesById.get(r.id) ?? { count: 0, mine: false },
         r.subjectId != null ? subjectTitles.get(r.subjectId) ?? null : null,
+        creditsById.get(r.id) ?? [],
       ),
       media: mediaById.get(r.id) ?? [],
       seenByMe: seenIds.has(r.id),
@@ -277,6 +289,8 @@ router.post("/:id/react", async (req: Request, res: Response) => {
  *  buzz, in the app (Graeme, 2026-09-02). Fire-and-forget: a notification
  *  hiccup must never fail the person's "I've done this". */
 async function celebrateImprovement(improvementId: number, title: string, byUserId: number | null, byName: string | null) {
+  // byName is everyone credited, already joined — "Graeme & Bodan made an
+  // improvement" (migration 0125).
   const message = byName
     ? `Great news — ${byName} made an improvement: ${title}`
     : `Great news — an improvement just landed: ${title}`;
@@ -356,12 +370,19 @@ async function submitForApproval(
     .where(eq(improvementSubmissionsTable.id, row.id))
     .returning();
 
+  // The lead gets a credit row like everyone else (migration 0125). Any
+  // "done with" people added when it was logged are already there.
+  await pinLeadCredit(db, row.id);
+
   // Celebrate only a FIRST completion — a send-back being re-done
-  // shouldn't ping the whole team twice.
+  // shouldn't ping the whole team twice. It names everyone credited.
   if (opts.celebrate && row.progressStatus === "submitted_for_review") {
-    celebrateImprovement(row.id, updated!.title, userId, updated!.creditedToName ?? userName).catch(err =>
-      console.error("[Improvements] celebration notify failed:", err),
-    );
+    creditsFor([updated!])
+      .then(map => celebrateImprovement(
+        row.id, updated!.title, userId,
+        formatCreditNames((map.get(row.id) ?? []).map(c => c.name)) ?? userName,
+      ))
+      .catch(err => console.error("[Improvements] celebration notify failed:", err));
   }
   // With the approval step on, every completion (first or re-done after a
   // send-back) queues the founder's quiet review task.
@@ -413,37 +434,73 @@ router.put("/settings", async (req: Request, res: Response) => {
   }
 });
 
-// POST /:id/create-sop — turn an improvement into the basis of an SOP
-// (Graeme, 2026-09-07): some improvements ARE a how-to, photos and all. The
-// new SOP takes the improvement's title, its description as step one, and
-// every photo/video as a step (before-phase first), filed under the
 // PATCH /:id/credit — move the credit to whoever actually deserves it.
 // Graeme's case (2026-09-10): someone reports the thing, he makes the
 // technical change, and the improvement should be THEIRS — the report was
 // the valuable part. Manager-only; feeds the scoreboard and the feed's
-// name chips immediately.
-router.patch("/:id/credit", async (req: Request, res: Response) => {
+// name chips immediately. Replaces the whole list with that one person —
+// PUT /:id/credits below is the multi-person version the screens now use.
+const creditOneSchema = z.object({ userId: z.coerce.number().int().positive() });
+router.patch("/:id/credit", validate(creditOneSchema), async (req: Request, res: Response) => {
   const viewer = await viewerOf(req);
   if (!viewer.isManager) { res.status(403).json({ error: "Manager or admin access required" }); return; }
   const id = parseInt(String(req.params.id), 10);
-  const userId = parseInt(String(req.body?.userId ?? ""), 10);
-  if (isNaN(id) || isNaN(userId)) { res.status(400).json({ error: "Invalid id" }); return; }
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const { userId } = req.body as z.infer<typeof creditOneSchema>;
   try {
-    const [user] = await db.select({ id: usersTable.id, name: usersTable.name })
-      .from(usersTable).where(eq(usersTable.id, userId));
-    if (!user) { res.status(404).json({ error: "No such user" }); return; }
-    const [row] = await db.update(improvementSubmissionsTable)
-      .set({ creditedTo: user.id, creditedToName: user.name, updatedAt: new Date() })
-      .where(eq(improvementSubmissionsTable.id, id))
-      .returning({ id: improvementSubmissionsTable.id, creditedToName: improvementSubmissionsTable.creditedToName });
-    if (!row) { res.status(404).json({ error: "Not found" }); return; }
-    res.json(row);
+    const result = await db.transaction(tx => setImprovementCredits(tx, id, [userId]));
+    if (!result.ok) { res.status(result.status).json({ error: result.error }); return; }
+    res.json({
+      id,
+      creditedToName: result.credits[0]?.name ?? null,
+      credits: result.credits,
+      creditNames: formatCreditNames(result.credits.map(c => c.name)),
+    });
   } catch (err) {
     console.error("[Improvements] credit change failed:", err);
     res.status(500).json({ error: "Couldn't change the credit" });
   }
 });
 
+// PUT /:id/credits — everyone who gets the credit, in order (the first is
+// the lead). Graeme, 2026-09-24: "Ability to credit an improvement to
+// multiple different people would be good. I did an improvement with Bodan
+// recently, and I can only assign it to me currently."
+//
+// Who may change it: a manager, the person who logged it, or anyone already
+// credited on it — the people who were there. Never to nobody.
+const creditsSchema = z.object({
+  userIds: z.array(z.coerce.number().int().positive())
+    .min(1, "Pick at least one person to credit.")
+    .max(MAX_CREDITED_PEOPLE),
+});
+router.put("/:id/credits", validate(creditsSchema), async (req: Request, res: Response) => {
+  const viewer = await viewerOf(req);
+  if (!viewer.id) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const { userIds } = req.body as z.infer<typeof creditsSchema>;
+  try {
+    const [row] = await db.select().from(improvementSubmissionsTable).where(eq(improvementSubmissionsTable.id, id));
+    if (!row) { res.status(404).json({ error: "Not found" }); return; }
+    const current = (await creditsFor([row])).get(id) ?? [];
+    if (!viewer.isManager && row.submittedBy !== viewer.id && !isCredited(current, viewer.id)) {
+      res.status(403).json({ error: "Only a manager, whoever logged it, or someone already credited can change who gets the credit." });
+      return;
+    }
+    const result = await db.transaction(tx => setImprovementCredits(tx, id, userIds));
+    if (!result.ok) { res.status(result.status).json({ error: result.error }); return; }
+    res.json({ id, credits: result.credits, creditNames: formatCreditNames(result.credits.map(c => c.name)) });
+  } catch (err) {
+    console.error("[Improvements] credits change failed:", err);
+    res.status(500).json({ error: "Couldn't save who gets the credit" });
+  }
+});
+
+// POST /:id/create-sop — turn an improvement into the basis of an SOP
+// (Graeme, 2026-09-07): some improvements ARE a how-to, photos and all. The
+// new SOP takes the improvement's title, its description as step one, and
+// every photo/video as a step (before-phase first), filed under the
 // improvement's station so the library filter finds it. The client opens
 // the SOP editor on it straight away for the quick tidy-and-tag.
 router.post("/:id/create-sop", async (req: Request, res: Response) => {
@@ -508,7 +565,8 @@ router.post("/:id/done", async (req: Request, res: Response) => {
     }
 
     const updated = await submitForApproval(row, req.session.userId ?? null);
-    res.json(decorate(updated, mediaCount, await viewerOf(req)));
+    const credits = (await creditsFor([updated])).get(id) ?? [];
+    res.json(decorate(updated, mediaCount, await viewerOf(req), undefined, null, credits));
   } catch (err) {
     console.error("Error marking improvement done:", err);
     res.status(500).json({ error: "Failed to mark it as done" });
@@ -553,35 +611,48 @@ router.post("/:id/review", async (req: Request, res: Response) => {
       reviewerName = user?.name ?? null;
     }
 
-    // A manager may move the credit — the person who did the work isn't
-    // always the person who typed it in.
-    let creditedTo = row.creditedTo;
-    let creditedToName = row.creditedToName;
+    // A manager may name who did it on approval — the person who did the
+    // work isn't always the person who typed it in. They become the lead;
+    // anyone already credited keeps their credit (migration 0125).
+    let creditId: number | null = null;
     if (approve && req.body?.creditedTo != null) {
-      const creditId = parseInt(String(req.body.creditedTo), 10);
+      creditId = parseInt(String(req.body.creditedTo), 10);
       if (isNaN(creditId)) { res.status(400).json({ error: "Invalid creditedTo" }); return; }
-      const [person] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, creditId));
-      if (!person) { res.status(400).json({ error: "That person isn't on the team list." }); return; }
-      creditedTo = creditId;
-      creditedToName = person.name;
     }
 
-    const [updated] = await db.update(improvementSubmissionsTable)
-      .set({
-        progressStatus: approve ? "complete" : "rejected",
-        approvedBy: viewer.id ?? null,
-        approvedByName: reviewerName,
-        approvedAt: approve ? new Date() : null,
-        reviewNote: note || null,
-        creditedTo,
-        creditedToName,
-        updatedAt: new Date(),
-      })
-      .where(eq(improvementSubmissionsTable.id, id))
-      .returning();
+    let creditProblem: string | null = null;
+    const updated = await db.transaction(async tx => {
+      const [reviewed] = await tx.update(improvementSubmissionsTable)
+        .set({
+          progressStatus: approve ? "complete" : "rejected",
+          approvedBy: viewer.id ?? null,
+          approvedByName: reviewerName,
+          approvedAt: approve ? new Date() : null,
+          reviewNote: note || null,
+          updatedAt: new Date(),
+        })
+        .where(eq(improvementSubmissionsTable.id, id))
+        .returning();
+      if (creditId == null) return reviewed!;
+      const current = (await creditsFor([row], tx)).get(id) ?? [];
+      const moved = await setImprovementCredits(tx, id, withLead(current.map(c => c.userId), creditId));
+      if (!moved.ok) {
+        // Roll the whole review back — approving with the wrong name on it
+        // is worse than not approving yet.
+        creditProblem = moved.error;
+        tx.rollback();
+      }
+      const [reread] = await tx.select().from(improvementSubmissionsTable).where(eq(improvementSubmissionsTable.id, id));
+      return reread!;
+    }).catch(err => {
+      if (creditProblem) return null;
+      throw err;
+    });
+    if (!updated) { res.status(400).json({ error: creditProblem ?? "Couldn't save the review" }); return; }
 
     const counts = await attachmentCounts([id]);
-    res.json(decorate(updated!, counts.get(id) ?? 0, viewer));
+    const credits = (await creditsFor([updated])).get(id) ?? [];
+    res.json(decorate(updated, counts.get(id) ?? 0, viewer, undefined, null, credits));
   } catch (err) {
     console.error("Error reviewing improvement:", err);
     res.status(500).json({ error: "Failed to save the review" });
@@ -850,15 +921,22 @@ router.get("/scoreboard", async (_req: Request, res: Response) => {
     // so the tallies started from real history — but it was never approved by
     // anyone, and a screen that calls it "approved" is telling a small lie
     // (Graeme spotted exactly this, 2026-08-26).
+    //
+    // Every credited person counts the improvement in full — something
+    // Graeme did with Bodan is one on each of their tallies (migration
+    // 0125). CREDIT_PAIRS is the credit rows plus the lead, de-duplicated.
     const result = await db.execute<{ user_id: number | null; name: string | null; n: number; signed_off: number; last_at: Date | null }>(sql`
-      SELECT credited_to AS user_id,
-             COALESCE(credited_to_name, 'Unknown') AS name,
+      WITH pairs AS (${CREDIT_PAIRS})
+      SELECT p.user_id,
+             COALESCE(u.name, 'Unknown') AS name,
              COUNT(*)::int AS n,
-             COUNT(approved_at)::int AS signed_off,
-             MAX(approved_at) AS last_at
-        FROM improvement_submissions
-       WHERE progress_status = 'complete' AND credited_to IS NOT NULL
-       GROUP BY credited_to, credited_to_name
+             COUNT(s.approved_at)::int AS signed_off,
+             MAX(s.approved_at) AS last_at
+        FROM pairs p
+        JOIN improvement_submissions s ON s.id = p.improvement_id
+        LEFT JOIN app_users u ON u.id = p.user_id
+       WHERE s.progress_status = 'complete'
+       GROUP BY p.user_id, u.name
        ORDER BY n DESC, name ASC
     `);
     res.json((result.rows ?? []).map(r => ({
@@ -874,18 +952,28 @@ router.get("/scoreboard", async (_req: Request, res: Response) => {
   }
 });
 
-router.post("/", async (req: Request, res: Response) => {
+const createSchema = z.object({
+  title: z.string().trim().min(1, "title is required").max(1000),
+  description: z.string().trim().min(1, "description is required").max(20000),
+  station: z.string().trim().min(1, "station is required").max(200),
+  type: z.string().optional(),
+  reportContext: z.string().max(4000).nullish(),
+  claim: z.boolean().optional(),
+  // "Done with…" — everyone who did it, the recorder included (or not, if
+  // they're logging it for someone else). Left out = the old behaviour:
+  // credit is settled when it's marked done.
+  creditUserIds: z.array(z.coerce.number().int().positive()).min(1).max(MAX_CREDITED_PEOPLE).optional(),
+});
+
+router.post("/", validate(createSchema), async (req: Request, res: Response) => {
   try {
     // `claim` false = "it needs doing", logged for whoever picks it up. It
     // stays unassigned so it surfaces as up for grabs rather than sitting on
     // the reporter's own list. Defaults true (the old behaviour) so existing
     // callers — the Report modal, the station screens — are unaffected.
-    const { title, description, station, type, reportContext, claim } = req.body;
+    const { title, description, station, type, reportContext, claim, creditUserIds } =
+      req.body as z.infer<typeof createSchema>;
     const claimed = claim !== false;
-    if (!title || !description || !station) {
-      res.status(400).json({ error: "title, description, and station are required" });
-      return;
-    }
 
     const submissionType = type === "struggle" ? "struggle" : "improvement";
 
@@ -896,22 +984,38 @@ router.post("/", async (req: Request, res: Response) => {
       submittedByName = user?.name ?? null;
     }
 
-    const [row] = await db
-      .insert(improvementSubmissionsTable)
-      .values({
-        title,
-        description,
-        station,
-        type: submissionType,
-        submittedBy: userId ?? null,
-        submittedByName,
-        // Claimed submissions start assigned to whoever raised them; managers
-        // can reassign from the Improvements table.
-        assignedTo: claimed ? userId ?? null : null,
-        assignedToName: claimed ? submittedByName : null,
-        reportContext: reportContext || null,
-      })
-      .returning();
+    let creditProblem: string | null = null;
+    const row = await db.transaction(async tx => {
+      const [inserted] = await tx
+        .insert(improvementSubmissionsTable)
+        .values({
+          title,
+          description,
+          station,
+          type: submissionType,
+          submittedBy: userId ?? null,
+          submittedByName,
+          // Claimed submissions start assigned to whoever raised them; managers
+          // can reassign from the Improvements table.
+          assignedTo: claimed ? userId ?? null : null,
+          assignedToName: claimed ? submittedByName : null,
+          reportContext: reportContext || null,
+        })
+        .returning();
+      if (!inserted || !creditUserIds || creditUserIds.length === 0) return inserted;
+      // Everyone it was done with is credited from the start, so the
+      // completion (usually the after-photo upload moments later)
+      // celebrates and counts all of them.
+      const credited = await setImprovementCredits(tx, inserted.id, creditUserIds);
+      if (!credited.ok) { creditProblem = credited.error; tx.rollback(); }
+      const [reread] = await tx.select().from(improvementSubmissionsTable)
+        .where(eq(improvementSubmissionsTable.id, inserted.id));
+      return reread;
+    }).catch(err => {
+      if (creditProblem) return null;
+      throw err;
+    });
+    if (row === null) { res.status(400).json({ error: creditProblem ?? "Couldn't save who gets the credit" }); return; }
 
     // Tag it with the lean subject it illustrates, without keeping anyone
     // waiting — a missing tag is cosmetic, a slow submit is not.

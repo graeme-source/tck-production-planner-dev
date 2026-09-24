@@ -38,6 +38,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { LessonDiagram, DIAGRAM_OPTIONS } from "@/components/lesson-diagrams";
 import ImprovementsPage from "@/pages/improvements";
+import { creditLabel } from "@/lib/improvement-credits";
 import { MarkdownBlock, YouTubeEmbed } from "@/components/lesson-media";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -3238,6 +3239,8 @@ interface MeetingFeedImprovement {
   stage: "todo" | "waiting" | "approved" | "sent_back";
   submittedByName: string | null;
   creditedToName: string | null;
+  /** Everyone credited, joined — "Graeme & Bodan" (migration 0125). */
+  creditNames?: string | null;
   media?: Array<{ id: number; kind: "image" | "video"; phase: "before" | "after" | "stitched" | null }>;
 }
 
@@ -3273,7 +3276,8 @@ function ImprovementsFeedList({ limit }: { limit: number }) {
   return (
     <div className="space-y-4">
       {items.map(imp => {
-        const who = imp.creditedToName || imp.submittedByName;
+        // Everyone credited is named on the slide, not just the first.
+        const who = creditLabel(imp);
         return (
           <div key={imp.id} className="glass-panel rounded-2xl px-6 py-5">
             <div className="flex items-start gap-4">

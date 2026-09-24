@@ -25,6 +25,7 @@ import { StarterFormsList } from "@/components/starter-forms";
 import { TodoSheet, useMyOpenTodoCount } from "@/components/todo-lists";
 import { jsPDF } from "jspdf";
 import { toast } from "@/hooks/use-toast";
+import { isCreditedTo } from "@/lib/improvement-credits";
 
 // HMRC Approved Mileage Allowance Payment (AMAP) rates — cars and
 // vans. Unchanged since 2011 but stored in one place so updating
@@ -952,6 +953,10 @@ interface ImprovementRow {
   submittedByName: string | null;
   progressStatus: string | null;
   createdAt: string;
+  /** Everyone credited (migration 0125) — an improvement done with
+   *  someone else is on both people's lists. */
+  credits?: Array<{ userId: number; name: string | null }>;
+  creditNames?: string | null;
 }
 
 interface AndonRow {
@@ -1011,7 +1016,9 @@ function MyImprovementsList({ userId }: { userId: number | null }) {
   });
 
   if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
-  const rows = (data ?? []).filter(r => r.submittedBy === userId);
+  // Yours = ones you logged OR are credited on — "done with Bodan" is on
+  // Bodan's list too.
+  const rows = (data ?? []).filter(r => r.submittedBy === userId || isCreditedTo(r, userId));
   if (rows.length === 0) {
     return <EmptyList label="You haven't logged any improvements yet." />;
   }
@@ -1023,6 +1030,9 @@ function MyImprovementsList({ userId }: { userId: number | null }) {
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium truncate">{r.title}</p>
               <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{r.description}</p>
+              {(r.credits?.length ?? 0) > 1 && r.creditNames && (
+                <p className="text-xs font-medium text-muted-foreground mt-1">Credited to {r.creditNames}</p>
+              )}
             </div>
             <div className="text-right shrink-0">
               <p className="text-xs text-muted-foreground">{fmtRelative(r.createdAt)}</p>
@@ -1338,7 +1348,7 @@ export default function EmployeeHub() {
               <div className="mb-4 pb-4 border-b border-border">
                 <h2 className="text-lg font-semibold">My Improvements</h2>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Improvement ideas you've submitted. Add new ones from the report dialog on any station.
+                  Improvement ideas you've submitted, and improvements you're credited on. Add new ones from the report dialog on any station.
                 </p>
               </div>
               <MyImprovementsList userId={userId} />
