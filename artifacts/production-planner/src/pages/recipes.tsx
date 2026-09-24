@@ -47,6 +47,9 @@ const schema = z.object({
   cookingLossPercent: z.preprocess(v => (v === "" || v == null ? null : Number(v)), z.number().min(0).max(50).nullable().optional()),
   builderFillingDeductionGrams: z.preprocess(v => (v === "" || v == null ? 0 : Number(v)), z.number().int().min(0).max(500, "Max 500 g").optional()),
   dietaryCategory: z.preprocess(v => (v === "" ? null : v), z.enum(["meat", "vegetarian"]).nullable().optional()),
+  // Per-recipe oven override — blank = bake at the dietary profile's standard.
+  ovenTempC: z.preprocess(v => (v === "" || v == null ? null : Number(v)), z.number().int("Whole degrees only").min(50, "Min 50°C").max(450, "Max 450°C").nullable().optional()),
+  ovenTimeMinutes: z.preprocess(v => (v === "" || v == null ? null : Number(v)), z.number().min(0.5, "Min 0.5 min").max(60, "Max 60 min").nullable().optional()),
   tags: z.array(z.string()).optional(),
   ingredients: z.array(z.object({
     ingredientId: z.coerce.number().min(1, "Select ingredient"),
@@ -212,6 +215,8 @@ type RecipeExtras = {
   labelLiveDesignName?: string | null;
   isFridgeProduct?: boolean;
   dietaryCategory?: "meat" | "vegetarian" | null;
+  ovenTempC?: number | null;
+  ovenTimeSeconds?: number | null;
   cookingLossPercent?: number;
   tags?: string[];
 };
@@ -538,6 +543,19 @@ function RecipeForm({
               <span className="text-xs text-muted-foreground mt-1 block">Drives the oven-defaults overlay shown on the first batch built.</span>
             </div>
           </div>
+          <div>
+            <label className="text-sm font-medium mb-1 block">Oven temperature override (°C)</label>
+            <input type="number" step="1" min="50" max="450" {...register("ovenTempC")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="blank = profile standard" />
+            {errors.ovenTempC && <span className="text-destructive text-xs">{String(errors.ovenTempC.message)}</span>}
+          </div>
+          <div>
+            <label className="text-sm font-medium mb-1 block">Oven time override (minutes)</label>
+            <input type="number" step="0.25" min="0.5" max="60" {...register("ovenTimeMinutes")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="blank = profile standard" />
+            {errors.ovenTimeMinutes && <span className="text-destructive text-xs">{String(errors.ovenTimeMinutes.message)}</span>}
+          </div>
+          <p className="col-span-2 text-xs text-muted-foreground -mt-2">
+            Only for recipes that bake differently from the meat / vegetarian standard (e.g. 200°C for 6 minutes). When set, the building station shows a big amber “oven change” reminder on this recipe.
+          </p>
           <div className="col-span-2 flex items-center gap-4 flex-wrap">
             <div className="flex items-center gap-2">
               <input type="checkbox" id="isCoreMenu" {...register("isCoreMenu")} className="rounded border-border" />
@@ -1216,11 +1234,13 @@ function EditRecipeDialog({
         cookingLossPercent: detail.cookingLossPercent != null ? Number(detail.cookingLossPercent) : 3,
         builderFillingDeductionGrams: Number(detail.builderFillingDeductionGrams ?? 0),
         dietaryCategory: detail.dietaryCategory ?? null,
+        ovenTempC: detail.ovenTempC ?? null,
+        ovenTimeMinutes: detail.ovenTimeSeconds != null ? Number(detail.ovenTimeSeconds) / 60 : null,
         tags: Array.isArray(detail.tags) ? detail.tags : [],
         ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, marinadeAddAtCooking: i.marinadeAddAtCooking === true, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: i.isTopping === true, quid: i.quid === true, showInPrep: i.showInPrep === true, mixingOverage: Number(i.mixingOverage ?? 0) })),
         subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, marinadeAddAtCooking: s.marinadeAddAtCooking === true, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: s.isTopping === true, quid: s.quid === true, showInPrep: s.showInPrep === true, mixingOverage: Number(s.mixingOverage ?? 0) })),
       }
-    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", cookingLossPercent: 3, builderFillingDeductionGrams: 0, dietaryCategory: null, tags: [], ingredients: [], subRecipes: [] };
+    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", cookingLossPercent: 3, builderFillingDeductionGrams: 0, dietaryCategory: null, ovenTempC: null, ovenTimeMinutes: null, tags: [], ingredients: [], subRecipes: [] };
 
   return (
     <>
@@ -1273,10 +1293,12 @@ function EditRecipeDialog({
                 onSubmit={(data) => {
                   // isFridgeProduct rides its own endpoint — the main update
                   // body's validator is OpenAPI-generated and would drop it.
-                  const { targetBuildMinutes, isFridgeProduct, ...rest } = data;
+                  const { targetBuildMinutes, isFridgeProduct, ovenTimeMinutes, ...rest } = data;
                   const payload = {
                     ...rest,
                     targetBuildSeconds: targetBuildMinutes != null ? Math.round(targetBuildMinutes * 60) : null,
+                    ovenTempC: rest.ovenTempC ?? null,
+                    ovenTimeSeconds: ovenTimeMinutes != null ? Math.round(ovenTimeMinutes * 60) : null,
                   } as unknown as typeof data;
                   const fridgeWrite = fetch(`/api/recipes/${id}/fridge-product`, {
                     method: "PUT",
@@ -2205,6 +2227,8 @@ export default function Recipes() {
         cookingLossPercent: duplicateDetail.cookingLossPercent != null ? Number(duplicateDetail.cookingLossPercent) : 3,
         builderFillingDeductionGrams: Number(duplicateDetail.builderFillingDeductionGrams ?? 0),
         dietaryCategory: duplicateDetail.dietaryCategory ?? null,
+        ovenTempC: duplicateDetail.ovenTempC ?? null,
+        ovenTimeMinutes: duplicateDetail.ovenTimeSeconds != null ? Number(duplicateDetail.ovenTimeSeconds) / 60 : null,
         tags: Array.isArray(duplicateDetail.tags) ? duplicateDetail.tags : [],
         ingredients: (duplicateDetail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, marinadeAddAtCooking: i.marinadeAddAtCooking === true, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: i.isTopping === true, quid: i.quid === true, showInPrep: i.showInPrep === true, mixingOverage: Number(i.mixingOverage ?? 0) })),
         subRecipes: (duplicateDetail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, marinadeAddAtCooking: s.marinadeAddAtCooking === true, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: s.isTopping === true, quid: s.quid === true, showInPrep: s.showInPrep === true, mixingOverage: Number(s.mixingOverage ?? 0) })),
@@ -2242,7 +2266,7 @@ export default function Recipes() {
   const addDefaults: FormValues = {
     name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "",
     packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined,
-    tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", cookingLossPercent: 3, builderFillingDeductionGrams: 0, dietaryCategory: null, tags: [], ingredients: [], subRecipes: [],
+    tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", cookingLossPercent: 3, builderFillingDeductionGrams: 0, dietaryCategory: null, ovenTempC: null, ovenTimeMinutes: null, tags: [], ingredients: [], subRecipes: [],
   };
 
   // Shared filter for both card and table views.
@@ -2452,10 +2476,12 @@ export default function Recipes() {
             onSubmit={(data) => {
               // isFridgeProduct rides its own endpoint — the create body's
               // validator is OpenAPI-generated and would drop it.
-              const { targetBuildMinutes, isFridgeProduct, ...rest } = data;
+              const { targetBuildMinutes, isFridgeProduct, ovenTimeMinutes, ...rest } = data;
               const payload = {
                 ...rest,
                 targetBuildSeconds: targetBuildMinutes != null ? Math.round(targetBuildMinutes * 60) : null,
+                ovenTempC: rest.ovenTempC ?? null,
+                ovenTimeSeconds: ovenTimeMinutes != null ? Math.round(ovenTimeMinutes * 60) : null,
               } as unknown as typeof data;
               createRecipe.mutate({ data: payload }, {
                 onSuccess: (created) => {

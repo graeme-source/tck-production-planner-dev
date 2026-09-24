@@ -46,6 +46,11 @@ export const recipesTable = pgTable("recipes", {
   // overlay. Nullable for legacy rows; kept as text so we can extend without a
   // migration if a third profile is ever added.
   dietaryCategory: text("dietary_category"),
+  // Per-recipe oven override (migration 0118). NULL = bake at the dietary
+  // profile's standard from app_settings. When set and different from that
+  // standard, the building station shows an "oven change" reminder.
+  ovenTempC: integer("oven_temp_c"),
+  ovenTimeSeconds: integer("oven_time_seconds"),
   color: text("color"),
   cookingLossPercent: numeric("cooking_loss_percent", { precision: 5, scale: 2 }).notNull().default("3"),
   // Grams trimmed off the filling weight shown to the builders, per batch.

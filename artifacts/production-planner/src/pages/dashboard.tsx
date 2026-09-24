@@ -698,7 +698,7 @@ export default function Dashboard() {
   // through the production plan.
   const [buildChooserOpen, setBuildChooserOpen] = useState(false);
   // Who is already on each building table for today's plan — drives the
-  // chooser's "Jane is on this one" hint. A non-building stationType means
+  // chooser's "Started by Jane today" hint. A non-building stationType means
   // this instance only READS; it never claims a table from the dashboard.
   const { assignments: buildingAssignments } = useStationAssignment(todayPlans[0]?.id ?? 0, "dashboard");
   const currentUserId = state.status === "authenticated" ? state.user.id : 0;
@@ -1107,7 +1107,12 @@ export default function Dashboard() {
                           ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
                           : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
                       )}>
-                        {isMe ? "You're on this one" : `${firstName} is on this one`}
+                        {/* "Started by", not "is on": the name is whoever
+                            opened this table FIRST today and never updates
+                            on a handover (18 Sep: Kerri-Leigh took over
+                            Table 1 at 08:48 but it still read "Ji-Hey is
+                            on this one"). */}
+                        {isMe ? "You started here today" : `Started by ${firstName} today`}
                       </span>
                     ) : (
                       <span className="text-xs font-medium text-muted-foreground">Free</span>

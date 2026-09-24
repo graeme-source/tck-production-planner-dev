@@ -22,6 +22,9 @@ import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisp
 import { QueueDock, QueueSheet } from "../shared/station-queue";
 import { effectiveBatchesTarget, netTwoPacks as computeNetTwoPacks, packsTargetForItem, packsDoneForItem, packsPerBatch } from "../shared/recipe-completion";
 import { RECIPE_RACK_COLOURS, WonkyColour, ChillerRackItem, ChillerRackVisual } from "./dough-sheeting-station";
+import { ovenChangeReminder } from "../shared/oven-reminder";
+import { OvenChangeBanner } from "../shared/oven-change-banner";
+import { useOvenStandards, useRecipeOvenInputs } from "@/hooks/use-oven-settings";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Ovens Station
@@ -64,6 +67,14 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
   const { state } = useAuth();
   const isAdmin = state.status === "authenticated" && state.user.role === "admin";
   const [wonlyLoading, setWonlyLoading] = useState<number | null>(null);
+  // Recipes that bake differently from their profile's standard get the same
+  // amber "oven change" strip the builders see (shared/oven-reminder.ts).
+  const ovenStandards = useOvenStandards();
+  const recipeOvenInputs = useRecipeOvenInputs();
+  const ovenReminderFor = (it: ProductionPlanItem) => {
+    const input = recipeOvenInputs.get(it.recipeId);
+    return ovenStandards && input ? ovenChangeReminder(input, ovenStandards) : null;
+  };
   // ONE recipe is on show at a time and it stays put — you can't scroll away
   // from it and lose your place (Graeme, 2026-09-16). Navigation happens
   // through Prev/Next on the bottom dock or by picking from the queue sheet.
@@ -734,6 +745,10 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                 </button>
               )}
             </div>
+            {(() => {
+              const r = ovenReminderFor(item);
+              return r ? <OvenChangeBanner reminder={r} atOvens /> : null;
+            })()}
             <div className="px-4 py-3 space-y-3">
                     {/* Waiting for building alert */}
                     {isCurrent && getAvailableFromPrev(item, "ovens") <= 0 && (

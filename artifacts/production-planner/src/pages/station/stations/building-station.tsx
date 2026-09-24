@@ -22,7 +22,7 @@ import {
   Plus, Minus, CheckCircle2, Loader2, ChevronRight, RotateCcw,
   BarChart2, BookOpen, Target, Scale, GripVertical, Check, ExternalLink,
   ClipboardList, CheckSquare, Square, AlertCircle, Eye, X, AlertTriangle,
-  ChevronDown, Snowflake, Pencil, ArrowUp,
+  ChevronDown, Snowflake, Pencil, ArrowUp, Flame,
 } from "lucide-react";
 import { format, parseISO, differenceInMinutes } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -38,6 +38,11 @@ import { createPortal } from "react-dom";
 import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay, STATION_VIEW_ROW_SLOT_ID } from "../shared/constants";
 import { QueueDock, QueueSheet } from "../shared/station-queue";
 import { packsPerBatch } from "../shared/recipe-completion";
+import { splitToppings, isToppingEntry, toppingQuantities } from "../shared/assembly-groups";
+import { effectiveOvenSetting, ovenChangeReminder, ovenSettingKey, formatOvenTime, type RecipeOvenInput } from "../shared/oven-reminder";
+import { useOvenStandards, useRecipeOvenInputs } from "@/hooks/use-oven-settings";
+import { OvenChangeBanner } from "../shared/oven-change-banner";
+import { isBuildingComplete, buildProgressPercent, stillToBuild, type BuildProgressItem } from "../shared/building-complete";
 
 import {
   DndContext,
@@ -55,38 +60,79 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
-/** Little "goes ON TOP" marker for topping rows — new starters otherwise
- *  read "Sprinkle" as just another filling step (Graeme, 2026-09-16). */
-function ToppingChip() {
+/** Slim label over the "inside" rows, shown only when the recipe also has
+ *  an On top section below — it's a divider, not a section. */
+function InsideLabel() {
   return (
-    <span className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 flex-shrink-0">
-      <ArrowUp className="w-3 h-3" /> Topping
-    </span>
-  );
-}
-
-/** Slim group label splitting the checklist into "inside" vs "on top".
- *  A few px tall on purpose — it's a divider, not a section. */
-function AssemblyGroupLabel({ label, tone }: { label: string; tone: "inside" | "top" }) {
-  return (
-    <div className={cn(
-      "px-3 pt-1.5 pb-1 text-[11px] font-bold uppercase tracking-wider",
-      tone === "top"
-        ? "text-amber-700 dark:text-amber-300 bg-amber-50/70 dark:bg-amber-900/20"
-        : "text-slate-500 dark:text-slate-400",
-    )}>
-      {label}
+    <div className="px-3 pt-2 pb-1 text-sm font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+      Inside
     </div>
   );
 }
 
-/** Index where a contiguous run of toppings starts at the END of the list —
- *  the normal shape, since toppings go on last. -1 when there are no
- *  toppings or they're interleaved (each row's chip still marks them). */
-function toppingTailStart(entries: Array<{ isFilling: boolean; ai?: { isTopping?: boolean } }>): number {
-  const first = entries.findIndex(e => !e.isFilling && e.ai?.isTopping);
-  if (first <= 0) return -1; // none, or nothing "inside" before them
-  return entries.slice(first).every(e => !e.isFilling && e.ai?.isTopping) ? first : -1;
+/** The "On top" section: every recipe line flagged as a topping, split out
+ *  below everything that goes inside and styled so it can't be mistaken for
+ *  a filling at arm's length (Graeme, 2026-09-16 / 2026-09-24). Driven only
+ *  by the topping flag — see shared/assembly-groups.ts. Rows stay tickable
+ *  in the live checklist so the "Ready" lock still needs them. */
+function OnTopSection({
+  rows, portionsPerBatch, compact = false, checkedItems, locked = false, onToggle,
+}: {
+  rows: Array<{ key: string; ai?: AssemblyItemData }>;
+  portionsPerBatch: number;
+  compact?: boolean;
+  checkedItems?: Record<string, boolean>;
+  locked?: boolean;
+  onToggle?: (key: string) => void;
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="border-t-4 border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/30">
+      <div className="flex items-center gap-2 px-3 py-2 bg-amber-400 text-amber-950 dark:bg-amber-600 dark:text-amber-50">
+        <ArrowUp className={compact ? "w-5 h-5" : "w-6 h-6"} strokeWidth={3} />
+        <span className={cn("font-extrabold uppercase tracking-wide", compact ? "text-lg" : "text-xl")}>On top</span>
+        <span className="text-sm font-semibold opacity-90">add last</span>
+      </div>
+      <div className="divide-y divide-amber-200 dark:divide-amber-800/60">
+        {rows.map(({ key, ai }) => {
+          if (!ai) return null;
+          const q = toppingQuantities(ai.weightPerBatch, portionsPerBatch);
+          const checked = !!checkedItems?.[key];
+          const body = (
+            <>
+              {onToggle && (locked || checked
+                ? <CheckSquare className="w-6 h-6 text-emerald-600 flex-shrink-0" />
+                : <Square className="w-6 h-6 text-amber-600 dark:text-amber-400 flex-shrink-0" />)}
+              <span className="flex-1 min-w-0">
+                <span className={cn("block font-bold leading-tight", compact ? "text-xl" : "text-2xl")}>{ai.name}</span>
+                <span className="block text-sm font-semibold text-amber-800 dark:text-amber-300 tabular-nums">{q.perBatch} per batch</span>
+              </span>
+              <span className="flex-shrink-0 text-right">
+                <span className={cn("block font-extrabold tabular-nums text-amber-900 dark:text-amber-100 leading-tight", compact ? "text-xl" : "text-2xl")}>{q.perItem}</span>
+                <span className="block text-xs font-bold uppercase tracking-wider text-amber-700 dark:text-amber-300">on each</span>
+              </span>
+            </>
+          );
+          return onToggle ? (
+            <button
+              key={key}
+              type="button"
+              onClick={() => onToggle(key)}
+              disabled={locked}
+              className={cn(
+                "w-full flex items-center gap-3 px-3 py-3 text-left transition-colors",
+                !locked && "active:bg-amber-100 dark:active:bg-amber-900/40",
+              )}
+            >
+              {body}
+            </button>
+          ) : (
+            <div key={key} className="flex items-center gap-3 px-3 py-3">{body}</div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function SortableAssemblyRow({
@@ -98,7 +144,7 @@ function SortableAssemblyRow({
   onToggle,
 }: {
   id: string;
-  ai: { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number; isTopping?: boolean };
+  ai: { name: string; unit: string; weightPerBatch: number; weightHalfBatch: number };
   checked: boolean;
   locked: boolean;
   showHandle: boolean;
@@ -138,10 +184,7 @@ function SortableAssemblyRow({
           ? <CheckSquare className="w-6 h-6 text-emerald-500 flex-shrink-0" />
           : <Square className="w-6 h-6 text-slate-400 flex-shrink-0" />}
         <span className="text-2xl font-bold flex-1 leading-tight">{ai.name}</span>
-        {ai.isTopping
-          ? <span className="flex items-center gap-2 flex-shrink-0"><ToppingChip /><span className="text-2xl font-bold font-mono text-slate-500 dark:text-slate-400">Sprinkle</span></span>
-          : <span className="text-2xl font-bold font-mono tabular-nums flex-shrink-0">{Math.round(ai.weightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(ai.weightHalfBatch)}g</span></span>
-        }
+        <span className="text-2xl font-bold font-mono tabular-nums flex-shrink-0">{Math.round(ai.weightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(ai.weightHalfBatch)}g</span></span>
       </button>
     </div>
   );
@@ -224,10 +267,11 @@ type AssemblyItemData = { name: string; unit: string; weightPerBatch: number; we
 type AssemblyData = { itemId: number; recipeId: number; fillingWeightPerBatch: number; fillingWeightHalfBatch: number; builderFillingDeductionGrams: number; builderWeightPerBatch: number; builderWeightHalfBatch: number; fillingAssemblyOrder: number; assemblyItems: AssemblyItemData[]; postOvenItems?: AssemblyItemData[] };
 
 function ChecklistItems({
-  asm, hasFilling, isLocked, checkedItems, toggleCheck, dndSensors, onDragEnd,
+  asm, hasFilling, portionsPerBatch, isLocked, checkedItems, toggleCheck, dndSensors, onDragEnd,
 }: {
   asm: AssemblyData;
   hasFilling: boolean;
+  portionsPerBatch: number;
   isLocked: boolean;
   checkedItems: Record<string, boolean>;
   toggleCheck: (key: string) => void;
@@ -243,64 +287,59 @@ function ChecklistItems({
     allItems.splice(pos, 0, { key: "filling", isFilling: true });
   }
 
-  // Two visible groups when the toppings sit together at the end (their
-  // natural order): "inside the calzone" then "on top" — so a new starter
-  // can't mistake the pepper for a filling (Graeme, 2026-09-16). Dragging a
-  // topping into the middle drops the dividers; the amber chip on each
-  // topping row still marks it.
-  const topStart = toppingTailStart(allItems);
+  // Everything inside first (drag-sortable, in the saved order), then every
+  // topping-flagged line in its own On top section — whatever order the
+  // toppings were saved in.
+  const { inside, onTop } = splitToppings(allItems);
 
   // Drag-and-drop reorder is always available to all builders, regardless of
   // whether the checklist has been marked "Ready" (isLocked). Locked state still
   // disables the checkbox toggles via the `locked` prop below.
   return (
-    <div className="divide-y divide-slate-100 dark:divide-slate-800">
-      <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-        <SortableContext items={allItems.map(a => a.key)} strategy={verticalListSortingStrategy}>
-          {topStart > 0 && <AssemblyGroupLabel label="Inside the calzone" tone="inside" />}
-          {allItems.map((entry, i) => {
-            const divider = i === topStart
-              ? <AssemblyGroupLabel key="on-top-label" label="On top of the calzone" tone="top" />
-              : null;
-            if (entry.isFilling) {
-              return (
-                <React.Fragment key="filling">
-                  {divider}
-                  <SortableFillingRow
-                    id="filling"
-                    weightPerBatch={asm.builderWeightPerBatch}
-                    weightHalfBatch={asm.builderWeightHalfBatch}
-                    deductionGrams={asm.builderFillingDeductionGrams}
-                    checked={!!checkedItems["filling"]}
-                    locked={isLocked}
-                    showHandle={true}
-                    onToggle={() => toggleCheck("filling")}
-                  />
-                </React.Fragment>
-              );
-            }
-            return (
-              <React.Fragment key={entry.key}>
-                {divider}
-                <SortableAssemblyRow
-                  id={entry.key}
-                  ai={entry.ai!}
-                  checked={!!checkedItems[entry.key]}
-                  locked={isLocked}
-                  showHandle={true}
-                  onToggle={() => toggleCheck(entry.key)}
-                />
-              </React.Fragment>
-            );
-          })}
-        </SortableContext>
-      </DndContext>
+    <div>
+      {onTop.length > 0 && inside.length > 0 && <InsideLabel />}
+      <div className="divide-y divide-slate-100 dark:divide-slate-800">
+        <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+          <SortableContext items={inside.map(a => a.key)} strategy={verticalListSortingStrategy}>
+            {inside.map(entry => entry.isFilling ? (
+              <SortableFillingRow
+                key="filling"
+                id="filling"
+                weightPerBatch={asm.builderWeightPerBatch}
+                weightHalfBatch={asm.builderWeightHalfBatch}
+                deductionGrams={asm.builderFillingDeductionGrams}
+                checked={!!checkedItems["filling"]}
+                locked={isLocked}
+                showHandle={true}
+                onToggle={() => toggleCheck("filling")}
+              />
+            ) : (
+              <SortableAssemblyRow
+                key={entry.key}
+                id={entry.key}
+                ai={entry.ai!}
+                checked={!!checkedItems[entry.key]}
+                locked={isLocked}
+                showHandle={true}
+                onToggle={() => toggleCheck(entry.key)}
+              />
+            ))}
+          </SortableContext>
+        </DndContext>
+      </div>
+      <OnTopSection
+        rows={onTop}
+        portionsPerBatch={portionsPerBatch}
+        checkedItems={checkedItems}
+        locked={isLocked}
+        onToggle={toggleCheck}
+      />
     </div>
   );
 }
 
 /** Read-only assembly list for viewing non-current recipes */
-function ReadOnlyAssemblyList({ asm }: { asm: AssemblyData }) {
+function ReadOnlyAssemblyList({ asm, portionsPerBatch }: { asm: AssemblyData; portionsPerBatch: number }) {
   const hasFilling = asm.fillingWeightPerBatch > 0;
   const hasItems = asm.assemblyItems.length > 0;
   if (!hasFilling && !hasItems) {
@@ -315,6 +354,7 @@ function ReadOnlyAssemblyList({ asm }: { asm: AssemblyData }) {
     const pos = Math.min(asm.fillingAssemblyOrder ?? 0, allItems.length);
     allItems.splice(pos, 0, { key: "filling", isFilling: true });
   }
+  const { inside, onTop } = splitToppings(allItems);
 
   return (
     <div className="bg-slate-50 dark:bg-slate-900/30 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
@@ -324,25 +364,20 @@ function ReadOnlyAssemblyList({ asm }: { asm: AssemblyData }) {
           Assembly Items
         </span>
       </div>
+      {onTop.length > 0 && inside.length > 0 && <InsideLabel />}
       <div className="divide-y divide-slate-100 dark:divide-slate-800">
-        {(() => { const topStart = toppingTailStart(allItems); return allItems.map((entry, i) => (
-          <React.Fragment key={entry.key}>
-            {topStart > 0 && i === 0 && <AssemblyGroupLabel label="Inside the calzone" tone="inside" />}
-            {i === topStart && <AssemblyGroupLabel label="On top of the calzone" tone="top" />}
-            <div className="flex items-center gap-3 px-3 py-3">
-              <span className={cn("text-xl font-bold flex-1 leading-tight", entry.isFilling && "text-blue-700 dark:text-blue-400")}>
-                {entry.isFilling ? "Filling" : entry.ai!.name}
-              </span>
-              {!entry.isFilling && entry.ai!.isTopping
-                ? <span className="flex items-center gap-2 flex-shrink-0"><ToppingChip /><span className="text-xl font-bold font-mono text-slate-500 dark:text-slate-400">Sprinkle</span></span>
-                : <span className="text-xl font-bold font-mono tabular-nums flex-shrink-0">
-                    {Math.round(entry.isFilling ? asm.builderWeightPerBatch : entry.ai!.weightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(entry.isFilling ? asm.builderWeightHalfBatch : entry.ai!.weightHalfBatch)}g</span>
-                  </span>
-              }
-            </div>
-          </React.Fragment>
-        )); })()}
+        {inside.map(entry => (
+          <div key={entry.key} className="flex items-center gap-3 px-3 py-3">
+            <span className={cn("text-xl font-bold flex-1 leading-tight", entry.isFilling && "text-blue-700 dark:text-blue-400")}>
+              {entry.isFilling ? "Filling" : entry.ai!.name}
+            </span>
+            <span className="text-xl font-bold font-mono tabular-nums flex-shrink-0">
+              {Math.round(entry.isFilling ? asm.builderWeightPerBatch : entry.ai!.weightPerBatch)}g/<span className="text-slate-500 dark:text-slate-400">{Math.round(entry.isFilling ? asm.builderWeightHalfBatch : entry.ai!.weightHalfBatch)}g</span>
+            </span>
+          </div>
+        ))}
       </div>
+      <OnTopSection rows={onTop} portionsPerBatch={portionsPerBatch} compact />
     </div>
   );
 }
@@ -381,33 +416,24 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   const [pendingTap, setPendingTap] = useState(false);
   const isOnBreak = isOnBreakProp;
 
-  // Oven-settings overlay state. Shown when the builder switches between
-  // dietary categories (meat ↔ vegetarian) — first meat or veg of the day,
-  // and any time they swap from one profile to the other after that. Doing
-  // four meat recipes in a row only prompts on the first one. Defaults
-  // come from the four app_settings keys seeded with sane numbers.
-  const [ovenDefaults, setOvenDefaults] = useState<{ meatTemp: number; meatTime: number; vegTemp: number; vegTime: number } | null>(null);
-  const [lastConfirmedDietary, setLastConfirmedDietary] = useState<"meat" | "vegetarian" | null>(null);
+  // Oven-settings overlay state. Shown whenever the oven needs to be set
+  // differently from the last recipe this builder confirmed — first recipe
+  // of the session, a meat ↔ vegetarian swap, or a recipe with its own oven
+  // override (e.g. 200°C / 6:00) and the one after it. Four standard meat
+  // recipes in a row only prompt on the first. Standards come from the four
+  // app_settings keys; overrides from the recipe (shared/oven-reminder.ts).
+  const ovenStandards = useOvenStandards();
+  const recipeOvenInputs = useRecipeOvenInputs();
+  const [lastConfirmedOvenKey, setLastConfirmedOvenKey] = useState<string | null>(null);
   const [ovenPromptItemId, setOvenPromptItemId] = useState<number | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([
-      fetch("/api/app-settings/oven_meat_temp_c", { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch("/api/app-settings/oven_meat_time_min", { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch("/api/app-settings/oven_veg_temp_c", { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch("/api/app-settings/oven_veg_time_min", { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null),
-    ]).then(([mt, mm, vt, vm]) => {
-      if (cancelled) return;
-      setOvenDefaults({
-        meatTemp: Number(mt?.value ?? 220) || 220,
-        meatTime: Number(mm?.value ?? 8) || 8,
-        vegTemp: Number(vt?.value ?? 210) || 210,
-        vegTime: Number(vm?.value ?? 7) || 7,
-      });
-    });
-    return () => { cancelled = true; };
-  }, []);
+  // Profile + override for a plan item. Falls back to the item's own
+  // dietary category while the recipe list is still loading.
+  const ovenInputFor = (it: ProductionPlanItem): RecipeOvenInput =>
+    recipeOvenInputs.get(it.recipeId) ?? { dietaryCategory: (it as { dietaryCategory?: string | null }).dietaryCategory ?? null };
+  const ovenSettingFor = (it: ProductionPlanItem) =>
+    ovenStandards ? effectiveOvenSetting(ovenInputFor(it), ovenStandards) : null;
+  const ovenReminderFor = (it: ProductionPlanItem) =>
+    ovenStandards ? ovenChangeReminder(ovenInputFor(it), ovenStandards) : null;
 
   // ONE recipe on show at a time (the shared station-queue pattern, Graeme
   // 2026-09-16): the pinned panel always shows the recipe this builder is on
@@ -648,12 +674,17 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   // remaining = planned batches still to build toward the reference target
   // (purely informational; building is never blocked when it reaches 0).
   const remaining = currentItem ? Math.max(0, targetRef - buildingCount) : 0;
-  // A recipe counts as done when it hit the planned target OR the builder
+  // A recipe counts as done when it hit ITS OWN planned target OR the builder
   // marked it finished for the day (short builds included — what was built
-  // is the day's output). Building is complete once every recipe is done.
-  const allDone = items.length > 0 && items.every(it =>
-    !!it.builderMarkedCompleteAt || getCombinedBuildCount(it) >= getTargetRef(it)
-  );
+  // is the day's output). Building is complete once every recipe is done;
+  // extras on one recipe never cover another's shortfall (shared rule in
+  // shared/building-complete.ts — also drives the finish pop-up below).
+  const buildProgressItems: BuildProgressItem[] = items.map(it => ({
+    target: getTargetRef(it),
+    built: getCombinedBuildCount(it),
+    markedComplete: !!it.builderMarkedCompleteAt,
+  }));
+  const allDone = isBuildingComplete(buildProgressItems);
 
   // checklistPending is computed below but we need it here for the timer.
   // Inline the same logic to avoid forward-reference issues.
@@ -830,13 +861,13 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
 
   const handleBatchComplete = () => {
     if (!currentItem || pendingTap || isOnBreak || checklistPending || !canRecordBatch(currentItem)) return;
-    // Oven-settings gate: prompt only when the builder is moving between
-    // dietary profiles (meat ↔ vegetarian), so the oven temp / time actually
-    // needs to change. Same profile back-to-back skips the prompt — four
-    // meat recipes in a row only ask once. First profile of the session
-    // (lastConfirmedDietary === null) always prompts.
-    const dietary = (currentItem as any).dietaryCategory as "meat" | "vegetarian" | null | undefined;
-    const needsOvenPrompt = !!dietary && dietary !== lastConfirmedDietary;
+    // Oven-settings gate: prompt only when the oven temp / time actually
+    // needs to change from the last setting this builder confirmed (a
+    // profile swap, or into / out of a recipe with its own oven override).
+    // The same setting back-to-back skips the prompt. First recipe of the
+    // session (lastConfirmedOvenKey === null) always prompts.
+    const ovenKey = ovenSettingKey(ovenSettingFor(currentItem));
+    const needsOvenPrompt = ovenKey != null && ovenKey !== lastConfirmedOvenKey;
     if (needsOvenPrompt) {
       setOvenPromptItemId(currentItem.id);
       return;
@@ -984,9 +1015,12 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   const totalBatchesDone = calzoneItems.reduce((s, it) => s + getCombinedBuildCount(it), 0);
   const totalMacPacksTarget = macItems.reduce((s, it) => s + getTargetRef(it), 0);
   const totalMacPacksDone = macItems.reduce((s, it) => s + getCombinedBuildCount(it), 0);
-  const combinedTarget = totalBatchesTarget + totalMacPacksTarget;
-  const combinedDone = totalBatchesDone + totalMacPacksDone;
-  const overallProgress = combinedTarget > 0 ? Math.round((combinedDone / combinedTarget) * 100) : 0;
+  // Per-item capped: 2 extra mac packs must not push the bar to 100% while a
+  // calzone is still short.
+  const overallProgress = buildProgressPercent(buildProgressItems);
+  // Outstanding work per category (batches vs packs are different units).
+  const calzoneStillToBuild = stillToBuild(buildProgressItems.filter((_, i) => !isMacCheese(items[i] as any)));
+  const macStillToBuild = stillToBuild(buildProgressItems.filter((_, i) => isMacCheese(items[i] as any)));
 
   // Team and per-user BPH both come from /api/production-plans/:id/kpi
   // (polled every 5s) — the one standard calculation in the server's
@@ -1000,7 +1034,10 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   // the number decays after the last batch; pressing it pins the finish
   // time and decides whether the lunch break gets deducted.
   const buildingFinishedAt = plan.buildingFinishedAt ?? serverKpi?.buildingFinishedAt ?? null;
-  const allBuiltOut = combinedTarget > 0 && combinedDone >= combinedTarget;
+  // Every item at its own target (see allDone above). Never a combined
+  // total: that let extra mac cheese fire the pop-up with calzones still to
+  // build (plan 172, 18 Sep 2026).
+  const allBuiltOut = allDone;
   const [finishPromptDismissed, setFinishPromptDismissed] = useState(false);
   // Confirmation gate for finishing while batches are still outstanding —
   // e.g. a short day where the last flavour ran out of filling. The button is
@@ -1198,11 +1235,19 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                   <span className="font-bold tabular-nums">{totalMacPacksDone} / {totalMacPacksTarget}</span>
                 </div>
               )}
-              {combinedTarget - combinedDone > 0 && (
+              {calzoneStillToBuild > 0 && (
                 <div className="flex justify-between text-base">
-                  <span className="text-muted-foreground">Still to build</span>
+                  <span className="text-muted-foreground">Calzone batches still to build</span>
                   <span className="font-bold tabular-nums text-amber-600 dark:text-amber-400">
-                    {combinedTarget - combinedDone}
+                    {formatBatches(calzoneStillToBuild)}
+                  </span>
+                </div>
+              )}
+              {macStillToBuild > 0 && (
+                <div className="flex justify-between text-base">
+                  <span className="text-muted-foreground">Mac packs still to build</span>
+                  <span className="font-bold tabular-nums text-amber-600 dark:text-amber-400">
+                    {macStillToBuild}
                   </span>
                 </div>
               )}
@@ -1270,44 +1315,58 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
         </DialogContent>
       </Dialog>
 
-      {/* First-batch oven settings — confirm before recording the very first
-          batch of a meat / vegetarian recipe. */}
+      {/* Oven settings — confirm before recording the first batch whenever
+          the oven needs setting differently from the last recipe (profile
+          swap, or a recipe with its own override). The X closes it without
+          recording. */}
       <Dialog open={ovenPromptItemId !== null} onOpenChange={(open) => { if (!open) setOvenPromptItemId(null); }}>
-        <DialogContent className="max-w-md mx-auto" onPointerDownOutside={e => e.preventDefault()} onEscapeKeyDown={e => e.preventDefault()}>
+        <DialogContent className="max-w-md mx-auto max-h-[92dvh] overflow-y-auto" onPointerDownOutside={e => e.preventDefault()} onEscapeKeyDown={e => e.preventDefault()}>
           {(() => {
             if (ovenPromptItemId === null) return null;
             const item = items.find(it => it.id === ovenPromptItemId);
             if (!item) return null;
-            const dietary = (item as any).dietaryCategory as "meat" | "vegetarian" | null;
-            if (!dietary || !ovenDefaults) return null;
-            const isMeat = dietary === "meat";
-            const temp = isMeat ? ovenDefaults.meatTemp : ovenDefaults.vegTemp;
-            const time = isMeat ? ovenDefaults.meatTime : ovenDefaults.vegTime;
+            const setting = ovenSettingFor(item);
+            if (!setting) return null;
+            const reminder = ovenReminderFor(item);
+            const dietary = ovenInputFor(item).dietaryCategory;
+            const profile = dietary === "meat" ? "Meat" : dietary === "vegetarian" ? "Vegetarian" : null;
+            const tile = reminder
+              ? "rounded-2xl border-4 border-amber-500 bg-amber-50 dark:bg-amber-950/40 p-4 text-center"
+              : "rounded-2xl border-2 border-primary/30 bg-primary/5 p-4 text-center";
             return (
               <div className="space-y-5 pt-2">
                 <div>
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">First batch · check oven settings</p>
+                  {reminder ? (
+                    <p className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 text-white px-2.5 py-1 text-sm font-extrabold uppercase tracking-wide">
+                      <Flame className="w-4 h-4" /> Oven change for this recipe
+                    </p>
+                  ) : (
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">First batch · check oven settings</p>
+                  )}
                   <h3 className="font-bold text-2xl mt-1" style={{ color: item.recipeColor || undefined }}>
                     {item.recipeName ?? `Recipe #${item.recipeId}`}
                   </h3>
-                  <p className="text-sm text-muted-foreground mt-0.5">
-                    {isMeat ? "Meat" : "Vegetarian"} profile
-                  </p>
+                  {profile && (
+                    <p className="text-sm text-muted-foreground mt-0.5">
+                      {profile} profile
+                      {reminder?.standard && <> · standard is {reminder.standard.tempC}°C for {formatOvenTime(reminder.standard.timeSeconds)}</>}
+                    </p>
+                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-2xl border-2 border-primary/30 bg-primary/5 p-4 text-center">
+                  <div className={tile}>
                     <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">Temperature</div>
-                    <div className="text-4xl font-bold tabular-nums mt-1">{temp}<span className="text-xl font-normal text-muted-foreground">°C</span></div>
+                    <div className="text-4xl font-bold tabular-nums mt-1">{setting.tempC}<span className="text-xl font-normal text-muted-foreground">°C</span></div>
                   </div>
-                  <div className="rounded-2xl border-2 border-primary/30 bg-primary/5 p-4 text-center">
+                  <div className={tile}>
                     <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">Time</div>
-                    <div className="text-4xl font-bold tabular-nums mt-1">{time}<span className="text-xl font-normal text-muted-foreground"> min</span></div>
+                    <div className="text-4xl font-bold tabular-nums mt-1">{formatOvenTime(setting.timeSeconds)}<span className="text-xl font-normal text-muted-foreground"> min</span></div>
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => {
-                    setLastConfirmedDietary(dietary);
+                    setLastConfirmedOvenKey(ovenSettingKey(setting));
                     setOvenPromptItemId(null);
                     // Record the batch right away so the same tap that
                     // confirms the oven settings also lands the build —
@@ -1316,12 +1375,15 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                     // we used to hit when re-running the gate.
                     recordBatchNow(item);
                   }}
-                  className="w-full py-4 rounded-xl bg-primary text-primary-foreground font-bold text-lg hover:bg-primary/90 active:scale-95 transition-all"
+                  className={cn(
+                    "w-full py-4 rounded-xl font-bold text-lg active:scale-95 transition-all",
+                    reminder ? "bg-amber-500 hover:bg-amber-600 text-white" : "bg-primary text-primary-foreground hover:bg-primary/90",
+                  )}
                 >
-                  Checked oven settings — record batch
+                  {reminder ? "Oven changed — record batch" : "Checked oven settings — record batch"}
                 </button>
                 <p className="text-[11px] text-muted-foreground text-center">
-                  Only shows when switching between meat and vegetarian profiles.
+                  Shows whenever the oven needs setting differently from the last recipe.
                 </p>
               </div>
             );
@@ -1431,6 +1493,15 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                   )}
                 </div>
 
+                {/* Oven change reminder — this recipe bakes differently from
+                    its profile's standard (set on the recipe form). Big and
+                    amber so whoever loads the ovens changes them; a banner,
+                    never a gate. */}
+                {(() => {
+                  const r = ovenReminderFor(item);
+                  return r ? <OvenChangeBanner reminder={r} /> : null;
+                })()}
+
                   <div className="px-4 py-3 space-y-3">
                     {/* Legacy external SOP link (recipe SOP chips follow below) */}
                     <div className="flex items-center gap-2 empty:hidden">
@@ -1484,6 +1555,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                                 <ChecklistItems
                                   asm={asm}
                                   hasFilling={hasFilling}
+                                  portionsPerBatch={item.portionsPerBatch}
                                   isLocked={isLocked}
                                   checkedItems={checkedItems}
                                   toggleCheck={toggleCheck}
@@ -1735,7 +1807,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                     ) : (
                       <>
                       {/* Non-current: assembly list (read-only) */}
-                      {asm && <ReadOnlyAssemblyList asm={asm} />}
+                      {asm && <ReadOnlyAssemblyList asm={asm} portionsPerBatch={item.portionsPerBatch} />}
 
                       {/* Compact meta row */}
                       <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
@@ -1886,6 +1958,15 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                       {item.recipeName ?? `Recipe #${item.recipeId}`}
                       {isSelected && <span className="text-xs text-primary ml-1 no-underline">← now</span>}
                     </span>
+                    {/* Heads-up for recipes that need a different oven setting. */}
+                    {(() => {
+                      const r = ovenReminderFor(item);
+                      return r ? (
+                        <span className="inline-flex items-center gap-0.5 rounded-md bg-amber-500 text-white px-1.5 py-0.5 text-xs font-bold tabular-nums flex-shrink-0" title="Oven change for this recipe">
+                          <Flame className="w-3 h-3" />{r.setting.tempC}°C · {formatOvenTime(r.setting.timeSeconds)}
+                        </span>
+                      ) : null;
+                    })()}
                     <span className="text-sm tabular-nums font-medium flex-shrink-0">
                       {formatBatches(combinedCount)}/{formatBatches(item.batchesTarget ?? 0)}{" "}<span className="text-xs font-normal text-muted-foreground">({batchesToPacks(item.batchesTarget ?? 0, Math.max(1, Math.floor((item.portionsPerBatch ?? 10) / 2)))} packs)</span>
                     </span>
@@ -2165,18 +2246,22 @@ function BatchDivision({ assemblyData, portionsPerBatch }: { assemblyData: Assem
       </div>
       {selected != null && (
         <div className="divide-y divide-border/50 -mx-1">
-          {allItems.map((entry) => {
-            const isTopping = !entry.isFilling && entry.ai?.isTopping;
+          {(() => { const { inside, onTop } = splitToppings(allItems); return [...inside, ...onTop]; })().map((entry) => {
+            const isTopping = isToppingEntry(entry);
             const weight = entry.isFilling
               ? assemblyData.builderWeightPerBatch * scale
               : (entry.ai?.weightPerBatch ?? 0) * scale;
             return (
-              <div key={entry.key} className="flex items-center justify-between px-1 py-2">
+              <div key={entry.key} className={cn("flex items-center justify-between px-1 py-2", isTopping && "bg-amber-50 dark:bg-amber-950/30")}>
                 <span className={cn("text-base font-bold", entry.isFilling && "text-blue-700 dark:text-blue-400")}>
                   {entry.isFilling ? "Filling" : entry.ai!.name}
                 </span>
                 {isTopping
-                  ? <span className="flex items-center gap-2"><ToppingChip /><span className="text-base font-bold font-mono text-slate-500 dark:text-slate-400">Sprinkle</span></span>
+                  // A topping is per item, so a part batch doesn't change it.
+                  ? <span className="flex items-center gap-2 text-base font-bold text-amber-800 dark:text-amber-300">
+                      <ArrowUp className="w-4 h-4" strokeWidth={3} />
+                      On top · {toppingQuantities(entry.ai?.weightPerBatch ?? 0, portionsPerBatch).perItem} each
+                    </span>
                   : <span className="text-base font-bold font-mono tabular-nums">{Math.round(weight)}g</span>
                 }
               </div>
