@@ -33,7 +33,7 @@ import { getOrdersByTag } from "../services/shopify";
 const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
 
 /**
- * Builder batches/hour for a single day — the standard method from
+ * TCK run rate for a single day — the standard method from
  * lib/batches-per-hour: calzone building completions only (mac cheese
  * ignored entirely), first→last completion window, standard break
  * lengths deducted when the window spans them.
