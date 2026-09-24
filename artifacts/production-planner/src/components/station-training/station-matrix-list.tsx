@@ -3,7 +3,8 @@
  * 2026-09-24: "a training matrix for each station in the current training
  * section", not a separate top-level tab).
  *
- * One card per station that has SOPs on its front screen. Each is a matrix
+ * One card per station that has SOPs anywhere on it (front screen, recipes,
+ * ingredients, sub-recipes, checklists). Each is a matrix
  * built automatically from those SOPs — nothing is stored, so it can't be
  * edited here; attach or change an SOP at the station and the matrix follows.
  * Stations with no SOPs yet are a quiet list underneath.
@@ -16,9 +17,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, ShieldCheck, ShieldOff, Loader2, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
-import { STATIONS } from "@/pages/station/shared/constants";
 import { splitStations, stationTrainingPath } from "@/lib/training-sections";
-import { STATION_TRAINING_API, getStationTraining, stationLabel } from "./shared";
+import { STATION_TRAINING_API, TRAINING_STATION_KEYS, getStationTraining, stationLabel } from "./shared";
 
 interface StationSummary { station: string; sopCount: number; trained: number; refresher: number; untrained: number }
 
@@ -43,7 +43,7 @@ export function StationMatrixList({ showEnforceSwitch }: { showEnforceSwitch: bo
     onError: (e: Error) => toast({ title: e.message, variant: "destructive" }),
   });
 
-  const { withSops, without } = splitStations(STATIONS.map(s => s.key as string), data?.stations ?? []);
+  const { withSops, without } = splitStations(TRAINING_STATION_KEYS, data?.stations ?? []);
 
   return (
     <div className="space-y-4">
@@ -85,7 +85,7 @@ export function StationMatrixList({ showEnforceSwitch }: { showEnforceSwitch: bo
             >
               <div className="flex items-start justify-between gap-2">
                 <h3 className="text-xl font-bold leading-snug">
-                  {stationLabel(s.station)} <span className="text-muted-foreground font-semibold">— station SOPs</span>
+                  {stationLabel(s.station)} <span className="text-muted-foreground font-semibold">— SOPs</span>
                 </h3>
                 <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0 mt-1" />
               </div>
@@ -116,7 +116,7 @@ export function StationMatrixList({ showEnforceSwitch }: { showEnforceSwitch: bo
             ))}
           </div>
           <p className="text-xs text-muted-foreground mt-2">
-            Add one from the station's ⋯ menu ("Add SOP to this station") and its matrix appears here automatically.
+            Attach an SOP to the station (⋯ menu → "Add SOP to this station"), or to a recipe, ingredient or checklist used there, and its matrix appears here automatically.
           </p>
         </div>
       )}

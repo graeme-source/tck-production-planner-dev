@@ -116,7 +116,7 @@ export default function TrainingMatrixPage() {
             <div>
               <h2 className="text-xl font-bold">Station matrices</h2>
               <p className="text-sm text-muted-foreground">
-                One per station, built from the SOPs on its front screen. Review them here or at the station —
+                One per station, built from every SOP attached to it — on the station itself, or on a recipe, ingredient or checklist it uses. Review them here or at the station —
                 when an SOP changes, you'll be asked to review it again.
               </p>
             </div>

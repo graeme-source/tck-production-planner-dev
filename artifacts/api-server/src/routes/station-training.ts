@@ -18,6 +18,7 @@ import { sql } from "drizzle-orm";
 import { validate } from "../middleware/validate";
 import { requireAdmin } from "../middleware/roles";
 import { londonDateString } from "../lib/london-time";
+import { stationsForLink } from "../lib/station-sop-scope";
 import {
   gateDecision,
   deadlineFor,
@@ -32,6 +33,7 @@ const router: IRouter = Router();
 
 const ENFORCE_KEY = "feature_station_sop_gate";
 const STATION_RE = /^[a-z0-9_]{1,64}$/;
+const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
 
 // ── Facts ──────────────────────────────────────────────────────────────────
 
@@ -43,30 +45,73 @@ interface StationSop {
   changedAt: string;
 }
 
-/** The SOPs on the front of a station that have something to review. An
- *  SOP created but never written (no steps) isn't training yet. */
-async function stationSops(station: string): Promise<StationSop[]> {
-  const r = await db.execute<{ sop_id: number; title: string; step_count: number; content_version: number; changed_at: string }>(sql`
-    SELECT s.id AS sop_id, s.title, s.content_version,
-           -- A naive timestamp written by NOW() in the session's zone; cast
-           -- back through that zone so the browser gets a real offset (the
-           -- live database runs on UTC, so a bare value would read an hour
-           -- out in BST).
+/** Every SOP a person working each station can see on it — pinned to the
+ *  station's front screen, or attached to a recipe, ingredient, sub-recipe
+ *  or checklist item that shows there (lib/station-sop-scope.ts). SOPs with
+ *  no steps yet aren't training. One query set for all stations. */
+async function stationSopMap(): Promise<Map<string, StationSop[]>> {
+  const links = await db.execute<{
+    sop_id: number; target_type: string; target_a: number | null; target_b: number | null; target_text: string | null;
+    title: string; content_version: number; changed_at: string; step_count: number;
+  }>(sql`
+    SELECT l.sop_id, l.target_type, l.target_a, l.target_b, l.target_text,
+           s.title, s.content_version,
+           -- Naive timestamp written by NOW() in the session's zone; cast back
+           -- through it so the browser gets a real offset (live runs on UTC).
            s.content_changed_at::timestamptz::text AS changed_at,
            (SELECT COUNT(*)::int FROM sop_steps st WHERE st.sop_id = s.id) AS step_count
     FROM sop_links l JOIN standards_sops s ON s.id = l.sop_id
-    WHERE l.target_type = 'station' AND l.target_text = ${station}
-    ORDER BY s.title
   `);
-  return (r.rows ?? [])
-    .filter(x => Number(x.step_count) > 0)
-    .map(x => ({
-      sopId: x.sop_id,
-      title: x.title,
-      stepCount: Number(x.step_count),
-      currentVersion: Number(x.content_version),
-      changedAt: x.changed_at,
-    }));
+  const rows = (links.rows ?? []).filter(r => Number(r.step_count) > 0);
+  if (rows.length === 0) return new Map();
+
+  const ids = (xs: Array<number | null>) => `{${[...new Set(xs.filter((x): x is number => x != null))].join(",")}}`;
+  const recipeIds = ids(rows.filter(r => r.target_type === "recipe").map(r => r.target_a));
+  const ingredientIds = ids(rows.flatMap(r => r.target_type === "recipe_ingredient" ? [r.target_b] : r.target_type === "ingredient" ? [r.target_a] : []));
+  const templateIds = ids(rows.filter(r => r.target_type === "checklist_template").map(r => r.target_a));
+
+  const [meatRecipes, macRecipes, meatIngredients, templates] = await Promise.all([
+    db.execute<{ id: number }>(sql`
+      SELECT ri.recipe_id AS id FROM recipe_ingredients ri JOIN ingredients i ON i.id = ri.ingredient_id
+       WHERE i.category = 'raw_meat' AND ri.recipe_id = ANY(${recipeIds}::int[])
+      UNION
+      SELECT rsr.recipe_id FROM recipe_sub_recipes rsr
+        JOIN sub_recipe_ingredients sri ON sri.sub_recipe_id = rsr.sub_recipe_id
+        JOIN ingredients i ON i.id = sri.ingredient_id
+       WHERE i.category = 'raw_meat' AND rsr.recipe_id = ANY(${recipeIds}::int[])`),
+    db.execute<{ id: number }>(sql`SELECT id FROM recipes WHERE category = ${MAC_CHEESE_CATEGORY} AND id = ANY(${recipeIds}::int[])`),
+    db.execute<{ id: number }>(sql`SELECT id FROM ingredients WHERE category = 'raw_meat' AND id = ANY(${ingredientIds}::int[])`),
+    db.execute<{ id: number; station_type: string }>(sql`SELECT id, station_type FROM checklist_templates WHERE id = ANY(${templateIds}::int[])`),
+  ]);
+  const set = (r: { rows?: Array<{ id: number }> }) => new Set((r.rows ?? []).map(x => Number(x.id)));
+  const meatR = set(meatRecipes), macR = set(macRecipes), meatI = set(meatIngredients);
+  const tplStation = new Map((templates.rows ?? []).map(t => [Number(t.id), t.station_type]));
+  const facts = {
+    recipeHasRawMeat: (id: number) => meatR.has(id),
+    recipeIsMacCheese: (id: number) => macR.has(id),
+    ingredientIsRawMeat: (id: number) => meatI.has(id),
+    checklistStation: (id: number) => tplStation.get(id) ?? null,
+  };
+
+  const out = new Map<string, Map<number, StationSop>>();
+  for (const r of rows) {
+    for (const station of stationsForLink({ targetType: r.target_type, targetA: r.target_a, targetB: r.target_b, targetText: r.target_text }, facts)) {
+      const bucket = out.get(station) ?? new Map<number, StationSop>();
+      bucket.set(r.sop_id, {
+        sopId: r.sop_id,
+        title: r.title,
+        stepCount: Number(r.step_count),
+        currentVersion: Number(r.content_version),
+        changedAt: r.changed_at,
+      });
+      out.set(station, bucket);
+    }
+  }
+  return new Map([...out.entries()].map(([st, m]) => [st, [...m.values()].sort((a, b) => a.title.localeCompare(b.title))]));
+}
+
+async function stationSops(station: string): Promise<StationSop[]> {
+  return (await stationSopMap()).get(station) ?? [];
 }
 
 interface LatestReview { version: number; reviewedAt: string; source: string }
@@ -307,21 +352,18 @@ router.post("/reviews", validate(reviewBody), async (req: Request, res: Response
 // shows them from its own station list as "no SOPs yet").
 router.get("/stations", async (req: Request, res: Response) => {
   const userId = req.session.userId!;
-  const r = await db.execute<{ station: string; sop_id: number; content_version: number }>(sql`
-    SELECT l.target_text AS station, s.id AS sop_id, s.content_version
-    FROM sop_links l JOIN standards_sops s ON s.id = l.sop_id
-    WHERE l.target_type = 'station'
-      AND EXISTS (SELECT 1 FROM sop_steps st WHERE st.sop_id = s.id)
-  `);
-  const rows = r.rows ?? [];
-  const reviews = await latestReviews([...new Set(rows.map(x => x.sop_id))]);
+  const map = await stationSopMap();
+  const allSopIds = [...new Set([...map.values()].flat().map(x => x.sopId))];
+  const reviews = await latestReviews(allSopIds);
   const mine = reviews.get(userId) ?? new Map();
   const byStation = new Map<string, { sopCount: number; trained: number; refresher: number; untrained: number }>();
-  for (const x of rows) {
-    const s = byStation.get(x.station) ?? { sopCount: 0, trained: 0, refresher: 0, untrained: 0 };
-    s.sopCount++;
-    s[reviewStatus(mine.get(x.sop_id)?.version, Number(x.content_version))]++;
-    byStation.set(x.station, s);
+  for (const [station, sops] of map) {
+    const s = { sopCount: 0, trained: 0, refresher: 0, untrained: 0 };
+    for (const x of sops) {
+      s.sopCount++;
+      s[reviewStatus(mine.get(x.sopId)?.version, x.currentVersion)]++;
+    }
+    byStation.set(station, s);
   }
   res.json({
     enforce: await enforceOn(),

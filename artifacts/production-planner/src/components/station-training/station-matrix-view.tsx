@@ -45,7 +45,7 @@ export function StationMatrixView({ station, backHref }: { station: string; back
           <ChevronLeft className="w-4 h-4" /> All training
         </Link>
         <h2 className="text-2xl font-display font-bold mt-1">
-          {stationLabel(station)} <span className="text-muted-foreground font-semibold">— station SOPs</span>
+          {stationLabel(station)} <span className="text-muted-foreground font-semibold">— SOPs</span>
         </h2>
         <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1.5">
           <Sparkles className="w-3.5 h-3.5 flex-shrink-0" />
@@ -59,7 +59,7 @@ export function StationMatrixView({ station, backHref }: { station: string; back
       {isError && <p className="text-base text-destructive">Couldn't load this station's matrix — refresh the page to try again.</p>}
       {data && data.sops.length === 0 && (
         <p className="text-base text-muted-foreground">
-          No SOPs on this station yet. Add one from the station's ⋯ menu and it becomes this station's training automatically.
+          No SOPs on this station yet. Attach one to the station, or to a recipe, ingredient or checklist used there, and it becomes this station's training automatically.
         </p>
       )}
 

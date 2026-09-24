@@ -12,14 +12,18 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export const STATION_TRAINING_API = `${BASE}/api/station-training`;
 
-const EXTRA_LABELS: Record<string, string> = {
-  main_prep: "Main Prep",
-  prep_bases: "Bases & Sauces",
-  prep_meat: "Raw Meat",
+const PREP_SUB_STATIONS: Record<string, string> = {
+  main_prep: "Prep — Main Prep",
+  prep_bases: "Prep — Bases & Sauces",
+  prep_meat: "Prep — Raw Meat",
 };
 
 export const stationLabel = (key: string) =>
-  STATIONS.find(s => s.key === key)?.label ?? EXTRA_LABELS[key] ?? key.replace(/_/g, " ");
+  STATIONS.find(s => s.key === key)?.label ?? PREP_SUB_STATIONS[key] ?? key.replace(/_/g, " ");
+
+/** Every station a matrix can belong to, prep's sub-stations listed straight after Prep. */
+export const TRAINING_STATION_KEYS: string[] = STATIONS.flatMap(s =>
+  s.key === "prep" ? [s.key, ...Object.keys(PREP_SUB_STATIONS)] : [s.key as string]);
 
 export async function getStationTraining<T>(path: string): Promise<T> {
   const res = await fetch(`${STATION_TRAINING_API}${path}`, { credentials: "include" });
