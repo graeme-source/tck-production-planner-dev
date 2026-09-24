@@ -12,6 +12,7 @@ import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
 import { londonDateString } from "../lib/london-time";
 import { toGrams } from "@workspace/units";
 import { requireManagerOrAdmin } from "../middleware/roles";
+import { parseOvenOverride } from "../lib/recipe-oven-override";
 import * as z from "zod";
 
 function requireAdmin(req: Request, res: Response, next: NextFunction) {
@@ -215,6 +216,11 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
     if (nonMeat) { res.status(400).json({ error: `Ingredient ${nonMeat.id} is not in the raw_meat category` }); return; }
   }
 
+  // Per-recipe oven override (migration 0118) — validated here because the
+  // generated CreateRecipeBody doesn't know these keys yet.
+  const oven = parseOvenOverride(req.body);
+  if (!oven.ok) { res.status(400).json({ error: oven.error }); return; }
+
   const insertValues = {
     name, description,
     servings: String(servings),
@@ -239,6 +245,7 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
     builderFillingDeductionGrams: builderFillingDeductionGrams != null ? Math.round(Number(builderFillingDeductionGrams)) : 0,
     dietaryCategory: dietaryCategory ?? null,
     tags: normaliseTags(tags),
+    ...oven.fields,
   };
 
   // Everything in ONE transaction — a failed ingredient/sub-recipe/marinade
@@ -534,6 +541,9 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
     if (nonMeat) { res.status(400).json({ error: `Ingredient ${nonMeat.id} is not in the raw_meat category` }); return; }
   }
 
+  const oven = parseOvenOverride(req.body);
+  if (!oven.ok) { res.status(400).json({ error: oven.error }); return; }
+
   const recipeFields = {
     name, description,
     servings: String(servings),
@@ -558,6 +568,9 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
     ...(dietaryCategory !== undefined ? { dietaryCategory: dietaryCategory ?? null } : {}),
     ...(isCurrentSpecial !== undefined ? { isCurrentSpecial } : {}),
     ...(tags !== undefined ? { tags: normaliseTags(tags) } : {}),
+    // Only the oven keys the body actually carries — a client that doesn't
+    // send them never wipes a saved override.
+    ...oven.fields,
   };
 
   const [updated] = await db.transaction(async (tx) => {

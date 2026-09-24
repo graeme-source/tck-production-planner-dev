@@ -22,7 +22,7 @@ import {
   Plus, Minus, CheckCircle2, Loader2, ChevronRight, RotateCcw,
   BarChart2, BookOpen, Target, Scale, GripVertical, Check, ExternalLink,
   ClipboardList, CheckSquare, Square, AlertCircle, Eye, X, AlertTriangle,
-  ChevronDown, Snowflake, Pencil, ArrowUp,
+  ChevronDown, Snowflake, Pencil, ArrowUp, Flame,
 } from "lucide-react";
 import { format, parseISO, differenceInMinutes } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -39,6 +39,9 @@ import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisp
 import { QueueDock, QueueSheet } from "../shared/station-queue";
 import { packsPerBatch } from "../shared/recipe-completion";
 import { splitToppings, isToppingEntry, toppingQuantities } from "../shared/assembly-groups";
+import { effectiveOvenSetting, ovenChangeReminder, ovenSettingKey, formatOvenTime, type RecipeOvenInput } from "../shared/oven-reminder";
+import { useOvenStandards, useRecipeOvenInputs } from "@/hooks/use-oven-settings";
+import { OvenChangeBanner } from "../shared/oven-change-banner";
 import { isBuildingComplete, buildProgressPercent, stillToBuild, type BuildProgressItem } from "../shared/building-complete";
 
 import {
@@ -413,33 +416,24 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   const [pendingTap, setPendingTap] = useState(false);
   const isOnBreak = isOnBreakProp;
 
-  // Oven-settings overlay state. Shown when the builder switches between
-  // dietary categories (meat ↔ vegetarian) — first meat or veg of the day,
-  // and any time they swap from one profile to the other after that. Doing
-  // four meat recipes in a row only prompts on the first one. Defaults
-  // come from the four app_settings keys seeded with sane numbers.
-  const [ovenDefaults, setOvenDefaults] = useState<{ meatTemp: number; meatTime: number; vegTemp: number; vegTime: number } | null>(null);
-  const [lastConfirmedDietary, setLastConfirmedDietary] = useState<"meat" | "vegetarian" | null>(null);
+  // Oven-settings overlay state. Shown whenever the oven needs to be set
+  // differently from the last recipe this builder confirmed — first recipe
+  // of the session, a meat ↔ vegetarian swap, or a recipe with its own oven
+  // override (e.g. 200°C / 6:00) and the one after it. Four standard meat
+  // recipes in a row only prompt on the first. Standards come from the four
+  // app_settings keys; overrides from the recipe (shared/oven-reminder.ts).
+  const ovenStandards = useOvenStandards();
+  const recipeOvenInputs = useRecipeOvenInputs();
+  const [lastConfirmedOvenKey, setLastConfirmedOvenKey] = useState<string | null>(null);
   const [ovenPromptItemId, setOvenPromptItemId] = useState<number | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([
-      fetch("/api/app-settings/oven_meat_temp_c", { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch("/api/app-settings/oven_meat_time_min", { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch("/api/app-settings/oven_veg_temp_c", { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch("/api/app-settings/oven_veg_time_min", { credentials: "include" }).then(r => r.ok ? r.json() : null).catch(() => null),
-    ]).then(([mt, mm, vt, vm]) => {
-      if (cancelled) return;
-      setOvenDefaults({
-        meatTemp: Number(mt?.value ?? 220) || 220,
-        meatTime: Number(mm?.value ?? 8) || 8,
-        vegTemp: Number(vt?.value ?? 210) || 210,
-        vegTime: Number(vm?.value ?? 7) || 7,
-      });
-    });
-    return () => { cancelled = true; };
-  }, []);
+  // Profile + override for a plan item. Falls back to the item's own
+  // dietary category while the recipe list is still loading.
+  const ovenInputFor = (it: ProductionPlanItem): RecipeOvenInput =>
+    recipeOvenInputs.get(it.recipeId) ?? { dietaryCategory: (it as { dietaryCategory?: string | null }).dietaryCategory ?? null };
+  const ovenSettingFor = (it: ProductionPlanItem) =>
+    ovenStandards ? effectiveOvenSetting(ovenInputFor(it), ovenStandards) : null;
+  const ovenReminderFor = (it: ProductionPlanItem) =>
+    ovenStandards ? ovenChangeReminder(ovenInputFor(it), ovenStandards) : null;
 
   // ONE recipe on show at a time (the shared station-queue pattern, Graeme
   // 2026-09-16): the pinned panel always shows the recipe this builder is on
@@ -867,13 +861,13 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
 
   const handleBatchComplete = () => {
     if (!currentItem || pendingTap || isOnBreak || checklistPending || !canRecordBatch(currentItem)) return;
-    // Oven-settings gate: prompt only when the builder is moving between
-    // dietary profiles (meat ↔ vegetarian), so the oven temp / time actually
-    // needs to change. Same profile back-to-back skips the prompt — four
-    // meat recipes in a row only ask once. First profile of the session
-    // (lastConfirmedDietary === null) always prompts.
-    const dietary = (currentItem as any).dietaryCategory as "meat" | "vegetarian" | null | undefined;
-    const needsOvenPrompt = !!dietary && dietary !== lastConfirmedDietary;
+    // Oven-settings gate: prompt only when the oven temp / time actually
+    // needs to change from the last setting this builder confirmed (a
+    // profile swap, or into / out of a recipe with its own oven override).
+    // The same setting back-to-back skips the prompt. First recipe of the
+    // session (lastConfirmedOvenKey === null) always prompts.
+    const ovenKey = ovenSettingKey(ovenSettingFor(currentItem));
+    const needsOvenPrompt = ovenKey != null && ovenKey !== lastConfirmedOvenKey;
     if (needsOvenPrompt) {
       setOvenPromptItemId(currentItem.id);
       return;
@@ -1321,44 +1315,58 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
         </DialogContent>
       </Dialog>
 
-      {/* First-batch oven settings — confirm before recording the very first
-          batch of a meat / vegetarian recipe. */}
+      {/* Oven settings — confirm before recording the first batch whenever
+          the oven needs setting differently from the last recipe (profile
+          swap, or a recipe with its own override). The X closes it without
+          recording. */}
       <Dialog open={ovenPromptItemId !== null} onOpenChange={(open) => { if (!open) setOvenPromptItemId(null); }}>
-        <DialogContent className="max-w-md mx-auto" onPointerDownOutside={e => e.preventDefault()} onEscapeKeyDown={e => e.preventDefault()}>
+        <DialogContent className="max-w-md mx-auto max-h-[92dvh] overflow-y-auto" onPointerDownOutside={e => e.preventDefault()} onEscapeKeyDown={e => e.preventDefault()}>
           {(() => {
             if (ovenPromptItemId === null) return null;
             const item = items.find(it => it.id === ovenPromptItemId);
             if (!item) return null;
-            const dietary = (item as any).dietaryCategory as "meat" | "vegetarian" | null;
-            if (!dietary || !ovenDefaults) return null;
-            const isMeat = dietary === "meat";
-            const temp = isMeat ? ovenDefaults.meatTemp : ovenDefaults.vegTemp;
-            const time = isMeat ? ovenDefaults.meatTime : ovenDefaults.vegTime;
+            const setting = ovenSettingFor(item);
+            if (!setting) return null;
+            const reminder = ovenReminderFor(item);
+            const dietary = ovenInputFor(item).dietaryCategory;
+            const profile = dietary === "meat" ? "Meat" : dietary === "vegetarian" ? "Vegetarian" : null;
+            const tile = reminder
+              ? "rounded-2xl border-4 border-amber-500 bg-amber-50 dark:bg-amber-950/40 p-4 text-center"
+              : "rounded-2xl border-2 border-primary/30 bg-primary/5 p-4 text-center";
             return (
               <div className="space-y-5 pt-2">
                 <div>
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">First batch · check oven settings</p>
+                  {reminder ? (
+                    <p className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 text-white px-2.5 py-1 text-sm font-extrabold uppercase tracking-wide">
+                      <Flame className="w-4 h-4" /> Oven change for this recipe
+                    </p>
+                  ) : (
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">First batch · check oven settings</p>
+                  )}
                   <h3 className="font-bold text-2xl mt-1" style={{ color: item.recipeColor || undefined }}>
                     {item.recipeName ?? `Recipe #${item.recipeId}`}
                   </h3>
-                  <p className="text-sm text-muted-foreground mt-0.5">
-                    {isMeat ? "Meat" : "Vegetarian"} profile
-                  </p>
+                  {profile && (
+                    <p className="text-sm text-muted-foreground mt-0.5">
+                      {profile} profile
+                      {reminder?.standard && <> · standard is {reminder.standard.tempC}°C for {formatOvenTime(reminder.standard.timeSeconds)}</>}
+                    </p>
+                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-2xl border-2 border-primary/30 bg-primary/5 p-4 text-center">
+                  <div className={tile}>
                     <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">Temperature</div>
-                    <div className="text-4xl font-bold tabular-nums mt-1">{temp}<span className="text-xl font-normal text-muted-foreground">°C</span></div>
+                    <div className="text-4xl font-bold tabular-nums mt-1">{setting.tempC}<span className="text-xl font-normal text-muted-foreground">°C</span></div>
                   </div>
-                  <div className="rounded-2xl border-2 border-primary/30 bg-primary/5 p-4 text-center">
+                  <div className={tile}>
                     <div className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">Time</div>
-                    <div className="text-4xl font-bold tabular-nums mt-1">{time}<span className="text-xl font-normal text-muted-foreground"> min</span></div>
+                    <div className="text-4xl font-bold tabular-nums mt-1">{formatOvenTime(setting.timeSeconds)}<span className="text-xl font-normal text-muted-foreground"> min</span></div>
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => {
-                    setLastConfirmedDietary(dietary);
+                    setLastConfirmedOvenKey(ovenSettingKey(setting));
                     setOvenPromptItemId(null);
                     // Record the batch right away so the same tap that
                     // confirms the oven settings also lands the build —
@@ -1367,12 +1375,15 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                     // we used to hit when re-running the gate.
                     recordBatchNow(item);
                   }}
-                  className="w-full py-4 rounded-xl bg-primary text-primary-foreground font-bold text-lg hover:bg-primary/90 active:scale-95 transition-all"
+                  className={cn(
+                    "w-full py-4 rounded-xl font-bold text-lg active:scale-95 transition-all",
+                    reminder ? "bg-amber-500 hover:bg-amber-600 text-white" : "bg-primary text-primary-foreground hover:bg-primary/90",
+                  )}
                 >
-                  Checked oven settings — record batch
+                  {reminder ? "Oven changed — record batch" : "Checked oven settings — record batch"}
                 </button>
                 <p className="text-[11px] text-muted-foreground text-center">
-                  Only shows when switching between meat and vegetarian profiles.
+                  Shows whenever the oven needs setting differently from the last recipe.
                 </p>
               </div>
             );
@@ -1481,6 +1492,15 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                     </button>
                   )}
                 </div>
+
+                {/* Oven change reminder — this recipe bakes differently from
+                    its profile's standard (set on the recipe form). Big and
+                    amber so whoever loads the ovens changes them; a banner,
+                    never a gate. */}
+                {(() => {
+                  const r = ovenReminderFor(item);
+                  return r ? <OvenChangeBanner reminder={r} /> : null;
+                })()}
 
                   <div className="px-4 py-3 space-y-3">
                     {/* Legacy external SOP link (recipe SOP chips follow below) */}
@@ -1938,6 +1958,15 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                       {item.recipeName ?? `Recipe #${item.recipeId}`}
                       {isSelected && <span className="text-xs text-primary ml-1 no-underline">← now</span>}
                     </span>
+                    {/* Heads-up for recipes that need a different oven setting. */}
+                    {(() => {
+                      const r = ovenReminderFor(item);
+                      return r ? (
+                        <span className="inline-flex items-center gap-0.5 rounded-md bg-amber-500 text-white px-1.5 py-0.5 text-xs font-bold tabular-nums flex-shrink-0" title="Oven change for this recipe">
+                          <Flame className="w-3 h-3" />{r.setting.tempC}°C · {formatOvenTime(r.setting.timeSeconds)}
+                        </span>
+                      ) : null;
+                    })()}
                     <span className="text-sm tabular-nums font-medium flex-shrink-0">
                       {formatBatches(combinedCount)}/{formatBatches(item.batchesTarget ?? 0)}{" "}<span className="text-xs font-normal text-muted-foreground">({batchesToPacks(item.batchesTarget ?? 0, Math.max(1, Math.floor((item.portionsPerBatch ?? 10) / 2)))} packs)</span>
                     </span>
