@@ -101,7 +101,7 @@ export default function EndOfDayMeeting() {
 
       <div className="grid gap-4 sm:grid-cols-2">
         <KpiCard
-          label="Builders — batches per hour"
+          label="TCK run rate — batches per hour"
           icon={Hammer}
           tone="green"
           value={data.builder.batchesPerHour == null ? "—" : data.builder.batchesPerHour.toFixed(1)}

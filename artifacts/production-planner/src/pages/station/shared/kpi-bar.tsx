@@ -66,7 +66,7 @@ export function KpiBar({ sessionBatches, sessionStartedAt, activeBreakMinutes, t
           <p className="text-xl font-bold tabular-nums">{breakMins}m</p>
         </div>
         <div className="text-center">
-          <p className="text-xs text-muted-foreground">Batches / hour</p>
+          <p className="text-xs text-muted-foreground">TCK run rate</p>
           <p className={cn("text-2xl font-bold tabular-nums", bphColor)}>
             {bph.toFixed(1)}
           </p>

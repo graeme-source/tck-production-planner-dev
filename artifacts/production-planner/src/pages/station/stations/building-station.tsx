@@ -1121,7 +1121,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
             {teamBand && !buildingFinishedAt && (
               <span
                 className={cn("flex-shrink-0 rounded-lg px-2.5 py-1 text-sm font-extrabold tabular-nums leading-none", teamBand.tile)}
-                aria-label={`Building pace ${teamBph.toFixed(1)} batches per hour`}
+                aria-label={`TCK run rate ${teamBph.toFixed(1)} batches per hour`}
                 title={teamBand.label}
               >
                 {teamBph.toFixed(1)}<span className="font-bold opacity-90 text-xs">/hr</span>
@@ -1187,7 +1187,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
               )}
               {teamBph > 0 && (
                 <div className="flex justify-between text-base">
-                  <span className="text-muted-foreground">Team batches/hr</span>
+                  <span className="text-muted-foreground">TCK run rate</span>
                   <span className={cn("font-bold tabular-nums", bphColor(teamBph))}>{teamBph.toFixed(1)}</span>
                 </div>
               )}
@@ -2005,11 +2005,11 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                   "rounded-xl px-4 py-2.5 flex items-center justify-between gap-3 transition-colors",
                   teamBand.tile,
                 )}
-                aria-label={`Building pace ${teamBph.toFixed(1)} batches per hour`}
+                aria-label={`TCK run rate ${teamBph.toFixed(1)} batches per hour`}
               >
                 <span className="text-2xl md:text-3xl font-extrabold tabular-nums leading-none">
                   {teamBph.toFixed(1)}
-                  <span className="text-sm font-bold opacity-90 ml-1.5">batches/hr</span>
+                  <span className="text-sm font-bold opacity-90 ml-1.5">batches/hr · TCK run rate</span>
                 </span>
                 <span className="text-lg md:text-xl font-bold text-right leading-tight">{teamBand.label}</span>
               </div>

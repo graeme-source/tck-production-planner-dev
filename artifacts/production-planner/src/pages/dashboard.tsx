@@ -928,7 +928,7 @@ export default function Dashboard() {
           title="Building"
           value={batchesLoading ? "…" : formatProgressValue(totalBatches?.calzoneBuilt ?? 0, totalBatches?.calzoneBatches ?? 0)}
           subtitle={batchesLoading ? undefined : [
-            teamBph > 0 ? `${teamBph.toFixed(1)} batches/hr` : null,
+            teamBph > 0 ? `Run rate ${teamBph.toFixed(1)}/hr` : null,
             (totalBatches?.macPacks ?? 0) > 0 ? `+ ${totalBatches!.macPacks} mac packs` : null,
           ].filter(Boolean).join(" · ") || "Tap, then pick your table"}
           icon={ChefHat}

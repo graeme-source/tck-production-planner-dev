@@ -2053,7 +2053,7 @@ function SpecialPrepSlide({ data, slide }: { data: DashboardData; slide: Meeting
  *  `configJson.kpis` overrides this; default matches the three the
  *  kitchen actually tracks day-to-day. */
 const KPI_CATALOG = {
-  builder_rate: { label: "Builder batches/hr", get: (k: DashboardData["yesterdayKpis"]) => k.builderBatchesPerHour != null ? k.builderBatchesPerHour.toFixed(1) : "—", warn: () => false },
+  builder_rate: { label: "TCK run rate (batches/hr)", get: (k: DashboardData["yesterdayKpis"]) => k.builderBatchesPerHour != null ? k.builderBatchesPerHour.toFixed(1) : "—", warn: () => false },
   packing_rate: { label: "Packing boxes/hr",   get: (k: DashboardData["yesterdayKpis"]) => k.packingBatchesPerHour != null ? k.packingBatchesPerHour.toFixed(1) : "—", warn: () => false },
   wonkies:      { label: "Wonkies",            get: (k: DashboardData["yesterdayKpis"]) => k.wonkyCount.toString(), warn: (k: DashboardData["yesterdayKpis"]) => k.wonkyCount > 20 },
   // Completed improvements only, bucketed by when the work was marked done —

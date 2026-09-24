@@ -634,7 +634,7 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
         />
         <SummaryCard
           icon={<Activity className="w-5 h-5 text-violet-600" />}
-          label="Batches / Hour"
+          label="TCK run rate"
           value={data.overview.overallBph != null ? String(data.overview.overallBph) : "—"}
           sub={data.overview.targetBph != null ? `Target ${data.overview.targetBph}/hr` : "Start→finish minus standard breaks"}
         />
@@ -658,7 +658,7 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
                 <tr>
                   <th className="px-4 py-3 font-medium text-left">Builder</th>
                   <th className="px-4 py-3 font-medium text-center">Batches</th>
-                  <th className="px-4 py-3 font-medium text-center">BPH</th>
+                  <th className="px-4 py-3 font-medium text-center">Run rate</th>
                   <th className="px-4 py-3 font-medium text-center">Active Time</th>
                   <th className="px-4 py-3 font-medium text-center">Days</th>
                   <th className="px-4 py-3 font-medium text-center">Status</th>
@@ -756,7 +756,7 @@ function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: str
                               <th className="px-3 py-2 font-medium text-center">Batches</th>
                               <th className="px-3 py-2 font-medium text-center">Active</th>
                               <th className="px-3 py-2 font-medium text-center">Breaks</th>
-                              <th className="px-3 py-2 font-medium text-center">BPH</th>
+                              <th className="px-3 py-2 font-medium text-center">Run rate</th>
                               <th className="px-3 py-2 font-medium text-center">Status</th>
                             </tr>
                           </thead>
