@@ -59,6 +59,7 @@ import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assistant";
 import { TodoSheet, TodoInterstitial, useMyOpenTodoCount } from "@/components/todo-lists";
 import { StationMessageInterstitial } from "@/components/station-messages";
+import { FixedNoticeInterstitial } from "@/components/fixed-notice-interstitial";
 import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
 import { Banknote, BookOpen, Bot, GraduationCap, ChevronLeft, ChevronRight, ListTodo, ScanLine } from "lucide-react";
 
@@ -837,6 +838,7 @@ export function QuickActionsDock() {
           unacknowledged to-do — a message sent to packing has to reach the
           person even when they're on another page (Graeme, 2026-09-17). */}
       <StationMessageInterstitial />
+      <FixedNoticeInterstitial />
     </>
   );
 }
