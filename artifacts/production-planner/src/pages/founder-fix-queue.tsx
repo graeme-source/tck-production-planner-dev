@@ -16,7 +16,7 @@ import { Link, Redirect } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, HelpCircle, Loader2,
-  MessageCircleQuestion, OctagonAlert, Scale, Video, Wrench, X, XCircle,
+  MessageCircleQuestion, MessageSquareText, OctagonAlert, Scale, Send, Video, Wrench, X, XCircle,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
@@ -37,7 +37,7 @@ const TABS: Array<{ key: FixQueueTab; label: string }> = [
   { key: "proposed", label: "To review" },
   { key: "approved", label: "Approved" },
   { key: "in_progress", label: "In progress" },
-  { key: "fixed", label: "Fixed" },
+  { key: "fixed", label: "Done" },
   { key: "rejected", label: "Rejected" },
 ];
 
@@ -52,7 +52,7 @@ const LANE_STYLES: Record<TriageLane, string> = {
 
 const STATUS_LABELS: Record<TriageStatus, string> = {
   proposed: "To review", approved: "Approved", rejected: "Rejected",
-  in_progress: "In progress", fixed: "Fixed", wont_fix: "Won't fix",
+  in_progress: "In progress", fixed: "Fixed", wont_fix: "Won't fix", answered: "Answered",
 };
 
 const SEVERITY_DOT: Record<string, string> = { red: "bg-red-500", yellow: "bg-amber-400", green: "bg-emerald-500" };
@@ -83,7 +83,7 @@ function NoteDialog({ mode, onCancel, onSubmit }: {
       >
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
           {isReply ? <MessageCircleQuestion className="w-5 h-5 text-sky-600" /> : <XCircle className="w-5 h-5 text-red-600" />}
-          <h2 className="font-display font-bold text-lg flex-1">{isReply ? "Reply to Claude" : "Reject this recommendation"}</h2>
+          <h2 className="font-display font-bold text-lg flex-1">{isReply ? "Reply / ask Claude" : "Reject this recommendation"}</h2>
           <button onClick={onCancel} className="p-2 rounded-lg hover:bg-secondary" aria-label="Close">
             <X className="w-5 h-5" />
           </button>
@@ -123,20 +123,90 @@ function NoteDialog({ mode, onCancel, onSubmit }: {
   );
 }
 
+/** "Message the reporter": Graeme's own words to whoever reported it,
+ *  pre-filled with Claude's suggested reply (step-by-step instructions when
+ *  they can fix it themselves in the app). "This answers it" closes the
+ *  report — the usual case when no code change is needed. */
+function MessageDialog({ reporterName, suggested, canClose, onCancel, onSubmit }: {
+  reporterName: string;
+  suggested: string | null;
+  canClose: boolean;
+  onCancel: () => void;
+  onSubmit: (message: string, close: boolean) => void;
+}) {
+  const [message, setMessage] = useState(suggested ?? "");
+  const [close, setClose] = useState(canClose);
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-3 md:p-8" onClick={onCancel}>
+      <div
+        className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-xl max-h-[92dvh] flex flex-col overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
+          <MessageSquareText className="w-5 h-5 text-primary" />
+          <h2 className="font-display font-bold text-lg flex-1">Message {reporterName}</h2>
+          <button onClick={onCancel} className="p-2 rounded-lg hover:bg-secondary" aria-label="Close">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5 space-y-3">
+          <p className="text-sm text-muted-foreground">
+            {suggested
+              ? "Claude drafted this — check it, change anything, then send. It pops up full-screen for them next time they use the app."
+              : "Write to them directly. It pops up full-screen for them next time they use the app."}
+          </p>
+          <textarea
+            value={message}
+            onChange={e => setMessage(e.target.value)}
+            autoFocus
+            maxLength={4000}
+            placeholder="e.g. No fix needed — you can set this yourself: open Product → Recipes, pick the recipe, and fill in the oven override."
+            className="w-full min-h-[200px] px-3 py-2.5 bg-background border border-border rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+          {canClose ? (
+            <label className="flex items-start gap-3 rounded-xl border border-border p-3 cursor-pointer">
+              <input type="checkbox" checked={close} onChange={e => setClose(e.target.checked)} className="mt-1 w-5 h-5 accent-[hsl(var(--primary))]" />
+              <span>
+                <span className="block font-semibold">This answers it — close the report</span>
+                <span className="block text-sm text-muted-foreground">Untick to keep it open (e.g. you're asking them something).</span>
+              </span>
+            </label>
+          ) : (
+            <p className="text-sm text-muted-foreground">This report is already closed or being fixed, so the message won't change that.</p>
+          )}
+        </div>
+        <div className="p-5 pt-0 flex gap-2">
+          <button onClick={onCancel} className="flex-1 h-12 rounded-xl border border-border font-semibold hover:bg-secondary/60">
+            Cancel
+          </button>
+          <button
+            onClick={() => onSubmit(message.trim(), canClose && close)}
+            disabled={!message.trim()}
+            className="flex-1 h-12 rounded-xl bg-primary text-primary-foreground font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            <Send className="w-4 h-4" /> {canClose && close ? "Send & close" : "Send"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── One recommendation ──────────────────────────────────────────────────────
 
 function Chip({ children, className }: { children: React.ReactNode; className?: string }) {
   return <span className={cn("inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold", className)}>{children}</span>;
 }
 
-function FixCard({ item, onDecide, saving }: {
+function FixCard({ item, onDecide, onMessage, saving }: {
   item: FixQueueItem;
   onDecide: (action: DecisionAction, note?: string) => void;
+  onMessage: (message: string, close: boolean) => void;
   saving: boolean;
 }) {
   const { triage: t, issue } = item;
   const [whyOpen, setWhyOpen] = useState(false);
-  const [dialog, setDialog] = useState<null | "reject" | "reply">(null);
+  const [dialog, setDialog] = useState<null | "reject" | "reply" | "message">(null);
   const status = t.status;
   const images = issue?.attachments.filter(a => a.kind === "image") ?? [];
   const videos = issue?.attachments.filter(a => a.kind !== "image") ?? [];
@@ -236,6 +306,17 @@ function FixCard({ item, onDecide, saving }: {
         </div>
       )}
 
+      {/* Claude's draft to the reporter — the training moment when they can
+          fix it themselves from the app's own settings. */}
+      {t.suggestedReply?.trim() && (
+        <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4">
+          <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-primary mb-1">
+            <MessageSquareText className="w-4 h-4" /> Suggested reply to {issue?.reporter.name ?? "the reporter"}
+          </p>
+          <p className="text-base whitespace-pre-wrap">{t.suggestedReply}</p>
+        </div>
+      )}
+
       {/* Facts */}
       <div className="flex flex-wrap gap-2 text-sm">
         {t.objective && <Chip className="bg-primary/15 text-foreground">Objective {t.objective}</Chip>}
@@ -268,7 +349,9 @@ function FixCard({ item, onDecide, saving }: {
             <p>
               {status === "proposed"
                 ? (t.awaitingRetriage ? "You replied" : "You replied — Claude has updated the recommendation")
-                : `${status === "rejected" ? "Rejected" : "Approved"} by ${t.decidedBy ?? "you"}`}
+                : status === "answered"
+                  ? `Answered with a message by ${t.decidedBy ?? "you"}`
+                  : `${status === "rejected" ? "Rejected" : "Approved"} by ${t.decidedBy ?? "you"}`}
               {" · "}{feedTimestamp(t.decidedAt)}
               {t.decisionNote && <span className="block text-foreground">“{t.decisionNote}”</span>}
             </p>
@@ -303,7 +386,13 @@ function FixCard({ item, onDecide, saving }: {
         {status === "proposed" && (
           <button onClick={() => setDialog("reply")} disabled={saving}
             className="h-14 px-5 rounded-2xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/60 disabled:opacity-50">
-            <MessageCircleQuestion className="w-5 h-5" /> Reply / ask
+            <MessageCircleQuestion className="w-5 h-5" /> Reply / ask Claude
+          </button>
+        )}
+        {issue?.reporter.id != null && (
+          <button onClick={() => setDialog("message")} disabled={saving}
+            className="h-14 px-5 rounded-2xl border-2 border-primary/40 text-primary font-bold flex items-center gap-2 hover:bg-primary/10 disabled:opacity-50">
+            <MessageSquareText className="w-5 h-5" /> Message {issue.reporter.name?.split(" ")[0] ?? "the reporter"}
           </button>
         )}
         <Link href={`/reports?tab=issues&issueId=${t.andonIssueId}`}
@@ -312,7 +401,16 @@ function FixCard({ item, onDecide, saving }: {
         </Link>
       </div>
 
-      {dialog && (
+      {dialog === "message" && (
+        <MessageDialog
+          reporterName={issue?.reporter.name ?? "the reporter"}
+          suggested={t.suggestedReply}
+          canClose={["proposed", "approved", "rejected", "wont_fix"].includes(status)}
+          onCancel={() => setDialog(null)}
+          onSubmit={(message, close) => { setDialog(null); onMessage(message, close); }}
+        />
+      )}
+      {(dialog === "reject" || dialog === "reply") && (
         <NoteDialog
           mode={dialog}
           onCancel={() => setDialog(null)}
@@ -326,9 +424,10 @@ function FixCard({ item, onDecide, saving }: {
 /** A card Graeme has replied to, folded to one line: nothing for him to do
  *  until Claude answers, so it shouldn't look like it needs him. Tap to
  *  open the full card (e.g. to reject it while waiting). */
-function WaitingRow({ item, onDecide, saving }: {
+function WaitingRow({ item, onDecide, onMessage, saving }: {
   item: FixQueueItem;
   onDecide: (action: DecisionAction, note?: string) => void;
+  onMessage: (message: string, close: boolean) => void;
   saving: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -339,7 +438,7 @@ function WaitingRow({ item, onDecide, saving }: {
         <button onClick={() => setOpen(false)} className="text-sm font-semibold text-muted-foreground hover:text-foreground flex items-center gap-1.5">
           <ChevronDown className="w-4 h-4" /> Fold it back up
         </button>
-        <FixCard item={item} onDecide={onDecide} saving={saving} />
+        <FixCard item={item} onDecide={onDecide} onMessage={onMessage} saving={saving} />
       </div>
     );
   }
@@ -432,6 +531,26 @@ export default function FounderFixQueue() {
     },
   });
 
+  const sendMessage = useMutation({
+    mutationFn: async ({ id, message, close }: { id: number; message: string; close: boolean }) =>
+      fetch(`${BASE}/api/issue-pipeline/review/${id}/message`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, close }),
+      }).then(jsonOrThrow),
+    onMutate: ({ id }) => setSavingIds(s => new Set(s).add(id)),
+    onSuccess: (_d, { close }) => toast({
+      title: close ? "Sent — report closed" : "Message sent",
+      description: "It pops up for them next time they use the app.",
+    }),
+    onError: (err: Error) => toast({ title: "Not sent", description: err.message, variant: "destructive" }),
+    onSettled: (_d, _e, { id }) => {
+      setSavingIds(s => { const n = new Set(s); n.delete(id); return n; });
+      void qc.invalidateQueries({ queryKey: ["issue-pipeline", "review"] });
+    },
+  });
+
   if (state.status === "authenticated" && !isFounder) return <Redirect to="/" />;
   if (state.status !== "authenticated") return null;
 
@@ -509,6 +628,7 @@ export default function FounderFixQueue() {
             item={item}
             saving={savingIds.has(item.triage.id)}
             onDecide={(action, note) => decide.mutate({ id: item.triage.id, action, note })}
+            onMessage={(message, close) => sendMessage.mutate({ id: item.triage.id, message, close })}
           />
         ))}
       </div>
@@ -528,6 +648,7 @@ export default function FounderFixQueue() {
                 item={item}
                 saving={savingIds.has(item.triage.id)}
                 onDecide={(action, note) => decide.mutate({ id: item.triage.id, action, note })}
+                onMessage={(message, close) => sendMessage.mutate({ id: item.triage.id, message, close })}
               />
             ))}
           </div>

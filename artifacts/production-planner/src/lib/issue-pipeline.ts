@@ -5,7 +5,7 @@
  */
 
 export type TriageLane = "defect" | "data_fix" | "understanding" | "improvement" | "needs_info" | "not_app";
-export type TriageStatus = "proposed" | "approved" | "rejected" | "in_progress" | "fixed" | "wont_fix";
+export type TriageStatus = "proposed" | "approved" | "rejected" | "in_progress" | "fixed" | "wont_fix" | "answered";
 export type FixQueueTab = "proposed" | "approved" | "in_progress" | "fixed" | "rejected";
 
 export interface Triage {
@@ -21,6 +21,8 @@ export interface Triage {
   noGoZone: boolean;
   behaviourChange: boolean;
   questionForGraeme: string | null;
+  /** Claude's draft message to the reporter — pre-fills "Message the reporter". */
+  suggestedReply: string | null;
   relatedIssueIds: number[];
   causeTag: string | null;
   status: TriageStatus;
@@ -54,6 +56,7 @@ export interface FixNoticeSummary {
   id: number;
   andonIssueId: number;
   userId: number;
+  kind: "fixed" | "message";
   ackAction: "test_now" | "later" | null;
   acknowledgedAt: string | null;
   createdAt: string;
@@ -75,6 +78,8 @@ export interface FixQueueResponse {
 export interface MyFixedNotice {
   id: number;
   andonIssueId: number;
+  /** 'fixed' = "your report has been fixed"; 'message' = a reply from Graeme. */
+  kind: "fixed" | "message";
   quote: string;
   whatChanged: string;
   testPath: string | null;
@@ -96,6 +101,8 @@ export const LANE_LABELS: Record<TriageLane, string> = {
 export function tabCount(counts: FixQueueResponse["counts"] | undefined, tab: FixQueueTab): number {
   if (!counts) return 0;
   if (tab === "rejected") return (counts.rejected ?? 0) + (counts.wont_fix ?? 0);
+  // The Done tab: fixed in code, or answered with a message to the reporter.
+  if (tab === "fixed") return (counts.fixed ?? 0) + (counts.answered ?? 0);
   // "To review" counts only what needs Graeme: a card he has replied to is
   // waiting on Claude, not on him (Graeme, 2026-09-24).
   if (tab === "proposed") return Math.max(0, (counts.proposed ?? 0) - (counts.awaitingReply ?? 0));
@@ -118,7 +125,8 @@ export function safeTestPath(p: string | null | undefined): string | null {
 }
 
 /** "Reporter notified — tested it now" etc., for the Fix queue card. */
-export function noticeStatusLine(n: Pick<FixNoticeSummary, "ackAction" | "acknowledgedAt">): string {
+export function noticeStatusLine(n: Pick<FixNoticeSummary, "ackAction" | "acknowledgedAt"> & { kind?: FixNoticeSummary["kind"] }): string {
+  if (n.kind === "message") return n.acknowledgedAt ? "Your message — reporter has read it" : "Your message — not seen yet";
   if (!n.acknowledgedAt) return "Reporter notified — not seen yet";
   return n.ackAction === "test_now" ? "Reporter notified — testing it now" : "Reporter notified — will test later";
 }

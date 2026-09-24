@@ -24,6 +24,9 @@ describe("tabCount", () => {
     expect(tabCount(counts, "rejected")).toBe(3);
     expect(tabCount(undefined, "fixed")).toBe(0);
   });
+  it("Done counts fixed and answered-by-message together", () => {
+    expect(tabCount({ ...counts, fixed: 4, answered: 2 } as typeof counts & { answered: number }, "fixed")).toBe(6);
+  });
   it("To review leaves out cards waiting on Claude's answer to a reply", () => {
     expect(tabCount({ ...counts, proposed: 2, awaitingReply: 2 }, "proposed")).toBe(0);
     expect(tabCount({ ...counts, proposed: 0, awaitingReply: 1 }, "proposed")).toBe(0);
@@ -35,5 +38,9 @@ describe("noticeStatusLine", () => {
     expect(noticeStatusLine({ ackAction: null, acknowledgedAt: null })).toMatch(/not seen yet/);
     expect(noticeStatusLine({ ackAction: "test_now", acknowledgedAt: "2026-09-24T10:00:00Z" })).toMatch(/testing it now/);
     expect(noticeStatusLine({ ackAction: "later", acknowledgedAt: "2026-09-24T10:00:00Z" })).toMatch(/will test later/);
+  });
+  it("a message to the reporter says whether they've read it", () => {
+    expect(noticeStatusLine({ kind: "message", ackAction: null, acknowledgedAt: null })).toMatch(/Your message — not seen yet/);
+    expect(noticeStatusLine({ kind: "message", ackAction: "later", acknowledgedAt: "2026-09-24T10:00:00Z" })).toMatch(/has read it/);
   });
 });

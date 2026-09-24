@@ -73,6 +73,9 @@ export function FixedNoticeInterstitial() {
   if (!loggedIn || !notice) return null;
 
   const testPath = safeTestPath(notice.testPath);
+  // A reply from Graeme (e.g. "no fix needed — here's how to set it
+  // yourself") rather than a fix: same pop-up, different words, one button.
+  const isMessage = notice.kind === "message";
   const busy = ack.isPending;
 
   const later = () => ack.mutate({ id: notice.id, action: "later" });
@@ -96,18 +99,18 @@ export function FixedNoticeInterstitial() {
           <CheckCircle2 className="w-12 h-12 md:w-14 md:h-14 text-primary flex-shrink-0" />
           <div className="flex-1 min-w-0">
             <h2 id="fixed-notice-title" className="font-display font-bold text-2xl md:text-3xl leading-tight">
-              Your report has been fixed
+              {isMessage ? "A reply to your report" : "Your report has been fixed"}
             </h2>
             <p className="text-sm text-muted-foreground mt-1">
-              Thank you — this changed because you reported it.
+              {isMessage ? "Thank you for reporting it." : "Thank you — this changed because you reported it."}
               {queue.length > 1 ? ` · 1 of ${queue.length}` : ""}
             </p>
           </div>
           <button
             onClick={later}
             disabled={busy}
-            aria-label="Close — I'll test it later"
-            title="Close — I'll test it later"
+            aria-label={isMessage ? "Close — got it" : "Close — I'll test it later"}
+            title={isMessage ? "Close — got it" : "Close — I'll test it later"}
             className="w-11 h-11 rounded-xl border border-border bg-background flex items-center justify-center text-muted-foreground hover:text-foreground flex-shrink-0"
           >
             <X className="w-5 h-5" />
@@ -123,12 +126,14 @@ export function FixedNoticeInterstitial() {
             <p className="text-sm text-muted-foreground mt-1.5 pl-5">{feedTimestamp(notice.reportedAt)} · {notice.station}</p>
           </div>
           <div>
-            <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1.5">What's different</p>
+            <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1.5">{isMessage ? "Reply" : "What's different"}</p>
             <p className="text-lg md:text-xl font-semibold whitespace-pre-wrap">{notice.whatChanged}</p>
           </div>
-          <p className="text-base text-muted-foreground">
-            Please test it and let us know if it's still not working — just report it again.
-          </p>
+          {!isMessage && (
+            <p className="text-base text-muted-foreground">
+              Please test it and let us know if it's still not working — just report it again.
+            </p>
+          )}
         </div>
 
         <div className="p-5 md:p-7 pt-0 space-y-2">
@@ -151,8 +156,8 @@ export function FixedNoticeInterstitial() {
                 : "w-full h-16 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2 hover:bg-primary/90 disabled:opacity-50"
             }
           >
-            {busy && !testPath ? <Loader2 className="w-5 h-5 animate-spin" /> : <Clock className="w-5 h-5" />}
-            I'll test it later
+            {busy && !testPath ? <Loader2 className="w-5 h-5 animate-spin" /> : isMessage ? <CheckCircle2 className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
+            {isMessage ? "Got it" : "I'll test it later"}
           </button>
         </div>
       </div>
