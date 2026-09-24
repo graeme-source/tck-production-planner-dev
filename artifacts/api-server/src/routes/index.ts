@@ -89,6 +89,8 @@ import financeRouter from "./finance";
 import featuresRouter from "./features";
 import contractsRouter from "./contracts";
 import starterFormsRouter from "./starter-forms";
+import issuePipelineMachineRouter from "./issue-pipeline-machine";
+import issuePipelineRouter from "./issue-pipeline";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -98,6 +100,11 @@ router.use(healthRouter);
 router.use("/auth", authRouter);
 router.use("/auth", invitesRouter);
 router.use(storageRouter);
+// Issue pipeline MACHINE API — the scheduled Claude Code session has no
+// session cookie, so it mounts here, above the session guard. It is NOT
+// public: the router's own first middleware demands the ISSUE_PIPELINE_TOKEN
+// bearer on every path (503 when the env var is unset).
+router.use("/issue-pipeline/machine", issuePipelineMachineRouter);
 
 // Auth guard for all routes below
 router.use((req: Request, res: Response, next: NextFunction) => {
@@ -206,6 +213,9 @@ router.use("/starter-forms", starterFormsRouter);
 router.use("/founder-sales", founderSalesRouter);
 router.use("/improvements", improvementsRouter);
 router.use("/andon", andonRouter);
+// Issue pipeline people side: Graeme's Fix queue (founder-gated per route)
+// and each reporter's own "your report has been fixed" notices.
+router.use("/issue-pipeline", issuePipelineRouter);
 router.use("/qr", qrRouter);
 router.use("/pnl", pnlRouter);
 router.use("/checklists", checklistsRouter);
