@@ -1,6 +1,11 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import { installPinRequiredFetchHook } from "./lib/pin-required-fetch";
+
+// Before any request: a write the server refuses because today's PIN hasn't
+// been entered (423 PIN_REQUIRED) puts the PIN pad up — see auth-context.
+installPinRequiredFetchHook();
 
 // Tag this device as desktop or mobile so the backend can clamp the session
 // cookie lifetime for shared PCs without affecting iPads. Touch capability is

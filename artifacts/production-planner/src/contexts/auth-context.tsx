@@ -7,6 +7,7 @@ import { toast } from "@/hooks/use-toast";
 import { idleTimeoutMs, type IdleTimeoutSettings } from "@/lib/idle-timeout";
 import { londonDay, crossedLondonMidnight } from "@/lib/day-rollover";
 import { nextStreakStart, shouldDeferCutover, cutoverPassedWhileAway } from "@/lib/pin-cutover-client";
+import { PIN_REQUIRED_EVENT } from "@/lib/pin-required-fetch";
 
 export type AuthUser = {
   id: number;
@@ -495,6 +496,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("pageshow", handleFocus);
     };
   }, [state, pinLocked, checkSession, getLastActivity, lockIfCutoverPassedWhileAway]);
+
+  // The server refused a write that records work against a person because
+  // this session's PIN is due (423 PIN_REQUIRED — lib/pin-required-fetch.ts).
+  // Put the pad up; no navigation, so nothing typed on the screen is lost.
+  // Whoever is really there enters their PIN (or switches user) and taps
+  // again. One toast per burst — a screen can fire several writes at once.
+  const lastPinToastRef = useRef(0);
+  useEffect(() => {
+    const onPinRequired = () => {
+      setPinLocked(true);
+      markPinLockApplied();
+      prevPinRequiredRef.current = true;
+      if (Date.now() - lastPinToastRef.current > 5_000) {
+        lastPinToastRef.current = Date.now();
+        toast({
+          title: "Enter your PIN, then tap again",
+          description: "That wasn't saved — today's PIN is needed first, so it goes down under the right name.",
+          variant: "destructive",
+        });
+      }
+    };
+    window.addEventListener(PIN_REQUIRED_EVENT, onPinRequired);
+    return () => window.removeEventListener(PIN_REQUIRED_EVENT, onPinRequired);
+  }, []);
 
   // Page load: the same local check, straight away, from what the last
   // session check stored — a reload in the morning doesn't wait for
