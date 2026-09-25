@@ -4,13 +4,17 @@
  * person's sick-leave spells, lates and absences, clearly labelled and
  * filterable. Sick spells carry their return-to-work reason inline and open
  * the full report; bare spells offer the quick "Add reason" back-fill.
- * Privacy is enforced server-side: only the colleague and the named RTW
- * managers get content — anyone else gets the door held politely shut.
+ * Privacy is enforced server-side: only the colleague and people with
+ * People access get content — anyone else gets the door held politely shut.
+ * The person's name links to their full record in People (/people/:id),
+ * where every absence, form, review and note sits in one timeline.
  * Closable + viewport-fit per the standing modal rule.
  */
 import { useEffect, useState } from "react";
 import { X, Loader2, HeartPulse, ChevronRight, ChevronLeft, Lock, PenLine, CheckCircle2, Clock, AlertTriangle } from "lucide-react";
+import { Link } from "wouter";
 import { cn } from "@/lib/utils";
+import { RTW_REASONS } from "@/lib/rtw-wording";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -29,8 +33,6 @@ export type TimelineFilter = "all" | "sick" | "late" | "absence";
 
 const fmtDay = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
 const fmtRange = (s: string, e: string | null) => (!e || e === s) ? fmtDay(s) : `${fmtDay(s)} – ${fmtDay(e)}`;
-
-const REASONS = ["Illness", "Injury", "Medical appointment / procedure", "Stress or mental health", "Other"];
 
 /** Historical back-fill (Graeme, 2026-09-14): just a reason against the
  *  dates — no full form. Creates a minimal record signed by the recorder. */
@@ -79,7 +81,7 @@ function QuickAddReason({ userId, spell, onSaved }: {
       <select value={reason} onChange={e => setReason(e.target.value)}
         className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm">
         <option value="">Reason…</option>
-        {REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+        {RTW_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
       </select>
       <input type="text" value={note} onChange={e => setNote(e.target.value)} placeholder="Optional note"
         className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
@@ -170,9 +172,11 @@ export function SickLeaveModal({ userId, userName, fromDate, initialFilter = "al
           </div>
           <div className="flex-1 min-w-0">
             <h2 className="font-display font-bold text-lg leading-tight truncate">
-              {detail ? fmtRange(detail.absenceStart, detail.absenceEnd) : `Attendance — ${userName}`}
+              {detail ? fmtRange(detail.absenceStart, detail.absenceEnd) : (
+                <>Attendance — <Link href={`/people/${userId}`} className="underline underline-offset-2 hover:text-primary">{userName}</Link></>
+              )}
             </h2>
-            <p className="text-xs text-muted-foreground flex items-center gap-1"><Lock className="w-3 h-3" /> Private — colleague, Graeme and Lorna only</p>
+            <p className="text-xs text-muted-foreground flex items-center gap-1"><Lock className="w-3 h-3" /> Private — the colleague and People access only</p>
           </div>
           {detail && (
             <button onClick={() => setDetail(null)} className="p-2 rounded-lg hover:bg-secondary" aria-label="Back to timeline">
@@ -187,7 +191,7 @@ export function SickLeaveModal({ userId, userName, fromDate, initialFilter = "al
         <div className="flex-1 overflow-y-auto p-5 space-y-3">
           {denied ? (
             <p className="text-muted-foreground text-sm">
-              Attendance records here include return-to-work reports, which are private — only the colleague themselves, Graeme and Lorna can read them.
+              Attendance records here include return-to-work reports, which are private — only the colleague themselves and people with People access can read them.
             </p>
           ) : detail ? (
             <div className="space-y-4 text-sm">
@@ -297,10 +301,10 @@ export function SickLeaveModal({ userId, userName, fromDate, initialFilter = "al
                   </button>
                 );
               })}
-              <a href={`${BASE}/return-to-work?user=${userId}`}
+              <Link href={`/people/${userId}`}
                 className="block text-center text-sm font-semibold text-primary hover:underline pt-1">
-                Open {userName.split(" ")[0]}'s return-to-work page →
-              </a>
+                Open {userName.split(" ")[0]}'s full record in People →
+              </Link>
             </>
           )}
         </div>
