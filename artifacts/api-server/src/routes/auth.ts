@@ -8,6 +8,7 @@ import { z } from "zod";
 import { validate } from "../middleware/validate";
 import { validatePassword } from "../lib/password-policy";
 import multer from "multer";
+import { isPinRequired, pinResetWindow } from "../lib/pin-cutover";
 
 const router: IRouter = Router();
 
@@ -51,53 +52,9 @@ async function ensurePasswordResetDeadline(
   return deadline;
 }
 
-// Returns true if the session needs PIN re-verification.
-// PIN lock resets at 4am UTC (morning shift start) and 10pm UK time (evening shift end).
-// Uses Europe/London timezone for the 10pm reset to handle BST/GMT automatically.
-function isPinRequired(pinVerifiedAt: string | undefined): boolean {
-  if (!pinVerifiedAt) return true;
-
-  const verified = new Date(pinVerifiedAt);
-  const now = new Date();
-
-  // Calculate reset times and find the most recent one
-  const resets: Date[] = [];
-
-  // Reset 1: 4am UTC (always UTC, doesn't shift with BST)
-  const morning = new Date();
-  morning.setUTCHours(4, 0, 0, 0);
-  if (now.getTime() < morning.getTime()) {
-    morning.setUTCDate(morning.getUTCDate() - 1);
-  }
-  resets.push(morning);
-
-  // Reset 2: 10pm UK time (Europe/London — automatically handles BST/GMT)
-  // 10pm GMT = 22:00 UTC in winter, 10pm BST = 21:00 UTC in summer
-  const evening = new Date();
-  // Work out 10pm UK in UTC: subtract the UK offset
-  const ukOffsetMs = getUKOffsetMs(now);
-  evening.setTime(now.getTime());
-  evening.setUTCHours(0, 0, 0, 0);
-  evening.setTime(evening.getTime() + 22 * 60 * 60 * 1000 - ukOffsetMs); // 22:00 UK → UTC
-  if (now.getTime() < evening.getTime()) {
-    evening.setUTCDate(evening.getUTCDate() - 1);
-  }
-  resets.push(evening);
-
-  // The most recent reset is the one we check against
-  const latestReset = resets.reduce((a, b) => (a.getTime() > b.getTime() ? a : b));
-
-  return verified.getTime() < latestReset.getTime();
-}
-
-/** Get the UK timezone offset in milliseconds (0 in winter, +3600000 in BST) */
-function getUKOffsetMs(date: Date): number {
-  const utcStr = date.toLocaleString("en-GB", { timeZone: "UTC" });
-  const ukStr = date.toLocaleString("en-GB", { timeZone: "Europe/London" });
-  const utcDate = new Date(utcStr.split(",").reverse().join(" "));
-  const ukDate = new Date(ukStr.split(",").reverse().join(" "));
-  return ukDate.getTime() - utcDate.getTime();
-}
+// The daily PIN cutover rule (4am UTC + 10pm London) lives in
+// lib/pin-cutover.ts, shared with the server-side lock in
+// middleware/pin-enforce.ts.
 
 router.post("/login", loginLimiter, validate(LoginBody), async (req, res) => {
   const { email, password } = req.body as z.infer<typeof LoginBody>;
@@ -172,7 +129,13 @@ router.get("/me", async (req, res) => {
     return;
   }
 
-  const pinRequired = isPinRequired(req.session.pinVerifiedAt);
+  const now = new Date();
+  const pinRequired = isPinRequired(req.session.pinVerifiedAt, now);
+  // The reset moments either side of now, so the app can tell someone who
+  // was genuinely active across a cutover (defer the lock) from a device
+  // that was asleep through it (lock the moment it wakes). See
+  // production-planner lib/pin-cutover-client.ts.
+  const resets = pinResetWindow(now);
   const resetDeadline = await ensurePasswordResetDeadline(user);
 
   res.json({
@@ -187,6 +150,8 @@ router.get("/me", async (req, res) => {
     isBookkeeper: user.isBookkeeper ?? false,
     features: await allowedFeatureKeys(user.id),
     pinRequired,
+    pinResetAt: resets.latest.toISOString(),
+    pinNextResetAt: resets.next.toISOString(),
     onboardingRequired: user.onboardingRequired ?? false,
     onboardingCompletedAt: user.onboardingCompletedAt ? user.onboardingCompletedAt.toISOString() : null,
     passwordResetDeadline: resetDeadline ? resetDeadline.toISOString() : null,
