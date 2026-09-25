@@ -8,6 +8,7 @@ import ingredientsRouter from "./ingredients";
 import subRecipesRouter from "./sub-recipes";
 import recipesRouter from "./recipes";
 import productionPlansRouter from "./production-plans";
+import buildingTablesRouter from "./building-tables";
 import dptSettingsRouter from "./dpt-settings";
 import timingStandardsRouter from "./timing-standards";
 import timingHealthRouter from "./timing-health";
@@ -52,6 +53,7 @@ import stationMessagesRouter from "./station-messages";
 import employeeReviewsRouter from "./employee-reviews";
 import peopleRouter from "./people";
 import { requirePeopleUnlock } from "../middleware/people-unlock";
+import { requireFreshPinForAttributingWrites } from "../middleware/pin-enforce";
 import friedChickenRouter from "./fried-chicken";
 import riskAssessmentsRouter from "./risk-assessments";
 import complianceActionsRouter from "./compliance-actions";
@@ -121,6 +123,12 @@ router.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
+// Daily PIN lock, server side: writes that put a person's name on work
+// (batches, table claims, checklist ticks, HACCP logs, packing/wrapping
+// records…) are refused with 423 PIN_REQUIRED once the session's PIN is due
+// (4am UTC / 10pm London). The list and rules: lib/pin-enforce.ts.
+router.use(requireFreshPinForAttributingWrites);
+
 // Admin-only middleware
 async function requireAdmin(req: Request, res: Response, next: NextFunction) {
   if (req.session.userRole === "admin") {
@@ -166,6 +174,9 @@ router.use("/recipes", recipesRouter);
 router.use("/recipe-collections", recipeCollectionsRouter);
 router.use("/queued-production", queuedProductionRouter);
 router.use("/production-plans", productionPlansRouter);
+// Who is actually on each building table (last batch recorder + who opened
+// it) — read-only, feeds the dashboard chooser and the building lock.
+router.use("/building-tables", buildingTablesRouter);
 router.use("/dpt-settings", requireAdminOrManager, dptSettingsRouter);
 router.use("/timing-standards", timingStandardsRouter);
 // Missing/stale schedule timing inputs + suggestions (manager/admin, read-only).

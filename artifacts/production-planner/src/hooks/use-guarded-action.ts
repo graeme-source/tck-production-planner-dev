@@ -47,6 +47,13 @@ export function useGuardedAction(options?: {
           // Expected 409 (e.g., target already met) — don't show error toast
           return undefined;
         }
+        if (err instanceof ClientError && err.status === 423) {
+          // Today's PIN is due: the PIN pad is already up with its own
+          // "Enter your PIN, then tap again" toast (lib/pin-required-fetch.ts)
+          // — a second "Action failed: 423 Locked" would only confuse.
+          onError?.(err);
+          return undefined;
+        }
 
         const message =
           err instanceof Error

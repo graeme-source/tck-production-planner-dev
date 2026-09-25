@@ -276,9 +276,12 @@ export default function StationPage() {
             <Lock className="w-8 h-8 text-amber-600 dark:text-amber-400" />
           </div>
           <div className="space-y-2">
-            <h2 className="text-xl font-bold">Station Assigned</h2>
+            <h2 className="text-xl font-bold">Table in use</h2>
+            {/* Follows whoever is actually working the table (a batch in
+                the last 30 minutes, or a fresh open with no batch since) —
+                lib/building-table-status.ts. It frees itself when they stop. */}
             <p className="text-muted-foreground max-w-sm">
-              This station is assigned to <span className="font-semibold text-foreground">{assignedUserName}</span> for today's production.
+              <span className="font-semibold text-foreground">{assignedUserName}</span> is working on this table right now.
             </p>
           </div>
           <button
