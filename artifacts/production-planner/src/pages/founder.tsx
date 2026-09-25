@@ -1086,6 +1086,18 @@ function FounderDashboard() {
             loading={monthLoading}
             error={!!monthError}
           />
+          {/* Today's AOV sits third, next to the other "today" figures
+              (Graeme, 2026-09-25); the two month-average tiles follow. */}
+          <KpiCard
+            title="Today's AOV"
+            value={monthSummary && monthSummary.todayOrderCount > 0 ? formatGBP(monthSummary.todayRevenue / monthSummary.todayOrderCount) : "—"}
+            sub={monthSummary && monthSummary.todayOrderCount > 0 ? `Across ${monthSummary.todayOrderCount} order${monthSummary.todayOrderCount !== 1 ? "s" : ""}` : "No orders yet today"}
+            icon={ShoppingBag}
+            color="text-emerald-500"
+            bg="bg-emerald-500/10"
+            loading={monthLoading}
+            error={!!monthError}
+          />
           <KpiCard
             title="Avg Daily Sales This Month"
             value={monthSummary ? formatGBP(monthSummary.averageDailyRevenue) : "—"}
@@ -1103,16 +1115,6 @@ function FounderDashboard() {
             icon={Calendar}
             color="text-amber-500"
             bg="bg-amber-500/10"
-            loading={monthLoading}
-            error={!!monthError}
-          />
-          <KpiCard
-            title="Today's AOV"
-            value={monthSummary && monthSummary.todayOrderCount > 0 ? formatGBP(monthSummary.todayRevenue / monthSummary.todayOrderCount) : "—"}
-            sub={monthSummary && monthSummary.todayOrderCount > 0 ? `Across ${monthSummary.todayOrderCount} order${monthSummary.todayOrderCount !== 1 ? "s" : ""}` : "No orders yet today"}
-            icon={ShoppingBag}
-            color="text-emerald-500"
-            bg="bg-emerald-500/10"
             loading={monthLoading}
             error={!!monthError}
           />
