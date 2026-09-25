@@ -53,6 +53,7 @@ function qtyToGrams(qty: number, unit: string | null): number {
 }
 import { cn } from "@/lib/utils";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
+import { TimingFlag, recipeTimingHref, ingredientTimingHref, meatMissingLabel } from "@/components/timing-flag";
 import { kgOrNull } from "@workspace/units";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
@@ -570,23 +571,32 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
   // and the day options (start time, builders, changeover). The timeline itself
   // is recomputed here from the CURRENT recipe order, so reordering a recipe or
   // dragging a break card re-times the whole day instantly.
-  const [schedInputs, setSchedInputs] = useState<Map<number, ScheduleRecipeInput> | null>(null);
-  const [schedOptions, setSchedOptions] = useState<ScheduleOptions | null>(null);
+  // React Query (charter rule 6) under the same key the meeting deck uses, so
+  // saving a missing build/cook time from the Recipes page's Timing data card
+  // (which invalidates "plan-schedule") re-times this screen too. Fetched once
+  // per plan otherwise, as before — drags are local + persisted separately.
+  const { data: schedData } = useQuery<{
+    recipes: ScheduleRecipeInput[];
+    options: Omit<ScheduleOptions, "breaks">;
+    breaks: ScheduleBreakInput[];
+    warnings: string[];
+  }>({
+    queryKey: ["plan-schedule", plan.id],
+    queryFn: async () => {
+      const res = await fetch(`/api/production-plans/${plan.id}/schedule`, { credentials: "include" });
+      if (!res.ok) throw new Error(`Schedule failed (${res.status})`);
+      return res.json();
+    },
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+  });
+  const schedInputs = schedData ? new Map(schedData.recipes.map(r => [r.planItemId, r])) : null;
+  const schedOptions: ScheduleOptions | null = schedData ? { ...schedData.options, breaks: [] } : null;
+  const schedWarnings = schedData?.warnings ?? [];
   const [schedBreaks, setSchedBreaks] = useState<ScheduleBreakInput[]>([]);
-  const [schedWarnings, setSchedWarnings] = useState<string[]>([]);
-
   useEffect(() => {
-    fetch(`/api/production-plans/${plan.id}/schedule`, { credentials: "include" })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => {
-        if (!d) return;
-        setSchedInputs(new Map((d.recipes as ScheduleRecipeInput[]).map(r => [r.planItemId, r])));
-        setSchedOptions(d.options as ScheduleOptions);
-        setSchedBreaks(d.breaks as ScheduleBreakInput[]);
-        setSchedWarnings(d.warnings as string[]);
-      })
-      .catch(err => console.warn("[Mixing] schedule fetch failed:", err));
-  }, [plan.id]);
+    if (schedData) setSchedBreaks(schedData.breaks);
+  }, [schedData]);
 
   const schedule = (() => {
     if (!schedInputs || !schedOptions) return null;
@@ -1298,6 +1308,12 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                 const earliestCookStart = schedMeats.length > 0
                   ? schedMeats.reduce((min, m) => Math.min(min, m.cookStartMinutes), Infinity)
                   : null;
+                // Any meat whose start time is a guess or impossible — flagged
+                // under the header so the cook knows the time can't be trusted.
+                const timingGaps = [
+                  ...schedMeats.filter(m => m.missing).map(m => ({ id: m.rawMeatIngredientId, name: m.rawMeatName, label: meatMissingLabel(m.missing) })),
+                  ...(schedByRecipeId.get(recipe.recipeId)?.untimedMeats ?? []).map(m => ({ id: m.rawMeatIngredientId, name: m.rawMeatName, label: meatMissingLabel("both") })),
+                ];
                 return (
                   <div key={recipe.recipeId} className={cn("bg-card border-2 rounded-xl overflow-hidden transition-all", recipeAllDone ? "border-green-400 dark:border-green-600" : "border-border")}>
                     {/* Recipe header */}
@@ -1336,6 +1352,16 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                         )}
                       </div>
                     </button>
+                    {timingGaps.length > 0 && !recipeAllDone && (
+                      <div className="px-4 py-2 border-b border-border bg-amber-50/60 dark:bg-amber-900/10 flex flex-wrap items-center gap-2 text-sm">
+                        {timingGaps.map(g => (
+                          <span key={g.id} className="inline-flex items-center gap-1.5 flex-wrap">
+                            <span className="font-medium">{g.name}:</span>
+                            <TimingFlag href={ingredientTimingHref(g.id)}>{g.label}</TimingFlag>
+                          </span>
+                        ))}
+                      </div>
+                    )}
 
                     {isOpen && (<>
                     {/* This flavour's own SOPs — the process for cooking THIS
@@ -1741,8 +1767,13 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
               </h3>
               {sched && (
                 <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-secondary text-muted-foreground tabular-nums whitespace-nowrap flex-shrink-0">
-                  {formatClock(sched.startMinutes)}
+                  {sched.buildTimeGuessed ? "~" : ""}{formatClock(sched.startMinutes)}
                 </span>
+              )}
+              {sched?.buildTimeGuessed && item.recipeId != null && (
+                <TimingFlag href={recipeTimingHref(item.recipeId)} className="flex-shrink-0">
+                  No build time set — timing is a guess
+                </TimingFlag>
               )}
               {isComplete && <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
               {item.status === "in-progress" && !isComplete && <PlayCircle className="w-5 h-5 text-blue-500 flex-shrink-0" />}
@@ -1767,7 +1798,7 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
               <span>{mixingCount} / {target} batches total</span>
             </div>
 
-            {sched && sched.meats.length > 0 && (
+            {sched && (sched.meats.length > 0 || sched.untimedMeats.length > 0) && (
               <div className="mt-1.5 space-y-0.5">
                 {sched.meats.map((m, i) => (
                   <div key={i} className="flex items-center gap-1.5 text-sm flex-wrap">
@@ -1785,6 +1816,21 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
                     {m.beforeShiftStart && (
                       <span className="text-xs font-medium text-rose-600 dark:text-rose-400">before start of day</span>
                     )}
+                    {m.missing && (
+                      <TimingFlag href={ingredientTimingHref(m.rawMeatIngredientId)}>{meatMissingLabel(m.missing)}</TimingFlag>
+                    )}
+                  </div>
+                ))}
+                {/* Meats with no cook or process time can't be given a start
+                    time — shown, flagged, rather than silently left off. */}
+                {sched.untimedMeats.map(m => (
+                  <div key={`untimed-${m.rawMeatIngredientId}`} className="flex items-center gap-1.5 text-sm flex-wrap">
+                    <Beef className="w-4 h-4 text-rose-500 flex-shrink-0" />
+                    <span className="text-muted-foreground">Start cooking</span>
+                    <span className="font-medium">{m.rawMeatName}</span>
+                    <span className="text-muted-foreground">by</span>
+                    <span className="font-bold">?</span>
+                    <TimingFlag href={ingredientTimingHref(m.rawMeatIngredientId)}>{meatMissingLabel("both")}</TimingFlag>
                   </div>
                 ))}
               </div>

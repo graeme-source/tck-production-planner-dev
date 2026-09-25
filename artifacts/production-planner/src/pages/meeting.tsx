@@ -17,6 +17,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import type React from "react";
 import { ImprovementFeedMedia } from "@/components/improvement-feed-media";
 import { useLocation, Link } from "wouter";
+import { TimingFlag, recipeTimingHref } from "@/components/timing-flag";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
@@ -2311,7 +2312,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
   // Predicted build-start time per recipe from the day-schedule engine (the
   // same numbers the mixing station shows). Mac cheese runs on its own station
   // so its rows just show "—".
-  const { data: sched } = useQuery<{ timeline: Array<{ type: string; recipeId?: number; start?: string }> }>({
+  const { data: sched } = useQuery<{ timeline: Array<{ type: string; recipeId?: number; start?: string; buildTimeGuessed?: boolean }> }>({
     queryKey: ["plan-schedule", effectivePlan.id],
     enabled: effectivePlan.id != null,
     queryFn: async () => {
@@ -2322,8 +2323,12 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
     staleTime: 60_000,
   });
   const startByRecipe = new Map<number, string>();
+  // Recipes with no build time are timed at a typical rate — flag them so the
+  // meeting doesn't read a guessed start time as fact (2026-09-25).
+  const guessedBuildTime = new Set<number>();
   for (const row of sched?.timeline ?? []) {
     if (row.type === "recipe" && row.recipeId != null && row.start) startByRecipe.set(row.recipeId, row.start);
+    if (row.type === "recipe" && row.recipeId != null && row.buildTimeGuessed) guessedBuildTime.add(row.recipeId);
   }
 
   // Stock position per recipe. NEED = what's STILL to go out in today's pack
@@ -2605,6 +2610,9 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
                   <div className="flex items-center gap-3 min-w-0">
                     <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: r.color ?? "hsl(var(--muted))" }} aria-hidden />
                     <span className={cn("font-semibold truncate", numTxt)}>{r.recipeName}</span>
+                    {guessedBuildTime.has(r.recipeId) && (
+                      <TimingFlag href={recipeTimingHref(r.recipeId)} className="shrink-0">No build time — start time is a guess</TimingFlag>
+                    )}
                     {r.category === "Macaroni Cheese" && (
                       <span className="text-xs uppercase tracking-wide bg-amber-500/10 text-amber-700 dark:text-amber-300 px-2.5 py-0.5 rounded-full font-bold shrink-0">Mac</span>
                     )}
