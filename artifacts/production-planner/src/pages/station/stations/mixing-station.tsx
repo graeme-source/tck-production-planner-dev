@@ -1761,7 +1761,7 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
           </div>
 
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
               <h3 className={cn("font-semibold text-lg", isComplete ? "line-through text-muted-foreground" : "")}>
                 {item.recipeName ?? `Recipe #${item.recipeId}`}
               </h3>
