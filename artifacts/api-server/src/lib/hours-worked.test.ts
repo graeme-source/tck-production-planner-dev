@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   leaveKindForShiftType, leaveKindForAbsenceAccount, toHoursShift, classifyForEmployees,
-  buildHoursReport, typicalTime, isoWeekday, standingFor, sortTeamRows, payrollBlocks,
+  buildHoursReport, typicalTime, isoWeekday, standingFor, sortTeamRows, payrollBlocks, resolveHoursRange,
   type ClassifiedHoursShift, type HoursShift,
 } from "./hours-worked";
 
@@ -166,13 +166,32 @@ describe("buildHoursReport", () => {
     expect(r.weeks[1]).toMatchObject({ status: "counted", paidHours: 0, vsContract: -40 });
   });
 
+  it("nobody on the rota in the range has no weekly average, not zero", () => {
+    const r = buildHoursReport({ ...base, shifts: [], leaveDays: [], contractedHours: 40 });
+    expect(r.avgPaidPerWeek).toBeNull();
+    expect(r.difference).toBeNull();
+    expect(r.standing).toBeNull();
+  });
+
+  it("averages keep enough precision to read in minutes (476.2 h over 52 shifts is 9h 09m)", () => {
+    // 52 shifts summing to 476.2 paid hours: 9.1577 h each on average.
+    const shifts = Array.from({ length: 52 }, (_, i) => {
+      const d = new Date("2026-06-29T00:00:00Z"); d.setUTCDate(d.getUTCDate() + Math.floor(i / 5) * 7 + (i % 5));
+      const date = d.toISOString().slice(0, 10);
+      return { ...shift(date, "05:00", "14:00"), paidHours: 476.2 / 52 };
+    });
+    const r = buildHoursReport({ from: "2026-06-29", to: "2026-09-13", today: "2026-09-25", startedOn: null, shifts, leaveDays: [], contractedHours: null });
+    expect(r.totalPaidHours).toBeCloseTo(476.2, 1);
+    expect(Math.round((r.avgPaidHours! % 1) * 60)).toBe(9);
+  });
+
   it("weekday table: shifts, average paid hours and typical times per day", () => {
     const shifts = [shift("2026-09-03", "05:00", "16:00", 50), shift("2026-09-10", "05:30", "16:30", 50), shift("2026-09-04", "05:00", "12:00", 0)];
     const r = buildHoursReport({ ...base, shifts, leaveDays: [], contractedHours: null });
     const thu = r.weekdays.find(d => d.weekday === 4)!;
     expect(thu.shifts).toBe(2);
     expect(thu.avgPaidHours).toBeCloseTo(11 - 5 / 6, 2);
-    expect(thu.typicalStart).toBe("05:15");
+    expect(thu.typicalStart).toBe("05:15"); // median of 05:00 and 05:30
     const fri = r.weekdays.find(d => d.weekday === 5)!;
     expect(fri.avgClockHours).toBe(7);
     expect(r.weekdays.find(d => d.weekday === 6)!.avgPaidHours).toBeNull();
@@ -180,9 +199,11 @@ describe("buildHoursReport", () => {
 });
 
 describe("helpers", () => {
-  it("typicalTime is the median time of day", () => {
+  it("typicalTime is the median time of day, to the nearest 5 minutes", () => {
     expect(typicalTime(["05:15", "05:20", "06:00"])).toBe("05:20");
     expect(typicalTime(["05:10", "05:20"])).toBe("05:15");
+    expect(typicalTime(["05:11", "05:13", "05:14"])).toBe("05:15");
+    expect(typicalTime(["15:22"])).toBe("15:20");
     expect(typicalTime([])).toBeNull();
   });
   it("isoWeekday: Monday 1 … Sunday 7", () => {
@@ -209,6 +230,20 @@ describe("sortTeamRows", () => {
       { name: "F", avgPaidPerWeek: 20, difference: null },
     ];
     expect(sortTeamRows(rows).map(r => r.name)).toEqual(["B", "E", "A", "C", "F", "D"]);
+  });
+});
+
+describe("resolveHoursRange", () => {
+  it("defaults to this week and the 12 before it, ending today", () => {
+    expect(resolveHoursRange({}, "2026-09-25")).toEqual({ from: "2026-06-29", to: "2026-09-25" });
+  });
+  it("never runs past today", () => {
+    expect(resolveHoursRange({ from: "2026-09-01", to: "2026-12-01" }, "2026-09-25")).toEqual({ from: "2026-09-01", to: "2026-09-25" });
+  });
+  it("refuses backwards and over-long ranges", () => {
+    expect(resolveHoursRange({ from: "2026-09-20", to: "2026-09-10" }, "2026-09-25")).toHaveProperty("error");
+    expect(resolveHoursRange({ from: "2025-01-01" }, "2026-09-25")).toHaveProperty("error");
+    expect(resolveHoursRange({ from: "2025-09-01" }, "2026-09-25")).toEqual({ from: "2025-09-01", to: "2026-09-25" });
   });
 });
 

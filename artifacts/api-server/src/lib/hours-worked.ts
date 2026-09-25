@@ -194,7 +194,7 @@ export interface HoursReport {
   totalClockHours: number;
   avgClockHours: number | null;
   avgPaidHours: number | null;
-  /** Median start and finish ("HH:MM") of worked shifts. */
+  /** Median start and finish ("HH:MM", nearest 5 min) of worked shifts. */
   typicalStart: string | null;
   typicalFinish: string | null;
   weeks: WeekHours[];
@@ -202,7 +202,7 @@ export interface HoursReport {
   leaveWeeks: number;
   /** Part weeks, the week in progress and weeks before they started. */
   otherExcludedWeeks: number;
-  /** Average paid hours over COUNTED weeks only. */
+  /** Average paid hours over COUNTED weeks only; null with no shifts at all. */
   avgPaidPerWeek: number | null;
   contractedHours: number | null;
   /** avgPaidPerWeek − contractedHours. */
@@ -224,6 +224,8 @@ export interface HoursReportInput {
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+/** Averages keep a little more, so 9.158 h still reads as 9h 09m. */
+const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
 function minutesOf(hhmm: string): number | null {
   const m = /^(\d{2}):(\d{2})$/.exec(hhmm);
@@ -236,9 +238,13 @@ function hhmm(minutes: number | null): string | null {
   return `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 }
 
-/** Median time of day ("HH:MM") of a list of "HH:MM" strings. */
+/** Typical times are rounded to the nearest 5 minutes — "about 05:15". */
+export const TYPICAL_TIME_ROUNDING_MIN = 5;
+
+/** Median time of day of a list of "HH:MM" strings, to the nearest 5 minutes. */
 export function typicalTime(times: string[]): string | null {
-  return hhmm(median(times.map(minutesOf).filter((n): n is number => n != null)));
+  const m = median(times.map(minutesOf).filter((n): n is number => n != null));
+  return hhmm(m == null ? null : Math.round(m / TYPICAL_TIME_ROUNDING_MIN) * TYPICAL_TIME_ROUNDING_MIN);
 }
 
 /** 1 = Monday … 7 = Sunday, from a "YYYY-MM-DD" date. */
@@ -293,8 +299,10 @@ export function buildHoursReport(input: HoursReportInput): HoursReport {
   }
 
   const counted = weeks.filter(w => w.status === "counted");
-  const avgPerWeek = mean(counted.map(w => w.paidHours));
-  const difference = avgPerWeek != null && contractedHours != null ? round2(avgPerWeek - contractedHours) : null;
+  // Nobody on the rota at all in the range (the founder, a salaried
+  // manager, someone not started yet) has no weekly average — not "0 h".
+  const avgPerWeek = worked.length === 0 ? null : mean(counted.map(w => w.paidHours));
+  const difference = avgPerWeek != null && contractedHours != null ? round3(avgPerWeek - contractedHours) : null;
 
   const weekdays: WeekdayHours[] = [];
   for (let d = 1; d <= 7; d++) {
@@ -304,8 +312,8 @@ export function buildHoursReport(input: HoursReportInput): HoursReport {
     weekdays.push({
       weekday: d,
       shifts: day.length,
-      avgPaidHours: paid == null ? null : round2(paid),
-      avgClockHours: clock == null ? null : round2(clock),
+      avgPaidHours: paid == null ? null : round3(paid),
+      avgClockHours: clock == null ? null : round3(clock),
       typicalStart: typicalTime(day.map(s => s.start)),
       typicalFinish: typicalTime(day.map(s => s.end)),
     });
@@ -320,15 +328,15 @@ export function buildHoursReport(input: HoursReportInput): HoursReport {
     leaveShifts,
     totalPaidHours: round2(totalPaid),
     totalClockHours: round2(totalClock),
-    avgClockHours: worked.length ? round2(totalClock / worked.length) : null,
-    avgPaidHours: worked.length ? round2(totalPaid / worked.length) : null,
+    avgClockHours: worked.length ? round3(totalClock / worked.length) : null,
+    avgPaidHours: worked.length ? round3(totalPaid / worked.length) : null,
     typicalStart: typicalTime(worked.map(s => s.start)),
     typicalFinish: typicalTime(worked.map(s => s.end)),
     weeks,
     countedWeeks: counted.length,
     leaveWeeks: weeks.filter(w => w.status === "leave").length,
     otherExcludedWeeks: weeks.filter(w => w.status !== "counted" && w.status !== "leave").length,
-    avgPaidPerWeek: avgPerWeek == null ? null : round2(avgPerWeek),
+    avgPaidPerWeek: avgPerWeek == null ? null : round3(avgPerWeek),
     contractedHours,
     difference,
     standing: standingFor(difference),
@@ -355,6 +363,27 @@ export function sortTeamRows<T extends TeamSortable>(rows: readonly T[]): T[] {
     if (group(a) === 1) return b.avgPaidPerWeek! - a.avgPaidPerWeek! || a.name.localeCompare(b.name);
     return a.name.localeCompare(b.name);
   });
+}
+
+// ── The range asked for ───────────────────────────────────────────────────
+
+/** Longest range one request may ask for (a year and a bit). */
+export const MAX_RANGE_DAYS = 400;
+/** Default: this week plus the 12 before it (about 3 months). */
+export const DEFAULT_WEEKS = 13;
+
+/** Resolve ?from/?to: defaults to the last 13 weeks, never runs past today,
+ *  and refuses a backwards or over-long range. */
+export function resolveHoursRange(
+  q: { from?: string; to?: string },
+  today: string,
+): { from: string; to: string } | { error: string } {
+  const to = q.to && q.to < today ? q.to : today;
+  const from = q.from ?? addDaysIso(weekStart(today), -7 * (DEFAULT_WEEKS - 1));
+  if (from > to) return { error: "The start date is after the end date." };
+  const days = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
+  if (days > MAX_RANGE_DAYS) return { error: `Pick a range of ${MAX_RANGE_DAYS} days or fewer.` };
+  return { from, to };
 }
 
 // ── Payroll windows ───────────────────────────────────────────────────────
