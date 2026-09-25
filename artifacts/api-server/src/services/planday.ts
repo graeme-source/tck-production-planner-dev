@@ -5,6 +5,7 @@
 
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import { payrollTotals } from "../lib/planday-payroll";
 
 // ── Config ─────────────────────────────────────────────────────────────────
 
@@ -187,33 +188,16 @@ export async function getPayrollCosts(from: string, to: string): Promise<ActualL
   const shifts = data.shiftsPayroll ?? [];
   if (shifts.length === 0) return { ...unavailable, available: true, settings: { niRate, niWeeklyThreshold, employmentAllowanceAnnual: allowanceAnnual, pensionRate } };
 
-  // Calculate gross wages (Planday's pre-calculated salary per shift, breaks already deducted)
-  const grossWages = shifts.reduce((sum, s) => sum + s.salary, 0);
-
-  // Calculate total hours from shift durations
-  let totalHours = 0;
-  for (const s of shifts) {
-    const start = new Date(s.start);
-    const end = new Date(s.end);
-    const shiftHours = (end.getTime() - start.getTime()) / 3600000;
-    // Subtract unpaid breaks
-    const unpaidBreakHours = s.breaks
-      .filter(b => !b.isPaid)
-      .reduce((sum, b) => sum + b.duration, 0);
-    totalHours += Math.max(0, shiftHours - unpaidBreakHours);
-  }
+  // Gross wages and paid hours. Planday's `salary` is clock time × rate —
+  // it does NOT take unpaid breaks off (they come back as negative-amount
+  // breaks), so payrollTotals adds those amounts back in. See lib/planday-payroll.ts.
+  const { grossWages, totalHours, wagesByEmployee } = payrollTotals(shifts);
 
   // Calculate period in weeks for NI threshold calculation
   const fromDate = new Date(from);
   const toDate = new Date(to);
   const daysInRange = Math.max(1, Math.ceil((toDate.getTime() - fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1);
   const weeksInRange = daysInRange / 7;
-
-  // Group wages by employee for NI calculation
-  const wagesByEmployee = new Map<number, number>();
-  for (const s of shifts) {
-    wagesByEmployee.set(s.employeeId, (wagesByEmployee.get(s.employeeId) ?? 0) + s.salary);
-  }
 
   // Calculate employer's NI per employee
   // NI = max(0, (employee_total_wages - (weekly_threshold × weeks_in_range))) × rate%
