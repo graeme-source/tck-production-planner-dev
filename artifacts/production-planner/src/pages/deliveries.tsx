@@ -1200,25 +1200,6 @@ export default function Deliveries() {
         </div>
       </div>
 
-      {/* In the page body, not the top bar: the top bar has no room for a
-          label this long on an iPad, and at the door this should be the
-          obvious thing to tap when something turns up off the list. */}
-      {canReceive && (
-        <button
-          onClick={() => setUnexpectedOpen(true)}
-          className="w-full min-h-16 px-5 py-3 rounded-2xl bg-amber-500 text-white flex items-center gap-4 text-left hover:bg-amber-600 active:bg-amber-700 transition-colors shadow-sm"
-        >
-          <span className="w-11 h-11 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
-            <Sparkles className="w-6 h-6" />
-          </span>
-          <span className="flex-1 min-w-0">
-            <span className="block text-xl font-bold leading-tight">Record an unexpected delivery</span>
-            <span className="block text-sm text-white/90">Something turned up that isn't on the list? Find it and check it in.</span>
-          </span>
-          <ChevronRight className="w-6 h-6 shrink-0" />
-        </button>
-      )}
-
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <h2 className="font-semibold text-lg">
@@ -1229,15 +1210,28 @@ export default function Deliveries() {
               </span>
             )}
           </h2>
+          {/* Side by side and low-key — an unexpected delivery is rare, so it
+              sits with Add collection rather than as a big banner
+              (Graeme, 2026-09-25). */}
           {canReceive && (
-            <button
-              onClick={() => setAddingCollection({})}
-              className="px-3 py-1.5 border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"
-              title="Something being collected from us"
-            >
-              <PackageOpen className="w-4 h-4" />
-              Add collection
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={() => setAddingCollection({})}
+                className="px-3 py-1.5 border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"
+                title="Something being collected from us"
+              >
+                <PackageOpen className="w-4 h-4" />
+                Add collection
+              </button>
+              <button
+                onClick={() => setUnexpectedOpen(true)}
+                className="px-3 py-1.5 border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"
+                title="Something arrived that isn't on the list"
+              >
+                <Truck className="w-4 h-4" />
+                Add delivery
+              </button>
+            </div>
           )}
           {selectedDayOrdersAll.length > 0 && (
             <button
@@ -1263,16 +1257,7 @@ export default function Deliveries() {
           <div className="rounded-2xl border border-dashed border-border bg-card flex flex-col items-center justify-center py-14 text-muted-foreground">
             <Truck className="w-10 h-10 mb-3 opacity-20" />
             <p className="text-sm font-medium">Nothing expected for this day</p>
-            <p className="text-xs mt-1 opacity-70">Select another day, place an order from the Orders page, or add a collection</p>
-            {canReceive && (
-              <button
-                onClick={() => setUnexpectedOpen(true)}
-                className="mt-4 h-12 px-5 rounded-xl border-2 border-amber-400 text-amber-900 dark:text-amber-200 font-semibold flex items-center gap-2 hover:bg-amber-50 dark:hover:bg-amber-950/30"
-              >
-                <Sparkles className="w-4 h-4" />
-                Something arrived anyway? Record an unexpected delivery
-              </button>
-            )}
+            <p className="text-xs mt-1 opacity-70">Select another day, place an order from the Orders page, or use Add delivery if something arrived anyway</p>
           </div>
         ) : (
           <div className="space-y-3">
