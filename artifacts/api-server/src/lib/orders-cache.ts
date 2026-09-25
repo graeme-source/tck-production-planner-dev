@@ -23,6 +23,7 @@
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { shopifyFetchRaw, parseNextPageInfo, type ShopifyOrder } from "../services/shopify";
+import { addDaysToDateString, londonDaysWindowUtc } from "./london-time";
 
 // Union of getOrdersByDateRange + getOrdersForPnl field lists, plus
 // updated_at (the sync cursor) and shipping_address/note for future callers.
@@ -176,6 +177,29 @@ export async function getCachedOrders(fromDate: string, toDate: string): Promise
     SELECT payload FROM shopify_orders_cache
     WHERE created_at >= ${`${fromDate}T00:00:00Z`}::timestamptz
       AND created_at <= ${`${toDate}T23:59:59Z`}::timestamptz
+    ORDER BY created_at
+  `);
+  return rows.rows.map(r => r.payload);
+}
+
+/**
+ * The same mirror read, but over whole LONDON days — what "Yesterday" or
+ * "Wed 24 Sep" means to the kitchen, and what Shopify's own admin reports
+ * use (the shop's timezone). getCachedOrders' UTC days start at 1am in
+ * summer, so an order at 00:30 BST lands on the previous day there. The
+ * founder Numbers page reads through this so its tiles, its trend graphs
+ * and Shopify all agree on which day an order belongs to.
+ *
+ * Coverage is ensured from the day before `fromDate`, because in summer
+ * London's day starts at 23:00 UTC the evening before.
+ */
+export async function getCachedOrdersLondonDays(fromDate: string, toDate: string): Promise<ShopifyOrder[]> {
+  await ensureOrdersFresh(addDaysToDateString(fromDate, -1));
+  const { start, end } = londonDaysWindowUtc(fromDate, toDate);
+  const rows = await db.execute<{ payload: ShopifyOrder }>(sql`
+    SELECT payload FROM shopify_orders_cache
+    WHERE created_at >= ${start.toISOString()}::timestamptz
+      AND created_at < ${end.toISOString()}::timestamptz
     ORDER BY created_at
   `);
   return rows.rows.map(r => r.payload);

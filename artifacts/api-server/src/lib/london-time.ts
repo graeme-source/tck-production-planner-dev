@@ -86,3 +86,39 @@ function londonDayBoundary(date: Date, dayOffset: number): Date {
   utcMidnight.setUTCHours(utcMidnight.getUTCHours() - offsetHours + dayOffset * 24);
   return utcMidnight;
 }
+
+/** Add whole calendar days to a YYYY-MM-DD string (date-only, so a clock
+ *  change can't nudge it). */
+export function addDaysToDateString(date: string, days: number): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) throw new Error(`Not a date: ${date}`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * UTC instant of 00:00 London on a YYYY-MM-DD date.
+ *
+ * London midnight is either 00:00 UTC (GMT) or 23:00 UTC the evening before
+ * (BST). This asks London directly which one it is, AT midnight — unlike
+ * londonStartOfDay above, which reads the offset at midday and so is an hour
+ * out on the two clock-change Sundays (the clocks change at 1-2am, after
+ * that day's midnight).
+ */
+export function londonDayStartUtc(date: string): Date {
+  const utcMidnight = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(utcMidnight.getTime())) throw new Error(`Not a date: ${date}`);
+  const bstMidnight = new Date(utcMidnight.getTime() - 3_600_000);
+  if (londonDateString(bstMidnight) === date && londonHour(bstMidnight) === 0) return bstMidnight;
+  return utcMidnight;
+}
+
+/**
+ * The instants covering London days `from`..`to` inclusive, as [start, end).
+ * In summer that's 23:00 UTC the evening before to 23:00 UTC on `to`; in
+ * winter midnight to midnight UTC. A span across a clock change is simply
+ * an hour shorter or longer — both ends are real London midnights.
+ */
+export function londonDaysWindowUtc(from: string, to: string): { start: Date; end: Date } {
+  return { start: londonDayStartUtc(from), end: londonDayStartUtc(addDaysToDateString(to, 1)) };
+}

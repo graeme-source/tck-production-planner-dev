@@ -1,5 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { getOrdersByTag, getProducts, countProductsByTag, getOrdersByDateRange, countOrdersByTag, getOnlineStoreConversion, type ShopifyOrder, type ProductCount } from "../services/shopify";
+import { getOrdersByTag, getProducts, countProductsByTag, getOrdersByLondonDays, countOrdersByTag, getOnlineStoreConversion, type ShopifyOrder, type ProductCount } from "../services/shopify";
 import { db, recipesTable, usersTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { londonDateString, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
@@ -228,6 +228,10 @@ router.get("/weekly-orders", async (req, res) => {
 // ── Founder View: Sales Summary ───────────────────────────────────────────────
 // GET /api/shopify/sales-summary?from=YYYY-MM-DD&to=YYYY-MM-DD
 // Returns aggregated revenue stats for the period + today's revenue.
+// Days are whole LONDON days (getOrdersByLondonDays), like every founder
+// Numbers endpoint: until 2026-09-25 they were UTC days, so in summer
+// "Yesterday" ran 1am to 1am and "Today's Sales" (London day) could
+// disagree with the Order Analysis "Today" tile.
 router.get("/sales-summary", requireFounder, async (req, res) => {
   const { from, to } = req.query as { from?: string; to?: string };
   if (!from || !to) {
@@ -237,10 +241,10 @@ router.get("/sales-summary", requireFounder, async (req, res) => {
   try {
     const todayStr = toDateTag(new Date());
     const [periodOrders, todayOrders] = await Promise.all([
-      getOrdersByDateRange(from, to),
+      getOrdersByLondonDays(from, to),
       todayStr >= from && todayStr <= to
         ? Promise.resolve(null)
-        : getOrdersByDateRange(todayStr, todayStr),
+        : getOrdersByLondonDays(todayStr, todayStr),
     ]);
 
     // Deduplicate by order ID in case pagination returns duplicates
@@ -305,7 +309,7 @@ router.get("/orders-by-type", requireFounder, async (req, res) => {
     return;
   }
   try {
-    const allOrders = (await getOrdersByDateRange(from, to)).filter(isCountableOrder);
+    const allOrders = (await getOrdersByLondonDays(from, to)).filter(isCountableOrder);
 
     const groups = CUSTOMER_TYPE_TAGS.map(tag => {
       const matchingOrders = allOrders.filter(o => orderHasTag(o, tag));
@@ -370,7 +374,7 @@ router.get("/tag-summary", requireFounder, async (req, res) => {
     return;
   }
   try {
-    const allOrders = (await getOrdersByDateRange(from, to)).filter(isCountableOrder);
+    const allOrders = (await getOrdersByLondonDays(from, to)).filter(isCountableOrder);
     const matching = allOrders.filter(o => orderHasTag(o, tag));
     const totalValue = matching.reduce((s, o) => s + getNetRevenue(o), 0);
     res.json({ tag, from, to, count: matching.length, totalValue });

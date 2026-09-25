@@ -2,7 +2,7 @@ import { shouldSkipSideEffect, logSkippedSideEffect } from "../lib/app-env";
 import { apcTrackingUrl } from "./apc";
 // Circular at module level (orders-cache imports shopifyFetchRaw from here)
 // but both sides only touch the other at call time, so ESM resolves it fine.
-import { getCachedOrders } from "../lib/orders-cache";
+import { getCachedOrders, getCachedOrdersLondonDays } from "../lib/orders-cache";
 
 const STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN!;
 const CLIENT_ID = process.env.SHOPIFY_CLIENT_ID!;
@@ -970,6 +970,14 @@ export async function getOrdersByDateRange(
   toDate: string,
 ): Promise<ShopifyOrder[]> {
   return getCachedOrders(fromDate, toDate);
+}
+
+// Whole London days (the founder Numbers page) — see getCachedOrdersLondonDays.
+export async function getOrdersByLondonDays(
+  fromDate: string,
+  toDate: string,
+): Promise<ShopifyOrder[]> {
+  return getCachedOrdersLondonDays(fromDate, toDate);
 }
 
 // Orders with full line_items for P&L calculation. The mirror stores the
