@@ -11,6 +11,8 @@ import * as z from "zod";
 import { resolveRecipeIngredients, resolveSubRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
 import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag, getVariantOnHandQuantities, type ProductCount } from "../services/shopify";
 import { remainingFulfilmentPacks } from "../lib/remaining-fulfilment";
+import { planStartStock, interveningDispatchDays } from "@workspace/stock-prediction";
+import { loadStillToWrapToday, loadPlannedProductionByDate } from "../lib/plan-start-stock-inputs";
 import { getFactoryNumberCoreMenuOnly, getShopifyFreezerSyncEnabled } from "../lib/inventory-sync";
 import { logFridgeStockChange, type FridgeChangeSource } from "../lib/fridge-stock-log";
 import { londonDateString, londonStartOfDay } from "../lib/london-time";
@@ -705,31 +707,9 @@ export async function calculatePlanData(planDate: string) {
   const deliveryDates = dispatchDates.map(getNextCalendarDay);
 
   const prevProductionDate = getPreviousWorkingDay(planDate);
-  const prevPlanItems = await db
-    .select({
-      recipeId: productionPlanItemsTable.recipeId,
-      batchesTarget: productionPlanItemsTable.batchesTarget,
-      portionsPerBatch: recipesTable.portionsPerBatch,
-      packSize: recipesTable.packSize,
-    })
-    .from(productionPlanItemsTable)
-    .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
-    .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
-    .where(and(
-      eq(productionPlansTable.planDate, prevProductionDate),
-      inArray(productionPlansTable.status, ["draft", "active", "prep", "building", "complete"]),
-    ));
-
-  const prevProductionPacks: Record<number, number> = {};
-  for (const row of prevPlanItems) {
-    if (row.recipeId != null) {
-      const portionsPerBatch = Number(row.portionsPerBatch) || 10;
-      const packSize = Number(row.packSize) || 1;
-      const packsPerBatch = portionsPerBatch / packSize;
-      const packs = (row.batchesTarget ?? 0) * packsPerBatch;
-      prevProductionPacks[row.recipeId] = (prevProductionPacks[row.recipeId] ?? 0) + packs;
-    }
-  }
+  // Same loader the mac cheese roll-forward uses (lib/plan-start-stock-inputs).
+  const prevProductionPacks: Record<number, number> =
+    (await loadPlannedProductionByDate([prevProductionDate]))[prevProductionDate] ?? {};
 
   const fridgeRows = await db
     .select({
@@ -899,27 +879,10 @@ export async function calculatePlanData(planDate: string) {
   const deliveryTodayStr = deliveryTodayDate.toISOString().slice(0, 10);
   const coreMenuOnly = await getFactoryNumberCoreMenuOnly();
 
-  const todayPlanItems = await db
-    .select({
-      recipeId: productionPlanItemsTable.recipeId,
-      batchesTarget: productionPlanItemsTable.batchesTarget,
-      fridgeQty: productionPlanItemsTable.fridgeQty,
-      fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
-      eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
-      freezerQty: productionPlanItemsTable.freezerQty,
-      wonlyCount: productionPlanItemsTable.wonlyCount,
-      wonlyTotal: productionPlanItemsTable.wonlyTotal,
-      wrappingComplete: productionPlanItemsTable.wrappingComplete,
-      portionsPerBatch: recipesTable.portionsPerBatch,
-      packSize: recipesTable.packSize,
-    })
-    .from(productionPlanItemsTable)
-    .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
-    .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
-    .where(and(
-      eq(productionPlansTable.planDate, todayStr),
-      inArray(productionPlansTable.status, ["active", "prep", "building"]),
-    ));
+  // Today's production still to land in the fridge — same loader the mac
+  // cheese stock uses (lib/plan-start-stock-inputs → @workspace/stock-
+  // prediction remainingWrappingPacks for how bags/freezer/wonkies net off).
+  const remainingWrappingPacksToday = await loadStillToWrapToday(todayStr);
 
   // ─── 8-pack bags planned on the plan being created/edited ─────────
   // Bags are made FROM the same batches as the 2-packs (36 batches = 360
@@ -928,7 +891,7 @@ export async function calculatePlanData(planDate: string) {
   // actually yields. Without this the projection counts the whole batch
   // output as 2-packs and overstates availability by up to 4 packs per bag.
   //
-  // Distinct from the todayPlanItems query above, which feeds the
+  // Distinct from the still-to-wrap load above, which feeds the
   // end-of-TODAY prediction (estimatedFactoryNumber). This is the next term
   // along: what the plan's OWN production will leave behind.
   //
@@ -950,47 +913,6 @@ export async function calculatePlanData(planDate: string) {
     plannedBagsByRecipe[row.recipeId] = (plannedBagsByRecipe[row.recipeId] ?? 0) + (row.eightPackBagCount ?? 0);
   }
 
-  const remainingWrappingPacksToday: Record<number, number> = {};
-  for (const row of todayPlanItems) {
-    if (row.recipeId == null) continue;
-    const portionsPerBatch = Number(row.portionsPerBatch) || 10;
-    const packSize = Number(row.packSize) || 1;
-    const packsPerBatch = portionsPerBatch / packSize;
-    const targetPacks = (row.batchesTarget ?? 0) * packsPerBatch;
-    // If the wrapping station has been marked complete for this item, no
-    // more packs are coming in — irrespective of whether the count tallies.
-    // Otherwise subtract everything that's already been accounted for: packs
-    // wrapped to the production fridge, packs in 8-pack overflow, packs sent
-    // to the freezer (wonkies + auto-freeze on completion), and packs still
-    // sitting on the wonky rack waiting to move. Without the wonky / freezer
-    // subtractions, recipes with wonkies were stuck reading "still N to wrap"
-    // forever — those packs were never going to land in the fridge.
-    // The predicted end-of-day factory number counts 2-PACKS ONLY, so every
-    // 8-pack bag — planned or already wrapped — must come off the remaining
-    // wrapping. Bag counters are in BAGS (8 portions each) while targetPacks
-    // and the other terms are 2-pack units, hence the (8 / packSize)
-    // conversion (a bag = 4 two-packs for calzones).
-    //
-    //   eightPackBagCount   = bags PLANNED for this item (set on the plan
-    //                         before production — the operator's allocation)
-    //   fridgeEightPackQty  = bags actually wrapped so far
-    //
-    // Bags still to come are excluded up front so the prediction is right
-    // from the moment the plan carries a bag allocation, not only after the
-    // bagging physically happens (bagging often runs after the next day's
-    // plan is created). If the team bags MORE than planned, actuals win.
-    const bagEquiv = 8 / packSize;
-    const bagsWrapped = row.fridgeEightPackQty ?? 0;
-    const bagsStillToCome = Math.max(0, (row.eightPackBagCount ?? 0) - bagsWrapped);
-    const accountedFor = (row.fridgeQty ?? 0)
-      + bagsWrapped * bagEquiv
-      + (row.freezerQty ?? 0)
-      + (row.wonlyCount ?? 0);
-    const remaining = row.wrappingComplete
-      ? 0
-      : Math.max(0, targetPacks - accountedFor - bagsStillToCome * bagEquiv);
-    remainingWrappingPacksToday[row.recipeId] = (remainingWrappingPacksToday[row.recipeId] ?? 0) + remaining;
-  }
 
   // Packs still to leave the fridge today, netted off live stock below to
   // give the PREDICTED end-of-day Factory Number. Shared with the macaroni
@@ -1412,9 +1334,6 @@ export async function calculatePlanData(planDate: string) {
     const wrapRemain = remainingWrappingPacksToday[recipeId] ?? 0;
     const fulRemain = remainingFulfilmentPacksToday[recipeId] ?? 0;
     const useNewPrediction = !coreMenuOnly || isCore;
-    const predictedFridgeStock = useNewPrediction
-      ? Math.max(0, Math.round(fridgeStock + wrapRemain - fulRemain))
-      : Math.round(fridgeStock);
     // When the plan is built AHEAD of time (planDate tomorrow or later),
     // dispatch1 — the working day before planDate — hasn't left the fridge
     // yet, and that day's planned production hasn't landed yet either.
@@ -1425,10 +1344,20 @@ export async function calculatePlanData(planDate: string) {
     // for a Friday plan built on Wednesday while Thursday+Friday+Monday
     // orders outran stock (Don Burger, 2026-08-05). Same-day plans are
     // unchanged: dispatch1 is yesterday, already out of the fridge.
+    // The same maths the mac cheese stock uses (@workspace/stock-prediction).
     const planAhead = dispatchDates[0] > todayStr;
+    const planStart = planStartStock({
+      liveStock: fridgeStock,
+      stillToWrapToday: wrapRemain,
+      stillToDispatchToday: fulRemain,
+      rollForward: planAhead
+        ? [{ date: dispatchDates[0], plannedProductionPacks: prevProduction, dispatchPacks: dispatch1Qty }]
+        : [],
+    });
+    const predictedFridgeStock = useNewPrediction ? planStart.endOfToday : Math.round(fridgeStock);
     const legacyEstimatedFactoryNumber = fridgeStock - dispatch1Qty + prevProduction;
     const estimatedFactoryNumberRaw = useNewPrediction
-      ? Math.max(0, predictedFridgeStock + (planAhead ? prevProduction - dispatch1Qty : 0))
+      ? planStart.atPlanStart
       : Math.round(legacyEstimatedFactoryNumber);
 
     // Shelf-life netting: packs whose last valid dispatch is before this
@@ -2088,12 +2017,22 @@ router.get("/calculate-mac-cheese", async (req, res) => {
       inArray(stockEntriesTable.recipeId, macRecipeIds),
       eq(stockEntriesTable.itemType, "recipe"),
       eq(stockEntriesTable.location, "production_fridge"),
+      // Same 2-pack reading the calzone Factory Number uses — a bag row
+      // must never out-rank the pack count on recency.
+      eq(stockEntriesTable.packSize, 2),
     ))
     .orderBy(asc(stockEntriesTable.checkedAt));
   const latestStock: Record<number, number> = {};
   for (const row of stockRows) {
     if (row.recipeId != null) latestStock[row.recipeId] = Number(row.quantity);
   }
+
+  // Working days between today and planDate: their production and dispatch
+  // happen before this plan's day starts, so they roll forward into its
+  // opening stock (see @workspace/stock-prediction).
+  const macTodayStr = londonDateString();
+  const rollDates = interveningDispatchDays(macTodayStr, planDate, getNextWorkingDay);
+  const rollDeliveryDates = rollDates.map(getNextCalendarDay);
 
   // Load recipe → Shopify variant mappings (same source the calzone endpoint
   // uses) so mac cheese recipes can match by variant ID instead of fuzzy names.
@@ -2127,14 +2066,15 @@ router.get("/calculate-mac-cheese", async (req, res) => {
   const shopifySalesPerDate: Record<string, Record<string, number>> = {};
   const variantSalesPerDate: Record<string, Record<string, number>> = {};
   let shopifyError: string | null = null;
+  const salesDatesToFetch = [...deliveryDates, ...rollDeliveryDates];
   try {
     const results = await Promise.allSettled(
-      deliveryDates.map(date => countProductsByTag(date).then(products => ({ date, products })))
+      salesDatesToFetch.map(date => countProductsByTag(date).then(products => ({ date, products })))
     );
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
       if (result.status === "rejected") {
-        console.warn(`[calculate-mac-cheese] Shopify fetch for ${deliveryDates[i]} failed:`, result.reason?.message ?? result.reason);
+        console.warn(`[calculate-mac-cheese] Shopify fetch for ${salesDatesToFetch[i]} failed:`, result.reason?.message ?? result.reason);
         continue;
       }
       const { date, products } = result.value;
@@ -2215,10 +2155,18 @@ router.get("/calculate-mac-cheese", async (req, res) => {
   // DELIVERY date and TCK ships the day before, so today's dispatch carries
   // tomorrow's tag. Same helper and same date rule as the calzone Factory
   // Number, so the two categories can't disagree (Graeme, 2026-08-21).
-  const macTodayStr = londonDateString();
+  // 2026-09-25: plus today's mac still to be wrapped and the roll-forward of
+  // any working day in between — the same planStartStock() the calzone
+  // Factory Number uses. Loaders + maths live outside this frozen file.
   const macDeliveryTodayStr = getNextCalendarDay(macTodayStr);
-  const { byRecipe: macRemainingToday, diagnostics: macFulfilmentDiagnostics } =
-    await remainingFulfilmentPacks(macDeliveryTodayStr, { limitToRecipeIds: macRecipeIds });
+  const [{ byRecipe: macRemainingToday, diagnostics: macFulfilmentDiagnostics }, macStillToWrap, macRollProduction] =
+    await Promise.all([
+      remainingFulfilmentPacks(macDeliveryTodayStr, { limitToRecipeIds: macRecipeIds }),
+      // A same-day plan's "today's production" is the plan itself — never
+      // count it as stock it already has.
+      planDate > macTodayStr ? loadStillToWrapToday(macTodayStr, macRecipeIds) : Promise.resolve({} as Record<number, number>),
+      loadPlannedProductionByDate(rollDates, macRecipeIds),
+    ]);
 
   const recipes = macRecipes.map(r => {
     const portionsPerBatch = Number(r.portionsPerBatch) || 10;
@@ -2226,10 +2174,20 @@ router.get("/calculate-mac-cheese", async (req, res) => {
     const packsPerBatch = portionsPerBatch / packSize;
     const liveStock = latestStock[r.recipeId] ?? 0;
     const stillToDispatchToday = macRemainingToday[r.recipeId] ?? 0;
-    // Never below zero: more outstanding than stock means the fridge is
-    // already committed, and the plan should treat it as empty rather than
-    // credit a negative.
-    const leftOverStock = Math.max(0, liveStock - stillToDispatchToday);
+    // Never below zero at any step: more outstanding than stock means the
+    // fridge is already committed, and the plan treats it as empty rather
+    // than credit a negative.
+    const stockWorking = planStartStock({
+      liveStock,
+      stillToWrapToday: Math.round(macStillToWrap[r.recipeId] ?? 0),
+      stillToDispatchToday,
+      rollForward: rollDates.map((date, i) => ({
+        date,
+        plannedProductionPacks: Math.round(macRollProduction[date]?.[r.recipeId] ?? 0),
+        dispatchPacks: matchSalesForDate(r.recipeId, r.recipeName ?? "", rollDeliveryDates[i]),
+      })),
+    });
+    const leftOverStock = stockWorking.atPlanStart;
 
     const salesNextDay = matchSalesForDate(r.recipeId, r.recipeName ?? "", deliveryDates[0]);
     const salesNextDayPlus1 = matchSalesForDate(r.recipeId, r.recipeName ?? "", deliveryDates[1]);
@@ -2259,6 +2217,8 @@ router.get("/calculate-mac-cheese", async (req, res) => {
       // rather than an unexplained drop.
       liveStock: Math.round(liveStock),
       stillToDispatchToday: Math.round(stillToDispatchToday),
+      // Full working: still to wrap today, end of today, each rolled day.
+      stockWorking,
       salesNextDay,
       salesNextDayPlus1,
       salesNextDayPlus2,

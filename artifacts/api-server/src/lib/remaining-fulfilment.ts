@@ -12,9 +12,10 @@
  * drift, both paths now compute it here.
  */
 
-import { db } from "@workspace/db";
-import { sql } from "drizzle-orm";
+import { db, shopifyFulfilmentTrackingTable } from "@workspace/db";
+import { inArray, sql } from "drizzle-orm";
 import { getUnfulfilledOrdersByTag } from "../services/shopify";
+import { countRemainingPacks } from "./remaining-fulfilment-rules";
 
 export interface RemainingFulfilmentDiagnostics {
   tagQueried: string;
@@ -23,6 +24,8 @@ export interface RemainingFulfilmentDiagnostics {
   mappedLineItems: number;
   skippedNonCoreLineItems: number;
   unmappedVariantIds: string[];
+  /** Unfulfilled-on-Shopify orders already scanned off the fridge (skipped). */
+  alreadyOffStockOrderCount: number;
   error: string | null;
 }
 
@@ -57,10 +60,9 @@ export async function remainingFulfilmentPacks(
     mappedLineItems: 0,
     skippedNonCoreLineItems: 0,
     unmappedVariantIds: [],
+    alreadyOffStockOrderCount: 0,
     error: null,
   };
-
-  const limit = opts.limitToRecipeIds ? new Set(opts.limitToRecipeIds) : null;
 
   try {
     const unfulfilled = await getUnfulfilledOrdersByTag(deliveryDate);
@@ -91,26 +93,27 @@ export async function remainingFulfilmentPacks(
       if (m.wonky_variant_id) variantToRecipe.set(String(m.wonky_variant_id), entry);
     }
 
-    const unmapped = new Set<string>();
-    for (const order of unfulfilled) {
-      for (const line of order.line_items ?? []) {
-        if (!line.variant_id) continue;
-        diagnostics.totalLineItems += 1;
-        const mapping = variantToRecipe.get(String(line.variant_id));
-        if (!mapping) {
-          unmapped.add(String(line.variant_id));
-          continue;
-        }
-        if (limit && !limit.has(mapping.recipeId)) continue;
-        if (opts.coreMenuOnly && !mapping.isCoreMenu) {
-          diagnostics.skippedNonCoreLineItems += 1;
-          continue;
-        }
-        diagnostics.mappedLineItems += 1;
-        byRecipe[mapping.recipeId] = (byRecipe[mapping.recipeId] ?? 0) + (line.quantity || 0);
-      }
-    }
-    diagnostics.unmappedVariantIds = [...unmapped];
+    // Orders the fulfilment scan (or poller) has already taken off the
+    // fridge. Shopify can still list one as unfulfilled for a short while
+    // after the scan — its order search lags — or indefinitely if the
+    // Shopify fulfil call failed after the decrement. Either way its packs
+    // are out of the live count and must not be subtracted again.
+    const orderIds = unfulfilled.map(o => Number(o.id)).filter(n => Number.isFinite(n));
+    const trackedRows = orderIds.length > 0
+      ? await db
+        .select({ id: shopifyFulfilmentTrackingTable.shopifyOrderId })
+        .from(shopifyFulfilmentTrackingTable)
+        .where(inArray(shopifyFulfilmentTrackingTable.shopifyOrderId, orderIds))
+      : [];
+    const alreadyOffStock = new Set(trackedRows.map(r => Number(r.id)));
+
+    const counted = countRemainingPacks(unfulfilled, variantToRecipe, opts, alreadyOffStock);
+    Object.assign(byRecipe, counted.byRecipe);
+    diagnostics.totalLineItems = counted.totalLineItems;
+    diagnostics.mappedLineItems = counted.mappedLineItems;
+    diagnostics.skippedNonCoreLineItems = counted.skippedNonCoreLineItems;
+    diagnostics.unmappedVariantIds = counted.unmappedVariantIds;
+    diagnostics.alreadyOffStockOrderCount = counted.alreadyOffStockOrderCount;
   } catch (err) {
     diagnostics.error = err instanceof Error ? err.message : String(err);
     console.warn(`[remaining-fulfilment] ${deliveryDate}: falling back to live stock —`, diagnostics.error);
