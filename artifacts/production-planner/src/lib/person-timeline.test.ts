@@ -48,7 +48,30 @@ describe("filters", () => {
     expect(filterTimeline(timeline, "rtw").map(e => e.key)).toEqual(["a-2026-09-14", "a-2026-08-17", "f-9"]);
     expect(filterTimeline(timeline, "meetings").map(e => e.key)).toEqual(["m-1", "m-2"]);
     expect(filterTimeline(timeline, "notes").map(e => e.key)).toEqual(["n-5", "n-7"]);
-    expect(timelineCounts(timeline)).toEqual({ all: 8, attendance: 3, rtw: 3, meetings: 2, notes: 2 });
+    expect(timelineCounts(timeline)).toEqual({ all: 8, attendance: 3, rtw: 3, meetings: 2, notes: 2, contracts: 0 });
+  });
+});
+
+describe("contracts on the timeline (founder/HR view)", () => {
+  const withContracts = buildPersonTimeline({
+    spells: [], lates: [], forms: [form(9, "2023-03-01")], meetings: [], looseNotes: [note(5, "2023-03-01T10:00:00Z")],
+    contracts: [
+      { key: "uc-5", date: "2023-03-01", label: "Previous contract (uploaded PDF)" },
+      { key: "ic-2", date: "2026-09-01", label: "Contract issued" },
+    ],
+  });
+
+  it("slot in by date, after notes and before paperwork on the same day", () => {
+    expect(withContracts.map(e => e.key)).toEqual(["ic-2", "n-5", "uc-5", "f-9"]);
+  });
+
+  it("have their own chip, and nothing else counts as one", () => {
+    expect(filterTimeline(withContracts, "contracts").map(e => e.key)).toEqual(["ic-2", "uc-5"]);
+    expect(timelineCounts(withContracts).contracts).toBe(2);
+  });
+
+  it("are simply absent when not passed (everyone who isn't founder/HR)", () => {
+    expect(timeline.some(e => e.kind === "contract")).toBe(false);
   });
 });
 

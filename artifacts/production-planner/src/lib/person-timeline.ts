@@ -5,8 +5,9 @@
  * It mixes: absence spells (each carrying its return-to-work form state),
  * lates, return-to-work forms that don't sit on a detected spell (hand-
  * recorded absences, or history older than the window), meetings — reviews,
- * probation meetings, 1:1s — and notes/feedback/objectives written outside
- * a meeting. Notes written as part of a meeting stay nested inside that
+ * probation meetings, 1:1s — notes/feedback/objectives written outside
+ * a meeting, and — for the founder/HR accounts only, because they carry pay —
+ * contracts: issued in the app, or an old one uploaded as a PDF. Notes written as part of a meeting stay nested inside that
  * meeting's card (lib/employee-record-grouping.ts), never loose.
  *
  * Pure, so the merge, the order, the window and the filter chips are tested.
@@ -31,15 +32,22 @@ export interface TimelineLate { date: string; label: string }
 export interface TimelineFormLike { id: number; absenceStart: string; absenceEnd: string | null }
 export interface TimelineMeetingLike { id: number; scheduledFor: string | null; heldAt: string | null; createdAt?: string | null }
 export interface TimelineNoteLike { id: number; createdAt: string }
+/** A contract on the record — `key` must be unique ("ic-3" issued, "uc-5"
+ *  uploaded), `date` the day it belongs on (YYYY-MM-DD). */
+export interface TimelineContractLike { key: string; date: string }
 
-export type TimelineEntry<F extends TimelineFormLike, M extends TimelineMeetingLike, N extends TimelineNoteLike> =
+export type TimelineEntry<
+  F extends TimelineFormLike, M extends TimelineMeetingLike, N extends TimelineNoteLike,
+  C extends TimelineContractLike = TimelineContractLike,
+> =
   | { kind: "absence"; key: string; date: string; spell: TimelineSpell; form: F | null }
   | { kind: "late"; key: string; date: string; late: TimelineLate }
   | { kind: "form"; key: string; date: string; form: F }
   | { kind: "meeting"; key: string; date: string; meeting: M }
-  | { kind: "note"; key: string; date: string; note: N };
+  | { kind: "note"; key: string; date: string; note: N }
+  | { kind: "contract"; key: string; date: string; contract: C };
 
-export type TimelineFilter = "all" | "attendance" | "rtw" | "meetings" | "notes";
+export type TimelineFilter = "all" | "attendance" | "rtw" | "meetings" | "notes" | "contracts";
 
 export const TIMELINE_FILTERS: Array<{ key: TimelineFilter; label: string }> = [
   { key: "all", label: "All" },
@@ -47,6 +55,8 @@ export const TIMELINE_FILTERS: Array<{ key: TimelineFilter; label: string }> = [
   { key: "rtw", label: "Return to work" },
   { key: "meetings", label: "Meetings & reviews" },
   { key: "notes", label: "Notes" },
+  // Only ever has entries for the founder/HR accounts; the chip hides at 0.
+  { key: "contracts", label: "Contracts" },
 ];
 
 /** The day a meeting sits on: when it's booked for, else when it was held. */
@@ -56,19 +66,24 @@ export function meetingDate(m: TimelineMeetingLike): string {
 
 // Same-day order, newest-first list: the conversation, then what was
 // written, then the paperwork, then the attendance facts.
-const KIND_RANK: Record<string, number> = { meeting: 0, note: 1, form: 2, absence: 3, late: 4 };
+const KIND_RANK: Record<string, number> = { meeting: 0, note: 1, contract: 2, form: 3, absence: 4, late: 5 };
 
-export function buildPersonTimeline<F extends TimelineFormLike, M extends TimelineMeetingLike, N extends TimelineNoteLike>(input: {
+export function buildPersonTimeline<
+  F extends TimelineFormLike, M extends TimelineMeetingLike, N extends TimelineNoteLike,
+  C extends TimelineContractLike = TimelineContractLike,
+>(input: {
   spells: readonly TimelineSpell[];
   lates: readonly TimelineLate[];
   forms: readonly F[];
   meetings: readonly M[];
   /** Notes NOT attached to a meeting the record holds. */
   looseNotes: readonly N[];
-}): Array<TimelineEntry<F, M, N>> {
+  /** Founder/HR only — leave out for everyone else. */
+  contracts?: readonly C[];
+}): Array<TimelineEntry<F, M, N, C>> {
   const formsById = new Map(input.forms.map(f => [f.id, f]));
   const onSpell = new Set(input.spells.map(s => s.formId).filter((id): id is number => id != null));
-  const out: Array<TimelineEntry<F, M, N>> = [
+  const out: Array<TimelineEntry<F, M, N, C>> = [
     ...input.spells.map(spell => ({
       kind: "absence" as const, key: `a-${spell.start}`, date: spell.end, spell,
       form: spell.formId != null ? formsById.get(spell.formId) ?? null : null,
@@ -78,6 +93,7 @@ export function buildPersonTimeline<F extends TimelineFormLike, M extends Timeli
       .map(form => ({ kind: "form" as const, key: `f-${form.id}`, date: form.absenceEnd ?? form.absenceStart, form })),
     ...input.meetings.map(meeting => ({ kind: "meeting" as const, key: `m-${meeting.id}`, date: meetingDate(meeting), meeting })),
     ...input.looseNotes.map(note => ({ kind: "note" as const, key: `n-${note.id}`, date: note.createdAt.slice(0, 10), note })),
+    ...(input.contracts ?? []).map(contract => ({ kind: "contract" as const, key: contract.key, date: contract.date.slice(0, 10), contract })),
   ];
   return out.sort((a, b) =>
     b.date.localeCompare(a.date)
@@ -92,6 +108,7 @@ export function entryMatchesFilter(e: { kind: string }, filter: TimelineFilter):
     case "rtw": return e.kind === "absence" || e.kind === "form";
     case "meetings": return e.kind === "meeting";
     case "notes": return e.kind === "note";
+    case "contracts": return e.kind === "contract";
   }
 }
 
@@ -100,7 +117,7 @@ export function filterTimeline<E extends { kind: string }>(entries: readonly E[]
 }
 
 export function timelineCounts(entries: ReadonlyArray<{ kind: string }>): Record<TimelineFilter, number> {
-  const counts = { all: 0, attendance: 0, rtw: 0, meetings: 0, notes: 0 } as Record<TimelineFilter, number>;
+  const counts = { all: 0, attendance: 0, rtw: 0, meetings: 0, notes: 0, contracts: 0 } as Record<TimelineFilter, number>;
   for (const e of entries) {
     for (const f of TIMELINE_FILTERS) if (entryMatchesFilter(e, f.key)) counts[f.key] += 1;
   }
