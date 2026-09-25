@@ -681,11 +681,11 @@ export default function Dashboard() {
   // working at (Graeme, 2026-09-16), instead of two cards or a detour
   // through the production plan.
   const [buildChooserOpen, setBuildChooserOpen] = useState(false);
-  // Who is already on each building table for today's plan — drives the
-  // chooser's "Started by Jane today" hint. A non-building stationType means
-  // this instance only READS; it never claims a table from the dashboard.
-  const { assignments: buildingAssignments } = useStationAssignment(todayPlans[0]?.id ?? 0, "dashboard");
-  const currentUserId = state.status === "authenticated" ? state.user.id : 0;
+  // Who is actually on each building table for today's plan — the latest
+  // batch recorder, else who opened it and when (lib/building-table-status.ts).
+  // A non-building stationType means this instance only READS; it never
+  // records an open from the dashboard.
+  const { tables: buildingTables } = useStationAssignment(todayPlans[0]?.id ?? 0, "dashboard");
 
   // Station links land straight on today's plan's station screens — the
   // dashboard IS the station picker now, no production-plan detour.
@@ -1053,15 +1053,18 @@ export default function Dashboard() {
                 <X className="w-5 h-5" />
               </button>
             </div>
-            {/* Who's already on each table today — a hint, never a gate
-                (Graeme, 2026-09-16). Whoever opens a table first is recorded
-                against it for this plan, so the next person can see at a
-                glance which one to take. Both stay tappable. */}
+            {/* Who's on each table — a hint, never a gate (Graeme,
+                2026-09-16). The name is whoever recorded the latest batch
+                there ("Kerri-Leigh — last batch 10:19"); only with no recent
+                batch does it fall back to who opened it ("Opened by Tommy at
+                06:03"). 25 Sep: "Started by Tommy" named the first person to
+                open the screen, not the builder. Both stay tappable; amber
+                only while someone is actively working it. */}
             <div className="grid grid-cols-2 gap-3">
               {([1, 2] as const).map(n => {
-                const occupant = buildingAssignments[`building_${n}` as "building_1" | "building_2"];
-                const isMe = occupant != null && occupant.userId === currentUserId;
-                const firstName = occupant?.userName?.trim().split(/\s+/)[0] ?? "";
+                const table = buildingTables[`building_${n}` as "building_1" | "building_2"];
+                const isMe = table.isMe;
+                const busy = table.holder != null && !isMe;
                 return (
                   <button
                     key={n}
@@ -1071,33 +1074,30 @@ export default function Dashboard() {
                     }}
                     className={cn(
                       "flex flex-col items-center justify-center gap-2 p-5 min-h-[140px] rounded-2xl border-2 active:scale-[0.97] transition-all",
-                      occupant && !isMe
+                      busy
                         ? "border-amber-300 dark:border-amber-700 bg-amber-50/60 dark:bg-amber-950/20 hover:border-amber-400"
                         : "border-border hover:border-primary/60 hover:bg-secondary/40",
                     )}
                   >
                     <div className={cn(
                       "w-12 h-12 rounded-xl flex items-center justify-center",
-                      occupant && !isMe
+                      busy
                         ? "bg-amber-100 dark:bg-amber-900/30 text-amber-600"
                         : "bg-orange-50 dark:bg-orange-900/20 text-orange-500",
                     )}>
                       <ChefHat className="w-6 h-6" />
                     </div>
                     <span className="text-base font-bold">Table {n}</span>
-                    {occupant ? (
+                    {table.label ? (
                       <span className={cn(
                         "text-xs font-semibold rounded-full px-2 py-0.5 text-center leading-tight",
                         isMe
                           ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
-                          : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
+                          : busy
+                            ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+                            : "bg-secondary text-muted-foreground",
                       )}>
-                        {/* "Started by", not "is on": the name is whoever
-                            opened this table FIRST today and never updates
-                            on a handover (18 Sep: Kerri-Leigh took over
-                            Table 1 at 08:48 but it still read "Ji-Hey is
-                            on this one"). */}
-                        {isMe ? "You started here today" : `Started by ${firstName} today`}
+                        {table.label}
                       </span>
                     ) : (
                       <span className="text-xs font-medium text-muted-foreground">Free</span>
