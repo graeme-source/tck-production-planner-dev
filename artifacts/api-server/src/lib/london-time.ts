@@ -56,6 +56,20 @@ export function londonMinuteOfDay(date: Date = new Date()): number {
   return Number.parseInt(h, 10) * 60 + Number.parseInt(m, 10);
 }
 
+const TIME_FORMATTER = new Intl.DateTimeFormat("en-GB", {
+  timeZone: LONDON_TZ,
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+});
+
+/** London wall-clock time as "YYYY-MM-DDTHH:mm:ss" with no offset — the
+ *  shape Planday uses for shift and break times. */
+export function londonLocalTimestamp(date: Date = new Date()): string {
+  return `${DATE_FORMATTER.format(date)}T${TIME_FORMATTER.format(date)}`;
+}
+
 /** UTC instant equal to 00:00:00 London on the given date. */
 export function londonStartOfDay(date: Date = new Date()): Date {
   return londonDayBoundary(date, 0);

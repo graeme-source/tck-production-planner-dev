@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addDaysToDateString, londonDayStartUtc, londonDaysWindowUtc } from "./london-time";
+import { addDaysToDateString, londonDayStartUtc, londonDaysWindowUtc, londonLocalTimestamp } from "./london-time";
 
 describe("londonDayStartUtc", () => {
   it("is 23:00 UTC the evening before in summer time", () => {
@@ -39,5 +39,13 @@ describe("addDaysToDateString", () => {
   it("crosses month and year ends", () => {
     expect(addDaysToDateString("2026-12-31", 1)).toBe("2027-01-01");
     expect(addDaysToDateString("2026-03-01", -1)).toBe("2026-02-28");
+  });
+});
+
+describe("londonLocalTimestamp", () => {
+  it("gives London wall-clock time in Planday's shape, in BST and GMT", () => {
+    expect(londonLocalTimestamp(new Date("2026-09-25T15:08:54Z"))).toBe("2026-09-25T16:08:54");
+    expect(londonLocalTimestamp(new Date("2026-12-01T23:30:05Z"))).toBe("2026-12-01T23:30:05");
+    expect(londonLocalTimestamp(new Date("2026-06-30T23:30:00Z"))).toBe("2026-07-01T00:30:00");
   });
 });
