@@ -41,7 +41,7 @@ import LeanCave from "@/pages/lean-cave";
 import LeanStart from "@/pages/lean-start";
 import ReturnToWorkPage from "@/pages/return-to-work";
 import PeoplePinPage from "@/pages/people-pin";
-import PeopleRecordsPage from "@/pages/people-records";
+import PeopleSection from "@/pages/people";
 import Reports from "@/pages/reports";
 import Improvements from "@/pages/improvements";
 import EmployeeHub from "@/pages/employee-hub";
@@ -231,7 +231,10 @@ function Router() {
               <Route path="/lean-start" component={LeanStart} />
               <Route path="/return-to-work" component={ReturnToWorkPage} />
               <Route path="/account/people-pin" component={PeoplePinPage} />
-              <Route path="/people" component={PeopleRecordsPage} />
+              {/* People: the list, and each person's record. Same component on
+                  both so the People PIN gate stays mounted between them. */}
+              <Route path="/people" component={PeopleSection} />
+              <Route path="/people/:userId" component={PeopleSection} />
               <Route path="/hub" component={EmployeeHub} />
               <Route path="/documents/:id" component={DocumentViewer} />
               <Route path="/settings" component={Settings} />
