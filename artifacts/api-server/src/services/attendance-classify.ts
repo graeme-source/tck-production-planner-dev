@@ -30,6 +30,19 @@ export function isAbsenceReasonName(name: string | undefined): boolean {
   return n.includes("sick") || n.includes("absent") || n.includes("leave");
 }
 
+/**
+ * Does a day of this shift type need a return-to-work form once the person
+ * is back? Any absence REASON does — sickness, "Absent", "Dependants Leave",
+ * "Emergency Leave" — so the reason is on record (Graeme, 2026-09-25: "any
+ * absence should flag up on their record"). Holiday is planned time off and
+ * never does; nor do Meeting, Training or "Arrived late" (a late stays a
+ * timeline event with no form).
+ */
+export function needsReturnToWorkForm(name: string | undefined): boolean {
+  if (!name) return false;
+  return isAbsenceReasonName(name) && !isLateName(name);
+}
+
 /** Any sickness shift type — "Sick Leave", "Sick - paid", "Sick - unpaid".
  *  These consolidate into ONE "Sick leave" column plus an instances count
  *  (Graeme, 2026-09-14). */

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isLateName, isAbsenceReasonName, isSickName, countSickInstances, sickRuns } from "./attendance-classify";
+import { isLateName, isAbsenceReasonName, isSickName, countSickInstances, sickRuns, needsReturnToWorkForm } from "./attendance-classify";
 
 // Regression for the 2026-09-14 report bug: holiday accrual accounts were
 // rolling into "Total Absent" (and Planday's broken pagination multiplied
@@ -119,5 +119,27 @@ describe("sickRuns", () => {
 
   it("empty in, empty out", () => {
     expect(sickRuns([], ["2026-09-01"])).toEqual([]);
+  });
+});
+
+// Graeme, 2026-09-25: a return-to-work form records the reason for ANY
+// absence — dependants' leave as well as sickness — but never holiday, and a
+// late stays a timeline event with no form. TCK's real Planday shift types.
+describe("needsReturnToWorkForm", () => {
+  it("every absence reason needs a form", () => {
+    for (const name of ["Sick Leave", "Sick - paid", "Sick - unpaid", "Absent", "Dependants Leave", "Emergency Leave"]) {
+      expect(needsReturnToWorkForm(name)).toBe(true);
+    }
+  });
+
+  it("holiday, meetings, training and lates never do", () => {
+    for (const name of ["Holiday (with Pay)", "Standard Hourly Accrual", "Meeting", "Training", "Arrived late"]) {
+      expect(needsReturnToWorkForm(name)).toBe(false);
+    }
+  });
+
+  it("no type (a plain worked shift) never does", () => {
+    expect(needsReturnToWorkForm(undefined)).toBe(false);
+    expect(needsReturnToWorkForm("")).toBe(false);
   });
 });
