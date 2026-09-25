@@ -95,6 +95,11 @@ router.get("/weekly", async (req, res) => {
       expectedDeliveryDate: purchaseOrdersTable.expectedDeliveryDate,
       notes: purchaseOrdersTable.notes,
       createdAt: purchaseOrdersTable.createdAt,
+      // 'unexpected' = recorded at the door with no order (migration 0128);
+      // the card labels it. originallyExpectedDate = the day an open order
+      // was booked for before it arrived on another day.
+      origin: purchaseOrdersTable.origin,
+      originallyExpectedDate: purchaseOrdersTable.originallyExpectedDate,
     })
     .from(purchaseOrdersTable)
     .innerJoin(suppliersTable, eq(purchaseOrdersTable.supplierId, suppliersTable.id))
@@ -416,6 +421,11 @@ router.get("/:id", async (req, res) => {
       expectedDeliveryDate: purchaseOrdersTable.expectedDeliveryDate,
       notes: purchaseOrdersTable.notes,
       createdAt: purchaseOrdersTable.createdAt,
+      // 'unexpected' = recorded at the door with no order (migration 0128);
+      // the card labels it. originallyExpectedDate = the day an open order
+      // was booked for before it arrived on another day.
+      origin: purchaseOrdersTable.origin,
+      originallyExpectedDate: purchaseOrdersTable.originallyExpectedDate,
     })
     .from(purchaseOrdersTable)
     .innerJoin(suppliersTable, eq(purchaseOrdersTable.supplierId, suppliersTable.id))
@@ -443,6 +453,9 @@ router.get("/:id", async (req, res) => {
       quantityOrdered: purchaseOrderLinesTable.quantityOrdered,
       quantityReceived: purchaseOrderLinesTable.quantityReceived,
       unit: purchaseOrderLinesTable.unit,
+      // Native unit, as on /weekly — the receive dialog needs it to label
+      // pack sizes on lines stored as a pack count ("packs").
+      nativeUnit: ingredientsTable.unit,
       unitPrice: purchaseOrderLinesTable.unitPrice,
       checkedOff: purchaseOrderLinesTable.checkedOff,
       goodsInChecked: purchaseOrderLinesTable.goodsInChecked,
