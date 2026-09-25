@@ -23,7 +23,8 @@
  *
  * Time is London time throughout. Hour buckets are real hours, so the day
  * the clocks go back has two 01:00 hours (told apart in the tooltip) and
- * the day they go forward has no 01:00 at all. Weeks start on Monday.
+ * the day they go forward has no 01:00 at all. Weeks start on Monday;
+ * months are London calendar months (1st 00:00 London to the next 1st).
  */
 import type { ShopifyOrder } from "../services/shopify";
 import {
@@ -32,39 +33,56 @@ import {
 } from "./order-revenue";
 import { addDaysToDateString, londonDateString, londonDayStartUtc, londonHour } from "./london-time";
 
-export type Granularity = "hour" | "day" | "week";
+export type Granularity = "hour" | "day" | "week" | "month";
 
 /** Longest period that can still be drawn day by day (a year and a bit). */
 export const MAX_DAILY_DAYS = 400;
 /** Longest period the endpoint accepts at all. */
 export const MAX_TREND_DAYS = 800;
+/** Shortest period offered Monthly — about two months, so the graph has at
+ *  least one whole month in it rather than two half-month stubs. */
+export const MIN_MONTHLY_DAYS = 45;
 
 export interface GranularityOptions {
   /** What the graph opens on. */
   granularity: Granularity;
-  /** What the Daily/Weekly toggle may offer (one entry = no toggle). */
+  /** What the Daily/Weekly/Monthly switch may offer (one entry = no switch). */
   allowed: Granularity[];
 }
 
+/** How many calendar months from..to touches (Sep 20 → Oct 3 is 2). */
+export function calendarMonthsTouched(from: string, to: string): number {
+  if (from > to) return 0;
+  const months = (d: string) => Number(d.slice(0, 4)) * 12 + Number(d.slice(5, 7)) - 1;
+  return months(to) - months(from) + 1;
+}
+
 /**
- * The right grain for a period of `dayCount` London days:
+ * The right grain for London days from..to. The DEFAULT depends on length:
  *
  *   1 day            by the hour
- *   2–13 days        by the day (a week toggle would draw one or two points)
- *   14–60 days       by the day, with a Weekly toggle
- *   61+ days         by the week, with a Daily toggle up to MAX_DAILY_DAYS
+ *   2–13 days        by the day (a week switch would draw one or two points)
+ *   14–60 days       by the day, Weekly offered
+ *   61+ days         by the week, Daily offered up to MAX_DAILY_DAYS
+ *
+ * Monthly is offered (never the default) once the period is at least
+ * MIN_MONTHLY_DAYS long and reaches into two or more calendar months —
+ * Last 6 months, Last 12 months, long custom ranges.
  */
-export function granularityOptions(dayCount: number): GranularityOptions {
+export function granularityOptions(from: string, to: string): GranularityOptions {
+  const dayCount = dayCountBetween(from, to);
+  const monthly = dayCount >= MIN_MONTHLY_DAYS && calendarMonthsTouched(from, to) >= 2;
+  const withMonth = (allowed: Granularity[]): Granularity[] => (monthly ? [...allowed, "month"] : allowed);
   if (dayCount <= 1) return { granularity: "hour", allowed: ["hour"] };
   if (dayCount < 14) return { granularity: "day", allowed: ["day"] };
-  if (dayCount <= 60) return { granularity: "day", allowed: ["day", "week"] };
-  if (dayCount <= MAX_DAILY_DAYS) return { granularity: "week", allowed: ["day", "week"] };
-  return { granularity: "week", allowed: ["week"] };
+  if (dayCount <= 60) return { granularity: "day", allowed: withMonth(["day", "week"]) };
+  if (dayCount <= MAX_DAILY_DAYS) return { granularity: "week", allowed: withMonth(["day", "week"]) };
+  return { granularity: "week", allowed: withMonth(["week"]) };
 }
 
 /** The requested grain when it makes sense for the period, else the default. */
-export function resolveGranularity(dayCount: number, requested?: Granularity | null): Granularity {
-  const opts = granularityOptions(dayCount);
+export function resolveGranularity(from: string, to: string, requested?: Granularity | null): Granularity {
+  const opts = granularityOptions(from, to);
   return requested && opts.allowed.includes(requested) ? requested : opts.granularity;
 }
 
@@ -145,7 +163,9 @@ export interface TrendBucket extends TrendFigures {
   dayCount: number;
   /** Starts after "now": nothing can have happened yet — drawn as no line. */
   future: boolean;
-  /** Still running at "now", or a week cut short by the period. */
+  /** Still running at "now" (the hour, day, week or month isn't over). */
+  running: boolean;
+  /** Running, or a week/month the period only partly covers. */
   partial: boolean;
 }
 
@@ -231,7 +251,7 @@ interface Frame {
   /** Period days this bucket covers (for spend and ROAS; hour buckets: none). */
   days: string[];
   dayCount: number;
-  shortWeek: boolean;
+  shortPeriod: boolean;
 }
 
 // Labels are spelled out from the date string rather than via Intl month
@@ -270,7 +290,7 @@ function hourFrames(from: string, to: string): Frame[] {
       hourOfDay: h,
       days: [],
       dayCount: 0,
-      shortWeek: false,
+      shortPeriod: false,
     });
   }
   // The day the clocks go back has two 01:00s — say which is which. The
@@ -296,7 +316,7 @@ function dayFrames(from: string, to: string): Frame[] {
       hourOfDay: null,
       days: [d],
       dayCount: 1,
-      shortWeek: false,
+      shortPeriod: false,
     });
   }
   return frames;
@@ -320,7 +340,48 @@ function weekFrames(from: string, to: string): Frame[] {
       hourOfDay: null,
       days,
       dayCount: days.length,
-      shortWeek: short,
+      shortPeriod: short,
+    });
+  }
+  return frames;
+}
+
+/** Last day of the calendar month a date falls in. */
+export function lastDayOfMonth(date: string): string {
+  const y = Number(date.slice(0, 4));
+  const m = Number(date.slice(5, 7));
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+}
+
+/**
+ * London calendar months. A month the period only partly covers — it starts
+ * or ends mid-month, or the month is still running — is marked "(part)" on
+ * the axis and says how many of its days are in the period in the tooltip,
+ * so half a month isn't read as a bad month.
+ */
+function monthFrames(from: string, to: string): Frame[] {
+  const frames: Frame[] = [];
+  const acrossYears = from.slice(0, 4) !== to.slice(0, 4);
+  for (let monthStart = `${from.slice(0, 7)}-01`; monthStart <= to; monthStart = addDaysToDateString(lastDayOfMonth(monthStart), 1)) {
+    const monthEnd = lastDayOfMonth(monthStart);
+    const first = monthStart < from ? from : monthStart;
+    const last = monthEnd > to ? to : monthEnd;
+    const days: string[] = [];
+    for (let d = first; d <= last; d = addDaysToDateString(d, 1)) days.push(d);
+    const monthLength = Number(monthEnd.slice(8, 10));
+    const short = days.length < monthLength;
+    const m = Number(monthStart.slice(5, 7)) - 1;
+    const year = monthStart.slice(0, 4);
+    frames.push({
+      key: monthStart.slice(0, 7),
+      start: londonDayStartUtc(first),
+      end: londonDayStartUtc(addDaysToDateString(last, 1)),
+      label: `${MONTHS_SHORT[m]}${acrossYears ? ` '${year.slice(2)}` : ""}${short ? " (part)" : ""}`,
+      longLabel: `${MONTHS_LONG[m]} ${year}${short ? ` — ${days.length} of ${monthLength} days in this period` : ""}`,
+      hourOfDay: null,
+      days,
+      dayCount: days.length,
+      shortPeriod: short,
     });
   }
   return frames;
@@ -329,6 +390,7 @@ function weekFrames(from: string, to: string): Frame[] {
 function framesFor(granularity: Granularity, from: string, to: string): Frame[] {
   if (granularity === "hour") return hourFrames(from, to);
   if (granularity === "day") return dayFrames(from, to);
+  if (granularity === "month") return monthFrames(from, to);
   return weekFrames(from, to);
 }
 
@@ -338,6 +400,7 @@ function keyFor(granularity: Granularity, createdMs: number, from: string, to: s
   if (day < from || day > to) return null;
   if (granularity === "hour") return new Date(Math.floor(createdMs / 3_600_000) * 3_600_000).toISOString();
   if (granularity === "day") return day;
+  if (granularity === "month") return day.slice(0, 7);
   return mondayOf(day);
 }
 
@@ -358,9 +421,8 @@ export interface BuildTrendInput {
 
 export function buildTrendSeries(input: BuildTrendInput): TrendSeries {
   const { from, to, orders, spend, now } = input;
-  const dayCount = dayCountBetween(from, to);
-  const opts = granularityOptions(dayCount);
-  const granularity = resolveGranularity(dayCount, input.granularity);
+  const opts = granularityOptions(from, to);
+  const granularity = resolveGranularity(from, to, input.granularity);
 
   const spendByDate = new Map<string, number>();
   for (const row of spend) {
@@ -401,7 +463,8 @@ export function buildTrendSeries(input: BuildTrendInput): TrendSeries {
       hourOfDay: f.hourOfDay,
       dayCount: f.dayCount,
       future,
-      partial: running || f.shortWeek,
+      running,
+      partial: running || f.shortPeriod,
       ...figures(tallies.get(f.key) ?? emptyTally(), f.days, spendByDate),
     };
   });

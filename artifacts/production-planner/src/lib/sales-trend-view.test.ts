@@ -3,7 +3,9 @@ import {
   chartPoints,
   formatAxis,
   formatMetric,
+  granularityLabel,
   headlineNote,
+  partialBucketNote,
   unavailableReason,
   type TrendBucket,
   type TrendFigures,
@@ -19,7 +21,7 @@ const zero: TrendFigures = {
 function bucket(hour: number, over: Partial<TrendBucket> = {}): TrendBucket {
   return {
     ...zero, key: `h${hour}`, start: "", end: "", label: `${hour}:00`, longLabel: `${hour}:00`,
-    hourOfDay: hour, dayCount: 0, future: false, partial: false, ...over,
+    hourOfDay: hour, dayCount: 0, future: false, running: false, partial: false, ...over,
   };
 }
 
@@ -100,6 +102,27 @@ describe("headlines and reasons", () => {
     expect(unavailableReason(series([], {}, "hour"), "roas")).toMatch(/per day/);
     expect(unavailableReason(series([], {}, "day"), "roas")).toBeNull();
     expect(unavailableReason(series([], {}, "hour"), "revenue")).toBeNull();
+  });
+});
+
+describe("monthly", () => {
+  it("labels the grain Monthly", () => {
+    expect(granularityLabel("month")).toBe("Monthly");
+  });
+  it("explains part months under a monthly graph, and nothing when every month is whole", () => {
+    const part = series([
+      bucket(0, { label: "Mar (part)", partial: true }),
+      bucket(1, { label: "Apr" }),
+      bucket(2, { label: "Sep (part)", partial: true, running: true }),
+    ], {}, "month");
+    expect(partialBucketNote(part)).toMatch(/first and last months are only partly inside this period \(or still running\), marked "\(part\)"/);
+    const whole = series([bucket(0, { label: "Apr" }), bucket(1, { label: "May" })], {}, "month");
+    expect(partialBucketNote(whole)).toBeNull();
+    expect(partialBucketNote(series([bucket(0, { partial: true, running: true })], {}, "hour"))).toBeNull();
+  });
+  it("carries 'still running' separately from 'part of the period'", () => {
+    const s = series([bucket(0, { partial: true }), bucket(1, { partial: true, running: true })], {}, "month");
+    expect(chartPoints(s, "revenue").map(p => [p.partial, p.running])).toEqual([[true, false], [true, true]]);
   });
 });
 

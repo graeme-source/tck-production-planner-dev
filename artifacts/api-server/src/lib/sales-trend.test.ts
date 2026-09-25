@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { addDaysToDateString } from "./london-time";
 import {
   buildTrendSeries,
+  calendarMonthsTouched,
   dayCountBetween,
   granularityOptions,
   mondayOf,
@@ -29,24 +31,111 @@ const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
 describe("granularityOptions", () => {
   it("draws one day by the hour", () => {
-    expect(granularityOptions(1)).toEqual({ granularity: "hour", allowed: ["hour"] });
+    expect(granularityOptions("2026-09-24", "2026-09-24")).toEqual({ granularity: "hour", allowed: ["hour"] });
   });
-  it("draws a week by the day, no toggle", () => {
-    expect(granularityOptions(7)).toEqual({ granularity: "day", allowed: ["day"] });
+  it("draws a week by the day, no switch", () => {
+    expect(granularityOptions("2026-09-18", "2026-09-24")).toEqual({ granularity: "day", allowed: ["day"] });
   });
-  it("offers weekly from a fortnight up to 60 days, opening daily", () => {
-    expect(granularityOptions(14)).toEqual({ granularity: "day", allowed: ["day", "week"] });
-    expect(granularityOptions(60)).toEqual({ granularity: "day", allowed: ["day", "week"] });
+  it("offers weekly from a fortnight, opening daily; a single month has no Monthly", () => {
+    expect(granularityOptions("2026-09-11", "2026-09-24")).toEqual({ granularity: "day", allowed: ["day", "week"] });
+    expect(granularityOptions("2026-08-01", "2026-08-31")).toEqual({ granularity: "day", allowed: ["day", "week"] });
+    // Two months touched but only 22 days: two half-month stubs aren't worth a switch.
+    expect(granularityOptions("2026-08-20", "2026-09-10").allowed).not.toContain("month");
   });
-  it("opens weekly beyond 60 days, daily still allowed for a year", () => {
-    expect(granularityOptions(61)).toEqual({ granularity: "week", allowed: ["day", "week"] });
-    expect(granularityOptions(366).allowed).toContain("day");
-    expect(granularityOptions(500)).toEqual({ granularity: "week", allowed: ["week"] });
+  it("offers Monthly from about two months, without changing the default", () => {
+    expect(granularityOptions("2026-07-25", "2026-09-24")).toEqual({ granularity: "week", allowed: ["day", "week", "month"] });
+    expect(granularityOptions("2026-08-01", "2026-09-24")).toEqual({ granularity: "day", allowed: ["day", "week", "month"] });
+  });
+  it("Last 6 and 12 months open weekly with Daily and Monthly on offer; very long ranges lose Daily", () => {
+    expect(granularityOptions("2026-03-24", "2026-09-24")).toEqual({ granularity: "week", allowed: ["day", "week", "month"] });
+    expect(granularityOptions("2025-09-24", "2026-09-24").allowed).toEqual(["day", "week", "month"]);
+    expect(granularityOptions("2025-01-01", "2026-09-24")).toEqual({ granularity: "week", allowed: ["week", "month"] });
   });
   it("ignores a requested grain that doesn't suit the period", () => {
-    expect(resolveGranularity(1, "week")).toBe("hour");
-    expect(resolveGranularity(30, "week")).toBe("week");
-    expect(resolveGranularity(30, null)).toBe("day");
+    expect(resolveGranularity("2026-09-24", "2026-09-24", "week")).toBe("hour");
+    expect(resolveGranularity("2026-08-26", "2026-09-24", "week")).toBe("week");
+    expect(resolveGranularity("2026-08-26", "2026-09-24", "month")).toBe("day");
+    expect(resolveGranularity("2026-03-24", "2026-09-24", "month")).toBe("month");
+    expect(resolveGranularity("2026-08-26", "2026-09-24", null)).toBe("day");
+  });
+  it("counts calendar months touched", () => {
+    expect(calendarMonthsTouched("2026-09-20", "2026-10-03")).toBe(2);
+    expect(calendarMonthsTouched("2025-12-31", "2026-01-01")).toBe(2);
+    expect(calendarMonthsTouched("2026-09-01", "2026-09-30")).toBe(1);
+  });
+});
+
+describe("monthly buckets", () => {
+  it("one bucket per London calendar month; part months say so on the axis and in the tooltip", () => {
+    const s = buildTrendSeries({ from: "2026-03-24", to: "2026-09-24", granularity: "month", orders: [], spend: [], now: LATER });
+    expect(s.granularity).toBe("month");
+    expect(s.buckets.map(b => b.key)).toEqual(["2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09"]);
+    expect(s.buckets.map(b => b.label)).toEqual(["Mar (part)", "Apr", "May", "Jun", "Jul", "Aug", "Sep (part)"]);
+    expect(s.buckets.map(b => b.dayCount)).toEqual([8, 30, 31, 30, 31, 31, 24]);
+    expect(s.buckets[0].longLabel).toBe("March 2026 — 8 of 31 days in this period");
+    expect(s.buckets[6].longLabel).toBe("September 2026 — 24 of 30 days in this period");
+    expect(s.buckets[1].longLabel).toBe("April 2026");
+    expect(s.buckets.map(b => b.partial)).toEqual([true, false, false, false, false, false, true]);
+    expect(s.buckets.every(b => !b.running)).toBe(true);
+  });
+
+  it("month boundaries are London midnights, BST and GMT alike", () => {
+    const s = buildTrendSeries({ from: "2026-03-01", to: "2026-11-30", granularity: "month", orders: [], spend: [], now: LATER });
+    const byKey = new Map(s.buckets.map(b => [b.key, b]));
+    expect(byKey.get("2026-03")?.start).toBe("2026-03-01T00:00:00.000Z"); // GMT
+    expect(byKey.get("2026-04")?.start).toBe("2026-03-31T23:00:00.000Z"); // BST
+    expect(byKey.get("2026-10")?.end).toBe("2026-11-01T00:00:00.000Z"); // back on GMT
+  });
+
+  it("orders either side of a BST month boundary land in the right month", () => {
+    const orders = [
+      order("2026-03-31T23:30:00+01:00", "10.00"), // 31 Mar, BST (22:30 UTC)
+      order("2026-04-01T00:30:00+01:00", "20.00"), // 1 Apr, BST (still 31 Mar in UTC)
+      order("2026-10-31T23:30:00+00:00", "40.00"), // 31 Oct, GMT
+      order("2026-11-01T00:10:00+00:00", "80.00"), // 1 Nov
+    ];
+    const s = buildTrendSeries({ from: "2026-03-01", to: "2026-11-30", granularity: "month", orders, spend: [], now: LATER });
+    const rev = new Map(s.buckets.map(b => [b.key, b.revenue]));
+    expect(rev.get("2026-03")).toBe(10);
+    expect(rev.get("2026-04")).toBe(20);
+    expect(rev.get("2026-10")).toBe(40);
+    expect(rev.get("2026-11")).toBe(80);
+    expect(s.outsideOrders).toBe(0);
+  });
+
+  it("the running month is marked running and partial", () => {
+    const s = buildTrendSeries({
+      from: "2026-07-01", to: "2026-09-25", granularity: "month", orders: [], spend: [],
+      now: new Date("2026-09-25T13:00:00+01:00"),
+    });
+    const sep = s.buckets[2];
+    expect(sep.running).toBe(true);
+    expect(sep.partial).toBe(true);
+    expect(sep.label).toBe("Sep (part)");
+  });
+
+  it("puts the year on the axis when the period crosses New Year", () => {
+    const s = buildTrendSeries({ from: "2025-11-01", to: "2026-02-28", granularity: "month", orders: [], spend: [], now: LATER });
+    expect(s.buckets.map(b => b.label)).toEqual(["Nov '25", "Dec '25", "Jan '26", "Feb '26"]);
+  });
+
+  it("monthly sales sum to the tile; AOV and ROAS stay weighted per month", () => {
+    const orders = [
+      order("2026-07-10T10:00:00+01:00", "100.00", "new-customer"),
+      order("2026-07-20T10:00:00+01:00", "0.00", "resend"),
+      order("2026-08-05T10:00:00+01:00", "60.00", "new-customer"),
+      order("2026-08-06T10:00:00+01:00", "30.00"),
+      order("2026-09-02T10:00:00+01:00", "45.45", "new-customer"),
+    ];
+    const spend = [];
+    for (let d = "2026-07-01"; d <= "2026-09-10"; d = addDaysToDateString(d, 1)) spend.push({ date: d, amount: 1 });
+    const monthly = buildTrendSeries({ from: "2026-07-01", to: "2026-09-10", granularity: "month", orders, spend, now: LATER });
+    const daily = buildTrendSeries({ from: "2026-07-01", to: "2026-09-10", granularity: "day", orders, spend, now: LATER });
+    expect(sum(monthly.buckets.map(b => b.revenue))).toBeCloseTo(235.45, 10);
+    expect(monthly.totals).toEqual(daily.totals); // same period figures whatever the grain
+    expect(monthly.buckets.map(b => b.aov)).toEqual([100, 45, 45.45]); // July: £100 ÷ 1 paid (the resend isn't a basket)
+    expect(monthly.buckets.map(b => b.roasPercent)).toEqual([323, 194, 455]); // 100÷31, 60÷31, 45.45÷10
+    expect(monthly.totals.aov).toBeCloseTo(235.45 / 4, 10);
   });
 });
 
