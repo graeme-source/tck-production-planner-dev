@@ -117,7 +117,7 @@ async function getPnlSetting(key: string, defaultValue: number): Promise<number>
 
 // ── Payroll data types ─────────────────────────────────────────────────────
 
-interface PlandayShiftPayroll {
+export interface PlandayShiftPayroll {
   salary: number;
   start: string;
   end: string;
@@ -129,6 +129,7 @@ interface PlandayShiftPayroll {
   wage: { rate: number; type: string };
   shiftDuration: string;
   departmentId: number;
+  positionId?: number | null;
 }
 
 interface PlandayPayrollResponse {
@@ -164,11 +165,7 @@ export async function getPayrollCosts(from: string, to: string): Promise<ActualL
     settings: { niRate: 0, niWeeklyThreshold: 0, employmentAllowanceAnnual: 0, pensionRate: 0 },
   };
 
-  const config = getConfig();
-  if (!config) return unavailable;
-
-  const token = await getAccessToken();
-  if (!token) return unavailable;
+  if (!getConfig()) return unavailable;
 
   // Fetch editable settings
   const [niRate, niWeeklyThreshold, allowanceAnnual, pensionRate] = await Promise.all([
@@ -179,13 +176,8 @@ export async function getPayrollCosts(from: string, to: string): Promise<ActualL
   ]);
 
   // Fetch payroll from Planday
-  const data = await plandayGet<PlandayPayrollResponse>(
-    `/payroll/v1.0/payroll?departmentIds=${config.departmentId}&from=${from}&to=${to}&shiftStatus=Approved`,
-    token,
-  );
-  if (!data) return unavailable;
-
-  const shifts = data.shiftsPayroll ?? [];
+  const shifts = await getPlandayPayrollRows(from, to);
+  if (!shifts) return unavailable;
   if (shifts.length === 0) return { ...unavailable, available: true, settings: { niRate, niWeeklyThreshold, employmentAllowanceAnnual: allowanceAnnual, pensionRate } };
 
   // Gross wages and paid hours. Planday's `salary` is clock time × rate —
@@ -231,6 +223,39 @@ export async function getPayrollCosts(from: string, to: string): Promise<ActualL
   };
 }
 
+/**
+ * Approved payroll rows for [from, to] (one per shift, with positionId).
+ * null when Planday isn't configured or the call failed — never an empty
+ * list standing in for an outage. Callers keep windows short (≤ 28 days);
+ * plandayGet retries 429s with backoff.
+ */
+export async function getPlandayPayrollRows(from: string, to: string): Promise<PlandayShiftPayroll[] | null> {
+  const config = getConfig();
+  if (!config) return null;
+  const token = await getAccessToken();
+  if (!token) return null;
+  const data = await plandayGet<PlandayPayrollResponse>(
+    `/payroll/v1.0/payroll?departmentIds=${config.departmentId}&from=${from}&to=${to}&shiftStatus=Approved`,
+    token,
+  );
+  if (!data) return null;
+  return data.shiftsPayroll ?? [];
+}
+
+/** Employer NI and pension settings as fractions — the same pnl_settings
+ *  keys and defaults the P&L uses, so both screens cost labour alike. */
+export async function getEmployerCostSettings(): Promise<{
+  niRate: number; niWeeklyThreshold: number; employmentAllowanceAnnual: number; pensionRate: number;
+}> {
+  const [niRate, niWeeklyThreshold, allowanceAnnual, pensionRate] = await Promise.all([
+    getPnlSetting("employer_ni_rate", 15),
+    getPnlSetting("employer_ni_weekly_threshold", 96.15),
+    getPnlSetting("employment_allowance_annual", 10500),
+    getPnlSetting("employer_pension_rate", 3),
+  ]);
+  return { niRate: niRate / 100, niWeeklyThreshold, employmentAllowanceAnnual: allowanceAnnual, pensionRate: pensionRate / 100 };
+}
+
 export function isPlandayConfigured(): boolean {
   return getConfig() !== null;
 }
@@ -270,6 +295,13 @@ export interface PlandayShiftType {
 }
 
 export interface PlandayPosition {
+  id: number;
+  name: string;
+  /** Planday section (e.g. "Production", "Office"); null when unsectioned. */
+  sectionId?: number | null;
+}
+
+export interface PlandaySection {
   id: number;
   name: string;
 }
@@ -392,6 +424,13 @@ export async function datesWithPosition(
     if (s.positionId === position.id && s.date) dates.add(s.date.slice(0, 10));
   }
   return dates;
+}
+
+let cachedSections: CachedLookup<PlandaySection> | null = null;
+/** Sections group positions ("Production", "Office"). Cached like positions. */
+export async function getPlandaySections(): Promise<PlandaySection[]> {
+  return getCachedLookup(cachedSections, () => plandayReadAll<PlandaySection>(`/scheduling/v1.0/sections`),
+    c => { cachedSections = c; });
 }
 
 export async function getPlandayShifts(from: string, to: string): Promise<PlandayShift[]> {
