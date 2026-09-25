@@ -275,7 +275,11 @@ router.delete("/:id", requireHr, async (req: Request, res: Response) => {
 
 // ── HR: read it with Claude ────────────────────────────────────────────────
 
-const ExtractBody = z.object({});
+const ExtractBody = z.object({
+  // "Read it again" replaces the draft values with the new read; the first
+  // read (and any read without this) keeps the founder's corrections.
+  replacePrefill: z.boolean().optional(),
+});
 
 router.post("/:id/extract", requireHr, validate(ExtractBody), async (req: Request, res: Response) => {
   const found = await loadVisible(req, res);
@@ -289,9 +293,11 @@ router.post("/:id/extract", requireHr, validate(ExtractBody), async (req: Reques
   if (!out.ok) { res.status(out.status).json({ error: out.error }); return; }
 
   // Keep the read. The confirm card's values start from it the first time;
-  // after that they're the founder's (autosaved), and a re-read doesn't
-  // overwrite corrections. The document's own date fills a blank issue date.
-  const prefill = found.row.prefill ?? prefillFromExtraction(out.extraction);
+  // after that they're the founder's (autosaved), and only an explicit
+  // "Read it again" replaces them. The document's own date fills a blank
+  // issue date (never overwrites one the founder typed).
+  const { replacePrefill } = req.body as z.infer<typeof ExtractBody>;
+  const prefill = replacePrefill || found.row.prefill == null ? prefillFromExtraction(out.extraction) : found.row.prefill;
   const issueDate = found.row.originalIssueDate ?? out.extraction.fields.issueDate.value;
   const [row] = await db.update(uploadedContractsTable).set({
     extraction: out.extraction,

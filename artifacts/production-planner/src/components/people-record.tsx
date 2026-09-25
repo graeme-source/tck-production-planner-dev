@@ -41,6 +41,11 @@ import {
 } from "@/lib/people-api";
 import { PeopleLockedCard } from "@/components/people-locked-card";
 import { JobTitleField } from "@/components/job-title-field";
+import {
+  useCanManageContracts, useContractHistory, PersonContractsSection, ContractEntryCard, AddOldContractModal,
+  ContractOpenModal, type OpenContract,
+} from "@/components/person-contracts";
+import { contractHistory } from "@/lib/contract-history";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -375,6 +380,12 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
   const [filter, setFilter] = useState<TimelineFilter>("all");
   const [modal, setModal] = useState<null | "rtw" | "book" | "note">(null);
   const [openForm, setOpenForm] = useState<RtwForm | null>(null);
+  // Contracts — founder/HR accounts only (they carry pay); the server says
+  // whether to ask at all, and re-checks every request.
+  const canContracts = useCanManageContracts();
+  const contracts = useContractHistory(userId, ready && canContracts);
+  const [addingContract, setAddingContract] = useState(false);
+  const [openContract, setOpenContract] = useState<OpenContract | null>(null);
 
   const recordKey = ["people-record", userId, from ?? "default"];
   const record = useQuery<PersonRecordResponse>({
@@ -453,9 +464,12 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
       forms: data.forms,
       meetings: reviews.data?.meetings ?? [],
       looseNotes: grouped?.unattached ?? [],
+      contracts: canContracts && contracts.data
+        ? contractHistory(contracts.data.issued, contracts.data.uploaded).map(entry => ({ key: entry.key, date: entry.date, entry }))
+        : [],
     });
     return withinWindow(all, windowFrom);
-  }, [data, reviews.data, grouped, windowFrom]);
+  }, [data, reviews.data, grouped, windowFrom, canContracts, contracts.data]);
 
   const lockedError = [record.error, reviews.error].find(e => e instanceof PeopleLockedError) as PeopleLockedError | undefined;
   if (lockedError) return <PeopleLockedCard error={lockedError} />;
@@ -570,11 +584,21 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
 
       <EmploymentPanel userId={userId} ready={ready} />
 
+      {canContracts && (
+        <PersonContractsSection
+          history={contracts.data}
+          isLoading={contracts.isLoading}
+          error={contracts.error}
+          onOpen={setOpenContract}
+          onAdd={() => setAddingContract(true)}
+        />
+      )}
+
       {/* Everything, in one line of time. */}
       <section className="space-y-3">
         <h2 className="text-xl font-bold flex items-center gap-2"><History className="w-5 h-5 text-primary" /> The record</h2>
         <div className="flex flex-wrap gap-2">
-          {TIMELINE_FILTERS.map(f => (
+          {TIMELINE_FILTERS.filter(f => f.key !== "contracts" || counts.contracts > 0).map(f => (
             <button key={f.key} onClick={() => setFilter(f.key)} aria-pressed={filter === f.key}
               className={cn(
                 "h-12 px-4 rounded-2xl border-2 text-base font-bold transition-colors",
@@ -613,6 +637,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
           if (e.kind === "meeting") {
             return <MeetingCard key={e.key} meeting={e.meeting} notes={byMeeting.get(e.meeting.id) ?? []} {...meetingCardProps} />;
           }
+          if (e.kind === "contract") return <ContractEntryCard key={e.key} entry={e.contract.entry} onOpen={setOpenContract} />;
           return <NoteCard key={e.key} note={e.note} canManage={canManage} currentUserId={currentUserId} onChanged={refreshReviews} />;
         })}
 
@@ -643,6 +668,21 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
         <PeopleModal title={`Write a note — ${p.name}`} onClose={() => setModal(null)}>
           <WriteNote subjectId={p.id} subjectName={p.name} onDone={() => { setModal(null); refreshReviews(); }} onCancel={() => setModal(null)} />
         </PeopleModal>
+      )}
+      {addingContract && (
+        <AddOldContractModal
+          userId={p.id}
+          personName={p.name}
+          onClose={() => setAddingContract(false)}
+          onUploaded={row => {
+            setAddingContract(false);
+            void queryClient.invalidateQueries({ queryKey: ["contract-history", p.id] });
+            setOpenContract({ source: "uploaded", id: row.id });
+          }}
+        />
+      )}
+      {openContract && (
+        <ContractOpenModal target={openContract} userId={p.id} personName={p.name} onClose={() => setOpenContract(null)} />
       )}
       {openForm && (
         <PeopleModal title="Return-to-work form" onClose={() => { setOpenForm(null); refreshAll(); }} wide>
