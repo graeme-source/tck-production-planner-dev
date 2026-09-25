@@ -62,6 +62,43 @@ async function fetchFacts(plandayId: number): Promise<EmploymentFacts> {
   };
 }
 
+/**
+ * Just the contract rule and start date — the "Hours worked" report and the
+ * team's "Hours vs contract" view need these for everyone, without the
+ * holiday balance calls. Answers from the full employment cache when that's
+ * warm; otherwise one HR call, cached for the same 10 minutes.
+ */
+export type ContractRuleFacts =
+  | { status: "ok"; contractRule: string | null; hiredFrom: string | null }
+  | { status: "not_configured" | "unreachable" };
+
+const ruleCache = new Map<number, { facts: ContractRuleFacts; expiresAt: number }>();
+
+export async function getContractRuleFacts(plandayId: number): Promise<ContractRuleFacts> {
+  if (!isPlandayConfigured()) return { status: "not_configured" };
+  const full = cache.get(plandayId);
+  if (full && Date.now() < full.expiresAt && full.facts.status === "ok") {
+    return { status: "ok", contractRule: full.facts.employment.contractRule, hiredFrom: full.facts.employment.hiredFrom };
+  }
+  const hit = ruleCache.get(plandayId);
+  if (hit && Date.now() < hit.expiresAt) return hit.facts;
+  try {
+    const [employeeResp, employeeTypes, contractRules] = await Promise.all([
+      plandayRead<{ data?: PdEmployee }>(`/hr/v1.0/employees/${plandayId}`),
+      getPlandayEmployeeTypes(),
+      getPlandayContractRules(),
+    ]);
+    if (!employeeResp?.data) return { status: "unreachable" };
+    const e = summariseEmployment(employeeResp.data, employeeTypes, contractRules);
+    const facts: ContractRuleFacts = { status: "ok", contractRule: e.contractRule, hiredFrom: e.hiredFrom };
+    ruleCache.set(plandayId, { facts, expiresAt: Date.now() + TTL_MS });
+    return facts;
+  } catch (err) {
+    console.warn(`[planday-employment] contract rule for ${plandayId} failed:`, err instanceof Error ? err.message : err);
+    return { status: "unreachable" };
+  }
+}
+
 export async function getEmploymentFacts(plandayId: number, opts: { fresh?: boolean } = {}): Promise<EmploymentFacts> {
   if (!isPlandayConfigured()) return { status: "not_configured" };
   const hit = cache.get(plandayId);

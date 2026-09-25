@@ -42,6 +42,7 @@ import { isLateName } from "../services/attendance-classify";
 import { getAttendanceFromCache } from "../services/planday-attendance-cache";
 import { getEmploymentFacts } from "../services/planday-employment";
 import { formSelect, shapeForm, type FormRow } from "../lib/rtw-forms";
+import peopleHoursRouter from "./people-hours";
 
 const router: IRouter = Router();
 
@@ -60,6 +61,9 @@ async function requirePeopleAccess(req: Request, res: Response, next: NextFuncti
   }
 }
 router.use(requirePeopleAccess);
+// Hours worked vs contract (routes/people-hours.ts) — behind the same gates,
+// and ahead of "/:userId" so "/hours" isn't read as a person's id.
+router.use(peopleHoursRouter);
 
 /** Bring the Planday mirror up to date for the window (backfills anything
  *  never covered, re-pulls the trailing weeks at most hourly). Planday being
