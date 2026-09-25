@@ -96,6 +96,7 @@ import surveysRouter from "./surveys";
 import financeRouter from "./finance";
 import featuresRouter from "./features";
 import contractsRouter from "./contracts";
+import uploadedContractsRouter from "./uploaded-contracts";
 import starterFormsRouter from "./starter-forms";
 import issuePipelineMachineRouter from "./issue-pipeline-machine";
 import issuePipelineRouter from "./issue-pipeline";
@@ -229,6 +230,10 @@ router.use("/founder-focus", founderFocusRouter);
 // Numbers page. Founder-gated inside the router; a no-op until the
 // META_ADS_TOKEN / META_AD_ACCOUNT_ID env vars exist.
 router.use("/meta-ads", metaAdsRouter);
+// Old contracts filed on a person's record (uploaded PDF / photo): HR-records
+// accounts + the employee themself only, guarded inside. Mounted BEFORE
+// /contracts so "/uploaded" never reaches that router's "/:id".
+router.use("/contracts/uploaded", uploadedContractsRouter);
 // Employment contracts: founder-only surfaces guard themselves per-route
 // inside the router; /mine and /:id are owner-scoped there too.
 router.use("/contracts", contractsRouter);
