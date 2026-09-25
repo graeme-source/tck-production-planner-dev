@@ -5830,80 +5830,8 @@ router.post("/:id/wonky-to-freezer", async (req, res) => {
   }
 });
 
-// ──────────────────────────────────────────────────────────────────────────────
-// POST /:id/items/:itemId/wonly — atomically increment wonkyCount by 1 (quality reject)
-// ──────────────────────────────────────────────────────────────────────────────
-router.post("/:id/items/:itemId/wonly", async (req, res) => {
-  const planId = Number(req.params.id);
-  const itemId = Number(req.params.itemId);
-
-  // Verify item belongs to this plan first
-  const [exists] = await db.select({ id: productionPlanItemsTable.id })
-    .from(productionPlanItemsTable)
-    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
-
-  if (!exists) {
-    res.status(404).json({ error: "Plan item not found" });
-    return;
-  }
-
-  // Atomic increment — avoids read-modify-write race under concurrent taps.
-  // wonly_total tracks the cumulative count for display (so the wrapping
-  // station still shows the recorded number after wonkies are transferred to
-  // the freezer); wonly_count is the live "currently on the rack" counter.
-  const [updated] = await db
-    .update(productionPlanItemsTable)
-    .set({
-      wonlyCount: sql`${productionPlanItemsTable.wonlyCount} + 1`,
-      wonlyTotal: sql`${productionPlanItemsTable.wonlyTotal} + 1`,
-    })
-    .where(eq(productionPlanItemsTable.id, itemId))
-    .returning({
-      wonlyCount: productionPlanItemsTable.wonlyCount,
-      wonlyTotal: productionPlanItemsTable.wonlyTotal,
-    });
-
-  res.json({ itemId, wonlyCount: updated.wonlyCount, wonlyTotal: updated.wonlyTotal });
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// DELETE /:id/items/:itemId/wonly — atomically decrement wonkyCount (floor at 0)
-// ──────────────────────────────────────────────────────────────────────────────
-router.delete("/:id/items/:itemId/wonly", async (req, res) => {
-  const planId = Number(req.params.id);
-  const itemId = Number(req.params.itemId);
-
-  // Read current count only to enforce the floor-at-zero guard
-  const [item] = await db.select({ id: productionPlanItemsTable.id, wonlyCount: productionPlanItemsTable.wonlyCount })
-    .from(productionPlanItemsTable)
-    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
-
-  if (!item) {
-    res.status(404).json({ error: "Plan item not found" });
-    return;
-  }
-  if ((item.wonlyCount ?? 0) <= 0) {
-    res.status(409).json({ error: "Wonky count is already 0" });
-    return;
-  }
-
-  // Atomic decrement with GREATEST guard so DB can never go below 0. Decrement
-  // wonly_total alongside so an undo of a mistaken click doesn't leave the
-  // recorded total inflated.
-  const [updated] = await db
-    .update(productionPlanItemsTable)
-    .set({
-      wonlyCount: sql`GREATEST(${productionPlanItemsTable.wonlyCount} - 1, 0)`,
-      wonlyTotal: sql`GREATEST(${productionPlanItemsTable.wonlyTotal} - 1, 0)`,
-    })
-    .where(eq(productionPlanItemsTable.id, itemId))
-    .returning({
-      wonlyCount: productionPlanItemsTable.wonlyCount,
-      wonlyTotal: productionPlanItemsTable.wonlyTotal,
-    });
-
-  res.json({ itemId, wonlyCount: updated.wonlyCount, wonlyTotal: updated.wonlyTotal });
-});
+// POST/DELETE /:id/items/:itemId/wonly (wonky +1 / −1) moved to
+// routes/quality-rejects.ts on 2026-09-25, beside the dog bin counter.
 
 // POST /:id/items/:itemId/manual-batch — admin rectification for a missed
 // batch on an already-closed (or in-progress) recipe. Inserts a

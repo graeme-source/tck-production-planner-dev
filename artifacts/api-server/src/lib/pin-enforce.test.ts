@@ -51,6 +51,8 @@ describe("matchAttributingWrite", () => {
     ["PATCH", "/production-plans/180/items/9/wrapping-complete"],
     ["POST", "/fulfilment/verify-label-scan"],
     ["POST", "/deliveries/12/receive"],
+    ["POST", "/production-plans/180/items/9/wonly"], // wonky reject (+1)
+    ["POST", "/production-plans/180/items/9/dog-bin"], // dog bin reject (+1)
   ])("guards %s %s", (method, path) => {
     expect(matchAttributingWrite(method, path)).not.toBeNull();
   });
@@ -58,6 +60,9 @@ describe("matchAttributingWrite", () => {
   it.each([
     ["GET", "/production-plans/180/batch-completions"], // reads
     ["DELETE", "/production-plans/180/batch-completions/last"], // undo
+    ["DELETE", "/production-plans/180/items/9/wonly"], // undo a wonky
+    ["DELETE", "/production-plans/180/items/9/dog-bin"], // undo a dog bin
+    ["POST", "/production-plans/180/wonky-to-freezer"], // rack transfer, no person recorded
     ["POST", "/oven-events/oven-out"], // food-safety timer
     ["PUT", "/app-settings/total_daily_batches"], // not a station claim
     ["PUT", "/app-settings/schedule_break_anchors_180"],
