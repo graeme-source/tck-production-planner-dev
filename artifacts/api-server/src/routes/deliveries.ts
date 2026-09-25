@@ -14,6 +14,7 @@ import { eq, and, gte, lte, sql, desc, asc, inArray } from "drizzle-orm";
 import { londonDateString } from "../lib/london-time";
 import { adjustInventoryLevel } from "../services/shopify";
 import { outstandingCollectionsForOrder } from "./collections";
+import { receiptDelta, stockQuantityForReceipt } from "../lib/goods-in-stock";
 
 const router: IRouter = Router();
 
@@ -673,7 +674,7 @@ router.post("/:id/receive", async (req, res) => {
     const existing = existingLineMap.get(line.lineId)!;
     const previousReceived = Number(existing.quantityReceived);
     const newTotal = line.quantityReceived;
-    const delta = newTotal - previousReceived;
+    const delta = receiptDelta(previousReceived, newTotal);
 
     await db
       .update(purchaseOrderLinesTable)
@@ -689,10 +690,11 @@ router.post("/:id/receive", async (req, res) => {
     // row with ingredient_id NULL that no stock reader could ever surface.
     if (delta !== 0 && existing.ingredientId !== null) {
       const location = resolveStorageLocation(existing.ingredientCategory, existing.ingredientName, existing.perishable);
-      const isCountUnit = existing.unit === "packs" || existing.unit === "bottles" || existing.unit === "pallets";
-      const pw = Number(existing.packWeight) || 1;
-      const stockQty = isCountUnit ? delta * pw : delta;
-      const stockUnit = isCountUnit ? (existing.ingredientUnit ?? "kg") : existing.unit;
+      const { quantity: stockQty, unit: stockUnit } = stockQuantityForReceipt(delta, {
+        unit: existing.unit,
+        packWeight: existing.packWeight,
+        ingredientUnit: existing.ingredientUnit,
+      });
       stockInserts.push({
         ingredientId: existing.ingredientId,
         quantity: stockQty,
@@ -722,10 +724,11 @@ router.post("/:id/receive", async (req, res) => {
       .returning();
     if (nl.quantityReceived > 0) {
       const location = resolveStorageLocation(ing.ingredientCategory, ing.ingredientName, ing.perishable);
-      const isCountUnit = nl.unit === "packs" || nl.unit === "bottles" || nl.unit === "pallets";
-      const pw = Number(ing.packWeight) || 1;
-      const stockQty = isCountUnit ? nl.quantityReceived * pw : nl.quantityReceived;
-      const stockUnit = isCountUnit ? (ing.ingredientUnit ?? "kg") : nl.unit;
+      const { quantity: stockQty, unit: stockUnit } = stockQuantityForReceipt(nl.quantityReceived, {
+        unit: nl.unit,
+        packWeight: ing.packWeight,
+        ingredientUnit: ing.ingredientUnit,
+      });
       stockInserts.push({
         ingredientId: nl.ingredientId,
         quantity: stockQty,
@@ -941,10 +944,11 @@ router.post("/:id/unreceive", async (req, res) => {
     const received = Number(line.quantityReceived);
     if (!line.ingredientId || received <= 0) continue;
     const location = resolveStorageLocation(line.ingredientCategory, line.ingredientName, line.perishable);
-    const isCountUnit = line.unit === "packs" || line.unit === "bottles" || line.unit === "pallets";
-    const pw = Number(line.packWeight) || 1;
-    const stockQty = isCountUnit ? received * pw : received;
-    const stockUnit = isCountUnit ? (line.ingredientUnit ?? "kg") : line.unit;
+    const { quantity: stockQty, unit: stockUnit } = stockQuantityForReceipt(received, {
+      unit: line.unit,
+      packWeight: line.packWeight,
+      ingredientUnit: line.ingredientUnit,
+    });
     const key = `${line.ingredientId}|${location}`;
     const prev = reversals.get(key);
     if (prev) prev.qty += stockQty;
