@@ -26,6 +26,7 @@ import { hasHrRecordAccess, requireHrRecordAccess } from "../middleware/hr-acces
 import { renderContract, contractDate, templatePlaceholders, applySignature, CONTRACT_FIELDS } from "../lib/contract-render";
 import { renderContractPdf } from "../pdf/contract-pdf";
 import { maybeTickStarterPaperwork } from "../lib/starter-paperwork";
+import { jobTitleAfterIssue } from "../lib/job-title";
 
 // Columns for reads that display a contract — everything except the
 // archival PDF bytes, which only ever leave through /:id/signed.pdf.
@@ -250,12 +251,31 @@ router.post("/generate", requireFounder, validate(GenerateBody), async (req: Req
     issuedBy: req.session.userId ?? null,
   }).returning();
 
+  // The contract is the source of the person's job title (migration 0130):
+  // issuing one with a different title updates it, and the founder is told.
+  // A failure here must not fail the issue — the contract is already stored.
+  let jobTitleChange: { from: string | null; to: string } | null = null;
+  if (input.userId != null) {
+    try {
+      const [person] = await db.select({ jobTitle: usersTable.jobTitle }).from(usersTable).where(eq(usersTable.id, input.userId));
+      const next = jobTitleAfterIssue(person?.jobTitle, input.jobTitle);
+      if (next != null) {
+        await db.update(usersTable)
+          .set({ jobTitle: next, jobTitleUpdatedAt: new Date(), jobTitleUpdatedBy: req.session.userId ?? null })
+          .where(eq(usersTable.id, input.userId));
+        jobTitleChange = { from: person?.jobTitle ?? null, to: next };
+      }
+    } catch (err) {
+      console.warn("[Contracts] job title update after issue failed:", err instanceof Error ? err.message : err);
+    }
+  }
+
   // An invite-addressed contract has nobody to notify yet — it's claimed
   // and surfaced in their onboarding flow when the invite is accepted.
   if (input.userId != null) {
     await notify(input.userId, "Your employment contract is ready in your Employee Hub — please read and sign it.");
   }
-  res.json(row);
+  res.json({ ...row, jobTitleChange });
 });
 
 // A mis-issued contract can be withdrawn — but never once the employee has
