@@ -2388,6 +2388,7 @@ router.post("/:id/add-mac-cheese", validate(AddMacCheeseBody), async (req, res) 
       batchesComplete: productionPlanItemsTable.batchesComplete,
       wonlyCount: productionPlanItemsTable.wonlyCount,
       wonlyTotal: productionPlanItemsTable.wonlyTotal,
+      dogBinCount: productionPlanItemsTable.dogBinCount, // quality rejects (routes/quality-rejects.ts)
       wrappingComplete: productionPlanItemsTable.wrappingComplete,
       fridgeQty: productionPlanItemsTable.fridgeQty,
       freezerQty: productionPlanItemsTable.freezerQty,
@@ -2900,6 +2901,7 @@ router.get("/:id", async (req, res) => {
       batchesComplete: productionPlanItemsTable.batchesComplete,
       wonlyCount: productionPlanItemsTable.wonlyCount,
       wonlyTotal: productionPlanItemsTable.wonlyTotal,
+      dogBinCount: productionPlanItemsTable.dogBinCount, // quality rejects (routes/quality-rejects.ts)
       wrappingComplete: productionPlanItemsTable.wrappingComplete,
       fridgeQty: productionPlanItemsTable.fridgeQty,
       freezerQty: productionPlanItemsTable.freezerQty,

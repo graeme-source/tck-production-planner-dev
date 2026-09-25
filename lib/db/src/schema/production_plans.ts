@@ -45,6 +45,11 @@ export const productionPlanItemsTable = pgTable("production_plan_items", {
   // is not, so the wrapping station can keep showing how many wonkies were
   // recorded for a recipe today.
   wonlyTotal: integer("wonly_total").notNull().default(0),
+  // Dog bin = the OTHER kind of quality reject: too far gone even for Wonky
+  // stock, so it's thrown away. Reduces what reaches the fridge, but never
+  // enters the freezer, the fridge or any stock count. Never reset (no rack
+  // to transfer from), so it is also the day's total. Migration 0131.
+  dogBinCount: integer("dog_bin_count").notNull().default(0),
   wrappingComplete: boolean("wrapping_complete").notNull().default(false),
   fridgeQty: integer("fridge_qty").notNull().default(0),
   freezerQty: integer("freezer_qty").notNull().default(0),
@@ -95,6 +100,24 @@ export const batchCompletionsTable = pgTable("batch_completions", {
   correctionByUserId: integer("correction_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
   correctionNote: text("correction_note"),
 });
+
+// One row per + or − tap on a quality-reject counter (wonky or dog bin), so a
+// correction can be traced to a person and a time. The counters on
+// production_plan_items stay the source of truth for every calculation; this
+// is the audit trail behind them. Migration 0131.
+export const qualityRejectEventsTable = pgTable("quality_reject_events", {
+  id: serial("id").primaryKey(),
+  planId: integer("plan_id").notNull().references(() => productionPlansTable.id, { onDelete: "cascade" }),
+  planItemId: integer("plan_item_id").notNull().references(() => productionPlanItemsTable.id, { onDelete: "cascade" }),
+  recipeId: integer("recipe_id").references(() => recipesTable.id, { onDelete: "set null" }),
+  kind: text("kind").notNull(), // 'wonky' | 'dog_bin' (CHECK in the migration)
+  delta: integer("delta").notNull(), // +1 | -1 (CHECK in the migration)
+  stationType: text("station_type"),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type QualityRejectEvent = typeof qualityRejectEventsTable.$inferSelect;
 
 // Live presence ping per (planItem, station). The building station upserts
 // while a builder is actively working on a recipe; the recipe-close action

@@ -272,12 +272,12 @@ export interface Recipe {
     grossMargin?: number | null;
     /** Hex colour used to identify the recipe */
     color?: string | null;
-    /** Grams trimmed off the filling weight shown at the building station, per batch. Display only. */
-    builderFillingDeductionGrams?: number | null;
     /** Whether this recipe is on the core menu */
     isCoreMenu?: boolean;
     /** Whether this recipe is the current Calzone Club Special */
     isCurrentSpecial?: boolean;
+    /** Grams trimmed off the filling weight shown at the building station, per batch. Display only. */
+    builderFillingDeductionGrams?: number | null;
     createdAt: string;
 }
 export interface RecipeIngredient {
@@ -364,6 +364,7 @@ export interface CreateRecipe {
     isCoreMenu?: boolean;
     isCurrentSpecial?: boolean;
     cookingLossPercent?: number | null;
+    /** Grams trimmed off the filling weight shown at the building station, per batch. Display only — every other calculation uses the recipe's real filling weight. */
     builderFillingDeductionGrams?: number | null;
     ingredients: CreateRecipeIngredientsItem[];
     subRecipes: CreateRecipeSubRecipesItem[];
@@ -408,6 +409,8 @@ export interface ProductionPlanItem {
     batchesTarget: number;
     batchesComplete: number;
     wonlyCount: number;
+    /** Quality rejects thrown in the dog bin (too far gone even for Wonky stock). They reduce what reaches the fridge but never enter any stock. Never reset, so it is also the day's total. */
+    dogBinCount?: number;
     tinSize?: string | null;
     maxBatchesPerTin?: number | null;
     sopUrl?: string | null;

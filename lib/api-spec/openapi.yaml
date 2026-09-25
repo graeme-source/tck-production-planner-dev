@@ -2733,6 +2733,9 @@ components:
           type: integer
         wonlyCount:
           type: integer
+        dogBinCount:
+          type: integer
+          description: Quality rejects thrown in the dog bin (too far gone even for Wonky stock). They reduce what reaches the fridge but never enter any stock. Never reset, so it is also the day's total.
         tinSize:
           type: string
           nullable: true
