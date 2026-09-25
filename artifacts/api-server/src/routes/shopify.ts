@@ -4,35 +4,12 @@ import { db, recipesTable, usersTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { londonDateString, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
 import { FRIED_CHICKEN_CATEGORY } from "./fried-chicken";
+import { CUSTOMER_TYPE_TAGS, getNetRevenue, getRefundTotal, isCountableOrder, orderHasTag } from "../lib/order-revenue";
 
 const WEEKDAY_TO_NUM: Record<string, number> = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
 const londonWeekdayNumber = (d: Date) => WEEKDAY_TO_NUM[londonWeekdayName(d)] ?? 0;
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-const EXCLUDED_FINANCIAL = new Set(["refunded", "voided"]);
-
-function isCountableOrder(o: ShopifyOrder): boolean {
-  if (o.cancelled_at) return false;
-  if (EXCLUDED_FINANCIAL.has(o.financial_status)) return false;
-  return true;
-}
-
-function getRefundTotal(o: ShopifyOrder): number {
-  if (!o.refunds || o.refunds.length === 0) return 0;
-  return o.refunds.reduce((sum, r) => {
-    if (!r.transactions) return sum;
-    return sum + r.transactions
-      .filter(t => t.kind === "refund" && t.status === "success")
-      .reduce((s, t) => s + parseFloat(t.amount || "0"), 0);
-  }, 0);
-}
-
-function getNetRevenue(o: ShopifyOrder): number {
-  const total = parseFloat(o.total_price || "0");
-  const refunds = getRefundTotal(o);
-  return total - refunds;
-}
 
 const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
 
@@ -319,12 +296,7 @@ router.get("/sales-summary", requireFounder, async (req, res) => {
 // ── Founder View: Orders by Customer Type ─────────────────────────────────────
 // GET /api/shopify/orders-by-type?from=YYYY-MM-DD&to=YYYY-MM-DD
 // Returns counts + order lists grouped by the four customer-type tags.
-const CUSTOMER_TYPE_TAGS = [
-  "new-customer",
-  "Subscription Recurring Order",
-  "Subscription New Order",
-  "wholesale",
-] as const;
+// CUSTOMER_TYPE_TAGS lives in lib/order-revenue.ts, shared with the trend graphs.
 
 router.get("/orders-by-type", requireFounder, async (req, res) => {
   const { from, to } = req.query as { from?: string; to?: string };
@@ -336,11 +308,7 @@ router.get("/orders-by-type", requireFounder, async (req, res) => {
     const allOrders = (await getOrdersByDateRange(from, to)).filter(isCountableOrder);
 
     const groups = CUSTOMER_TYPE_TAGS.map(tag => {
-      const tagLower = tag.toLowerCase();
-      const matchingOrders = allOrders.filter(o => {
-        const tags = o.tags.split(",").map(t => t.trim().toLowerCase());
-        return tags.includes(tagLower);
-      });
+      const matchingOrders = allOrders.filter(o => orderHasTag(o, tag));
       return {
         tag,
         count: matchingOrders.length,
@@ -403,11 +371,7 @@ router.get("/tag-summary", requireFounder, async (req, res) => {
   }
   try {
     const allOrders = (await getOrdersByDateRange(from, to)).filter(isCountableOrder);
-    const tagLower = tag.toLowerCase();
-    const matching = allOrders.filter(o => {
-      const tags = o.tags.split(",").map(t => t.trim().toLowerCase());
-      return tags.includes(tagLower);
-    });
+    const matching = allOrders.filter(o => orderHasTag(o, tag));
     const totalValue = matching.reduce((s, o) => s + getNetRevenue(o), 0);
     res.json({ tag, from, to, count: matching.length, totalValue });
   } catch (err: unknown) {
