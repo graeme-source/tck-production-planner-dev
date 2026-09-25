@@ -15,6 +15,8 @@ import { NumberInput } from "@/components/ui/number-input";
 import { stockCellEdited, planStockWrite } from "@/lib/stock-override-guard";
 import { FSA_COOK_BANDS, defaultHoldSeconds, meetsCookStandard, formatHold } from "@/lib/cook-standards";
 import { DeferredPrepBanner } from "../shared/deferred-prep-banner";
+import type { PlanStartStock } from "@workspace/stock-prediction";
+import { MacStockWorking, macStockWorking, withLiveStock } from "@/components/mac-cheese-stock-working";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Macaroni Cheese Station
@@ -40,6 +42,9 @@ interface MacCheeseCalcRecipe {
   leftOverStock: number;
   liveStock: number;
   stillToDispatchToday: number;
+  /** How leftOverStock was reached (fridge now, still to wrap, still to go
+   *  out, days rolled forward) — shown under the Stock figure. */
+  stockWorking: PlanStartStock;
   salesNextDay: number;
   salesNextDayPlus1: number;
   salesNextDayPlus2: number;
@@ -126,11 +131,14 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
       if (!resp.ok) throw new Error(`Save failed (${resp.status})`);
       // The saved figure is the new baseline: the cell is no longer "edited"
       // and the next confirmation compares against the level just written.
-      const rebase = (list: MacCheeseCalcRecipe[]) => list.map(r =>
-        r.recipeId === recipe.recipeId
-          ? { ...r, liveStock: newLevel, leftOverStock: newLevel, stillToDispatchToday: 0 }
-          : r,
-      );
+      // The saved figure is the new FRIDGE count; still-to-wrap, still-to-go-
+      // out and the days rolled forward are unchanged, so the planning stock
+      // is re-run through the same maths.
+      const rebase = (list: MacCheeseCalcRecipe[]) => list.map(r => {
+        if (r.recipeId !== recipe.recipeId) return r;
+        const stockWorking = withLiveStock(r.stockWorking, newLevel);
+        return { ...r, liveStock: newLevel, stockWorking, leftOverStock: stockWorking.atPlanStart };
+      });
       setAllRecipes(rebase);
       setRecipes(rebase);
       relockStockRow(recipe.recipeId, false);
@@ -154,23 +162,28 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
     fetch(`/api/production-plans/calculate-mac-cheese?planDate=${planDate}`, { credentials: "include" })
       .then(r => r.json())
       .then((calcData) => {
-        const mapped: MacCheeseCalcRecipe[] = (calcData.recipes ?? []).map((r: any) => ({
-          recipeId: r.recipeId,
-          recipeName: r.recipeName,
-          color: r.color ?? null,
-          isCoreMenu: !!r.isCoreMenu,
-          packsPerBatch: r.packsPerBatch ?? 5,
-          leftOverStock: Math.round(r.leftOverStock ?? 0),
-          liveStock: Math.round(r.liveStock ?? r.leftOverStock ?? 0),
-          stillToDispatchToday: Math.round(r.stillToDispatchToday ?? 0),
-          salesNextDay: r.salesNextDay ?? 0,
-          salesNextDayPlus1: r.salesNextDayPlus1 ?? 0,
-          salesNextDayPlus2: r.salesNextDayPlus2 ?? 0,
-          neededForDispatch: r.neededForDispatch ?? 0,
-          extraToMake: r.extraToMake ?? 0,
-          toMakePacks: r.toMakePacks ?? 0,
-          toMakeBatches: r.toMakeBatches ?? 0,
-        }));
+        const mapped: MacCheeseCalcRecipe[] = (calcData.recipes ?? []).map((r: any) => {
+          const liveStock = Math.round(r.liveStock ?? r.leftOverStock ?? 0);
+          const stillToDispatchToday = Math.round(r.stillToDispatchToday ?? 0);
+          return {
+            recipeId: r.recipeId,
+            recipeName: r.recipeName,
+            color: r.color ?? null,
+            isCoreMenu: !!r.isCoreMenu,
+            packsPerBatch: r.packsPerBatch ?? 5,
+            leftOverStock: Math.round(r.leftOverStock ?? 0),
+            liveStock,
+            stillToDispatchToday,
+            stockWorking: macStockWorking({ liveStock, stillToDispatchToday, stockWorking: r.stockWorking }),
+            salesNextDay: r.salesNextDay ?? 0,
+            salesNextDayPlus1: r.salesNextDayPlus1 ?? 0,
+            salesNextDayPlus2: r.salesNextDayPlus2 ?? 0,
+            neededForDispatch: r.neededForDispatch ?? 0,
+            extraToMake: r.extraToMake ?? 0,
+            toMakePacks: r.toMakePacks ?? 0,
+            toMakeBatches: r.toMakeBatches ?? 0,
+          };
+        });
         // Seed the extraToMake input with whatever the endpoint already resolved
         // (it applies the per-recipe app-setting override and Thursday rules).
         const overrides: Record<number, number> = {};
@@ -186,7 +199,13 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
       .catch(() => setLoading(false));
   }, [planDate]);
 
-  const getStock = (r: MacCheeseCalcRecipe) => stockOverrides[r.recipeId] ?? r.leftOverStock;
+  // An override is the operator's PHYSICAL fridge count; the planning stock
+  // is that count run through the same maths as the server (still to wrap,
+  // still to go out today, days in between), never the raw count.
+  const getStock = (r: MacCheeseCalcRecipe) => {
+    const typed = stockOverrides[r.recipeId];
+    return typed === undefined ? r.leftOverStock : withLiveStock(r.stockWorking, typed).atPlanStart;
+  };
   const getSalesD1 = (r: MacCheeseCalcRecipe) => zeroedDays.d1 ? 0 : r.salesNextDay;
   const getSalesD2 = (r: MacCheeseCalcRecipe) => zeroedDays.d2 ? 0 : r.salesNextDayPlus1;
   const getSalesD3 = (r: MacCheeseCalcRecipe) => zeroedDays.d3 ? 0 : r.salesNextDayPlus2;
@@ -331,21 +350,24 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
                                 <Lock className="w-3.5 h-3.5" />
                               </button>
                             </div>
+                            <MacStockWorking working={r.stockWorking} planDate={planDate} />
                             {stockJustSaved[r.recipeId] && (
                               <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">Stock updated ✓</span>
                             )}
                           </div>
                         );
                       }
+                      // Unlocked, the cell is the FRIDGE count (what Stock
+                      // Control holds), not the planning figure.
                       const typed = stockOverrides[r.recipeId];
-                      const edited = stockCellEdited(typed, r.leftOverStock);
-                      const writePlan = planStockWrite(typed ?? r.leftOverStock, r.liveStock, r.stillToDispatchToday);
+                      const edited = stockCellEdited(typed, r.liveStock);
+                      const writePlan = planStockWrite(typed ?? r.liveStock, r.liveStock, r.stillToDispatchToday);
                       return (
                         <div className="flex flex-col items-end gap-1">
                           <div className="flex items-center justify-end gap-1.5">
                             <NumberInput
                               min={0}
-                              value={typed ?? r.leftOverStock}
+                              value={typed ?? r.liveStock}
                               onChange={n => {
                                 setStockOverrides(prev => ({ ...prev, [r.recipeId]: Math.max(0, n) }));
                                 if (stockConfirmId === r.recipeId) setStockConfirmId(null);
@@ -355,6 +377,11 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
                             />
                             <LockOpen className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
                           </div>
+                          <span className="text-[10px] text-muted-foreground">Fridge count right now</span>
+                          <MacStockWorking working={withLiveStock(r.stockWorking, typed ?? r.liveStock)} planDate={planDate} />
+                          {/* Keep the planning figure visible — the cell now
+                              holds the fridge count, not this. */}
+                          <span className="text-[10px] font-semibold">Plan uses {getStock(r)}</span>
                           {stockConfirmId === r.recipeId ? (
                             <div className="w-48 text-left text-[10px] leading-snug bg-amber-50 dark:bg-amber-950/40 border border-amber-400 dark:border-amber-600 rounded-lg p-2 space-y-1.5">
                               <div className="font-semibold text-amber-900 dark:text-amber-200">
@@ -453,7 +480,7 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Stock = current fridge packs from Stock Control, locked because it should be right. To correct it after a physical count: tap the padlock, type the real number, then Save — you'll be shown exactly what changes before anything is written. Cancel discards the edit. Sales D1/D2/D3 = next 3 dispatch days from Shopify. Deficit = max(0, D1 − Stock). Extra = additional packs. <strong>To Make is rounded up to whole batches</strong> — you can't produce partial batches, so target + rounding-up is what you'll actually make.
+        Stock = packs in the fridge when the plan day starts: the fridge count from Stock Control, plus today's mac still to be wrapped, minus today's orders not yet scanned out, then each working day in between (what that day's plan makes, minus what goes out). The working is shown under each number, and it comes out the same whether you plan during the pack or after it — scanned orders have already left the fridge count. To correct the fridge count after a physical count: tap the padlock, type what's physically in the fridge, then Save — you'll be shown exactly what changes before anything is written. Cancel discards the edit. Sales D1/D2/D3 = next 3 dispatch days from Shopify. Deficit = max(0, D1 − Stock). Extra = additional packs. <strong>To Make is rounded up to whole batches</strong> — you can't produce partial batches, so target + rounding-up is what you'll actually make.
       </p>
 
       <div className="flex flex-wrap items-center justify-between gap-3">

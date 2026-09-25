@@ -29,9 +29,10 @@ export interface StockWritePlan {
   currentLevel: number;
   /** Signed change the write amounts to. */
   delta: number;
-  /** Set when today's orders haven't all been scanned out yet: the on-screen
-   *  figure is net of those, so the operator must count them into the number
-   *  they save. Null when there is nothing to warn about. */
+  /** Set when today's orders haven't all been scanned out yet: those packs
+   *  are still physically in the fridge, so they belong in the count being
+   *  saved — the plan takes them off separately. Null when there is nothing
+   *  to warn about. */
   dispatchWarning: string | null;
 }
 
@@ -50,7 +51,7 @@ export function planStockWrite(
     currentLevel,
     delta: newLevel - currentLevel,
     dispatchWarning: toDispatch > 0
-      ? `${toDispatch} pack${toDispatch === 1 ? "" : "s"} from today's orders haven't been scanned out yet — the screen shows stock left AFTER them, but the number you save must be what is physically in the fridge right now.`
+      ? `${toDispatch} pack${toDispatch === 1 ? "" : "s"} from today's orders haven't been scanned out yet — they're still in the fridge, so include them in your count. The plan takes them off for you.`
       : null,
   };
 }

@@ -44,6 +44,8 @@ import {
 } from "@/components/ui/dialog";
 import { useLocation, useSearch } from "wouter";
 import { cn } from "@/lib/utils";
+import type { PlanStartStock } from "@workspace/stock-prediction";
+import { MacStockWorking, macStockWorking } from "@/components/mac-cheese-stock-working";
 import {
   DndContext,
   closestCenter,
@@ -4880,6 +4882,9 @@ interface MacCheeseCalcRecipe {
   color: string | null;
   packsPerBatch: number;
   leftOverStock: number;
+  liveStock: number;
+  stillToDispatchToday: number;
+  stockWorking?: PlanStartStock;
   salesNextDay: number;
   salesNextDayPlus1: number;
   salesNextDayPlus2: number;
@@ -5001,7 +5006,10 @@ function AddMacCheeseDialog({ planId, planDate, open, onOpenChange, onSuccess }:
                               {r.recipeName}
                             </div>
                           </td>
-                          <td className="py-2.5 px-2 text-right tabular-nums">{r.leftOverStock}</td>
+                          <td className="py-2.5 px-2 text-right tabular-nums align-top">
+                            <div>{r.leftOverStock}</div>
+                            <MacStockWorking working={macStockWorking(r)} planDate={planDate} />
+                          </td>
                           <td className="py-2.5 px-2 text-right tabular-nums">{r.salesNextDay}</td>
                           <td className="py-2.5 px-2 text-right tabular-nums text-amber-600">{r.neededForDispatch}</td>
                           <td className="py-2.5 px-2 text-right tabular-nums">{r.salesNextDayPlus1}</td>
@@ -5050,7 +5058,7 @@ function AddMacCheeseDialog({ planId, planDate, open, onOpenChange, onSuccess }:
               </div>
 
               <p className="text-xs text-muted-foreground">
-                Stock = current fridge packs. Sales D1/D2/D3 = next 3 dispatch days from Shopify. Deficit = max(0, D1 - Stock). Extra = additional packs on top of sales. All values in packs.
+                Stock = packs in the fridge when the plan day starts: fridge count + today's mac still to wrap − today's orders not yet scanned out, then each working day in between (made − going out). Working shown under each number. Sales D1/D2/D3 = next 3 dispatch days from Shopify. Deficit = max(0, D1 - Stock). Extra = additional packs on top of sales. All values in packs.
               </p>
 
               <div className="flex justify-end gap-3 pt-2">
