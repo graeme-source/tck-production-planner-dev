@@ -35,6 +35,7 @@ import dptIngredientRequirementsRouter from "./dpt-ingredient-requirements";
 import kanbansRouter from "./kanbans";
 import ordersRouter from "./orders";
 import deliveriesRouter from "./deliveries";
+import unexpectedDeliveriesRouter from "./unexpected-deliveries";
 import stockControlRouter from "./stock-control";
 import founderPanelsRouter from "./founder-panels";
 import improvementsRouter from "./improvements";
@@ -184,6 +185,9 @@ router.use("/stock-transfers", stockTransfersRouter);
 router.use("/dpt-ingredient-requirements", dptIngredientRequirementsRouter);
 router.use("/kanbans", kanbansRouter);
 router.use("/orders", ordersRouter);
+// Unexpected deliveries first: the deliveries router's GET /:id would
+// otherwise read "unexpected" as a purchase-order id.
+router.use("/deliveries/unexpected", unexpectedDeliveriesRouter);
 router.use("/deliveries", deliveriesRouter);
 // Collections — goods leaving the unit. Same audience as deliveries: anyone
 // on the floor may be the one who meets the driver.
