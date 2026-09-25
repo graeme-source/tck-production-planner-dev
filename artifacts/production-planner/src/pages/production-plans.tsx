@@ -35,7 +35,8 @@ import { useFriedChickenPrepDays } from "@/components/fried-chicken/api";
 import { AddDoughToPlanDialog } from "@/components/add-dough-to-plan-dialog";
 import { AddFriedChickenDialog } from "@/components/fried-chicken/add-fried-chicken-dialog";
 import { FriedChickenPrepSheetDialog } from "@/components/fried-chicken/prep-sheet";
-import { FRIED_CHICKEN_CATEGORY } from "@/pages/station/shared/constants";
+import { FRIED_CHICKEN_CATEGORY, type StationPlanItem } from "@/pages/station/shared/constants";
+import { netTwoPacks } from "@/pages/station/shared/recipe-completion";
 import { toast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, addDays, parseISO, isWeekend, isToday, startOfWeek, isSameDay, formatDistanceToNow } from "date-fns";
@@ -5294,15 +5295,11 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
       } else if (s.key === "wrapping") {
         // Progress = 2-packs wrapped and placed in production fridge ÷ net 2-packs that need wrapping.
         // Net target matches the "in chiller" figure shown on the wrapping station (gross oven output
-        // minus 8-pack bags, wonky, and short, plus any extras built).
+        // minus 8-pack bags, wonky, dog bin and short, plus any extras built) — the same shared
+        // netTwoPacks the stations use, instead of a copy of the formula that could drift.
         const wrappingTarget = items.reduce((sum, it) => {
           const ovenCount = (it.stationCompletions as Record<string, number> | undefined)?.["ovens"] ?? 0;
-          const gross = Math.floor((ovenCount * (it.portionsPerBatch ?? 10)) / 2);
-          const eightDeduction = (it.eightPackBagCount ?? 0) * 4;
-          // Once builder marks complete, legacy shortCount is no longer subtracted.
-          const legacyShort = it.builderMarkedCompleteAt ? 0 : (it.shortCount ?? 0);
-          const net = Math.max(0, gross - eightDeduction - (it.wonlyCount ?? 0) - legacyShort) + (it.extraPacksBuilt ?? 0);
-          return sum + net;
+          return sum + netTwoPacks(it as StationPlanItem, ovenCount);
         }, 0);
         const wrappingDone = items.reduce((sum, it) => sum + (it.fridgeQty ?? 0), 0);
         stationProgress[s.key] = { done: wrappingDone, target: wrappingTarget };
@@ -5717,6 +5714,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Packs</th>
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Done</th>
               <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Wonky</th>
+              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Dog bin</th>
               <th className="py-2.5 px-4 text-center font-medium text-indigo-600 dark:text-indigo-400">8-Pack</th>
               <th className="py-2.5 px-4 text-right font-medium text-muted-foreground">Tin Size</th>
               <th className="py-2.5 px-4 text-right font-medium text-muted-foreground">Tins</th>
@@ -5824,6 +5822,13 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                       <span className="text-muted-foreground opacity-40">0</span>
                     )}
                   </td>
+                  <td className="py-3 px-4 text-center">
+                    {(item.dogBinCount ?? 0) > 0 ? (
+                      <span className="text-slate-700 dark:text-slate-200 font-medium">{item.dogBinCount}</span>
+                    ) : (
+                      <span className="text-muted-foreground opacity-40">0</span>
+                    )}
+                  </td>
                   <td className="py-3 px-4 text-center whitespace-nowrap">
                     <div className="flex items-center justify-center gap-1">
                       <button
@@ -5887,7 +5892,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                 <td className="py-2.5 px-4 text-center">{totalBatchesTarget}</td>
                 <td className="py-2.5 px-4 text-center font-mono">{totalPacks.toLocaleString()}</td>
                 <td className="py-2.5 px-4 text-center">{totalBatchesComplete}</td>
-                <td colSpan={5} />
+                <td colSpan={6} />
               </tr>
             </tfoot>
           )}
@@ -5958,7 +5963,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
               <li>All prep completions deleted</li>
               <li>Station breaks, temperature records, and oven events deleted</li>
               <li>Fridge, freezer, and prep fridge counts zeroed</li>
-              <li>Wonky counts and extra packs zeroed</li>
+              <li>Wonky and dog bin counts and extra packs zeroed</li>
               <li>Plan set back to Draft</li>
             </ul>
             <p className="text-orange-600 text-sm font-semibold mb-4">
