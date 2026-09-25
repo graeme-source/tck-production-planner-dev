@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   band, pctLabel, trend, changeLabel, chartPoints, yDomain, lineOrder, totalPacks,
-  parsePercentInput, percentInputValue, type EffDay,
+  parsePercentInput, percentInputValue, parseRangeQuery, rangeQuery, editCustomRange, startingCustomRange,
+  rangeDays, previousRangeLabel, DEFAULT_CHOICE, type EffDay,
 } from "./team-efficiency-view";
 
 const day = (date: string, p: Partial<EffDay> = {}): EffDay => ({
@@ -28,7 +29,8 @@ describe("bands and labels", () => {
     expect(trend(null)).toBe("none");
     expect(changeLabel(4.4)).toBe("+4 points on the 7 days before");
     expect(changeLabel(-2.6)).toBe("−3 points on the 7 days before");
-    expect(changeLabel(null)).toMatch(/No earlier/);
+    expect(changeLabel(null)).toMatch(/Nothing counted in the 7 days before/);
+    expect(changeLabel(5, "the 31 days before")).toBe("+5 points on the 31 days before");
   });
 });
 
@@ -60,5 +62,52 @@ describe("percent inputs", () => {
     expect(parsePercentInput("120")).toBeNull();
     expect(percentInputValue(0.039)).toBe("3.9");
     expect(percentInputValue(0.22)).toBe("22");
+  });
+});
+
+describe("date range in the URL", () => {
+  it("reads a custom range, a preset, or falls back to 3 months", () => {
+    expect(parseRangeQuery("?from=2026-08-01&to=2026-08-31")).toEqual({ kind: "custom", from: "2026-08-01", to: "2026-08-31" });
+    expect(parseRangeQuery("from=2026-08-01&to=2026-08-01")).toEqual({ kind: "custom", from: "2026-08-01", to: "2026-08-01" });
+    expect(parseRangeQuery("?range=12m")).toEqual({ kind: "preset", range: "12m" });
+    expect(parseRangeQuery("")).toEqual(DEFAULT_CHOICE);
+    expect(parseRangeQuery("?from=2026-08-31&to=2026-08-01")).toEqual(DEFAULT_CHOICE); // end before start
+    expect(parseRangeQuery("?from=2026-08-01")).toEqual(DEFAULT_CHOICE);
+    expect(parseRangeQuery("?from=2026-02-30x&to=2026-03-01&range=6m")).toEqual({ kind: "preset", range: "6m" });
+    expect(parseRangeQuery("?range=2y")).toEqual(DEFAULT_CHOICE);
+  });
+  it("writes the same query back", () => {
+    expect(rangeQuery({ kind: "custom", from: "2026-08-01", to: "2026-08-31" })).toBe("from=2026-08-01&to=2026-08-31");
+    expect(rangeQuery({ kind: "preset", range: "30d" })).toBe("range=30d");
+    const c = { kind: "custom" as const, from: "2026-05-04", to: "2026-06-19" };
+    expect(parseRangeQuery(rangeQuery(c))).toEqual(c);
+  });
+});
+
+describe("custom range edits", () => {
+  const bounds = { min: "2026-03-30", max: "2026-09-24" };
+  const cur = { from: "2026-08-01", to: "2026-08-31" };
+  it("keeps dates inside the computed history", () => {
+    expect(editCustomRange(cur, "from", "2026-01-01", bounds)).toEqual({ from: "2026-03-30", to: "2026-08-31" });
+    expect(editCustomRange(cur, "to", "2026-12-31", bounds)).toEqual({ from: "2026-08-01", to: "2026-09-24" });
+  });
+  it("moves the other end so the end is never before the start", () => {
+    expect(editCustomRange(cur, "from", "2026-09-10", bounds)).toEqual({ from: "2026-09-10", to: "2026-09-10" });
+    expect(editCustomRange(cur, "to", "2026-07-15", bounds)).toEqual({ from: "2026-07-15", to: "2026-07-15" });
+  });
+  it("ignores a cleared or half-typed date", () => {
+    expect(editCustomRange(cur, "from", "", bounds)).toBe(cur);
+    expect(editCustomRange(cur, "to", "2026-0", bounds)).toBe(cur);
+  });
+  it("starts from the range on screen, inside the history", () => {
+    expect(startingCustomRange({ from: "2026-06-27", to: "2026-09-24" }, bounds, "2026-09-25")).toEqual({ from: "2026-06-27", to: "2026-09-24" });
+    expect(startingCustomRange({ from: "2025-09-25", to: "2026-09-24" }, bounds, "2026-09-25")).toEqual({ from: "2026-03-30", to: "2026-09-24" });
+    expect(startingCustomRange(null, { min: null, max: null }, "2026-09-25")).toEqual({ from: "2026-09-25", to: "2026-09-25" });
+  });
+  it("names the comparison period", () => {
+    expect(rangeDays("2026-08-01", "2026-08-31")).toBe(31);
+    expect(previousRangeLabel({ kind: "range", pct: 100, previousPct: 90, changePts: 10, from: "2026-08-01", to: "2026-08-31", previousFrom: "2026-07-01", previousTo: "2026-07-31" }))
+      .toBe("the 31 days before (1 Jul – 31 Jul)");
+    expect(previousRangeLabel({ kind: "range", pct: 100, previousPct: null, changePts: null, from: "2026-08-03", to: "2026-08-03" })).toBe("the day before");
   });
 });

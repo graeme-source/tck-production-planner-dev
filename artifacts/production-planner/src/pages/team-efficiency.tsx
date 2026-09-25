@@ -10,8 +10,9 @@
  * the dashboard or meetings until it's right).
  */
 import { useMemo, useState } from "react";
+import { useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDown, ArrowRight, ArrowUp, AlertTriangle, Clock, Loader2, Minus, Info } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, AlertTriangle, CalendarRange, Clock, Loader2, Minus, Info } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
@@ -20,7 +21,8 @@ import { TeamEfficiencySettings, type EffSettings } from "@/components/team-effi
 import {
   RANGES, BAND_LABEL, band, pctLabel, trend, changeLabel, chartPoints, lineOrder,
   dayLabel, weekLabel, monthLabel, gbp,
-  type RangeKey, type EffDay, type EffPeriod, type EffHeadline, type Band, type ChartPoint,
+  parseRangeQuery, rangeQuery, editCustomRange, startingCustomRange, previousRangeLabel,
+  type RangeChoice, type DateBounds, type RangeKey, type EffDay, type EffPeriod, type EffHeadline, type Band, type ChartPoint,
 } from "@/lib/team-efficiency-view";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -28,15 +30,15 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 interface EffResponse {
   ready: boolean;
   founder: boolean;
-  range?: RangeKey;
+  range?: RangeKey | "custom";
   report?: { range: { from: string; to: string }; headline: EffHeadline; days: EffDay[]; weekly: EffPeriod[]; monthly: EffPeriod[] };
   lines?: string[];
   meta?: { historyFrom: string | null; historyTo: string | null; lastComputedAt: string | null; backfillDone: boolean; running: boolean };
   settings?: EffSettings;
 }
 
-async function fetchEfficiency(range: RangeKey): Promise<EffResponse> {
-  const res = await fetch(`${BASE}/api/team-efficiency?range=${range}`, { credentials: "include" });
+async function fetchEfficiency(query: string): Promise<EffResponse> {
+  const res = await fetch(`${BASE}/api/team-efficiency?${query}`, { credentials: "include" });
   if (!res.ok) throw new Error(res.status === 403 ? "Managers only" : `Couldn't load team efficiency (${res.status})`);
   return res.json();
 }
@@ -59,7 +61,7 @@ function Segmented<T extends string>({ value, options, onChange, label }: {
   value: T; options: Array<{ key: T; label: string }>; onChange: (v: T) => void; label: string;
 }) {
   return (
-    <div role="group" aria-label={label} className="inline-flex rounded-2xl bg-secondary/60 p-1 gap-1">
+    <div role="group" aria-label={label} className="inline-flex flex-wrap rounded-2xl bg-secondary/60 p-1 gap-1">
       {options.map(o => (
         <button
           key={o.key} type="button" onClick={() => onChange(o.key)} aria-pressed={value === o.key}
@@ -76,13 +78,16 @@ function Segmented<T extends string>({ value, options, onChange, label }: {
 function Headline({ h, founder, days }: { h: EffHeadline; founder: boolean; days: EffDay[] }) {
   const t = trend(h.changePts);
   const Arrow = t === "up" ? ArrowUp : t === "down" ? ArrowDown : t === "flat" ? ArrowRight : Minus;
-  const span = h.from && h.to ? `${dayLabel(h.from)} – ${dayLabel(h.to)}` : "No counted days yet";
+  const isRange = h.kind === "range";
+  const span = h.from && h.to
+    ? (h.from === h.to ? dayLabel(h.from) : `${dayLabel(h.from)} – ${dayLabel(h.to)}`)
+    : "No counted days yet";
   const win = founder && h.from && h.to ? days.filter(d => d.status === "ok" && d.date >= h.from! && d.date <= h.to!) : [];
   const credited = win.reduce((n, d) => n + (d.valueCredited ?? 0), 0);
   const labour = win.reduce((n, d) => n + (d.labourCost ?? 0), 0);
   return (
     <section className="rounded-3xl border border-border bg-card p-6 sm:p-8">
-      <p className="text-base font-semibold text-muted-foreground">Last 7 production days</p>
+      <p className="text-base font-semibold text-muted-foreground">{isRange ? "Chosen dates" : "Last 7 production days"}</p>
       <div className="mt-2 flex flex-wrap items-end gap-x-5 gap-y-3">
         <span className="text-6xl sm:text-7xl font-extrabold tabular-nums leading-none">{pctLabel(h.pct)}</span>
         <BandChip pct={h.pct} />
@@ -92,10 +97,12 @@ function Headline({ h, founder, days }: { h: EffHeadline; founder: boolean; days
         t === "up" ? "text-emerald-700 dark:text-emerald-300" : t === "down" ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground",
       )}>
         <Arrow className="w-5 h-5" aria-hidden />
-        <span>{changeLabel(h.changePts)}</span>
+        <span>{changeLabel(h.changePts, isRange ? previousRangeLabel(h) : undefined)}</span>
         {h.previousPct != null && <span className="text-muted-foreground font-normal">(was {pctLabel(h.previousPct)})</span>}
       </div>
-      <p className="mt-1 text-sm text-muted-foreground">{span}</p>
+      <p className="mt-1 text-sm text-muted-foreground">
+        {span}{isRange && " — all the good product credited in these dates ÷ all the production wages, so big days count for more than small ones"}
+      </p>
       {founder && labour > 0 && (
         <p className="mt-3 text-sm text-muted-foreground">
           {gbp(credited)} credited on {gbp(labour)} of labour — R {(credited / labour).toFixed(2)}
@@ -202,6 +209,38 @@ function PeriodTable({ periods, label, founder }: { periods: EffPeriod[]; label:
   );
 }
 
+function CustomRangePicker({ from, to, bounds, onChange }: {
+  from: string; to: string; bounds: DateBounds; onChange: (r: { from: string; to: string }) => void;
+}) {
+  const input = "h-14 min-w-[11rem] px-4 rounded-2xl border-2 border-border bg-background text-lg font-semibold tabular-nums focus:border-primary focus:outline-none";
+  return (
+    <div className="rounded-3xl border border-border bg-card p-4 sm:p-5 flex flex-wrap items-end gap-4">
+      <CalendarRange className="w-6 h-6 text-muted-foreground mb-4 hidden sm:block" aria-hidden />
+      <label className="flex flex-col gap-1.5">
+        <span className="text-sm font-semibold text-muted-foreground">From</span>
+        <input
+          type="date" className={input} value={from}
+          min={bounds.min ?? undefined} max={to}
+          onChange={e => onChange(editCustomRange({ from, to }, "from", e.target.value, bounds))}
+        />
+      </label>
+      <label className="flex flex-col gap-1.5">
+        <span className="text-sm font-semibold text-muted-foreground">To</span>
+        <input
+          type="date" className={input} value={to}
+          min={from} max={bounds.max ?? undefined}
+          onChange={e => onChange(editCustomRange({ from, to }, "to", e.target.value, bounds))}
+        />
+      </label>
+      {bounds.min && bounds.max && (
+        <p className="text-sm text-muted-foreground pb-1 basis-full sm:basis-auto">
+          Figures run from {dayLabel(bounds.min)} to {dayLabel(bounds.max)}.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function periodPoints(periods: EffPeriod[], toDate: (p: string) => string): ChartPoint[] {
   return periods.filter(p => p.pct != null).map(p => {
     const date = toDate(p.period);
@@ -213,20 +252,38 @@ export default function TeamEfficiencyPage() {
   const { state } = useAuth();
   const role = state.status === "authenticated" ? state.user.role : "viewer";
   const allowed = role === "admin" || role === "manager";
-  const [range, setRange] = useState<RangeKey>("3m");
   const [view, setView] = useState<View>("daily");
+  // The range lives in the URL (?range= or ?from=&to=) so a refresh or a
+  // shared link opens the same dates.
+  const search = useSearch();
+  const [path, navigate] = useLocation();
+  const choice = useMemo(() => parseRangeQuery(search), [search]);
+  const query = rangeQuery(choice);
+  const choose = (next: RangeChoice) => navigate(`${path}?${rangeQuery(next)}`, { replace: true });
 
   const q = useQuery({
-    queryKey: ["team-efficiency", range],
-    queryFn: () => fetchEfficiency(range),
+    queryKey: ["team-efficiency", query],
+    queryFn: () => fetchEfficiency(query),
     enabled: allowed,
     staleTime: 5 * 60_000,
+    placeholderData: prev => prev,
   });
 
   const data = q.data;
   const report = data?.report;
   const founder = Boolean(data?.founder);
   const lines = useMemo(() => (report ? lineOrder(report.days) : []), [report]);
+  const bounds: DateBounds = { min: data?.meta?.historyFrom ?? null, max: data?.meta?.historyTo ?? null };
+  // The custom picker shows what the server actually used (clamped to the history).
+  const customShown = choice.kind === "custom"
+    ? (report?.range && data?.range === "custom" ? report.range : { from: choice.from, to: choice.to })
+    : null;
+  const pickRange = (key: RangeKey | "custom") => {
+    if (key !== "custom") { choose({ kind: "preset", range: key }); return; }
+    if (choice.kind === "custom") return;
+    const start = startingCustomRange(report?.range, bounds, new Date().toISOString().slice(0, 10));
+    choose({ kind: "custom", ...start });
+  };
   const points = useMemo<ChartPoint[]>(() => {
     if (!report) return [];
     if (view === "weekly") return periodPoints(report.weekly, p => p);
@@ -252,11 +309,23 @@ export default function TeamEfficiencyPage() {
       </p>
 
       <div className="flex flex-wrap items-center gap-3">
-        <Segmented<RangeKey> label="Time range" value={range} options={RANGES} onChange={setRange} />
+        <Segmented<RangeKey | "custom">
+          label="Time range"
+          value={choice.kind === "custom" ? "custom" : choice.range}
+          options={[...RANGES, { key: "custom", label: "Custom range" }]}
+          onChange={pickRange}
+        />
         <Segmented<View> label="Show" value={view} onChange={setView}
           options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]} />
         {q.isFetching && <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" aria-label="Loading" />}
       </div>
+
+      {customShown && (
+        <CustomRangePicker
+          from={customShown.from} to={customShown.to} bounds={bounds}
+          onChange={r => choose({ kind: "custom", ...r })}
+        />
+      )}
 
       {q.isLoading && <div className="rounded-3xl border border-border bg-card p-8 text-muted-foreground">Loading…</div>}
       {q.error && (

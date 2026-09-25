@@ -48,11 +48,15 @@ export interface EffPeriod {
 }
 
 export interface EffHeadline {
+  /** "rolling7" = last 7 counted days vs the 7 before; "range" = the chosen range vs the same-length period before. */
+  kind?: "rolling7" | "range";
   pct: number | null;
   previousPct: number | null;
   changePts: number | null;
   from: string | null;
   to: string | null;
+  previousFrom?: string | null;
+  previousTo?: string | null;
 }
 
 // ── Bands ─────────────────────────────────────────────────────────────────
@@ -91,11 +95,85 @@ export function trend(changePts: number | null | undefined): Trend {
   return "flat";
 }
 
-export function changeLabel(changePts: number | null | undefined): string {
-  if (changePts == null || !Number.isFinite(changePts)) return "No earlier week to compare yet";
+/** `before` names the comparison period, e.g. "the 7 days before". */
+export function changeLabel(changePts: number | null | undefined, before = "the 7 days before"): string {
+  if (changePts == null || !Number.isFinite(changePts)) return `Nothing counted in ${before} to compare with`;
   const n = Math.round(changePts);
-  if (n === 0) return "Same as the 7 days before";
-  return `${n > 0 ? "+" : "−"}${Math.abs(n)} points on the 7 days before`;
+  if (n === 0) return `Same as ${before}`;
+  return `${n > 0 ? "+" : "−"}${Math.abs(n)} points on ${before}`;
+}
+
+// ── Date range choice (kept in the URL) ───────────────────────────────────
+
+const ISO = /^\d{4}-\d{2}-\d{2}$/;
+const isIsoDate = (s: string | null): s is string => !!s && ISO.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00Z`));
+
+export type RangeChoice =
+  | { kind: "preset"; range: RangeKey }
+  | { kind: "custom"; from: string; to: string };
+
+export const DEFAULT_CHOICE: RangeChoice = { kind: "preset", range: "3m" };
+
+/** Read ?from=&to= (custom) or ?range= (preset) from a URL query string.
+ *  Anything malformed falls back to the default 3 months. */
+export function parseRangeQuery(search: string): RangeChoice {
+  const q = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  const from = q.get("from");
+  const to = q.get("to");
+  if (isIsoDate(from) && isIsoDate(to) && to >= from) return { kind: "custom", from, to };
+  const range = q.get("range");
+  if (range && RANGES.some(r => r.key === range)) return { kind: "preset", range: range as RangeKey };
+  return DEFAULT_CHOICE;
+}
+
+/** The query string for a choice — the page URL and the API use the same one. */
+export function rangeQuery(choice: RangeChoice): string {
+  return choice.kind === "custom" ? `from=${choice.from}&to=${choice.to}` : `range=${choice.range}`;
+}
+
+export interface DateBounds { min: string | null; max: string | null }
+
+function clampDate(d: string, b: DateBounds): string {
+  if (b.min && d < b.min) return b.min;
+  if (b.max && d > b.max) return b.max;
+  return d;
+}
+
+/** Apply one date picker edit: stays inside the computed history, and the
+ *  other end moves along so the end is never before the start. An empty or
+ *  invalid value leaves the range as it was. */
+export function editCustomRange(
+  current: { from: string; to: string }, field: "from" | "to", value: string, bounds: DateBounds,
+): { from: string; to: string } {
+  if (!isIsoDate(value)) return current;
+  const v = clampDate(value, bounds);
+  if (field === "from") return { from: v, to: current.to < v ? v : current.to };
+  return { from: current.from > v ? v : current.from, to: v };
+}
+
+/** Where "Custom range" starts when first picked: the range on screen, kept
+ *  inside the computed history. */
+export function startingCustomRange(shown: { from: string; to: string } | null | undefined, bounds: DateBounds, today: string): { from: string; to: string } {
+  const to = clampDate(shown?.to ?? today, bounds);
+  const from = clampDate(shown?.from ?? today, bounds);
+  return from <= to ? { from, to } : { from: to, to };
+}
+
+/** Calendar days in a range, both ends included. */
+export function rangeDays(from: string, to: string): number {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
+}
+
+/** "the 31 days before (1 – 31 Jul)" — what a custom range is compared with. */
+export function previousRangeLabel(h: EffHeadline): string {
+  if (!h.from || !h.to) return "the period before";
+  const n = rangeDays(h.from, h.to);
+  const span = h.previousFrom && h.previousTo ? ` (${shortDate(h.previousFrom)} – ${shortDate(h.previousTo)})` : "";
+  return `the ${n === 1 ? "day" : `${n} days`} before${span}`;
+}
+
+function shortDate(d: string): string {
+  return new Date(`${d}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
 }
 
 // ── Chart ─────────────────────────────────────────────────────────────────
