@@ -69,7 +69,7 @@ async function tableReady(): Promise<boolean> {
 
 const num = (x: unknown) => Number(x) || 0;
 
-async function planDatesAround(from: string, to: string): Promise<string[]> {
+export async function planDatesAround(from: string, to: string): Promise<string[]> {
   const r = await db.execute<{ d: string }>(sql`
     SELECT DISTINCT plan_date::text AS d FROM production_plans
     WHERE plan_date BETWEEN ${addDaysIso(from, -21)} AND ${addDaysIso(to, 21)} ORDER BY 1
@@ -79,7 +79,7 @@ async function planDatesAround(from: string, to: string): Promise<string[]> {
 
 /** Bank holidays / shutdowns — the app's own non-dispatch list, so the
  *  planner and this KPI agree on which weekdays are rest days. */
-async function nonDispatchDays(): Promise<Set<string>> {
+export async function nonDispatchDays(): Promise<Set<string>> {
   try {
     const r = await db.execute<{ value: string | null }>(sql`SELECT value FROM app_settings WHERE key = 'non_dispatch_dates' LIMIT 1`);
     const raw = r.rows[0]?.value;
@@ -90,7 +90,7 @@ async function nonDispatchDays(): Promise<Set<string>> {
   }
 }
 
-async function planItems(from: string, to: string): Promise<Map<string, PlanItemInput[]>> {
+export async function planItems(from: string, to: string): Promise<Map<string, PlanItemInput[]>> {
   const r = await db.execute<Record<string, unknown>>(sql`
     SELECT p.plan_date::text AS date, r.category, i.fridge_qty, (i.fridge_eight_pack_qty + i.freezer_eight_pack_qty) AS bags,
            i.batches_target, i.batches_complete, r.portions_per_batch, r.pack_size, r.rrp
@@ -118,7 +118,7 @@ async function planItems(from: string, to: string): Promise<Map<string, PlanItem
   return out;
 }
 
-async function despatchInputs(from: string, to: string) {
+export async function despatchInputs(from: string, to: string, lookbackDays = ORDER_LOOKBACK_DAYS) {
   const [orders, maps, recipes] = await Promise.all([
     db.execute<{ tags: string | null; fs: string | null; ca: string | null; li: unknown }>(sql`
       SELECT payload->>'tags' AS tags, payload->>'fulfillment_status' AS fs, payload->>'cancelled_at' AS ca,
@@ -126,7 +126,7 @@ async function despatchInputs(from: string, to: string) {
                 'v', x->>'variant_id', 'vt', x->>'variant_title', 't', x->>'title', 'q', x->>'quantity')), '[]'::jsonb)
               FROM jsonb_array_elements(coalesce(payload->'line_items', '[]'::jsonb)) x) AS li
       FROM shopify_orders_cache
-      WHERE created_at >= ${addDaysIso(from, -ORDER_LOOKBACK_DAYS)}::date AND created_at < ${addDaysIso(to, 2)}::date
+      WHERE created_at >= ${addDaysIso(from, -lookbackDays)}::date AND created_at < ${addDaysIso(to, 2)}::date
     `),
     db.execute<{ recipe_id: number; shopify_variant_id: string | null; shopify_product_title: string | null }>(sql`
       SELECT recipe_id, shopify_variant_id, shopify_product_title FROM recipe_shopify_mappings ORDER BY id
@@ -186,7 +186,7 @@ async function plandayWindow(from: string, to: string): Promise<PlandayWindow> {
   return { payroll, rota };
 }
 
-async function mirrorShiftTypes(from: string, to: string): Promise<Map<number, number | null>> {
+export async function mirrorShiftTypes(from: string, to: string): Promise<Map<number, number | null>> {
   try {
     const r = await db.execute<{ id: string; shift_type_id: string | null }>(sql`
       SELECT id, shift_type_id FROM planday_shifts_cache WHERE date BETWEEN ${from} AND ${to}

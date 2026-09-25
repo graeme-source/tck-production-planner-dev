@@ -27,6 +27,8 @@ import {
 } from "../lib/team-efficiency-report";
 import { SETTING_SCHEMAS, REPORT_QUERY as reportQuery, isSettingKey, NEEDS_RECOMPUTE } from "../lib/team-efficiency-settings";
 import type { DayFlag, DayStatus } from "../lib/team-efficiency-day";
+import { viewerToday } from "../lib/team-efficiency-today";
+import { todayEstimate } from "../services/team-efficiency-today";
 import { loadSettings, restateAll, recomputeHistory, jobMeta, isJobRunning } from "../services/team-efficiency-job";
 
 const router: IRouter = Router();
@@ -128,6 +130,25 @@ router.get("/", requireManagerOrAdmin, validateQuery(reportQuery), async (req: R
   } catch (err) {
     console.error("[team-efficiency] report failed:", err instanceof Error ? err.message : err);
     res.status(500).json({ error: "Couldn't load team efficiency" });
+  }
+});
+
+/**
+ * GET /api/team-efficiency/today — today's LIVE ESTIMATE (never stored; the
+ * real figure lands tomorrow once shifts are approved). Managers and admins
+ * get % and packs; only the founder gets pounds, R and hours.
+ */
+router.get("/today", requireManagerOrAdmin, validateQuery(z.object({})), async (req: Request, res: Response) => {
+  try {
+    const [result, founder] = await Promise.all([todayEstimate(), viewerIsFounder(req)]);
+    if ("unavailable" in result) {
+      res.json({ available: false, founder, reason: result.unavailable });
+      return;
+    }
+    res.json({ available: true, founder, today: founder ? result.estimate : viewerToday(result.estimate) });
+  } catch (err) {
+    console.error("[team-efficiency] today estimate failed:", err instanceof Error ? err.message : err);
+    res.status(500).json({ error: "Couldn't work out today's estimate" });
   }
 });
 

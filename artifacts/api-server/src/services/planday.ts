@@ -122,7 +122,9 @@ export interface PlandayShiftPayroll {
   start: string;
   end: string;
   supplements: Array<{ duration: number; modification: number }>;
-  breaks: Array<{ duration: number; amount: number; isPaid: boolean }>;
+  /** Unpaid breaks carry a negative amount; start/end are London local
+   *  times of when Planday schedules the break. */
+  breaks: Array<{ duration: number; amount: number; isPaid: boolean; start?: string | null; end?: string | null }>;
   id: number;
   employeeId: number;
   date: string;
@@ -224,18 +226,22 @@ export async function getPayrollCosts(from: string, to: string): Promise<ActualL
 }
 
 /**
- * Approved payroll rows for [from, to] (one per shift, with positionId).
+ * Payroll rows for [from, to] (one per shift, with positionId) — approved
+ * shifts only unless `approvedOnly` is false (today's live estimate needs
+ * the not-yet-approved ones; Planday still prices them from the schedule).
  * null when Planday isn't configured or the call failed — never an empty
  * list standing in for an outage. Callers keep windows short (≤ 28 days);
  * plandayGet retries 429s with backoff.
  */
-export async function getPlandayPayrollRows(from: string, to: string): Promise<PlandayShiftPayroll[] | null> {
+export async function getPlandayPayrollRows(
+  from: string, to: string, opts: { approvedOnly?: boolean } = {},
+): Promise<PlandayShiftPayroll[] | null> {
   const config = getConfig();
   if (!config) return null;
   const token = await getAccessToken();
   if (!token) return null;
   const data = await plandayGet<PlandayPayrollResponse>(
-    `/payroll/v1.0/payroll?departmentIds=${config.departmentId}&from=${from}&to=${to}&shiftStatus=Approved`,
+    `/payroll/v1.0/payroll?departmentIds=${config.departmentId}&from=${from}&to=${to}${opts.approvedOnly === false ? "" : "&shiftStatus=Approved"}`,
     token,
   );
   if (!data) return null;
