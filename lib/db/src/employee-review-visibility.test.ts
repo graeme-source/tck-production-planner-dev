@@ -4,14 +4,14 @@ import {
   type ReviewNoteForVisibility, type ReviewViewer,
 } from "./employee-review-visibility";
 
-const GRAEME: ReviewViewer = { id: 1, role: "admin", email: "graeme@thecalzonekitchen.co.uk" };
-// A second admin who is NOT on the people-data list — Jane Miles on live.
-const OTHER_ADMIN: ReviewViewer = { id: 2, role: "admin", email: "jane@thecalzonekitchen.co.uk" };
-const LORNA: ReviewViewer = { id: 3, role: "manager", email: "lornabrown17@icloud.com" };
-// A manager who is NOT on the list — Dave Bewsey on live.
-const OTHER_MANAGER: ReviewViewer = { id: 4, role: "manager", email: "dave@thecalzonekitchen.co.uk" };
-const SUBJECT: ReviewViewer = { id: 9, role: "viewer", email: "subject@thecalzonekitchen.co.uk" };
-const BYSTANDER: ReviewViewer = { id: 10, role: "viewer", email: "bystander@thecalzonekitchen.co.uk" };
+const GRAEME: ReviewViewer = { id: 1, role: "admin", hasPeopleAccess: true };
+// A second admin WITHOUT People access — Jane Miles on live.
+const OTHER_ADMIN: ReviewViewer = { id: 2, role: "admin", hasPeopleAccess: false };
+const LORNA: ReviewViewer = { id: 3, role: "manager", hasPeopleAccess: true };
+// A manager WITHOUT People access — Dave Bewsey on live.
+const OTHER_MANAGER: ReviewViewer = { id: 4, role: "manager" };
+const SUBJECT: ReviewViewer = { id: 9, role: "viewer" };
+const BYSTANDER: ReviewViewer = { id: 10, role: "viewer" };
 
 const priv = (authorId: number | null = GRAEME.id): ReviewNoteForVisibility =>
   ({ authorId, visibility: "private" });
@@ -112,7 +112,7 @@ describe("opening a record", () => {
 });
 
 describe("canManageRecord", () => {
-  it("is the two named people, by email", () => {
+  it("is whoever has People access switched on", () => {
     expect(canManageRecord(GRAEME)).toBe(true);
     expect(canManageRecord(LORNA)).toBe(true);
   });
@@ -123,15 +123,18 @@ describe("canManageRecord", () => {
     expect(canManageRecord(BYSTANDER)).toBe(false);
   });
 
-  it("fails closed on a missing or empty email", () => {
-    expect(canManageRecord({ email: null })).toBe(false);
-    expect(canManageRecord({ email: undefined })).toBe(false);
-    expect(canManageRecord({ email: "" })).toBe(false);
-    expect(canManageRecord({ email: "   " })).toBe(false);
+  it("fails closed when the access flag is missing", () => {
+    expect(canManageRecord({})).toBe(false);
+    expect(canManageRecord({ hasPeopleAccess: undefined })).toBe(false);
+    expect(canManageRecord({ hasPeopleAccess: false })).toBe(false);
   });
 
-  it("is not case- or whitespace-sensitive", () => {
-    expect(canManageRecord({ email: "  Graeme@TheCalzoneKitchen.co.uk " })).toBe(true);
+  it("REGRESSION: no email list — an old list address with no access switched on gets nothing", () => {
+    // The hard-coded PEOPLE_DATA_EMAILS list was replaced by a database
+    // switch on 2026-09-25. A viewer object carrying an email must not
+    // qualify on that alone.
+    const oldListEmail = { email: "lornabrown17@icloud.com" } as unknown as { hasPeopleAccess?: boolean };
+    expect(canManageRecord(oldListEmail)).toBe(false);
   });
 });
 
@@ -180,13 +183,13 @@ describe("unexpected data fails closed", () => {
 describe("shared notes stay visible to whoever shared them", () => {
   const sharedByGraeme: ReviewNoteForVisibility = { authorId: 1, visibility: "shared" };
 
-  it("REGRESSION: a viewer built without an email loses sight of shared notes", () => {
-    // canReadNote sends a SHARED note through canManageRecord, which became
-    // identity-based on 2026-09-17. A call site that built the viewer as
-    // { id, role } — dropping email — therefore hid a note from the person
-    // who had just shared it. Caught same day, before anyone hit it.
-    const noEmail = { id: GRAEME.id, role: GRAEME.role } as ReviewViewer;
-    expect(canReadNote(sharedByGraeme, noEmail, SUBJECT.id)).toBe(false);
+  it("REGRESSION: a viewer built without the access flag loses sight of shared notes", () => {
+    // canReadNote sends a SHARED note through canManageRecord, which is
+    // identity-based (2026-09-17). A call site that built the viewer as
+    // { id, role } — dropping the identity field — hid a note from the
+    // person who had just shared it. The route must pass hasPeopleAccess.
+    const noFlag = { id: GRAEME.id, role: GRAEME.role } as ReviewViewer;
+    expect(canReadNote(sharedByGraeme, noFlag, SUBJECT.id)).toBe(false);
     expect(canReadNote(sharedByGraeme, GRAEME, SUBJECT.id)).toBe(true);
   });
 

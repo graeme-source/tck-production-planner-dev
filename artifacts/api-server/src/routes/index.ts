@@ -93,6 +93,7 @@ import contractsRouter from "./contracts";
 import starterFormsRouter from "./starter-forms";
 import issuePipelineMachineRouter from "./issue-pipeline-machine";
 import issuePipelineRouter from "./issue-pipeline";
+import peopleAccessRouter from "./people-access";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -230,9 +231,14 @@ router.use("/employees", employeesRouter);
 // per-route inside via middleware/rtw-access.ts.
 router.use("/return-to-work", returnToWorkRouter);
 router.use("/station-messages", stationMessagesRouter);
-// People section: a private-PIN holder must have unlocked People with it
-// (middleware/people-unlock.ts); everyone else passes straight through.
+// People section: anyone with People access must have SET their private
+// PIN (428 until they do) and unlocked People with it recently (423)
+// (middleware/people-unlock.ts); everyone else passes straight through to
+// their own record.
 router.use("/employee-reviews", requirePeopleUnlock, employeeReviewsRouter);
+// Who has People access — the founder's per-person switch in Settings →
+// Team & Access. Admin read, founder-only write, guarded inside the router.
+router.use("/people-access", peopleAccessRouter);
 router.use("/fried-chicken", friedChickenRouter);
 router.use("/risk-assessments", riskAssessmentsRouter);
 router.use("/compliance-actions", complianceActionsRouter);

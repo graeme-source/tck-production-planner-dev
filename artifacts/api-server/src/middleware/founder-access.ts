@@ -9,8 +9,9 @@
 import type { Request, Response, NextFunction } from "express";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import { FOUNDER_EMAIL } from "../lib/founder-email";
 
-export const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
+export { FOUNDER_EMAIL };
 
 export async function requireFounder(req: Request, res: Response, next: NextFunction): Promise<void> {
   const userId = req.session.userId;
