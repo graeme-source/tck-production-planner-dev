@@ -64,6 +64,20 @@ export interface PersonRecordResponse {
   attendance: { syncedAt: string | null; stale: boolean; linked: boolean };
 }
 
+/** GET /api/people/job-titles — the "Set job titles" screen. `jobTitle` is
+ *  the stored title only (null = not set); `contractJobTitle` is the title
+ *  on their latest issued contract, offered as a one-tap fill. */
+export interface JobTitlesResponse {
+  people: Array<{
+    id: number;
+    name: string;
+    avatarUrl: string | null;
+    isActive: boolean;
+    jobTitle: string | null;
+    contractJobTitle: string | null;
+  }>;
+}
+
 export interface HolidaySummary {
   accountNames: string[];
   yearStart: string | null;

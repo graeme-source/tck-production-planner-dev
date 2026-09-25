@@ -12,6 +12,11 @@
  *   GET /api/people/:userId/employment    holiday balance, contract rule and
  *                                         employee type from Planday (cached
  *                                         10 min; ?fresh=1 re-asks)
+ *   GET /api/people/job-titles[?leavers=1] everyone's job title in one list,
+ *                                         for the "Set job titles" screen
+ *   PATCH /api/people/:userId/job-title   set one person's job title
+ *                                         (autosaved from the record header
+ *                                         and the bulk screen)
  *
  * Meetings, reviews, notes and feedback keep coming from
  * /api/employee-reviews/:userId, which holds the private-note rules.
@@ -26,7 +31,8 @@ import { Router, type IRouter, type Request, type Response, type NextFunction } 
 import { z } from "zod";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import { validateQuery } from "../middleware/validate";
+import { validate, validateQuery } from "../middleware/validate";
+import { normaliseJobTitle, JOB_TITLE_MAX } from "../lib/job-title";
 import { hasPeopleAccess } from "../lib/people-access";
 import { loadClassifiedShifts, loadFormCovers, todayIso } from "../lib/rtw-detect";
 import { absenceSpells, dueSpells, type AbsenceSpell } from "../lib/absence-spells";
@@ -82,7 +88,11 @@ interface UserRow extends Record<string, unknown> {
 
 const userSelect = sql`
   SELECT u.id, u.name, u.role, u.avatar_url, u.is_active, u.planday_employee_id, u.probation_months,
-         c.job_title, c.start_date::text AS contract_start
+         -- The person's own title (migration 0130), else their latest
+         -- contract's — e.g. a contract issued to an invite before the
+         -- account existed.
+         COALESCE(NULLIF(btrim(u.job_title), ''), c.job_title) AS job_title,
+         c.start_date::text AS contract_start
     FROM app_users u
     LEFT JOIN LATERAL (
       SELECT job_title, start_date FROM employment_contracts ec
@@ -176,6 +186,70 @@ router.get("/", validateQuery(listQuery), async (req: Request, res: Response) =>
   } catch (err) {
     console.error("[people] list failed:", err);
     res.status(500).json({ error: "Couldn't load the people list" });
+  }
+});
+
+// ── Job titles ─────────────────────────────────────────────────────────────
+//
+// What each person DOES ("Production Operative", "Head Chef") — shown on the
+// list and the record instead of the app role. Never touches the permission
+// role. Declared before "/:userId" so "job-titles" isn't read as an id.
+
+router.get("/job-titles", validateQuery(listQuery), async (_req: Request, res: Response) => {
+  const { leavers } = res.locals["query"] as z.infer<typeof listQuery>;
+  try {
+    const rows = await db.execute<{
+      id: number; name: string; avatar_url: string | null; is_active: boolean;
+      job_title: string | null; contract_job_title: string | null;
+    }>(sql`
+      SELECT u.id, u.name, u.avatar_url, u.is_active, u.job_title,
+             c.job_title AS contract_job_title
+        FROM app_users u
+        LEFT JOIN LATERAL (
+          SELECT job_title FROM employment_contracts ec
+           WHERE ec.user_id = u.id ORDER BY ec.issued_at DESC LIMIT 1
+        ) c ON TRUE
+       ${leavers === "1" ? sql`` : sql`WHERE u.is_active = TRUE`}
+       ORDER BY u.name
+    `);
+    res.json({
+      people: rows.rows.map(r => ({
+        id: Number(r.id),
+        name: r.name,
+        avatarUrl: r.avatar_url,
+        isActive: r.is_active,
+        jobTitle: r.job_title,
+        contractJobTitle: r.contract_job_title,
+      })),
+    });
+  } catch (err) {
+    console.error("[people] job titles failed:", err);
+    res.status(500).json({ error: "Couldn't load job titles" });
+  }
+});
+
+const JobTitleBody = z.object({
+  // Generous cap: the value is tidied and cut to JOB_TITLE_MAX, never refused
+  // mid-typing by an autosave.
+  jobTitle: z.string().max(JOB_TITLE_MAX * 4).nullable(),
+});
+
+router.patch("/:userId/job-title", validate(JobTitleBody), async (req: Request, res: Response) => {
+  const userId = parseUserId(req, res);
+  if (userId == null) return;
+  const jobTitle = normaliseJobTitle((req.body as z.infer<typeof JobTitleBody>).jobTitle);
+  try {
+    const rows = await db.execute<{ id: number; job_title: string | null }>(sql`
+      UPDATE app_users
+         SET job_title = ${jobTitle}, job_title_updated_at = NOW(), job_title_updated_by = ${req.session.userId ?? null}
+       WHERE id = ${userId}
+       RETURNING id, job_title
+    `);
+    if (!rows.rows[0]) { res.status(404).json({ error: "Not found" }); return; }
+    res.json({ id: userId, jobTitle: rows.rows[0].job_title });
+  } catch (err) {
+    console.error("[people] job title save failed:", err);
+    res.status(500).json({ error: "Couldn't save the job title" });
   }
 });
 

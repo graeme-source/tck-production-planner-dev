@@ -10,7 +10,8 @@
  * lands in that employee's hub — theirs and the founder's eyes only.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Redirect } from "wouter";
+import { Redirect, useSearch } from "wouter";
+import { fromUploadedParam, type UploadedContractRow } from "@/lib/contract-history";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
@@ -134,6 +135,39 @@ function NewContractCard({ template, people, meId }: { template: Template; peopl
   const [startDate, setStartDate] = useState(todayIso());
   const [preview, setPreview] = useState<{ body: string; employeeName: string } | null>(null);
 
+  // "Create a new contract from this" on a person's record lands here with
+  // ?fromUploaded=<id>: fill the form from the values the founder confirmed
+  // against their old contract (stored server-side — pay never rides in the
+  // URL). Applied once; everything stays editable, and nothing is issued
+  // until they preview and press Issue as normal.
+  const search = useSearch();
+  const fromUploaded = fromUploadedParam(search);
+  const { data: source } = useQuery<UploadedContractRow>({
+    queryKey: ["uploaded-contract", fromUploaded, meId],
+    queryFn: () => fetch(`${BASE}/api/contracts/uploaded/${fromUploaded}`, { credentials: "include" }).then(jsonOrThrow),
+    enabled: fromUploaded != null,
+  });
+  const appliedFrom = useRef<number | null>(null);
+  const appliedWho = useRef<number | null>(null);
+  const [prefilled, setPrefilled] = useState(false);
+  useEffect(() => {
+    if (!source || appliedFrom.current === source.id) return;
+    appliedFrom.current = source.id;
+    const p = source.prefill;
+    if (p?.jobTitle) setJobTitle(p.jobTitle);
+    if (p?.rateOfPay) setRateOfPay(p.rateOfPay);
+    if (p?.weeklyHours) setWeeklyHours(p.weeklyHours);
+    if (p?.startDate) setStartDate(p.startDate);
+    setPrefilled(true);
+  }, [source]);
+  // The people list may arrive after the source — pick the person when it does.
+  const sourcePerson = source ? people.users.find(u => u.id === source.userId) ?? null : null;
+  useEffect(() => {
+    if (!sourcePerson || appliedWho.current === sourcePerson.id) return;
+    appliedWho.current = sourcePerson.id;
+    setWho(`u:${sourcePerson.id}`);
+  }, [sourcePerson]);
+
   const isInvite = who.startsWith("i:");
   const addressing = who === "" ? null
     : isInvite
@@ -158,17 +192,24 @@ function NewContractCard({ template, people, meId }: { template: Template; peopl
       method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(fields),
     }).then(jsonOrThrow),
-    onSuccess: (row: IssuedRow) => {
+    onSuccess: (row: IssuedRow & { jobTitleChange?: { from: string | null; to: string } | null }) => {
       setPreview(null);
       setWho(""); setEmployeeName(""); setRateOfPay("");
       setJobTitle(template.defaultJobTitle); setWeeklyHours(template.defaultWeeklyHours);
       setStartDate(todayIso());
+      setPrefilled(false);
       queryClient.invalidateQueries({ queryKey: ["contracts", "issued", meId] });
+      // Their job title follows the contract (People list + record).
+      queryClient.invalidateQueries({ queryKey: ["people-list"] });
+      queryClient.invalidateQueries({ queryKey: ["people-job-titles"] });
+      queryClient.invalidateQueries({ queryKey: ["contract-history"] });
+      const change = row.jobTitleChange;
       toast({
         title: `Contract issued to ${row.employeeName}`,
-        description: row.inviteEmail
+        description: (row.inviteEmail
           ? "It'll be waiting in their onboarding the moment they accept their invite."
-          : "It's now in their Employee Hub, and they've been notified.",
+          : "It's now in their Employee Hub, and they've been notified.")
+          + (change ? ` Their job title is now "${change.to}"${change.from ? ` (was "${change.from}")` : ""}.` : ""),
       });
     },
     onError: (e: Error) => toast({ title: "Not issued", description: e.message, variant: "destructive" }),
@@ -182,6 +223,16 @@ function NewContractCard({ template, people, meId }: { template: Template; peopl
         <Send className="w-5 h-5 text-primary" />
         <h2 className="text-lg font-semibold">New contract</h2>
       </div>
+      {prefilled && (
+        <div className="rounded-xl border-2 border-primary/40 bg-primary/5 p-3 text-sm">
+          <p className="font-semibold">
+            Filled in from {sourcePerson?.name ? `${sourcePerson.name}'s` : "their"} previous contract — check every field, then preview.
+          </p>
+          {!sourcePerson && (
+            <p className="text-muted-foreground mt-1">Choose the employee below (they may be deactivated — reactivate them first).</p>
+          )}
+        </div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <label className="space-y-1.5 sm:col-span-2">
           <span className="text-sm font-medium">Employee</span>

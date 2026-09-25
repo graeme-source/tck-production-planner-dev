@@ -5,8 +5,9 @@
  * their record. From there, we can do the reviews, the return-to-work forms,
  * and book meetings. It's got their attendance record in there.").
  *
- *   /people          the list — big cards, search, people needing action first
- *   /people/:userId  their record (components/people-record.tsx)
+ *   /people            the list — big cards, search, people needing action first
+ *   /people/:userId    their record (components/people-record.tsx)
+ *   /people/job-titles everyone's job title on one screen (components/job-titles-bulk.tsx)
  *
  * It replaced a signpost page with three cards (Employee Records report,
  * Return-to-work forms, Reviews & Record) that sent you to three places.
@@ -20,7 +21,7 @@
 import { useMemo, useState } from "react";
 import { Link, useRoute } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Lock, Search, HeartPulse, AlertTriangle, CalendarDays, ChevronRight, UsersRound } from "lucide-react";
+import { Loader2, Lock, Search, HeartPulse, AlertTriangle, CalendarDays, ChevronRight, UsersRound, BadgeCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import { useIsRtwManager } from "@/hooks/use-rtw-manager";
@@ -29,12 +30,14 @@ import { usePeopleReady, peopleFetch, peopleRetry, PeopleLockedError } from "@/h
 import { UserAvatar } from "@/components/user-avatar";
 import { PersonRecord } from "@/components/people-record";
 import { PeopleLockedCard } from "@/components/people-locked-card";
-import { type PeopleListResponse, type PersonCard, MEETING_KIND_LABEL, roleLabel, fmtDay, fmtDayRange } from "@/lib/people-api";
+import { JobTitlesBulk } from "@/components/job-titles-bulk";
+import { type PeopleListResponse, type PersonCard, MEETING_KIND_LABEL, fmtDay, fmtDayRange } from "@/lib/people-api";
 
 export default function PeopleSection() {
   const { state } = useAuth();
   const isPeople = useIsRtwManager();
   const [onRecord, params] = useRoute<{ userId: string }>("/people/:userId");
+  const [onJobTitles] = useRoute("/people/job-titles");
   useSensitivePinGate({ enabled: isPeople, includeAdmins: true, fresh: true, entryKey: "people", scope: "people" });
   const ready = usePeopleReady(isPeople);
 
@@ -59,6 +62,8 @@ export default function PeopleSection() {
       </div>
     );
   }
+
+  if (onJobTitles) return <JobTitlesBulk ready={ready} />;
 
   const userId = onRecord && params ? Number(params.userId) : null;
   if (userId != null && Number.isInteger(userId) && userId > 0) {
@@ -95,7 +100,10 @@ function PersonCardView({ p, policy }: { p: PersonCard; policy: PeopleListRespon
         <UserAvatar name={p.name} avatarUrl={p.avatarUrl} size="lg" />
         <div className="flex-1 min-w-0">
           <p className="text-xl font-bold leading-snug truncate">{p.name}</p>
-          <p className="text-base text-muted-foreground truncate">{p.jobTitle ?? roleLabel(p.role)}</p>
+          {/* Their job, not their app access (Graeme, 2026-09-25). */}
+          <p className={cn("text-base truncate text-muted-foreground", !p.jobTitle && "italic opacity-70")}>
+            {p.jobTitle ?? "No job title yet"}
+          </p>
         </div>
         <ChevronRight className="w-6 h-6 text-muted-foreground shrink-0" />
       </div>
@@ -191,6 +199,12 @@ function PeopleList({ ready }: { ready: boolean }) {
             className="w-full h-14 pl-12 pr-4 rounded-2xl border-2 border-border bg-card text-lg focus:outline-none focus:ring-2 focus:ring-primary/40"
           />
         </label>
+        <Link
+          href="/people/job-titles"
+          className="h-14 px-5 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50"
+        >
+          <BadgeCheck className="w-5 h-5" /> Set job titles
+        </Link>
         <button
           onClick={() => setLeavers(v => !v)}
           aria-pressed={leavers}

@@ -45,6 +45,14 @@ export const usersTable = pgTable("app_users", {
   // NULL means "use the probation_default_months setting". The start date it
   // counts from lives in Planday, not here.
   probationMonths: integer("probation_months"),
+  // Job title (migration 0130) — "Production Operative", "Head Chef". NOT the
+  // permission role above. Set from People, and updated when a contract with
+  // a different title is issued. Who/when changed it last, for the record
+  // (FK to app_users lives in the migration — self-references stay out of
+  // the Drizzle builder).
+  jobTitle: text("job_title"),
+  jobTitleUpdatedAt: timestamp("job_title_updated_at"),
+  jobTitleUpdatedBy: integer("job_title_updated_by"),
 });
 
 export const insertUserSchema = createInsertSchema(usersTable).omit({ id: true, createdAt: true, updatedAt: true });

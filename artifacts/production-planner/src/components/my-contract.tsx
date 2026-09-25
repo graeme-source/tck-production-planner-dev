@@ -16,7 +16,10 @@ import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { printContract } from "@/components/contract-print";
 import { ContractPaper } from "@/components/contract-view";
-import { Check, ChevronRight, FileDown, FileSignature, Loader2, PenLine, Printer, X } from "lucide-react";
+import { Check, ChevronRight, FileDown, FileSignature, FileText, Loader2, PenLine, Printer, X } from "lucide-react";
+import { PeopleModal } from "@/components/people-modal";
+import { UploadedContractDocument } from "@/components/uploaded-contract-document";
+import { uploadedContractLabel, type UploadedContractRow } from "@/lib/contract-history";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -151,10 +154,21 @@ export function MyContractSection() {
     enabled: meId !== null,
   });
 
-  if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
+  // Old contracts the founder filed on their record (a PDF or a photo of the
+  // paper copy) — read-only here. Same privacy posture: /uploaded/mine takes
+  // no user parameter, and the key carries the user id.
+  const { data: uploaded, isLoading: uploadedLoading } = useQuery<UploadedContractRow[]>({
+    queryKey: ["contracts", "uploaded", "mine", meId],
+    queryFn: () => fetch(`${BASE}/api/contracts/uploaded/mine`, { credentials: "include" }).then(jsonOrThrow),
+    enabled: meId !== null,
+  });
+  const [openUploaded, setOpenUploaded] = useState<UploadedContractRow | null>(null);
+
+  if (isLoading || uploadedLoading) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
 
   const contracts = data ?? [];
-  if (contracts.length === 0) {
+  const previous = uploaded ?? [];
+  if (contracts.length === 0 && previous.length === 0) {
     return (
       <p className="text-sm text-muted-foreground py-6 text-center">
         No contract has been issued to you in the app yet.
@@ -166,6 +180,9 @@ export function MyContractSection() {
 
   return (
     <div className="space-y-3">
+      {contracts.length === 0 && (
+        <p className="text-sm text-muted-foreground">No contract has been issued to you in the app yet — your previous contract is below.</p>
+      )}
       {contracts.map((c, idx) => (
         <button
           key={c.id}
@@ -178,7 +195,7 @@ export function MyContractSection() {
               {c.jobTitle}
               {/* Newest first from the server: the top row is the version in
                   force; everything under it is the permanent history. */}
-              {contracts.length > 1 && (
+              {contracts.length + previous.length > 1 && (
                 <span className={cn(
                   "ml-2 text-[11px] font-semibold px-2 py-0.5 rounded-full align-middle",
                   idx === 0 ? "bg-primary/10 text-primary" : "bg-secondary text-muted-foreground",
@@ -201,7 +218,36 @@ export function MyContractSection() {
           <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
         </button>
       ))}
+      {previous.map(u => (
+        <button
+          key={`uc-${u.id}`}
+          onClick={() => setOpenUploaded(u)}
+          className="w-full text-left bg-card border border-border rounded-2xl p-4 flex items-center gap-4 hover:bg-secondary/30 transition-colors"
+        >
+          <FileText className="w-8 h-8 text-muted-foreground flex-shrink-0" />
+          <span className="flex-1 min-w-0">
+            <span className="block font-semibold text-base">
+              {uploadedContractLabel(u.mime)}
+              <span className="ml-2 text-[11px] font-semibold px-2 py-0.5 rounded-full align-middle bg-secondary text-muted-foreground">Previous version</span>
+            </span>
+            <span className="block text-sm text-muted-foreground">
+              {u.originalIssueDate ? `Dated ${u.originalIssueDate}` : `Added ${u.uploadedAt.slice(0, 10)}`}
+            </span>
+          </span>
+          <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+        </button>
+      ))}
       {open && meId != null && <ContractSheet contract={open} meId={meId} onClose={() => setOpenId(null)} />}
+      {openUploaded && (
+        <PeopleModal title="Your previous contract" onClose={() => setOpenUploaded(null)} wide>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              The contract you had before the app, kept on your record for reference. Only you and Graeme can see it.
+            </p>
+            <UploadedContractDocument id={openUploaded.id} mime={openUploaded.mime} fileName={openUploaded.fileName} />
+          </div>
+        </PeopleModal>
+      )}
     </div>
   );
 }
