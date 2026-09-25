@@ -9,6 +9,7 @@ import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { FeatureGrantsSection } from "@/components/feature-grants-section";
+import { PeopleAccessSection } from "@/components/people-access-section";
 import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
 import {
   Plus, Trash2, Edit2, Loader2, Users, ShieldCheck, Eye, Wrench,
@@ -1064,6 +1065,9 @@ function TeamAccessContent({
       {/* Feature grants — was its own "Access" page in the nav until
           2026-09-03; two places called Access was one too many. */}
       {user?.role === "admin" && <FeatureGrantsSection />}
+
+      {/* People section access — founder-only switch per person; own component. */}
+      {user?.role === "admin" && <PeopleAccessSection />}
 
       {/* Broadcast Notification — admin only */}
       {canSection("team") && <BroadcastNotificationSection />}
