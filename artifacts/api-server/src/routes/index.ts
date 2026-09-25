@@ -10,6 +10,7 @@ import recipesRouter from "./recipes";
 import productionPlansRouter from "./production-plans";
 import dptSettingsRouter from "./dpt-settings";
 import timingStandardsRouter from "./timing-standards";
+import timingHealthRouter from "./timing-health";
 import dptCalculatorRouter from "./dpt-calculator";
 import stockRouter from "./stock";
 import stockItemsRouter from "./stock-items";
@@ -167,6 +168,8 @@ router.use("/queued-production", queuedProductionRouter);
 router.use("/production-plans", productionPlansRouter);
 router.use("/dpt-settings", requireAdminOrManager, dptSettingsRouter);
 router.use("/timing-standards", timingStandardsRouter);
+// Missing/stale schedule timing inputs + suggestions (manager/admin, read-only).
+router.use("/timing-health", timingHealthRouter);
 router.use("/dpt-calculator", dptCalculatorRouter);
 router.use("/stock-entries", stockRouter);
 router.use("/stock-items", stockItemsRouter);

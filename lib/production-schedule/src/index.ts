@@ -34,6 +34,18 @@ export interface ScheduleMeatInput {
   rawMeatName: string;
   /** Cook + processing minutes for this raw meat. */
   processMinutes: number;
+  /**
+   * Which half of the lead time is unknown, if any. When one half is missing
+   * the lead time above is only the half we have, so the "start cooking by"
+   * time is later than it should be — the UI flags it rather than hiding it.
+   */
+  missing?: "cook" | "process" | null;
+}
+
+/** A raw meat the recipe needs but whose cook AND process times are both unset. */
+export interface UntimedMeat {
+  rawMeatIngredientId: number;
+  rawMeatName: string;
 }
 
 export interface ScheduleRecipeInput {
@@ -46,6 +58,14 @@ export interface ScheduleRecipeInput {
   minutesPerBatch: number;
   /** Raw meats this recipe uses (0+). Empty for veg recipes. */
   meats?: ScheduleMeatInput[];
+  /**
+   * True when the recipe has no build time of its own and minutesPerBatch is a
+   * stand-in. The engine times it the same way; the flag rides through so the
+   * UI can say "timing is a guess" on the card instead of looking certain.
+   */
+  buildTimeGuessed?: boolean;
+  /** Raw meats with no cook or process time at all — no start time possible. */
+  untimedMeats?: UntimedMeat[];
 }
 
 export interface ScheduleBreakInput {
@@ -79,6 +99,8 @@ export interface ScheduledMeat {
   cookStartMinutes: number;
   /** True when cookStart lands before the building start time (do it first thing / night before). */
   beforeShiftStart: boolean;
+  /** Passed through from the input: which half of the lead time is unknown. */
+  missing: "cook" | "process" | null;
 }
 
 export interface ScheduledRecipe {
@@ -89,6 +111,10 @@ export interface ScheduledRecipe {
   finishMinutes: number;
   buildMinutes: number;
   meats: ScheduledMeat[];
+  /** Passed through: build time is a stand-in, not the recipe's own. */
+  buildTimeGuessed: boolean;
+  /** Passed through: meats that can't be given a start time at all. */
+  untimedMeats: UntimedMeat[];
 }
 
 export interface ScheduledBreak {
@@ -113,6 +139,38 @@ function recipeBuildMinutes(recipe: ScheduleRecipeInput, buildersCount: number):
   const builders = Math.max(1, buildersCount);
   const perBatch = Math.max(0, recipe.minutesPerBatch) / builders;
   return Math.round(Math.max(0, recipe.batches) * perBatch);
+}
+
+/**
+ * Place one recipe on the clock at `startMinutes`: its finish time, and each
+ * meat's latest cook-start worked back from the recipe's start. Shared by both
+ * the auto-placed and the slot-ordered timelines so they can never disagree.
+ */
+function scheduleRecipeAt(
+  recipe: ScheduleRecipeInput,
+  startMinutes: number,
+  options: ScheduleOptions,
+): ScheduledRecipe {
+  const buildMinutes = recipeBuildMinutes(recipe, options.buildersCount);
+  const meats: ScheduledMeat[] = (recipe.meats ?? []).map((m) => ({
+    rawMeatIngredientId: m.rawMeatIngredientId,
+    rawMeatName: m.rawMeatName,
+    processMinutes: m.processMinutes,
+    cookStartMinutes: startMinutes - m.processMinutes,
+    beforeShiftStart: startMinutes - m.processMinutes < options.startMinutes,
+    missing: m.missing ?? null,
+  }));
+  return {
+    planItemId: recipe.planItemId,
+    recipeId: recipe.recipeId,
+    name: recipe.name,
+    startMinutes,
+    finishMinutes: startMinutes + buildMinutes,
+    buildMinutes,
+    meats,
+    buildTimeGuessed: recipe.buildTimeGuessed ?? false,
+    untimedMeats: recipe.untimedMeats ?? [],
+  };
 }
 
 /**
@@ -152,29 +210,9 @@ export function computeDaySchedule(
     // Any break whose anchor has passed slots in here, between recipes.
     drainBreaksDueBy(index - 1);
 
-    const buildMinutes = recipeBuildMinutes(recipe, options.buildersCount);
-    const startMinutes = clock;
-    const finishMinutes = startMinutes + buildMinutes;
-
-    const meats: ScheduledMeat[] = (recipe.meats ?? []).map((m) => ({
-      rawMeatIngredientId: m.rawMeatIngredientId,
-      rawMeatName: m.rawMeatName,
-      processMinutes: m.processMinutes,
-      cookStartMinutes: startMinutes - m.processMinutes,
-      beforeShiftStart: startMinutes - m.processMinutes < options.startMinutes,
-    }));
-
-    scheduledRecipes.push({
-      planItemId: recipe.planItemId,
-      recipeId: recipe.recipeId,
-      name: recipe.name,
-      startMinutes,
-      finishMinutes,
-      buildMinutes,
-      meats,
-    });
-
-    clock = finishMinutes;
+    const scheduled = scheduleRecipeAt(recipe, clock, options);
+    scheduledRecipes.push(scheduled);
+    clock = scheduled.finishMinutes;
   });
 
   // Any breaks anchored past the end of production land after the last recipe.
@@ -217,27 +255,9 @@ export function computeScheduleFromSlots(
   for (const slot of slots) {
     if (slot.kind === "recipe") {
       if (recipeCount > 0) clock += changeoverMinutes;
-      const recipe = slot.recipe;
-      const buildMinutes = recipeBuildMinutes(recipe, options.buildersCount);
-      const startMinutes = clock;
-      const finishMinutes = startMinutes + buildMinutes;
-      const meats: ScheduledMeat[] = (recipe.meats ?? []).map((m) => ({
-        rawMeatIngredientId: m.rawMeatIngredientId,
-        rawMeatName: m.rawMeatName,
-        processMinutes: m.processMinutes,
-        cookStartMinutes: startMinutes - m.processMinutes,
-        beforeShiftStart: startMinutes - m.processMinutes < options.startMinutes,
-      }));
-      scheduledRecipes.push({
-        planItemId: recipe.planItemId,
-        recipeId: recipe.recipeId,
-        name: recipe.name,
-        startMinutes,
-        finishMinutes,
-        buildMinutes,
-        meats,
-      });
-      clock = finishMinutes;
+      const scheduled = scheduleRecipeAt(slot.recipe, clock, options);
+      scheduledRecipes.push(scheduled);
+      clock = scheduled.finishMinutes;
       recipeCount += 1;
       lastRecipeIndex = scheduledRecipes.length - 1;
     } else {
