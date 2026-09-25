@@ -23,12 +23,16 @@ export function ImprovementAttachments({
   improvementId,
   editable = false,
   thumbSize = "w-24 h-24",
+  fullWidth = false,
   phase,
   onChanged,
 }: {
   improvementId: number;
   editable?: boolean;
   thumbSize?: string;
+  /** Each photo/video the full width of its container, stacked, videos
+   *  playing in place — for the improvement's own page. */
+  fullWidth?: boolean;
   /** Fired after an upload or a removal. The improvement's own state can
    *  change as a side effect — a photo on a to-do improvement sends it for
    *  approval — so the screen around this has to reload, not just the grid. */
@@ -219,10 +223,18 @@ export function ImprovementAttachments({
       ) : items.length === 0 ? (
         editable ? <p className="text-xs text-muted-foreground">No photos or videos yet.</p> : null
       ) : (
-        <div className="flex flex-wrap gap-2">
+        <div className={fullWidth ? "space-y-3" : "flex flex-wrap gap-2"}>
           {items.map(a => (
-            <div key={a.id} className="relative group">
-              {a.kind === "video" ? (
+            <div key={a.id} className={fullWidth ? "relative w-full" : "relative group"}>
+              {fullWidth ? (
+                a.kind === "video" ? (
+                  <video src={attachmentUrl(a.id)} controls playsInline preload="metadata" className="w-full max-h-[80vh] rounded-xl bg-black" />
+                ) : (
+                  <button onClick={() => setLightbox(a)} title="View photo" className="block w-full">
+                    <img src={attachmentUrl(a.id)} alt="" className="w-full h-auto max-h-[80vh] object-contain rounded-xl border border-border bg-black/5" loading="lazy" />
+                  </button>
+                )
+              ) : a.kind === "video" ? (
                 <button
                   onClick={() => setLightbox(a)}
                   className={`${thumbSize} rounded-lg border border-border bg-black flex items-center justify-center text-white`}
@@ -241,7 +253,9 @@ export function ImprovementAttachments({
               {editable && (
                 <button
                   onClick={() => remove(a.id)}
-                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1.5 shadow-md active:scale-95 transition-transform"
+                  className={fullWidth
+                    ? "absolute top-3 right-3 bg-red-500 text-white rounded-full p-2.5 shadow-md active:scale-95 transition-transform"
+                    : "absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1.5 shadow-md active:scale-95 transition-transform"}
                   title="Remove"
                   aria-label="Remove this photo or video"
                 >

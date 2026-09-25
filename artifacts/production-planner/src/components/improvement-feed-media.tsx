@@ -1,7 +1,9 @@
 /**
  * Inline media for an improvement, feed-post style: the stitched
  * before/after clip IS the story when it exists; otherwise a before/after
- * image pair sits side by side, videos play in place, and anything past
+ * image pair stacks (before above after — Graeme, 2026-09-25: side by side
+ * was too small to see) — except on the meeting slide, where two stacked
+ * photos wouldn't fit the TV — videos play in place, and anything past
  * three tiles collapses to "+N".
  *
  * Shared between the improvements feed and the morning meeting's Recent
@@ -43,7 +45,7 @@ export function ImprovementFeedMedia({
   const pair = before && after;
   const rest = pair ? shown.filter(m => m !== before && m !== after) : shown;
 
-  const imgMax = large ? "max-h-[44vh]" : "max-h-80";
+  const imgMax = large ? "max-h-[44vh] object-cover" : "max-h-[75vh] object-contain bg-black/5";
   const vidMax = large ? "max-h-[48vh]" : "max-h-96";
   const labelCls = large
     ? "absolute top-3 left-3 text-sm font-bold px-3 py-1 rounded-full bg-black/60 text-white uppercase tracking-wide"
@@ -51,7 +53,7 @@ export function ImprovementFeedMedia({
 
   const img = (m: ImprovementMediaItem, label?: string) => (
     <button key={m.id} onClick={onOpen} disabled={!onOpen} className="relative block w-full overflow-hidden rounded-xl">
-      <img src={improvementMediaUrl(m.id)} alt={label ?? "Improvement photo"} loading="lazy" className={`w-full ${imgMax} object-cover`} />
+      <img src={improvementMediaUrl(m.id)} alt={label ?? "Improvement photo"} loading="lazy" className={`w-full ${imgMax}`} />
       {label && <span className={labelCls}>{label}</span>}
     </button>
   );
@@ -66,7 +68,7 @@ export function ImprovementFeedMedia({
     <div className={large ? "mt-4 space-y-3" : "mt-3 space-y-2"}>
       {stitched && vid(stitched, "Before → After")}
       {pair && (
-        <div className="grid grid-cols-2 gap-2">
+        <div className={large ? "grid grid-cols-2 gap-2" : "space-y-2"}>
           {img(before!, "Before")}
           {img(after!, "After")}
         </div>

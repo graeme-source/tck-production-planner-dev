@@ -273,7 +273,7 @@ export default function Improvements() {
   const toReview = items.filter(needsReview).sort(byNewest);
 
   return (
-    <div className="max-w-3xl mx-auto pb-24 space-y-6">
+    <div className="w-full min-w-0 pb-24 space-y-6">
       <PageHeader
         title="Improvements"
         description={approvalOn
@@ -650,7 +650,7 @@ function LogImprovement({ onDone, onCancel }: { onDone: (id: number) => void; on
   });
 
   return (
-    <div className="max-w-3xl mx-auto pb-24 space-y-5">
+    <div className="w-full min-w-0 pb-24 space-y-5">
       <button onClick={onCancel} className="flex items-center gap-2 px-4 h-14 rounded-2xl bg-secondary hover:bg-secondary/70 text-lg font-bold transition-colors">
         <ChevronLeft className="w-5 h-5" /> Back
       </button>
@@ -854,7 +854,7 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
   }
 
   return (
-    <div className="max-w-3xl mx-auto pb-24 space-y-5">
+    <div className="w-full min-w-0 pb-24 space-y-5">
       <button onClick={onBack} className="flex items-center gap-2 px-4 h-14 rounded-2xl bg-secondary hover:bg-secondary/70 text-lg font-bold transition-colors">
         <ChevronLeft className="w-5 h-5" /> Back
       </button>
@@ -951,14 +951,16 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
             ? "This is what makes an improvement count. A photo is fine — a short clip is better."
             : "A photo is fine. A short clip is better."}
         </p>
-        <div className="grid gap-4 sm:grid-cols-2">
+        {/* Stacked and full width — side-by-side thumbnails were too small
+            to see what had changed (Graeme, 2026-09-25). */}
+        <div className="space-y-6">
           <div>
             <p className="text-base font-bold mb-2">Before</p>
-            <ImprovementAttachments improvementId={id} editable phase="before" thumbSize="w-24 h-24" onChanged={refresh} />
+            <ImprovementAttachments improvementId={id} editable phase="before" fullWidth onChanged={refresh} />
           </div>
           <div>
             <p className="text-base font-bold mb-2">After</p>
-            <ImprovementAttachments improvementId={id} editable phase="after" thumbSize="w-24 h-24" onChanged={refresh} />
+            <ImprovementAttachments improvementId={id} editable phase="after" fullWidth onChanged={refresh} />
           </div>
         </div>
 
@@ -974,7 +976,7 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
             {stitch.isPending ? "Joining them together…" : "Make one before & after clip"}
           </button>
           <div className="mt-3">
-            <ImprovementAttachments improvementId={id} phase="stitched" thumbSize="w-full h-40" />
+            <ImprovementAttachments improvementId={id} phase="stitched" fullWidth />
           </div>
         </div>
       </div>
@@ -1189,13 +1191,15 @@ function Scoreboard() {
           approved by anyone. New ones only count once a manager signs them off.
         </p>
       )}
-      <div className="rounded-2xl border-2 border-border bg-card overflow-hidden">
-        {data.map((row, i) => (
+      {/* Spread across the width so the list doesn't push the feed a
+          screen further down. */}
+      <div className="grid gap-2 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+        {data.map(row => (
           <div
             key={row.userId ?? row.name}
-            className={cn("flex items-center justify-between gap-3 px-4 py-3.5", i > 0 && "border-t border-border")}
+            className="flex items-center justify-between gap-3 px-4 py-3.5 rounded-2xl border-2 border-border bg-card min-w-0"
           >
-            <span className="text-lg font-bold">{row.name}</span>
+            <span className="text-lg font-bold truncate">{row.name}</span>
             <span className="text-2xl font-bold tabular-nums">{row.count}</span>
           </div>
         ))}
