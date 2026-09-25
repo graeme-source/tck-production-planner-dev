@@ -62,7 +62,7 @@ export default function PeopleRecordsPage() {
       <div className="max-w-lg mx-auto text-center py-16 space-y-3">
         <Lock className="w-8 h-8 mx-auto text-muted-foreground" />
         <p className="text-2xl font-bold">Nothing here for you</p>
-        <p className="text-base text-muted-foreground">Staff records are looked after by Graeme and Lorna.</p>
+        <p className="text-base text-muted-foreground">Staff records are only open to people Graeme has given People access.</p>
       </div>
     );
   }
@@ -72,7 +72,7 @@ export default function PeopleRecordsPage() {
       <div>
         <h1 className="font-display text-3xl font-bold">People</h1>
         <p className="text-base text-muted-foreground mt-1">
-          Staff records in one place — visible to you and Lorna only.
+          Staff records in one place — visible only to people Graeme has given People access.
         </p>
       </div>
 

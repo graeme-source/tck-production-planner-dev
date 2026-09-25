@@ -57,12 +57,29 @@ export function shouldDemandPinOnEntry(input: {
   return input.demandedFor !== input.entryKey;
 }
 
-/** Which PIN a sensitive gate asks for (Graeme, 2026-09-24). The People
- *  section asks for the PRIVATE PIN when the person has set one — so the PIN
- *  they type in front of others at a station can't open employee records.
- *  Everything else (and anyone without a private PIN) uses the normal PIN. */
+/** Which PIN a sensitive gate asks for. "people" = a People-section page
+ *  (employee records, reviews, return-to-work, the Employee Hub). */
 export type SensitiveScope = "general" | "people";
 
-export function gateUsesPrivatePin(scope: SensitiveScope, hasPrivatePin: boolean | undefined): boolean {
-  return scope === "people" && !!hasPrivatePin;
+/**
+ * What a People page's gate does (Graeme, 2026-09-24; compulsory 2026-09-25).
+ *
+ *   "setup"   — People access but no private PIN yet: show "Set your private
+ *               PIN to open People". The station PIN never opens People for
+ *               someone with access, so there is nothing to type yet.
+ *   "private" — People access and a private PIN: ask for the private PIN.
+ *   "normal"  — everything else (a non-People page, or someone without People
+ *               access looking at their OWN hub/forms): the usual PIN.
+ *
+ * The server enforces the same rule on every People request (428 / 423);
+ * this only decides what the person sees first.
+ */
+export type PeopleGateMode = "normal" | "private" | "setup";
+
+export function peopleGateMode(
+  scope: SensitiveScope,
+  user: { hasPeopleAccess?: boolean; hasPrivatePin?: boolean },
+): PeopleGateMode {
+  if (scope !== "people" || !user.hasPeopleAccess) return "normal";
+  return user.hasPrivatePin ? "private" : "setup";
 }

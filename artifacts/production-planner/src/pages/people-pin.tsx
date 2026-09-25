@@ -3,13 +3,15 @@
  *
  * A second PIN, used ONLY to open People (employee records, reviews,
  * return-to-work forms), so the PIN you type in front of others at a
- * station can't open them. Setting, changing or removing it needs your
- * account password. Only shown to people who can see People data.
+ * station can't open them. COMPULSORY for anyone with People access
+ * (2026-09-25): People stays shut until it's set, and it can be changed but
+ * not removed while you have access. Setting or changing it needs your
+ * account password. Only shown to people with People access.
  */
 import { useState } from "react";
 import { Link } from "wouter";
 import { useMutation } from "@tanstack/react-query";
-import { ChevronLeft, Loader2, ShieldCheck, ShieldOff } from "lucide-react";
+import { ChevronLeft, Loader2, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useIsRtwManager } from "@/hooks/use-rtw-manager";
 import { toast } from "@/hooks/use-toast";
@@ -40,18 +42,9 @@ export default function PeoplePinPage() {
     onSuccess: async () => {
       reset();
       await refreshUser();
-      toast({ title: "Private PIN saved", description: "People now asks for this PIN, not your station PIN." });
+      toast({ title: "Private PIN saved", description: "People now opens with this PIN — never your station PIN." });
     },
     onError: (e: Error) => toast({ title: "Not saved", description: e.message, variant: "destructive" }),
-  });
-  const clear = useMutation({
-    mutationFn: () => post("private-pin/clear", { currentPassword: password }),
-    onSuccess: async () => {
-      reset();
-      await refreshUser();
-      toast({ title: "Private PIN removed", description: "People asks for your normal PIN again." });
-    },
-    onError: (e: Error) => toast({ title: "Not removed", description: e.message, variant: "destructive" }),
   });
 
   const pinOk = /^\d{4}$/.test(pin) && pin === confirm;
@@ -61,7 +54,7 @@ export default function PeoplePinPage() {
     return (
       <div className="max-w-lg mx-auto space-y-4">
         <Link href="/" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ChevronLeft className="w-4 h-4" /> Back</Link>
-        <p className="text-base text-muted-foreground">This setting is only for people who can open the People section.</p>
+        <p className="text-base text-muted-foreground">This setting is only for people with People access. Graeme switches that on in Settings → Team &amp; Access.</p>
       </div>
     );
   }
@@ -72,15 +65,15 @@ export default function PeoplePinPage() {
         <Link href="/" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ChevronLeft className="w-4 h-4" /> Back</Link>
         <h1 className="text-3xl font-display font-bold mt-1">Private PIN for People</h1>
         <p className="text-base text-muted-foreground mt-1">
-          A second PIN used only to open People — employee records, reviews and return-to-work forms. Keep typing your
-          normal PIN at the stations; nobody watching can use it to open People.
+          A second PIN used only to open People — employee records, reviews and return-to-work forms. You need one to
+          open People at all. Keep typing your normal PIN at the stations; nobody watching can use it to open People.
         </p>
       </div>
 
-      <div className={`rounded-2xl border-2 p-4 flex items-center gap-3 ${hasPrivatePin ? "border-primary/40 bg-primary/5" : "border-border bg-card"}`}>
-        {hasPrivatePin ? <ShieldCheck className="w-6 h-6 text-primary" /> : <ShieldOff className="w-6 h-6 text-muted-foreground" />}
+      <div className={`rounded-2xl border-2 p-4 flex items-center gap-3 ${hasPrivatePin ? "border-primary/40 bg-primary/5" : "border-amber-400 bg-amber-50 dark:bg-amber-950/30"}`}>
+        {hasPrivatePin ? <ShieldCheck className="w-6 h-6 text-primary" /> : <ShieldAlert className="w-6 h-6 text-amber-600" />}
         <p className="text-base font-semibold">
-          {hasPrivatePin ? "On — People asks for your private PIN." : "Off — People uses your normal PIN."}
+          {hasPrivatePin ? "Set — People opens with your private PIN." : "Not set yet — People stays shut until you set one."}
         </p>
       </div>
 
@@ -104,17 +97,11 @@ export default function PeoplePinPage() {
           className="w-full h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-40"
         >
           {save.isPending && <Loader2 className="w-5 h-5 animate-spin" />}
-          {hasPrivatePin ? "Change private PIN" : "Turn on private PIN"}
+          {hasPrivatePin ? "Change private PIN" : "Set private PIN"}
         </button>
-        {hasPrivatePin && (
-          <button
-            onClick={() => clear.mutate()}
-            disabled={!password || clear.isPending}
-            className="w-full h-12 rounded-2xl border-2 border-border text-base font-semibold disabled:opacity-40"
-          >
-            {clear.isPending ? "Removing…" : "Turn off private PIN"}
-          </button>
-        )}
+        <p className="text-sm text-muted-foreground">
+          It can be changed any time but not removed while you have People access.
+        </p>
       </div>
     </div>
   );

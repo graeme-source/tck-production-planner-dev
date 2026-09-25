@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shouldPromptForSensitivePin, shouldDemandPinOnEntry, gateUsesPrivatePin } from "./sensitive-pin";
+import { shouldPromptForSensitivePin, shouldDemandPinOnEntry, peopleGateMode } from "./sensitive-pin";
 
 const TTL = 5 * 60 * 1000;
 
@@ -71,13 +71,26 @@ describe("shouldDemandPinOnEntry", () => {
   });
 });
 
-describe("gateUsesPrivatePin", () => {
-  it("People pages ask for the private PIN once one is set", () => {
-    expect(gateUsesPrivatePin("people", true)).toBe(true);
+describe("peopleGateMode", () => {
+  it("People pages ask for the private PIN when access + PIN are both there", () => {
+    expect(peopleGateMode("people", { hasPeopleAccess: true, hasPrivatePin: true })).toBe("private");
   });
-  it("otherwise the normal PIN — no private PIN, or not a People page", () => {
-    expect(gateUsesPrivatePin("people", false)).toBe(false);
-    expect(gateUsesPrivatePin("people", undefined)).toBe(false);
-    expect(gateUsesPrivatePin("general", true)).toBe(false);
+
+  it("REGRESSION: People access without a private PIN sends them to set one — never the station PIN", () => {
+    // It used to fall back to the normal PIN, which made the private PIN
+    // optional (Graeme, 2026-09-25: force it).
+    expect(peopleGateMode("people", { hasPeopleAccess: true, hasPrivatePin: false })).toBe("setup");
+    expect(peopleGateMode("people", { hasPeopleAccess: true })).toBe("setup");
+  });
+
+  it("someone without People access gets the normal PIN on their own hub/forms", () => {
+    expect(peopleGateMode("people", { hasPeopleAccess: false, hasPrivatePin: false })).toBe("normal");
+    expect(peopleGateMode("people", { hasPeopleAccess: false, hasPrivatePin: true })).toBe("normal");
+    expect(peopleGateMode("people", {})).toBe("normal");
+  });
+
+  it("non-People pages always use the normal PIN", () => {
+    expect(peopleGateMode("general", { hasPeopleAccess: true, hasPrivatePin: true })).toBe("normal");
+    expect(peopleGateMode("general", { hasPeopleAccess: true, hasPrivatePin: false })).toBe("normal");
   });
 });

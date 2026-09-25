@@ -1,25 +1,17 @@
-import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 
-const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
-
 /**
- * Is the signed-in person one of the named RTW managers (Graeme and Lorna)?
- * The server decides (middleware/rtw-access.ts — roles do NOT qualify); this
- * just surfaces its flag so the sidebar and the People page can follow it.
- * Cached: it changes roughly never.
+ * Does the signed-in person have People access — employee records, reviews,
+ * return-to-work forms for everyone? (The name is historical: RTW managers
+ * and People access are the same switch.)
+ *
+ * The founder turns it on per person in Settings → Team & Access; the server
+ * stores it (people_access_grants, migration 0126 — roles do NOT qualify)
+ * and reports it on /api/auth/me, which the app re-checks every 5 minutes.
+ * This only drives what the UI shows: every People request is enforced on
+ * the server, including the compulsory private PIN.
  */
 export function useIsRtwManager(): boolean {
   const { state } = useAuth();
-  const { data } = useQuery<{ isRtwManager: boolean }>({
-    queryKey: ["rtw-manager-flag"],
-    enabled: state.status === "authenticated",
-    staleTime: 10 * 60 * 1000,
-    queryFn: async () => {
-      const r = await fetch(`${BASE}/api/return-to-work/mine`, { credentials: "include" });
-      if (!r.ok) return { isRtwManager: false };
-      return r.json();
-    },
-  });
-  return data?.isRtwManager === true;
+  return state.status === "authenticated" && state.user.hasPeopleAccess === true;
 }
