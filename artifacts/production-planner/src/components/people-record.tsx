@@ -641,6 +641,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
             return <MeetingCard key={e.key} meeting={e.meeting} notes={byMeeting.get(e.meeting.id) ?? []} {...meetingCardProps} />;
           }
           if (e.kind === "contract") return <ContractEntryCard key={e.key} entry={e.contract.entry} onOpen={setOpenContract} />;
+          if (e.kind === "document") return null;
           return <NoteCard key={e.key} note={e.note} canManage={canManage} currentUserId={currentUserId} onChanged={refreshReviews} />;
         })}
 
