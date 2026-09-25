@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { toGrams } from "@workspace/units";
-import { Link } from "wouter";
+import { Link, useSearch } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { useListRecipes, useListIngredients, useListSubRecipes, useGetRecipe, useListCategoryDefaults, useGetUpfSummary, getGetRecipeQueryKey, getListRecipesQueryKey, getListIngredientsQueryKey, getGetUpfSummaryQueryKey } from "@workspace/api-client-react";
 import type { Recipe, RecipeDetail, RecipeIngredient, RecipeSubRecipe } from "@workspace/api-client-react";
@@ -8,6 +8,7 @@ import { UpfChip, UpfPercentPill } from "@/components/upf-badge";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
+import { TimingHealthCard } from "@/components/timing-health-card";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
 import { IngredientCombobox } from "@/components/ingredient-combobox";
 import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, Check, QrCode, Filter, Scale, LayoutGrid, Table2, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
@@ -2172,6 +2173,20 @@ export default function Recipes() {
   const [duplicatingId, setDuplicatingId] = useState<number | null>(null);
   const [duplicateDefaults, setDuplicateDefaults] = useState<FormValues | null>(null);
 
+  // Deep link: /recipes?edit=<id> opens that recipe's edit form once the list
+  // loads — the schedule's "No build time set" flags link here (2026-09-25).
+  // Consumed once so closing the form doesn't bounce it back open.
+  const queryClient = useQueryClient();
+  const searchStr = useSearch();
+  const editParamConsumedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!recipes || editParamConsumedRef.current === searchStr) return;
+    const editId = Number(new URLSearchParams(searchStr).get("edit"));
+    if (!Number.isInteger(editId) || editId <= 0) return;
+    editParamConsumedRef.current = searchStr;
+    if (recipes.some(r => r.id === editId)) setEditingId(editId);
+  }, [recipes, searchStr]);
+
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -2346,6 +2361,8 @@ export default function Recipes() {
         }
       />
 
+      <TimingHealthCard onEditRecipe={setEditingId} />
+
       {/* Margin legend + category filter */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
@@ -2516,7 +2533,12 @@ export default function Recipes() {
         <EditRecipeDialog
           id={editingId}
           open={editingId !== null}
-          onOpenChange={(v) => { if (!v) setEditingId(null); }}
+          onOpenChange={(v) => {
+            if (v) return;
+            setEditingId(null);
+            // A build time may have been set in the form — refresh the Timing data card.
+            queryClient.invalidateQueries({ queryKey: ["timing-health"] });
+          }}
           ingredients={ingredientList}
           subRecipes={subRecipeList}
           categoryDefaults={catDefaults}
