@@ -102,12 +102,24 @@ async function fetchSalesSummary(from: string, to: string) {
     to: string;
     totalRevenue: number;
     orderCount: number;
+    /** Orders with revenue above £0 — AOV's divisor (£0 resends left out). */
+    paidOrderCount: number;
+    /** totalRevenue ÷ paidOrderCount; null with no paid orders. */
+    aov: number | null;
     dayCount: number;
     averageDailyRevenue: number;
     estimatedMonthlyRevenue: number;
     todayRevenue: number;
     todayOrderCount: number;
+    todayPaidOrderCount: number;
+    todayAov: number | null;
   }>;
+}
+
+/** The AOV tiles' sub-line: what the figure is divided out of. */
+function aovSub(revenue: number, paidOrders: number, none: string): string {
+  if (paidOrders <= 0) return none;
+  return `${formatGBP(revenue)} ÷ ${paidOrders} paid order${paidOrders !== 1 ? "s" : ""}`;
 }
 
 async function fetchConversion(from: string, to: string) {
@@ -1181,8 +1193,8 @@ function FounderDashboard() {
               (Graeme, 2026-09-25); the two month-average tiles follow. */}
           <KpiCard
             title="Today's AOV"
-            value={monthSummary && monthSummary.todayOrderCount > 0 ? formatGBP(monthSummary.todayRevenue / monthSummary.todayOrderCount) : "—"}
-            sub={monthSummary && monthSummary.todayOrderCount > 0 ? `Across ${monthSummary.todayOrderCount} order${monthSummary.todayOrderCount !== 1 ? "s" : ""}` : "No orders yet today"}
+            value={monthSummary?.todayAov != null ? formatGBP(monthSummary.todayAov) : "—"}
+            sub={monthSummary ? aovSub(monthSummary.todayRevenue, monthSummary.todayPaidOrderCount, "No paid orders yet today") : undefined}
             icon={ShoppingBag}
             color="text-emerald-500"
             bg="bg-emerald-500/10"
@@ -1342,8 +1354,8 @@ function FounderDashboard() {
               />
               <KpiCard
                 title={`AOV — ${period.label}`}
-                value={periodSummary && periodSummary.orderCount > 0 ? formatGBP(periodSummary.totalRevenue / periodSummary.orderCount) : "—"}
-                sub={periodSummary && periodSummary.orderCount > 0 ? `Across ${periodSummary.orderCount} order${periodSummary.orderCount !== 1 ? "s" : ""}` : "No orders in this period"}
+                value={periodSummary?.aov != null ? formatGBP(periodSummary.aov) : "—"}
+                sub={periodSummary ? aovSub(periodSummary.totalRevenue, periodSummary.paidOrderCount, "No paid orders in this period") : undefined}
                 icon={ShoppingBag}
                 color="text-emerald-500"
                 bg="bg-emerald-500/10"
