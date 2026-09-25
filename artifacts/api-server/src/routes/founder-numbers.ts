@@ -1,7 +1,7 @@
 /**
  * Founder Numbers page — trend graphs behind the tiles (Objective I).
  *
- *   GET /api/founder-numbers/trend?from=YYYY-MM-DD&to=YYYY-MM-DD[&granularity=hour|day|week]
+ *   GET /api/founder-numbers/trend?from=YYYY-MM-DD&to=YYYY-MM-DD[&granularity=hour|day|week|month]
  *
  * One read returns EVERY graphed metric per bucket for the period — sales,
  * orders, AOV, new-customer revenue/count, subscription counts/revenue, ad
@@ -36,7 +36,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const trendQuery = z.object({
   from: z.string().regex(DATE_RE, "from must be YYYY-MM-DD"),
   to: z.string().regex(DATE_RE, "to must be YYYY-MM-DD"),
-  granularity: z.enum(["hour", "day", "week"]).optional(),
+  granularity: z.enum(["hour", "day", "week", "month"]).optional(),
 })
   .refine(q => q.from <= q.to, { message: "from must not be after to", path: ["from"] })
   .refine(q => dayCountBetween(q.from, q.to) <= MAX_TREND_DAYS, { message: `${MAX_TREND_DAYS} days maximum`, path: ["to"] });
@@ -78,7 +78,7 @@ async function spendDays(from: string, to: string): Promise<SpendDay[]> {
 
 router.get("/trend", validateQuery(trendQuery), async (_req: Request, res: Response) => {
   const { from, to, granularity: requested } = res.locals["query"] as TrendQuery;
-  const granularity: Granularity = resolveGranularity(dayCountBetween(from, to), requested);
+  const granularity: Granularity = resolveGranularity(from, to, requested);
   const key = `${from}|${to}|${granularity}`;
   const hit = cached(key);
   if (hit) { res.json(hit); return; }
