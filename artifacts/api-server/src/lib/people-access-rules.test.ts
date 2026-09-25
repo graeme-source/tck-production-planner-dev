@@ -25,7 +25,12 @@ describe("peopleAccessState", () => {
 describe("who may grant People access", () => {
   it("is the founder account", () => {
     expect(canGrantPeopleAccess(FOUNDER)).toBe(true);
-    expect(canGrantPeopleAccess({ email: "  Graeme@TheCalzoneKitchen.co.uk " })).toBe(true);
+    expect(canGrantPeopleAccess({ email: "graeme@thecalzonekitchen.co.uk" })).toBe(true);
+  });
+
+  it("REGRESSION: a look-alike email in different case or with spaces is NOT the founder", () => {
+    expect(canGrantPeopleAccess({ email: "GRAEME@thecalzonekitchen.co.uk" })).toBe(false);
+    expect(canGrantPeopleAccess({ email: " graeme@thecalzonekitchen.co.uk" })).toBe(false);
   });
 
   it("REGRESSION: is not any other admin", () => {

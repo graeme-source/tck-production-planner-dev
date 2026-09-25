@@ -75,7 +75,7 @@ function shape(r: StateRow, founderId: number | null) {
 async function founderUserId(): Promise<number | null> {
   // The founder is whoever holds the founder email — looked up, not assumed.
   const rows = await db.execute<{ id: number }>(
-    sql`SELECT id FROM app_users WHERE lower(trim(email)) = ${FOUNDER_EMAIL} LIMIT 1`,
+    sql`SELECT id FROM app_users WHERE email = ${FOUNDER_EMAIL} LIMIT 1`,
   );
   return rows.rows[0] ? Number(rows.rows[0].id) : null;
 }

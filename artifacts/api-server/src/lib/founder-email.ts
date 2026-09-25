@@ -5,7 +5,10 @@
  */
 export const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
 
-/** Case- and whitespace-insensitive; a missing email is never the founder. */
+/** EXACT match, like requireFounder. The email index is case-sensitive and
+ *  admins can edit emails, so a case-insensitive check would let an admin
+ *  give another account "GRAEME@…" and pass as the founder. A missing email
+ *  is never the founder. */
 export function isFounderEmail(email: string | null | undefined): boolean {
-  return (email ?? "").trim().toLowerCase() === FOUNDER_EMAIL;
+  return email === FOUNDER_EMAIL;
 }
