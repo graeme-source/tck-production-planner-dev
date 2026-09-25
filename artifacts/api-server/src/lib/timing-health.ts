@@ -164,8 +164,14 @@ export function assembleTimingHealth(input: {
   buildSuggestions: Map<number, TimingSuggestion>;
   meats: HealthMeatInput[];
   cookSuggestions: Map<number, TimingSuggestion>;
-}): { recipes: RecipeTimingIssue[]; meats: MeatTimingIssue[] } {
+}): {
+  recipes: RecipeTimingIssue[];
+  meats: MeatTimingIssue[];
+  /** No build time, but not on any plan in the window — listed quietly, not as a to-do. */
+  notPlannedRecently: Array<{ recipeId: number; name: string }>;
+} {
   const recipes: RecipeTimingIssue[] = [];
+  const notPlannedRecently: Array<{ recipeId: number; name: string }> = [];
   for (const r of input.recipes) {
     // Only what the day timeline uses: a mac cheese or fried chicken build
     // time never moves a start time, so it isn't a timing-data gap.
@@ -174,6 +180,10 @@ export function assembleTimingHealth(input: {
     const set = r.targetBuildSeconds != null && r.targetBuildSeconds > 0;
     const kind = !set ? "missing" : differsFromFloor(r.targetBuildSeconds!, suggestion) ? "check" : null;
     if (!kind) continue;
+    if (kind === "missing" && r.timesPlanned === 0 && !suggestion) {
+      notPlannedRecently.push({ recipeId: r.recipeId, name: r.name });
+      continue;
+    }
     recipes.push({
       recipeId: r.recipeId,
       name: r.name,
@@ -215,5 +225,6 @@ export function assembleTimingHealth(input: {
     b.usedBy.length - a.usedBy.length ||
     a.name.localeCompare(b.name));
 
-  return { recipes, meats };
+  notPlannedRecently.sort((a, b) => a.name.localeCompare(b.name));
+  return { recipes, meats, notPlannedRecently };
 }

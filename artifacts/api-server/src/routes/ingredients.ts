@@ -6,6 +6,7 @@ import { detectAllergens, ALLERGEN_DISPLAY } from "@workspace/allergens";
 import { validate } from "../middleware/validate";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { generateQrCode } from "../lib/qr-code";
+import * as z from "zod";
 
 const router: IRouter = Router();
 
@@ -523,6 +524,40 @@ router.put("/:id", validate(UpdateIngredientBody), async (req, res) => {
   }).where(eq(ingredientsTable.id, id)).returning();
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.json(mapRow(row));
+});
+
+// Set just a raw meat's cook and/or process minutes — the "Use suggested"
+// button on the Recipes page's Timing data card (2026-09-25). Dedicated
+// because PUT /:id writes every column from the body (a partial body would
+// blank the name, unit and pack weight). Only the keys sent are written.
+const MeatTimingBody = z.object({
+  estimatedCookTimeMin: z.number().int().min(0).max(1440).nullable().optional(),
+  meatProcessMinutes: z.number().int().min(0).max(1440).nullable().optional(),
+}).refine(b => b.estimatedCookTimeMin !== undefined || b.meatProcessMinutes !== undefined, {
+  message: "Send estimatedCookTimeMin and/or meatProcessMinutes",
+});
+router.put("/:id/meat-timing", requireManagerOrAdmin, validate(MeatTimingBody), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid ingredient id" }); return; }
+  const body = req.body as z.infer<typeof MeatTimingBody>;
+  // Belt and braces: validate()'s passthrough can shed a refine in some zod versions.
+  if (body.estimatedCookTimeMin === undefined && body.meatProcessMinutes === undefined) {
+    res.status(400).json({ error: "Send estimatedCookTimeMin and/or meatProcessMinutes" });
+    return;
+  }
+  const [row] = await db.update(ingredientsTable)
+    .set({
+      ...(body.estimatedCookTimeMin !== undefined ? { estimatedCookTimeMin: body.estimatedCookTimeMin } : {}),
+      ...(body.meatProcessMinutes !== undefined ? { meatProcessMinutes: body.meatProcessMinutes } : {}),
+    })
+    .where(eq(ingredientsTable.id, id))
+    .returning({
+      id: ingredientsTable.id,
+      estimatedCookTimeMin: ingredientsTable.estimatedCookTimeMin,
+      meatProcessMinutes: ingredientsTable.meatProcessMinutes,
+    });
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  res.json(row);
 });
 
 // Sixteen tables hold foreign keys into ingredients — recipes and prep the

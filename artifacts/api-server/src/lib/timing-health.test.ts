@@ -89,6 +89,7 @@ describe("assembleTimingHealth", () => {
         { recipeId: 13, name: "Mac Pork", category: "Macaroni Cheese", targetBuildSeconds: null, timesPlanned: 9 },
         { recipeId: 11, name: "The Don", category: "Calzones", targetBuildSeconds: 600, timesPlanned: 33 },
         { recipeId: 5, name: "Carnizone", category: "Calzones", targetBuildSeconds: 378, timesPlanned: 42 },
+        { recipeId: 22, name: "Dough ball 200g", category: "", targetBuildSeconds: null, timesPlanned: 0 },
       ],
       buildSuggestions: new Map([[25, sugg(352, 21)], [11, sugg(361, 16)], [5, sugg(385, 313)]]),
       meats: [],
@@ -99,6 +100,8 @@ describe("assembleTimingHealth", () => {
     ]);
     expect(out.recipes[0].suggestion).toEqual(sugg(352, 21));
     // Mac cheese (13) is off the day timeline, so its gap isn't listed.
+    // Never planned in the window and no history → a quiet footnote, not a to-do.
+    expect(out.notPlannedRecently).toEqual([{ recipeId: 22, name: "Dough ball 200g" }]);
     // Carnizone 378 vs 385 on the floor is within 20% — not flagged.
   });
 

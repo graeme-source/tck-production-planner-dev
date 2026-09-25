@@ -767,6 +767,24 @@ router.put("/:id/fridge-product", async (req, res) => {
   res.json(row);
 });
 
+// Set just the build time (seconds per batch, one builder) — the "Use
+// suggested" button on the Recipes page's Timing data card (2026-09-25).
+// Dedicated, like /:id/fridge-product: PUT /:id is a full replace that
+// deletes and re-inserts every ingredient row, so a one-tap single-field
+// save must never go through it.
+const BuildTimeBody = z.object({ targetBuildSeconds: z.number().int().min(10).max(3600) });
+router.put("/:id/build-time", requireManagerOrAdmin, validate(BuildTimeBody), async (req, res) => {
+  const parsed = RecipeIdParams.safeParse({ id: req.params.id });
+  if (!parsed.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
+  const { targetBuildSeconds } = req.body as z.infer<typeof BuildTimeBody>;
+  const [row] = await db.update(recipesTable)
+    .set({ targetBuildSeconds })
+    .where(eq(recipesTable.id, parsed.data.id))
+    .returning({ id: recipesTable.id, targetBuildSeconds: recipesTable.targetBuildSeconds });
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  res.json(row);
+});
+
 router.get("/:id/shopify-mapping", async (req, res) => {
   const parsed = RecipeIdParams.safeParse({ id: req.params.id });
   if (!parsed.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
