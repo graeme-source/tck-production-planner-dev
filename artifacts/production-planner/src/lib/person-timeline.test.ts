@@ -48,7 +48,7 @@ describe("filters", () => {
     expect(filterTimeline(timeline, "rtw").map(e => e.key)).toEqual(["a-2026-09-14", "a-2026-08-17", "f-9"]);
     expect(filterTimeline(timeline, "meetings").map(e => e.key)).toEqual(["m-1", "m-2"]);
     expect(filterTimeline(timeline, "notes").map(e => e.key)).toEqual(["n-5", "n-7"]);
-    expect(timelineCounts(timeline)).toEqual({ all: 8, attendance: 3, rtw: 3, meetings: 2, notes: 2, contracts: 0 });
+    expect(timelineCounts(timeline)).toEqual({ all: 8, attendance: 3, rtw: 3, meetings: 2, notes: 2, documents: 0, contracts: 0 });
   });
 });
 
@@ -72,6 +72,31 @@ describe("contracts on the timeline (founder/HR view)", () => {
 
   it("are simply absent when not passed (everyone who isn't founder/HR)", () => {
     expect(timeline.some(e => e.kind === "contract")).toBe(false);
+  });
+});
+
+describe("documents on the timeline", () => {
+  const withDocs = buildPersonTimeline({
+    spells: [], lates: [], forms: [form(9, "2026-05-01")], meetings: [], looseNotes: [note(5, "2026-05-01T10:00:00Z")],
+    contracts: [{ key: "uc-5", date: "2026-05-01" }],
+    documents: [
+      { key: "pd-3", date: "2026-05-01" },
+      { key: "od-8", date: "2025-11-20" },
+    ],
+  });
+
+  it("slot in by date: after notes, before contracts and forms on the same day", () => {
+    expect(withDocs.map(e => e.key)).toEqual(["n-5", "pd-3", "uc-5", "f-9", "od-8"]);
+  });
+
+  it("have their own Documents chip", () => {
+    expect(filterTimeline(withDocs, "documents").map(e => e.key)).toEqual(["pd-3", "od-8"]);
+    expect(timelineCounts(withDocs).documents).toBe(2);
+    expect(timelineCounts(withDocs).contracts).toBe(1);
+  });
+
+  it("are absent when not passed", () => {
+    expect(timeline.some(e => e.kind === "document")).toBe(false);
   });
 });
 

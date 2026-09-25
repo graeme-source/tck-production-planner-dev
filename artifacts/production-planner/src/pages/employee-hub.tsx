@@ -20,8 +20,9 @@ import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
 import { useIsRtwManager } from "@/hooks/use-rtw-manager";
 import { PageHeader } from "@/components/page-header";
 import { EmployeeReviewsSection } from "@/components/employee-reviews";
-import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt, Camera, Upload, X, FileText, ScrollText, ChevronRight, ListTodo, ClipboardList, FileSignature, UsersRound } from "lucide-react";
+import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt, Camera, Upload, X, FileText, ScrollText, ChevronRight, ListTodo, ClipboardList, FileSignature, UsersRound, FolderOpen } from "lucide-react";
 import { MyContractSection } from "@/components/my-contract";
+import { MyDocumentsSection } from "@/components/my-documents";
 import { StarterFormsList } from "@/components/starter-forms";
 import { TodoSheet, useMyOpenTodoCount } from "@/components/todo-lists";
 import { jsPDF } from "jspdf";
@@ -1181,9 +1182,9 @@ function PoliciesList() {
   );
 }
 
-type HubSection = "todos" | "reviews" | "contract" | "starterforms" | "mileage" | "expenses" | "policies" | "improvements" | "issues" | "sops";
+type HubSection = "todos" | "reviews" | "contract" | "documents" | "starterforms" | "mileage" | "expenses" | "policies" | "improvements" | "issues" | "sops";
 
-const HUB_SECTIONS: HubSection[] = ["todos", "reviews", "contract", "starterforms", "mileage", "expenses", "policies", "improvements", "issues", "sops"];
+const HUB_SECTIONS: HubSection[] = ["todos", "reviews", "contract", "documents", "starterforms", "mileage", "expenses", "policies", "improvements", "issues", "sops"];
 
 export default function EmployeeHub() {
   // Deep link from the notification bell: /hub?section=contract lands on
@@ -1223,6 +1224,7 @@ export default function EmployeeHub() {
     { key: "todos", label: "My To-dos", icon: ListTodo },
     { key: "reviews", label: "My Record", icon: ClipboardList },
     { key: "contract", label: "My Contract", icon: FileSignature },
+    { key: "documents", label: "My Documents", icon: FolderOpen },
     { key: "starterforms", label: "Starter Forms", icon: ClipboardList },
     { key: "mileage", label: "Mileage Claim", icon: Car },
     { key: "expenses", label: "Expense Claim", icon: Receipt },
@@ -1293,6 +1295,17 @@ export default function EmployeeHub() {
                 </p>
               </div>
               <MyContractSection />
+            </>
+          )}
+          {active === "documents" && (
+            <>
+              <div className="mb-4 pb-4 border-b border-border">
+                <h2 className="text-lg font-semibold">My Documents</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Letters, certificates and other documents kept on your record that have been shared with you. Read-only.
+                </p>
+              </div>
+              <MyDocumentsSection />
             </>
           )}
           {active === "starterforms" && (

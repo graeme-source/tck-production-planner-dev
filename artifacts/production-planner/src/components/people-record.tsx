@@ -9,7 +9,9 @@
  * Reuses rather than rewrites: the review cards and composers come from
  * components/employee-reviews.tsx, the return-to-work form from
  * components/rtw-form-editor.tsx. Data: /api/people/:id (attendance +
- * forms), /api/employee-reviews/:id (meetings + notes, private-note rules
+ * forms), /api/person-documents/person/:id (documents filed on the record
+ * + their onboarding uploads, founder-only ones left out by the server for
+ * anyone else), /api/employee-reviews/:id (meetings + notes, private-note rules
  * applied on the server), /api/people/:id/employment (Planday, loaded on its
  * own so a slow or failed Planday never holds up the rest of the page).
  */
@@ -17,7 +19,7 @@ import { useMemo, useState } from "react";
 import { Link, useSearch } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock, HeartPulse, Loader2, Lock,
+  AlertTriangle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock, FilePlus2, HeartPulse, Loader2, Lock,
   PenLine, Plus, RefreshCw, Sun, Target, History,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -47,6 +49,11 @@ import {
 } from "@/components/person-contracts";
 import { contractHistory } from "@/lib/contract-history";
 import { PersonHoursPanel } from "@/components/person-hours-panel";
+import {
+  usePersonDocuments, personDocumentsKey, PersonDocumentsSection, DocumentEntryCard, AddDocumentModal, DocumentOpenModal,
+  type OpenDocument,
+} from "@/components/person-documents";
+import { documentEntries, isFiledFounderOnly } from "@/lib/person-documents";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -387,6 +394,11 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
   const contracts = useContractHistory(userId, ready && canContracts);
   const [addingContract, setAddingContract] = useState(false);
   const [openContract, setOpenContract] = useState<OpenContract | null>(null);
+  // Documents filed on the record + their onboarding uploads — People access;
+  // founder-only ones are left out by the server for everyone else.
+  const documents = usePersonDocuments(userId, ready);
+  const [addingDocument, setAddingDocument] = useState(false);
+  const [openDocument, setOpenDocument] = useState<OpenDocument | null>(null);
 
   const recordKey = ["people-record", userId, from ?? "default"];
   const record = useQuery<PersonRecordResponse>({
@@ -468,11 +480,14 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
       contracts: canContracts && contracts.data
         ? contractHistory(contracts.data.issued, contracts.data.uploaded).map(entry => ({ key: entry.key, date: entry.date, entry }))
         : [],
+      documents: documents.data
+        ? documentEntries(documents.data.documents, documents.data.onboarding).map(entry => ({ key: entry.key, date: entry.date, entry }))
+        : [],
     });
     return withinWindow(all, windowFrom);
-  }, [data, reviews.data, grouped, windowFrom, canContracts, contracts.data]);
+  }, [data, reviews.data, grouped, windowFrom, canContracts, contracts.data, documents.data]);
 
-  const lockedError = [record.error, reviews.error].find(e => e instanceof PeopleLockedError) as PeopleLockedError | undefined;
+  const lockedError = [record.error, reviews.error, documents.error].find(e => e instanceof PeopleLockedError) as PeopleLockedError | undefined;
   if (lockedError) return <PeopleLockedCard error={lockedError} />;
 
   if (!ready || (record.isLoading && !data)) {
@@ -597,9 +612,23 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
         />
       )}
 
+      <PersonDocumentsSection
+        data={documents.data}
+        isLoading={documents.isLoading}
+        error={documents.error}
+        onOpen={setOpenDocument}
+        onAdd={() => setAddingDocument(true)}
+      />
+
       {/* Everything, in one line of time. */}
       <section className="space-y-3">
-        <h2 className="text-xl font-bold flex items-center gap-2"><History className="w-5 h-5 text-primary" /> The record</h2>
+        <div className="flex items-center gap-3 flex-wrap">
+          <h2 className="flex-1 min-w-0 text-xl font-bold flex items-center gap-2"><History className="w-5 h-5 text-primary" /> The record</h2>
+          <button onClick={() => setAddingDocument(true)}
+            className="h-12 px-4 rounded-xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/50">
+            <FilePlus2 className="w-5 h-5" /> Add a document
+          </button>
+        </div>
         <div className="flex flex-wrap gap-2">
           {TIMELINE_FILTERS.filter(f => f.key !== "contracts" || counts.contracts > 0).map(f => (
             <button key={f.key} onClick={() => setFilter(f.key)} aria-pressed={filter === f.key}
@@ -641,6 +670,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
             return <MeetingCard key={e.key} meeting={e.meeting} notes={byMeeting.get(e.meeting.id) ?? []} {...meetingCardProps} />;
           }
           if (e.kind === "contract") return <ContractEntryCard key={e.key} entry={e.contract.entry} onOpen={setOpenContract} />;
+          if (e.kind === "document") return <DocumentEntryCard key={e.key} entry={e.document.entry} onOpen={setOpenDocument} />;
           return <NoteCard key={e.key} note={e.note} canManage={canManage} currentUserId={currentUserId} onChanged={refreshReviews} />;
         })}
 
@@ -686,6 +716,22 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
       )}
       {openContract && (
         <ContractOpenModal target={openContract} userId={p.id} personName={p.name} onClose={() => setOpenContract(null)} />
+      )}
+      {addingDocument && (
+        <AddDocumentModal
+          userId={p.id}
+          personName={p.name}
+          canSetVisibility={documents.data?.canSetVisibility ?? false}
+          onClose={() => setAddingDocument(false)}
+          onFiled={row => {
+            setAddingDocument(false);
+            void queryClient.invalidateQueries({ queryKey: personDocumentsKey(p.id) });
+            if (!isFiledFounderOnly(row)) setOpenDocument({ source: "filed", id: row.id });
+          }}
+        />
+      )}
+      {openDocument && (
+        <DocumentOpenModal target={openDocument} userId={p.id} personName={p.name} onClose={() => setOpenDocument(null)} />
       )}
       {openForm && (
         <PeopleModal title="Return-to-work form" onClose={() => { setOpenForm(null); refreshAll(); }} wide>

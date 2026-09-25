@@ -103,6 +103,7 @@ import starterFormsRouter from "./starter-forms";
 import issuePipelineMachineRouter from "./issue-pipeline-machine";
 import issuePipelineRouter from "./issue-pipeline";
 import peopleAccessRouter from "./people-access";
+import personDocumentsRouter from "./person-documents";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -273,6 +274,11 @@ router.use("/employee-reviews", requirePeopleUnlock, employeeReviewsRouter);
 // People — the list and each person's record (routes/people.ts): People
 // access only (403 otherwise, checked inside), private PIN set + unlocked.
 router.use("/people", requirePeopleUnlock, peopleRouter);
+// Documents on a person's record (routes/person-documents.ts). The People
+// side sits behind requirePeopleUnlock + People access INSIDE the router,
+// after /mine — the employee's own shared documents, which must never ask
+// for the People PIN. Founder-only documents are re-checked per request.
+router.use("/person-documents", personDocumentsRouter);
 // Who has People access — the founder's per-person switch in Settings →
 // Team & Access. Admin read, founder-only write, guarded inside the router.
 router.use("/people-access", peopleAccessRouter);
