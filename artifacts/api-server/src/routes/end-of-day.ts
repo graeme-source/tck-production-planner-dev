@@ -4,7 +4,7 @@
  *
  *   • builders batches per hour
  *   • packing boxes per hour
- *   • wonkies
+ *   • quality rejects — wonkies and dog bins as separate figures
  *   • improvements completed (done work only, never ideas)
  *
  * These are the SAME four the morning meeting shows, but for TODAY rather
@@ -28,6 +28,7 @@ import {
   computePackingOrdersPerHourForDay,
   countImprovementsCompletedForDay,
 } from "../lib/yesterday-kpis";
+import { sumQualityRejects } from "../lib/quality-rejects";
 
 const router: IRouter = Router();
 
@@ -55,19 +56,21 @@ router.get("/", async (req: Request, res: Response) => {
       .limit(1);
 
     let wonkyCount = 0;
+    let dogBinCount = 0;
     let batchesTarget = 0;
     if (plan) {
       const items = await db
         .select({
           wonlyTotal: productionPlanItemsTable.wonlyTotal,
+          dogBinCount: productionPlanItemsTable.dogBinCount,
           batchesTarget: productionPlanItemsTable.batchesTarget,
         })
         .from(productionPlanItemsTable)
         .where(eq(productionPlanItemsTable.planId, plan.id));
-      for (const it of items) {
-        wonkyCount += it.wonlyTotal ?? 0;
-        batchesTarget += it.batchesTarget ?? 0;
-      }
+      const rejects = sumQualityRejects(items);
+      wonkyCount = rejects.wonky;
+      dogBinCount = rejects.dogBin;
+      for (const it of items) batchesTarget += it.batchesTarget ?? 0;
     }
 
     // A KPI that can't be worked out yet must come back as null and say so on
@@ -103,7 +106,10 @@ router.get("/", async (req: Request, res: Response) => {
         totalBoxes: packing.totalOrders,
         activeMinutes: packing.activeMinutes,
       },
+      // Two classifications of quality reject, always reported separately:
+      // wonkies are sold as Wonky stock, dog bins are thrown away.
       wonkies: { count: wonkyCount, batchesTarget },
+      dogBins: { count: dogBinCount },
       // Completed improvements only, bucketed by when the person marked the
       // work done (lib/improvements-completed.ts has the full definition).
       improvements: { completed: improvementsCompleted },

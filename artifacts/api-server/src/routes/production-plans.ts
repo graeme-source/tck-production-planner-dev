@@ -7104,6 +7104,7 @@ router.get("/:id/packing", async (req, res) => {
       batchesComplete: productionPlanItemsTable.batchesComplete,
       wonlyCount: productionPlanItemsTable.wonlyCount,
       wonlyTotal: productionPlanItemsTable.wonlyTotal,
+      dogBinCount: productionPlanItemsTable.dogBinCount, // quality rejects (routes/quality-rejects.ts)
       wrappingComplete: productionPlanItemsTable.wrappingComplete,
       fridgeQty: productionPlanItemsTable.fridgeQty,
       fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
@@ -7142,6 +7143,8 @@ router.get("/:id/packing", async (req, res) => {
     const batchesComplete = Number(item.batchesComplete) || 0;
     const portionsPerBatch = Number(item.portionsPerBatch) || 10;
     const wonlyCount = Number(item.wonlyCount) || 0;
+    // Dog bins are thrown away, so they come off net output like wonkies.
+    const dogBinCount = Number(item.dogBinCount) || 0;
     const extraPacksBuilt = Number(item.extraPacksBuilt) || 0;
     const eightPackBagCount = Number(item.eightPackBagCount) || 0;
     // Once the builder has marked a recipe complete, the legacy shortCount is
@@ -7152,7 +7155,7 @@ router.get("/:id/packing", async (req, res) => {
     // only; Cinnamon Buns pack in sixes.
     const packSize = Number(item.packSize) || 2;
     const grossPacks = Math.floor((batchesComplete * portionsPerBatch) / packSize);
-    const netPacks = Math.max(0, grossPacks - (eightPackBagCount * 4) - wonlyCount - shortCount) + extraPacksBuilt;
+    const netPacks = Math.max(0, grossPacks - (eightPackBagCount * 4) - wonlyCount - dogBinCount - shortCount) + extraPacksBuilt;
     const itemDispatches = dispatches.filter(d => d.recipeId === item.recipeId);
 
     return {
@@ -7169,6 +7172,7 @@ router.get("/:id/packing", async (req, res) => {
       fridgeEightPackQty: Number(item.fridgeEightPackQty) || 0,
       eightPackBagCount,
       wonlyCount,
+      dogBinCount,
       grossPacks,
       netPacks,
       wrappingComplete: item.wrappingComplete ?? false,
@@ -7194,6 +7198,7 @@ router.get("/:id/packing", async (req, res) => {
     totalNetPacks: wrappedItems.reduce((sum, p) => sum + p.netPacks, 0),
     totalGrossPacks: wrappedItems.reduce((sum, p) => sum + p.grossPacks, 0),
     totalWonly: wrappedItems.reduce((sum, p) => sum + p.wonlyCount, 0),
+    totalDogBin: wrappedItems.reduce((sum, p) => sum + p.dogBinCount, 0),
   });
 });
 
@@ -9512,6 +9517,7 @@ router.post("/:id/reset", async (req, res) => {
         .set({
           batchesComplete: 0,
           wonlyCount: 0,
+          dogBinCount: 0,
           shortCount: 0,
           extraPacksBuilt: 0,
           eightPackBagCount: 0,
