@@ -9,7 +9,7 @@ import { useAuth } from "@/contexts/auth-context";
 import {
   Loader2, CheckCircle2, Flame, RefreshCw, AlertCircle, BarChart2,
   Minus, Plus, Snowflake, X, Eye, Scale, ThermometerSnowflake,
-  Hammer, ArrowDown,
+  Hammer, ArrowDown, Trash2,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -24,6 +24,7 @@ import { effectiveBatchesTarget, netTwoPacks as computeNetTwoPacks, packsTargetF
 import { RECIPE_RACK_COLOURS } from "./dough-sheeting-station";
 import { ovenChangeReminder } from "../shared/oven-reminder";
 import { OvenChangeBanner } from "../shared/oven-change-banner";
+import { QualityRejectSteppers, RejectStepper, rejectCount, useQualityRejects } from "../shared/quality-rejects-control";
 import { useOvenStandards, useRecipeOvenInputs } from "@/hooks/use-oven-settings";
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -66,7 +67,8 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
   const queryClient = useQueryClient();
   const { state } = useAuth();
   const isAdmin = state.status === "authenticated" && state.user.role === "admin";
-  const [wonlyLoading, setWonlyLoading] = useState<number | null>(null);
+  // Quality rejects — Wonky and Dog bin, side by side (shared/quality-rejects-control).
+  const rejects = useQualityRejects({ planId: plan.id, stationType: "ovens" });
   // Recipes that bake differently from their profile's standard get the same
   // amber "oven change" strip the builders see (shared/oven-reminder.ts).
   const ovenStandards = useOvenStandards();
@@ -80,7 +82,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
   // through Prev/Next on the bottom dock or by picking from the queue sheet.
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
-  // Prompt state: when a recipe finishes all batches, prompt for wonky before moving on
+  // Prompt state: when a recipe finishes all batches, prompt for quality rejects (wonky / dog bin) before moving on
   const [promptItemId, setPromptItemId] = useState<number | null>(null);
   const [prevCurrentId, setPrevCurrentId] = useState<number | null>(null);
 
@@ -189,7 +191,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
   useEffect(() => {
     const curId = currentItem?.id ?? null;
     if (prevCurrentId !== null && curId !== prevCurrentId) {
-      // The previous recipe just completed — prompt for wonky
+      // The previous recipe just completed — prompt for quality rejects
       setPromptItemId(prevCurrentId);
       // Auto-advance to the new current recipe
       setSelectedItemId(curId);
@@ -375,32 +377,6 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
     });
   };
 
-  const [runWonlyAction, wonlyBusy] = useGuardedAction({
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
-  });
-
-  const addWonly = async (item: ProductionPlanItem) => {
-    setWonlyLoading(item.id);
-    await runWonlyAction(async (signal) => {
-      await guardedFetch(`/api/production-plans/${plan.id}/items/${item.id}/wonly`, {
-        method: "POST", signal,
-      });
-      toast({ title: "Wonky recorded", description: `Quality reject logged for ${item.recipeName ?? "recipe"}.` });
-    });
-    setWonlyLoading(null);
-  };
-
-  const undoWonly = async (item: ProductionPlanItem) => {
-    if ((item.wonlyCount ?? 0) === 0) return;
-    setWonlyLoading(item.id);
-    await runWonlyAction(async (signal) => {
-      await guardedFetch(`/api/production-plans/${plan.id}/items/${item.id}/wonly`, {
-        method: "DELETE", signal,
-      });
-    });
-    setWonlyLoading(null);
-  };
-
   // Extra packs adjustment
   const [runExtraAction, extraBusy] = useGuardedAction({
     onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
@@ -487,6 +463,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
 
   const sessionGrossPacks = items.reduce((s, it) => s + grossPacks(it), 0);
   const sessionWonly = items.reduce((s, it) => s + (it.wonlyCount ?? 0), 0);
+  const sessionDogBin = items.reduce((s, it) => s + (it.dogBinCount ?? 0), 0);
   const sessionNetTwoPacks = items.reduce((s, it) => s + netTwoPacks(it), 0);
   const sessionEightPackBags = items.reduce((s, it) => s + (it.eightPackBagCount ?? 0), 0);
   const sessionExtraPacks = items.reduce((s, it) => s + (it.extraPacksBuilt ?? 0), 0);
@@ -613,14 +590,16 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
         return viewRowSlot ? createPortal(strip, viewRowSlot) : strip;
       })()}
 
-      {/* Wonky prompt — shown when a recipe just finished all batches */}
+      {/* Quality-reject prompt — shown when a recipe just finished all
+          batches. Wonky (sold as wonky) and Dog bin (thrown away) side by
+          side, same + / − as the recipe panel. */}
       {promptItem && (
         <div className="bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-400 dark:border-amber-600 rounded-xl p-5">
           <div className="flex items-start gap-3 mb-3">
             <AlertCircle className="w-6 h-6 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
             <div className="flex-1">
               <h3 className="font-bold text-lg text-amber-800 dark:text-amber-200">
-                Any wonky calzones for {promptItem.recipeName ?? "this recipe"}?
+                Any quality rejects for {promptItem.recipeName ?? "this recipe"}?
               </h3>
               <p className="text-sm text-amber-700 dark:text-amber-300 mt-0.5">
                 Through the ovens for this recipe:{" "}
@@ -630,34 +609,15 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                 {" "}— check this matches what physically came out before moving on.
               </p>
               <p className="text-sm text-amber-700 dark:text-amber-300 mt-0.5">
-                Record any quality rejects before moving on.
-                Current wonky count: <strong>{promptItem.wonlyCount ?? 0}</strong>
+                Record any rejects before moving on: <strong>Wonky</strong> if it can still be sold as wonky, <strong>Dog bin</strong> if it's thrown away.
               </p>
             </div>
           </div>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => undoWonly(promptItem)}
-                disabled={(promptItem.wonlyCount ?? 0) === 0 || wonlyLoading === promptItem.id || wonlyBusy}
-                className="w-12 h-12 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
-              >
-                <Minus className="w-5 h-5" />
-              </button>
-              <span className="text-3xl font-bold tabular-nums w-12 text-center text-red-600 dark:text-red-400">
-                {wonlyLoading === promptItem.id ? "…" : (promptItem.wonlyCount ?? 0)}
-              </span>
-              <button
-                onClick={() => addWonly(promptItem)}
-                disabled={wonlyLoading === promptItem.id || wonlyBusy}
-                className="w-12 h-12 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
-              >
-                <Plus className="w-5 h-5" />
-              </button>
-            </div>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <QualityRejectSteppers item={promptItem} rejects={rejects} className="flex-1" />
             <button
               onClick={() => setPromptItemId(null)}
-              className="px-5 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-semibold transition-colors"
+              className="min-h-12 px-6 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-semibold transition-colors"
             >
               Done
             </button>
@@ -682,6 +642,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
         const nTwoPacks = netTwoPacks(item);
         const trays = chillerTrays(item);
         const wonlys = item.wonlyCount ?? 0;
+        const dogBins = item.dogBinCount ?? 0;
         const eightPacks = item.eightPackBagCount ?? 0;
         const recipeColour = item.recipeColor ?? RECIPE_RACK_COLOURS[idx % RECIPE_RACK_COLOURS.length];
 
@@ -957,44 +918,43 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                             </div>
                           )}
 
+                          {/* Dog bins never reach the chiller — they're in
+                              the bin, and already off Net above. */}
+                          {dogBins > 0 && (
+                            <p className="mt-2 flex items-center justify-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
+                              <Trash2 className="w-4 h-4" />
+                              {dogBins} dog bin — thrown away, not in the chiller
+                            </p>
+                          )}
                         </div>
                       );
                     })()}
 
-                    {/* Wonky + Extra Packs share a row on iPad landscape, as
-                        do Chill Timer + 8-Pack Bags below — four stacked
-                        full-width rows were most of the page's under-scroll
-                        (Graeme, 2026-09-16). Phones stack them again. */}
-                    <div className="grid md:grid-cols-2 gap-x-8 gap-y-3 border-t border-border pt-3">
-                      {/* Wonky quality rejects */}
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-semibold text-muted-foreground">Quality Rejects (Wonky)</p>
-                          <p className="text-xs text-muted-foreground">Not counted in output</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); undoWonly(item); }}
-                            disabled={(item.wonlyCount ?? 0) === 0 || wonlyLoading === item.id || wonlyBusy || isOnBreak}
-                            className="w-10 h-10 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
-                          >
-                            <Minus className="w-4 h-4" />
-                          </button>
-                          <span className="text-2xl font-bold tabular-nums w-9 text-center text-red-600 dark:text-red-400">
-                            {wonlyLoading === item.id ? "…" : wonlys}
-                          </span>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); addWonly(item); }}
-                            disabled={wonlyLoading === item.id || wonlyBusy || isOnBreak}
-                            className="w-10 h-10 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
-                          >
-                            <Plus className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
+                    {/* Quality rejects (Wonky, Dog bin) + Extra Packs share
+                        one row on iPad landscape, as do Chill Timer + 8-Pack
+                        Bags below — stacked full-width rows were most of the
+                        page's under-scroll (Graeme, 2026-09-16). Phones
+                        stack them again. */}
+                    <div className="grid md:grid-cols-3 gap-x-4 gap-y-3 border-t border-border pt-3 items-center">
+                      <RejectStepper
+                        kind="wonky"
+                        count={rejectCount(item, "wonky")}
+                        pending={rejects.isPending(item.id, "wonky")}
+                        onAdd={() => rejects.add(item, "wonky")}
+                        onRemove={() => rejects.remove(item, "wonky")}
+                        disabled={rejects.busy || isOnBreak}
+                      />
+                      <RejectStepper
+                        kind="dog_bin"
+                        count={rejectCount(item, "dog_bin")}
+                        pending={rejects.isPending(item.id, "dog_bin")}
+                        onAdd={() => rejects.add(item, "dog_bin")}
+                        onRemove={() => rejects.remove(item, "dog_bin")}
+                        disabled={rejects.busy || isOnBreak}
+                      />
 
                       {/* Extra packs */}
-                      <div className="flex items-center justify-between border-t md:border-t-0 md:border-l border-border pt-3 md:pt-0 md:pl-8">
+                      <div className="flex items-center justify-between border-t md:border-t-0 md:border-l border-border pt-3 md:pt-0 md:pl-4">
                         <div>
                           <p className="text-sm font-semibold text-muted-foreground">Extra Packs</p>
                         </div>
@@ -1213,7 +1173,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
               {/* Session totals — live under the queue so the day's summary
                   is always found in the same place. */}
               <div className="px-3 py-3 border-t border-border space-y-3">
-                <div className={cn("grid gap-2", sessionEightPackBags > 0 ? "grid-cols-5" : "grid-cols-4")}>
+                <div className={cn("grid gap-2", sessionEightPackBags > 0 ? "grid-cols-3 sm:grid-cols-6" : "grid-cols-3 sm:grid-cols-5")}>
                   <div className="bg-card border border-border rounded-xl p-3 text-center">
                     <p className="text-sm text-muted-foreground mb-1">Gross Packs</p>
                     <p className="text-2xl font-bold tabular-nums">{sessionGrossPacks}</p>
@@ -1221,6 +1181,10 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                   <div className="bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-xl p-3 text-center">
                     <p className="text-sm text-red-700 dark:text-red-300 mb-1">Wonky</p>
                     <p className="text-2xl font-bold tabular-nums text-red-600 dark:text-red-400">{sessionWonly}</p>
+                  </div>
+                  <div className="bg-slate-100 dark:bg-slate-900/40 border border-slate-300 dark:border-slate-700 rounded-xl p-3 text-center">
+                    <p className="text-sm text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-center gap-1"><Trash2 className="w-3.5 h-3.5" /> Dog bin</p>
+                    <p className="text-2xl font-bold tabular-nums text-slate-700 dark:text-slate-200">{sessionDogBin}</p>
                   </div>
                   <div className="bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3 text-center">
                     <p className="text-sm text-emerald-700 dark:text-emerald-300 mb-1">Net 2-Pk</p>

@@ -6,7 +6,7 @@ import {
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import {
-  Loader2, Plus, Minus, CheckCircle2, Snowflake, AlertCircle, Gift, Flame, ChevronDown, ThermometerSnowflake, ArrowDown, ClipboardList, PackageCheck, X,
+  Loader2, Plus, Minus, CheckCircle2, Snowflake, AlertCircle, Gift, Flame, ChevronDown, ThermometerSnowflake, ArrowDown, ClipboardList, PackageCheck, X, Trash2,
 } from "lucide-react";
 import { Link } from "wouter";
 import { cn } from "@/lib/utils";
@@ -20,6 +20,8 @@ import { createPortal } from "react-dom";
 import { getStationCount, getAvailableFromPrev, compareItemsForDisplay, STATION_VIEW_ROW_SLOT_ID, type StationPlanItem } from "../shared/constants";
 import { QueueDock, QueueSheet } from "../shared/station-queue";
 import { netTwoPacks as computeNetTwoPacks, effectiveBatchesTarget } from "../shared/recipe-completion";
+import { QualityRejectSteppers, useQualityRejects } from "../shared/quality-rejects-control";
+import { formatQualityRejects, packsLeftToClassify } from "@/lib/quality-rejects";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
 import { fetchFridgeAvailability, computeFridgeAllocation, type GateOrder } from "@/lib/fridge-gate";
 import { isCollection, isDispatchTagged, isLocalDelivery } from "@/lib/dispatch-tagging";
@@ -112,7 +114,6 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   });
   const [wrappingLoading, setWrappingLoading] = useState<number | null>(null);
   const [storageLoading, setStorageLoading] = useState<number | null>(null);
-  const [wonlyLoading, setWonlyLoading] = useState<number | null>(null);
   const [customAmounts, setCustomAmounts] = useState<Record<number, string>>({});
   // Where this item's wrapped packs are being stored. Defaults to the
   // Production Fridge (the calzone flow, unchanged); the wrapper flips it to
@@ -171,8 +172,27 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   });
   const sopViewer = useSopViewer("wrapping");
 
-  const [runWonlyAction, wonlyBusy] = useGuardedAction({
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [`/api/production-plans/${plan.id}`] }),
+  // Quality rejects — Wonky and Dog bin side by side on the reject rack. A
+  // reject can only be recorded while some of the oven output is still
+  // unaccounted for (not in the fridge, freezer, on the rack or in the bin).
+  const rejects = useQualityRejects({
+    planId: plan.id,
+    stationType: "wrapping",
+    beforeAdd: (rejectItem) => {
+      const item = (plan.items ?? []).find(it => it.id === rejectItem.id);
+      if (!item) return null;
+      const gross = grossPacks(item);
+      const left = packsLeftToClassify({
+        grossPacks: gross,
+        fridgeQty: item.fridgeQty ?? 0,
+        freezerQty: item.freezerQty ?? 0,
+        wonlyCount: item.wonlyCount ?? 0,
+        dogBinCount: item.dogBinCount ?? 0,
+      });
+      return left > 0
+        ? null
+        : `All ${gross} packs are already accounted for (${item.fridgeQty ?? 0} fridge, ${formatQualityRejects(item.wonlyCount ?? 0, item.dogBinCount ?? 0)}). Remove fridge stock first if packs need reclassifying.`;
+    },
   });
   const [runWonkyTransfer, wonkyTransferLoading] = useGuardedAction();
   const [runWrappingAction, wrappingBusy] = useGuardedAction();
@@ -232,37 +252,6 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
       .catch((err) => { console.warn("[WrappingStation] Post-oven map fetch failed:", err); });
   }, [plan.id]);
 
-  const addWonly = async (item: ProductionPlanItem) => {
-    // Prevent adding wonky if all gross packs are already accounted for
-    const gross = grossPacks(item);
-    const wonky = item.wonlyCount ?? 0;
-    const fridge = item.fridgeQty ?? 0;
-    const freezer = item.freezerQty ?? 0;
-    const totalAccountedFor = fridge + freezer + wonky;
-    if (totalAccountedFor >= gross) {
-      toast({ title: "No stock available", description: `All ${gross} packs are already accounted for (${fridge} fridge, ${wonky} wonky). Remove fridge stock first if packs need reclassifying.`, variant: "destructive" });
-      return;
-    }
-    setWonlyLoading(item.id);
-    await runWonlyAction(async (signal) => {
-      await guardedFetch(`/api/production-plans/${plan.id}/items/${item.id}/wonly`, {
-        method: "POST", signal,
-      });
-    });
-    setWonlyLoading(null);
-  };
-
-  const removeWonly = async (item: ProductionPlanItem) => {
-    if ((item.wonlyCount ?? 0) <= 0) return;
-    setWonlyLoading(item.id);
-    await runWonlyAction(async (signal) => {
-      await guardedFetch(`/api/production-plans/${plan.id}/items/${item.id}/wonly`, {
-        method: "DELETE", signal,
-      });
-    });
-    setWonlyLoading(null);
-  };
-
   const wonkyToFreezer = async () => {
     await runWonkyTransfer(async (signal) => {
       const res = await guardedFetch(`/api/production-plans/${plan.id}/wonky-to-freezer`, {
@@ -301,6 +290,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
     netTwoPacks(item) + (item.eightPackBagCount ?? 0);
 
   const totalWonly = items.reduce((s, it) => s + (it.wonlyCount ?? 0), 0);
+  const totalDogBin = items.reduce((s, it) => s + (it.dogBinCount ?? 0), 0);
   // After a transfer, the success banner replaces the transfer button and
   // disables every +/− wonky button. If the oven operator adds fresh wonky
   // afterwards, those new packs would be stuck — visible but unactionable.
@@ -699,6 +689,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
               {wrappedCount}/{items.length} wrapped
               <span className="text-xs font-normal text-muted-foreground"> · {totalFridge}/{totalNet} pk</span>
               {totalWonly > 0 && <span className="text-xs font-normal text-red-500"> · {totalWonly} wonky</span>}
+              {totalDogBin > 0 && <span className="text-xs font-normal text-slate-600 dark:text-slate-300"> · {totalDogBin} dog bin</span>}
             </p>
             <div className="flex-1 min-w-[60px] h-2 bg-secondary rounded-full overflow-hidden">
               <div
@@ -733,7 +724,10 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
             // wonky-to-freezer transfer. Falls back to wonlyCount if the
             // field isn't present (older API client cache).
             const wonkiesRecorded = ((item as ProductionPlanItem & { wonlyTotal?: number }).wonlyTotal ?? item.wonlyCount ?? 0);
-            const produced = net + wonkiesRecorded;
+            // Dog bins came out of the ovens too — they're off Net (thrown
+            // away), so they're added back to show everything produced.
+            const dogBins = item.dogBinCount ?? 0;
+            const produced = net + wonkiesRecorded + dogBins;
             const eightPkCount = item.eightPackBagCount ?? 0;
             const eightPkFridge = item.fridgeEightPackQty ?? 0;
             // Of the total bags, the case-order freezer split. Fridge bags are
@@ -829,7 +823,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                       </button>
                     </div>
 
-                    {/* From Chiller — Net + Wonky = Produced. Mirrors the
+                    {/* From Chiller — Net + Wonky (+ Dog bin) = Produced. Mirrors the
                         oven station's blast chiller card so the hand-off is
                         obvious: everything that came out of the chiller, split
                         between good and wonky. The "=" column is suppressed
@@ -856,6 +850,17 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                             {wonkiesRecorded}
                           </p>
                         </div>
+                        {dogBins > 0 && (
+                          <>
+                            <div className="flex items-center text-2xl text-muted-foreground font-light">+</div>
+                            <div className="flex-1 text-center bg-slate-100/80 dark:bg-slate-900/40 rounded-lg border border-slate-300 dark:border-slate-700 py-2">
+                              <p className="text-xs text-slate-700 dark:text-slate-300 font-medium mb-0.5 flex items-center justify-center gap-1"><Trash2 className="w-3 h-3" /> Dog bin</p>
+                              <p className="text-3xl font-bold tabular-nums leading-tight text-slate-700 dark:text-slate-200">
+                                {dogBins}
+                              </p>
+                            </div>
+                          </>
+                        )}
                         {eightPkCount === 0 && (
                           <>
                             <div className="flex items-center text-2xl text-muted-foreground font-light">=</div>
@@ -1263,59 +1268,45 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
               unitNoun="pack"
             />
 
-      {/* ── Wonky Rack dedicated panel ── */}
+      {/* ── Quality rejects: Wonky Rack + Dog bin ──
+          Wonky (bottom of rack 1, sold as wonky) and Dog bin (thrown away)
+          side by side per recipe. Only the wonkies are transferred to the
+          Product Freezer below — dog bins never become stock. */}
       <div className="rounded-xl border-2 border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/30 overflow-hidden">
         <div className="flex items-center gap-3 px-4 py-3 bg-red-100 dark:bg-red-900/40 border-b border-red-200 dark:border-red-800">
           <div className="w-9 h-9 rounded-full bg-red-500 text-white flex items-center justify-center flex-shrink-0">
             <AlertCircle className="w-5 h-5" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="font-bold text-lg text-red-800 dark:text-red-200">Wonky Rack</p>
-            <p className="text-sm text-red-600 dark:text-red-400">Bottom of rack 1 — rejected packs by recipe</p>
+            <p className="font-bold text-lg text-red-800 dark:text-red-200">Quality Rejects</p>
+            <p className="text-sm text-red-600 dark:text-red-400">Wonky → bottom of rack 1 · Dog bin → thrown away</p>
           </div>
-          <div className="text-right">
-            <p className="text-3xl font-bold tabular-nums text-red-600 dark:text-red-400">{totalWonly}</p>
-            <p className="text-xs text-red-500 dark:text-red-500">total wonky</p>
+          <div className="flex items-end gap-4 text-right">
+            <div>
+              <p className="text-3xl font-bold tabular-nums text-red-600 dark:text-red-400">{totalWonly}</p>
+              <p className="text-xs text-red-500 dark:text-red-500">wonky on rack</p>
+            </div>
+            <div>
+              <p className="text-3xl font-bold tabular-nums text-slate-700 dark:text-slate-200">{totalDogBin}</p>
+              <p className="text-xs text-slate-600 dark:text-slate-400 flex items-center justify-end gap-1"><Trash2 className="w-3 h-3" /> dog bin</p>
+            </div>
           </div>
         </div>
 
         <div className="divide-y divide-red-200 dark:divide-red-800">
-          {items.map(item => {
-            const wonlys = item.wonlyCount ?? 0;
-            return (
-              <div key={item.id} className="flex items-center gap-3 px-4 py-2.5">
-                <div className="flex-1 min-w-0">
-                  <p className="text-base font-medium text-foreground truncate">{item.recipeName}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => removeWonly(item)}
-                    disabled={wonlyLoading === item.id || wonlyBusy || wonlys <= 0 || isOnBreak || !!wonkyTransferResult}
-                    className="w-9 h-9 flex items-center justify-center rounded-full border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 disabled:opacity-40 transition-colors"
-                  >
-                    <Minus className="w-4 h-4" />
-                  </button>
-                  <span className={cn(
-                    "text-xl font-bold tabular-nums w-8 text-center",
-                    wonlys > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground"
-                  )}>
-                    {wonlyLoading === item.id
-                      ? <Loader2 className="w-3.5 h-3.5 animate-spin mx-auto" />
-                      : wonlys}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => addWonly(item)}
-                    disabled={wonlyLoading === item.id || wonlyBusy || isOnBreak || !!wonkyTransferResult}
-                    className="w-9 h-9 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 disabled:opacity-40 transition-colors"
-                  >
-                    <Plus className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+          {items.map(item => (
+            <div key={item.id} className="px-4 py-2.5 space-y-2 lg:space-y-0 lg:flex lg:items-center lg:gap-3">
+              <p className="text-base font-medium text-foreground truncate lg:flex-1 lg:min-w-0">{item.recipeName}</p>
+              <QualityRejectSteppers
+                item={item}
+                rejects={rejects}
+                compact
+                disabled={isOnBreak}
+                wonkyLocked={!!wonkyTransferResult}
+                className="lg:w-[28rem] lg:flex-shrink-0"
+              />
+            </div>
+          ))}
         </div>
 
         <div className="px-4 py-3 border-t border-red-200 dark:border-red-800">
