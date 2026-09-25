@@ -3417,6 +3417,12 @@ async function startup() {
     const { startRtwScheduler } = await import("./lib/rtw-scheduler");
     startRtwScheduler();
 
+    // Team efficiency KPI: one-off 12-month backfill on first boot after
+    // deploy, then the last 10 production days recomputed nightly so late
+    // Planday approvals land. Table-guarded; Planday read-only.
+    const { startTeamEfficiencyScheduler } = await import("./services/team-efficiency-job");
+    startTeamEfficiencyScheduler();
+
     // Stock gate — holds products back from next-day delivery when the
     // fridge-vs-despatch surplus runs low. Self-gates on stock_gate_enabled
     // (default false) + dry-run, so it's a no-op until configured. One
