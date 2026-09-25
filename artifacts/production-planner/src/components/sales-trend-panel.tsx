@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SalesTrendChart } from "@/components/sales-trend-chart";
 import { useSalesTrend } from "@/hooks/use-sales-trend";
 import {
-  chartPoints, formatMetric, granularityLabel, headlineNote, TREND_METRICS, unavailableReason,
+  chartPoints, formatMetric, granularityLabel, headlineNote, partialBucketNote, TREND_METRICS, unavailableReason,
   type Granularity, type TrendMetricId,
 } from "@/lib/sales-trend-view";
 
@@ -102,7 +102,7 @@ export function SalesTrendPanel({ metric, from, to, title, periodCaption, series
           </div>
         )}
         {series && series.allowed.length > 1 && (
-          <div className="inline-flex rounded-lg border border-border p-0.5" role="group" aria-label="Graph by day or by week">
+          <div className="inline-flex rounded-lg border border-border p-0.5" role="group" aria-label="Graph by day, week or month">
             {series.allowed.map((g) => (
               <button
                 key={g}
@@ -147,10 +147,8 @@ export function SalesTrendPanel({ metric, from, to, title, periodCaption, series
         />
       )}
 
-      {series && series.granularity === "week" && series.buckets.some((b) => b.partial) && (
-        <p className="text-xs text-muted-foreground mt-2">
-          The first or last week is only partly inside this period — hover it to see how many days it covers.
-        </p>
+      {series && partialBucketNote(series) && (
+        <p className="text-xs text-muted-foreground mt-2">{partialBucketNote(series)}</p>
       )}
       {series && series.outsideOrders > 0 && (
         <p className="text-xs text-amber-600 dark:text-amber-500 mt-2 flex items-start gap-1">

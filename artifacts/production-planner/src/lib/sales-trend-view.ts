@@ -10,7 +10,7 @@
  * tile above it — never a sum or mean re-derived from the drawn points.
  */
 
-export type Granularity = "hour" | "day" | "week";
+export type Granularity = "hour" | "day" | "week" | "month";
 
 /** The per-bucket and whole-period figures (mirrors the server's TrendFigures). */
 export interface TrendFigures {
@@ -40,6 +40,9 @@ export interface TrendBucket extends TrendFigures {
   hourOfDay: number | null;
   dayCount: number;
   future: boolean;
+  /** Still running at "now". */
+  running: boolean;
+  /** Running, or a week/month the period only partly covers. */
   partial: boolean;
 }
 
@@ -118,7 +121,22 @@ export function formatAxis(format: MetricFormat, v: number): string {
 }
 
 export function granularityLabel(g: Granularity): string {
-  return g === "hour" ? "By the hour" : g === "day" ? "Daily" : "Weekly";
+  return g === "hour" ? "By the hour" : g === "day" ? "Daily" : g === "week" ? "Weekly" : "Monthly";
+}
+
+/**
+ * The note under a weekly or monthly graph when its first or last bucket is
+ * only partly inside the period — so a short week or half month isn't read
+ * as a bad one. null when there's nothing to say.
+ */
+export function partialBucketNote(series: TrendSeries): string | null {
+  if (series.granularity !== "week" && series.granularity !== "month") return null;
+  const short = series.buckets.filter(b => b.partial && !b.future);
+  if (short.length === 0) return null;
+  const unit = series.granularity === "week" ? "week" : "month";
+  const running = short.some(b => b.running);
+  return `${short.length === 1 ? `One ${unit} is` : `The first and last ${unit}s are`} only partly inside this period${running ? " (or still running)" : ""}` +
+    `${unit === "month" ? ", marked \"(part)\"" : ""} — hover to see how many days ${short.length === 1 ? "it covers" : "each covers"}.`;
 }
 
 /** A per-basket bucket resting on this many paid orders or fewer is drawn lighter. */
@@ -133,6 +151,8 @@ export interface ChartPoint {
   /** The comparison day's figure for the same hour, when one is shown. */
   compare: number | null;
   partial: boolean;
+  /** The hour/day/week/month isn't over yet (tooltip: "still running"). */
+  running: boolean;
   /** For the tooltip: the bucket's revenue, orders and paid orders. */
   revenue: number;
   orders: number;
@@ -172,6 +192,7 @@ export function chartPoints(series: TrendSeries, metric: TrendMetricId, comparis
       value,
       compare: b.hourOfDay != null && compareByHour.has(b.hourOfDay) ? compareByHour.get(b.hourOfDay) ?? null : null,
       partial: b.partial && !b.future,
+      running: b.running,
       revenue: b.revenue,
       orders: b.orders,
       paidOrders: b.paidOrders,

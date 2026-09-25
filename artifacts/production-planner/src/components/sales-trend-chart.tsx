@@ -51,7 +51,7 @@ function TipBox({ active, payload, format, seriesName, compareName, perBasket }:
   const unpaid = p.orders - p.paidOrders;
   return (
     <div className="rounded-xl border border-border bg-card px-3 py-2 shadow-lg text-sm max-w-[16rem]">
-      <p className="font-semibold text-foreground">{p.longLabel}{p.partial ? " · still running" : ""}</p>
+      <p className="font-semibold text-foreground">{p.longLabel}{p.running ? " · still running" : ""}</p>
       <p className="text-muted-foreground">
         {compareName ? `${seriesName}: ` : perBasket ? "AOV: " : ""}
         <span className="font-semibold text-foreground tabular-nums">{formatMetric(format, p.value)}</span>
@@ -70,7 +70,7 @@ function TipBox({ active, payload, format, seriesName, compareName, perBasket }:
               Few orders — one basket can swing this hour.
             </p>
           )}
-          {p.value == null && p.paidOrders === 0 && !p.partial && (
+          {p.value == null && p.paidOrders === 0 && !p.running && (
             <p className="text-xs text-muted-foreground mt-1">No paid orders this hour.</p>
           )}
         </>
