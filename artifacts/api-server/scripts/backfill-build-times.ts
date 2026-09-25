@@ -7,15 +7,13 @@
  * recipes.target_build_seconds. The production-schedule timeline reads that
  * value, so this seeds the schedule from reality instead of hand-entered guesses.
  *
- * Method (kept deliberately simple):
- *   - Look at every building-station completion (building_1 / building_2) in the
- *     window, grouped by (plan item, station) and ordered by time.
- *   - The gap between two consecutive completions in the same stream is how long
- *     that one batch took for one builder.
- *   - Drop gaps that aren't real build time: <= 0, or longer than MAX_GAP_MIN
- *     (those span breaks, changeovers, or the end of a recipe run).
- *   - Per recipe, take the MEDIAN of the remaining gaps (robust to outliers).
- *   - Proposed target_build_seconds = round(median minutes × 60).
+ * Method: src/lib/timing-suggestions.ts (suggestBuildSeconds) — the SAME rules
+ * the Recipes page "Timing data" card uses for its suggestions, so this script
+ * and the app can never propose different numbers. In short: the gap between
+ * consecutive completions in one (plan item, station) stream is one builder's
+ * batch; gaps under 20 s, over 25 min, or containing a logged station break
+ * are dropped, then anything over 3× the median, and the median of the rest
+ * is the proposal.
  *
  * This is a SINGLE-BUILDER pace, which is exactly what the schedule wants — it
  * divides by the builder count itself.
@@ -33,34 +31,28 @@
  */
 
 import { pool } from "@workspace/db";
+import { BUILD_RULES, suggestBuildSeconds, type BuildCompletion, type StationBreakInterval } from "../src/lib/timing-suggestions";
 
 const args = process.argv.slice(2);
 const APPLY = args.includes("--apply");
 const DAYS = Number(args.find(a => a.startsWith("--days="))?.split("=")[1] ?? 30);
-const MIN_SAMPLES = Number(args.find(a => a.startsWith("--min="))?.split("=")[1] ?? 5);
-const MAX_GAP_MIN = 25; // gaps longer than this aren't a single batch
-const MIN_GAP_SEC = 20; // gaps shorter than this are double-taps / errors
-
-function median(xs: number[]): number {
-  const s = [...xs].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
-}
+const MIN_SAMPLES = Number(args.find(a => a.startsWith("--min="))?.split("=")[1] ?? BUILD_RULES.minSamples);
 
 async function main() {
   console.log(`\nBuild-time backfill — last ${DAYS} days, ${APPLY ? "APPLY" : "DRY RUN"}\n`);
 
-  // Pull building completions joined to recipe, ordered for gap analysis.
+  // Pull building completions joined to recipe, plus the builders' logged breaks.
   const { rows } = await pool.query<{
     recipe_id: number;
     recipe_name: string;
+    plan_id: number;
     plan_item_id: number;
     station_type: string;
     completed_at: string;
     current_target: number | null;
   }>(`
     SELECT r.id AS recipe_id, r.name AS recipe_name,
-           bc.plan_item_id, bc.station_type, bc.completed_at,
+           pi.plan_id, bc.plan_item_id, bc.station_type, bc.completed_at,
            r.target_build_seconds AS current_target
     FROM batch_completions bc
     JOIN production_plan_items pi ON pi.id = bc.plan_item_id
@@ -72,43 +64,43 @@ async function main() {
       -- gaps say nothing about build pace, and the day schedule excludes the
       -- category anyway.
       AND r.category IS DISTINCT FROM 'Macaroni Cheese'
-    ORDER BY bc.plan_item_id, bc.station_type, bc.completed_at
+  `, [DAYS]);
+  const { rows: breakRows } = await pool.query<{ plan_id: number; station_type: string; started_at: string; ended_at: string | null }>(`
+    SELECT plan_id, station_type, started_at, ended_at
+    FROM station_breaks
+    WHERE station_type IN ('building_1', 'building_2')
+      AND started_at >= NOW() - (($1::int + 1) || ' days')::interval
   `, [DAYS]);
 
-  // Walk each (plan item, station) stream, collecting per-batch gaps by recipe.
-  const gapsByRecipe = new Map<number, number[]>();
   const recipeName = new Map<number, string>();
   const currentTarget = new Map<number, number | null>();
-
-  let prevKey = "";
-  let prevTime = 0;
-  for (const row of rows) {
+  const completions: BuildCompletion[] = rows.map(row => {
     recipeName.set(row.recipe_id, row.recipe_name);
     currentTarget.set(row.recipe_id, row.current_target);
-    const key = `${row.plan_item_id}:${row.station_type}`;
-    const t = new Date(row.completed_at).getTime();
-    if (key === prevKey) {
-      const gapMin = (t - prevTime) / 60000;
-      if (gapMin * 60 >= MIN_GAP_SEC && gapMin <= MAX_GAP_MIN) {
-        const list = gapsByRecipe.get(row.recipe_id) ?? [];
-        list.push(gapMin);
-        gapsByRecipe.set(row.recipe_id, list);
-      }
-    }
-    prevKey = key;
-    prevTime = t;
-  }
+    return {
+      recipeId: row.recipe_id,
+      planId: row.plan_id,
+      planItemId: row.plan_item_id,
+      stationType: row.station_type,
+      completedAtMs: new Date(row.completed_at).getTime(),
+    };
+  });
+  const breaks: StationBreakInterval[] = breakRows.map(b => ({
+    planId: b.plan_id,
+    stationType: b.station_type,
+    startMs: new Date(b.started_at).getTime(),
+    endMs: b.ended_at ? new Date(b.ended_at).getTime() : null,
+  }));
 
+  const suggestions = suggestBuildSeconds(completions, breaks, { ...BUILD_RULES, minSamples: MIN_SAMPLES });
   const proposals: { recipeId: number; name: string; samples: number; medianMin: number; seconds: number; current: number | null }[] = [];
-  for (const [recipeId, gaps] of gapsByRecipe) {
-    if (gaps.length < MIN_SAMPLES) continue;
-    const medMin = median(gaps);
+  for (const [recipeId, s] of suggestions) {
     proposals.push({
       recipeId,
       name: recipeName.get(recipeId) ?? `#${recipeId}`,
-      samples: gaps.length,
-      medianMin: Math.round(medMin * 10) / 10,
-      seconds: Math.round(medMin * 60),
+      samples: s.samples,
+      medianMin: Math.round((s.value / 60) * 10) / 10,
+      seconds: s.value,
       current: currentTarget.get(recipeId) ?? null,
     });
   }
