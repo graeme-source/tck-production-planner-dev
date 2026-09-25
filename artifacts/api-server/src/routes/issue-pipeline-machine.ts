@@ -27,8 +27,8 @@ import {
   MACHINE_TARGETS,
   TRIAGE_LANES,
   checkMachineToken,
+  machineIssueWanted,
   machineMoveVerdict,
-  matchesAreaFilter,
   parseBearer,
   pipelineMayHandle,
   resolveIssueVerdict,
@@ -106,12 +106,12 @@ router.get("/issues", async (req, res) => {
       .where(conds.length ? and(...conds) : undefined)
       .orderBy(desc(andonIssuesTable.createdAt));
 
-    const inArea = rows.filter(r => matchesAreaFilter(area, r.area, r.station));
-    const triage = await triageByIssueId(inArea.map(r => r.id));
+    const triage = await triageByIssueId(rows.map(r => r.id));
     // Default: only what still needs the session's attention — no triage row
-    // yet, or Graeme replied and asked for another look.
-    const wanted = inArea
-      .filter(r => includeTriaged || !triage.has(r.id) || triage.get(r.id)!.awaitingRetriage)
+    // yet (in the chosen area), or Graeme replied and asked for another look
+    // (any area — see machineIssueWanted).
+    const wanted = rows
+      .filter(r => machineIssueWanted(area, r, triage.get(r.id), includeTriaged))
       .slice(0, limit);
 
     const views = await buildIssueViews(wanted, machineAttachmentUrl);

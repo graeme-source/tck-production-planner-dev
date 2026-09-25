@@ -81,6 +81,25 @@ export function matchesAreaFilter(filter: AreaFilter, area: string | null | unde
   return filter === "all" || classifyIssueArea(area, station) === filter;
 }
 
+/**
+ * Does the session's GET /issues list need this report? Untriaged reports
+ * follow the area filter. A reply Graeme is waiting on does NOT: once a card
+ * is in the Fix queue his reply must reach Claude whatever area the report
+ * came from (2026-09-25: #191, logged from the prep station with no area,
+ * sat "waiting for Claude" for a day because the hourly run asks for app
+ * reports only). Safety and factory reports are still never handed over.
+ */
+export function machineIssueWanted(
+  filter: AreaFilter,
+  issue: { area: string | null | undefined; station: string | null | undefined; category: string },
+  triage: { awaitingRetriage: boolean } | null | undefined,
+  includeTriaged: boolean,
+): boolean {
+  if (triage?.awaitingRetriage) return pipelineMayHandle(issue).ok;
+  if (!matchesAreaFilter(filter, issue.area, issue.station)) return false;
+  return includeTriaged || !triage;
+}
+
 // ── Re-triage vs decision ───────────────────────────────────────────────────
 
 /** Statuses that carry a human decision (or work that followed one). */

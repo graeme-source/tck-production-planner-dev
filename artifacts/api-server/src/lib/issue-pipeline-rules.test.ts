@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  machineIssueWanted,
   parseBearer,
   checkMachineToken,
   classifyIssueArea,
@@ -317,5 +318,29 @@ describe("buildThread — the back-and-forth on a card", () => {
   it("shows messages to the reporter and ignores internal bookkeeping", () => {
     const thread = buildThread([ev("messaged", "Hi Jane"), ev("improvement_credited", "credited"), ev("status:fixed", null)]);
     expect(thread).toEqual([{ at: "2026-09-24T10:00:00Z", who: "you", kind: "message", text: "Hi Jane" }]);
+  });
+});
+
+describe("machineIssueWanted", () => {
+  const prepReport = { area: null, station: "prep", category: "equipment" };
+  const appReport = { area: "system", station: "App / iPad", category: "other" };
+
+  it("REGRESSION: hands over Graeme's reply on a non-app report (#191, 2026-09-25)", () => {
+    expect(machineIssueWanted("app", prepReport, { awaitingRetriage: true }, false)).toBe(true);
+  });
+
+  it("still keeps untriaged non-app reports out of the app list", () => {
+    expect(machineIssueWanted("app", prepReport, null, false)).toBe(false);
+    expect(machineIssueWanted("app", appReport, null, false)).toBe(true);
+  });
+
+  it("leaves already-triaged cards alone unless asked", () => {
+    expect(machineIssueWanted("app", appReport, { awaitingRetriage: false }, false)).toBe(false);
+    expect(machineIssueWanted("app", appReport, { awaitingRetriage: false }, true)).toBe(true);
+  });
+
+  it("never hands over safety or factory reports, even with a reply waiting", () => {
+    expect(machineIssueWanted("app", { area: null, station: "prep", category: "safety" }, { awaitingRetriage: true }, false)).toBe(false);
+    expect(machineIssueWanted("app", { area: "factory", station: null, category: "other" }, { awaitingRetriage: true }, false)).toBe(false);
   });
 });
