@@ -21,7 +21,7 @@ import { createPortal } from "react-dom";
 import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay, STATION_VIEW_ROW_SLOT_ID, type StationPlanItem } from "../shared/constants";
 import { QueueDock, QueueSheet } from "../shared/station-queue";
 import { effectiveBatchesTarget, netTwoPacks as computeNetTwoPacks, packsTargetForItem, packsDoneForItem, packsPerBatch } from "../shared/recipe-completion";
-import { RECIPE_RACK_COLOURS, WonkyColour, ChillerRackItem, ChillerRackVisual } from "./dough-sheeting-station";
+import { RECIPE_RACK_COLOURS } from "./dough-sheeting-station";
 import { ovenChangeReminder } from "../shared/oven-reminder";
 import { OvenChangeBanner } from "../shared/oven-change-banner";
 import { useOvenStandards, useRecipeOvenInputs } from "@/hooks/use-oven-settings";
@@ -491,26 +491,6 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
   const sessionEightPackBags = items.reduce((s, it) => s + (it.eightPackBagCount ?? 0), 0);
   const sessionExtraPacks = items.reduce((s, it) => s + (it.extraPacksBuilt ?? 0), 0);
   const sessionTotalTrays = items.reduce((s, it) => s + chillerTrays(it), 0);
-
-  // Build rack data in production order for ChillerRackVisual
-  const rackItems: ChillerRackItem[] = items
-    .map((item, idx) => ({
-      recipeId: item.recipeId,
-      recipeName: item.recipeName ?? `Recipe #${item.recipeId}`,
-      trayCount: chillerTrays(item),
-      colour: item.recipeColor ?? RECIPE_RACK_COLOURS[idx % RECIPE_RACK_COLOURS.length],
-    }))
-    .filter(r => r.trayCount > 0);
-
-  const wonkyItems: WonkyColour[] = items
-    .filter(item => (item.wonlyCount ?? 0) > 0)
-    .map(item => {
-      const idx = items.indexOf(item);
-      return {
-        colour: item.recipeColor ?? RECIPE_RACK_COLOURS[idx % RECIPE_RACK_COLOURS.length],
-        recipeName: item.recipeName ?? `Recipe #${item.recipeId}`,
-      };
-    });
 
   // Weight modal state derivations
   const weighingTarget = targetFor(weighingItem?.recipeId);
@@ -1261,8 +1241,6 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                   </div>
                 </div>
 
-                {/* Chiller Rack Visual */}
-                <ChillerRackVisual rackItems={rackItems} wonkyItems={wonkyItems} />
               </div>
         </QueueSheet>
       )}
