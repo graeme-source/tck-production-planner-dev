@@ -43,6 +43,7 @@ import ReturnToWorkPage from "@/pages/return-to-work";
 import PeoplePinPage from "@/pages/people-pin";
 import PeopleSection from "@/pages/people";
 import Reports from "@/pages/reports";
+import TeamEfficiencyPage from "@/pages/team-efficiency";
 import Improvements from "@/pages/improvements";
 import EmployeeHub from "@/pages/employee-hub";
 import Fulfilment from "@/pages/fulfilment";
@@ -218,6 +219,8 @@ function Router() {
               <Route path="/founder/contracts" component={FounderContracts} />
               <Route path="/founder/fix-queue" component={FounderFixQueue} />
               <Route path="/reports">{() => <ProtectedRoute component={Reports} pageKey="/reports" />}</Route>
+              {/* Team efficiency KPI — Analytics only for now (Graeme, 2026-09-25). Managers/admins; server-enforced. */}
+              <Route path="/analytics/efficiency" component={TeamEfficiencyPage} />
               {/* Training is for everyone: station matrices are self-service;
                   the stored matrices inside are manager-only (lib/training-sections). */}
               <Route path="/training">{() => <ProtectedRoute component={TrainingMatrix} pageKey="/training" />}</Route>

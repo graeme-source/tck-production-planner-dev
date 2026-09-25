@@ -45,6 +45,7 @@ import {
   Wrench,
   MessagesSquare,
   Scan,
+  Gauge,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/user-avatar";
@@ -107,6 +108,14 @@ export const bottomNavItems: NavItem[] = [
   // which held what. Feature grants moved into that tab (Graeme,
   // 2026-09-03); see components/feature-grants-section.tsx.
   { name: "Settings", href: "/settings", icon: Settings },
+];
+
+// Analytics becomes a group for managers/admins so its analytics pages sit
+// under it. Team efficiency lives here only for now (Graeme, 2026-09-25).
+const ANALYTICS_PATHS = ["/reports", "/analytics/efficiency"];
+export const analyticsSubItems: NavItem[] = [
+  { name: "Analytics", href: "/reports", icon: BarChart2 },
+  { name: "Team efficiency", href: "/analytics/efficiency", icon: Gauge },
 ];
 
 const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory", "/product-hub", "/surveys"];
@@ -247,6 +256,8 @@ export function NavLinks({
   const isOnProductPage = PRODUCT_PATHS.includes(location);
   const isOnDispatchPage = DISPATCH_PATHS.includes(location);
   const isOnInventoryPage = isInventoryRoute(location);
+  const isOnAnalyticsPage = ANALYTICS_PATHS.includes(location);
+  const [analyticsOpen, setAnalyticsOpen] = useState(isOnAnalyticsPage);
   const [productOpen, setProductOpen] = useState(isOnProductPage);
   const [dispatchOpen, setDispatchOpen] = useState(isOnDispatchPage);
   const [inventoryOpen, setInventoryOpen] = useState(isOnInventoryPage);
@@ -263,6 +274,10 @@ export function NavLinks({
     if (isOnInventoryPage) setInventoryOpen(true);
   }, [isOnInventoryPage]);
 
+  useEffect(() => {
+    if (isOnAnalyticsPage) setAnalyticsOpen(true);
+  }, [isOnAnalyticsPage]);
+
   const dispatchSubItems = [
     { name: "Dispatches", href: "/dispatches", icon: Truck },
     { name: "Order Packing Live", href: "/fulfilment", icon: Scan },
@@ -270,9 +285,73 @@ export function NavLinks({
     { name: "Bin Locations", href: "/locations", icon: MapPin },
   ];
 
+  function renderNavGroup(
+    key: string, label: string, Icon: NavItem["icon"], subItems: NavItem[],
+    open: boolean, setOpen: (fn: (o: boolean) => boolean) => void, onGroupPage: boolean,
+  ) {
+    return (
+      <div key={key}>
+        <button
+          onClick={() => setOpen(o => !o)}
+          className={cn(
+            "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group",
+            onGroupPage ? "text-primary font-semibold" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+          )}
+        >
+          <Icon className={cn("w-4 h-4 flex-shrink-0", onGroupPage ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+          <span className="flex-1 text-left">{label}</span>
+          <ChevronDown className={cn("w-4 h-4 transition-transform duration-200", open ? "rotate-180" : "", onGroupPage ? "text-primary" : "text-muted-foreground")} />
+        </button>
+        <AnimatePresence initial={false}>
+          {open && (
+            <motion.div
+              key={`${key}-group`}
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="overflow-hidden"
+            >
+              <div className="ml-4 pl-3 border-l border-border/60 space-y-0.5 py-1">
+                {subItems.map(sub => {
+                  const subActive = location === sub.href;
+                  return (
+                    <Link
+                      key={sub.href}
+                      href={sub.href}
+                      onClick={onNavigate}
+                      className={cn(
+                        "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative text-sm",
+                        subActive ? "text-primary font-semibold" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+                      )}
+                    >
+                      {subActive && (
+                        <motion.div
+                          layoutId="activeNav"
+                          className="absolute inset-0 bg-primary/10 rounded-lg"
+                          transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                        />
+                      )}
+                      <sub.icon className={cn("w-4 h-4 relative z-10", subActive ? "text-primary" : "text-muted-foreground group-hover:text-primary")} />
+                      <span className="relative z-10">{sub.name}</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  }
+
   function renderNavItem(item: NavItem) {
     const isActive = location === item.href;
     const isDispatches = item.href === "/dispatches";
+
+    if (item.href === "/reports" && (user?.role === "admin" || user?.role === "manager")) {
+      return renderNavGroup("analytics", item.name, item.icon, analyticsSubItems, analyticsOpen, setAnalyticsOpen, isOnAnalyticsPage);
+    }
 
     if (isDispatches && user?.role === "admin") {
       return (
