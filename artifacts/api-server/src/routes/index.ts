@@ -8,6 +8,7 @@ import ingredientsRouter from "./ingredients";
 import subRecipesRouter from "./sub-recipes";
 import recipesRouter from "./recipes";
 import productionPlansRouter from "./production-plans";
+import buildingTablesRouter from "./building-tables";
 import dptSettingsRouter from "./dpt-settings";
 import timingStandardsRouter from "./timing-standards";
 import dptCalculatorRouter from "./dpt-calculator";
@@ -169,6 +170,9 @@ router.use("/recipes", recipesRouter);
 router.use("/recipe-collections", recipeCollectionsRouter);
 router.use("/queued-production", queuedProductionRouter);
 router.use("/production-plans", productionPlansRouter);
+// Who is actually on each building table (last batch recorder + who opened
+// it) — read-only, feeds the dashboard chooser and the building lock.
+router.use("/building-tables", buildingTablesRouter);
 router.use("/dpt-settings", requireAdminOrManager, dptSettingsRouter);
 router.use("/timing-standards", timingStandardsRouter);
 router.use("/dpt-calculator", dptCalculatorRouter);
