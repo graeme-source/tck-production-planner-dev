@@ -143,10 +143,18 @@ export interface WrappingProgressRow extends PlanItemPacksRow {
  *
  * Once wrapping is marked complete nothing more is coming, whatever the count
  * says. Otherwise the target less everything already accounted for: packs
- * wrapped to the fridge, 8-pack bags (wrapped or still planned — a bag is
- * 8 ÷ packSize packs and never lands as 2-packs), packs sent to the freezer
- * and packs sitting on the wonky rack. If the team bags more than planned,
- * actuals win.
+ * wrapped to the fridge, 8-pack bags, packs sent to the freezer (wonkies +
+ * auto-freeze on completion) and packs sitting on the wonky rack. Without the
+ * wonky/freezer terms a recipe with wonkies read "still N to wrap" forever.
+ *
+ * The prediction counts 2-PACKS ONLY, so every 8-pack bag — planned or already
+ * wrapped — comes off. Bag counters are in BAGS (8 portions each), hence the
+ * 8 ÷ packSize conversion (a bag = 4 two-packs for calzones):
+ *   eightPackBagCount  = bags PLANNED for the item (set before production)
+ *   fridgeEightPackQty = bags actually wrapped so far
+ * Bags still to come are excluded up front so the prediction is right from
+ * the moment the plan carries a bag allocation — bagging often runs after the
+ * next day's plan is made. If the team bags more than planned, actuals win.
  */
 export function remainingWrappingPacks(row: WrappingProgressRow): number {
   if (row.wrappingComplete) return 0;

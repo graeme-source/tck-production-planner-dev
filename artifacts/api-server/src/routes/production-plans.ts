@@ -11,6 +11,7 @@ import * as z from "zod";
 import { resolveRecipeIngredients, resolveSubRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
 import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag, getVariantOnHandQuantities, type ProductCount } from "../services/shopify";
 import { remainingFulfilmentPacks } from "../lib/remaining-fulfilment";
+import { planStartStock, plannedProductionPacks, remainingWrappingPacks } from "@workspace/stock-prediction";
 import { getFactoryNumberCoreMenuOnly, getShopifyFreezerSyncEnabled } from "../lib/inventory-sync";
 import { logFridgeStockChange, type FridgeChangeSource } from "../lib/fridge-stock-log";
 import { londonDateString, londonStartOfDay } from "../lib/london-time";
@@ -724,10 +725,8 @@ export async function calculatePlanData(planDate: string) {
   const prevProductionPacks: Record<number, number> = {};
   for (const row of prevPlanItems) {
     if (row.recipeId != null) {
-      const portionsPerBatch = Number(row.portionsPerBatch) || 10;
-      const packSize = Number(row.packSize) || 1;
-      const packsPerBatch = portionsPerBatch / packSize;
-      const packs = (row.batchesTarget ?? 0) * packsPerBatch;
+      // Shared with the mac cheese roll-forward (@workspace/stock-prediction).
+      const packs = plannedProductionPacks(row);
       prevProductionPacks[row.recipeId] = (prevProductionPacks[row.recipeId] ?? 0) + packs;
     }
   }
@@ -954,42 +953,9 @@ export async function calculatePlanData(planDate: string) {
   const remainingWrappingPacksToday: Record<number, number> = {};
   for (const row of todayPlanItems) {
     if (row.recipeId == null) continue;
-    const portionsPerBatch = Number(row.portionsPerBatch) || 10;
-    const packSize = Number(row.packSize) || 1;
-    const packsPerBatch = portionsPerBatch / packSize;
-    const targetPacks = (row.batchesTarget ?? 0) * packsPerBatch;
-    // If the wrapping station has been marked complete for this item, no
-    // more packs are coming in — irrespective of whether the count tallies.
-    // Otherwise subtract everything that's already been accounted for: packs
-    // wrapped to the production fridge, packs in 8-pack overflow, packs sent
-    // to the freezer (wonkies + auto-freeze on completion), and packs still
-    // sitting on the wonky rack waiting to move. Without the wonky / freezer
-    // subtractions, recipes with wonkies were stuck reading "still N to wrap"
-    // forever — those packs were never going to land in the fridge.
-    // The predicted end-of-day factory number counts 2-PACKS ONLY, so every
-    // 8-pack bag — planned or already wrapped — must come off the remaining
-    // wrapping. Bag counters are in BAGS (8 portions each) while targetPacks
-    // and the other terms are 2-pack units, hence the (8 / packSize)
-    // conversion (a bag = 4 two-packs for calzones).
-    //
-    //   eightPackBagCount   = bags PLANNED for this item (set on the plan
-    //                         before production — the operator's allocation)
-    //   fridgeEightPackQty  = bags actually wrapped so far
-    //
-    // Bags still to come are excluded up front so the prediction is right
-    // from the moment the plan carries a bag allocation, not only after the
-    // bagging physically happens (bagging often runs after the next day's
-    // plan is created). If the team bags MORE than planned, actuals win.
-    const bagEquiv = 8 / packSize;
-    const bagsWrapped = row.fridgeEightPackQty ?? 0;
-    const bagsStillToCome = Math.max(0, (row.eightPackBagCount ?? 0) - bagsWrapped);
-    const accountedFor = (row.fridgeQty ?? 0)
-      + bagsWrapped * bagEquiv
-      + (row.freezerQty ?? 0)
-      + (row.wonlyCount ?? 0);
-    const remaining = row.wrappingComplete
-      ? 0
-      : Math.max(0, targetPacks - accountedFor - bagsStillToCome * bagEquiv);
+    // Shared with the mac cheese path — see @workspace/stock-prediction for
+    // how wrapped packs, 8-pack bags, freezer and wonkies are netted off.
+    const remaining = remainingWrappingPacks(row);
     remainingWrappingPacksToday[row.recipeId] = (remainingWrappingPacksToday[row.recipeId] ?? 0) + remaining;
   }
 
@@ -1413,9 +1379,6 @@ export async function calculatePlanData(planDate: string) {
     const wrapRemain = remainingWrappingPacksToday[recipeId] ?? 0;
     const fulRemain = remainingFulfilmentPacksToday[recipeId] ?? 0;
     const useNewPrediction = !coreMenuOnly || isCore;
-    const predictedFridgeStock = useNewPrediction
-      ? Math.max(0, Math.round(fridgeStock + wrapRemain - fulRemain))
-      : Math.round(fridgeStock);
     // When the plan is built AHEAD of time (planDate tomorrow or later),
     // dispatch1 — the working day before planDate — hasn't left the fridge
     // yet, and that day's planned production hasn't landed yet either.
@@ -1426,10 +1389,20 @@ export async function calculatePlanData(planDate: string) {
     // for a Friday plan built on Wednesday while Thursday+Friday+Monday
     // orders outran stock (Don Burger, 2026-08-05). Same-day plans are
     // unchanged: dispatch1 is yesterday, already out of the fridge.
+    // The same maths the mac cheese stock uses (@workspace/stock-prediction).
     const planAhead = dispatchDates[0] > todayStr;
+    const planStart = planStartStock({
+      liveStock: fridgeStock,
+      stillToWrapToday: wrapRemain,
+      stillToDispatchToday: fulRemain,
+      rollForward: planAhead
+        ? [{ date: dispatchDates[0], plannedProductionPacks: prevProduction, dispatchPacks: dispatch1Qty }]
+        : [],
+    });
+    const predictedFridgeStock = useNewPrediction ? planStart.endOfToday : Math.round(fridgeStock);
     const legacyEstimatedFactoryNumber = fridgeStock - dispatch1Qty + prevProduction;
     const estimatedFactoryNumberRaw = useNewPrediction
-      ? Math.max(0, predictedFridgeStock + (planAhead ? prevProduction - dispatch1Qty : 0))
+      ? planStart.atPlanStart
       : Math.round(legacyEstimatedFactoryNumber);
 
     // Shelf-life netting: packs whose last valid dispatch is before this
