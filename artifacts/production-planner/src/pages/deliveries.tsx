@@ -6,7 +6,7 @@ import {
   Truck, ChevronLeft, ChevronRight, Calendar, Package, Thermometer,
   Check, AlertTriangle, Loader2, ClipboardCheck, X,
   CheckCircle2, AlertCircle, PackageCheck, ArrowRightLeft, Plus, Minus,
-  FileText, Boxes, Pencil, Eye, EyeOff, RotateCcw, PackageOpen,
+  FileText, Boxes, Pencil, Eye, EyeOff, RotateCcw, PackageOpen, Sparkles,
 } from "lucide-react";
 import { format, startOfWeek, addDays, isSameDay, parseISO, isToday } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -22,6 +22,7 @@ import {
   CollectionPanel, AddCollectionDialog, useWeekCollections, groupCollections, collectionKey,
   type Collection,
 } from "@/components/collections";
+import { UnexpectedDeliveryDialog } from "@/components/unexpected-delivery-dialog";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -73,6 +74,12 @@ interface DeliveryOrder {
   notes: string | null;
   createdAt: string;
   lines: POLine[];
+  /** 'unexpected' = recorded at the door with no order in the app
+   *  (unexpected-delivery-dialog); 'planned' otherwise. */
+  origin?: string;
+  /** The day an open order was booked for, when it arrived on another day
+   *  and was moved to today. */
+  originallyExpectedDate?: string | null;
   requiresTemperature?: boolean;
   /** False for suppliers flagged "no invoices" (Amazon etc.) — the invoice
    *  check is skipped entirely for their deliveries. */
@@ -104,6 +111,16 @@ function StatusBadge({ status }: { status: string }) {
     <span className={cn("text-xs font-medium px-2 py-0.5 rounded-full inline-flex items-center gap-1.5", s.bg, s.text)}>
       <span className={cn("w-1.5 h-1.5 rounded-full", s.dot)} />
       {s.label}
+    </span>
+  );
+}
+
+/** Marks a delivery recorded at the door with no order in the app. */
+function UnexpectedBadge() {
+  return (
+    <span className="text-xs font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200">
+      <Sparkles className="w-3 h-3" />
+      Unexpected
     </span>
   );
 }
@@ -399,7 +416,12 @@ function ReceivingDialog({
           notes: notes || null,
         }),
       });
-      if (!res.ok) throw new Error("Failed to receive delivery");
+      if (!res.ok) {
+        // Show the server's reason — e.g. "complete the collection first" —
+        // rather than a generic failure the person can't act on.
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error || "Failed to receive delivery");
+      }
       return res.json();
     },
     onSuccess: (data: { shopifySync?: Array<{ ingredientName: string; units: number; newQuantity?: number; error?: string }> }) => {
@@ -452,6 +474,12 @@ function ReceivingDialog({
             return (
               <div className="mt-2 flex items-center gap-2 flex-wrap">
                 <span className="text-sm text-muted-foreground">PO #{order.id}</span>
+                {order.origin === "unexpected" && <UnexpectedBadge />}
+                {order.originallyExpectedDate && (
+                  <span className="text-sm text-muted-foreground">
+                    (booked for {format(parseISO(order.originallyExpectedDate), "EEE d MMM")})
+                  </span>
+                )}
                 <span
                   className={cn(
                     "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-semibold text-white",
@@ -1085,6 +1113,17 @@ export default function Deliveries() {
     setReceivingOpen(true);
   };
 
+  // "Record an unexpected delivery" hands back an order that is now due
+  // today (moved or newly created) — show today and open the normal
+  // receive dialog on it, so the usual checks and stock update apply.
+  const [unexpectedOpen, setUnexpectedOpen] = useState(false);
+  const receiveUnexpected = (orderId: number) => {
+    setUnexpectedOpen(false);
+    queryClient.invalidateQueries({ predicate: (q) => String(q.queryKey[0]).includes("/api/deliveries") });
+    goToday();
+    openReceiving(orderId);
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -1161,6 +1200,25 @@ export default function Deliveries() {
         </div>
       </div>
 
+      {/* In the page body, not the top bar: the top bar has no room for a
+          label this long on an iPad, and at the door this should be the
+          obvious thing to tap when something turns up off the list. */}
+      {canReceive && (
+        <button
+          onClick={() => setUnexpectedOpen(true)}
+          className="w-full min-h-16 px-5 py-3 rounded-2xl bg-amber-500 text-white flex items-center gap-4 text-left hover:bg-amber-600 active:bg-amber-700 transition-colors shadow-sm"
+        >
+          <span className="w-11 h-11 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+            <Sparkles className="w-6 h-6" />
+          </span>
+          <span className="flex-1 min-w-0">
+            <span className="block text-xl font-bold leading-tight">Record an unexpected delivery</span>
+            <span className="block text-sm text-white/90">Something turned up that isn't on the list? Find it and check it in.</span>
+          </span>
+          <ChevronRight className="w-6 h-6 shrink-0" />
+        </button>
+      )}
+
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <h2 className="font-semibold text-lg">
@@ -1206,6 +1264,15 @@ export default function Deliveries() {
             <Truck className="w-10 h-10 mb-3 opacity-20" />
             <p className="text-sm font-medium">Nothing expected for this day</p>
             <p className="text-xs mt-1 opacity-70">Select another day, place an order from the Orders page, or add a collection</p>
+            {canReceive && (
+              <button
+                onClick={() => setUnexpectedOpen(true)}
+                className="mt-4 h-12 px-5 rounded-xl border-2 border-amber-400 text-amber-900 dark:text-amber-200 font-semibold flex items-center gap-2 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+              >
+                <Sparkles className="w-4 h-4" />
+                Something arrived anyway? Record an unexpected delivery
+              </button>
+            )}
           </div>
         ) : (
           <div className="space-y-3">
@@ -1273,9 +1340,13 @@ export default function Deliveries() {
                         ) : (
                           <StatusBadge status={order.status} />
                         )}
+                        {order.origin === "unexpected" && <UnexpectedBadge />}
                       </div>
                       <p className="text-sm text-muted-foreground mt-1">
                         PO #{order.id} &middot; {order.lines.length} {order.lines.length === 1 ? "item" : "items"}
+                        {order.originallyExpectedDate && order.originallyExpectedDate !== order.expectedDeliveryDate && (
+                          <> &middot; booked for {format(parseISO(order.originallyExpectedDate), "EEE d MMM")}</>
+                        )}
                       </p>
                     </div>
 
@@ -1497,6 +1568,12 @@ export default function Deliveries() {
           }}
         />
       )}
+
+      <UnexpectedDeliveryDialog
+        open={unexpectedOpen}
+        onClose={() => setUnexpectedOpen(false)}
+        onReceive={receiveUnexpected}
+      />
 
       {addingCollection && (
         <AddCollectionDialog

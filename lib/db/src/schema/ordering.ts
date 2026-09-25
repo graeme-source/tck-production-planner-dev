@@ -79,6 +79,12 @@ export const purchaseOrdersTable = pgTable("purchase_orders", {
   expectedDeliveryDate: date("expected_delivery_date"),
   notes: text("notes"),
   placedByUserId: integer("placed_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  // 'planned' (raised from Orders) or 'unexpected' (recorded at the front
+  // door when it turned up without an order). Migration 0128.
+  origin: text("origin").notNull().default("planned"),
+  // The day an open order was booked for, kept when it's received on a
+  // different day and moved to today. Migration 0128.
+  originallyExpectedDate: date("originally_expected_date"),
 });
 
 export const purchaseOrderLinesTable = pgTable("purchase_order_lines", {
