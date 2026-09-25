@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
+  addDays,
   customWindow,
   DEFAULT_PERIOD,
   PERIOD_PRESETS,
@@ -41,6 +42,8 @@ import {
   type RoasResult,
 } from "@/lib/roas";
 import { revenueForTags } from "@/lib/order-type-totals";
+import { SalesTrendPanel, TrendChip } from "@/components/sales-trend-panel";
+import type { TrendMetricId } from "@/lib/sales-trend-view";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
@@ -232,6 +235,31 @@ async function fetchOrdersByType(from: string, to: string) {
   }>;
 }
 
+/** A tile's trend graph switch: open state and how to flip it. */
+interface TrendToggle {
+  open: boolean;
+  onToggle: () => void;
+}
+
+/**
+ * The outer shell of a tile. With a trend toggle the whole tile becomes the
+ * button that opens its graph (a big target for an iPad thumb), with the
+ * "Trend" chip showing that it can; without one it's the plain panel it was.
+ */
+function TileShell({ trend, className, children }: { trend?: TrendToggle; className: string; children: React.ReactNode }) {
+  if (!trend) return <div className={className}>{children}</div>;
+  return (
+    <button
+      type="button"
+      onClick={trend.onToggle}
+      aria-expanded={trend.open}
+      className={`${className} text-left w-full hover-lift transition-all cursor-pointer ${trend.open ? "ring-2 ring-primary" : "ring-0"}`}
+    >
+      {children}
+    </button>
+  );
+}
+
 /**
  * One ROAS figure, in the same shape as the other tiles in the block.
  *
@@ -245,15 +273,17 @@ function RoasTile({
   result,
   loading,
   windowLabel,
+  trend,
 }: {
   title: string;
   result: RoasResult;
   loading?: boolean;
   /** e.g. "11 Sep – 17 Sep", shown so the window is never in doubt. */
   windowLabel?: string;
+  trend?: TrendToggle;
 }) {
   return (
-    <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
+    <TileShell trend={trend} className="glass-panel p-5 rounded-2xl flex items-center gap-4">
       <div className="p-3 rounded-xl bg-pink-500/10 text-pink-500 shrink-0">
         <Percent className="w-5 h-5" />
       </div>
@@ -278,7 +308,8 @@ function RoasTile({
         )}
         {windowLabel && <p className="text-xs text-muted-foreground/70 mt-0.5 truncate">{windowLabel}</p>}
       </div>
-    </div>
+      {trend && <TrendChip open={trend.open} />}
+    </TileShell>
   );
 }
 
@@ -295,6 +326,7 @@ function MoneyTile({
   color,
   bg,
   loading,
+  trend,
 }: {
   title: string;
   value: number | null;
@@ -303,9 +335,10 @@ function MoneyTile({
   color: string;
   bg: string;
   loading?: boolean;
+  trend?: TrendToggle;
 }) {
   return (
-    <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
+    <TileShell trend={trend} className="glass-panel p-5 rounded-2xl flex items-center gap-4">
       <div className={`p-3 rounded-xl ${bg} ${color} shrink-0`}>
         <Icon className="w-5 h-5" />
       </div>
@@ -322,7 +355,8 @@ function MoneyTile({
           </>
         )}
       </div>
-    </div>
+      {trend && <TrendChip open={trend.open} />}
+    </TileShell>
   );
 }
 
@@ -335,6 +369,7 @@ function KpiCard({
   bg,
   loading,
   error,
+  trend,
 }: {
   title: string;
   value: string;
@@ -344,14 +379,16 @@ function KpiCard({
   bg: string;
   loading?: boolean;
   error?: boolean;
+  trend?: TrendToggle;
 }) {
   return (
-    <div className="glass-panel p-6 rounded-2xl flex flex-col gap-3">
+    <TileShell trend={trend} className="glass-panel p-6 rounded-2xl flex flex-col gap-3">
       <div className="flex items-center gap-3">
         <div className={`p-3 rounded-xl ${bg} ${color}`}>
           <Icon className="w-5 h-5" />
         </div>
-        <p className="text-sm font-medium text-muted-foreground">{title}</p>
+        <p className="text-sm font-medium text-muted-foreground flex-1 min-w-0">{title}</p>
+        {trend && <TrendChip open={trend.open} />}
       </div>
       {loading ? (
         <Skeleton className="h-9 w-40" />
@@ -365,7 +402,7 @@ function KpiCard({
           {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
         </>
       )}
-    </div>
+    </TileShell>
   );
 }
 
@@ -465,6 +502,7 @@ function OrderTypeCard({
   isActive,
   onClick,
   loading,
+  trend,
 }: {
   type: (typeof CUSTOMER_TYPES)[number];
   count: number;
@@ -472,14 +510,20 @@ function OrderTypeCard({
   isActive: boolean;
   onClick: () => void;
   loading?: boolean;
+  /** The count's graph, on its own chip — tapping the tile still opens the orders. */
+  trend?: TrendToggle;
 }) {
   const { label, icon: Icon, color, bg } = type;
   const dailyAvg = dayCount > 1 ? (count / dayCount).toFixed(1) : null;
   return (
+    <div
+      className={`glass-panel rounded-2xl flex items-center w-full hover-lift transition-all
+        ${isActive || trend?.open ? "ring-2 ring-primary" : "ring-0"}`}
+    >
     <button
       onClick={onClick}
-      className={`glass-panel p-5 rounded-2xl flex items-center gap-4 text-left w-full hover-lift transition-all cursor-pointer
-        ${isActive ? "ring-2 ring-primary" : "ring-0"}`}
+      aria-expanded={isActive}
+      className="p-5 flex-1 min-w-0 flex items-center gap-4 text-left cursor-pointer"
     >
       <div className={`p-3 rounded-xl ${bg} ${color} shrink-0`}>
         <Icon className="w-5 h-5" />
@@ -501,6 +545,12 @@ function OrderTypeCard({
         className={`w-4 h-4 text-muted-foreground transition-transform shrink-0 ${isActive ? "rotate-180" : ""}`}
       />
     </button>
+    {trend && (
+      <div className="pr-4 shrink-0">
+        <TrendChip open={trend.open} onClick={trend.onToggle} />
+      </div>
+    )}
+    </div>
   );
 }
 
@@ -1036,6 +1086,45 @@ function FounderDashboard() {
   );
   const roasLoading = orderTypesLoading || adSpendLoading;
 
+  // ── Trend graphs ──────────────────────────────────────────────────────────
+  // Graeme, 2026-09-25: a line graph behind each tile "so I can see visually
+  // what I've done over that period". One graph open per section; it opens
+  // inline, full width, under the row its tile is in. At a Glance is today's
+  // figures, so only Today's Sales / Today's AOV (by the hour) and This Month
+  // to Date (by the day) have one — the two month averages don't.
+  type GlanceTrend = "todaySales" | "todayAov" | "monthToDate";
+  const [glanceTrend, setGlanceTrend] = useState<GlanceTrend | null>(null);
+  const [periodTrend, setPeriodTrend] = useState<TrendMetricId | null>(null);
+  const glanceToggle = (id: GlanceTrend): TrendToggle => ({
+    open: glanceTrend === id,
+    onToggle: () => setGlanceTrend((cur) => (cur === id ? null : id)),
+  });
+  const periodToggle = (id: TrendMetricId, alsoOpenFor: TrendMetricId[] = []): TrendToggle => ({
+    open: periodTrend === id || (periodTrend != null && alsoOpenFor.includes(periodTrend)),
+    onToggle: () => setPeriodTrend((cur) => (cur === id || (cur != null && alsoOpenFor.includes(cur)) ? null : id)),
+  });
+  // Today against the same weekday last week, drawn faintly behind today.
+  const lastWeekStr = addDays(todayStr, -7);
+  const lastWeekName = `Last ${format(new Date(`${lastWeekStr}T12:00:00`), "EEEE")}`;
+  const periodCaption = describePeriod(period) + (period.includesToday ? " · today is still running" : "");
+  const periodPanel = (metrics: TrendMetricId[]) =>
+    periodTrend && metrics.includes(periodTrend) ? (
+      <div className="mt-4">
+        <SalesTrendPanel
+          key={`${from}-${to}`}
+          metric={periodTrend}
+          from={from}
+          to={to}
+          periodCaption={periodCaption}
+          alternatives={periodTrend === "revenue" || periodTrend === "orders"
+            ? [{ metric: "revenue", label: "Sales" }, { metric: "orders", label: "Orders" }]
+            : undefined}
+          onSwitchMetric={setPeriodTrend}
+          onClose={() => setPeriodTrend(null)}
+        />
+      </div>
+    ) : null;
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-8">
@@ -1075,6 +1164,7 @@ function FounderDashboard() {
             bg="bg-primary/10"
             loading={monthLoading}
             error={!!monthError}
+            trend={glanceToggle("todaySales")}
           />
           <KpiCard
             title="This Month to Date"
@@ -1085,6 +1175,7 @@ function FounderDashboard() {
             bg="bg-blue-500/10"
             loading={monthLoading}
             error={!!monthError}
+            trend={glanceToggle("monthToDate")}
           />
           {/* Today's AOV sits third, next to the other "today" figures
               (Graeme, 2026-09-25); the two month-average tiles follow. */}
@@ -1097,6 +1188,7 @@ function FounderDashboard() {
             bg="bg-emerald-500/10"
             loading={monthLoading}
             error={!!monthError}
+            trend={glanceToggle("todayAov")}
           />
           <KpiCard
             title="Avg Daily Sales This Month"
@@ -1119,6 +1211,34 @@ function FounderDashboard() {
             error={!!monthError}
           />
         </div>
+        {(glanceTrend === "todaySales" || glanceTrend === "todayAov") && (
+          <div className="mt-4">
+            <SalesTrendPanel
+              key={`${glanceTrend}-${todayStr}`}
+              metric={glanceTrend === "todaySales" ? "revenue" : "aov"}
+              from={todayStr}
+              to={todayStr}
+              title={glanceTrend === "todaySales" ? "Sales by the hour — today" : "AOV by the hour — today"}
+              periodCaption={`${format(today, "EEE d MMM")} so far, against ${lastWeekName.charAt(0).toLowerCase()}${lastWeekName.slice(1)} (dashed)`}
+              seriesName="Today"
+              compare={{ date: lastWeekStr, name: lastWeekName }}
+              onClose={() => setGlanceTrend(null)}
+            />
+          </div>
+        )}
+        {glanceTrend === "monthToDate" && (
+          <div className="mt-4">
+            <SalesTrendPanel
+              key={`month-${monthStart}-${todayStr}`}
+              metric="revenue"
+              from={monthStart}
+              to={todayStr}
+              title="Daily sales this month"
+              periodCaption={`${format(startOfMonth(today), "d MMM")} to today · today is still running`}
+              onClose={() => setGlanceTrend(null)}
+            />
+          </div>
+        )}
       </section>
 
       {/* ── Order Analysis — ONE period drives every tile ──────────────────
@@ -1208,7 +1328,7 @@ function FounderDashboard() {
             )}
 
             {/* Period totals */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <KpiCard
                 title={`Total Sales — ${period.label}`}
                 value={periodSummary ? formatGBP(periodSummary.totalRevenue) : "—"}
@@ -1218,6 +1338,7 @@ function FounderDashboard() {
                 bg="bg-blue-500/10"
                 loading={periodLoading}
                 error={!!periodError}
+                trend={periodToggle("revenue", ["orders"])}
               />
               <KpiCard
                 title={`AOV — ${period.label}`}
@@ -1228,12 +1349,15 @@ function FounderDashboard() {
                 bg="bg-emerald-500/10"
                 loading={periodLoading}
                 error={!!periodError}
+                trend={periodToggle("aov")}
               />
             </div>
+            {periodPanel(["revenue", "orders", "aov"])}
+            <div className="mb-6" />
 
             {/* Row 1 — new customers, and what they cost.
                 The count tile is also the drill-down: tap it for the orders. */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
               <OrderTypeCard
                 type={customerType("newCustomer")}
                 count={getGroupCount(customerType("newCustomer").tag)}
@@ -1241,6 +1365,7 @@ function FounderDashboard() {
                 isActive={activeTab === customerType("newCustomer").tag && expandedPanel}
                 onClick={() => handleTypeClick(customerType("newCustomer").tag)}
                 loading={orderTypesLoading}
+                trend={periodToggle("newCustomerOrders")}
               />
               <MoneyTile
                 title="New Customer Revenue"
@@ -1249,11 +1374,13 @@ function FounderDashboard() {
                 color="text-blue-500"
                 bg="bg-blue-500/10"
                 loading={orderTypesLoading}
+                trend={periodToggle("newCustomerRevenue")}
               />
               <RoasTile
                 title="New Customer ROAS"
                 result={periodRoas}
                 loading={roasLoading}
+                trend={periodToggle("roas")}
               />
 
               {/* Ad Spend — synced from the Meta Marketing API when it's
@@ -1281,6 +1408,11 @@ function FounderDashboard() {
                         <RefreshCw className={`w-3.5 h-3.5 ${metaRefresh.isPending ? "animate-spin" : ""}`} />
                       </button>
                     )}
+                    {/* Its own chip, not the whole tile: the tile already
+                        holds the pencil and the Meta refresh. */}
+                    <span className="ml-auto shrink-0">
+                      <TrendChip open={periodTrend === "adSpend"} onClick={periodToggle("adSpend").onToggle} />
+                    </span>
                   </div>
                   {adSpendLoading ? (
                     <Skeleton className="h-7 w-16 mt-1" />
@@ -1338,8 +1470,12 @@ function FounderDashboard() {
                 </div>
               </div>
             </div>
+            {periodPanel(["newCustomerOrders", "newCustomerRevenue", "roas", "adSpend"])}
+            <div className="mb-4" />
 
-            {/* Row 2 — subscriptions, and the storefront's own conversion. */}
+            {/* Row 2 — subscriptions, and the storefront's own conversion.
+                Conversion Rate has no graph: it is Shopify's own session
+                metric (ShopifyQL), not something the orders mirror holds. */}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
               {(["recurringSub", "newSub"] as const).map((id) => (
                 <OrderTypeCard
@@ -1350,6 +1486,7 @@ function FounderDashboard() {
                   isActive={activeTab === customerType(id).tag && expandedPanel}
                   onClick={() => handleTypeClick(customerType(id).tag)}
                   loading={orderTypesLoading}
+                  trend={periodToggle(id === "recurringSub" ? "recurringSubOrders" : "newSubOrders")}
                 />
               ))}
               {/* Recurring and new subscription orders combined, deduped by
@@ -1362,6 +1499,7 @@ function FounderDashboard() {
                 color="text-violet-500"
                 bg="bg-violet-500/10"
                 loading={orderTypesLoading}
+                trend={periodToggle("subscriptionRevenue")}
               />
 
               {/* Conversion Rate — Shopify's own online-store metric via
@@ -1393,6 +1531,7 @@ function FounderDashboard() {
                 </div>
               </div>
             </div>
+            {periodPanel(["recurringSubOrders", "newSubOrders", "subscriptionRevenue"])}
 
             {/* Drill-down. Tap any count tile above to open the orders behind
                 it; the tab strip then reaches every order type, wholesale
