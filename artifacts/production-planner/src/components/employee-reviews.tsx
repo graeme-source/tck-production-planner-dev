@@ -15,6 +15,10 @@
  *
  * The server decides what a private note is and who may read it. Nothing here
  * hides rows it was sent — it is never sent them.
+ *
+ * The cards and composers are exported so each person's record in People
+ * (pages/people.tsx) uses these same ones in its timeline — one set of
+ * review UI, not two (2026-09-25).
  */
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -24,13 +28,13 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import { groupRecordNotes, currentObjectives } from "@/lib/employee-record-grouping";
 import {
-  CalendarDays, ChevronLeft, ChevronRight, Eye, EyeOff, Loader2, Lock,
-  MessageSquare, Pencil, Plus, Target, CheckCircle2, Trash2, Users, X, Check,
+  CalendarDays, ChevronLeft, Eye, EyeOff, Loader2, Lock,
+  MessageSquare, Pencil, Plus, Target, CheckCircle2, Trash2, X, Check,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
-async function api<T>(path: string, opts?: RequestInit): Promise<T> {
+export async function api<T>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}/api${path}`, {
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -44,10 +48,10 @@ async function api<T>(path: string, opts?: RequestInit): Promise<T> {
   return res.json();
 }
 
-type MeetingKind = "review" | "probation" | "one_to_one";
-type NoteKind = "note" | "feedback" | "objective";
+export type MeetingKind = "review" | "probation" | "one_to_one";
+export type NoteKind = "note" | "feedback" | "objective";
 
-interface Meeting {
+export interface Meeting {
   id: number;
   kind: MeetingKind;
   title: string | null;
@@ -58,7 +62,7 @@ interface Meeting {
   createdByName: string | null;
 }
 
-interface Note {
+export interface Note {
   id: number;
   kind: NoteKind;
   meetingId: number | null;
@@ -74,7 +78,7 @@ interface Note {
   createdAt: string;
 }
 
-interface Record_ {
+export interface Record_ {
   subject: { id: number; name: string; probationMonths: number | null };
   canManage: boolean;
   isOwnRecord: boolean;
@@ -82,9 +86,7 @@ interface Record_ {
   notes: Note[];
 }
 
-interface Person { id: number; name: string; role: string }
-
-const MEETING_LABEL: Record<MeetingKind, string> = {
+export const MEETING_LABEL: Record<MeetingKind, string> = {
   review: "Review",
   probation: "Probation meeting",
   one_to_one: "1:1",
@@ -102,7 +104,7 @@ const NOTE_ICON: Record<NoteKind, typeof MessageSquare> = {
   objective: Target,
 };
 
-function niceDate(iso: string | null): string {
+export function niceDate(iso: string | null): string {
   if (!iso) return "No date yet";
   try { return format(parseISO(iso), "EEE d MMM yyyy"); } catch { return iso; }
 }
@@ -235,7 +237,7 @@ function RecordView({ userId, onBack }: { userId: number | "me"; onBack?: () => 
 
 // ── Cards ──────────────────────────────────────────────────────────────────
 
-function MeetingCard({ meeting, notes, canManage, currentUserId, subjectId, subjectName, onChanged }: {
+export function MeetingCard({ meeting, notes, canManage, currentUserId, subjectId, subjectName, onChanged }: {
   meeting: Meeting;
   notes: Note[];
   canManage: boolean;
@@ -434,7 +436,7 @@ function ShareWholeMeeting({ meetingId, subjectName, onChanged }: {
  * that set it. No share button either — objectives come out of a meeting, and
  * a meeting is shared as one report (Graeme, 2026-09-17).
  */
-function AgreedObjective({ note, canManage, currentUserId, onChanged }: {
+export function AgreedObjective({ note, canManage, currentUserId, onChanged }: {
   note: Note; canManage: boolean; currentUserId: number | null; onChanged: () => void;
 }) {
   const isAuthor = currentUserId != null && note.authorId === currentUserId;
@@ -474,7 +476,7 @@ function AgreedObjective({ note, canManage, currentUserId, onChanged }: {
   );
 }
 
-function NoteCard({ note, canManage, currentUserId, onChanged, inReport = false }: {
+export function NoteCard({ note, canManage, currentUserId, onChanged, inReport = false }: {
   note: Note; canManage: boolean; currentUserId: number | null; onChanged: () => void;
   /** Part of a meeting write-up. The write-up is shared as ONE report, so the
    *  per-item share/unshare controls are hidden — sharing a probation meeting
@@ -679,7 +681,7 @@ function NoteCard({ note, canManage, currentUserId, onChanged, inReport = false 
 
 // ── Composers ──────────────────────────────────────────────────────────────
 
-function BookMeeting({ subjectId, onDone, onCancel }: { subjectId: number; onDone: () => void; onCancel: () => void }) {
+export function BookMeeting({ subjectId, onDone, onCancel }: { subjectId: number; onDone: () => void; onCancel: () => void }) {
   const [kind, setKind] = useState<MeetingKind>("review");
   const [date, setDate] = useState("");
 
@@ -888,7 +890,7 @@ function MeetingWriteUp({ meetingId, subjectName, onDone, onCancel }: {
   );
 }
 
-function WriteNote({ subjectId, subjectName, meetingId, meetingLabel, onDone, onCancel }: {
+export function WriteNote({ subjectId, subjectName, meetingId, meetingLabel, onDone, onCancel }: {
   subjectId: number; subjectName: string;
   /** When set, the note is saved as part of this meeting's write-up. */
   meetingId?: number; meetingLabel?: string;
@@ -994,45 +996,10 @@ function WriteNote({ subjectId, subjectName, meetingId, meetingLabel, onDone, on
 }
 
 // ── The section as the Employee Hub renders it ─────────────────────────────
+// Always YOUR OWN record, whoever you are. Everyone else's records — the old
+// "Whose record?" list that used to live here for managers — are in People,
+// one place per person (pages/people.tsx, 2026-09-25).
 
-export function EmployeeReviewsSection({ isManager }: { isManager: boolean }) {
-  const [openPersonId, setOpenPersonId] = useState<number | null>(null);
-
-  const { data: people = [], isLoading } = useQuery<Person[]>({
-    queryKey: ["employee-review-people"],
-    queryFn: () => api<Person[]>("/employee-reviews/people"),
-    enabled: isManager,
-  });
-
-  // Everyone who isn't a manager sees exactly one thing: their own record.
-  if (!isManager) return <RecordView userId="me" />;
-
-  if (openPersonId != null) {
-    return <RecordView userId={openPersonId} onBack={() => setOpenPersonId(null)} />;
-  }
-
-  return (
-    <div className="space-y-5">
-      <section className="space-y-3">
-        <h3 className="text-lg font-bold flex items-center gap-2"><Users className="w-5 h-5 text-primary" /> Whose record?</h3>
-        {isLoading ? (
-          <div className="flex items-center gap-3 py-8 text-muted-foreground text-lg"><Loader2 className="w-6 h-6 animate-spin" /> Loading…</div>
-        ) : (
-          people.map(p => (
-            <button
-              key={p.id}
-              onClick={() => setOpenPersonId(p.id)}
-              className="w-full text-left rounded-2xl border-2 border-border bg-card hover:border-primary/50 active:scale-[0.995] transition-all p-4 flex items-center gap-4"
-            >
-              <span className="flex-1 min-w-0">
-                <span className="block text-xl font-bold leading-snug">{p.name}</span>
-                <span className="block text-base text-muted-foreground capitalize">{p.role}</span>
-              </span>
-              <ChevronRight className="w-6 h-6 text-muted-foreground shrink-0" />
-            </button>
-          ))
-        )}
-      </section>
-    </div>
-  );
+export function EmployeeReviewsSection() {
+  return <RecordView userId="me" />;
 }

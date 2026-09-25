@@ -13,13 +13,14 @@
  */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link, Redirect } from "wouter";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import { useAuth } from "@/contexts/auth-context";
 import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
 import { useIsRtwManager } from "@/hooks/use-rtw-manager";
 import { PageHeader } from "@/components/page-header";
 import { EmployeeReviewsSection } from "@/components/employee-reviews";
-import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt, Camera, Upload, X, FileText, ScrollText, ChevronRight, ListTodo, ClipboardList, FileSignature } from "lucide-react";
+import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt, Camera, Upload, X, FileText, ScrollText, ChevronRight, ListTodo, ClipboardList, FileSignature, UsersRound } from "lucide-react";
 import { MyContractSection } from "@/components/my-contract";
 import { StarterFormsList } from "@/components/starter-forms";
 import { TodoSheet, useMyOpenTodoCount } from "@/components/todo-lists";
@@ -1211,11 +1212,16 @@ export default function EmployeeHub() {
   // (Graeme, 2026-09-17: "me and Lorna only, strictly").
   const isManager = useIsRtwManager();
   const [todosOpen, setTodosOpen] = useState(false);
+  // The old People signpost linked here (/hub?section=reviews) for the
+  // "Whose record?" list. Everyone's records now live in People — one place
+  // per person (Graeme, 2026-09-25) — so that link goes there instead.
+  // Tapping the section from inside the hub still shows your OWN record.
+  const cameForEveryone = initialSection === "reviews" && isManager;
   const openTodoCount = useMyOpenTodoCount();
 
   const sections: { key: HubSection; label: string; icon: typeof Car }[] = [
     { key: "todos", label: "My To-dos", icon: ListTodo },
-    { key: "reviews", label: "Reviews & Record", icon: ClipboardList },
+    { key: "reviews", label: "My Record", icon: ClipboardList },
     { key: "contract", label: "My Contract", icon: FileSignature },
     { key: "starterforms", label: "Starter Forms", icon: ClipboardList },
     { key: "mileage", label: "Mileage Claim", icon: Car },
@@ -1225,6 +1231,8 @@ export default function EmployeeHub() {
     { key: "issues", label: "My Issues", icon: AlertTriangle },
     { key: "sops", label: "My SOPs", icon: BookOpen },
   ];
+
+  if (cameForEveryone) return <Redirect to="/people" replace />;
 
   return (
     <div className="space-y-6">
@@ -1302,13 +1310,29 @@ export default function EmployeeHub() {
           {active === "reviews" && (
             <>
               <div className="mb-4 pb-4 border-b border-border">
-                <h2 className="text-lg font-semibold">Reviews &amp; Record</h2>
+                <h2 className="text-lg font-semibold">My Record</h2>
                 <p className="text-sm text-muted-foreground mt-1">
                   Reviews, probation meetings and the running record of your time here — feedback
                   given, and what was agreed. Managers write it; you see what has been shared with you.
                 </p>
               </div>
-              <EmployeeReviewsSection isManager={isManager} />
+              {isManager && (
+                <Link
+                  href="/people"
+                  className="mb-5 block rounded-2xl border-2 border-primary/40 bg-primary/5 hover:border-primary active:scale-[0.995] transition-all p-4"
+                >
+                  <span className="flex items-center gap-4">
+                    <UsersRound className="w-7 h-7 text-primary shrink-0" />
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-xl font-bold">Everyone else's records are in People</span>
+                      <span className="block text-base text-muted-foreground">One place per person: attendance, return-to-work forms, reviews and notes.</span>
+                    </span>
+                    <ChevronRight className="w-6 h-6 text-muted-foreground shrink-0" />
+                  </span>
+                </Link>
+              )}
+              {/* Always your OWN record here, managers included. */}
+              <EmployeeReviewsSection />
             </>
           )}
           {active === "mileage" && (
