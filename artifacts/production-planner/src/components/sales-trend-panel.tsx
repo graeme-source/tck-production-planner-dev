@@ -143,6 +143,7 @@ export function SalesTrendPanel({ metric, from, to, title, periodCaption, series
           seriesName={seriesName ?? m.label}
           compareName={showCompare ? compare?.name : undefined}
           reference={reference}
+          perBasket={m.perBasket}
         />
       )}
 

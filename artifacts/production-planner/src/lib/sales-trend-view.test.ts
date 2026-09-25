@@ -11,7 +11,7 @@ import {
 } from "./sales-trend-view";
 
 const zero: TrendFigures = {
-  revenue: 0, orders: 0, aov: null, newCustomerRevenue: 0, newCustomerOrders: 0,
+  revenue: 0, orders: 0, paidOrders: 0, aov: null, newCustomerRevenue: 0, newCustomerOrders: 0,
   recurringSubOrders: 0, newSubOrders: 0, subscriptionRevenue: 0, subscriptionOrders: 0,
   adSpend: null, spendDaysRecorded: 0, spendDays: 0, roasPercent: null,
 };
@@ -36,9 +36,42 @@ describe("chartPoints", () => {
     expect(pts[2].partial).toBe(false);
   });
 
-  it("an hour with no orders has no AOV point (a gap, not £0)", () => {
-    const s = series([bucket(3), bucket(4, { revenue: 90, orders: 2, aov: 45 })]);
+  it("an hour with no paid orders has no AOV point (a gap, not £0) — even with a £0 resend in it", () => {
+    const s = series([bucket(3, { orders: 1, paidOrders: 0 }), bucket(4, { revenue: 90, orders: 2, paidOrders: 2, aov: 45 })]);
     expect(chartPoints(s, "aov").map(p => p.value)).toEqual([null, 45]);
+  });
+
+  it("carries revenue and paid orders for the tooltip, and flags AOV hours on 1–2 baskets", () => {
+    const s = series([
+      bucket(9, { revenue: 200, orders: 1, paidOrders: 1, aov: 200 }),
+      bucket(10, { revenue: 300, orders: 6, paidOrders: 5, aov: 60 }),
+    ]);
+    const aov = chartPoints(s, "aov");
+    expect(aov.map(p => p.fewOrders)).toEqual([true, false]);
+    expect(aov[1]).toMatchObject({ revenue: 300, orders: 6, paidOrders: 5 });
+    // Few-orders is about averages; a sales total isn't "over-read" the same way.
+    expect(chartPoints(s, "revenue").some(p => p.fewOrders)).toBe(false);
+  });
+
+  it("bridges a one-hour AOV gap with a straight dashed connector, never a longer gap", () => {
+    const s = series([
+      bucket(8, { paidOrders: 3, aov: 40 }),
+      bucket(9),
+      bucket(10, { paidOrders: 3, aov: 60 }),
+      bucket(11),
+      bucket(12),
+      bucket(13, { paidOrders: 3, aov: 50 }),
+    ]);
+    const pts = chartPoints(s, "aov");
+    expect(pts.map(p => p.bridge)).toEqual([40, 50, 60, null, null, null]);
+    expect(pts.map(p => p.isolated)).toEqual([true, false, true, false, false, true]);
+    // Spend-based gaps mean "we don't know" — never bridged.
+    expect(chartPoints(s, "roas").every(p => p.bridge === null)).toBe(true);
+  });
+
+  it("doesn't bridge into hours that haven't happened yet", () => {
+    const s = series([bucket(8, { paidOrders: 3, aov: 40 }), bucket(9, { future: true }), bucket(10, { future: true })]);
+    expect(chartPoints(s, "aov").every(p => p.bridge === null)).toBe(true);
   });
 
   it("lines last week up by hour of day, even across a clock change", () => {
@@ -52,8 +85,8 @@ describe("chartPoints", () => {
 });
 
 describe("headlines and reasons", () => {
-  it("AOV note shows the weighted sum it comes from", () => {
-    expect(headlineNote(series([], { revenue: 100, orders: 4, aov: 25 }), "aov")).toMatch(/£100\.00 ÷ 4 orders/);
+  it("AOV note shows the weighted sum it comes from, over PAID orders", () => {
+    expect(headlineNote(series([], { revenue: 100, orders: 5, paidOrders: 4, aov: 25 }), "aov")).toMatch(/£100\.00 ÷ 4 paid orders/);
   });
   it("only mentions the dashed line when a graph is drawn", () => {
     const totals = { newCustomerRevenue: 300, adSpend: 100, roasPercent: 300, spendDays: 1, spendDaysRecorded: 1 };

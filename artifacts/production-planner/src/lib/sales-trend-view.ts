@@ -16,6 +16,8 @@ export type Granularity = "hour" | "day" | "week";
 export interface TrendFigures {
   revenue: number;
   orders: number;
+  /** Orders with revenue above £0 — AOV's divisor (£0 resends left out). */
+  paidOrders: number;
   aov: number | null;
   newCustomerRevenue: number;
   newCustomerOrders: number;
@@ -75,13 +77,18 @@ export interface TrendMetric {
   kind: "total" | "ratio";
   /** Ad spend is recorded per day, so these can't be split by the hour. */
   daily: boolean;
+  /** An average over baskets: a gap means "no paid orders", so a faint
+   *  dashed bridge may span a single missing bucket, and buckets resting on
+   *  one or two baskets are drawn lighter. (Not for spend-based gaps, which
+   *  mean "we don't know".) */
+  perBasket?: boolean;
   value: (f: TrendFigures) => number | null;
 }
 
 export const TREND_METRICS: Record<TrendMetricId, TrendMetric> = {
   revenue: { id: "revenue", label: "Total sales", format: "money", kind: "total", daily: false, value: f => f.revenue },
   orders: { id: "orders", label: "Orders", format: "count", kind: "total", daily: false, value: f => f.orders },
-  aov: { id: "aov", label: "Average order value", format: "money", kind: "ratio", daily: false, value: f => f.aov },
+  aov: { id: "aov", label: "Average order value", format: "money", kind: "ratio", daily: false, perBasket: true, value: f => f.aov },
   newCustomerOrders: { id: "newCustomerOrders", label: "New customers", format: "count", kind: "total", daily: false, value: f => f.newCustomerOrders },
   newCustomerRevenue: { id: "newCustomerRevenue", label: "New customer revenue", format: "money", kind: "total", daily: false, value: f => f.newCustomerRevenue },
   roas: { id: "roas", label: "New customer ROAS", format: "percent", kind: "ratio", daily: true, value: f => f.roasPercent },
@@ -114,15 +121,29 @@ export function granularityLabel(g: Granularity): string {
   return g === "hour" ? "By the hour" : g === "day" ? "Daily" : "Weekly";
 }
 
+/** A per-basket bucket resting on this many paid orders or fewer is drawn lighter. */
+export const FEW_ORDERS = 2;
+
 export interface ChartPoint {
   key: string;
   label: string;
   longLabel: string;
-  /** null = draw no line here (a future hour, or no orders for an average). */
+  /** null = draw no line here (a future hour, or no paid orders for an average). */
   value: number | null;
   /** The comparison day's figure for the same hour, when one is shown. */
   compare: number | null;
   partial: boolean;
+  /** For the tooltip: the bucket's revenue, orders and paid orders. */
+  revenue: number;
+  orders: number;
+  paidOrders: number;
+  /** Per-basket metric resting on 1–2 paid orders: drawn lighter, flagged in the tooltip. */
+  fewOrders: boolean;
+  /** Has a value but no drawn neighbour on either side — needs its own visible dot. */
+  isolated: boolean;
+  /** The faint dashed connector across a ONE-bucket gap (per-basket metrics
+   *  only): the two points either side, plus their midpoint in the gap. */
+  bridge: number | null;
 }
 
 /**
@@ -140,14 +161,44 @@ export function chartPoints(series: TrendSeries, metric: TrendMetricId, comparis
       compareByHour.set(b.hourOfDay, b.future ? null : m.value(b));
     }
   }
-  return series.buckets.map(b => ({
-    key: b.key,
-    label: b.label,
-    longLabel: b.longLabel,
-    value: b.future ? null : m.value(b),
-    compare: b.hourOfDay != null && compareByHour.has(b.hourOfDay) ? compareByHour.get(b.hourOfDay) ?? null : null,
-    partial: b.partial && !b.future,
-  }));
+  const values = series.buckets.map(b => (b.future ? null : m.value(b)));
+  const bridge = m.perBasket ? bridgeOneGaps(values, series.buckets.map(b => b.future)) : values.map(() => null);
+  return series.buckets.map((b, i) => {
+    const value = values[i];
+    return {
+      key: b.key,
+      label: b.label,
+      longLabel: b.longLabel,
+      value,
+      compare: b.hourOfDay != null && compareByHour.has(b.hourOfDay) ? compareByHour.get(b.hourOfDay) ?? null : null,
+      partial: b.partial && !b.future,
+      revenue: b.revenue,
+      orders: b.orders,
+      paidOrders: b.paidOrders,
+      fewOrders: !!m.perBasket && value != null && b.paidOrders > 0 && b.paidOrders <= FEW_ORDERS,
+      isolated: value != null && (values[i - 1] ?? null) == null && (values[i + 1] ?? null) == null,
+      bridge: bridge[i],
+    };
+  });
+}
+
+/**
+ * The dashed connector series. Only a gap of exactly ONE bucket between two
+ * real points is bridged — its value there is the midpoint, so the dashes
+ * run straight between the two real points. Longer gaps stay empty: several
+ * hours with no paid orders is worth seeing. Never bridges into the future.
+ */
+export function bridgeOneGaps(values: Array<number | null>, future: boolean[] = []): Array<number | null> {
+  const out: Array<number | null> = values.map(() => null);
+  for (let i = 1; i < values.length - 1; i++) {
+    const before = values[i - 1];
+    const after = values[i + 1];
+    if (values[i] != null || before == null || after == null || future[i] || future[i + 1]) continue;
+    out[i - 1] = before;
+    out[i] = (before + after) / 2;
+    out[i + 1] = after;
+  }
+  return out;
 }
 
 /** The one line under the big headline figure — how it was worked out. */
@@ -159,9 +210,9 @@ export function headlineNote(series: TrendSeries, metric: TrendMetricId): string
     case "revenue":
       return `${t.orders.toLocaleString("en-GB")} order${t.orders === 1 ? "" : "s"}`;
     case "aov":
-      return t.orders > 0
-        ? `${GBP.format(t.revenue)} ÷ ${t.orders.toLocaleString("en-GB")} orders${dashed}`
-        : "No orders in this period";
+      return t.paidOrders > 0
+        ? `${GBP.format(t.revenue)} ÷ ${t.paidOrders.toLocaleString("en-GB")} paid order${t.paidOrders === 1 ? "" : "s"}${dashed}`
+        : "No paid orders in this period";
     case "roas":
       if (t.roasPercent != null && t.adSpend != null) {
         return `${GBP.format(t.newCustomerRevenue)} ÷ ${GBP.format(t.adSpend)} spend${dashed}`;
