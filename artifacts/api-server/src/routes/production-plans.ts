@@ -11,7 +11,8 @@ import * as z from "zod";
 import { resolveRecipeIngredients, resolveSubRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
 import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag, getVariantOnHandQuantities, type ProductCount } from "../services/shopify";
 import { remainingFulfilmentPacks } from "../lib/remaining-fulfilment";
-import { planStartStock, plannedProductionPacks, remainingWrappingPacks } from "@workspace/stock-prediction";
+import { planStartStock, plannedProductionPacks, remainingWrappingPacks, interveningDispatchDays } from "@workspace/stock-prediction";
+import { loadStillToWrapToday, loadPlannedProductionByDate } from "../lib/plan-start-stock-inputs";
 import { getFactoryNumberCoreMenuOnly, getShopifyFreezerSyncEnabled } from "../lib/inventory-sync";
 import { logFridgeStockChange, type FridgeChangeSource } from "../lib/fridge-stock-log";
 import { londonDateString, londonStartOfDay } from "../lib/london-time";
@@ -2062,12 +2063,22 @@ router.get("/calculate-mac-cheese", async (req, res) => {
       inArray(stockEntriesTable.recipeId, macRecipeIds),
       eq(stockEntriesTable.itemType, "recipe"),
       eq(stockEntriesTable.location, "production_fridge"),
+      // Same 2-pack reading the calzone Factory Number uses — a bag row
+      // must never out-rank the pack count on recency.
+      eq(stockEntriesTable.packSize, 2),
     ))
     .orderBy(asc(stockEntriesTable.checkedAt));
   const latestStock: Record<number, number> = {};
   for (const row of stockRows) {
     if (row.recipeId != null) latestStock[row.recipeId] = Number(row.quantity);
   }
+
+  // Working days between today and planDate: their production and dispatch
+  // happen before this plan's day starts, so they roll forward into its
+  // opening stock (see @workspace/stock-prediction).
+  const macTodayStr = londonDateString();
+  const rollDates = interveningDispatchDays(macTodayStr, planDate, getNextWorkingDay);
+  const rollDeliveryDates = rollDates.map(getNextCalendarDay);
 
   // Load recipe → Shopify variant mappings (same source the calzone endpoint
   // uses) so mac cheese recipes can match by variant ID instead of fuzzy names.
@@ -2101,14 +2112,15 @@ router.get("/calculate-mac-cheese", async (req, res) => {
   const shopifySalesPerDate: Record<string, Record<string, number>> = {};
   const variantSalesPerDate: Record<string, Record<string, number>> = {};
   let shopifyError: string | null = null;
+  const salesDatesToFetch = [...deliveryDates, ...rollDeliveryDates];
   try {
     const results = await Promise.allSettled(
-      deliveryDates.map(date => countProductsByTag(date).then(products => ({ date, products })))
+      salesDatesToFetch.map(date => countProductsByTag(date).then(products => ({ date, products })))
     );
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
       if (result.status === "rejected") {
-        console.warn(`[calculate-mac-cheese] Shopify fetch for ${deliveryDates[i]} failed:`, result.reason?.message ?? result.reason);
+        console.warn(`[calculate-mac-cheese] Shopify fetch for ${salesDatesToFetch[i]} failed:`, result.reason?.message ?? result.reason);
         continue;
       }
       const { date, products } = result.value;
@@ -2189,10 +2201,18 @@ router.get("/calculate-mac-cheese", async (req, res) => {
   // DELIVERY date and TCK ships the day before, so today's dispatch carries
   // tomorrow's tag. Same helper and same date rule as the calzone Factory
   // Number, so the two categories can't disagree (Graeme, 2026-08-21).
-  const macTodayStr = londonDateString();
+  // 2026-09-25: plus today's mac still to be wrapped and the roll-forward of
+  // any working day in between — the same planStartStock() the calzone
+  // Factory Number uses. Loaders + maths live outside this frozen file.
   const macDeliveryTodayStr = getNextCalendarDay(macTodayStr);
-  const { byRecipe: macRemainingToday, diagnostics: macFulfilmentDiagnostics } =
-    await remainingFulfilmentPacks(macDeliveryTodayStr, { limitToRecipeIds: macRecipeIds });
+  const [{ byRecipe: macRemainingToday, diagnostics: macFulfilmentDiagnostics }, macStillToWrap, macRollProduction] =
+    await Promise.all([
+      remainingFulfilmentPacks(macDeliveryTodayStr, { limitToRecipeIds: macRecipeIds }),
+      // A same-day plan's "today's production" is the plan itself — never
+      // count it as stock it already has.
+      planDate > macTodayStr ? loadStillToWrapToday(macTodayStr, macRecipeIds) : Promise.resolve({} as Record<number, number>),
+      loadPlannedProductionByDate(rollDates, macRecipeIds),
+    ]);
 
   const recipes = macRecipes.map(r => {
     const portionsPerBatch = Number(r.portionsPerBatch) || 10;
@@ -2200,10 +2220,20 @@ router.get("/calculate-mac-cheese", async (req, res) => {
     const packsPerBatch = portionsPerBatch / packSize;
     const liveStock = latestStock[r.recipeId] ?? 0;
     const stillToDispatchToday = macRemainingToday[r.recipeId] ?? 0;
-    // Never below zero: more outstanding than stock means the fridge is
-    // already committed, and the plan should treat it as empty rather than
-    // credit a negative.
-    const leftOverStock = Math.max(0, liveStock - stillToDispatchToday);
+    // Never below zero at any step: more outstanding than stock means the
+    // fridge is already committed, and the plan treats it as empty rather
+    // than credit a negative.
+    const stockWorking = planStartStock({
+      liveStock,
+      stillToWrapToday: Math.round(macStillToWrap[r.recipeId] ?? 0),
+      stillToDispatchToday,
+      rollForward: rollDates.map((date, i) => ({
+        date,
+        plannedProductionPacks: Math.round(macRollProduction[date]?.[r.recipeId] ?? 0),
+        dispatchPacks: matchSalesForDate(r.recipeId, r.recipeName ?? "", rollDeliveryDates[i]),
+      })),
+    });
+    const leftOverStock = stockWorking.atPlanStart;
 
     const salesNextDay = matchSalesForDate(r.recipeId, r.recipeName ?? "", deliveryDates[0]);
     const salesNextDayPlus1 = matchSalesForDate(r.recipeId, r.recipeName ?? "", deliveryDates[1]);
@@ -2233,6 +2263,8 @@ router.get("/calculate-mac-cheese", async (req, res) => {
       // rather than an unexplained drop.
       liveStock: Math.round(liveStock),
       stillToDispatchToday: Math.round(stillToDispatchToday),
+      // Full working: still to wrap today, end of today, each rolled day.
+      stockWorking,
       salesNextDay,
       salesNextDayPlus1,
       salesNextDayPlus2,
