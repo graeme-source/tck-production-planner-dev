@@ -11,7 +11,7 @@ import * as z from "zod";
 import { resolveRecipeIngredients, resolveSubRecipeIngredients, aggregateIngredients, roundByUnit, type ResolvedIngredient } from "../lib/ingredient-resolver";
 import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag, getVariantOnHandQuantities, type ProductCount } from "../services/shopify";
 import { remainingFulfilmentPacks } from "../lib/remaining-fulfilment";
-import { planStartStock, plannedProductionPacks, remainingWrappingPacks, interveningDispatchDays } from "@workspace/stock-prediction";
+import { planStartStock, interveningDispatchDays } from "@workspace/stock-prediction";
 import { loadStillToWrapToday, loadPlannedProductionByDate } from "../lib/plan-start-stock-inputs";
 import { getFactoryNumberCoreMenuOnly, getShopifyFreezerSyncEnabled } from "../lib/inventory-sync";
 import { logFridgeStockChange, type FridgeChangeSource } from "../lib/fridge-stock-log";
@@ -708,29 +708,9 @@ export async function calculatePlanData(planDate: string) {
   const deliveryDates = dispatchDates.map(getNextCalendarDay);
 
   const prevProductionDate = getPreviousWorkingDay(planDate);
-  const prevPlanItems = await db
-    .select({
-      recipeId: productionPlanItemsTable.recipeId,
-      batchesTarget: productionPlanItemsTable.batchesTarget,
-      portionsPerBatch: recipesTable.portionsPerBatch,
-      packSize: recipesTable.packSize,
-    })
-    .from(productionPlanItemsTable)
-    .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
-    .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
-    .where(and(
-      eq(productionPlansTable.planDate, prevProductionDate),
-      inArray(productionPlansTable.status, ["draft", "active", "prep", "building", "complete"]),
-    ));
-
-  const prevProductionPacks: Record<number, number> = {};
-  for (const row of prevPlanItems) {
-    if (row.recipeId != null) {
-      // Shared with the mac cheese roll-forward (@workspace/stock-prediction).
-      const packs = plannedProductionPacks(row);
-      prevProductionPacks[row.recipeId] = (prevProductionPacks[row.recipeId] ?? 0) + packs;
-    }
-  }
+  // Same loader the mac cheese roll-forward uses (lib/plan-start-stock-inputs).
+  const prevProductionPacks: Record<number, number> =
+    (await loadPlannedProductionByDate([prevProductionDate]))[prevProductionDate] ?? {};
 
   const fridgeRows = await db
     .select({
@@ -900,27 +880,10 @@ export async function calculatePlanData(planDate: string) {
   const deliveryTodayStr = deliveryTodayDate.toISOString().slice(0, 10);
   const coreMenuOnly = await getFactoryNumberCoreMenuOnly();
 
-  const todayPlanItems = await db
-    .select({
-      recipeId: productionPlanItemsTable.recipeId,
-      batchesTarget: productionPlanItemsTable.batchesTarget,
-      fridgeQty: productionPlanItemsTable.fridgeQty,
-      fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
-      eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
-      freezerQty: productionPlanItemsTable.freezerQty,
-      wonlyCount: productionPlanItemsTable.wonlyCount,
-      wonlyTotal: productionPlanItemsTable.wonlyTotal,
-      wrappingComplete: productionPlanItemsTable.wrappingComplete,
-      portionsPerBatch: recipesTable.portionsPerBatch,
-      packSize: recipesTable.packSize,
-    })
-    .from(productionPlanItemsTable)
-    .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
-    .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
-    .where(and(
-      eq(productionPlansTable.planDate, todayStr),
-      inArray(productionPlansTable.status, ["active", "prep", "building"]),
-    ));
+  // Today's production still to land in the fridge — same loader the mac
+  // cheese stock uses (lib/plan-start-stock-inputs → @workspace/stock-
+  // prediction remainingWrappingPacks for how bags/freezer/wonkies net off).
+  const remainingWrappingPacksToday = await loadStillToWrapToday(todayStr);
 
   // ─── 8-pack bags planned on the plan being created/edited ─────────
   // Bags are made FROM the same batches as the 2-packs (36 batches = 360
@@ -929,7 +892,7 @@ export async function calculatePlanData(planDate: string) {
   // actually yields. Without this the projection counts the whole batch
   // output as 2-packs and overstates availability by up to 4 packs per bag.
   //
-  // Distinct from the todayPlanItems query above, which feeds the
+  // Distinct from the still-to-wrap load above, which feeds the
   // end-of-TODAY prediction (estimatedFactoryNumber). This is the next term
   // along: what the plan's OWN production will leave behind.
   //
@@ -951,14 +914,6 @@ export async function calculatePlanData(planDate: string) {
     plannedBagsByRecipe[row.recipeId] = (plannedBagsByRecipe[row.recipeId] ?? 0) + (row.eightPackBagCount ?? 0);
   }
 
-  const remainingWrappingPacksToday: Record<number, number> = {};
-  for (const row of todayPlanItems) {
-    if (row.recipeId == null) continue;
-    // Shared with the mac cheese path — see @workspace/stock-prediction for
-    // how wrapped packs, 8-pack bags, freezer and wonkies are netted off.
-    const remaining = remainingWrappingPacks(row);
-    remainingWrappingPacksToday[row.recipeId] = (remainingWrappingPacksToday[row.recipeId] ?? 0) + remaining;
-  }
 
   // Packs still to leave the fridge today, netted off live stock below to
   // give the PREDICTED end-of-day Factory Number. Shared with the macaroni
