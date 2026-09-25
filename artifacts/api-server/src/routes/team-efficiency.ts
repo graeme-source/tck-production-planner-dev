@@ -2,6 +2,9 @@
  * Team efficiency analytics (Objective I; feeds E/G).
  *
  *   GET /api/team-efficiency?range=30d|3m|6m|12m   managers and admins
+ *   GET /api/team-efficiency?from=YYYY-MM-DD&to=YYYY-MM-DD   a custom range,
+ *       kept inside the computed history; its headline is the range's own
+ *       value-weighted figure against the same-length period before it
  *   PUT /api/team-efficiency/settings/:key          founder only
  *
  * CONFIDENTIAL: pounds and R go to the founder account ONLY (exact email
@@ -19,14 +22,15 @@ import { validate, validateQuery } from "../middleware/validate";
 import { isFounderEmail } from "../lib/founder-email";
 import { londonDateString } from "../lib/london-time";
 import { addDaysIso } from "../lib/team-efficiency-labour";
-import { buildReport, viewerReport, rangeFrom, type RangeKey, type StoredDay } from "../lib/team-efficiency-report";
-import { SETTING_SCHEMAS, isSettingKey, NEEDS_RECOMPUTE } from "../lib/team-efficiency-settings";
+import {
+  buildReport, viewerReport, rangeFrom, clampRange, previousPeriod, type RangeKey, type StoredDay,
+} from "../lib/team-efficiency-report";
+import { SETTING_SCHEMAS, REPORT_QUERY as reportQuery, isSettingKey, NEEDS_RECOMPUTE } from "../lib/team-efficiency-settings";
 import type { DayFlag, DayStatus } from "../lib/team-efficiency-day";
 import { loadSettings, restateAll, recomputeHistory, jobMeta, isJobRunning } from "../services/team-efficiency-job";
 
 const router: IRouter = Router();
 
-const reportQuery = z.object({ range: z.enum(["30d", "3m", "6m", "12m"]).default("3m") });
 
 async function viewerIsFounder(req: Request): Promise<boolean> {
   const userId = req.session.userId;
@@ -74,18 +78,33 @@ router.get("/", requireManagerOrAdmin, validateQuery(reportQuery), async (req: R
       res.json({ ready: false, founder: false });
       return;
     }
-    const { range } = res.locals["query"] as { range: RangeKey };
+    const q = res.locals["query"] as { range: RangeKey; from?: string; to?: string };
+    const meta = await jobMeta();
     const today = londonDateString();
-    const to = addDaysIso(today, -1);
-    const from = rangeFrom(range, today);
-    const [settings, days, meta, founder] = await Promise.all([
+    let from: string;
+    let to: string;
+    const custom = Boolean(q.from && q.to);
+    if (q.from && q.to) {
+      const clamped = clampRange(q.from, q.to, { min: meta.historyFrom, max: meta.historyTo });
+      // Nothing computed in that range: keep it as asked; the report is simply empty.
+      from = clamped?.from ?? q.from;
+      to = clamped?.to ?? q.to;
+    } else {
+      to = addDaysIso(today, -1);
+      from = rangeFrom(q.range, today);
+    }
+    // Load early enough for the first days' rolling figure (three weeks) and,
+    // for a custom range, the same-length period before it.
+    const rollingFrom = addDaysIso(from, -21);
+    const prevFrom = previousPeriod(from, to).from;
+    const since = custom && prevFrom < rollingFrom ? prevFrom : rollingFrom;
+    const [settings, days, founder] = await Promise.all([
       loadSettings(),
-      // A fortnight before the range so its first days have a rolling figure.
-      storedDays(addDaysIso(from, -21)),
-      jobMeta(),
+      storedDays(since),
       viewerIsFounder(req),
     ]);
-    const full = buildReport(days, settings.standardRatio, from, to);
+    const full = buildReport(days, settings.standardRatio, from, to, { headline: custom ? "range" : "rolling7" });
+    const range = custom ? "custom" : q.range;
     const lines = [...new Set(days.flatMap(d => Object.keys(d.packsByLine)))].sort();
 
     if (!founder) {

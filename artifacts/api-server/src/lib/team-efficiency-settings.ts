@@ -21,6 +21,19 @@ export const SETTING_SCHEMAS = {
   holiday_accrual: z.number().min(0).max(0.5),
 } as const;
 
+const isoDate = z.string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine(d => !Number.isNaN(Date.parse(`${d}T00:00:00Z`)), "Not a real date");
+
+/** GET /api/team-efficiency query: a preset range, or a custom from/to. */
+export const REPORT_QUERY = z.object({
+  range: z.enum(["30d", "3m", "6m", "12m"]).default("3m"),
+  from: isoDate.optional(),
+  to: isoDate.optional(),
+})
+  .refine(q => (q.from == null) === (q.to == null), { message: "Give both from and to, or neither" })
+  .refine(q => q.from == null || q.to == null || q.to >= q.from, { message: "The end date can't be before the start" });
+
 export type SettingKey = keyof typeof SETTING_SCHEMAS;
 export const SETTING_KEYS = Object.keys(SETTING_SCHEMAS) as SettingKey[];
 

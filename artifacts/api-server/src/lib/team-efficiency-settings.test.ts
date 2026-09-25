@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseSettings, SETTING_SCHEMAS, isSettingKey, NEEDS_RECOMPUTE } from "./team-efficiency-settings";
+import { parseSettings, SETTING_SCHEMAS, REPORT_QUERY, isSettingKey, NEEDS_RECOMPUTE } from "./team-efficiency-settings";
 import { FALLBACK_SETTINGS } from "./team-efficiency-day";
 
 describe("parseSettings", () => {
@@ -30,6 +30,22 @@ describe("parseSettings", () => {
     expect(s.standardRatio).toBe(FALLBACK_SETTINGS.standardRatio);
     expect(s.despatchShare).toBe(FALLBACK_SETTINGS.despatchShare);
     expect(s.discountRates).toEqual({});
+  });
+});
+
+describe("report query", () => {
+  it("takes a preset, defaulting to 3 months", () => {
+    expect(REPORT_QUERY.safeParse({}).success && REPORT_QUERY.parse({}).range).toBe("3m");
+    expect(REPORT_QUERY.parse({ range: "12m" }).range).toBe("12m");
+    expect(REPORT_QUERY.safeParse({ range: "2y" }).success).toBe(false);
+  });
+  it("takes a custom from/to: both, real dates, end not before start", () => {
+    expect(REPORT_QUERY.parse({ from: "2026-08-01", to: "2026-08-31" })).toMatchObject({ from: "2026-08-01", to: "2026-08-31" });
+    expect(REPORT_QUERY.safeParse({ from: "2026-08-01", to: "2026-08-01" }).success).toBe(true);
+    expect(REPORT_QUERY.safeParse({ from: "2026-08-01" }).success).toBe(false);
+    expect(REPORT_QUERY.safeParse({ from: "2026-08-31", to: "2026-08-01" }).success).toBe(false);
+    expect(REPORT_QUERY.safeParse({ from: "2026-13-01", to: "2026-13-02" }).success).toBe(false);
+    expect(REPORT_QUERY.safeParse({ from: "1 Aug", to: "2026-08-31" }).success).toBe(false);
   });
 });
 

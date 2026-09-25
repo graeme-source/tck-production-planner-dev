@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  buildReport, headline, viewerReport, rangeFrom, FOUNDER_ONLY_KEYS, type StoredDay,
+  buildReport, headline, viewerReport, rangeFrom, rangeFigure, previousPeriod, rangeHeadline, clampRange,
+  FOUNDER_ONLY_KEYS, type StoredDay,
 } from "./team-efficiency-report";
 
 const STANDARD = 5;
@@ -80,6 +81,59 @@ describe("headline", () => {
   });
 });
 
+describe("custom ranges", () => {
+  it("the range figure is value-weighted, not a mean of daily percentages", () => {
+    // A small 200% day and a big 50% day: the mean of % would say 125%.
+    const days = [day("2026-09-01", 2000, 200), day("2026-09-02", 5000, 2000)];
+    const f = rangeFigure(days, STANDARD, "2026-09-01", "2026-09-02");
+    expect(f.pct).toBeCloseTo((7000 / 2200 / STANDARD) * 100, 6);
+    expect(f.pct).toBeLessThan(70);
+    expect(f.countedDays).toBe(2);
+  });
+
+  it("leaves flagged and pending days out of the range figure", () => {
+    const f = rangeFigure(history, STANDARD, "2026-09-14", "2026-09-21");
+    expect(f.pct).toBeCloseTo(120, 6);
+    expect(f.countedDays).toBe(5);
+    expect(f.flaggedDays).toBe(2);
+  });
+
+  it("compares with the same number of calendar days immediately before", () => {
+    expect(previousPeriod("2026-09-14", "2026-09-20")).toEqual({ from: "2026-09-07", to: "2026-09-13" });
+    expect(previousPeriod("2026-09-01", "2026-09-01")).toEqual({ from: "2026-08-31", to: "2026-08-31" });
+    expect(previousPeriod("2026-03-01", "2026-03-31")).toEqual({ from: "2026-01-29", to: "2026-02-28" });
+    const h = rangeHeadline(history, STANDARD, "2026-09-14", "2026-09-20");
+    expect(h.kind).toBe("range");
+    expect(h.pct).toBeCloseTo(120, 6);
+    expect(h.previousPct).toBeCloseTo(100, 6);
+    expect(h.changePts).toBeCloseTo(20, 6);
+    expect([h.from, h.to, h.previousFrom, h.previousTo]).toEqual(["2026-09-14", "2026-09-20", "2026-09-07", "2026-09-13"]);
+  });
+
+  it("has no comparison when the period before has no counted days", () => {
+    const h = rangeHeadline(history, STANDARD, "2026-09-07", "2026-09-11");
+    expect(h.pct).toBeCloseTo(100, 6);
+    expect(h.previousPct).toBeNull();
+    expect(h.changePts).toBeNull();
+  });
+
+  it("buildReport uses the range headline when asked", () => {
+    const r = buildReport(history, STANDARD, "2026-09-14", "2026-09-20", { headline: "range" });
+    expect(r.headline.kind).toBe("range");
+    expect(r.days.map(d => d.date)).toEqual(["2026-09-14", "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18", "2026-09-19"]);
+    expect(viewerReport(r).headline.previousFrom).toBe("2026-09-07");
+  });
+
+  it("clamps a range to the stored history", () => {
+    const b = { min: "2026-03-30", max: "2026-09-24" };
+    expect(clampRange("2026-01-01", "2026-12-31", b)).toEqual({ from: "2026-03-30", to: "2026-09-24" });
+    expect(clampRange("2026-05-01", "2026-05-31", b)).toEqual({ from: "2026-05-01", to: "2026-05-31" });
+    expect(clampRange("2026-05-31", "2026-05-01", b)).toEqual({ from: "2026-05-01", to: "2026-05-31" }); // swapped
+    expect(clampRange("2025-01-01", "2025-02-01", b)).toBeNull();
+    expect(clampRange("2026-05-01", "2026-05-31", { min: null, max: null })).toEqual({ from: "2026-05-01", to: "2026-05-31" });
+  });
+});
+
 describe("rangeFrom", () => {
   it("steps back 30 days / 3 / 6 / 12 months", () => {
     expect(rangeFrom("30d", "2026-09-25")).toBe("2026-08-26");
@@ -92,7 +146,9 @@ describe("viewerReport — pay stays with the founder (regression)", () => {
   const viewer = viewerReport(full);
   const json = JSON.stringify(viewer);
 
-  it("contains no £ or R field anywhere", () => {
+  it("contains no £ or R field anywhere, for a custom range too", () => {
+    const custom = JSON.stringify(viewerReport(buildReport(history, STANDARD, "2026-09-14", "2026-09-20", { headline: "range" })));
+    for (const key of FOUNDER_ONLY_KEYS) expect(custom).not.toContain(`"${key}"`);
     for (const key of FOUNDER_ONLY_KEYS) expect(json).not.toContain(`"${key}"`);
     expect(json).not.toContain("£");
   });

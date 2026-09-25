@@ -18,7 +18,7 @@
  * lists it here.
  */
 import { dailyEfficiency } from "./team-efficiency";
-import { weekStart, addDaysIso } from "./team-efficiency-labour";
+import { weekStart, addDaysIso, daysBetween } from "./team-efficiency-labour";
 import type { DayFlag, DayStatus } from "./team-efficiency-day";
 
 export interface StoredDay {
@@ -58,13 +58,19 @@ export interface PeriodFigure {
 }
 
 export interface Headline {
+  /** "rolling7": the last 7 counted production days vs the 7 before.
+   *  "range": the chosen date range vs the same-length period before it. */
+  kind: "rolling7" | "range";
   pct: number | null;
   previousPct: number | null;
   /** pct − previousPct, in percentage points. */
   changePts: number | null;
-  /** The 7 counted days behind the headline. */
+  /** The days behind the headline (counted days for rolling7, the range for range). */
   from: string | null;
   to: string | null;
+  /** The comparison period ("range" only). */
+  previousFrom?: string | null;
+  previousTo?: string | null;
 }
 
 export interface TeamEfficiencyReport {
@@ -126,6 +132,7 @@ export function headline(history: StoredDay[], standard: number, window = 7): He
   const pct = pctOf(last);
   const previousPct = prev.length === window ? pctOf(prev) : null;
   return {
+    kind: "rolling7",
     pct,
     previousPct,
     changePts: pct != null && previousPct != null ? pct - previousPct : null,
@@ -134,12 +141,61 @@ export function headline(history: StoredDay[], standard: number, window = 7): He
   };
 }
 
+// ── Custom date ranges ────────────────────────────────────────────────────
+
+/** A range's own figure, value-weighted: total credited ÷ total labour over
+ *  its counted days ÷ standard — never a mean of daily percentages. */
+export function rangeFigure(history: StoredDay[], standard: number, from: string, to: string): PeriodFigure {
+  return periodFigure(`${from}..${to}`, history.filter(d => d.date >= from && d.date <= to), standard);
+}
+
+/** The same number of calendar days immediately before [from, to]. */
+export function previousPeriod(from: string, to: string): { from: string; to: string } {
+  const len = daysBetween(from, to) + 1;
+  return { from: addDaysIso(from, -len), to: addDaysIso(from, -1) };
+}
+
+/** Headline for a chosen range: its value-weighted figure against the
+ *  same-length period before it (no comparison when that has no counted days). */
+export function rangeHeadline(history: StoredDay[], standard: number, from: string, to: string): Headline {
+  const now = rangeFigure(history, standard, from, to);
+  const prev = previousPeriod(from, to);
+  const before = rangeFigure(history, standard, prev.from, prev.to);
+  const previousPct = before.countedDays > 0 ? before.pct : null;
+  return {
+    kind: "range",
+    pct: now.pct,
+    previousPct,
+    changePts: now.pct != null && previousPct != null ? now.pct - previousPct : null,
+    from, to,
+    previousFrom: prev.from, previousTo: prev.to,
+  };
+}
+
+/**
+ * Keep a requested range inside the stored history [min, max] (the first and
+ * latest computed days). Returns null when nothing of it overlaps. Swaps an
+ * end that comes before its start.
+ */
+export function clampRange(
+  from: string, to: string, bounds: { min: string | null; max: string | null },
+): { from: string; to: string } | null {
+  let f = from <= to ? from : to;
+  let t = from <= to ? to : from;
+  if (bounds.min && f < bounds.min) f = bounds.min;
+  if (bounds.max && t > bounds.max) t = bounds.max;
+  return f <= t ? { from: f, to: t } : null;
+}
+
 /**
  * The full report over [from, to]. `history` is every stored day in date
  * order (the rolling figure at the start of the range needs the days before
  * it); days outside the range only feed the rolling window.
  */
-export function buildReport(history: StoredDay[], standard: number, from: string, to: string): TeamEfficiencyReport {
+export function buildReport(
+  history: StoredDay[], standard: number, from: string, to: string,
+  opts: { headline?: "rolling7" | "range" } = {},
+): TeamEfficiencyReport {
   const sorted = [...history].sort((a, b) => a.date.localeCompare(b.date));
   const rolling = dailyEfficiency(
     sorted.map(d => ({ date: d.date, credited: d.valueCredited, labourCost: d.labourCost, exclude: !counted(d) })),
@@ -158,7 +214,9 @@ export function buildReport(history: StoredDay[], standard: number, from: string
 
   return {
     range: { from, to },
-    headline: headline(sorted.filter(d => d.date <= to), standard),
+    headline: opts.headline === "range"
+      ? rangeHeadline(sorted, standard, from, to)
+      : headline(sorted.filter(d => d.date <= to), standard),
     days,
     weekly: [...weeks].map(([k, v]) => periodFigure(k, v, standard)),
     monthly: [...months].map(([k, v]) => periodFigure(k, v, standard)),
@@ -202,7 +260,17 @@ export function viewerReport(r: TeamEfficiencyReport): ViewerReport {
   });
   return {
     range: { ...r.range },
-    headline: { ...r.headline },
+    // Built field by field like the rest: a £ figure added to the headline
+    // later must not ride along.
+    headline: {
+      kind: r.headline.kind,
+      pct: r.headline.pct,
+      previousPct: r.headline.previousPct,
+      changePts: r.headline.changePts,
+      from: r.headline.from,
+      to: r.headline.to,
+      ...(r.headline.kind === "range" ? { previousFrom: r.headline.previousFrom ?? null, previousTo: r.headline.previousTo ?? null } : {}),
+    },
     days: r.days.map(day),
     weekly: r.weekly.map(period),
     monthly: r.monthly.map(period),
