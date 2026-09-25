@@ -56,6 +56,31 @@ export function getNetRevenue(o: Pick<RevenueOrder, "total_price" | "refunds">):
   return total - getRefundTotal(o);
 }
 
+/**
+ * Did the order bring in money? Net revenue above zero (to the penny).
+ *
+ * £0 orders are real — resends and replacements go out at a 100% discount
+ * (tag "resend"), about 70 in 90 days — so they still count as ORDERS. But
+ * they aren't baskets anyone paid for, and letting them into AOV dragged it
+ * down: one £0 resend alone in an hour made that hour's AOV £0 (Graeme,
+ * 2026-09-25, "AOV looks a little bit unusual").
+ */
+export function isPaidOrder(o: Pick<RevenueOrder, "total_price" | "refunds">): boolean {
+  return Math.round(getNetRevenue(o) * 100) > 0;
+}
+
+/**
+ * Average order value, everywhere on the Numbers page:
+ *
+ *     AOV = net revenue ÷ PAID orders (isPaidOrder)
+ *
+ * £0 orders add nothing to revenue and are left out of the divisor. null
+ * when there are no paid orders — "no baskets", never £0.
+ */
+export function averageOrderValue(revenue: number, paidOrders: number): number | null {
+  return paidOrders > 0 ? revenue / paidOrders : null;
+}
+
 /** The order's tags, trimmed and lower-cased. */
 export function orderTags(o: Pick<RevenueOrder, "tags">): string[] {
   return (o.tags ?? "").split(",").map(t => t.trim().toLowerCase());

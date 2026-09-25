@@ -4,7 +4,9 @@ import { db, recipesTable, usersTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { londonDateString, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
 import { FRIED_CHICKEN_CATEGORY } from "./fried-chicken";
-import { CUSTOMER_TYPE_TAGS, getNetRevenue, getRefundTotal, isCountableOrder, orderHasTag } from "../lib/order-revenue";
+import {
+  averageOrderValue, CUSTOMER_TYPE_TAGS, getNetRevenue, getRefundTotal, isCountableOrder, isPaidOrder, orderHasTag,
+} from "../lib/order-revenue";
 
 const WEEKDAY_TO_NUM: Record<string, number> = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
 const londonWeekdayNumber = (d: Date) => WEEKDAY_TO_NUM[londonWeekdayName(d)] ?? 0;
@@ -279,16 +281,27 @@ router.get("/sales-summary", requireFounder, async (req, res) => {
     const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
     const estimatedMonthlyRevenue = averageDailyRevenue * daysInMonth;
 
+    // AOV divides by PAID orders only — £0 resends/replacements count as
+    // orders but not as baskets (lib/order-revenue.ts averageOrderValue).
+    const roundedTotal = Math.round(totalRevenue * 100) / 100;
+    const roundedToday = Math.round(todayRevenue * 100) / 100;
+    const paidOrderCount = validPeriod.filter(isPaidOrder).length;
+    const todayPaidOrderCount = todayOrdersFinal.filter(isPaidOrder).length;
+
     res.json({
       from,
       to,
-      totalRevenue: Math.round(totalRevenue * 100) / 100,
+      totalRevenue: roundedTotal,
       orderCount: validPeriod.length,
+      paidOrderCount,
+      aov: averageOrderValue(roundedTotal, paidOrderCount),
       dayCount,
       averageDailyRevenue: Math.round(averageDailyRevenue * 100) / 100,
       estimatedMonthlyRevenue: Math.round(estimatedMonthlyRevenue * 100) / 100,
-      todayRevenue: Math.round(todayRevenue * 100) / 100,
+      todayRevenue: roundedToday,
       todayOrderCount: todayOrdersFinal.length,
+      todayPaidOrderCount,
+      todayAov: averageOrderValue(roundedToday, todayPaidOrderCount),
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

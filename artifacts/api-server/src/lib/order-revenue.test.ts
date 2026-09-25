@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { getNetRevenue, getRefundTotal, isCountableOrder, orderHasTag, type RevenueOrder } from "./order-revenue";
+import {
+  averageOrderValue, getNetRevenue, getRefundTotal, isCountableOrder, isPaidOrder, orderHasTag, type RevenueOrder,
+} from "./order-revenue";
 
 function order(over: Partial<RevenueOrder> = {}): RevenueOrder {
   return { cancelled_at: null, financial_status: "paid", total_price: "40.00", refunds: [], tags: "", ...over };
@@ -36,6 +38,36 @@ describe("getNetRevenue", () => {
   });
   it("treats a missing price as zero", () => {
     expect(getNetRevenue(order({ total_price: "" }))).toBe(0);
+  });
+});
+
+describe("AOV leaves out £0 orders (regression: £0 resend #135073 made an hour's AOV £0)", () => {
+  const resend = order({ total_price: "0.00", tags: "2026-09-19, dispatch, resend, Small Box" });
+  const paid = [order({ total_price: "45.00" }), order({ total_price: "55.00" })];
+
+  it("a £0 resend still counts as an order, but not as a paid one", () => {
+    expect(isCountableOrder(resend)).toBe(true);
+    expect(isPaidOrder(resend)).toBe(false);
+    expect(paid.every(isPaidOrder)).toBe(true);
+  });
+
+  it("an order refunded down to £0 isn't paid either", () => {
+    const refundedToZero = order({
+      total_price: "30.00",
+      financial_status: "partially_refunded",
+      refunds: [{ id: 1, created_at: "2026-09-19T10:00:00+01:00", transactions: [{ amount: "30.00", kind: "refund", status: "success" }] }],
+    });
+    expect(isPaidOrder(refundedToZero)).toBe(false);
+  });
+
+  it("AOV = revenue ÷ paid orders: £100 over two paid orders plus a resend is £50, not £33.33", () => {
+    const all = [...paid, resend];
+    const revenue = all.reduce((s, o) => s + getNetRevenue(o), 0);
+    expect(averageOrderValue(revenue, all.filter(isPaidOrder).length)).toBe(50);
+  });
+
+  it("an hour whose only order is a £0 resend has no AOV, not £0", () => {
+    expect(averageOrderValue(getNetRevenue(resend), [resend].filter(isPaidOrder).length)).toBeNull();
   });
 });
 

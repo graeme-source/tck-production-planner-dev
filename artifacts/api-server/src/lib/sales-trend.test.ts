@@ -8,7 +8,7 @@ import {
   roasPercentFor,
   type BuildTrendInput,
 } from "./sales-trend";
-import { getNetRevenue, isCountableOrder, orderHasTag } from "./order-revenue";
+import { getNetRevenue, isCountableOrder, isPaidOrder, orderHasTag } from "./order-revenue";
 
 let nextId = 1;
 function order(createdAt: string, total: string, tags = "", over: Record<string, unknown> = {}) {
@@ -156,6 +156,8 @@ describe("reconciliation with the tiles", () => {
     order("2026-09-24T18:30:00+01:00", "33.33", "", { cancelled_at: "2026-09-24T19:00:00+01:00" }),
     order("2026-09-24T21:00:00+01:00", "12.34", "", { financial_status: "refunded" }),
     order("2026-09-24T23:59:59+01:00", "0.01", "new-customer"),
+    // A £0 resend, alone in its hour — like #135073 on live.
+    order("2026-09-24T06:10:00+01:00", "0.00", "dispatch, resend, Small Box", { total_discounts: "53.30" }),
   ];
 
   // What the tiles compute, independently, from the same orders.
@@ -186,13 +188,24 @@ describe("reconciliation with the tiles", () => {
     expect(hourly.totals.newCustomerOrders).toBe(3);
   });
 
-  it("AOV is weighted: period AOV = total revenue ÷ total orders, not the mean of hourly AOVs", () => {
-    expect(hourly.totals.aov).toBeCloseTo(tileRevenue / tileOrders, 10);
-    const withOrders = hourly.buckets.filter(b => b.orders > 0);
-    const meanOfBucketAovs = sum(withOrders.map(b => b.aov ?? 0)) / withOrders.length;
+  it("AOV is weighted: period AOV = total revenue ÷ total PAID orders, not the mean of hourly AOVs", () => {
+    const tilePaidOrders = countable.filter(isPaidOrder).length;
+    expect(tilePaidOrders).toBe(tileOrders - 1);
+    expect(hourly.totals.paidOrders).toBe(tilePaidOrders);
+    expect(hourly.totals.aov).toBeCloseTo(tileRevenue / tilePaidOrders, 10);
+    const withPaid = hourly.buckets.filter(b => b.paidOrders > 0);
+    const meanOfBucketAovs = sum(withPaid.map(b => b.aov ?? 0)) / withPaid.length;
     expect(Math.abs(meanOfBucketAovs - (hourly.totals.aov ?? 0))).toBeGreaterThan(1);
-    // and each bucket's AOV is its own revenue ÷ its own orders
-    for (const b of withOrders) expect(b.aov).toBeCloseTo(b.revenue / b.orders, 10);
+    // and each bucket's AOV is its own revenue ÷ its own paid orders
+    for (const b of withPaid) expect(b.aov).toBeCloseTo(b.revenue / b.paidOrders, 10);
+    expect(sum(hourly.buckets.map(b => b.paidOrders))).toBe(tilePaidOrders);
+  });
+
+  it("an hour whose only order is a £0 resend has an order but no AOV (regression: #135073)", () => {
+    const six = hourly.buckets[6];
+    expect(six.orders).toBe(1);
+    expect(six.paidOrders).toBe(0);
+    expect(six.aov).toBeNull();
   });
 
   it("an hour with no orders has no AOV (a gap, not £0)", () => {

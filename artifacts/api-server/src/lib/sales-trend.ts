@@ -13,9 +13,10 @@
  *   - Orders are filtered and valued by lib/order-revenue.ts, the same rules
  *     the tiles use.
  *   - Ratios are weighted, never averaged: a bucket's AOV is its revenue ÷
- *     its orders, and the period AOV is total revenue ÷ total orders — NOT
- *     the mean of the bucket AOVs (one £200 wholesale order in a quiet hour
- *     would otherwise swing the whole day).
+ *     its PAID orders, and the period AOV is total revenue ÷ total paid
+ *     orders — NOT the mean of the bucket AOVs (one £200 wholesale order in
+ *     a quiet hour would otherwise swing the whole day). £0 resends count as
+ *     orders but not in AOV (averageOrderValue in lib/order-revenue.ts).
  *   - ROAS follows lib/roas.ts on the page: a bucket only gets a figure when
  *     EVERY day in it has an ad-spend figure. "—" means "we don't know",
  *     never 0%.
@@ -26,7 +27,7 @@
  */
 import type { ShopifyOrder } from "../services/shopify";
 import {
-  getNetRevenue, isCountableOrder, orderHasTag,
+  averageOrderValue, getNetRevenue, isCountableOrder, isPaidOrder, orderHasTag,
   NEW_CUSTOMER_TAG, NEW_SUB_TAG, RECURRING_SUB_TAG, SUBSCRIPTION_TAGS,
 } from "./order-revenue";
 import { addDaysToDateString, londonDateString, londonDayStartUtc, londonHour } from "./london-time";
@@ -85,6 +86,7 @@ export function mondayOf(date: string): string {
 interface Tally {
   revenueP: number;
   orders: number;
+  paidOrders: number;
   newCustomerRevenueP: number;
   newCustomerOrders: number;
   recurringSubOrders: number;
@@ -94,7 +96,7 @@ interface Tally {
 }
 
 const emptyTally = (): Tally => ({
-  revenueP: 0, orders: 0,
+  revenueP: 0, orders: 0, paidOrders: 0,
   newCustomerRevenueP: 0, newCustomerOrders: 0,
   recurringSubOrders: 0, newSubOrders: 0,
   subscriptionRevenueP: 0, subscriptionOrders: 0,
@@ -104,9 +106,11 @@ const emptyTally = (): Tally => ({
 export interface TrendFigures {
   /** Net revenue, £ — the Total Sales tile. */
   revenue: number;
-  /** Countable orders — the Total Sales tile's sub-line. */
+  /** Countable orders, £0 resends included — the Total Sales tile's sub-line. */
   orders: number;
-  /** revenue ÷ orders; null with no orders (a gap, not £0). */
+  /** Orders with net revenue above £0 — AOV's divisor. */
+  paidOrders: number;
+  /** revenue ÷ paid orders; null with no paid orders (a gap, not £0). */
   aov: number | null;
   newCustomerRevenue: number;
   newCustomerOrders: number;
@@ -172,6 +176,7 @@ function addOrder(t: Tally, o: TrendOrder): void {
   const p = pence(getNetRevenue(o));
   t.revenueP += p;
   t.orders += 1;
+  if (isPaidOrder(o)) t.paidOrders += 1;
   if (orderHasTag(o, NEW_CUSTOMER_TAG)) { t.newCustomerRevenueP += p; t.newCustomerOrders += 1; }
   if (orderHasTag(o, RECURRING_SUB_TAG)) t.recurringSubOrders += 1;
   if (orderHasTag(o, NEW_SUB_TAG)) t.newSubOrders += 1;
@@ -199,7 +204,8 @@ function figures(t: Tally, days: string[], spendByDate: Map<string, number>): Tr
   return {
     revenue: pounds(t.revenueP),
     orders: t.orders,
-    aov: t.orders > 0 ? t.revenueP / t.orders / 100 : null,
+    paidOrders: t.paidOrders,
+    aov: averageOrderValue(pounds(t.revenueP), t.paidOrders),
     newCustomerRevenue,
     newCustomerOrders: t.newCustomerOrders,
     recurringSubOrders: t.recurringSubOrders,
