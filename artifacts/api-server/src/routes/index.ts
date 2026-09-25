@@ -49,6 +49,7 @@ import returnToWorkRouter from "./return-to-work";
 import stationMessagesRouter from "./station-messages";
 import employeeReviewsRouter from "./employee-reviews";
 import { requirePeopleUnlock } from "../middleware/people-unlock";
+import { requireFreshPinForAttributingWrites } from "../middleware/pin-enforce";
 import friedChickenRouter from "./fried-chicken";
 import riskAssessmentsRouter from "./risk-assessments";
 import complianceActionsRouter from "./compliance-actions";
@@ -116,6 +117,12 @@ router.use((req: Request, res: Response, next: NextFunction) => {
   }
   next();
 });
+
+// Daily PIN lock, server side: writes that put a person's name on work
+// (batches, table claims, checklist ticks, HACCP logs, packing/wrapping
+// records…) are refused with 423 PIN_REQUIRED once the session's PIN is due
+// (4am UTC / 10pm London). The list and rules: lib/pin-enforce.ts.
+router.use(requireFreshPinForAttributingWrites);
 
 // Admin-only middleware
 async function requireAdmin(req: Request, res: Response, next: NextFunction) {
