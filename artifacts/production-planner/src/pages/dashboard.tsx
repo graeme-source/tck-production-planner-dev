@@ -841,7 +841,7 @@ export default function Dashboard() {
         <StatCard
           title="End-of-Day Meeting"
           value="▶"
-          subtitle="Today's builder, packing and wonky numbers"
+          subtitle="Today's builder, packing, wonky and dog bin numbers"
           icon={MoonStar}
           color="text-slate-500"
           bg="bg-slate-500/10"

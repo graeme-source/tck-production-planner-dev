@@ -63,6 +63,7 @@ import aiRouter from "./ai";
 import recipeDesignerRouter from "./recipe-designer";
 import morningMeetingsRouter from "./morning-meetings";
 import endOfDayRouter from "./end-of-day";
+import qualityRejectsRouter from "./quality-rejects";
 import leanReviewsRouter from "./lean-reviews";
 import leanCurriculumRouter from "./lean-curriculum";
 import ingredientScrapeRouter from "./ingredient-scrape";
@@ -176,6 +177,10 @@ router.use("/sub-recipes", subRecipesRouter);
 router.use("/recipes", recipesRouter);
 router.use("/recipe-collections", recipeCollectionsRouter);
 router.use("/queued-production", queuedProductionRouter);
+// Wonky + dog bin counters on plan items. Mounted BEFORE the frozen
+// production-plans router so its paths (including the wonky ones moved out
+// of it) are answered here.
+router.use("/production-plans", qualityRejectsRouter);
 router.use("/production-plans", productionPlansRouter);
 // Who is actually on each building table (last batch recorder + who opened
 // it) — read-only, feeds the dashboard chooser and the building lock.

@@ -50,6 +50,7 @@ import {
 import { getPreviousDispatchDayAsync, getNextDispatchDayAsync } from "./production-plans";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 import { leanCorpusPrompt } from "../lib/lean-corpus";
+import { sumQualityRejects } from "../lib/quality-rejects";
 import type Anthropic from "@anthropic-ai/sdk";
 
 const router: IRouter = Router();
@@ -450,6 +451,7 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       .limit(1);
 
     let wonkyCount = 0;
+    let dogBinCount = 0;
     let shortCount = 0;
     let leftoverFillingGrams = 0;
     let builderBatchesPerHour: number | null = null;
@@ -461,6 +463,7 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
         .select({
           id: productionPlanItemsTable.id,
           wonlyTotal: productionPlanItemsTable.wonlyTotal,
+          dogBinCount: productionPlanItemsTable.dogBinCount,
           shortCount: productionPlanItemsTable.shortCount,
           leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
           batchesTarget: productionPlanItemsTable.batchesTarget,
@@ -468,8 +471,10 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
         .from(productionPlanItemsTable)
         .where(eq(productionPlanItemsTable.planId, yesterdayPlan.id));
 
+      const rejects = sumQualityRejects(items);
+      wonkyCount = rejects.wonky;
+      dogBinCount = rejects.dogBin;
       for (const it of items) {
-        wonkyCount += it.wonlyTotal ?? 0;
         shortCount += it.shortCount ?? 0;
         leftoverFillingGrams += it.leftoverFillingGrams ?? 0;
         yesterdayBatchesTotal += it.batchesTarget ?? 0;
@@ -735,6 +740,8 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       },
       yesterdayKpis: {
         wonkyCount,
+        // Thrown away — a separate figure from wonkies, never added to them.
+        dogBinCount,
         shortCount,
         leftoverFillingGrams,
         builderBatchesPerHour,

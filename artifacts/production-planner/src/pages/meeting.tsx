@@ -109,6 +109,9 @@ export interface DashboardData {
   };
   yesterdayKpis: {
     wonkyCount: number;
+    /** Thrown away — reported beside wonkies, never added to them. Optional
+     *  so a cached older server payload still renders (read as 0). */
+    dogBinCount?: number;
     shortCount: number;
     leftoverFillingGrams: number;
     builderBatchesPerHour: number | null;
@@ -2065,7 +2068,11 @@ function SpecialPrepSlide({ data, slide }: { data: DashboardData; slide: Meeting
 const KPI_CATALOG = {
   builder_rate: { label: "TCK run rate (batches/hr)", get: (k: DashboardData["yesterdayKpis"]) => k.builderBatchesPerHour != null ? k.builderBatchesPerHour.toFixed(1) : "—", warn: () => false },
   packing_rate: { label: "Packing boxes/hr",   get: (k: DashboardData["yesterdayKpis"]) => k.packingBatchesPerHour != null ? k.packingBatchesPerHour.toFixed(1) : "—", warn: () => false },
-  wonkies:      { label: "Wonkies",            get: (k: DashboardData["yesterdayKpis"]) => k.wonkyCount.toString(), warn: (k: DashboardData["yesterdayKpis"]) => k.wonkyCount > 20 },
+  // Quality rejects: the Wonkies tile carries dog bins as a separate figure
+  // underneath, so a slide configured before dog bins existed still shows
+  // both. "Dog bins" is also its own tile for slides that want it.
+  wonkies:      { label: "Wonkies",            get: (k: DashboardData["yesterdayKpis"]) => k.wonkyCount.toString(), sub: (k: DashboardData["yesterdayKpis"]) => `+ ${k.dogBinCount ?? 0} dog bin (thrown away)`, warn: (k: DashboardData["yesterdayKpis"]) => k.wonkyCount > 20 },
+  dog_bins:     { label: "Dog bins",           get: (k: DashboardData["yesterdayKpis"]) => (k.dogBinCount ?? 0).toString(), warn: () => false },
   // Completed improvements only, bucketed by when the work was marked done —
   // never ideas, never the later approval (Graeme, 2026-09-18). Unlike the
   // rates, 0 is a real zero and renders as 0; "—" only when the server
@@ -2094,6 +2101,7 @@ function YesterdayKpisSlide({ data, slide }: { data: DashboardData; slide: Meeti
               key={key}
               label={def.label}
               value={def.get(k)}
+              sub={"sub" in def ? def.sub(k) : undefined}
               tone={def.warn(k) ? "warn" : "ok"}
             />
           );
@@ -2103,11 +2111,12 @@ function YesterdayKpisSlide({ data, slide }: { data: DashboardData; slide: Meeti
   );
 }
 
-function KpiTile({ label, value, tone = "ok" }: { label: string; value: string; tone?: "ok" | "warn" }) {
+function KpiTile({ label, value, sub, tone = "ok" }: { label: string; value: string; sub?: string; tone?: "ok" | "warn" }) {
   return (
     <div className={cn("glass-panel rounded-2xl p-6", tone === "warn" && "border-amber-300/60 dark:border-amber-700/40")}>
       <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground mb-2">{label}</p>
       <p className="text-6xl font-display font-bold tabular-nums">{value}</p>
+      {sub && <p className="text-lg font-semibold text-muted-foreground mt-2">{sub}</p>}
     </div>
   );
 }
@@ -3690,7 +3699,7 @@ void ArrowRight;
 const SLIDE_KIND_CATALOG: Array<{ kind: SlideKind; label: string; description: string }> = [
   { kind: "special_prep",        label: "Test Product Prep",    description: "Tomorrow's non-core items being prepped today" },
   { kind: "stretches",           label: "Stretches",            description: "Daily-random stretches, auto-cycling 10s each" },
-  { kind: "yesterday_kpis",      label: "Yesterday's Numbers",  description: "Building rate, packing rate, wonkies" },
+  { kind: "yesterday_kpis",      label: "Yesterday's Numbers",  description: "Building rate, packing rate, wonkies and dog bins" },
   { kind: "station_assignments", label: "Who's On Today",       description: "Stations and who's rostered on each, live from Planday" },
   { kind: "order_of_production", label: "Order of Production",  description: "Today's recipe order + batches, with shortages colour-coded" },
   { kind: "local_delivery",      label: "Local Dispatch",       description: "Any local dispatches + today's deliveries in" },

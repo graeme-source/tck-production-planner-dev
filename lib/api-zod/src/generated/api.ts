@@ -728,6 +728,12 @@ export const ListRecipesResponseItem = zod.object({
     .boolean()
     .optional()
     .describe("Whether this recipe is the current Calzone Club Special"),
+  builderFillingDeductionGrams: zod
+    .number()
+    .nullish()
+    .describe(
+      "Grams trimmed off the filling weight shown at the building station, per batch. Display only.",
+    ),
   createdAt: zod.string(),
 });
 export const ListRecipesResponse = zod.array(ListRecipesResponseItem);
@@ -765,7 +771,12 @@ export const CreateRecipeBody = zod.object({
   isCoreMenu: zod.boolean().optional(),
   isCurrentSpecial: zod.boolean().optional(),
   cookingLossPercent: zod.number().nullish(),
-  builderFillingDeductionGrams: zod.number().nullish(),
+  builderFillingDeductionGrams: zod
+    .number()
+    .nullish()
+    .describe(
+      "Grams trimmed off the filling weight shown at the building station, per batch. Display only — every other calculation uses the recipe's real filling weight.",
+    ),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -877,6 +888,12 @@ export const GetRecipeResponse = zod
       .boolean()
       .optional()
       .describe("Whether this recipe is the current Calzone Club Special"),
+    builderFillingDeductionGrams: zod
+      .number()
+      .nullish()
+      .describe(
+        "Grams trimmed off the filling weight shown at the building station, per batch. Display only.",
+      ),
     createdAt: zod.string(),
   })
   .and(
@@ -949,7 +966,12 @@ export const UpdateRecipeBody = zod.object({
   isCoreMenu: zod.boolean().optional(),
   isCurrentSpecial: zod.boolean().optional(),
   cookingLossPercent: zod.number().nullish(),
-  builderFillingDeductionGrams: zod.number().nullish(),
+  builderFillingDeductionGrams: zod
+    .number()
+    .nullish()
+    .describe(
+      "Grams trimmed off the filling weight shown at the building station, per batch. Display only — every other calculation uses the recipe's real filling weight.",
+    ),
   ingredients: zod.array(
     zod.object({
       ingredientId: zod.number(),
@@ -1047,6 +1069,12 @@ export const UpdateRecipeResponse = zod.object({
     .boolean()
     .optional()
     .describe("Whether this recipe is the current Calzone Club Special"),
+  builderFillingDeductionGrams: zod
+    .number()
+    .nullish()
+    .describe(
+      "Grams trimmed off the filling weight shown at the building station, per batch. Display only.",
+    ),
   createdAt: zod.string(),
 });
 
@@ -1159,6 +1187,12 @@ export const GetProductionPlanResponse = zod
           batchesTarget: zod.number(),
           batchesComplete: zod.number(),
           wonlyCount: zod.number(),
+          dogBinCount: zod
+            .number()
+            .optional()
+            .describe(
+              "Quality rejects thrown in the dog bin (too far gone even for Wonky stock). They reduce what reaches the fridge but never enter any stock. Never reset, so it is also the day's total.",
+            ),
           tinSize: zod.string().nullish(),
           maxBatchesPerTin: zod.number().nullish(),
           sopUrl: zod.string().nullish(),
@@ -1283,6 +1317,12 @@ export const UpdateProductionPlanItemResponse = zod.object({
   batchesTarget: zod.number(),
   batchesComplete: zod.number(),
   wonlyCount: zod.number(),
+  dogBinCount: zod
+    .number()
+    .optional()
+    .describe(
+      "Quality rejects thrown in the dog bin (too far gone even for Wonky stock). They reduce what reaches the fridge but never enter any stock. Never reset, so it is also the day's total.",
+    ),
   tinSize: zod.string().nullish(),
   maxBatchesPerTin: zod.number().nullish(),
   sopUrl: zod.string().nullish(),

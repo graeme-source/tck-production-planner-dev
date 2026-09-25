@@ -135,6 +135,9 @@ export interface WrappingProgressRow extends PlanItemPacksRow {
   eightPackBagCount: number | null;
   freezerQty: number | null;
   wonlyCount: number | null;
+  /** Packs thrown in the dog bin (migration 0131). Optional so callers that
+   *  predate dog bins read as zero. */
+  dogBinCount?: number | null;
   wrappingComplete: boolean | null;
 }
 
@@ -144,8 +147,11 @@ export interface WrappingProgressRow extends PlanItemPacksRow {
  * Once wrapping is marked complete nothing more is coming, whatever the count
  * says. Otherwise the target less everything already accounted for: packs
  * wrapped to the fridge, 8-pack bags, packs sent to the freezer (wonkies +
- * auto-freeze on completion) and packs sitting on the wonky rack. Without the
- * wonky/freezer terms a recipe with wonkies read "still N to wrap" forever.
+ * auto-freeze on completion), packs sitting on the wonky rack, and packs
+ * thrown in the dog bin. Without the wonky/freezer terms a recipe with
+ * wonkies read "still N to wrap" forever; without the dog bin term the
+ * prediction counted packs that are in the bin as fridge stock to come.
+ * Dog bins are ONLY subtracted here — they are never stock anywhere.
  *
  * The prediction counts 2-PACKS ONLY, so every 8-pack bag — planned or already
  * wrapped — comes off. Bag counters are in BAGS (8 portions each), hence the
@@ -166,6 +172,7 @@ export function remainingWrappingPacks(row: WrappingProgressRow): number {
   const accountedFor = (row.fridgeQty ?? 0)
     + bagsWrapped * bagEquiv
     + (row.freezerQty ?? 0)
-    + (row.wonlyCount ?? 0);
+    + (row.wonlyCount ?? 0)
+    + (row.dogBinCount ?? 0);
   return Math.max(0, targetPacks - accountedFor - bagsStillToCome * bagEquiv);
 }

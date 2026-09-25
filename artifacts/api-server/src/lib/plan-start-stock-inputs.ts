@@ -32,6 +32,7 @@ export async function loadStillToWrapToday(today: string, recipeIds?: number[]):
       eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
       freezerQty: productionPlanItemsTable.freezerQty,
       wonlyCount: productionPlanItemsTable.wonlyCount,
+      dogBinCount: productionPlanItemsTable.dogBinCount,
       wrappingComplete: productionPlanItemsTable.wrappingComplete,
       portionsPerBatch: recipesTable.portionsPerBatch,
       packSize: recipesTable.packSize,

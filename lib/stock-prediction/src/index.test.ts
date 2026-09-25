@@ -179,3 +179,41 @@ describe("stock at the start of the plan date", () => {
     expect(result.atPlanStart).toBe(12);
   });
 });
+
+// ── Dog bins (migration 0131): the second kind of quality reject ──────────
+// A dog bin is thrown away. It must come off what is still to reach the
+// fridge, exactly like a wonky does, but it is never stock anywhere.
+describe("dog bins in the still-to-wrap prediction", () => {
+  const base: WrappingProgressRow = {
+    batchesTarget: 10, portionsPerBatch: 10, packSize: 2, // 50 two-packs planned
+    fridgeQty: 20, fridgeEightPackQty: 0, eightPackBagCount: 0,
+    freezerQty: 0, wonlyCount: 3, wrappingComplete: false,
+  };
+
+  it("a dog bin reduces the packs predicted to reach the fridge", () => {
+    expect(remainingWrappingPacks(base)).toBe(27); // 50 − 20 − 3
+    expect(remainingWrappingPacks({ ...base, dogBinCount: 2 })).toBe(25); // and 2 in the bin
+  });
+
+  it("removing a dog bin (undo) restores the prediction", () => {
+    const withBin = remainingWrappingPacks({ ...base, dogBinCount: 1 });
+    const undone = remainingWrappingPacks({ ...base, dogBinCount: 0 });
+    expect(undone - withBin).toBe(1);
+    expect(undone).toBe(remainingWrappingPacks(base));
+  });
+
+  it("a dog bin comes off the same as a wonky does, but is its own term", () => {
+    expect(remainingWrappingPacks({ ...base, wonlyCount: 3, dogBinCount: 2 }))
+      .toBe(remainingWrappingPacks({ ...base, wonlyCount: 5, dogBinCount: 0 }));
+  });
+
+  it("wonky behaviour is unchanged: no dog bin field reads exactly as before", () => {
+    expect(remainingWrappingPacks({ ...base, dogBinCount: null })).toBe(legacyRemainingWrapping(base));
+    expect(remainingWrappingPacks({ ...base, dogBinCount: 0 })).toBe(legacyRemainingWrapping(base));
+  });
+
+  it("never goes below zero, and a completed wrap is still zero", () => {
+    expect(remainingWrappingPacks({ ...base, dogBinCount: 500 })).toBe(0);
+    expect(remainingWrappingPacks({ ...base, dogBinCount: 2, wrappingComplete: true })).toBe(0);
+  });
+});

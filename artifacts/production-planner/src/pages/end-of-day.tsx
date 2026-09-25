@@ -13,6 +13,7 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, Hammer, PackageCheck, AlertTriangle, Trophy } from "lucide-react";
+import { formatQualityRejects } from "@/lib/quality-rejects";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 
@@ -24,6 +25,9 @@ interface EndOfDay {
   builder: { batchesPerHour: number | null; totalBatches: number; activeMinutes: number };
   packing: { boxesPerHour: number | null; totalBoxes: number; activeMinutes: number };
   wonkies: { count: number; batchesTarget: number };
+  /** Thrown away — a separate figure from wonkies. Optional so a cached
+   *  older server payload still renders (read as 0). */
+  dogBins?: { count: number };
   /** Completed improvements only — done work bucketed by when it was marked
    *  done, never ideas. 0 is a real zero; null means the lookup failed.
    *  Optional so a cached older server payload doesn't crash the page. */
@@ -32,10 +36,12 @@ interface EndOfDay {
 
 const hours = (mins: number) => (mins / 60).toFixed(1);
 
-function KpiCard({ label, value, unit, sub, icon: Icon, tone }: {
+function KpiCard({ label, value, unit, second, sub, icon: Icon, tone }: {
   label: string;
   value: string;
   unit?: string;
+  /** A second figure on the same line, e.g. dog bins beside wonkies. */
+  second?: { value: string; unit: string };
   sub: string;
   icon: typeof Hammer;
   tone: "green" | "blue" | "amber" | "violet";
@@ -55,6 +61,13 @@ function KpiCard({ label, value, unit, sub, icon: Icon, tone }: {
       <p className="flex items-baseline gap-2 text-foreground">
         <span className="text-6xl sm:text-7xl font-extrabold tabular-nums leading-none">{value}</span>
         {unit && <span className="text-xl sm:text-2xl font-semibold text-muted-foreground">{unit}</span>}
+        {second && (
+          <>
+            <span className="text-3xl sm:text-4xl font-light text-muted-foreground px-1">·</span>
+            <span className="text-6xl sm:text-7xl font-extrabold tabular-nums leading-none">{second.value}</span>
+            <span className="text-xl sm:text-2xl font-semibold text-muted-foreground">{second.unit}</span>
+          </>
+        )}
       </p>
       <p className="text-base text-muted-foreground">{sub}</p>
     </div>
@@ -95,7 +108,7 @@ export default function EndOfDayMeeting() {
 
       {!data.hasPlan && (
         <p className="rounded-2xl border-2 border-border bg-secondary/30 px-5 py-4 text-base text-muted-foreground">
-          No production plan for today, so there are no wonkies to count. The rates below still read from what was actually built and packed.
+          No production plan for today, so there are no quality rejects to count. The rates below still read from what was actually built and packed.
         </p>
       )}
 
@@ -121,14 +134,15 @@ export default function EndOfDayMeeting() {
             : `${data.packing.totalBoxes} boxes over ${hours(data.packing.activeMinutes)} hours packing`}
         />
         <KpiCard
-          label="Wonkies"
+          label="Quality rejects"
           icon={AlertTriangle}
           tone="amber"
           value={String(data.wonkies.count)}
-          unit={data.wonkies.count === 1 ? "today" : "today"}
-          sub={data.wonkies.batchesTarget > 0
-            ? `Across ${data.wonkies.batchesTarget} batches planned`
-            : "No batches planned today"}
+          unit="wonky"
+          second={{ value: String(data.dogBins?.count ?? 0), unit: "dog bin" }}
+          sub={`${formatQualityRejects(data.wonkies.count, data.dogBins?.count ?? 0)} — wonky is sold as wonky, dog bin is thrown away. ${data.wonkies.batchesTarget > 0
+            ? `Across ${data.wonkies.batchesTarget} batches planned.`
+            : "No batches planned today."}`}
         />
         <KpiCard
           label="Improvements completed"

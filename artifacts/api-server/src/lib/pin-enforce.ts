@@ -13,7 +13,7 @@
  *
  * Deliberately narrow: only writes that RECORD WHO DID SOMETHING (batches,
  * table claims, checklist ticks, temperature/HACCP logs, packing and wrapping
- * records, prep ticks, stock counts, training sign-offs). Reads, auth routes,
+ * records, quality rejects, prep ticks, stock counts, training sign-offs). Reads, auth routes,
  * undo/delete actions, oven-out (a food-safety timer must never be blocked),
  * Andon safety alerts, the visitor kiosk and planning/admin edits are not
  * touched. Kill switch: app_settings feature_server_pin_enforce = 'false'.
@@ -39,6 +39,11 @@ export const ATTRIBUTING_WRITES: readonly Rule[] = [
   { method: "POST", pattern: new RegExp(`${PLAN}/items/${ID}/manual-batch/?$`), what: "manual batch" },
   { method: "PATCH", pattern: new RegExp(`${PLAN}/items/${ID}/wrapping-complete/?$`), what: "wrapping complete" },
   { method: "POST", pattern: new RegExp(`${PLAN}/items/${ID}/fridge/?$`), what: "packs into fridge" },
+  // Quality rejects: both + taps now write who-and-when to
+  // quality_reject_events (routes/quality-rejects.ts). The − undo taps stay
+  // unguarded like every other undo here.
+  { method: "POST", pattern: new RegExp(`${PLAN}/items/${ID}/wonly/?$`), what: "wonky reject" },
+  { method: "POST", pattern: new RegExp(`${PLAN}/items/${ID}/dog-bin/?$`), what: "dog bin reject" },
   { method: "POST", pattern: new RegExp(`${PLAN}/prep-completions/?$`), what: "prep tick" },
   { method: "POST", pattern: new RegExp(`${PLAN}/prep-deferrals/?$`), what: "prep deferral" },
   { method: "POST", pattern: new RegExp(`${PLAN}/sub-recipe-completions/?$`), what: "sub-recipe tick" },
