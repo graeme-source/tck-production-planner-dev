@@ -13,7 +13,7 @@
  * status reviews. Stretches and the lean lesson take the most time
  * because they're meant to.
  */
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
 import type React from "react";
 import { ImprovementFeedMedia } from "@/components/improvement-feed-media";
 import { useLocation, Link } from "wouter";
@@ -33,6 +33,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } 
 import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/utils";
 import { packDayName, packDayNameCap } from "@/lib/pack-day";
+import { resetScrollWithin } from "@/lib/scroll";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
@@ -514,6 +515,13 @@ function MeetingShell({
     };
   }, []);
 
+  // Every slide (and every page within a report slide) opens at the top.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    resetScrollWithin(bodyRef.current);
+    window.scrollTo({ top: 0 });
+  }, [slideIndex, subIndex]);
+
   // Swipe navigation: horizontal pan > 60px advances/retreats. We start
   // tracking only when the touch begins outside an interactive element
   // so taps on buttons / chips inside slides still work.
@@ -585,7 +593,7 @@ function MeetingShell({
       {/* Slide body — fills the screen vertically. Short slides centre
           so the iPad/TV canvas isn't dominated by whitespace; long
           slides (Order of Production, deliveries) overflow scroll. */}
-      <div className={cn(
+      <div ref={bodyRef} className={cn(
         "flex-1 flex flex-col",
         // Gratitude goes full-bleed (image fills the area between header and
         // footer, with just a little padding); every other slide stays in the

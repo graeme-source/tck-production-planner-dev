@@ -16,3 +16,26 @@ export function scrollAppToTop() {
   if (el) el.scrollTop = 0;
   else window.scrollTo({ top: 0 });
 }
+
+/** The bits of an element resetScrollWithin touches — narrow so it's testable
+ *  without a DOM. */
+export interface ScrollableLike {
+  scrollTop: number;
+  querySelectorAll?: (selector: string) => ArrayLike<ScrollableLike>;
+}
+
+/** Put a scroll area and every scrollable thing inside it back at the top.
+ *  The meeting deck keeps ONE slide-body element across slides, and React
+ *  reuses a slide's inner elements when two slides of the same kind sit side
+ *  by side, so without this the next slide opens wherever the last one was
+ *  scrolled to (Graeme, 2026-09-25). */
+export function resetScrollWithin(root: ScrollableLike | null | undefined) {
+  if (!root) return;
+  root.scrollTop = 0;
+  const inner = root.querySelectorAll?.("*");
+  if (!inner) return;
+  for (let i = 0; i < inner.length; i++) {
+    const el = inner[i]!;
+    if (el.scrollTop > 0) el.scrollTop = 0;
+  }
+}
