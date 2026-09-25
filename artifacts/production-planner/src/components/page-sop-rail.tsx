@@ -79,8 +79,8 @@ export function PageSopButton({ pageLabel }: {
   // a modal rendered in place would be trapped inside the header (same
   // stacking-context trap the layout's SOPs dialog works around).
   const modalShell = (title: string, onClose: () => void, children: React.ReactNode) => createPortal(
-    <div className="fixed inset-0 z-[60] flex items-start justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto" onClick={onClose}>
-      <div className="bg-card rounded-2xl border border-border shadow-2xl w-full max-w-lg p-5 space-y-4 mt-14" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 z-[60] flex items-start justify-center bg-black/60 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="bg-card rounded-2xl border border-border shadow-2xl w-full max-w-2xl max-h-[92dvh] overflow-y-auto overscroll-contain p-5 space-y-4 mt-2 sm:mt-10" onClick={e => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="font-display text-lg font-bold leading-tight">{title}</h2>

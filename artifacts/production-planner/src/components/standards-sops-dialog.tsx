@@ -1002,16 +1002,27 @@ function summariseStep(description: string): string {
   return text || "(no description)";
 }
 
+/** Exported as SopViewer for the attach picker's preview, which passes no
+ *  onEdit (no Edit button), its own back label, a footer with the Attach
+ *  buttons, and a higher layer so it sits above the modal it opens from. */
+export { Viewer as SopViewer };
+
 function Viewer({
   sopId,
   onBack,
   onEdit,
   onClose,
   mode = "modal",
+  backLabel = "Library",
+  footer,
+  layerClass = "z-50",
 }: {
   sopId: number;
   onBack: () => void;
-  onEdit: () => void;
+  onEdit?: () => void;
+  backLabel?: string;
+  footer?: React.ReactNode;
+  layerClass?: string;
   /** Unused in page mode (no overlay to close). */
   onClose?: () => void;
   mode?: FrameMode;
@@ -1078,7 +1089,7 @@ function Viewer({
       className={cn(
         "flex flex-col bg-card w-full",
         mode === "modal"
-          ? "fixed inset-0 z-50 pointer-events-auto"
+          ? cn("fixed inset-0 pointer-events-auto", layerClass)
           : "rounded-2xl border border-border h-[78vh] overflow-hidden",
       )}
       onTouchStart={onTouchStart}
@@ -1086,7 +1097,7 @@ function Viewer({
     >
       <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
         <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
-          <ChevronLeft className="w-4 h-4" /> Library
+          <ChevronLeft className="w-4 h-4" /> {backLabel}
         </button>
         <div className="min-w-0 flex-1 text-center px-4">
           <p className="font-display font-bold text-xl truncate">{sop?.title || "Loading…"}</p>
@@ -1106,7 +1117,7 @@ function Viewer({
               <Printer className="w-4 h-4" /> Print PDF
             </button>
           )}
-          {canEdit && sop && (
+          {canEdit && sop && onEdit && (
             <button onClick={onEdit} className="text-sm px-3 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-secondary">
               Edit
             </button>
@@ -1261,6 +1272,9 @@ function Viewer({
             />
           ))}
         </div>
+      )}
+      {footer && (
+        <div className="px-5 py-3 border-t border-border flex-shrink-0 pb-[max(0.75rem,env(safe-area-inset-bottom))]">{footer}</div>
       )}
     </div>
   );
