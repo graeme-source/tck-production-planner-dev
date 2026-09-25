@@ -46,6 +46,7 @@ import {
   ContractOpenModal, type OpenContract,
 } from "@/components/person-contracts";
 import { contractHistory } from "@/lib/contract-history";
+import { PersonHoursPanel } from "@/components/person-hours-panel";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -583,6 +584,8 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
       )}
 
       <EmploymentPanel userId={userId} ready={ready} />
+
+      <PersonHoursPanel userId={userId} ready={ready} />
 
       {canContracts && (
         <PersonContractsSection
