@@ -19,9 +19,9 @@
  * behind it is enforced on the server: People access + private PIN.
  */
 import { useMemo, useState } from "react";
-import { Link, useRoute } from "wouter";
+import { Link, useRoute, useSearch, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Lock, Search, HeartPulse, AlertTriangle, CalendarDays, ChevronRight, UsersRound, BadgeCheck } from "lucide-react";
+import { Loader2, Lock, Search, HeartPulse, AlertTriangle, CalendarDays, ChevronRight, UsersRound, BadgeCheck, Clock3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import { useIsRtwManager } from "@/hooks/use-rtw-manager";
@@ -31,6 +31,7 @@ import { UserAvatar } from "@/components/user-avatar";
 import { PersonRecord } from "@/components/people-record";
 import { PeopleLockedCard } from "@/components/people-locked-card";
 import { JobTitlesBulk } from "@/components/job-titles-bulk";
+import { TeamHoursView } from "@/components/team-hours-view";
 import { type PeopleListResponse, type PersonCard, MEETING_KIND_LABEL, fmtDay, fmtDayRange } from "@/lib/people-api";
 
 export default function PeopleSection() {
@@ -137,10 +138,14 @@ function PersonCardView({ p, policy }: { p: PersonCard; policy: PeopleListRespon
 function PeopleList({ ready }: { ready: boolean }) {
   const [search, setSearch] = useState("");
   const [leavers, setLeavers] = useState(false);
+  // "Hours vs contract" lives in the URL (?view=hours) so Back from
+  // someone's record returns to it.
+  const [, navigate] = useLocation();
+  const view = new URLSearchParams(useSearch()).get("view") === "hours" ? "hours" : "people";
   const { data, isLoading, error } = useQuery<PeopleListResponse>({
     queryKey: ["people-list", leavers],
     queryFn: () => peopleFetch<PeopleListResponse>(`/people${leavers ? "?leavers=1" : ""}`),
-    enabled: ready,
+    enabled: ready && view === "people",
     retry: peopleRetry,
   });
 
@@ -167,6 +172,24 @@ function PeopleList({ ready }: { ready: boolean }) {
         </div>
       </div>
 
+      <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-secondary/60" role="tablist" aria-label="People view">
+        {([["people", "Everyone", UsersRound], ["hours", "Hours vs contract", Clock3]] as const).map(([key, label, Icon]) => (
+          <button
+            key={key}
+            role="tab"
+            aria-selected={view === key}
+            onClick={() => navigate(key === "hours" ? "/people?view=hours" : "/people", { replace: true })}
+            className={cn(
+              "h-14 rounded-xl text-lg font-bold flex items-center justify-center gap-2 transition-colors",
+              view === key ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Icon className="w-5 h-5" /> {label}
+          </button>
+        ))}
+      </div>
+
+      {view === "hours" ? <TeamHoursView ready={ready} /> : <>
       {outstanding.length > 0 && (
         <section className="rounded-3xl border-2 border-amber-400 dark:border-amber-700 bg-amber-50/80 dark:bg-amber-950/30 p-4 sm:p-5 space-y-3">
           <p className="text-xl font-bold text-amber-950 dark:text-amber-100 flex items-center gap-2">
@@ -234,6 +257,7 @@ function PeopleList({ ready }: { ready: boolean }) {
           Couldn't reach Planday just now — attendance shown as last synced{data.attendance.syncedAt ? ` (${new Date(data.attendance.syncedAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })})` : ""}.
         </p>
       )}
+      </>}
 
       <p className="text-xs text-muted-foreground flex items-center gap-1.5">
         <Lock className="w-3.5 h-3.5" /> Private — People access only. Asks for your private PIN on the way in.
