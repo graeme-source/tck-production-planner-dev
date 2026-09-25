@@ -20,18 +20,20 @@ export type RevenueOrder = Pick<ShopifyOrder, "cancelled_at" | "financial_status
 
 const EXCLUDED_FINANCIAL = new Set(["refunded", "voided"]);
 
+// The Shopify tags that mark each customer type (set by the storefront and
+// the subscription app — they are Shopify's words, not product names).
+export const NEW_CUSTOMER_TAG = "new-customer";
+export const RECURRING_SUB_TAG = "Subscription Recurring Order";
+export const NEW_SUB_TAG = "Subscription New Order";
+export const WHOLESALE_TAG = "wholesale";
+
 /** The four customer-type tags the Numbers page groups orders by. */
-export const CUSTOMER_TYPE_TAGS = [
-  "new-customer",
-  "Subscription Recurring Order",
-  "Subscription New Order",
-  "wholesale",
-] as const;
+export const CUSTOMER_TYPE_TAGS = [NEW_CUSTOMER_TAG, RECURRING_SUB_TAG, NEW_SUB_TAG, WHOLESALE_TAG] as const;
 
 export type CustomerTypeTag = (typeof CUSTOMER_TYPE_TAGS)[number];
 
 /** Both subscription tags together make up "subscription revenue". */
-export const SUBSCRIPTION_TAGS: readonly CustomerTypeTag[] = ["Subscription Recurring Order", "Subscription New Order"];
+export const SUBSCRIPTION_TAGS: readonly CustomerTypeTag[] = [RECURRING_SUB_TAG, NEW_SUB_TAG];
 
 export function isCountableOrder(o: Pick<RevenueOrder, "cancelled_at" | "financial_status">): boolean {
   if (o.cancelled_at) return false;
