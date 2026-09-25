@@ -98,6 +98,9 @@ export function packsDoneForItem(
  * - Pre-completion path keeps the legacy shortCount subtraction so in-flight
  *   plans with shortCount > 0 still display correctly until the builder
  *   finishes or marks complete.
+ * - Both kinds of quality reject come off: wonkies (they go to the Wonky
+ *   Rack, not the 2-pack lane) and dog bins (thrown away). Neither is a
+ *   good pack heading for the fridge.
  */
 export function netTwoPacks(
   item: StationPlanItem,
@@ -108,6 +111,7 @@ export function netTwoPacks(
   const grossPacks = Math.floor((ovensBatchCount * (item.portionsPerBatch ?? 10)) / 2);
   const eightPackDeduction = (item.eightPackBagCount ?? 0) * 4;
   const wonky = item.wonlyCount ?? 0;
+  const dogBin = item.dogBinCount ?? 0;
   const extras = item.extraPacksBuilt ?? 0;
   const legacyShort = item.builderMarkedCompleteAt ? 0 : (item.shortCount ?? 0);
   // Extras cook in the same trays as the regular batches, so they count as
@@ -120,5 +124,5 @@ export function netTwoPacks(
   // (legacy behaviour) so unrelated callers aren't silently affected.
   const gate = builtBatches ?? effectiveBatches;
   const extrasCredit = gate === undefined ? extras : (ovensBatchCount >= gate ? extras : 0);
-  return Math.max(0, grossPacks - eightPackDeduction - wonky - legacyShort) + extrasCredit;
+  return Math.max(0, grossPacks - eightPackDeduction - wonky - dogBin - legacyShort) + extrasCredit;
 }
