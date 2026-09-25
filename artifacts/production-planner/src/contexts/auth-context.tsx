@@ -6,6 +6,7 @@ import { addDeviceUserId } from "@/lib/device-users";
 import { toast } from "@/hooks/use-toast";
 import { idleTimeoutMs, type IdleTimeoutSettings } from "@/lib/idle-timeout";
 import { londonDay, crossedLondonMidnight } from "@/lib/day-rollover";
+import { nextStreakStart, shouldDeferCutover, cutoverPassedWhileAway } from "@/lib/pin-cutover-client";
 
 export type AuthUser = {
   id: number;
@@ -85,6 +86,35 @@ function readStoredActivity(): number {
     if (Number.isFinite(v) && v > 0 && v <= Date.now()) return v;
   } catch { /* private mode */ }
   return 0;
+}
+
+// ── Daily PIN cutover bookkeeping (2026-09-25) ────────────────────────
+// The 4am/10pm cutover may only wait for someone who was ALREADY working
+// when the reset struck (lib/pin-cutover-client.ts). Two things make that
+// knowable, both shared across tabs and surviving a reload:
+//  - ACTIVITY_STREAK_KEY: when the current unbroken run of activity began.
+//  - NEXT_PIN_RESET_KEY: the next reset moment, as /api/auth/me last said.
+//    Lets a screen that wakes, refocuses or reloads lock straight away,
+//    before the server answers and before the first tap looks like work.
+const ACTIVITY_STREAK_KEY = "tck_activity_streak_start";
+const NEXT_PIN_RESET_KEY = "tck_pin_next_reset";
+function readStoredNumber(key: string): number {
+  try {
+    const v = Number(localStorage.getItem(key));
+    if (Number.isFinite(v) && v > 0) return v;
+  } catch { /* private mode */ }
+  return 0;
+}
+function writeStored(key: string, value: number | null) {
+  try {
+    if (value == null) localStorage.removeItem(key);
+    else localStorage.setItem(key, String(value));
+  } catch { /* private mode */ }
+}
+function parseIsoMs(iso: unknown): number | null {
+  if (typeof iso !== "string") return null;
+  const ms = new Date(iso).getTime();
+  return Number.isFinite(ms) ? ms : null;
 }
 
 // ── Next-morning dashboard bounce ─────────────────────────────────────
@@ -182,6 +212,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // other tab persisted. Every idle decision goes through here.
   const lastActivityRef = useRef<number>(readStoredActivity() || Date.now());
   const lastPersistRef = useRef<number>(0);
+  // Start of the current unbroken activity streak (see ACTIVITY_STREAK_KEY).
+  // Written through to localStorage on every change, so the stored value is
+  // the freshest across tabs; this tab's ref covers private mode.
+  const streakStartRef = useRef<number>(readStoredNumber(ACTIVITY_STREAK_KEY));
+  const getStreakStart = useCallback(() => {
+    return readStoredNumber(ACTIVITY_STREAK_KEY) || streakStartRef.current;
+  }, []);
   const getLastActivity = useCallback(() => {
     return Math.max(lastActivityRef.current, readStoredActivity());
   }, []);
@@ -203,6 +240,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // the client picks up the latest hashed asset bundle. Both problems solved
   // in one move.
   const prevPinRequiredRef = useRef<boolean | null>(null);
+
+  // Put the cutover lock up and, the first time, bounce to the dashboard
+  // (full navigation → fresh bundle, off yesterday's URL).
+  const applyCutoverLock = useCallback(() => {
+    const wasLocked = prevPinRequiredRef.current;
+    prevPinRequiredRef.current = true;
+    setPinLocked(true);
+    markPinLockApplied();
+    if (wasLocked !== true) {
+      const path = window.location.pathname;
+      if (path !== "/" && !path.startsWith("/login")) {
+        const url = new URL("/", window.location.origin);
+        url.searchParams.set("v", Date.now().toString());
+        window.location.assign(url.toString());
+      }
+    }
+  }, []);
+
+  // Wake / focus / reload check: if the reset the server told us about has
+  // passed while nobody was working, lock NOW — before the round-trip to
+  // /api/auth/me, and before the first tap of the morning can make the
+  // device look busy. checkSession then confirms (and clears the lock if
+  // the server disagrees, e.g. a device clock running fast).
+  const lockIfCutoverPassedWhileAway = useCallback(() => {
+    if (pinLockedRef.current) return;
+    if (cutoverPassedWhileAway({
+      now: Date.now(),
+      nextResetAt: readStoredNumber(NEXT_PIN_RESET_KEY) || null,
+      lastActivity: getLastActivity(),
+      streakStart: getStreakStart(),
+      lockAlreadyApplied: isPinLockApplied(),
+    })) {
+      applyCutoverLock();
+    }
+  }, [applyCutoverLock, getLastActivity, getStreakStart]);
 
   const checkSession = useCallback(async (isPeriodicRefresh = false) => {
     const BACKOFFS = [1000, 2000, 4000];
@@ -227,8 +299,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const res = await fetch("/api/auth/me", { credentials: "include" });
       if (res.ok) {
         consecutiveFailsRef.current = 0;
-        const data: AuthUser & { pinRequired?: boolean } = await res.json();
-        const { pinRequired, ...user } = data;
+        const data: AuthUser & { pinRequired?: boolean; pinResetAt?: string; pinNextResetAt?: string } = await res.json();
+        const { pinRequired, pinResetAt, pinNextResetAt, ...user } = data;
+        writeStored(NEXT_PIN_RESET_KEY, parseIsoMs(pinNextResetAt));
         addDeviceUserId(user.id);
         setState({ status: "authenticated", user });
 
@@ -240,42 +313,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // "/" — "/dashboard" doesn't exist and rendered the 404 page.
         //
         // BUT a full navigation destroys unsaved client state, so the
-        // cutover is DEFERRED while the user is actively working (Graeme
-        // lost a half-built recipe to the 10pm cutover, 2026-08-20). While
-        // they're active we neither lock nor navigate; each 5-minute poll
-        // re-checks, and the cutover lands once they've been idle for
-        // the screen's idle allowance. Nobody is genuinely typing at 4am, so in
-        // practice this only softens the 10pm edge. An already-applied
-        // lock always stays applied — typing PIN digits is "activity" but
-        // must never dismiss the overlay.
+        // cutover is DEFERRED for someone who was already working when the
+        // reset struck and hasn't stopped (Graeme lost a half-built recipe
+        // to the 10pm cutover, 2026-08-20). Activity AFTER the reset never
+        // counts: the old rule ("active in the last N minutes") let the
+        // first taps on an iPad woken in the morning dodge the lock, and a
+        // session signed in as Grant overnight recorded 16 batches before
+        // he arrived (25 Sep 2026). Rule + tests: lib/pin-cutover-client.ts.
+        // An already-applied lock always stays applied — typing PIN digits
+        // is "activity" but must never dismiss the overlay.
         if (!pinRequired) {
           prevPinRequiredRef.current = false;
           setPinLocked(false);
           clearPinLockApplied();
         } else if (pinLockedRef.current) {
           prevPinRequiredRef.current = true;
-        } else if (!isPinLockApplied() && Date.now() - getLastActivity() < currentIdleTimeoutMs()) {
-          // Active AND no lock has been applied on this device yet — defer.
-          // (An applied lock re-locks on reload regardless of activity;
-          // otherwise tapping the PIN pad then refreshing would walk
-          // straight past it.) prevPinRequiredRef deliberately unchanged
-          // so the apply branch below still sees the transition later.
+        } else if (shouldDeferCutover({
+          now: Date.now(),
+          resetAt: parseIsoMs(pinResetAt),
+          lastActivity: getLastActivity(),
+          streakStart: getStreakStart(),
+          lockAlreadyApplied: isPinLockApplied(),
+        })) {
+          // Working straight through the reset — defer. (An applied lock
+          // re-locks on reload regardless of activity; otherwise tapping
+          // the PIN pad then refreshing would walk straight past it.)
+          // prevPinRequiredRef deliberately unchanged so the apply branch
+          // still sees the transition later.
         } else {
-          const wasLocked = prevPinRequiredRef.current;
-          prevPinRequiredRef.current = true;
-          setPinLocked(true);
-          markPinLockApplied();
-          if (wasLocked !== true) {
-            const path = window.location.pathname;
-            if (path !== "/" && !path.startsWith("/login")) {
-              const url = new URL("/", window.location.origin);
-              url.searchParams.set("v", Date.now().toString());
-              window.location.assign(url.toString());
-            }
-          }
+          applyCutoverLock();
         }
       } else if (res.status === 401) {
         consecutiveFailsRef.current = 0;
+        writeStored(NEXT_PIN_RESET_KEY, null);
         setState({ status: "unauthenticated" });
         setPinLocked(false);
         prevPinRequiredRef.current = null;
@@ -332,6 +402,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const touch = () => {
       const now = Date.now();
+      // Streak first, against the activity as it stood BEFORE this touch.
+      const streak = nextStreakStart({ lastActivity: getLastActivity(), streakStart: getStreakStart() }, now);
+      if (streak !== streakStartRef.current) {
+        streakStartRef.current = streak;
+        writeStored(ACTIVITY_STREAK_KEY, streak);
+      }
       lastActivityRef.current = now;
       if (now - lastPersistRef.current > 30_000) {
         lastPersistRef.current = now;
@@ -352,7 +428,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       for (const evt of events) document.removeEventListener(evt, touch);
       document.removeEventListener("visibilitychange", persistOnHide);
     };
-  }, []);
+  }, [getLastActivity, getStreakStart]);
 
   // Boot check: a freshly launched browser (PC turned on in the morning)
   // fires neither the 5-minute poll nor a visibilitychange, so without this
@@ -385,6 +461,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const handleVisibility = () => {
       if (document.visibilityState !== "visible") return;
 
+      // A reset that passed while the screen was asleep locks immediately.
+      lockIfCutoverPassedWhileAway();
+
       // Always re-check session so server-side time-based locks are picked up
       checkSession(true);
 
@@ -400,9 +479,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .catch((err) => { console.warn("[Auth] Pin lock failed:", err); });
       }
     };
+    // focus / pageshow too: an iPad web app restored from the app switcher,
+    // or a page brought back from the back-forward cache, doesn't always
+    // fire visibilitychange.
+    const handleFocus = () => {
+      lockIfCutoverPassedWhileAway();
+      checkSession(true);
+    };
     document.addEventListener("visibilitychange", handleVisibility);
-    return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, [state, pinLocked, checkSession, getLastActivity]);
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("pageshow", handleFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("pageshow", handleFocus);
+    };
+  }, [state, pinLocked, checkSession, getLastActivity, lockIfCutoverPassedWhileAway]);
+
+  // Page load: the same local check, straight away, from what the last
+  // session check stored — a reload in the morning doesn't wait for
+  // /api/auth/me (whose answer could arrive after the first tap).
+  useEffect(() => {
+    lockIfCutoverPassedWhileAway();
+  }, [lockIfCutoverPassedWhileAway]);
 
   // ── Scheduled hard refresh at 10pm UK wall-clock ──────────────────────
   // The auth-triggered redirect in checkSession already handles every
@@ -470,6 +569,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setPinLocked(false);
         clearPinLockApplied();
         sensitiveUnlockedAtRef.current = Date.now();
+        // The stored "next reset" is now in the past; a focus event must
+        // not read it as a missed cutover. Fetch the new schedule.
+        writeStored(NEXT_PIN_RESET_KEY, null);
+        void checkSession(true);
         // A tab that has sat on the login screen across midnight is still
         // parked on yesterday's URL underneath — send it home.
         if (crossedMidnightSinceLoad()) bounceToDashboard();
@@ -481,7 +584,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.warn("[Auth] Login network error:", err);
       return { error: "Network error — please try again" };
     }
-  }, []);
+  }, [checkSession]);
 
   const pinLogin = useCallback(async (userId: number, pin: string) => {
     try {
@@ -498,6 +601,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setPinLocked(false);
         clearPinLockApplied();
         sensitiveUnlockedAtRef.current = Date.now();
+        // The stored "next reset" is now in the past; a focus event must
+        // not read it as a missed cutover. Fetch the new schedule.
+        writeStored(NEXT_PIN_RESET_KEY, null);
+        void checkSession(true);
         if (crossedMidnightSinceLoad()) bounceToDashboard();
         return {};
       }
@@ -512,7 +619,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.warn("[Auth] PIN login network error:", err);
       return { error: "Network error — please try again" };
     }
-  }, []);
+  }, [checkSession]);
 
   // In-session PIN verification for the daily lock overlay.
   // The user is already authenticated — this just re-confirms their identity
@@ -530,6 +637,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setPinLocked(false);
         clearPinLockApplied();
         sensitiveUnlockedAtRef.current = Date.now();
+        // The stored "next reset" is now in the past; a focus event must
+        // not read it as a missed cutover. Fetch the new schedule.
+        writeStored(NEXT_PIN_RESET_KEY, null);
+        void checkSession(true);
         // Screen left on overnight: the page never reloaded, so the boot
         // check can't see the new day — but the tab itself knows it was
         // loaded yesterday. Unlocking on a new day starts on the dashboard.
@@ -547,7 +658,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.warn("[Auth] PIN verify network error:", err);
       return { error: "Network error — please try again" };
     }
-  }, []);
+  }, [checkSession]);
 
   // Gate for sensitive pages. If the last PIN entry was within the TTL window,
   // no-op. Otherwise, trigger the PIN overlay — the user re-enters their PIN
@@ -625,6 +736,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    writeStored(NEXT_PIN_RESET_KEY, null);
     setState({ status: "unauthenticated" });
     setPinLocked(false);
     setPeoplePinPrompt(false);
