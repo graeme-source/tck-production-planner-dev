@@ -206,7 +206,7 @@ export function FormEditor({ form, isRtwManager, onDone, onBack }: { form: RtwFo
   const [f, setF] = useState(form);
   const { state: saveState, save } = useAutosave(form.id);
   const [signing, setSigning] = useState(false);
-  // A signed form is a record and stays locked — but the named RTW managers
+  // A signed form is a record and stays locked — but people with People access
   // can deliberately unlock it to add or correct something (the server has
   // always allowed their edits; the page used to lock them out too).
   const [amending, setAmending] = useState(false);
