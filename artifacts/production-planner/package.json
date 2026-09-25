@@ -54,6 +54,7 @@
     "@workspace/business-days": "workspace:*",
     "@workspace/feature-registry": "workspace:*",
     "@workspace/production-schedule": "workspace:*",
+    "@workspace/stock-prediction": "workspace:*",
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",
     "cmdk": "^1.1.1",
