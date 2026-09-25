@@ -1191,13 +1191,12 @@ function Scoreboard() {
           approved by anyone. New ones only count once a manager signs them off.
         </p>
       )}
-      {/* Spread across the width so the list doesn't push the feed a
-          screen further down. */}
-      <div className="grid gap-2 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-        {data.map(row => (
+      {/* One list, most at the top — not columns (Graeme, 2026-09-25). */}
+      <div className="rounded-2xl border-2 border-border bg-card overflow-hidden">
+        {[...data].sort((x, y) => y.count - x.count || x.name.localeCompare(y.name)).map((row, i) => (
           <div
             key={row.userId ?? row.name}
-            className="flex items-center justify-between gap-3 px-4 py-3.5 rounded-2xl border-2 border-border bg-card min-w-0"
+            className={cn("flex items-center justify-between gap-3 px-4 py-3.5 min-w-0", i > 0 && "border-t border-border")}
           >
             <span className="text-lg font-bold truncate">{row.name}</span>
             <span className="text-2xl font-bold tabular-nums">{row.count}</span>
