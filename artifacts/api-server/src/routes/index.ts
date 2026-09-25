@@ -12,6 +12,7 @@ import buildingTablesRouter from "./building-tables";
 import dptSettingsRouter from "./dpt-settings";
 import timingStandardsRouter from "./timing-standards";
 import timingHealthRouter from "./timing-health";
+import teamEfficiencyRouter from "./team-efficiency";
 import dptCalculatorRouter from "./dpt-calculator";
 import stockRouter from "./stock";
 import stockItemsRouter from "./stock-items";
@@ -181,6 +182,7 @@ router.use("/dpt-settings", requireAdminOrManager, dptSettingsRouter);
 router.use("/timing-standards", timingStandardsRouter);
 // Missing/stale schedule timing inputs + suggestions (manager/admin, read-only).
 router.use("/timing-health", timingHealthRouter);
+router.use("/team-efficiency", teamEfficiencyRouter);
 router.use("/dpt-calculator", dptCalculatorRouter);
 router.use("/stock-entries", stockRouter);
 router.use("/stock-items", stockItemsRouter);
