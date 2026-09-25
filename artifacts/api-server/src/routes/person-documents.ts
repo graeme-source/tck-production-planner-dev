@@ -31,7 +31,7 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import * as z from "zod";
 import { db, personDocumentsTable, onboardingDocumentsTable, usersTable } from "@workspace/db";
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { validate, validateQuery } from "../middleware/validate";
 import { singleFileUpload } from "../middleware/upload";
 import { hasHrRecordAccess } from "../middleware/hr-access";
@@ -204,7 +204,8 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
         byteSize: onboardingDocumentsTable.fileSizeBytes,
         uploadedAt: onboardingDocumentsTable.uploadedAt,
       }).from(onboardingDocumentsTable)
-        .where(eq(onboardingDocumentsTable.userId, userId))
+        // Only uploads that actually hold a file — nothing to open otherwise.
+        .where(and(eq(onboardingDocumentsTable.userId, userId), isNotNull(onboardingDocumentsTable.fileBlob)))
         .orderBy(asc(onboardingDocumentsTable.uploadedAt)),
     ]);
     res.json({
