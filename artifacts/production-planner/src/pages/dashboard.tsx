@@ -793,6 +793,17 @@ export default function Dashboard() {
             fixed 3 columns, which pushed End-of-Day Meeting onto a second line
             of its own (Graeme, 2026-09-17). */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {/* The day starts with the meeting, so it leads the row (Graeme, 2026-09-25). */}
+        <StatCard
+          title="Morning Meeting"
+          value="▶"
+          subtitle="10-min Two Second Lean"
+          icon={Sparkles}
+          color="text-slate-500"
+          bg="bg-slate-500/10"
+          headerClass="bg-slate-500"
+          href="/meeting"
+        />
         <StatCard
           // Everything that happens at the front door in one place —
           // deliveries in, collections out, visitors signing in
@@ -823,16 +834,6 @@ export default function Dashboard() {
           bg="bg-slate-500/10"
           headerClass="bg-slate-500"
           href="/pack-report"
-        />
-        <StatCard
-          title="Morning Meeting"
-          value="▶"
-          subtitle="10-min Two Second Lean"
-          icon={Sparkles}
-          color="text-slate-500"
-          bg="bg-slate-500/10"
-          headerClass="bg-slate-500"
-          href="/meeting"
         />
         {/* The morning meeting reviews yesterday's three KPIs; this reviews
             the same three for TODAY, before anyone goes home
