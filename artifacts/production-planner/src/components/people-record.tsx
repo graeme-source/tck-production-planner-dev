@@ -37,9 +37,10 @@ import {
 } from "@/lib/person-timeline";
 import { ABSENCE_TYPE_OPTIONS, absencePhrase } from "@/lib/rtw-wording";
 import {
-  type PersonRecordResponse, type EmploymentResponse, roleLabel, fmtDay, fmtDayRange,
+  type PersonRecordResponse, type EmploymentResponse, fmtDay, fmtDayRange,
 } from "@/lib/people-api";
 import { PeopleLockedCard } from "@/components/people-locked-card";
+import { JobTitleField } from "@/components/job-title-field";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -500,13 +501,15 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
         <div className="flex items-center gap-4">
           <UserAvatar name={p.name} avatarUrl={p.avatarUrl} size="xl" />
           <div className="flex-1 min-w-0">
-            <h1 className="font-display text-3xl font-bold leading-tight break-words">{p.name}</h1>
-            <p className="text-lg text-muted-foreground">{p.jobTitle ?? roleLabel(p.role)}{!p.isActive && " · Leaver"}</p>
+            <h1 className="font-display text-3xl font-bold leading-tight break-words">{p.name}{!p.isActive && <span className="text-lg text-muted-foreground font-sans"> · Leaver</span>}</h1>
             {startDate && (
               <p className="text-base text-muted-foreground">Started {fmtDay(startDate, true)}{service ? ` · ${service}` : ""}</p>
             )}
           </div>
         </div>
+        {/* Their job title — what they do, not their app access. Keyed by
+            person so moving between records never carries a draft across. */}
+        <JobTitleField key={p.id} userId={p.id} initial={p.jobTitle} />
         <div className="grid gap-3 sm:grid-cols-3">
           <button onClick={() => setModal("rtw")}
             className={cn("h-16 rounded-2xl text-lg font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.99]",
