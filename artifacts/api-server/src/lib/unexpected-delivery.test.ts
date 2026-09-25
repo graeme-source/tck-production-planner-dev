@@ -61,6 +61,15 @@ describe("rankOpenOrderMatches — 'Is it one of these?'", () => {
     expect(ranked[0].reasons).toEqual(["Same supplier"]);
   });
 
+  it("leaves out orders booked more than 60 days ago — stale, never booked in", () => {
+    const ranked = rankOpenOrderMatches(
+      [order(11, 3, "2026-04-01", [10]), order(12, 3, "2026-07-28", [10]), order(13, 3, "2027-01-10", [10])],
+      { supplierId: 3, ingredientIds: [10] },
+      TODAY,
+    );
+    expect(ranked.map(r => r.id).sort()).toEqual([12, 13]);
+  });
+
   it("offers nothing when no open order shares the supplier or any item", () => {
     expect(rankOpenOrderMatches([order(9, 4, TODAY, [1])], { supplierId: 3, ingredientIds: [2] }, TODAY)).toEqual([]);
   });

@@ -58,27 +58,38 @@ function daysBetween(fromIso: string, toIso: string): number {
 }
 
 /**
+ * Open orders booked more than this many days ago are left out. The live
+ * data holds placed orders from months back that were never booked in (or
+ * were superseded) — offering a five-month-old order as "maybe it's this
+ * one" is noise that buries the real candidate.
+ */
+export const STALE_OPEN_ORDER_DAYS = 60;
+
+/**
  * Rank open orders against the basket. An order is offered when it shares at
- * least one item with the basket OR comes from the same supplier. Items
- * outrank supplier (an order with the very things on the pallet is the best
- * guess), then the order booked closest to today wins ties.
+ * least one item with the basket OR comes from the same supplier, and wasn't
+ * booked for more than STALE_OPEN_ORDER_DAYS ago. Items outrank supplier (an
+ * order with the very things on the pallet is the best guess), then the order
+ * booked closest to today wins ties.
  */
 export function rankOpenOrderMatches(
   candidates: OpenOrderCandidate[],
   basket: BasketSummary,
   today: string,
   limit = 12,
+  staleAfterDays = STALE_OPEN_ORDER_DAYS,
 ): OpenOrderMatch[] {
   const wanted = new Set(basket.ingredientIds);
   const out: OpenOrderMatch[] = [];
 
   for (const c of candidates) {
+    const daysFromToday = c.expectedDeliveryDate ? daysBetween(today, c.expectedDeliveryDate) : null;
+    if (daysFromToday != null && daysFromToday < -staleAfterDays) continue;
+
     const onOrder = new Set(c.lines.map(l => l.ingredientId).filter((id): id is number => id != null));
     const matchedIngredientIds = [...wanted].filter(id => onOrder.has(id));
     const sameSupplier = basket.supplierId != null && c.supplierId === basket.supplierId;
     if (matchedIngredientIds.length === 0 && !sameSupplier) continue;
-
-    const daysFromToday = c.expectedDeliveryDate ? daysBetween(today, c.expectedDeliveryDate) : null;
 
     const reasons: string[] = [];
     if (matchedIngredientIds.length > 0) {
