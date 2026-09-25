@@ -92,6 +92,7 @@ import founderFocusRouter from "./founder-focus";
 import metaAdsRouter from "./meta-ads";
 import todosRouter from "./todos";
 import founderSalesRouter from "./founder-sales";
+import founderNumbersRouter from "./founder-numbers";
 import surveysRouter from "./surveys";
 import financeRouter from "./finance";
 import featuresRouter from "./features";
@@ -240,6 +241,8 @@ router.use("/contracts", contractsRouter);
 // Starter forms: owner-scoped + HR-records access, guarded inside the router.
 router.use("/starter-forms", starterFormsRouter);
 router.use("/founder-sales", founderSalesRouter);
+// Numbers page trend graphs — founder account only, gated inside the router.
+router.use("/founder-numbers", founderNumbersRouter);
 router.use("/improvements", improvementsRouter);
 router.use("/andon", andonRouter);
 // Issue pipeline people side: Graeme's Fix queue (founder-gated per route)
