@@ -1205,9 +1205,10 @@ export default function EmployeeHub() {
   useSensitivePinGate({ includeAdmins: true, entryKey: "employee-hub", scope: "people" });
   // Managers write records for anyone; everyone else sees only their own.
   // Who sees the "Whose record?" list rather than just their own record.
-  // Identity, not role: the server decides (PEOPLE_DATA_EMAILS) and this
-  // follows its flag, so a new admin or manager does NOT get the personnel
-  // files handed to them (Graeme, 2026-09-17: "me and Lorna only, strictly").
+  // Identity, not role: the server decides (the founder's per-person People
+  // access switch, Settings -> Team & Access) and this follows its flag, so a
+  // new admin or manager does NOT get the personnel files handed to them
+  // (Graeme, 2026-09-17: "me and Lorna only, strictly").
   const isManager = useIsRtwManager();
   const [todosOpen, setTodosOpen] = useState(false);
   const openTodoCount = useMyOpenTodoCount();

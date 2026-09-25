@@ -5,13 +5,15 @@ import bcrypt from "bcryptjs";
 import { CreateUserBody, UpdateUserBody } from "@workspace/api-zod";
 import { validate } from "../middleware/validate";
 import { validatePassword } from "../lib/password-policy";
+import { toSafeUserRow } from "../lib/safe-user-row";
 
 const router: IRouter = Router();
 
 const SALT_ROUNDS = 10;
 
 function mapRow(r: typeof usersTable.$inferSelect) {
-  const { passwordHash: _ph, ...safe } = r;
+  // No password or PIN hashes — see lib/safe-user-row.ts.
+  const safe = toSafeUserRow(r);
   return {
     ...safe,
     createdAt: r.createdAt.toISOString(),

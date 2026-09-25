@@ -8,6 +8,12 @@ import { z } from "zod";
 import { validate } from "../middleware/validate";
 import { validatePassword } from "../lib/password-policy";
 import multer from "multer";
+import { hasPeopleAccessOrFalse, peopleGateFacts } from "../lib/people-access";
+import { canClearPrivatePin } from "../lib/people-access-rules";
+import {
+  peoplePinHashFor, pinClashes, PRIVATE_PIN_REQUIRED_CODE,
+  PRIVATE_PIN_SAME_AS_STATION, STATION_PIN_SAME_AS_PRIVATE,
+} from "../lib/people-unlock";
 
 const router: IRouter = Router();
 
@@ -123,7 +129,10 @@ router.post("/login", loginLimiter, validate(LoginBody), async (req, res) => {
   req.session.userId = user.id;
   req.session.userRole = user.role as "admin" | "manager" | "viewer";
   req.session.pinVerifiedAt = new Date().toISOString();
+  // A fresh sign-in never inherits an earlier People unlock on this browser.
+  delete req.session.peopleUnlockedAt;
   const features = await allowedFeatureKeys(user.id);
+  const hasPeopleAccess = await hasPeopleAccessOrFalse(user.id, "login");
   req.session.save((err) => {
     if (err) {
       console.error("Session save error:", err);
@@ -138,6 +147,7 @@ router.post("/login", loginLimiter, validate(LoginBody), async (req, res) => {
       avatarUrl: user.avatarUrl ?? null,
       hasPin: !!user.pinHash,
       hasPrivatePin: !!user.privatePinHash,
+      hasPeopleAccess,
       isProductionPlanner: user.isProductionPlanner ?? false,
       isBookkeeper: user.isBookkeeper ?? false,
       features,
@@ -183,6 +193,10 @@ router.get("/me", async (req, res) => {
     avatarUrl: user.avatarUrl ?? null,
     hasPin: !!user.pinHash,
     hasPrivatePin: !!user.privatePinHash,
+    // People access: the founder's per-person switch (lib/people-access.ts).
+    // Drives the People nav and the "set your private PIN" prompt; the
+    // server enforces it on every People request regardless.
+    hasPeopleAccess: await hasPeopleAccessOrFalse(user.id, "/auth/me"),
     isProductionPlanner: user.isProductionPlanner ?? false,
     isBookkeeper: user.isBookkeeper ?? false,
     features: await allowedFeatureKeys(user.id),
@@ -250,7 +264,21 @@ const PinSetBody = z.object({
   pin: z.string().length(4).regex(/^\d{4}$/, "PIN must be 4 digits"),
 });
 
-router.post("/pin/set", async (req, res) => {
+// Station-PIN changes are rare, so they're capped per person — every
+// attempt counts, successful or not. Refusing a station PIN that equals the
+// private People PIN (below) tells the caller "that's your private PIN"; the
+// cap stops anyone at an unlocked iPad using that refusal to hunt for the
+// private PIN by trying every 4-digit number.
+const pinSetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `pin-set:${req.session.userId ?? "anon"}`,
+  message: { error: "Too many PIN changes — try again in 15 minutes." },
+});
+
+router.post("/pin/set", pinSetLimiter, async (req, res) => {
   if (!req.session.userId) {
     res.status(401).json({ error: "Not authenticated" });
     return;
@@ -263,6 +291,19 @@ router.post("/pin/set", async (req, res) => {
   }
 
   const { pin } = parsed.data;
+
+  // The station PIN and the private People PIN must never match — checked
+  // here as well as when the private PIN is set (Graeme, 2026-09-25), so
+  // neither can be changed into the other.
+  const [current] = await db
+    .select({ privatePinHash: usersTable.privatePinHash })
+    .from(usersTable)
+    .where(eq(usersTable.id, req.session.userId));
+  if (await pinClashes(pin, current?.privatePinHash, bcrypt.compare)) {
+    res.status(400).json({ error: STATION_PIN_SAME_AS_PRIVATE });
+    return;
+  }
+
   const pinHash = await bcrypt.hash(pin, 10);
 
   await db
@@ -357,10 +398,14 @@ router.post("/pin/login", loginLimiter, async (req, res) => {
 
   const resetDeadline = await ensurePasswordResetDeadline(user);
   const featuresForPinUnlock = await allowedFeatureKeys(user.id);
+  const hasPeopleAccessForPinLogin = await hasPeopleAccessOrFalse(user.id, "pin/login");
 
   req.session.userId = user.id;
   req.session.userRole = user.role as "admin" | "manager" | "viewer";
   req.session.pinVerifiedAt = new Date().toISOString();
+  // Station PCs are shared: switching person by PIN must never carry the
+  // previous person's People unlock across to the next one.
+  delete req.session.peopleUnlockedAt;
   req.session.save((err) => {
     if (err) {
       console.error("Session save error:", err);
@@ -375,6 +420,7 @@ router.post("/pin/login", loginLimiter, async (req, res) => {
       avatarUrl: user.avatarUrl ?? null,
       hasPin: true,
       hasPrivatePin: !!user.privatePinHash,
+      hasPeopleAccess: hasPeopleAccessForPinLogin,
       isProductionPlanner: user.isProductionPlanner ?? false,
       isBookkeeper: user.isBookkeeper ?? false,
       features: featuresForPinUnlock,
@@ -474,27 +520,34 @@ router.post("/pin/verify", loginLimiter, async (req, res) => {
   });
 });
 
-// ── People section private PIN (Graeme, 2026-09-24) ─────────────────────────
+// ── People section private PIN (Graeme, 2026-09-24; compulsory 2026-09-25) ──
 // A second PIN, used only by the People gate, so the PIN someone types in
-// front of others at a station can't open employee records. Opt-in: with no
-// private PIN the People gate takes the normal PIN, exactly as before.
-// Separate attempt counter + lockout from the station PIN. See
-// lib/people-unlock.ts and middleware/people-unlock.ts.
+// front of others at a station can't open employee records. COMPULSORY for
+// anyone with People access: there is no falling back to the station PIN —
+// with no private PIN set, People answers 428 "private_pin_required" and the
+// app sends them to set one. Separate attempt counter + lockout from the
+// station PIN. See lib/people-unlock.ts and middleware/people-unlock.ts.
 
 const PeoplePinBody = z.object({ pin: z.string().regex(/^\d{4}$/, "PIN must be 4 digits") });
 
-router.post("/people-pin/verify", loginLimiter, async (req, res) => {
+router.post("/people-pin/verify", loginLimiter, validate(PeoplePinBody), async (req, res) => {
   const userId = req.session.userId;
   if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const parsed = PeoplePinBody.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: "PIN must be 4 digits" }); return; }
+  const { pin } = req.body as z.infer<typeof PeoplePinBody>;
   const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
   if (!user || !user.isActive) { res.status(401).json({ error: "Not authenticated" }); return; }
 
-  const usesPrivate = !!user.privatePinHash;
-  const hash = usesPrivate ? user.privatePinHash : user.pinHash;
-  if (!hash) { res.status(400).json({ error: "No PIN set" }); return; }
-  const lockedUntil = usesPrivate ? user.privatePinLockedUntil : user.pinLockedUntil;
+  const { hasAccess } = await peopleGateFacts(userId);
+  if (!hasAccess) { res.status(403).json({ error: "People access isn't switched on for your account" }); return; }
+
+  // ONLY the private PIN — never the station PIN (regression-tested in
+  // lib/people-unlock.test.ts, peoplePinHashFor).
+  const hash = peoplePinHashFor(user);
+  if (!hash) {
+    res.status(428).json({ error: "Set your private PIN to open People", code: PRIVATE_PIN_REQUIRED_CODE });
+    return;
+  }
+  const lockedUntil = user.privatePinLockedUntil;
   if (lockedUntil && lockedUntil > new Date()) {
     res.status(429).json({
       error: "Too many failed attempts. Try again in a few minutes.",
@@ -504,13 +557,11 @@ router.post("/people-pin/verify", loginLimiter, async (req, res) => {
     return;
   }
 
-  if (!(await bcrypt.compare(parsed.data.pin, hash))) {
-    const attempts = (usesPrivate ? user.privatePinAttempts : user.pinAttempts) + 1;
+  if (!(await bcrypt.compare(pin, hash))) {
+    const attempts = user.privatePinAttempts + 1;
     const lock = attempts >= PIN_MAX_ATTEMPTS ? new Date(Date.now() + PIN_LOCKOUT_MS) : null;
-    await db.update(usersTable).set(usesPrivate
-      ? { privatePinAttempts: attempts, privatePinLockedUntil: lock }
-      : { pinAttempts: attempts, pinLockedUntil: lock },
-    ).where(eq(usersTable.id, userId));
+    await db.update(usersTable).set({ privatePinAttempts: attempts, privatePinLockedUntil: lock })
+      .where(eq(usersTable.id, userId));
     const left = PIN_MAX_ATTEMPTS - attempts;
     if (left <= 0) {
       res.status(429).json({ error: "Too many failed attempts. Locked for 15 minutes.", lockedUntil: lock?.toISOString(), remainingSeconds: Math.ceil(PIN_LOCKOUT_MS / 1000) });
@@ -520,10 +571,8 @@ router.post("/people-pin/verify", loginLimiter, async (req, res) => {
     return;
   }
 
-  await db.update(usersTable).set(usesPrivate
-    ? { privatePinAttempts: 0, privatePinLockedUntil: null }
-    : { pinAttempts: 0, pinLockedUntil: null },
-  ).where(eq(usersTable.id, userId));
+  await db.update(usersTable).set({ privatePinAttempts: 0, privatePinLockedUntil: null })
+    .where(eq(usersTable.id, userId));
   req.session.peopleUnlockedAt = new Date().toISOString();
   req.session.save(err => {
     if (err) { res.status(500).json({ error: "Failed to save session" }); return; }
@@ -536,23 +585,27 @@ const PrivatePinSetBody = z.object({
   pin: z.string().regex(/^\d{4}$/, "PIN must be 4 digits"),
 });
 
-// Set or change the private PIN. Needs the account password, and must not be
-// the same as the station PIN (that would defeat the point).
-router.post("/private-pin/set", loginLimiter, async (req, res) => {
+// Set or change the private PIN. Only for people with People access (it
+// opens nothing else). Needs the account password, and must not be the same
+// as the station PIN (that would defeat the point) — /pin/set checks the
+// other direction.
+router.post("/private-pin/set", loginLimiter, validate(PrivatePinSetBody), async (req, res) => {
   const userId = req.session.userId;
   if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const parsed = PrivatePinSetBody.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: "PIN must be 4 digits" }); return; }
+  const body = req.body as z.infer<typeof PrivatePinSetBody>;
   const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
   if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
-  if (!(await bcrypt.compare(parsed.data.currentPassword, user.passwordHash))) {
+  if (!(await peopleGateFacts(userId)).hasAccess) {
+    res.status(403).json({ error: "A private PIN is only for people with People access" }); return;
+  }
+  if (!(await bcrypt.compare(body.currentPassword, user.passwordHash))) {
     res.status(403).json({ error: "That password isn't right" }); return;
   }
-  if (user.pinHash && (await bcrypt.compare(parsed.data.pin, user.pinHash))) {
-    res.status(400).json({ error: "Choose a different PIN from the one you use at the stations" }); return;
+  if (await pinClashes(body.pin, user.pinHash, bcrypt.compare)) {
+    res.status(400).json({ error: PRIVATE_PIN_SAME_AS_STATION }); return;
   }
   await db.update(usersTable).set({
-    privatePinHash: await bcrypt.hash(parsed.data.pin, 10),
+    privatePinHash: await bcrypt.hash(body.pin, 10),
     privatePinAttempts: 0,
     privatePinLockedUntil: null,
   }).where(eq(usersTable.id, userId));
@@ -563,14 +616,20 @@ router.post("/private-pin/set", loginLimiter, async (req, res) => {
 
 const PrivatePinClearBody = z.object({ currentPassword: z.string().min(1) });
 
-router.post("/private-pin/clear", loginLimiter, async (req, res) => {
+// Removing the private PIN is refused while you have People access — it's
+// compulsory for you (lib/people-access-rules.ts, canClearPrivatePin). Once
+// access is removed, an old private PIN can be tidied away.
+router.post("/private-pin/clear", loginLimiter, validate(PrivatePinClearBody), async (req, res) => {
   const userId = req.session.userId;
   if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const parsed = PrivatePinClearBody.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: "Password required" }); return; }
+  const body = req.body as z.infer<typeof PrivatePinClearBody>;
   const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
   if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
-  if (!(await bcrypt.compare(parsed.data.currentPassword, user.passwordHash))) {
+  if (!canClearPrivatePin(await peopleGateFacts(userId))) {
+    res.status(409).json({ error: "You have People access, so your private PIN can't be removed — you can change it instead." });
+    return;
+  }
+  if (!(await bcrypt.compare(body.currentPassword, user.passwordHash))) {
     res.status(403).json({ error: "That password isn't right" }); return;
   }
   await db.update(usersTable).set({ privatePinHash: null, privatePinAttempts: 0, privatePinLockedUntil: null })

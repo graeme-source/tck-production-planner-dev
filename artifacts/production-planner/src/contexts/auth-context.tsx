@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { shouldResetCachesOnIdentityChange } from "@/lib/session-identity";
-import { shouldPromptForSensitivePin, gateUsesPrivatePin, type SensitiveScope } from "@/lib/sensitive-pin";
+import { shouldPromptForSensitivePin, peopleGateMode, type SensitiveScope } from "@/lib/sensitive-pin";
 import { addDeviceUserId } from "@/lib/device-users";
 import { toast } from "@/hooks/use-toast";
 import { idleTimeoutMs, type IdleTimeoutSettings } from "@/lib/idle-timeout";
@@ -16,6 +16,9 @@ export type AuthUser = {
   hasPin: boolean;
   /** Has a private PIN for the People section (migration 0123). */
   hasPrivatePin?: boolean;
+  /** People access switched on by the founder (migration 0126). With it,
+   *  the private PIN is compulsory before any People page opens. */
+  hasPeopleAccess?: boolean;
   isProductionPlanner?: boolean;
   isBookkeeper?: boolean;
   /** Feature keys this user can use right now (grants + optional SOP gate). */
@@ -51,6 +54,11 @@ type AuthContextValue = {
   verifyPeoplePin: (pin: string) => Promise<PinResult>;
   /** "Not now" on the People PIN prompt — closes it; the page sends them away. */
   cancelPeoplePin: () => void;
+  /** People access but no private PIN yet: the "set your private PIN" card
+   *  is showing instead of any PIN prompt. */
+  peoplePinSetupPrompt: boolean;
+  /** Closes that card (closing it, or following its link to set the PIN). */
+  closePeoplePinSetup: () => void;
 };
 
 // How long a PIN entry grants access to sensitive pages before re-prompting.
@@ -193,6 +201,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // have one). Station PIN logins/unlocks deliberately don't touch it.
   const peopleUnlockedAtRef = useRef<number>(0);
   const [peoplePinPrompt, setPeoplePinPrompt] = useState(false);
+  const [peoplePinSetupPrompt, setPeoplePinSetupPrompt] = useState(false);
 
   const consecutiveFailsRef = useRef(0);
   const offlineToastedRef = useRef(false);
@@ -561,10 +570,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // exemption for analytics-style pages. Rule + tests: lib/sensitive-pin.ts.
   const requireSensitivePin = useCallback((opts?: { includeAdmins?: boolean; fresh?: boolean; scope?: SensitiveScope }) => {
     if (state.status !== "authenticated") return;
-    if (pinLocked || peoplePinPrompt) return; // already prompting
-    // People pages ask for the private PIN once one is set (Graeme,
-    // 2026-09-24): its own unlock window, never opened by a station PIN.
-    const privatePin = gateUsesPrivatePin(opts?.scope ?? "general", state.user.hasPrivatePin);
+    if (pinLocked || peoplePinPrompt || peoplePinSetupPrompt) return; // already prompting
+    // People pages, for someone with People access, need the PRIVATE PIN —
+    // its own unlock window, never opened by a station PIN. With no private
+    // PIN set yet they get the "set your private PIN" card instead, every
+    // time: there is nothing they can type to get in (Graeme, 2026-09-25).
+    const mode = peopleGateMode(opts?.scope ?? "general", state.user);
+    if (mode === "setup") { setPeoplePinSetupPrompt(true); return; }
+    const privatePin = mode === "private";
     const prompt = shouldPromptForSensitivePin({
       role: state.user.role,
       includeAdmins: opts?.includeAdmins ?? false,
@@ -575,7 +588,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!prompt) return;
     if (privatePin) setPeoplePinPrompt(true);
     else setPinLocked(true);
-  }, [state, pinLocked, peoplePinPrompt]);
+  }, [state, pinLocked, peoplePinPrompt, peoplePinSetupPrompt]);
 
   const verifyPeoplePin = useCallback(async (pin: string): Promise<PinResult> => {
     try {
@@ -599,6 +612,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const cancelPeoplePin = useCallback(() => setPeoplePinPrompt(false), []);
+  const closePeoplePinSetup = useCallback(() => setPeoplePinSetupPrompt(false), []);
 
   // Manually lock the station — clears pinVerifiedAt server-side and locally.
   // We lock the UI regardless of the server response (security-first): if the
@@ -628,12 +642,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setState({ status: "unauthenticated" });
     setPinLocked(false);
     setPeoplePinPrompt(false);
+    setPeoplePinSetupPrompt(false);
     sensitiveUnlockedAtRef.current = 0;
     peopleUnlockedAtRef.current = 0;
   }, []);
 
   return (
-    <AuthContext.Provider value={{ state, pinLocked, login, pinLogin, verifyPin, lockStation, logout, refreshUser, requireSensitivePin, peoplePinPrompt, verifyPeoplePin, cancelPeoplePin }}>
+    <AuthContext.Provider value={{ state, pinLocked, login, pinLogin, verifyPin, lockStation, logout, refreshUser, requireSensitivePin, peoplePinPrompt, verifyPeoplePin, cancelPeoplePin, peoplePinSetupPrompt, closePeoplePinSetup }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,8 +1,8 @@
 /**
  * Return-to-work forms (Graeme, 2026-09-14): completed by a colleague WITH
  * a manager after a spell of sick leave. Privacy: the colleague and the
- * named RTW managers only (middleware/rtw-access.ts — founder + Lorna
- * Brown); ordinary admin/manager roles see nothing. Spells are detected
+ * people Graeme has given People access only (middleware/rtw-access.ts);
+ * ordinary admin/manager roles see nothing. Spells are detected
  * from the Planday mirror (lib/rtw-detect.ts) and an hourly sweep raises
  * to-dos for the colleague and the RTW managers when a form is owed.
  */
@@ -15,8 +15,8 @@ import { hasRtwManagerAccess, canAccessRtwUser } from "../middleware/rtw-access"
 import { sickSpellsForUser, dueSpells, attendanceEventsForUser } from "../lib/rtw-detect";
 import { singleFileUpload } from "../middleware/upload";
 import { canUploadRtwAttachment, canDeleteRtwAttachment } from "../lib/rtw-attachment-rules";
-
 import { requirePeopleUnlock } from "../middleware/people-unlock";
+
 const router: IRouter = Router();
 
 function requireAuth(req: Request, res: Response, next: NextFunction) {
@@ -85,10 +85,18 @@ router.get("/mine", async (req: Request, res: Response) => {
   });
 });
 
+// Everything below /mine is behind the People lock (middleware/people-unlock.ts).
+// For someone with People access that means their private PIN must be set
+// (428 until it is) and entered recently (423) — for reads AND writes, so
+// the PIN can't be sidestepped by editing a form it would stop you reading.
+// Colleagues without People access pass straight through to their own forms.
+// /mine stays outside: it drives the RTW banner and the page itself.
+router.use(requirePeopleUnlock);
+
 // GET /user/:userId — spells + forms for one person. Self or RTW manager.
 // ?from=YYYY-MM-DD widens the spell window (the report modal passes its own
 // range so the instances listed match the numbers that were clicked).
-router.get("/user/:userId", requirePeopleUnlock, async (req: Request, res: Response) => {
+router.get("/user/:userId", async (req: Request, res: Response) => {
   const subjectId = Number(req.params.userId);
   if (!Number.isInteger(subjectId)) { res.status(400).json({ error: "Invalid user" }); return; }
   if (!(await canAccessRtwUser(req, subjectId))) {
@@ -106,7 +114,7 @@ router.get("/user/:userId", requirePeopleUnlock, async (req: Request, res: Respo
 });
 
 // GET /form/:id — one form in full.
-router.get("/form/:id", requirePeopleUnlock, async (req: Request, res: Response) => {
+router.get("/form/:id", async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid form" }); return; }
   const rows = await db.execute<FormRow>(sql`${formSelect} WHERE f.id = ${id}`);
@@ -265,7 +273,7 @@ async function loadFormForAttachment(req: Request, res: Response, formId: number
 }
 
 // GET /:id/attachments — list (metadata only, no bytes).
-router.get("/:id/attachments", requirePeopleUnlock, async (req: Request, res: Response) => {
+router.get("/:id/attachments", async (req: Request, res: Response) => {
   const formId = Number(req.params.id);
   const form = await loadFormForAttachment(req, res, formId);
   if (!form) return;
@@ -309,7 +317,7 @@ router.post("/:id/attachments", singleFileUpload("file", 15), async (req: Reques
 });
 
 // GET /attachments/:attachmentId — the bytes, inline (view/print).
-router.get("/attachments/:attachmentId", requirePeopleUnlock, async (req: Request, res: Response) => {
+router.get("/attachments/:attachmentId", async (req: Request, res: Response) => {
   const attId = Number(req.params.attachmentId);
   if (!Number.isInteger(attId)) { res.status(400).json({ error: "Invalid attachment" }); return; }
   const rows = await db.execute<{ form_id: number; mime: string; file_name: string | null; data: Buffer }>(sql`

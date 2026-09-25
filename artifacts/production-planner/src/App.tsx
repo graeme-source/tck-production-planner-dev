@@ -76,6 +76,7 @@ import ResetPassword from "@/pages/reset-password";
 import { Loader2 } from "lucide-react";
 import { PinLockOverlay } from "@/components/pin-lock-overlay";
 import { PeoplePinOverlay } from "@/components/people-pin-overlay";
+import { PeoplePinSetupCard } from "@/components/people-pin-setup-card";
 import { PasswordResetGate } from "@/components/password-reset-gate";
 import { LeanReviewPage } from "@/components/lean-weekly-review";
 import { toast } from "@/hooks/use-toast";
@@ -244,7 +245,7 @@ function Router() {
 }
 
 function AuthGate() {
-  const { state, pinLocked, peoplePinPrompt, refreshUser } = useAuth();
+  const { state, pinLocked, peoplePinPrompt, peoplePinSetupPrompt, refreshUser } = useAuth();
   const [location] = useLocation();
 
   const isPublicPath = PUBLIC_PATHS.some(p => location.startsWith(p));
@@ -296,6 +297,7 @@ function AuthGate() {
       <Router />
       {pinLocked && <PinLockOverlay />}
       {!pinLocked && peoplePinPrompt && <PeoplePinOverlay />}
+      {!pinLocked && peoplePinSetupPrompt && <PeoplePinSetupCard />}
     </>
   );
 }

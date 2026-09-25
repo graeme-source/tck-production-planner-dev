@@ -28,38 +28,31 @@ export interface ReviewNoteForVisibility {
 export interface ReviewViewer {
   id: number;
   role: string;
-  /** The account's email. Identity, not role, decides who looks after
-   *  people-data — see PEOPLE_DATA_EMAILS. */
-  email?: string | null;
+  /** Has People access — the per-person switch in Settings → Team &
+   *  Access (people_access_grants, migration 0126), looked up by the server.
+   *  Identity, not role, decides who looks after people-data. Missing or
+   *  false = no access. */
+  hasPeopleAccess?: boolean;
   /** Explicitly switched on for this viewer, for this person's record.
    *  Defaults to false — being an admin does not grant it. */
   hasPrivateGrant?: boolean;
 }
 
 /**
- * The only people who look after everyone else's record.
+ * Who looks after everyone else's record: the people the founder has given
+ * People access in Settings → Team & Access (Graeme, 2026-09-25).
  *
- * Named accounts, NOT a role (Graeme, 2026-09-17: "me and Lorna only,
- * strictly"). It was role-based, which quietly meant five people — every
- * admin and every manager, so Jane Miles and Dave Bewsey could open anyone's
- * probation meetings and feedback. Promoting somebody to manager must never
- * hand them the personnel files as a side effect.
+ * NOT a role (Graeme, 2026-09-17: "me and Lorna only, strictly"). It was
+ * role-based once, which quietly meant every admin and every manager could
+ * open anyone's probation meetings and feedback. Promoting somebody to
+ * manager must never hand them the personnel files as a side effect.
  *
- * Same list as the return-to-work managers, and deliberately so: it is one
- * question — who looks after people-data — and it should have one answer.
- * rtw-access.ts imports this rather than keeping a second copy.
+ * It was a hard-coded email list until 2026-09-25; the server now reads the
+ * switch from the database (api-server lib/people-access.ts) and passes it
+ * in, so this stays pure. The same switch decides return-to-work access.
  */
-export const PEOPLE_DATA_EMAILS: ReadonlySet<string> = new Set([
-  "graeme@thecalzonekitchen.co.uk",
-  "lornabrown17@icloud.com",
-  // Local test account — no such user exists on live.
-  "claude-test@thecalzonekitchen.co.uk",
-]);
-
-/** Who can book meetings and write notes about someone else. */
-export function canManageRecord(viewer: { email?: string | null }): boolean {
-  const email = viewer.email?.trim().toLowerCase();
-  return email != null && email !== "" && PEOPLE_DATA_EMAILS.has(email);
+export function canManageRecord(viewer: { hasPeopleAccess?: boolean }): boolean {
+  return viewer.hasPeopleAccess === true;
 }
 
 /** Can this viewer open this person's record at all? */

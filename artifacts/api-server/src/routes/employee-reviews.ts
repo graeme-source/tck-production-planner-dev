@@ -27,21 +27,23 @@ import { and, desc, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import * as z from "zod";
 import { validate } from "../middleware/validate";
+import { hasPeopleAccess } from "../lib/people-access";
 
 const router: IRouter = Router();
 
-async function sessionUser(req: Request): Promise<{ id: number; role: string; name: string; email: string | null } | null> {
+async function sessionUser(req: Request): Promise<{ id: number; role: string; name: string; hasPeopleAccess: boolean } | null> {
   const id = req.session.userId;
   if (!id) return null;
   const [row] = await db
-    // email, because who looks after people-data is decided by identity, not
-    // by role — see PEOPLE_DATA_EMAILS in employee-review-visibility.ts.
-    .select({ role: usersTable.role, name: usersTable.name, email: usersTable.email })
+    .select({ role: usersTable.role, name: usersTable.name })
     .from(usersTable)
     .where(eq(usersTable.id, id));
   if (!row) return null;
   if (!req.session.userRole) req.session.userRole = row.role as "admin" | "manager" | "viewer";
-  return { id, role: row.role, name: row.name, email: row.email ?? null };
+  // Who looks after people-data is decided by identity, not role: the
+  // founder's per-person People access switch (lib/people-access.ts), read
+  // fresh on every request so a revoke bites immediately.
+  return { id, role: row.role, name: row.name, hasPeopleAccess: await hasPeopleAccess(id) };
 }
 
 /** Notify without ever letting a missed bell fail the action itself. */
@@ -117,10 +119,10 @@ router.get("/:userId", async (req: Request, res: Response) => {
 
     // THE line that matters. Everything below this point has already been
     // filtered to what this person may see.
-    // email MUST be passed: canReadNote sends a SHARED note through
-    // canManageRecord, which is keyed on identity now, not role. Dropping it
-    // here made a shared note invisible to the very person who shared it.
-    const notes = visibleNotes(allNotes, { id: user.id, role: user.role, email: user.email }, subjectId);
+    // hasPeopleAccess MUST be passed: canReadNote sends a SHARED note
+    // through canManageRecord, which is keyed on identity, not role.
+    // Dropping it made a shared note invisible to the person who shared it.
+    const notes = visibleNotes(allNotes, { id: user.id, role: user.role, hasPeopleAccess: user.hasPeopleAccess }, subjectId);
 
     res.json({
       subject,
