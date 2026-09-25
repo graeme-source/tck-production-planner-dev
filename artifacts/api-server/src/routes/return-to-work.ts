@@ -1,6 +1,8 @@
 /**
  * Return-to-work forms (Graeme, 2026-09-14): completed by a colleague WITH
- * a manager after a spell of sick leave. Privacy: the colleague and the
+ * a manager after a spell of absence — sickness, and since 2026-09-25 any
+ * absence reason (dependants' or emergency leave, unexplained absence), so
+ * the reason is on record. Never holiday. Privacy: the colleague and the
  * people Graeme has given People access only (middleware/rtw-access.ts);
  * ordinary admin/manager roles see nothing. Spells are detected
  * from the Planday mirror (lib/rtw-detect.ts) and an hourly sweep raises
@@ -12,7 +14,13 @@ import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { validate } from "../middleware/validate";
 import { hasRtwManagerAccess, canAccessRtwUser } from "../middleware/rtw-access";
-import { sickSpellsForUser, dueSpells, attendanceEventsForUser } from "../lib/rtw-detect";
+import {
+  sickSpellsForUser, absenceSpellsForUser, absenceSpellsForUsers, dueSpells, attendanceEventsForUser, todayIso,
+  type AbsenceSpell,
+} from "../lib/rtw-detect";
+import { outstandingFormsForViewer } from "../lib/people-list";
+import { checkAbsenceDates } from "../lib/rtw-dates";
+import { chaseLikePatternsForUser } from "../lib/rtw-chase";
 import { singleFileUpload } from "../middleware/upload";
 import { canUploadRtwAttachment, canDeleteRtwAttachment } from "../lib/rtw-attachment-rules";
 import { requirePeopleUnlock } from "../middleware/people-unlock";
@@ -31,6 +39,7 @@ interface FormRow extends Record<string, unknown> {
   user_name: string | null;
   absence_start: string;
   absence_end: string | null;
+  absence_type: string | null;
   return_date: string | null;
   reason_category: string | null;
   reason_details: string | null;
@@ -46,7 +55,7 @@ interface FormRow extends Record<string, unknown> {
 
 const formSelect = sql`
   SELECT f.id, f.user_id, u.name AS user_name, f.absence_start::text, f.absence_end::text,
-         f.return_date::text, f.reason_category, f.reason_details, f.support_notes,
+         f.absence_type, f.return_date::text, f.reason_category, f.reason_details, f.support_notes,
          f.doctor_seen, f.work_related,
          f.manager_name, f.colleague_signed_at, f.manager_signed_at, f.status, f.created_at
   FROM return_to_work_forms f JOIN app_users u ON u.id = f.user_id
@@ -59,6 +68,7 @@ function shapeForm(r: FormRow) {
     userName: r.user_name,
     absenceStart: r.absence_start,
     absenceEnd: r.absence_end,
+    absenceType: r.absence_type,
     returnDate: r.return_date,
     reasonCategory: r.reason_category,
     reasonDetails: r.reason_details,
@@ -73,15 +83,32 @@ function shapeForm(r: FormRow) {
   };
 }
 
-// GET /mine — my forms + any spells owing one (drives the page + banner).
+// GET /mine — my forms + any absence spells owing one (drives the page +
+// banner). For someone with People access it also counts everyone ELSE's
+// outstanding forms — only a number, no names or dates, because /mine sits
+// outside the People lock — so the page can point them to People, where
+// the full list lives (Graeme, 2026-09-25: he opened this page, saw only his
+// own nothing, and concluded there were no forms at all).
 router.get("/mine", async (req: Request, res: Response) => {
   const userId = req.session.userId!;
   const rows = await db.execute<FormRow>(sql`${formSelect} WHERE f.user_id = ${userId} ORDER BY f.absence_start DESC`);
-  const spells = await sickSpellsForUser(userId).catch(() => []);
+  const spells = await absenceSpellsForUser(userId).catch(err => {
+    console.warn("[rtw] /mine spell detection failed:", err instanceof Error ? err.message : err);
+    return [];
+  });
+  const isRtwManager = await hasRtwManagerAccess(req);
+  let othersOutstanding = 0;
+  if (isRtwManager) {
+    const everyone = await absenceSpellsForUsers(null).catch(() => new Map<number, AbsenceSpell[]>());
+    const dueByUser = new Map([...everyone].map(([uid, list]) => [uid, dueSpells(list)]));
+    othersOutstanding = outstandingFormsForViewer({ id: userId, hasPeopleAccess: true }, dueByUser, new Map())
+      .filter(f => f.userId !== userId).length;
+  }
   res.json({
     forms: rows.rows.map(shapeForm),
     due: dueSpells(spells),
-    isRtwManager: await hasRtwManagerAccess(req),
+    isRtwManager,
+    othersOutstanding,
   });
 });
 
@@ -100,7 +127,7 @@ router.get("/user/:userId", async (req: Request, res: Response) => {
   const subjectId = Number(req.params.userId);
   if (!Number.isInteger(subjectId)) { res.status(400).json({ error: "Invalid user" }); return; }
   if (!(await canAccessRtwUser(req, subjectId))) {
-    res.status(403).json({ error: "Return-to-work records are private — the colleague and named RTW managers only." });
+    res.status(403).json({ error: "Return-to-work records are private — the colleague and people with People access only." });
     return;
   }
   const fromRaw = String(req.query["from"] ?? "");
@@ -121,27 +148,34 @@ router.get("/form/:id", async (req: Request, res: Response) => {
   const row = rows.rows[0];
   if (!row) { res.status(404).json({ error: "Form not found" }); return; }
   if (!(await canAccessRtwUser(req, Number(row.user_id)))) {
-    res.status(403).json({ error: "Return-to-work records are private — the colleague and named RTW managers only." });
+    res.status(403).json({ error: "Return-to-work records are private — the colleague and people with People access only." });
     return;
   }
   res.json(shapeForm(row));
 });
 
 const createSchema = z.object({
-  userId: z.number().int().optional(),      // RTW managers may open for others
+  userId: z.number().int().optional(),      // People-access managers may open for others
   absenceStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   absenceEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  // What kind of absence: Planday's type name(s) for a detected spell, or
+  // the type picked when recording one Planday doesn't show.
+  absenceType: z.string().trim().max(80).nullable().optional(),
 });
 
-// POST / — open a draft (usually pre-filled from a detected spell).
+// POST / — open a draft: pre-filled from a detected spell, or dates a
+// manager typed for an absence Planday doesn't show (checked: end not before
+// start, nothing in the future — lib/rtw-dates.ts).
 router.post("/", validate(createSchema), async (req: Request, res: Response) => {
   const callerId = req.session.userId!;
-  const { userId, absenceStart, absenceEnd } = req.body as z.infer<typeof createSchema>;
+  const { userId, absenceStart, absenceEnd, absenceType } = req.body as z.infer<typeof createSchema>;
   const subjectId = userId ?? callerId;
   if (subjectId !== callerId && !(await hasRtwManagerAccess(req))) {
-    res.status(403).json({ error: "Only RTW managers can open a form for someone else." });
+    res.status(403).json({ error: "Only someone with People access can open a form for someone else." });
     return;
   }
+  const dateProblem = checkAbsenceDates(absenceStart, absenceEnd ?? null, todayIso());
+  if (dateProblem) { res.status(400).json({ error: dateProblem }); return; }
   // One form per spell: reuse an existing draft covering the same dates.
   const existing = await db.execute<{ id: number }>(sql`
     SELECT id FROM return_to_work_forms
@@ -151,8 +185,8 @@ router.post("/", validate(createSchema), async (req: Request, res: Response) => 
   `);
   if (existing.rows[0]) { res.json({ id: Number(existing.rows[0].id), reused: true }); return; }
   const inserted = await db.execute<{ id: number }>(sql`
-    INSERT INTO return_to_work_forms (user_id, absence_start, absence_end, created_by_user_id)
-    VALUES (${subjectId}, ${absenceStart}, ${absenceEnd ?? null}, ${callerId})
+    INSERT INTO return_to_work_forms (user_id, absence_start, absence_end, absence_type, created_by_user_id)
+    VALUES (${subjectId}, ${absenceStart}, ${absenceEnd ?? null}, ${absenceType || null}, ${callerId})
     RETURNING id
   `);
   res.json({ id: Number(inserted.rows[0].id), reused: false });
@@ -161,6 +195,7 @@ router.post("/", validate(createSchema), async (req: Request, res: Response) => 
 const patchSchema = z.object({
   absenceStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   absenceEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  absenceType: z.string().trim().max(80).nullable().optional(),
   returnDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   reasonCategory: z.string().max(60).nullable().optional(),
   reasonDetails: z.string().max(8000).nullable().optional(),
@@ -182,7 +217,7 @@ router.patch("/:id", validate(patchSchema), async (req: Request, res: Response) 
   if (!row) { res.status(404).json({ error: "Form not found" }); return; }
   if (!(await canAccessRtwUser(req, Number(row.user_id)))) { res.status(403).json({ error: "Private" }); return; }
   if (row.status === "complete" && !(await hasRtwManagerAccess(req))) {
-    res.status(409).json({ error: "This form is signed — ask Graeme or Lorna for changes." });
+    res.status(409).json({ error: "This form is signed — ask someone with People access to change it." });
     return;
   }
   const b = req.body as z.infer<typeof patchSchema>;
@@ -190,6 +225,7 @@ router.patch("/:id", validate(patchSchema), async (req: Request, res: Response) 
     UPDATE return_to_work_forms SET
       absence_start = COALESCE(${b.absenceStart ?? null}, absence_start),
       absence_end = ${b.absenceEnd !== undefined ? b.absenceEnd : sql`absence_end`},
+      absence_type = ${b.absenceType !== undefined ? (b.absenceType || null) : sql`absence_type`},
       return_date = ${b.returnDate !== undefined ? b.returnDate : sql`return_date`},
       reason_category = ${b.reasonCategory !== undefined ? b.reasonCategory : sql`reason_category`},
       reason_details = ${b.reasonDetails !== undefined ? b.reasonDetails : sql`reason_details`},
@@ -239,10 +275,17 @@ router.post("/:id/complete", async (req: Request, res: Response) => {
       updated_at = NOW()
     WHERE id = ${id}
   `);
-  // The chase to-dos close themselves for everyone involved.
+  // The chase to-dos close themselves for everyone involved — the
+  // colleague's (/return-to-work?spell=…) and the managers' (/people/<id>?spell=…,
+  // or the older /return-to-work?user=…&spell=…). Anchored on ? or & so
+  // user 4's form never closes user 14's (lib/rtw-chase.ts). If the person
+  // has another spell still owing a form, the next hourly sweep re-raises it.
+  const [tagQ, tagAmp] = chaseLikePatternsForUser(Number(row.user_id));
   await db.execute(sql`
     UPDATE todo_tasks SET status = 'done', completed_at = NOW(), updated_at = NOW()
-    WHERE status <> 'done' AND url LIKE ${"/return-to-work%"} AND url LIKE ${`%spell=${row.user_id}:%`}
+    WHERE status <> 'done'
+      AND (url LIKE ${"/return-to-work%"} OR url LIKE ${"/people/%"})
+      AND (url LIKE ${tagQ} OR url LIKE ${tagAmp})
   `);
   res.json({ ok: true });
 });
@@ -266,7 +309,7 @@ async function loadFormForAttachment(req: Request, res: Response, formId: number
   const row = rows.rows[0];
   if (!row) { res.status(404).json({ error: "Form not found" }); return null; }
   if (!(await canAccessRtwUser(req, Number(row.user_id)))) {
-    res.status(403).json({ error: "Return-to-work records are private — the colleague and named RTW managers only." });
+    res.status(403).json({ error: "Return-to-work records are private — the colleague and people with People access only." });
     return null;
   }
   return { userId: Number(row.user_id), status: row.status };
@@ -298,7 +341,7 @@ router.post("/:id/attachments", singleFileUpload("file", 15), async (req: Reques
   if (!form) return;
   const isManager = await hasRtwManagerAccess(req);
   if (!canUploadRtwAttachment({ formStatus: form.status, isRtwManager: isManager })) {
-    res.status(409).json({ error: "This form is signed — ask Graeme or Lorna to file the document." });
+    res.status(409).json({ error: "This form is signed — ask someone with People access to file the document." });
     return;
   }
   if (!req.file) { res.status(400).json({ error: "No file uploaded" }); return; }
@@ -354,7 +397,7 @@ router.delete("/attachments/:attachmentId", async (req: Request, res: Response) 
     viewerUserId: req.session.userId!,
   });
   if (!allowed) {
-    res.status(403).json({ error: "Only Graeme or Lorna can remove documents from a signed form." });
+    res.status(403).json({ error: "Only someone with People access can remove documents from a signed form." });
     return;
   }
   await db.execute(sql`DELETE FROM return_to_work_attachments WHERE id = ${attId}`);
