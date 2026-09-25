@@ -50,3 +50,18 @@ export function validate(schema: ValidatableSchema): RequestHandler {
     next();
   };
 }
+
+/** The query-string twin of validate(), for GET endpoints that take
+ *  parameters. The parsed result is on res.locals.query (Express 5's
+ *  req.query is a read-only getter). */
+export function validateQuery(schema: ValidatableSchema): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const result = schema.safeParse(req.query ?? {});
+    if (!result.success) {
+      res.status(400).json({ error: "Validation failed", details: result.error.flatten() });
+      return;
+    }
+    res.locals["query"] = result.data;
+    next();
+  };
+}

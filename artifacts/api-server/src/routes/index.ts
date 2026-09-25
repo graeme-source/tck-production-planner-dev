@@ -48,6 +48,7 @@ import employeesRouter from "./employees";
 import returnToWorkRouter from "./return-to-work";
 import stationMessagesRouter from "./station-messages";
 import employeeReviewsRouter from "./employee-reviews";
+import peopleRouter from "./people";
 import { requirePeopleUnlock } from "../middleware/people-unlock";
 import friedChickenRouter from "./fried-chicken";
 import riskAssessmentsRouter from "./risk-assessments";
@@ -236,6 +237,9 @@ router.use("/station-messages", stationMessagesRouter);
 // (middleware/people-unlock.ts); everyone else passes straight through to
 // their own record.
 router.use("/employee-reviews", requirePeopleUnlock, employeeReviewsRouter);
+// People — the list and each person's record (routes/people.ts): People
+// access only (403 otherwise, checked inside), private PIN set + unlocked.
+router.use("/people", requirePeopleUnlock, peopleRouter);
 // Who has People access — the founder's per-person switch in Settings →
 // Team & Access. Admin read, founder-only write, guarded inside the router.
 router.use("/people-access", peopleAccessRouter);

@@ -489,3 +489,40 @@ export async function getPlandayAbsenceAccounts(): Promise<PlandayAbsenceAccount
     return fetchAllPages<PlandayAbsenceAccount>(`/absence/v1.0/accounts`, token);
   }, c => { cachedAbsenceAccounts = c; });
 }
+
+// ── Employment facts for a person's record (People redesign, 2026-09-25) ───
+// Read-only GETs with the scopes the app already has. Shaping lives in
+// lib/holiday-summary.ts (pure, tested); the caching and "Couldn't reach
+// Planday" handling in services/planday-employment.ts.
+
+/** One GET, authenticated. null when Planday isn't configured, the token
+ *  can't be had, or the call fails (plandayGet logs which). */
+export async function plandayRead<T>(path: string): Promise<T | null> {
+  const token = await getAccessToken();
+  if (!token) return null;
+  return plandayGet<T>(path, token);
+}
+
+/** Every page of a list endpoint (repeated-page guard included — some
+ *  Planday endpoints ignore limit/offset). */
+export async function plandayReadAll<T>(path: string): Promise<T[]> {
+  const token = await getAccessToken();
+  if (!token) return [];
+  return fetchAllPages<T>(path, token);
+}
+
+export interface PlandayNamedItem { id: number; name: string; description?: string | null }
+
+let cachedEmployeeTypes: CachedLookup<PlandayNamedItem> | null = null;
+/** "Full time employees", "Part Time Employee", "Zero Hour Employee"… */
+export async function getPlandayEmployeeTypes(): Promise<PlandayNamedItem[]> {
+  return getCachedLookup(cachedEmployeeTypes, () => plandayReadAll<PlandayNamedItem>(`/hr/v1.0/employeetypes`),
+    c => { cachedEmployeeTypes = c; });
+}
+
+let cachedContractRules: CachedLookup<PlandayNamedItem> | null = null;
+/** "16.5 Hours per week", "41.25 Hours"… */
+export async function getPlandayContractRules(): Promise<PlandayNamedItem[]> {
+  return getCachedLookup(cachedContractRules, () => plandayReadAll<PlandayNamedItem>(`/contractrules/v1.0/contractrules`),
+    c => { cachedContractRules = c; });
+}

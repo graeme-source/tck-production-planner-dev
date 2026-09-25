@@ -2,7 +2,7 @@
  * When a return-to-work form's fields are editable.
  *
  * A signed ("complete") form is locked — it is a record. But the server has
- * always allowed the named RTW managers (Graeme and Lorna) to amend one, and
+ * always allowed people with People access to amend one, and
  * its refusal message for everyone else says to ask them. The page used to
  * lock managers out too (2026-09-16 report: founder couldn't add missed
  * information the day after signing) — these rules give managers a
@@ -12,7 +12,7 @@
 export interface RtwEditContext {
   /** The form's status — anything other than "complete" is a draft. */
   status: string;
-  /** Viewer is one of the named RTW managers (server-verified flag). */
+  /** Viewer has People access (server-verified flag). */
   isRtwManager: boolean;
   /** Manager has tapped Amend on this signed form in this view. */
   amending: boolean;

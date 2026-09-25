@@ -527,11 +527,12 @@ export function NavLinks({
       </nav>
 
       <div className="px-3 pb-2">
-        {/* People — staff records front door, rendered ONLY for the named
-            RTW managers (Graeme + Lorna; server-verified flag). Not a role
-            check: ordinary admins/managers don't get the entry at all. */}
+        {/* People — staff records front door, rendered ONLY for people with
+            People access (per-person switch; server-verified flag). Not a role
+            check: ordinary admins/managers don't get the entry at all. It stays
+            lit on a person's record (/people/:id) too. */}
         {(hideBottomNav ? [] : (isRtwManager ? [{ name: "People", href: "/people", icon: UsersRound } as NavItem] : [])).concat(hideBottomNav ? [] : bottomNavItems).map((item) => {
-          const isActive = location === item.href;
+          const isActive = location === item.href || (item.href === "/people" && location.startsWith("/people/"));
           return (
             <Link
               key={item.name}
