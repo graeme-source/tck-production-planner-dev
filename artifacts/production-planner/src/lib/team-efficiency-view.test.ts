@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   band, pctLabel, trend, changeLabel, chartPoints, yDomain, lineOrder, totalPacks,
   parsePercentInput, percentInputValue, parseRangeQuery, rangeQuery, editCustomRange, startingCustomRange,
-  rangeDays, previousRangeLabel, DEFAULT_CHOICE, type EffDay,
+  rangeDays, previousRangeLabel, DEFAULT_CHOICE, reportQuery, todayMessage, asOfLabel, type EffDay,
 } from "./team-efficiency-view";
 
 const day = (date: string, p: Partial<EffDay> = {}): EffDay => ({
@@ -109,5 +109,27 @@ describe("custom range edits", () => {
     expect(previousRangeLabel({ kind: "range", pct: 100, previousPct: 90, changePts: 10, from: "2026-08-01", to: "2026-08-31", previousFrom: "2026-07-01", previousTo: "2026-07-31" }))
       .toBe("the 31 days before (1 Jul – 31 Jul)");
     expect(previousRangeLabel({ kind: "range", pct: 100, previousPct: null, changePts: null, from: "2026-08-03", to: "2026-08-03" })).toBe("the day before");
+  });
+});
+
+describe("Today", () => {
+  it("is kept in the URL as range=today", () => {
+    expect(parseRangeQuery("?range=today")).toEqual({ kind: "today" });
+    expect(rangeQuery({ kind: "today" })).toBe("range=today");
+  });
+  it("fetches the last 30 stored days alongside the live estimate", () => {
+    expect(reportQuery({ kind: "today" })).toBe("range=30d");
+    expect(reportQuery({ kind: "preset", range: "6m" })).toBe("range=6m");
+    expect(reportQuery({ kind: "custom", from: "2026-08-01", to: "2026-08-31" })).toBe("from=2026-08-01&to=2026-08-31");
+  });
+  it("never shows a misleading number before there is one", () => {
+    expect(todayMessage("estimate")).toBeNull();
+    expect(todayMessage("waiting_for_counts")).toMatch(/counted/);
+    expect(todayMessage("no_labour")).toMatch(/clocked in/);
+    expect(todayMessage("no_plan")).toMatch(/No production/);
+  });
+  it("says when it was worked out, in London time", () => {
+    expect(asOfLabel("2026-09-25T15:17:59Z")).toBe("Updated 16:17");
+    expect(asOfLabel("nonsense")).toBe("");
   });
 });

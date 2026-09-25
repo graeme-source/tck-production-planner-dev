@@ -18,10 +18,12 @@ import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import { TeamEfficiencyChart } from "@/components/team-efficiency-chart";
 import { TeamEfficiencySettings, type EffSettings } from "@/components/team-efficiency-settings";
+import { TeamEfficiencyToday } from "@/components/team-efficiency-today";
 import {
   RANGES, BAND_LABEL, band, pctLabel, trend, changeLabel, chartPoints, lineOrder,
   dayLabel, weekLabel, monthLabel, gbp,
-  parseRangeQuery, rangeQuery, editCustomRange, startingCustomRange, previousRangeLabel,
+  parseRangeQuery, rangeQuery, reportQuery, editCustomRange, startingCustomRange, previousRangeLabel, TODAY_REFRESH_MS,
+  type TodayEstimate,
   type RangeChoice, type DateBounds, type RangeKey, type EffDay, type EffPeriod, type EffHeadline, type Band, type ChartPoint,
 } from "@/lib/team-efficiency-view";
 
@@ -40,6 +42,14 @@ interface EffResponse {
 async function fetchEfficiency(query: string): Promise<EffResponse> {
   const res = await fetch(`${BASE}/api/team-efficiency?${query}`, { credentials: "include" });
   if (!res.ok) throw new Error(res.status === 403 ? "Managers only" : `Couldn't load team efficiency (${res.status})`);
+  return res.json();
+}
+
+interface TodayResponse { available: boolean; founder: boolean; reason?: string; today?: TodayEstimate }
+
+async function fetchToday(): Promise<TodayResponse> {
+  const res = await fetch(`${BASE}/api/team-efficiency/today`, { credentials: "include" });
+  if (!res.ok) throw new Error(`Couldn't work out today's estimate (${res.status})`);
   return res.json();
 }
 
@@ -258,7 +268,8 @@ export default function TeamEfficiencyPage() {
   const search = useSearch();
   const [path, navigate] = useLocation();
   const choice = useMemo(() => parseRangeQuery(search), [search]);
-  const query = rangeQuery(choice);
+  const query = reportQuery(choice);
+  const isToday = choice.kind === "today";
   const choose = (next: RangeChoice) => navigate(`${path}?${rangeQuery(next)}`, { replace: true });
 
   const q = useQuery({
@@ -267,6 +278,14 @@ export default function TeamEfficiencyPage() {
     enabled: allowed,
     staleTime: 5 * 60_000,
     placeholderData: prev => prev,
+  });
+  // Today's live estimate — only while Today is chosen, refreshed every few minutes.
+  const todayQ = useQuery({
+    queryKey: ["team-efficiency-today"],
+    queryFn: fetchToday,
+    enabled: allowed && isToday,
+    staleTime: 60_000,
+    refetchInterval: isToday ? TODAY_REFRESH_MS : false,
   });
 
   const data = q.data;
@@ -278,7 +297,8 @@ export default function TeamEfficiencyPage() {
   const customShown = choice.kind === "custom"
     ? (report?.range && data?.range === "custom" ? report.range : { from: choice.from, to: choice.to })
     : null;
-  const pickRange = (key: RangeKey | "custom") => {
+  const pickRange = (key: RangeKey | "custom" | "today") => {
+    if (key === "today") { choose({ kind: "today" }); return; }
     if (key !== "custom") { choose({ kind: "preset", range: key }); return; }
     if (choice.kind === "custom") return;
     const start = startingCustomRange(report?.range, bounds, new Date().toISOString().slice(0, 10));
@@ -309,15 +329,17 @@ export default function TeamEfficiencyPage() {
       </p>
 
       <div className="flex flex-wrap items-center gap-3">
-        <Segmented<RangeKey | "custom">
+        <Segmented<RangeKey | "custom" | "today">
           label="Time range"
-          value={choice.kind === "custom" ? "custom" : choice.range}
-          options={[...RANGES, { key: "custom", label: "Custom range" }]}
+          value={choice.kind === "preset" ? choice.range : choice.kind}
+          options={[{ key: "today", label: "Today" }, ...RANGES, { key: "custom", label: "Custom range" }]}
           onChange={pickRange}
         />
-        <Segmented<View> label="Show" value={view} onChange={setView}
-          options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]} />
-        {q.isFetching && <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" aria-label="Loading" />}
+        {!isToday && (
+          <Segmented<View> label="Show" value={view} onChange={setView}
+            options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]} />
+        )}
+        {(q.isFetching || todayQ.isFetching) && <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" aria-label="Loading" />}
       </div>
 
       {customShown && (
@@ -327,7 +349,7 @@ export default function TeamEfficiencyPage() {
         />
       )}
 
-      {q.isLoading && <div className="rounded-3xl border border-border bg-card p-8 text-muted-foreground">Loading…</div>}
+      {q.isLoading && !isToday && <div className="rounded-3xl border border-border bg-card p-8 text-muted-foreground">Loading…</div>}
       {q.error && (
         <div className="rounded-3xl border border-destructive/40 bg-destructive/5 p-6 text-destructive flex items-center gap-2">
           <AlertTriangle className="w-5 h-5" /> {(q.error as Error).message}
@@ -344,7 +366,17 @@ export default function TeamEfficiencyPage() {
         </div>
       )}
 
-      {report && (
+      {isToday && (
+        <TeamEfficiencyToday
+          today={todayQ.data?.today ?? null}
+          founder={Boolean(todayQ.data?.founder)}
+          lastSeven={report?.headline ?? null}
+          loading={todayQ.isLoading}
+          error={todayQ.error ? (todayQ.error as Error).message : todayQ.data && !todayQ.data.available ? todayQ.data.reason ?? "Not available" : null}
+        />
+      )}
+
+      {report && !isToday && (
         <>
           <Headline h={report.headline} founder={founder} days={report.days} />
 

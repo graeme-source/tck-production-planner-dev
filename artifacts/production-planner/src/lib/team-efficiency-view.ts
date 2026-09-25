@@ -109,6 +109,7 @@ const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const isIsoDate = (s: string | null): s is string => !!s && ISO.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00Z`));
 
 export type RangeChoice =
+  | { kind: "today" }
   | { kind: "preset"; range: RangeKey }
   | { kind: "custom"; from: string; to: string };
 
@@ -122,13 +123,65 @@ export function parseRangeQuery(search: string): RangeChoice {
   const to = q.get("to");
   if (isIsoDate(from) && isIsoDate(to) && to >= from) return { kind: "custom", from, to };
   const range = q.get("range");
+  if (range === "today") return { kind: "today" };
   if (range && RANGES.some(r => r.key === range)) return { kind: "preset", range: range as RangeKey };
   return DEFAULT_CHOICE;
 }
 
-/** The query string for a choice — the page URL and the API use the same one. */
+/** The page URL's query string for a choice. */
 export function rangeQuery(choice: RangeChoice): string {
+  if (choice.kind === "today") return "range=today";
   return choice.kind === "custom" ? `from=${choice.from}&to=${choice.to}` : `range=${choice.range}`;
+}
+
+/** The stored-figures report to fetch for a choice. Today's own figure is a
+ *  separate live estimate; alongside it the page shows the last 30 days for
+ *  context (the last-7-days headline). */
+export function reportQuery(choice: RangeChoice): string {
+  return choice.kind === "today" ? "range=30d" : rangeQuery(choice);
+}
+
+// ── Today's live estimate ─────────────────────────────────────────────────
+
+export type TodayStatus = "estimate" | "waiting_for_counts" | "no_labour" | "no_plan";
+
+export interface TodayEstimate {
+  date: string;
+  status: TodayStatus;
+  estimatePct: number | null;
+  packsByLine: Record<string, number>;
+  eightPackBags: number;
+  ordersDespatched: number;
+  packsDespatched: number;
+  notes: string[];
+  shiftsCounted: number;
+  shiftsNotStarted: number;
+  asOf: string;
+  // founder only
+  valueCredited?: number;
+  labourCost?: number;
+  ratio?: number | null;
+  paidHours?: number;
+}
+
+/** How often the Today view refreshes (the server caches for 3 minutes too). */
+export const TODAY_REFRESH_MS = 3 * 60_000;
+
+/** The big line on the Today tile when there's no percentage to show. */
+export function todayMessage(status: TodayStatus): string | null {
+  switch (status) {
+    case "waiting_for_counts": return "Waiting for the first packs to be counted";
+    case "no_labour": return "Nobody from production has clocked in yet";
+    case "no_plan": return "No production planned today";
+    default: return null;
+  }
+}
+
+/** "Updated 14:05" in London time. */
+export function asOfLabel(iso: string): string {
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return "";
+  return `Updated ${t.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" })}`;
 }
 
 export interface DateBounds { min: string | null; max: string | null }
