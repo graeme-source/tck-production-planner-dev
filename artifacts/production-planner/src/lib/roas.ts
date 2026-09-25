@@ -163,10 +163,9 @@ export interface PeriodWindow extends RoasWindow {
   /** The preset this came from, or "custom" for hand-typed dates. */
   id: PeriodPresetId | "custom";
   label: string;
-  /** True only for Today — every other period is finished days. */
+  /** True for Today and Month to date — every other preset is finished days. */
   includesToday: boolean;
-  /** True when the period contains no days at all (see monthToDate on the
-   *  1st of a month: the month has not had a complete day yet). */
+  /** True when the period contains no days at all. */
   empty: boolean;
 }
 
@@ -178,12 +177,12 @@ function windowFrom(id: PeriodWindow["id"], label: string, from: DayString, to: 
 /**
  * The days a selected period covers, in London.
  *
- * Every period except Today is made of FULL days ending yesterday. Today is
- * still running — its orders are still arriving and Meta has reported only
- * part of its spend — so a period that quietly included it would report a
- * number that says more about the time of day than about the business.
- * Today is offered as its own option, clearly, rather than smuggled into
- * the others.
+ * Today and Month to date include today; every other preset is FULL days
+ * ending yesterday. Today is still running — its orders are still arriving
+ * and Meta has reported only part of its spend — so the tiles say so
+ * whenever a period includes it. Month to date means the month so far,
+ * today included (Graeme, 2026-09-25: "Month-to-date should always include
+ * today").
  */
 export function periodWindow(id: PeriodPresetId, now: number | Date): PeriodWindow {
   const todayStr = londonDayString(now);
@@ -198,9 +197,7 @@ export function periodWindow(id: PeriodPresetId, now: number | Date): PeriodWind
     case "last7":
       return windowFrom(id, label, addDays(yesterday, -6), yesterday, false);
     case "monthToDate":
-      // On the 1st, this month has not had a complete day yet, so `from`
-      // lands after `to` and the window is honestly empty.
-      return windowFrom(id, label, startOfMonth(todayStr), yesterday, false);
+      return windowFrom(id, label, startOfMonth(todayStr), todayStr, true);
     case "lastMonth": {
       const inLastMonth = addMonths(startOfMonth(todayStr), -1);
       return windowFrom(id, label, startOfMonth(inLastMonth), endOfMonth(inLastMonth), false);

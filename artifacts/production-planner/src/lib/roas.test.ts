@@ -342,7 +342,7 @@ describe("periodWindow", () => {
     expect(w.includesToday).toBe(false);
   });
 
-  it("Today is the only period that includes today", () => {
+  it("Today includes today", () => {
     const w = periodWindow("today", now);
     expect(w.from).toBe("2026-09-18");
     expect(w.to).toBe("2026-09-18");
@@ -350,7 +350,7 @@ describe("periodWindow", () => {
   });
 
   it("every other period is full days ending yesterday", () => {
-    const ids: PeriodPresetId[] = ["yesterday", "last7", "monthToDate", "lastMonth", "last6Months", "last12Months"];
+    const ids: PeriodPresetId[] = ["yesterday", "last7", "lastMonth", "last6Months", "last12Months"];
     for (const id of ids) {
       const w = periodWindow(id, now);
       expect(w.includesToday, id).toBe(false);
@@ -367,25 +367,19 @@ describe("periodWindow", () => {
     expect(w.dayCount).toBe(7);
   });
 
-  it("Month to date runs from the 1st to yesterday", () => {
+  it("REGRESSION: Month to date runs from the 1st to TODAY, and says today is still running", () => {
     const w = periodWindow("monthToDate", now);
     expect(w.from).toBe("2026-09-01");
-    expect(w.to).toBe("2026-09-17");
-    expect(w.dayCount).toBe(17);
+    expect(w.to).toBe("2026-09-18");
+    expect(w.dayCount).toBe(18);
+    expect(w.includesToday).toBe(true);
   });
 
-  it("Month to date is honestly EMPTY on the 1st, rather than borrowing last month", () => {
+  it("Month to date on the 1st is just today, never last month", () => {
     const w = periodWindow("monthToDate", at("2026-09-01T10:00:00Z"));
-    expect(w.empty).toBe(true);
-    expect(w.days).toEqual([]);
-    expect(w.dayCount).toBe(0);
-  });
-
-  it("Month to date is a single day on the 2nd", () => {
-    const w = periodWindow("monthToDate", at("2026-09-02T10:00:00Z"));
-    expect(w.from).toBe("2026-09-01");
-    expect(w.to).toBe("2026-09-01");
-    expect(w.dayCount).toBe(1);
+    expect(w.empty).toBe(false);
+    expect(w.days).toEqual(["2026-09-01"]);
+    expect(w.includesToday).toBe(true);
   });
 
   it("Last month is the whole previous calendar month", () => {
@@ -462,7 +456,7 @@ describe("windowRoas over a selected period", () => {
   });
 
   it("says a period with no complete days has nothing to show", () => {
-    const win = periodWindow("monthToDate", at("2026-09-01T10:00:00Z"));
+    const win = customWindow("2026-09-02", "2026-09-01", at("2026-09-05T10:00:00Z")); // end before start: no days
     const r = windowRoas({ window: win, revenue: 500, spendDays: [{ date: "2026-08-31", amount: 100 }] });
     expect(r.available).toBe(false);
     if (r.available) return;
@@ -479,12 +473,12 @@ describe("windowRoas over a selected period", () => {
   });
 
   it("computes a month-to-date ROAS once every day has spend", () => {
-    const win = periodWindow("monthToDate", now); // 1–17 Sep, 17 days
+    const win = periodWindow("monthToDate", now); // 1–18 Sep, 18 days
     const spendDays = win.days.map((date) => ({ date, amount: 50 }));
-    const r = windowRoas({ window: win, revenue: 3400, spendDays });
+    const r = windowRoas({ window: win, revenue: 3600, spendDays });
     expect(r.available).toBe(true);
     if (!r.available) return;
-    expect(r.spend).toBe(850);
+    expect(r.spend).toBe(900);
     expect(r.percent).toBe(400);
   });
 
