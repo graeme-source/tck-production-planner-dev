@@ -19,6 +19,7 @@ import { eq, and, or, isNull, desc, sql, inArray, notInArray, lte, gte } from "d
 import { resolveRecipeIngredients, aggregateIngredients } from "../lib/ingredient-resolver";
 import { computeOutstandingPrepRaw } from "../lib/outstanding-prep";
 import { londonDateString, londonEndOfDay, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
+import { kanbanOrderPacks, packsToBaseQty, positivePalletSize } from "@workspace/units";
 
 async function requireManagerOrAdmin(req: Request, res: Response, next: NextFunction) {
   let role = (req.session as any).userRole;
@@ -169,6 +170,7 @@ router.get("/calculate", async (req, res) => {
       orderingUrl: ingredientsTable.orderingUrl,
       stockInPacks: ingredientsTable.stockInPacks,
       caseSizePacks: ingredientsTable.caseSizePacks,
+      palletSize: ingredientsTable.palletSize,
     })
     .from(ingredientsTable)
     .where(inArray(ingredientsTable.id, ingredientIds));
@@ -385,6 +387,17 @@ router.get("/calculate", async (req, res) => {
       // tracked stations). Added to the requirement so counted stock that
       // prep is about to eat doesn't read as available.
       prepOutstandingQty: number;
+      // The ingredient's own unit — differs from `unit` on pack-counted
+      // lines ("packs" / "bottles"), so the page can label the pack size.
+      nativeUnit: string;
+      // Pallet ordering: items whose kanban unit is "pallet" read "1 pallet
+      // — 50 packs · 1,800 each" on the page. packsToOrder is ALWAYS supplier
+      // packs; palletSize (packs per pallet) lets the page show pallets.
+      // palletSizeMissing = a pallet item with no pallet size, ordered as
+      // 1 pack per pallet until someone sets it (shown as a warning).
+      palletSize: number | null;
+      orderInPallets: boolean;
+      palletSizeMissing: boolean;
     }>;
   }> = {};
 
@@ -448,18 +461,23 @@ router.get("/calculate", async (req, res) => {
     // A scanned kanban is a person at the shelf saying "we're low — order
     // one kanban's worth", so it FLOORS the suggestion at the kanban order
     // amount even when the stock maths says 0 (stale stock check, opened
-    // packs, etc.). Kanban units pack/bottle/pallet mean supplier packs;
-    // "weight" means the ingredient's native unit.
+    // packs, etc.). The kanban amount → packs conversion is the shared one
+    // in @workspace/units: pack/bottle = packs, "weight" = native unit,
+    // "pallet" = pallet_size packs per pallet (it used to be ONE pack, so
+    // "1 pallet" of 50-box pallets ordered a single box — 2026-09-26).
     let kanbanFloorPacks: number | null = null;
+    const orderInPallets = detail.kanbanUnit === "pallet";
+    let palletSizeMissing = orderInPallets && positivePalletSize(detail.palletSize) == null;
     if (isKanban) {
-      const kanbanAmt = Number(detail.kanbanOrderAmount ?? detail.kanbanQuantity) || 1;
-      const kanbanPacks = detail.kanbanUnit === "weight" && packWeight > 0
-        ? Math.ceil(kanbanAmt / packWeight)
-        : Math.ceil(kanbanAmt);
+      const kanban = kanbanOrderPacks(detail.kanbanOrderAmount ?? detail.kanbanQuantity, detail.kanbanUnit, {
+        packWeight,
+        palletSize: detail.palletSize,
+      });
+      palletSizeMissing = kanban.warning === "pallet-size-missing";
       // Emitted on the line so the frontend's stock-edit recompute applies
       // the same floor instead of re-deriving (or forgetting) it.
-      kanbanFloorPacks = kanbanPacks;
-      packsToOrder = Math.max(packsToOrder, kanbanPacks);
+      kanbanFloorPacks = kanban.packs;
+      packsToOrder = Math.max(packsToOrder, kanban.packs);
     }
     // Case rounding: when this ingredient is ordered by the case, round the
     // pack count UP to the nearest whole case (e.g. need 8 tins, case of 12 →
@@ -527,6 +545,10 @@ router.get("/calculate", async (req, res) => {
       inboundDeliveries: inboundByIngredient[iid] ?? [],
       prepOutstandingQty: Math.round(prepOutstandingQty * 100) / 100,
       belowRequirement,
+      nativeUnit: ing.unit,
+      palletSize: positivePalletSize(detail.palletSize),
+      orderInPallets,
+      palletSizeMissing,
     });
   }
 
@@ -551,6 +573,7 @@ router.get("/calculate", async (req, res) => {
           kanbanUnit: ingredientsTable.kanbanUnit,
           orderingUrl: ingredientsTable.orderingUrl,
           stockInPacks: ingredientsTable.stockInPacks,
+          palletSize: ingredientsTable.palletSize,
         })
         .from(ingredientsTable)
         .where(eq(ingredientsTable.id, kanban.ingredientId))
@@ -562,12 +585,24 @@ router.get("/calculate", async (req, res) => {
       if (!suppId) continue;
 
       const packWeight = Number(d.packWeight) || 1;
-      const packsToOrder = Number(d.kanbanOrderAmount ?? d.kanbanQuantity) || 1;
       const kanbanUnitVal = d.kanbanUnit ?? "weight";
+      // Same shared conversion as the stock-driven lines above. This path
+      // used to take the kanban amount as the pack count whatever the unit,
+      // so a 1-pallet card ordered one box and a 10 kg "weight" card ordered
+      // ten packs.
+      const kanbanPacks = kanbanOrderPacks(d.kanbanOrderAmount ?? d.kanbanQuantity, kanbanUnitVal, {
+        packWeight,
+        palletSize: d.palletSize,
+      });
+      const packsToOrder = kanbanPacks.packs;
       const displayUnit = kanbanUnitVal === "pack" ? "packs"
         : kanbanUnitVal === "bottle" ? "bottles"
         : (d.unit ?? "kg");
-      const orderQty = packsToOrder;
+      // Pack-counted lines quote packs; native-unit lines (weight, pallet)
+      // quote base units, like every other line.
+      const orderQty = displayUnit === "packs" || displayUnit === "bottles"
+        ? packsToOrder
+        : packsToBaseQty(packsToOrder, packWeight);
 
       if (!supplierOrderMap[suppId]) {
         const supplier = supplierLookup[suppId] ??
@@ -611,6 +646,10 @@ router.get("/calculate", async (req, res) => {
         inboundQty: Math.round((inboundByIngredient[d.id] ?? []).reduce((s, x) => s + x.qty, 0) * 100) / 100,
         inboundDeliveries: inboundByIngredient[d.id] ?? [],
         prepOutstandingQty: Math.round((prepOutstandingByIngredient[d.id] ?? 0) * 100) / 100,
+        nativeUnit: d.unit ?? "kg",
+        palletSize: positivePalletSize(d.palletSize),
+        orderInPallets: kanbanUnitVal === "pallet",
+        palletSizeMissing: kanbanPacks.warning === "pallet-size-missing",
       });
     }
   }
@@ -878,6 +917,13 @@ router.get("/purchase-orders", async (req, res) => {
     unitPrice: string | null;
     checkedOff: boolean;
     notes: string | null;
+    // Ingredient sizes, so a reopened order rebuilds its pack counts
+    // (1,800 each of 36-per-box = 50 boxes = 1 pallet) instead of reading
+    // every base unit as a "pack".
+    nativeUnit: string | null;
+    packWeight: string | null;
+    palletSize: number | null;
+    kanbanUnit: string | null;
   }>> = {};
 
   if (orderIds.length > 0) {
@@ -896,6 +942,10 @@ router.get("/purchase-orders", async (req, res) => {
         unitPrice: purchaseOrderLinesTable.unitPrice,
         checkedOff: purchaseOrderLinesTable.checkedOff,
         notes: purchaseOrderLinesTable.notes,
+        nativeUnit: ingredientsTable.unit,
+        packWeight: ingredientsTable.packWeight,
+        palletSize: ingredientsTable.palletSize,
+        kanbanUnit: ingredientsTable.kanbanUnit,
       })
       .from(purchaseOrderLinesTable)
       .leftJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
@@ -917,6 +967,10 @@ router.get("/purchase-orders", async (req, res) => {
         unitPrice: line.unitPrice,
         checkedOff: line.checkedOff,
         notes: line.notes,
+        nativeUnit: line.nativeUnit ?? null,
+        packWeight: line.packWeight ?? null,
+        palletSize: line.palletSize ?? null,
+        kanbanUnit: line.kanbanUnit ?? null,
       });
     }
   }
@@ -1120,6 +1174,9 @@ router.patch("/purchase-orders/:id/resubmit", async (req, res) => {
         unit: String(l.unit ?? "kg"),
         unitPrice: l.unitPrice != null ? String(l.unitPrice) : null,
         checkedOff: Boolean(l.checkedOff),
+        // Human wording for pallet lines ("1 pallet (50 × 36 each)") —
+        // kept on a resubmit exactly as on the first placing.
+        notes: l.notes ? String(l.notes).slice(0, 500) : null,
       };
     });
 

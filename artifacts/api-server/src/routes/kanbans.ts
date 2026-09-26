@@ -126,6 +126,8 @@ router.get("/ingredients", async (_req, res) => {
       kanbanUnit: ingredientsTable.kanbanUnit,
       packWeight: ingredientsTable.packWeight,
       costPerPack: ingredientsTable.costPerPack,
+      // Packs per pallet — a "pallet" kanban orders this many packs.
+      palletSize: ingredientsTable.palletSize,
       supplierId: ingredientsTable.supplierId,
       supplierName: suppliersTable.name,
       secondarySupplierId: ingredientsTable.secondarySupplierId,
@@ -148,6 +150,7 @@ router.get("/ingredients", async (_req, res) => {
     kanbanUnit: r.kanbanUnit ?? "weight",
     packWeight: r.packWeight != null ? Number(r.packWeight) : null,
     costPerPack: r.costPerPack != null ? Number(r.costPerPack) : null,
+    palletSize: r.palletSize ?? null,
     supplierId: r.supplierId,
     supplierName: r.supplierName ?? null,
     secondarySupplierId: r.secondarySupplierId,
