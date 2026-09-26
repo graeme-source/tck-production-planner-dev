@@ -43,6 +43,7 @@ import {
 } from "@/lib/roas";
 import { revenueForTags } from "@/lib/order-type-totals";
 import { SalesTrendPanel, TrendChip } from "@/components/sales-trend-panel";
+import { DispatchOrdersPanel } from "@/components/dispatch-orders-panel";
 import type { TrendMetricId } from "@/lib/sales-trend-view";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -1679,6 +1680,13 @@ function FounderDashboard() {
             </div>
           )}
         </div>
+      </section>
+
+      {/* ── Section 4: Dispatch Orders ─────────────────────────────────────────
+          The Kitchen Dashboard's own panel — same component, same data, so a
+          change to it shows on both pages (Graeme, 2026-09-26). */}
+      <section>
+        <DispatchOrdersPanel />
       </section>
     </div>
   );
