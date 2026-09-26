@@ -70,7 +70,7 @@ function TipBox({ active, payload, format, seriesName, compareName, perBasket }:
               Few orders — one basket can swing this hour.
             </p>
           )}
-          {p.value == null && p.paidOrders === 0 && !p.running && (
+          {(p.value == null || p.value === 0) && p.paidOrders === 0 && !p.running && (
             <p className="text-xs text-muted-foreground mt-1">No paid orders this hour.</p>
           )}
         </>

@@ -38,9 +38,9 @@ describe("chartPoints", () => {
     expect(pts[2].partial).toBe(false);
   });
 
-  it("an hour with no paid orders has no AOV point (a gap, not £0) — even with a £0 resend in it", () => {
+  it("an hour with no paid orders plots £0 AOV — a £0 resend in it doesn't count as paid", () => {
     const s = series([bucket(3, { orders: 1, paidOrders: 0 }), bucket(4, { revenue: 90, orders: 2, paidOrders: 2, aov: 45 })]);
-    expect(chartPoints(s, "aov").map(p => p.value)).toEqual([null, 45]);
+    expect(chartPoints(s, "aov").map(p => p.value)).toEqual([0, 45]);
   });
 
   it("carries revenue and paid orders for the tooltip, and flags AOV hours on 1–2 baskets", () => {
@@ -55,7 +55,7 @@ describe("chartPoints", () => {
     expect(chartPoints(s, "revenue").some(p => p.fewOrders)).toBe(false);
   });
 
-  it("bridges a one-hour AOV gap with a straight dashed connector, never a longer gap", () => {
+  it("REGRESSION: an AOV hour with no paid orders drops to £0 instead of leaving a gap (Shopify-style)", () => {
     const s = series([
       bucket(8, { paidOrders: 3, aov: 40 }),
       bucket(9),
@@ -65,15 +65,15 @@ describe("chartPoints", () => {
       bucket(13, { paidOrders: 3, aov: 50 }),
     ]);
     const pts = chartPoints(s, "aov");
-    expect(pts.map(p => p.bridge)).toEqual([40, 50, 60, null, null, null]);
-    expect(pts.map(p => p.isolated)).toEqual([true, false, true, false, false, true]);
-    // Spend-based gaps mean "we don't know" — never bridged.
-    expect(chartPoints(s, "roas").every(p => p.bridge === null)).toBe(true);
+    expect(pts.map(p => p.value)).toEqual([40, 0, 60, 0, 0, 50]);
+    expect(pts.every(p => p.bridge === null)).toBe(true);
+    // Spend-based gaps mean "we don't know" — they stay gaps.
+    expect(chartPoints(s, "roas").some(p => p.value === 0)).toBe(false);
   });
 
-  it("doesn't bridge into hours that haven't happened yet", () => {
+  it("leaves hours that haven't happened yet empty, not £0", () => {
     const s = series([bucket(8, { paidOrders: 3, aov: 40 }), bucket(9, { future: true }), bucket(10, { future: true })]);
-    expect(chartPoints(s, "aov").every(p => p.bridge === null)).toBe(true);
+    expect(chartPoints(s, "aov").map(p => p.value)).toEqual([40, null, null]);
   });
 
   it("lines last week up by hour of day, even across a clock change", () => {

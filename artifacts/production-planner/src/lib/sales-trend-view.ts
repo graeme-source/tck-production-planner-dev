@@ -178,10 +178,18 @@ export function chartPoints(series: TrendSeries, metric: TrendMetricId, comparis
   if (comparison) {
     for (const b of comparison.buckets) {
       if (b.hourOfDay == null || compareByHour.has(b.hourOfDay)) continue;
-      compareByHour.set(b.hourOfDay, b.future ? null : m.value(b));
+      compareByHour.set(b.hourOfDay, b.future ? null : valueOrZero(b));
     }
   }
-  const values = series.buckets.map(b => (b.future ? null : m.value(b)));
+  // An hour (or day) with no paid orders is £0 AOV, drawn as a drop to zero
+  // and back like Shopify's graphs, not a gap that looks broken (Graeme,
+  // 2026-09-26). Spend-based metrics keep their gaps: there a gap means "no
+  // spend figure yet", not zero. Hours still to come stay empty.
+  function valueOrZero(b: TrendSeries["buckets"][number]): number | null {
+    const v = m.value(b);
+    return v == null && m.perBasket ? 0 : v;
+  }
+  const values = series.buckets.map(b => (b.future ? null : valueOrZero(b)));
   const bridge = m.perBasket ? bridgeOneGaps(values, series.buckets.map(b => b.future)) : values.map(() => null);
   return series.buckets.map((b, i) => {
     const value = values[i];
