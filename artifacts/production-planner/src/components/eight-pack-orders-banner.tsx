@@ -346,57 +346,63 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
         </div>
 
         {!isDone && (
-          <div className="flex items-center gap-3 flex-wrap">
-            <label className="text-sm text-muted-foreground">Deliver</label>
-            <select
-              value={delivery}
-              onChange={e => changeDelivery(order, e.target.value)}
-              className="px-2 py-1.5 border border-border rounded-lg text-sm bg-background"
-            >
-              {options.map(d => <option key={d} value={d}>{fmtNice(d)}</option>)}
-            </select>
+          <div className="space-y-2">
+            {/* Make above Deliver — top to bottom in the order things happen
+                (Graeme, 2026-09-26). */}
+            <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2 max-w-md">
+              {!isWholesale && (
+                <>
+                  <label className="text-sm text-muted-foreground">Make</label>
+                  <select
+                    value={production}
+                    onChange={e => setSelectedProduction(prev => ({ ...prev, [order.orderId]: e.target.value }))}
+                    className="px-2 py-1.5 border border-border rounded-lg text-sm bg-background"
+                    title="Which production plan the bags go on — up to 3 days before delivery. Defaults to the earliest plan that already has these products."
+                  >
+                    {prodCandidates.map(d => {
+                      const s = evaluateProduction(order, d, data.plansByDespatchDate);
+                      return (
+                        <option key={d} value={d}>
+                          {fmtNice(d)}{s.ok ? "" : ` — ${data.plansByDespatchDate[d] ? "missing products" : "no plan"}`}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </>
+              )}
 
-            {!isWholesale && (
-              <>
-                <label className="text-sm text-muted-foreground">Make</label>
-                <select
-                  value={production}
-                  onChange={e => setSelectedProduction(prev => ({ ...prev, [order.orderId]: e.target.value }))}
-                  className="px-2 py-1.5 border border-border rounded-lg text-sm bg-background"
-                  title="Which production plan the bags go on — up to 3 days before delivery. Defaults to the earliest plan that already has these products."
-                >
-                  {prodCandidates.map(d => {
-                    const s = evaluateProduction(order, d, data.plansByDespatchDate);
-                    return (
-                      <option key={d} value={d}>
-                        {fmtNice(d)}{s.ok ? "" : ` — ${data.plansByDespatchDate[d] ? "missing products" : "no plan"}`}
-                      </option>
-                    );
-                  })}
-                </select>
-              </>
-            )}
+              <label className="text-sm text-muted-foreground">Deliver</label>
+              <select
+                value={delivery}
+                onChange={e => changeDelivery(order, e.target.value)}
+                className="px-2 py-1.5 border border-border rounded-lg text-sm bg-background"
+              >
+                {options.map(d => <option key={d} value={d}>{fmtNice(d)}</option>)}
+              </select>
+            </div>
 
-            {status.ok ? (
-              <span className="text-xs text-muted-foreground">
-                {status.tagOnly
-                  ? `→ tag ${fmtNice(delivery)} + production`
-                  : `→ bags on the ${fmtNice(production)} plan · delivers ${fmtNice(delivery)}`}
-              </span>
-            ) : (
-              <span className="flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400">
-                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" /> {status.reason}
-              </span>
-            )}
+            <div className="flex items-center gap-3 flex-wrap">
+              {status.ok ? (
+                <span className="text-xs text-muted-foreground">
+                  {status.tagOnly
+                    ? `→ tag ${fmtNice(delivery)} + production`
+                    : `→ bags on the ${fmtNice(production)} plan · delivers ${fmtNice(delivery)}`}
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400">
+                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" /> {status.reason}
+                </span>
+              )}
 
-            <button
-              onClick={() => processOrder(order)}
-              disabled={!status.ok || processing === order.orderId}
-              className="ml-auto flex items-center gap-1.5 text-sm px-3 py-1.5 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50"
-            >
-              {processing === order.orderId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PackageCheck className="w-3.5 h-3.5" />}
-              Process
-            </button>
+              <button
+                onClick={() => processOrder(order)}
+                disabled={!status.ok || processing === order.orderId}
+                className="ml-auto flex items-center gap-1.5 text-sm px-3 py-1.5 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50"
+              >
+                {processing === order.orderId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PackageCheck className="w-3.5 h-3.5" />}
+                Process
+              </button>
+            </div>
           </div>
         )}
 
