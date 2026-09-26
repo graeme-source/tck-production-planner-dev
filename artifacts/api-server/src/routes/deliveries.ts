@@ -181,6 +181,8 @@ router.get("/weekly", async (req, res) => {
         requiresUseByDate: ingredientsTable.requiresUseByDate,
         stockInPacks: ingredientsTable.stockInPacks,
         packWeight: ingredientsTable.packWeight,
+        // Packs per pallet — lets goods-in read "1 pallet — 50 packs".
+        palletSize: ingredientsTable.palletSize,
         perishable: ingredientsTable.perishable,
       })
       .from(purchaseOrderLinesTable)
@@ -448,6 +450,8 @@ router.get("/:id", async (req, res) => {
       requiresUseByDate: ingredientsTable.requiresUseByDate,
       stockInPacks: ingredientsTable.stockInPacks,
       packWeight: ingredientsTable.packWeight,
+      // Packs per pallet — lets the receive dialog read "1 pallet — 50 packs".
+      palletSize: ingredientsTable.palletSize,
       perishable: ingredientsTable.perishable,
       quantityRequired: purchaseOrderLinesTable.quantityRequired,
       quantityOrdered: purchaseOrderLinesTable.quantityOrdered,

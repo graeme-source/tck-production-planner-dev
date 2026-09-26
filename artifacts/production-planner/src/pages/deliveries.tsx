@@ -17,6 +17,7 @@ import { toast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { packNoun, packDescriptor, fmtQty, formatLineQty, formatLineQtyParts, packSizeHint } from "@/pages/station/shared/prep-helpers";
 import { NumberInput } from "@/components/ui/number-input";
+import { palletReceiptLabel } from "@workspace/units";
 import { TempDial } from "@/components/temp-dial";
 import {
   CollectionPanel, AddCollectionDialog, useWeekCollections, groupCollections, collectionKey,
@@ -49,6 +50,9 @@ interface POLine {
   defaultStorageLocation: string | null;
   stockInPacks?: boolean;
   packWeight?: number | null;
+  // Packs per pallet (ingredient setting) — for the "1 pallet — 50 packs"
+  // reading of pallet orders.
+  palletSize?: number | null;
 }
 
 interface DeliveryRecordSummary {
@@ -216,6 +220,7 @@ interface ReceivingLine {
   checked: boolean;
   stockInPacks?: boolean;
   packWeight?: number | null;
+  palletSize?: number | null;
 }
 
 interface CheckResult {
@@ -357,6 +362,7 @@ function ReceivingDialog({
             checked: l.goodsInChecked ?? false,
             stockInPacks: l.stockInPacks,
             packWeight: l.packWeight,
+            palletSize: l.palletSize,
           };
         })
       );
@@ -646,6 +652,19 @@ function ReceivingDialog({
                         <span className="text-xl font-bold tabular-nums">
                           {orderedDisplay}
                         </span>
+                        {(() => {
+                          // Pallet orders: "1 pallet — 50 packs" so the
+                          // person at the door can match it to what's on
+                          // the truck (1,800 each on its own means nothing).
+                          const pallet = palletReceiptLabel(line.quantityOrdered, line.unit, {
+                            packWeight: line.packWeight,
+                            palletSize: line.palletSize,
+                            unit: line.nativeUnit ?? line.unit,
+                          });
+                          return pallet ? (
+                            <span className="block text-sm font-semibold text-muted-foreground">{pallet}</span>
+                          ) : null;
+                        })()}
                       </div>
                       <div className="min-w-0">
                         <label className="text-base font-semibold text-muted-foreground block mb-1 flex items-baseline gap-1.5 flex-wrap">
@@ -1524,6 +1543,16 @@ export default function Deliveries() {
                                   </span>
                                 )}
                               </span>
+                              {(() => {
+                                const pallet = palletReceiptLabel(line.quantityOrdered, line.unit, {
+                                  packWeight: line.packWeight,
+                                  palletSize: line.palletSize,
+                                  unit: line.nativeUnit ?? line.unit,
+                                });
+                                return pallet ? (
+                                  <span className="text-xs text-muted-foreground mt-0.5">{pallet}</span>
+                                ) : null;
+                              })()}
                               {ordered.descriptor && (
                                 <span className="text-xs text-muted-foreground mt-0.5">
                                   ({ordered.descriptor})
