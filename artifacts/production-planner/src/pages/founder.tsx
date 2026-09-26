@@ -258,6 +258,18 @@ interface TrendToggle {
  * button that opens its graph (a big target for an iPad thumb), with the
  * "Trend" chip showing that it can; without one it's the plain panel it was.
  */
+/** The Trend button on its own line at the foot of a tile, so it never
+ *  squeezes the title or figure above it (Graeme, 2026-09-26). mt-auto keeps
+ *  the buttons level across tiles of different heights in the same row. */
+function TrendFooter({ trend }: { trend?: TrendToggle }) {
+  if (!trend) return null;
+  return (
+    <div className="mt-auto pt-1">
+      <TrendChip open={trend.open} />
+    </div>
+  );
+}
+
 function TileShell({ trend, className, children }: { trend?: TrendToggle; className: string; children: React.ReactNode }) {
   if (!trend) return <div className={className}>{children}</div>;
   return (
@@ -295,7 +307,8 @@ function RoasTile({
   trend?: TrendToggle;
 }) {
   return (
-    <TileShell trend={trend} className="glass-panel p-5 rounded-2xl flex items-center gap-4">
+    <TileShell trend={trend} className="glass-panel p-5 rounded-2xl flex flex-col gap-3">
+      <div className="flex items-center gap-4">
       <div className="p-3 rounded-xl bg-pink-500/10 text-pink-500 shrink-0">
         <Percent className="w-5 h-5" />
       </div>
@@ -320,7 +333,8 @@ function RoasTile({
         )}
         {windowLabel && <p className="text-xs text-muted-foreground/70 mt-0.5 truncate">{windowLabel}</p>}
       </div>
-      {trend && <TrendChip open={trend.open} />}
+      </div>
+      <TrendFooter trend={trend} />
     </TileShell>
   );
 }
@@ -350,7 +364,8 @@ function MoneyTile({
   trend?: TrendToggle;
 }) {
   return (
-    <TileShell trend={trend} className="glass-panel p-5 rounded-2xl flex items-center gap-4">
+    <TileShell trend={trend} className="glass-panel p-5 rounded-2xl flex flex-col gap-3">
+      <div className="flex items-center gap-4">
       <div className={`p-3 rounded-xl ${bg} ${color} shrink-0`}>
         <Icon className="w-5 h-5" />
       </div>
@@ -367,13 +382,15 @@ function MoneyTile({
           </>
         )}
       </div>
-      {trend && <TrendChip open={trend.open} />}
+      </div>
+      <TrendFooter trend={trend} />
     </TileShell>
   );
 }
 
 function KpiCard({
   title,
+  qualifier,
   value,
   sub,
   icon: Icon,
@@ -384,6 +401,9 @@ function KpiCard({
   trend,
 }: {
   title: string;
+  /** Small grey words under the title that pin down what it means, e.g.
+   *  "Sales this month" under "Average Daily". */
+  qualifier?: string;
   value: string;
   sub?: string;
   icon: React.ElementType;
@@ -399,8 +419,12 @@ function KpiCard({
         <div className={`p-3 rounded-xl ${bg} ${color}`}>
           <Icon className="w-5 h-5" />
         </div>
-        <p className="text-sm font-medium text-muted-foreground flex-1 min-w-0">{title}</p>
-        {trend && <TrendChip open={trend.open} />}
+        {/* Big and bold enough to read at a glance alongside the figure
+            (Graeme, 2026-09-26: "all I see is the big, bold numbers"). */}
+        <div className="flex-1 min-w-0">
+          <p className="text-lg font-display font-bold leading-tight">{title}</p>
+          {qualifier && <p className="text-xs text-muted-foreground mt-0.5">{qualifier}</p>}
+        </div>
       </div>
       {loading ? (
         <Skeleton className="h-9 w-40" />
@@ -414,6 +438,7 @@ function KpiCard({
           {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
         </>
       )}
+      <TrendFooter trend={trend} />
     </TileShell>
   );
 }
@@ -529,13 +554,13 @@ function OrderTypeCard({
   const dailyAvg = dayCount > 1 ? (count / dayCount).toFixed(1) : null;
   return (
     <div
-      className={`glass-panel rounded-2xl flex items-center w-full hover-lift transition-all
+      className={`glass-panel rounded-2xl flex flex-col w-full hover-lift transition-all
         ${isActive || trend?.open ? "ring-2 ring-primary" : "ring-0"}`}
     >
     <button
       onClick={onClick}
       aria-expanded={isActive}
-      className="p-5 flex-1 min-w-0 flex items-center gap-4 text-left cursor-pointer"
+      className="p-5 pb-3 w-full min-w-0 flex items-center gap-4 text-left cursor-pointer"
     >
       <div className={`p-3 rounded-xl ${bg} ${color} shrink-0`}>
         <Icon className="w-5 h-5" />
@@ -558,7 +583,7 @@ function OrderTypeCard({
       />
     </button>
     {trend && (
-      <div className="pr-4 shrink-0">
+      <div className="px-5 pb-4 mt-auto">
         <TrendChip open={trend.open} onClick={trend.onToggle} />
       </div>
     )}
@@ -1198,7 +1223,7 @@ function FounderDashboard() {
             </div>
           )}
           <KpiCard
-            title="This Month to Date"
+            title="Month to Date"
             value={monthSummary ? formatGBP(monthSummary.totalRevenue) : "—"}
             sub={monthSummary ? `${monthSummary.orderCount} orders this month` : undefined}
             icon={BarChart2}
@@ -1250,7 +1275,8 @@ function FounderDashboard() {
             </div>
           )}
           <KpiCard
-            title="Avg Daily Sales This Month"
+            title="Average Daily"
+            qualifier="Sales this month"
             value={monthSummary ? formatGBP(monthSummary.averageDailyRevenue) : "—"}
             sub={monthSummary ? `Over ${monthSummary.dayCount} day${monthSummary.dayCount !== 1 ? "s" : ""} so far` : undefined}
             icon={Calculator}
@@ -1260,7 +1286,8 @@ function FounderDashboard() {
             error={!!monthError}
           />
           <KpiCard
-            title="Est. Monthly Forecast"
+            title="Forecast"
+            qualifier="Estimated monthly"
             value={monthSummary ? formatGBP(monthSummary.estimatedMonthlyRevenue) : "—"}
             sub={`Based on ${getDaysInMonth(today)}-day month`}
             icon={Calendar}
@@ -1425,7 +1452,8 @@ function FounderDashboard() {
                   spend is stored per day; multi-day periods show the total
                   of the days we have, and say how many that is. It never
                   shows a £0 for "nobody has told us yet". */}
-              <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
+              <div className={`glass-panel p-5 rounded-2xl flex flex-col gap-3 ${periodTrend === "adSpend" ? "ring-2 ring-primary" : ""}`}>
+                <div className="flex items-center gap-4">
                 <div className="p-3 rounded-xl bg-orange-500/10 text-orange-500 shrink-0">
                   <Megaphone className="w-5 h-5" />
                 </div>
@@ -1443,11 +1471,6 @@ function FounderDashboard() {
                         <RefreshCw className={`w-3.5 h-3.5 ${metaRefresh.isPending ? "animate-spin" : ""}`} />
                       </button>
                     )}
-                    {/* Its own chip, not the whole tile: the tile already
-                        holds the pencil and the Meta refresh. */}
-                    <span className="ml-auto shrink-0">
-                      <TrendChip open={periodTrend === "adSpend"} onClick={periodToggle("adSpend").onToggle} />
-                    </span>
                   </div>
                   {adSpendLoading ? (
                     <Skeleton className="h-7 w-16 mt-1" />
@@ -1502,6 +1525,12 @@ function FounderDashboard() {
                       )}
                     </>
                   )}
+                </div>
+                </div>
+                {/* Its own button, not the whole tile: the tile already holds
+                    the pencil and the Meta refresh. */}
+                <div className="mt-auto pt-1">
+                  <TrendChip open={periodTrend === "adSpend"} onClick={periodToggle("adSpend").onToggle} />
                 </div>
               </div>
               {periodPanel(["adSpend"])}
