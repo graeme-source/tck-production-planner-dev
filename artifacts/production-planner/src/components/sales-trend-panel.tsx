@@ -5,7 +5,7 @@
  * weekly as suits the period, with a Daily/Weekly switch where both make
  * sense. Opens inline (no modal), closes with the X or by tapping the tile.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertCircle, LineChart as LineChartIcon, RefreshCw, X } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SalesTrendChart } from "@/components/sales-trend-chart";
@@ -49,8 +49,15 @@ export function SalesTrendPanel({ metric, from, to, title, periodCaption, series
     : null;
   const showCompare = !!compare && hourly && !!comparison.data;
 
+  // Bring the graph into view as it opens, so the tile tapped and its graph
+  // share the screen — no hunting down the page for it.
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    panelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, []);
+
   return (
-    <div className="glass-panel rounded-2xl p-5 sm:p-6" role="region" aria-label={`${title ?? m.label} graph`}>
+    <div ref={panelRef} className="glass-panel rounded-2xl p-5 sm:p-6 scroll-mt-4" role="region" aria-label={`${title ?? m.label} graph`}>
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-muted-foreground flex items-center gap-2">

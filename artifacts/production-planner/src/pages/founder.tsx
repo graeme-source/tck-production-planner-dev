@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback, useEffect } from "react";
+import { Fragment, useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useAuth } from "@/contexts/auth-context";
 import { Redirect } from "wouter";
 import { useQuery, useMutation, useQueryClient, useIsFetching } from "@tanstack/react-query";
@@ -1100,8 +1100,12 @@ function FounderDashboard() {
 
   // ── Trend graphs ──────────────────────────────────────────────────────────
   // Graeme, 2026-09-25: a line graph behind each tile "so I can see visually
-  // what I've done over that period". One graph open per section; it opens
-  // inline, full width, under the row its tile is in. At a Glance is today's
+  // what I've done over that period". One graph open per section. It is a
+  // full-width item INSIDE the tiles' grid, placed straight after its own
+  // tile, and the grids pack densely: on a phone (one column) the graph
+  // opens right under the tile tapped instead of below every tile, and on
+  // wider screens the rest of the row backfills so it opens under the
+  // tile's row (Graeme, 2026-09-26). At a Glance is today's
   // figures, so only Today's Sales / Today's AOV (by the hour) and This Month
   // to Date (by the day) have one — the two month averages don't.
   type GlanceTrend = "todaySales" | "todayAov" | "monthToDate";
@@ -1121,7 +1125,7 @@ function FounderDashboard() {
   const periodCaption = describePeriod(period) + (period.includesToday ? " · today is still running" : "");
   const periodPanel = (metrics: TrendMetricId[]) =>
     periodTrend && metrics.includes(periodTrend) ? (
-      <div className="mt-4">
+      <div className="col-span-full">
         <SalesTrendPanel
           key={`${from}-${to}`}
           metric={periodTrend}
@@ -1166,7 +1170,7 @@ function FounderDashboard() {
       {/* ── Section 1: Fixed At-a-Glance KPIs (always this month) ──────────── */}
       <section>
         {sectionHeading("At a Glance — " + format(today, "MMMM yyyy"))}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 grid-flow-row-dense">
           <KpiCard
             title="Today's Sales"
             value={monthSummary ? formatGBP(monthSummary.todayRevenue) : "—"}
@@ -1178,6 +1182,21 @@ function FounderDashboard() {
             error={!!monthError}
             trend={glanceToggle("todaySales")}
           />
+          {glanceTrend === "todaySales" && (
+            <div className="col-span-full">
+              <SalesTrendPanel
+                key={`todaySales-${todayStr}`}
+                metric="revenue"
+                from={todayStr}
+                to={todayStr}
+                title="Sales by the hour — today"
+                periodCaption={`${format(today, "EEE d MMM")} so far, against ${lastWeekName.charAt(0).toLowerCase()}${lastWeekName.slice(1)} (dashed)`}
+                seriesName="Today"
+                compare={{ date: lastWeekStr, name: lastWeekName }}
+                onClose={() => setGlanceTrend(null)}
+              />
+            </div>
+          )}
           <KpiCard
             title="This Month to Date"
             value={monthSummary ? formatGBP(monthSummary.totalRevenue) : "—"}
@@ -1189,6 +1208,19 @@ function FounderDashboard() {
             error={!!monthError}
             trend={glanceToggle("monthToDate")}
           />
+          {glanceTrend === "monthToDate" && (
+            <div className="col-span-full">
+              <SalesTrendPanel
+                key={`month-${monthStart}-${todayStr}`}
+                metric="revenue"
+                from={monthStart}
+                to={todayStr}
+                title="Daily sales this month"
+                periodCaption={`${format(startOfMonth(today), "d MMM")} to today · today is still running`}
+                onClose={() => setGlanceTrend(null)}
+              />
+            </div>
+          )}
           {/* Today's AOV sits third, next to the other "today" figures
               (Graeme, 2026-09-25); the two month-average tiles follow. */}
           <KpiCard
@@ -1202,6 +1234,21 @@ function FounderDashboard() {
             error={!!monthError}
             trend={glanceToggle("todayAov")}
           />
+          {glanceTrend === "todayAov" && (
+            <div className="col-span-full">
+              <SalesTrendPanel
+                key={`todayAov-${todayStr}`}
+                metric="aov"
+                from={todayStr}
+                to={todayStr}
+                title="AOV by the hour — today"
+                periodCaption={`${format(today, "EEE d MMM")} so far, against ${lastWeekName.charAt(0).toLowerCase()}${lastWeekName.slice(1)} (dashed)`}
+                seriesName="Today"
+                compare={{ date: lastWeekStr, name: lastWeekName }}
+                onClose={() => setGlanceTrend(null)}
+              />
+            </div>
+          )}
           <KpiCard
             title="Avg Daily Sales This Month"
             value={monthSummary ? formatGBP(monthSummary.averageDailyRevenue) : "—"}
@@ -1223,34 +1270,6 @@ function FounderDashboard() {
             error={!!monthError}
           />
         </div>
-        {(glanceTrend === "todaySales" || glanceTrend === "todayAov") && (
-          <div className="mt-4">
-            <SalesTrendPanel
-              key={`${glanceTrend}-${todayStr}`}
-              metric={glanceTrend === "todaySales" ? "revenue" : "aov"}
-              from={todayStr}
-              to={todayStr}
-              title={glanceTrend === "todaySales" ? "Sales by the hour — today" : "AOV by the hour — today"}
-              periodCaption={`${format(today, "EEE d MMM")} so far, against ${lastWeekName.charAt(0).toLowerCase()}${lastWeekName.slice(1)} (dashed)`}
-              seriesName="Today"
-              compare={{ date: lastWeekStr, name: lastWeekName }}
-              onClose={() => setGlanceTrend(null)}
-            />
-          </div>
-        )}
-        {glanceTrend === "monthToDate" && (
-          <div className="mt-4">
-            <SalesTrendPanel
-              key={`month-${monthStart}-${todayStr}`}
-              metric="revenue"
-              from={monthStart}
-              to={todayStr}
-              title="Daily sales this month"
-              periodCaption={`${format(startOfMonth(today), "d MMM")} to today · today is still running`}
-              onClose={() => setGlanceTrend(null)}
-            />
-          </div>
-        )}
       </section>
 
       {/* ── Order Analysis — ONE period drives every tile ──────────────────
@@ -1340,7 +1359,7 @@ function FounderDashboard() {
             )}
 
             {/* Period totals */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 grid-flow-row-dense">
               <KpiCard
                 title={`Total Sales — ${period.label}`}
                 value={periodSummary ? formatGBP(periodSummary.totalRevenue) : "—"}
@@ -1352,6 +1371,7 @@ function FounderDashboard() {
                 error={!!periodError}
                 trend={periodToggle("revenue", ["orders"])}
               />
+              {periodPanel(["revenue", "orders"])}
               <KpiCard
                 title={`AOV — ${period.label}`}
                 value={periodSummary?.aov != null ? formatGBP(periodSummary.aov) : "—"}
@@ -1363,13 +1383,13 @@ function FounderDashboard() {
                 error={!!periodError}
                 trend={periodToggle("aov")}
               />
+              {periodPanel(["aov"])}
             </div>
-            {periodPanel(["revenue", "orders", "aov"])}
             <div className="mb-6" />
 
             {/* Row 1 — new customers, and what they cost.
                 The count tile is also the drill-down: tap it for the orders. */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 grid-flow-row-dense">
               <OrderTypeCard
                 type={customerType("newCustomer")}
                 count={getGroupCount(customerType("newCustomer").tag)}
@@ -1379,6 +1399,7 @@ function FounderDashboard() {
                 loading={orderTypesLoading}
                 trend={periodToggle("newCustomerOrders")}
               />
+              {periodPanel(["newCustomerOrders"])}
               <MoneyTile
                 title="New Customer Revenue"
                 value={newCustomerRevenue}
@@ -1388,12 +1409,14 @@ function FounderDashboard() {
                 loading={orderTypesLoading}
                 trend={periodToggle("newCustomerRevenue")}
               />
+              {periodPanel(["newCustomerRevenue"])}
               <RoasTile
                 title="New Customer ROAS"
                 result={periodRoas}
                 loading={roasLoading}
                 trend={periodToggle("roas")}
               />
+              {periodPanel(["roas"])}
 
               {/* Ad Spend — synced from the Meta Marketing API when it's
                   connected, typed in with the pencil when it isn't. A typed
@@ -1481,17 +1504,17 @@ function FounderDashboard() {
                   )}
                 </div>
               </div>
+              {periodPanel(["adSpend"])}
             </div>
-            {periodPanel(["newCustomerOrders", "newCustomerRevenue", "roas", "adSpend"])}
             <div className="mb-4" />
 
             {/* Row 2 — subscriptions, and the storefront's own conversion.
                 Conversion Rate has no graph: it is Shopify's own session
                 metric (ShopifyQL), not something the orders mirror holds. */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 grid-flow-row-dense">
               {(["recurringSub", "newSub"] as const).map((id) => (
+                <Fragment key={id}>
                 <OrderTypeCard
-                  key={id}
                   type={customerType(id)}
                   count={getGroupCount(customerType(id).tag)}
                   dayCount={period.dayCount}
@@ -1500,6 +1523,8 @@ function FounderDashboard() {
                   loading={orderTypesLoading}
                   trend={periodToggle(id === "recurringSub" ? "recurringSubOrders" : "newSubOrders")}
                 />
+                {periodPanel([id === "recurringSub" ? "recurringSubOrders" : "newSubOrders"])}
+                </Fragment>
               ))}
               {/* Recurring and new subscription orders combined, deduped by
                   order id so an order carrying both tags is counted once. */}
@@ -1513,6 +1538,7 @@ function FounderDashboard() {
                 loading={orderTypesLoading}
                 trend={periodToggle("subscriptionRevenue")}
               />
+              {periodPanel(["subscriptionRevenue"])}
 
               {/* Conversion Rate — Shopify's own online-store metric via
                   ShopifyQL. Session-based, so subscription renewals are
@@ -1543,7 +1569,6 @@ function FounderDashboard() {
                 </div>
               </div>
             </div>
-            {periodPanel(["recurringSubOrders", "newSubOrders", "subscriptionRevenue"])}
 
             {/* Drill-down. Tap any count tile above to open the orders behind
                 it; the tab strip then reaches every order type, wholesale
