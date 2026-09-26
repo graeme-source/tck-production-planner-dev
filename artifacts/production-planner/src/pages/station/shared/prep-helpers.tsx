@@ -5,6 +5,7 @@ import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import type { PrepRequirementItem } from "@workspace/api-client-react";
+import { packNoun, formatPackSize } from "@workspace/units";
 
 export function fmtQty(q: number | string, unit: string): string {
   // Defensive coercion: pgNumeric columns come back as strings ("2.2700"),
@@ -34,17 +35,9 @@ export function fmtQty(q: number | string, unit: string): string {
 export const toKg = (qty: number, unit: string): number =>
   unit === "g" ? qty / 1000 : unit === "mg" ? qty / 1_000_000 : qty;
 
-// Pack/bottle label for an ingredient that's counted in whole packs. Uses
-// "bottle" for liquids (ml/l) and "pack" for everything else, so the UI
-// reads naturally: "2 bottles of milk" vs "3 packs of chutney". Already-
-// pluralised pack-units ("packs" / "bottles") collapse straight back to
-// the right singular/plural so we never end up with "1 packs" or
-// "2 bottless".
-export function packNoun(unit: string, count: number): string {
-  const isLiquid = unit === "ml" || unit === "l" || unit === "L" || unit === "bottle" || unit === "bottles";
-  const base = isLiquid ? "bottle" : "pack";
-  return count === 1 ? base : `${base}s`;
-}
+// Pack/bottle label ("pack" / "bottles" …) — lives in @workspace/units so
+// the server, the Orders page and the stations share one copy.
+export { packNoun };
 
 // Descriptive pack label including the pack size, e.g. "2.27 kg packs" or
 // "1 L bottle". Used in stock-check prompts so operators can tell at a glance
@@ -66,40 +59,10 @@ export function packDescriptor(unit: string, packWeight: number | string | null 
   return `${sized} ${noun}`;
 }
 
-// Pack-size formatter that uses the most natural unit at the scale of the
-// pack. Sub-1 kg packs render in grams ("500g"), sub-1 L bottles in ml
-// ("330ml"), bigger packs stay in their primary unit ("2.27 kg", "1.5 L").
-// Distinct from fmtQty (which always normalises to kg/L for prep-sheet
-// consistency) because pack labels read more naturally at human scales.
-export function fmtPackSize(weight: number | string, nativeUnit: string): string {
-  // Same defensive coerce as fmtQty — packWeight from the API is a string.
-  const w = typeof weight === "number" ? weight : Number(weight);
-  if (!Number.isFinite(w)) return "";
-  const u = nativeUnit;
-  const isWeight = u === "g" || u === "kg" || u === "mg";
-  const isVolume = u === "ml" || u === "l" || u === "L";
-  // Convert any weight to grams first so the threshold check works regardless
-  // of source unit, then pick g vs kg by magnitude.
-  if (isWeight) {
-    const grams = u === "kg" ? w * 1000 : u === "mg" ? w / 1000 : w;
-    if (grams < 1000) {
-      const rounded = grams % 1 === 0 ? grams : Number(grams.toFixed(1));
-      return `${rounded}g`;
-    }
-    const kg = grams / 1000;
-    return `${kg % 1 === 0 ? kg : Number(kg.toFixed(2))} kg`;
-  }
-  if (isVolume) {
-    const ml = u === "l" || u === "L" ? w * 1000 : w;
-    if (ml < 1000) {
-      const rounded = ml % 1 === 0 ? ml : Number(ml.toFixed(1));
-      return `${rounded}ml`;
-    }
-    const litres = ml / 1000;
-    return `${litres % 1 === 0 ? litres : Number(litres.toFixed(2))} L`;
-  }
-  return `${w % 1 === 0 ? w : Number(w.toFixed(2))} ${u}`;
-}
+// Pack-size formatter at the most natural scale ("500g", "2.27 kg", "5 L",
+// "36 each") — lives in @workspace/units (formatPackSize) so the Orders page
+// and the server share one copy.
+export const fmtPackSize = formatPackSize;
 
 // Compact "<size> per pack" / "<size> per bottle" suffix used as small grey
 // secondary text next to a pack-count input or pill. Returns null when the
