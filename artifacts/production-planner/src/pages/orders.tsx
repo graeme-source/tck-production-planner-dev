@@ -1029,12 +1029,13 @@ export default function Orders() {
       });
     }
     for (const kanban of toAdd) {
-      // Same conversion the server uses (@workspace/units): a pallet card
-      // orders pallet_size packs, a weight card ceil(amount ÷ pack size).
-      // Pallet and weight lines are in the item's own unit; pack and bottle
-      // cards stay pack-counted lines.
+      // Same conversion as the server's kanban-only lines (@workspace/units):
+      // a pallet card orders pallet_size packs. A "weight" card's amount is
+      // still read as a pack count here, exactly as the server's kanban-only
+      // path does (unchanged — see routes/orders.ts). Pallet and weight lines
+      // are in the item's own unit; pack and bottle cards stay pack-counted.
       const packWeight = Number(kanban.packWeight) > 0 ? Number(kanban.packWeight) : 1;
-      const kanbanPacks = kanbanOrderPacks(kanban.kanbanOrderAmount ?? kanban.kanbanQuantity, kanban.kanbanUnit, {
+      const kanbanPacks = kanbanOrderPacks(kanban.kanbanOrderAmount ?? kanban.kanbanQuantity, kanban.kanbanUnit === "weight" ? "pack" : kanban.kanbanUnit, {
         packWeight,
         palletSize: kanban.palletSize,
       });

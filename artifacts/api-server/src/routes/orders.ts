@@ -586,11 +586,14 @@ router.get("/calculate", async (req, res) => {
 
       const packWeight = Number(d.packWeight) || 1;
       const kanbanUnitVal = d.kanbanUnit ?? "weight";
-      // Same shared conversion as the stock-driven lines above. This path
-      // used to take the kanban amount as the pack count whatever the unit,
-      // so a 1-pallet card ordered one box and a 10 kg "weight" card ordered
-      // ten packs.
-      const kanbanPacks = kanbanOrderPacks(d.kanbanOrderAmount ?? d.kanbanQuantity, kanbanUnitVal, {
+      // Same shared conversion as the stock-driven lines above, so a
+      // 1-pallet card orders pallet_size packs (it used to order ONE pack).
+      // EXCEPTION, deliberately unchanged: on this kanban-only path a
+      // "weight" card's amount has always been read as a pack count, and the
+      // live cards are filled in that way (e.g. 6 on a 450 g spice pack).
+      // Switching it to amount ÷ pack size would quietly cut those orders
+      // to 1 pack — a decision for Graeme, not a side effect of this fix.
+      const kanbanPacks = kanbanOrderPacks(d.kanbanOrderAmount ?? d.kanbanQuantity, kanbanUnitVal === "weight" ? "pack" : kanbanUnitVal, {
         packWeight,
         palletSize: d.palletSize,
       });
