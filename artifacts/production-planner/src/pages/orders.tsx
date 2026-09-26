@@ -46,7 +46,17 @@ import {
   toISODate,
 } from "@workspace/business-days";
 import { resolveDeliveryDate } from "@/lib/order-delivery";
-import { packNoun } from "@/pages/station/shared/prep-helpers";
+import { kanbanOrderPacks, packNoun, positivePalletSize, packsToBaseQty } from "@workspace/units";
+import {
+  buildOrderMessage,
+  costPerUnitLabel,
+  hydratePlacedLine,
+  lineTotal,
+  orderQtyDisplay,
+  packSizeLabel,
+  palletPriceLabel,
+  placedLineQuantity,
+} from "@/lib/order-line-text";
 import { toast } from "@/hooks/use-toast";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -96,6 +106,15 @@ type OrderLine = {
   // synthetic negative number for UI purposes; serialiser sends null.
   isMisc?: boolean;
   description?: string | null;
+  // The ingredient's own unit when `unit` is a pack-count unit ("packs").
+  nativeUnit?: string | null;
+  // Pallet ordering (kanban unit "pallet"): packsToOrder/editedPacks stay
+  // SUPPLIER PACKS; palletSize (packs per pallet) makes the line read
+  // "1 pallet — 50 packs · 1,800 each". palletSizeMissing = pallet item with
+  // no pallet size set — ordered as 1 pack per pallet, with a warning.
+  palletSize?: number | null;
+  orderInPallets?: boolean;
+  palletSizeMissing?: boolean;
 };
 
 type SupplierOrder = {
@@ -144,6 +163,12 @@ type PurchaseOrder = {
     unit: string;
     unitPrice: string | null;
     checkedOff: boolean;
+    notes?: string | null;
+    // Ingredient sizes — used to rebuild pack counts on reopen.
+    nativeUnit?: string | null;
+    packWeight?: string | null;
+    palletSize?: number | null;
+    kanbanUnit?: string | null;
   }>;
 };
 
@@ -183,6 +208,7 @@ type KanbanIngredient = {
   kanbanUnit: string;
   packWeight: number | null;
   costPerPack: number | null;
+  palletSize?: number | null;
   supplierId: number | null;
   supplierName: string | null;
   secondarySupplierId: number | null;
@@ -270,43 +296,8 @@ function inboundQtyLabel(qty: number, unit: string, packWeight: number): string 
   return `${qty} ${unit}`;
 }
 
-// Cost per kilo (or per native unit) for a line — the like-for-like number
-// suppliers' own websites show, so alternatives can be compared without
-// doing maths at the bench. g/ml pack weights convert to per-kg / per-litre.
-function costPerUnitLabel(line: { costPerPack: number; packWeight: number; unit: string }): string | null {
-  if (!(line.costPerPack > 0) || !(line.packWeight > 0)) return null;
-  const u = (line.unit || "").toLowerCase().trim();
-  if (u === "g") return `£${(line.costPerPack / (line.packWeight / 1000)).toFixed(2)}/kg`;
-  if (u === "ml") return `£${(line.costPerPack / (line.packWeight / 1000)).toFixed(2)}/L`;
-  if (u === "kg" || u === "l") return `£${(line.costPerPack / line.packWeight).toFixed(2)}/${u === "l" ? "L" : "kg"}`;
-  return `£${(line.costPerPack / line.packWeight).toFixed(2)}/${u || "unit"}`;
-}
-
-function lineOrderQty(line: EditableLine): string {
-  if (line.stockInPacks || line.unit === "packs" || line.unit === "bottles") {
-    return `${line.editedPacks} ${line.stockInPacks ? packNoun(line.unit, line.editedPacks) : line.unit}`;
-  }
-  return `${(line.editedPacks * line.packWeight).toLocaleString()} ${line.unit}`;
-}
-
-// The shared plain-text order message used by both the email and WhatsApp
-// buttons — lists each item with its order quantity and the delivery date.
-function buildOrderMessage(supplierName: string, lines: EditableLine[], deliveryDateText: string): string {
-  const itemLines = lines.map(l => {
-    const part = l.supplierPartNumber ? ` [${l.supplierPartNumber}]` : "";
-    return `- ${lineOrderQty(l)} × ${l.ingredientName}${part}`;
-  }).join("\n");
-  return [
-    `Hi ${supplierName},`,
-    ``,
-    `Please could we order the following for delivery on ${deliveryDateText}:`,
-    ``,
-    itemLines,
-    ``,
-    `Many thanks,`,
-    `The Calzone Kitchen`,
-  ].join("\n");
-}
+// Line wording (order quantity, pack size, cost per unit, the supplier
+// email / WhatsApp text) lives in lib/order-line-text.ts — pure and tested.
 
 // Build a mailto: link that pre-fills an order email to the supplier — opens
 // in whatever mail client the operator's machine uses.
@@ -800,10 +791,21 @@ export default function Orders() {
         .filter(l => l.ingredientId == null || !existingIngredientIds.has(l.ingredientId))
         .map(l => {
           const qtyOrdered = Number(l.quantityOrdered) || 0;
-          const unit = l.unit ?? "kg";
-          const isPackUnit = unit === "packs" || unit === "bottles" || unit === "pallets";
-          const packs = isPackUnit ? qtyOrdered : Math.max(1, Math.round(qtyOrdered));
           const isMisc = l.ingredientId == null;
+          // Rebuild real pack counts from the ingredient's sizes (1,800 each
+          // of a 36-per-box item = 50 boxes) so the line total stays packs ×
+          // pack price; legacy "1 pallets" lines become pallet_size packs.
+          const hydrated = hydratePlacedLine({
+            quantityOrdered: qtyOrdered,
+            unit: l.unit ?? "kg",
+            isMisc,
+            packWeight: l.packWeight,
+            palletSize: l.palletSize,
+            nativeUnit: l.nativeUnit,
+            kanbanUnit: l.kanbanUnit,
+          });
+          const unit = hydrated.unit;
+          const packs = hydrated.packs;
           // For misc lines the backend folds the operator-typed name into
           // ingredientName via a description fallback. Keep a copy on the
           // line so the resubmit payload preserves it round-trip.
@@ -813,10 +815,13 @@ export default function Orders() {
             ingredientId: syntheticId,
             ingredientName: l.ingredientName ?? (isMisc ? "Misc item" : `Ingredient #${l.ingredientId}`),
             unit,
+            nativeUnit: l.nativeUnit ?? null,
             totalRequired: Number(l.quantityRequired) || 0,
             stockOnHand: 0,
             surplusTarget: 0,
-            packWeight: 1,
+            packWeight: hydrated.packWeight,
+            palletSize: hydrated.palletSize,
+            orderInPallets: hydrated.orderInPallets,
             costPerPack: Number(l.unitPrice) || 0,
             supplierPartNumber: null,
             orderQty: qtyOrdered,
@@ -1024,13 +1029,21 @@ export default function Orders() {
       });
     }
     for (const kanban of toAdd) {
-      const qty = kanban.kanbanOrderAmount ?? kanban.kanbanQuantity ?? 1;
-      const packWeight = kanban.packWeight ?? 1;
+      // Same conversion the server uses (@workspace/units): a pallet card
+      // orders pallet_size packs, a weight card ceil(amount ÷ pack size).
+      // Pallet and weight lines are in the item's own unit; pack and bottle
+      // cards stay pack-counted lines.
+      const packWeight = Number(kanban.packWeight) > 0 ? Number(kanban.packWeight) : 1;
+      const kanbanPacks = kanbanOrderPacks(kanban.kanbanOrderAmount ?? kanban.kanbanQuantity, kanban.kanbanUnit, {
+        packWeight,
+        palletSize: kanban.palletSize,
+      });
+      const qty = kanbanPacks.packs;
+      const nativeUnit = kanban.ingredientUnit ?? "kg";
       const unit =
         kanban.kanbanUnit === "pack" ? "packs"
         : kanban.kanbanUnit === "bottle" ? "bottles"
-        : kanban.kanbanUnit === "pallet" ? "pallets"
-        : (kanban.ingredientUnit ?? "kg");
+        : nativeUnit;
       const supplierId = effectiveSupplierIdFor(kanban)!;
       const newLine: EditableLine = {
         ingredientId: kanban.ingredientId,
@@ -1040,12 +1053,17 @@ export default function Orders() {
         stockOnHand: 0,
         surplusTarget: 0,
         packWeight,
+        nativeUnit,
+        palletSize: positivePalletSize(kanban.palletSize),
+        orderInPallets: kanban.kanbanUnit === "pallet",
+        palletSizeMissing: kanbanPacks.warning === "pallet-size-missing",
         costPerPack: kanban.costPerPack ?? 0,
         // The part number belongs to the primary supplier — only quote it
         // when the kanban is actually being ordered from them.
         supplierPartNumber: supplierId === kanban.supplierId ? (kanban.supplierPartNumber ?? null) : null,
-        orderQty: qty,
+        orderQty: unit === "packs" || unit === "bottles" ? qty : packsToBaseQty(qty, packWeight),
         packsToOrder: qty,
+        kanbanFloorPacks: qty,
         isKanban: true,
         orderingUrl: kanban.orderingUrl ?? null,
         lastStockCheckAt: null,
@@ -1173,6 +1191,7 @@ export default function Orders() {
       ingredientId: ingredient.id,
       ingredientName: ingredient.name,
       unit: ingredient.unit ?? "kg",
+      nativeUnit: ingredient.unit ?? "kg",
       totalRequired: 0,
       stockOnHand: 0,
       surplusTarget: 0,
@@ -1218,18 +1237,11 @@ export default function Orders() {
         ingredientId: l.isMisc ? null : l.ingredientId,
         description: l.isMisc ? (l.description ?? l.ingredientName) : null,
         quantityRequired: l.orderQty,
-        // Pack-counted units (packs, bottles, pallets) store the pack
-        // count directly. Weight/volume-based units multiply by packWeight
-        // to get the native quantity. Pallets were previously missing
-        // from this list, so a 1-pallet order with packWeight = 0 saved
-        // as quantityOrdered = 0 and showed as zero on deliveries.
-        quantityOrdered: l.isMisc
-          ? l.editedPacks
-          : (l.unit === "packs" || l.unit === "bottles" || l.unit === "pallets")
-            ? l.editedPacks
-            : l.editedPacks * l.packWeight,
-        unit: l.unit,
-        unitPrice: l.costPerPack > 0 ? l.costPerPack : null,
+        // Pack-counted units store the pack count; everything else stores
+        // base units (packs × pack size) — how goods-in reads it. A pallet
+        // line saves as base units (1 pallet of gel packs = 1,800 each at
+        // £6.84 a box) with "1 pallet (50 × 36 each)" kept in notes.
+        ...placedLineQuantity(l),
         checkedOff: l.checked,
       }));
 
@@ -2065,9 +2077,27 @@ export default function Orders() {
                             </div>
                           </td>
                           <td className="p-3 text-right tabular-nums font-bold text-lg text-green-600 dark:text-green-400">
-                            {(line.stockInPacks || line.unit === "packs" || line.unit === "bottles")
-                              ? `${line.editedPacks} ${line.stockInPacks ? packNoun(line.unit, line.editedPacks) : line.unit}`
-                              : `${(line.editedPacks * line.packWeight).toLocaleString()} ${line.unit}`}
+                            {(() => {
+                              const qty = orderQtyDisplay(line);
+                              return (
+                                <>
+                                  {qty.primary}
+                                  {qty.detail && (
+                                    <span className="block text-xs font-medium text-muted-foreground">{qty.detail}</span>
+                                  )}
+                                  {line.palletSizeMissing && !line.isMisc && (
+                                    <a
+                                      href={`${BASE}/inventory?tab=ingredients&edit=${line.ingredientId}`}
+                                      className="mt-1 flex items-start justify-end gap-1 text-xs font-medium text-amber-700 dark:text-amber-400 underline underline-offset-2 text-right"
+                                      title="Ordering by the pallet needs the number of packs on a pallet. Until it's set, each pallet orders just one pack."
+                                    >
+                                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
+                                      Pallet size not set — set packs per pallet on the item
+                                    </a>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </td>
                           <td className="p-3 text-center">
                             <input
@@ -2080,9 +2110,12 @@ export default function Orders() {
                               placeholder="0"
                               className="w-16 h-8 rounded border border-border bg-background text-center text-sm tabular-nums disabled:opacity-40"
                             />
+                            {line.orderInPallets && (line.palletSize ?? 0) > 0 && (
+                              <span className="block text-[11px] text-muted-foreground mt-0.5">{line.palletSize} per pallet</span>
+                            )}
                           </td>
                           <td className="p-3 text-right tabular-nums">
-                            {line.isMisc ? "—" : `${line.packWeight} kg`}
+                            {packSizeLabel(line)}
                           </td>
                           <td className="p-3 text-right tabular-nums">
                             {line.isMisc ? "—"
@@ -2098,12 +2131,15 @@ export default function Orders() {
                           </td>
                           {lines.some(l => l.costPerPack > 0) && (
                             <td className="p-3 text-right tabular-nums">
-                              {line.costPerPack > 0 ? `\u00A3${(line.editedPacks * line.costPerPack).toFixed(2)}` : "-"}
+                              {line.costPerPack > 0 ? `\u00A3${lineTotal(line).toFixed(2)}` : "-"}
                               {/* Cost per kilo (or per native unit) \u2014 the number
                                   compared against other suppliers' sites when
                                   deciding where to order (Graeme, 2026-08-27). */}
                               {costPerUnitLabel(line) && (
                                 <span className="block text-xs text-muted-foreground">{costPerUnitLabel(line)}</span>
+                              )}
+                              {palletPriceLabel(line) && (
+                                <span className="block text-xs text-muted-foreground">{palletPriceLabel(line)}</span>
                               )}
                             </td>
                           )}
@@ -2385,7 +2421,12 @@ export default function Orders() {
                             </a>
                           ) : line.ingredientName}
                         </td>
-                        <td className="p-3 text-right tabular-nums">{Number(line.quantityOrdered).toLocaleString()}</td>
+                        <td className="p-3 text-right tabular-nums">
+                          {Number(line.quantityOrdered).toLocaleString()}
+                          {line.notes && (
+                            <span className="block text-xs text-muted-foreground">{line.notes}</span>
+                          )}
+                        </td>
                         <td className="p-3 text-right">{line.unit}</td>
                       </tr>
                     ))}
@@ -2527,9 +2568,10 @@ export default function Orders() {
                 const noSupplier = effectiveSupplierId == null;
                 const orderAmt = k.kanbanOrderAmount ?? k.kanbanQuantity ?? null;
                 const unitLabel =
-                  k.kanbanUnit === "pack" ? "packs"
-                  : k.kanbanUnit === "bottle" ? "bottles"
-                  : k.kanbanUnit === "pallet" ? "pallets"
+                  k.kanbanUnit === "pack" ? (orderAmt === 1 ? "pack" : "packs")
+                  : k.kanbanUnit === "bottle" ? (orderAmt === 1 ? "bottle" : "bottles")
+                  : k.kanbanUnit === "pallet"
+                    ? `${orderAmt === 1 ? "pallet" : "pallets"}${(k.palletSize ?? 0) > 0 && orderAmt != null ? ` (${orderAmt * (k.palletSize ?? 0)} packs)` : ""}`
                   : (k.ingredientUnit ?? "");
                 const supplierOptions = supplierOptionsFor(k);
                 return (
@@ -2924,10 +2966,18 @@ export default function Orders() {
                           </a>
                         ) : l.ingredientName}
                       </span>
-                      <span className="tabular-nums font-medium">
-                        {(l.unit === "packs" || l.unit === "bottles")
-                          ? `${l.editedPacks} ${l.unit} (${l.packWeight} kg each)`
-                          : `${l.editedPacks} x ${l.packWeight} kg = ${(l.editedPacks * l.packWeight).toLocaleString()} ${l.unit}`}
+                      <span className="tabular-nums font-medium text-right">
+                        {(() => {
+                          const qty = orderQtyDisplay(l);
+                          const size = packSizeLabel(l);
+                          const sub = qty.detail ?? (size !== "—" ? `${l.editedPacks} × ${size}` : null);
+                          return (
+                            <>
+                              {qty.primary}
+                              {sub && <span className="block text-xs font-normal text-muted-foreground">{sub}</span>}
+                            </>
+                          );
+                        })()}
                       </span>
                     </div>
                   ))}
