@@ -4,6 +4,7 @@ import { PackageCheck, Loader2, AlertTriangle, CheckCircle2, ArrowRight, Store, 
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { ShopifyOrderNumber } from "@/components/shopify-order-link";
+import { OrderDateCalendar } from "@/components/order-date-calendar";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
@@ -397,6 +398,19 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
               Process
             </button>
           </div>
+        )}
+
+        {!isDone && (
+          <OrderDateCalendar
+            today={data.today}
+            delivery={delivery}
+            production={isWholesale ? undefined : production}
+            candidates={isWholesale ? [] : prodCandidates.map(d => {
+              const s = evaluateProduction(order, d, data.plansByDespatchDate);
+              return { date: d, ok: s.ok, reason: s.ok ? undefined : (data.plansByDespatchDate[d] ? "missing products" : "no plan") };
+            })}
+            onPickProduction={isWholesale ? undefined : d => setSelectedProduction(prev => ({ ...prev, [order.orderId]: d }))}
+          />
         )}
       </div>
     );
