@@ -99,8 +99,10 @@ describe("describePalletOrder", () => {
       .toBe("20 bottles · 100 L");
   });
 
-  it("with no pack size, the supplier text quotes the base count", () => {
+  it("with no pack size (or a pack of 1), the supplier text quotes the base count", () => {
     expect(describePalletOrder(600, { unit: "each", packWeight: 0, palletSize: 600 })!.supplierText)
+      .toBe("1 pallet (600 each)");
+    expect(describePalletOrder(600, { unit: "each", packWeight: 1, palletSize: 600 })!.supplierText)
       .toBe("1 pallet (600 each)");
   });
 });

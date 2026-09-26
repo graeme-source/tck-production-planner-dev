@@ -36,6 +36,8 @@ describe("gel-pack pallet line", () => {
     expect(lineTotal(gelPack)).toBe(342);
     expect(palletPriceLabel(gelPack)).toBe("£342.00/pallet");
     expect(costPerUnitLabel(gelPack)).toBe("£0.19 each");
+    // Big pallets keep their thousands separator.
+    expect(palletPriceLabel({ ...gelPack, costPerPack: 189, palletSize: 180 })).toBe("£34,020.00/pallet");
   });
 
   it("editing packs keeps working: 100 packs → 2 pallets, 75 → 1.5 pallets (75 packs)", () => {

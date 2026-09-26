@@ -130,7 +130,9 @@ export function costPerUnitLabel(line: { costPerPack: number; packWeight: number
 export function palletPriceLabel(line: OrderLineForText): string | null {
   if (!readsInPallets(line)) return null;
   const price = palletPrice(line.costPerPack, line.palletSize);
-  return price == null ? null : `£${price.toFixed(2)}/pallet`;
+  return price == null
+    ? null
+    : `£${price.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/pallet`;
 }
 
 /** Line total: packs × price per pack. */

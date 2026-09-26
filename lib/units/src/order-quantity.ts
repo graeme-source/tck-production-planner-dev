@@ -201,7 +201,9 @@ export function describePalletOrder(
   const packsText = `${formatCount(packs)} ${packNoun(unit, packs)}`;
   const whole = Number.isInteger(pallets);
   const pw = Number(item.packWeight);
-  const hasPackSize = Number.isFinite(pw) && pw > 0;
+  // A pack of exactly 1 (or no pack size, which the ordering maths counts
+  // as 1) quotes the plain count: "1 pallet (600 each)", not "600 × 1 each".
+  const hasPackSize = Number.isFinite(pw) && pw > 0 && pw !== 1;
   const perPack = hasPackSize
     ? `${formatCount(packs)} × ${formatPackSize(pw, unit)}`
     : baseText;
