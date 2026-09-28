@@ -1099,11 +1099,25 @@ function AdminPanel() {
     onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
+  // Closed by default: connection settings are set-once admin plumbing, and
+  // open they pushed the invoice list off the screen (Graeme, 2026-09-28).
+  const [open, setOpen] = useState(false);
+
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base"><Banknote className="h-4 w-4" /> Admin — connections & access</CardTitle>
+      <CardHeader className={open ? undefined : "py-4"}>
+        <button
+          type="button"
+          onClick={() => setOpen(o => !o)}
+          aria-expanded={open}
+          className="w-full flex items-center gap-2 text-left"
+        >
+          <CardTitle className="flex-1 flex items-center gap-2 text-base"><Banknote className="h-4 w-4" /> Admin — connections & access</CardTitle>
+          <span className="text-xs text-muted-foreground">{open ? "Hide" : "Show"}</span>
+          {open ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+        </button>
       </CardHeader>
+      {open && (
       <CardContent className="space-y-6">
         <div>
           <div className="text-sm font-medium mb-2 flex items-center gap-2"><Mail className="h-4 w-4" /> Mailbox (one.com IMAP)</div>
@@ -1277,6 +1291,7 @@ function AdminPanel() {
           </div>
         </div>
       </CardContent>
+      )}
     </Card>
   );
 }
