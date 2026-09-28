@@ -1,6 +1,6 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import multer from "multer";
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { z } from "zod/v4";
 import {
   db,
@@ -194,6 +194,55 @@ router.patch("/lines/:id", requireFinanceAccess, validate(lineStatusSchema), asy
   } catch (err) {
     console.error("[finance] line update error:", err);
     res.status(500).json({ error: "Failed to update line" });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Manual lines (Graeme, 2026-09-28): the finance team adds a transaction by
+// hand — paid from another bank account, or missing from the card export.
+// It then works like any other line: mailbox suggestions, chasing, and the
+// QuickBooks sync closes it if it turns out to be posted already.
+
+const manualLineSchema = z.object({
+  lineDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD"),
+  descriptor: z.string().trim().min(1, "Say what the statement shows").max(300),
+  merchant: z.string().trim().max(200).optional().nullable(),
+  amount: z.number().finite()
+    .refine(v => v !== 0, "Amount can't be zero")
+    .refine(v => Math.abs(v) < 1_000_000, "Amount looks too large"),
+  paidFrom: z.string().trim().max(120).optional().nullable(),
+  note: z.string().trim().max(2000).optional().nullable(),
+});
+
+router.post("/lines", requireFinanceAccess, validate(manualLineSchema), async (req: Request, res: Response) => {
+  try {
+    const body = req.body as z.infer<typeof manualLineSchema>;
+    const [me] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, req.session.userId!));
+    const merchant = body.merchant || null;
+    const vendorId = await findOrCreateVendor(merchant ?? body.descriptor);
+    const addedBy = `Added by hand by ${me?.name ?? "the finance team"}`;
+    const [row] = await db
+      .insert(finLinesTable)
+      .values({
+        source: "manual",
+        lineDate: body.lineDate,
+        descriptor: body.descriptor,
+        merchant,
+        amount: body.amount.toFixed(2),
+        currency: "GBP",
+        // Shown on the row where a card line shows its cardholder.
+        cardholder: body.paidFrom || null,
+        vendorId,
+        statusNote: body.note ? `${body.note} — ${addedBy}` : addedBy,
+        // Nothing to dedupe against: a hand-added line is always new.
+        dedupeHash: createHash("sha256").update(`manual|${randomUUID()}`).digest("hex"),
+      })
+      .returning();
+    refreshSuggestions().catch((e) => console.error("[finance] suggestion refresh failed:", e));
+    res.status(201).json(row);
+  } catch (err) {
+    console.error("[finance] manual line error:", err);
+    res.status(500).json({ error: "Failed to add the transaction" });
   }
 });
 

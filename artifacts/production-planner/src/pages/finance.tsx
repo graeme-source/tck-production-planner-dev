@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Banknote,
   Download,
@@ -21,6 +22,7 @@ import {
   Loader2,
   Mail,
   Paperclip,
+  Plus,
   RefreshCw,
   Search as SearchIcon,
   Upload,
@@ -54,6 +56,8 @@ type FinLine = {
   supplierWebsite: string | null;
   chaseCount: number;
   lastChasedAt: string | null;
+  /** Set when the QuickBooks sync matched this line to a posted transaction. */
+  qboTxnId: number | null;
 };
 
 type FinVendor = {
@@ -135,6 +139,7 @@ export default function FinancePage() {
   const [search, setSearch] = useState("");
   const [csvDragOver, setCsvDragOver] = useState(false);
   const [expanded, setExpanded] = useState<number | null>(null);
+  const [adding, setAdding] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const linesQuery = useQuery<LinesResponse>({
@@ -257,6 +262,9 @@ export default function FinancePage() {
 
       {/* Filter tabs + search */}
       <div className="flex gap-2 flex-wrap items-center">
+        <Button size="sm" variant="secondary" onClick={() => setAdding(true)}>
+          <Plus className="h-4 w-4 mr-1" /> Add a transaction
+        </Button>
         {FILTERS.map((f) => (
           <Button key={f.key} size="sm" variant={filter === f.key ? "default" : "outline"} onClick={() => setFilter(f.key)}>
             {f.label}
@@ -305,7 +313,95 @@ export default function FinancePage() {
       )}
 
       {isAdmin && <AdminPanel />}
+      {adding && <AddLineDialog onClose={() => setAdding(false)} onAdded={() => { setFilter("outstanding"); setSearch(""); }} />}
     </div>
+  );
+}
+
+/** Add a transaction by hand (Graeme, 2026-09-28) — paid from another bank
+ *  account, or missing from the card export. It lands as "Needs invoice"
+ *  and then behaves like every other line. */
+function AddLineDialog({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+  const [lineDate, setLineDate] = useState(today);
+  const [descriptor, setDescriptor] = useState("");
+  const [merchant, setMerchant] = useState("");
+  const [amount, setAmount] = useState("");
+  const [paidFrom, setPaidFrom] = useState("");
+  const [note, setNote] = useState("");
+  const amountNum = Number(amount.replace(/[£,\s]/g, ""));
+  const amountOk = amount.trim() !== "" && Number.isFinite(amountNum) && amountNum !== 0;
+  const canSave = !!lineDate && descriptor.trim() !== "" && amountOk;
+
+  const add = useMutation({
+    mutationFn: () => jsonFetch(`${BASE}/api/finance/lines`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        lineDate,
+        descriptor: descriptor.trim(),
+        merchant: merchant.trim() || null,
+        amount: Math.round(amountNum * 100) / 100,
+        paidFrom: paidFrom.trim() || null,
+        note: note.trim() || null,
+      }),
+    }),
+    onSuccess: () => {
+      toast({ title: "Transaction added", description: "It's in Outstanding as \"Needs invoice\"." });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/summary"] });
+      onAdded();
+      onClose();
+    },
+    onError: (e: Error) => toast({ title: "Couldn't add it", description: e.message, variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-[520px] max-h-[92dvh] overflow-y-auto">
+        <DialogHeader><DialogTitle>Add a transaction</DialogTitle></DialogHeader>
+        <form
+          className="space-y-4"
+          onSubmit={(e) => { e.preventDefault(); if (canSave && !add.isPending) add.mutate(); }}
+        >
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="fin-add-date">Date</Label>
+              <Input id="fin-add-date" type="date" value={lineDate} max={today} onChange={(e) => setLineDate(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="fin-add-amount">Amount (£)</Label>
+              <Input id="fin-add-amount" inputMode="decimal" placeholder="e.g. 42.50" value={amount} onChange={(e) => setAmount(e.target.value)} />
+              {amount.trim() !== "" && !amountOk && <p className="text-xs text-destructive">Enter an amount like 42.50</p>}
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="fin-add-desc">What the statement says</Label>
+            <Input id="fin-add-desc" placeholder="e.g. AMZN MKTP UK*2X4YZ" value={descriptor} onChange={(e) => setDescriptor(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="fin-add-merchant">Supplier <span className="text-muted-foreground font-normal">(if you know it)</span></Label>
+            <Input id="fin-add-merchant" placeholder="e.g. Amazon" value={merchant} onChange={(e) => setMerchant(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="fin-add-from">Paid from</Label>
+            <Input id="fin-add-from" placeholder="e.g. Allica current account, Graeme's card" value={paidFrom} onChange={(e) => setPaidFrom(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="fin-add-note">Note <span className="text-muted-foreground font-normal">(optional)</span></Label>
+            <Textarea id="fin-add-note" rows={2} placeholder="Anything that helps find the invoice" value={note} onChange={(e) => setNote(e.target.value)} />
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={!canSave || add.isPending}>
+              {add.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Plus className="h-4 w-4 mr-1" />} Add transaction
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -329,7 +425,11 @@ function LineRow({
   // The pill says what we actually HOLD, not just "Document found": a VAT
   // invoice beats an order confirmation beats the generic label (Graeme,
   // 2026-09-10).
-  const baseStatus = STATUS_LABELS[line.status] ?? STATUS_LABELS.open;
+  // Say WHY a line is done when QuickBooks closed it, so a wrong auto-close
+  // is easy to spot in Completed and reopen.
+  const baseStatus = line.status === "done" && line.qboTxnId
+    ? { label: "Posted in QuickBooks", tone: "bg-indigo-100 text-indigo-900" }
+    : STATUS_LABELS[line.status] ?? STATUS_LABELS.open;
   const hasInvoiceDoc = docs.some(d => d.docKind === "invoice");
   const hasConfirmationDoc = docs.some(d => d.docKind === "order_confirmation");
   const status = (line.status === "matched" || line.status === "identified") && hasInvoiceDoc
@@ -349,6 +449,7 @@ function LineRow({
               {line.cardholder ? ` · ${line.cardholder}` : ""}
               {line.cardLast4 ? ` · card ${line.cardLast4}` : ""}
               {line.originalCurrency && line.originalCurrency !== "GBP" ? ` · ${line.originalAmount} ${line.originalCurrency}` : ""}
+              {line.source === "manual" ? " · added by hand" : ""}
             </div>
           </div>
           <div className="text-right shrink-0">
@@ -951,7 +1052,16 @@ function StatusButtons({ line, onStatus }: { line: FinLine; onStatus: (status: s
             )}
           </>
         ) : (
-          <Button size="sm" variant="outline" onClick={() => onStatus("open", note || null)}>Reopen</Button>
+          // Reopening keeps the QuickBooks link, and the sync never closes a
+          // linked line again — so it stays open until the invoice is in.
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onStatus("open", note && note !== line.statusNote ? note
+              : line.qboTxnId ? "Posted in QuickBooks without an invoice — reopened" : (note || null))}
+          >
+            Reopen — still needs invoice
+          </Button>
         )}
       </div>
     </div>

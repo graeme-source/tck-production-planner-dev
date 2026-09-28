@@ -60,7 +60,7 @@ export const finStatementUploadsTable = pgTable("fin_statement_uploads", {
 export const finLinesTable = pgTable("fin_lines", {
   id: serial("id").primaryKey(),
   uploadId: integer("upload_id"),
-  source: text("source").notNull(), // 'capital_on_tap' | 'allica' | 'backlog_seed'
+  source: text("source").notNull(), // 'capital_on_tap' | 'allica' | 'backlog_seed' | 'qbo' | 'manual' (added by hand)
   lineDate: date("line_date").notNull(), // clearance date (or sheet date)
   authDate: date("auth_date"), // authorisation date when known
   descriptor: text("descriptor").notNull(),
