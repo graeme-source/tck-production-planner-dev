@@ -11,6 +11,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { STATIONS } from "@/pages/station/shared/constants";
 import { youtubeEmbedSrc, currentOrigin } from "@/lib/youtube-embed";
 import { rankSops } from "@/lib/sop-search";
+import { SopDetachFooter, type SopPlace } from "@/components/sop-detach";
 
 interface SopSummary {
   id: number;
@@ -348,6 +349,7 @@ export function StandardsSopsDialog({
   currentStationType,
   initialSopId,
   initialEditSopId,
+  detachFrom,
 }: {
   open: boolean;
   onClose: () => void;
@@ -360,6 +362,10 @@ export function StandardsSopsDialog({
    *  Used by the SOP chips after creating an SOP in place, so writing the
    *  steps is one tap from the station screen. */
   initialEditSopId?: number;
+  /** Where the opened SOP is attached. When set, the bottom of that SOP
+   *  offers "Wrong place for this SOP?" → confirm → remove (sop-detach.tsx).
+   *  The only way to take an SOP off a place (Graeme, 2026-09-28). */
+  detachFrom?: SopPlace;
 }) {
   type View = { kind: "library" } | { kind: "viewer"; sopId: number } | { kind: "editor"; sopId: number };
   const [view, setView] = useState<View>({ kind: "library" });
@@ -400,6 +406,9 @@ export function StandardsSopsDialog({
               onBack={() => setView({ kind: "library" })}
               onEdit={() => setView({ kind: "editor", sopId: view.sopId })}
               onClose={onClose}
+              footer={detachFrom && detachFrom.sopId === view.sopId
+                ? <SopDetachFooter place={detachFrom} onRemoved={onClose} />
+                : undefined}
             />
           )}
           {view.kind === "editor" && (

@@ -24,6 +24,7 @@ import { BookOpen, Plus, X, Loader2, Search, CheckCircle2, FileText, Eye } from 
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { rankSops } from "@/lib/sop-search";
+import { type SopPlace } from "@/components/sop-detach";
 import { StandardsSopsDialog, SopViewer } from "@/components/standards-sops-dialog";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -70,26 +71,35 @@ interface SopListEntry {
 }
 
 /** One viewer per surface: `const sopViewer = useSopViewer()` then render
- *  `sopViewer.dialog` once and call `sopViewer.open(sopId)` from any chip. */
+ *  `sopViewer.dialog` once and pass `sopViewer.open` to any chip. When a
+ *  chip passes where the SOP is attached, the viewer offers "Wrong place for
+ *  this SOP?" at its foot — the only way to take it off (2026-09-28). */
 export function useSopViewer(currentStationType?: string | null) {
   const [sopId, setSopId] = useState<number | null>(null);
+  const [place, setPlace] = useState<SopPlace | undefined>(undefined);
   return {
-    open: (id: number) => setSopId(id),
+    open: (id: number, where?: SopPlace) => { setPlace(where); setSopId(id); },
     dialog: (
       <StandardsSopsDialog
         open={sopId != null}
-        onClose={() => setSopId(null)}
+        onClose={() => { setSopId(null); setPlace(undefined); }}
         currentStationType={currentStationType}
         initialSopId={sopId ?? undefined}
+        detachFrom={place}
       />
     ),
   };
 }
 
-export function SopChips({ links, onOpen, attach, size = "sm", queryKeysToInvalidate }: {
+export function SopChips({ links, onOpen, attach, size = "sm", queryKeysToInvalidate, placeLabel }: {
   links: SopLink[];
-  onOpen: (sopId: number) => void;
-  /** When provided, an "+ SOP" chip lets the user attach/detach. */
+  /** Opens the SOP. The second argument is where it's attached — pass it on
+   *  to useSopViewer().open so the viewer can offer removing it. */
+  onOpen: (sopId: number, where?: SopPlace) => void;
+  /** Human name of where these chips sit ("Building Table 1"). Falls back
+   *  to the attach target's label, then to "this spot". */
+  placeLabel?: string;
+  /** When provided, an "+ SOP" chip lets the user attach more. */
   attach?: SopAttachTarget | SopAttachTarget[];
   size?: "sm" | "xs";
   /** Query keys refetched after attach/detach so chips update in place. */
@@ -106,13 +116,19 @@ export function SopChips({ links, onOpen, attach, size = "sm", queryKeysToInvali
     for (const key of queryKeysToInvalidate ?? []) queryClient.invalidateQueries({ queryKey: key });
   };
 
-  const detach = useMutation({
-    mutationFn: async (linkId: number) => {
-      const res = await fetch(`${BASE}/api/standards/links/${linkId}`, { method: "DELETE", credentials: "include" });
-      if (!res.ok) throw new Error("Failed to detach SOP");
-    },
-    onSuccess: invalidate,
-    onError: () => toast({ title: "Couldn't detach the SOP", variant: "destructive" }),
+  // No ✕ on the chips: removing an SOP from a place happens only inside the
+  // SOP, behind an "Are you sure?" (Graeme, 2026-09-28) — see sop-detach.tsx.
+  const firstTarget = Array.isArray(attach) ? attach[0] : attach;
+  const where = (l: SopLink): SopPlace => ({
+    linkId: l.linkId,
+    sopId: l.sopId,
+    sopTitle: l.title,
+    // subject names the thing; label only does when there's one target
+    // (with several it's a scope like "Everywhere").
+    placeLabel: placeLabel ?? firstTarget?.subject
+      ?? (!Array.isArray(attach) ? firstTarget?.label : undefined)
+      ?? (l.recipeName ? `this ingredient in ${l.recipeName}` : "this spot"),
+    onChanged: invalidate,
   });
 
   if (links.length === 0 && !attach) return null;
@@ -142,7 +158,7 @@ export function SopChips({ links, onOpen, attach, size = "sm", queryKeysToInvali
               : "border-primary bg-primary text-primary-foreground font-semibold shadow-sm")}
           >
             <button
-              onClick={e => { e.stopPropagation(); if (isDraft) setEditSopId(l.sopId); else onOpen(l.sopId); }}
+              onClick={e => { e.stopPropagation(); if (isDraft) setEditSopId(l.sopId); else onOpen(l.sopId, where(l)); }}
               className="inline-flex items-center gap-1.5 min-w-0"
               title={isDraft
                 ? `${l.title} — no steps written yet`
@@ -152,15 +168,6 @@ export function SopChips({ links, onOpen, attach, size = "sm", queryKeysToInvali
               <span className="whitespace-nowrap">{isDraft ? "Write the steps" : "Show me how"}</span>
               {links.length > 1 && <span className="truncate opacity-80 font-normal">· {l.title}</span>}
             </button>
-            {attach && pickerOpen && (
-              <button
-                onClick={e => { e.stopPropagation(); detach.mutate(l.linkId); }}
-                className="flex-shrink-0 opacity-80 hover:opacity-100"
-                title="Detach this SOP" aria-label={`Detach ${l.title}`}
-              >
-                <X className="w-3 h-3" />
-              </button>
-            )}
           </span>
         );
       })}
@@ -218,6 +225,7 @@ export function StationSopRail({ stationType, stationLabel }: { stationType: str
       <SopChips
         links={links}
         onOpen={sopViewer.open}
+        placeLabel={stationLabel}
         queryKeysToInvalidate={[queryKey]}
       />
       {sopViewer.dialog}
@@ -244,18 +252,9 @@ export function StationSopManageModal({ stationType, stationLabel, onClose }: {
       return res.ok ? res.json() : [];
     },
   });
-  const [viewSopId, setViewSopId] = useState<number | null>(null);
+  const [viewSop, setViewSop] = useState<SopPlace | null>(null);
   const [editSopId, setEditSopId] = useState<number | null>(null);
   const invalidate = () => queryClient.invalidateQueries({ queryKey });
-
-  const detach = useMutation({
-    mutationFn: async (linkId: number) => {
-      const res = await fetch(`${BASE}/api/standards/links/${linkId}`, { method: "DELETE", credentials: "include" });
-      if (!res.ok) throw new Error("Failed to detach SOP");
-    },
-    onSuccess: invalidate,
-    onError: () => toast({ title: "Couldn't detach the SOP", variant: "destructive" }),
-  });
 
   return createPortal(
     <>
@@ -276,20 +275,17 @@ export function StationSopManageModal({ stationType, stationLabel, onClose }: {
               {links.map(l => (
                 <div key={l.linkId} className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
                   <BookOpen className="w-4 h-4 text-primary flex-shrink-0" />
+                  {/* No ✕ here: open the SOP, and "Wrong place for this
+                      SOP?" at its foot removes it after a confirm. */}
                   <button
-                    onClick={() => { if (l.stepCount === 0) setEditSopId(l.sopId); else setViewSopId(l.sopId); }}
+                    onClick={() => {
+                      if (l.stepCount === 0) setEditSopId(l.sopId);
+                      else setViewSop({ linkId: l.linkId, sopId: l.sopId, sopTitle: l.title, placeLabel: stationLabel, onChanged: invalidate });
+                    }}
                     className="flex-1 min-w-0 truncate text-left text-sm font-medium hover:text-primary"
-                    title={l.title}
+                    title={`${l.title} — open it to read, or to remove it from ${stationLabel}`}
                   >
                     {l.title}
-                  </button>
-                  <button
-                    onClick={() => detach.mutate(l.linkId)}
-                    disabled={detach.isPending}
-                    className="p-1.5 text-muted-foreground hover:text-destructive rounded-md hover:bg-destructive/10 flex-shrink-0 disabled:opacity-50"
-                    title={`Detach ${l.title} from this station`}
-                  >
-                    <X className="w-4 h-4" />
                   </button>
                 </div>
               ))}
@@ -304,8 +300,8 @@ export function StationSopManageModal({ stationType, stationLabel, onClose }: {
           />
         </div>
       </div>
-      {viewSopId != null && (
-        <StandardsSopsDialog open onClose={() => setViewSopId(null)} currentStationType={stationType} initialSopId={viewSopId} />
+      {viewSop != null && (
+        <StandardsSopsDialog open onClose={() => setViewSop(null)} currentStationType={stationType} initialSopId={viewSop.sopId} detachFrom={viewSop} />
       )}
       {editSopId != null && (
         <StandardsSopsDialog open onClose={() => { setEditSopId(null); invalidate(); }} initialEditSopId={editSopId} />

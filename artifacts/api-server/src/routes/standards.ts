@@ -984,11 +984,29 @@ router.post("/links", requireAuth, async (req, res) => {
 });
 
 // DELETE /links/:id — detach.
+// DELETE /links/:id — take an SOP off a place. Any signed-in user may
+// (Graeme, 2026-09-28), but the app only offers it from inside the SOP after
+// an "Are you sure?". The link is copied to sop_link_removals (who + when,
+// migration 0133) before it goes, and the copy comes back in the response so
+// the client's Undo can re-attach it exactly. The SOP itself is untouched.
 router.delete("/links/:id", requireAuth, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-  await db.execute(sql`DELETE FROM sop_links WHERE id = ${id}`);
-  res.json({ ok: true });
+  const removed = await db.transaction(async (tx) => {
+    const rows = await tx.execute<{ sop_id: number; target_type: string; target_a: number | null; target_b: number | null; target_text: string | null }>(sql`
+      DELETE FROM sop_links WHERE id = ${id}
+      RETURNING sop_id, target_type, target_a, target_b, target_text, created_by, created_at
+    `);
+    const r = rows.rows[0] as (typeof rows.rows)[number] & { created_by: number | null; created_at: Date | null } | undefined;
+    if (!r) return null;
+    await tx.execute(sql`
+      INSERT INTO sop_link_removals (link_id, sop_id, target_type, target_a, target_b, target_text, link_created_by, link_created_at, removed_by)
+      VALUES (${id}, ${r.sop_id}, ${r.target_type}, ${r.target_a}, ${r.target_b}, ${r.target_text}, ${r.created_by}, ${r.created_at}, ${req.session.userId ?? null})
+    `);
+    return { sopId: r.sop_id, targetType: r.target_type, a: r.target_a, b: r.target_b, text: r.target_text };
+  });
+  if (!removed) { res.status(404).json({ error: "Already removed" }); return; }
+  res.json({ ok: true, removed });
 });
 
 export default router;

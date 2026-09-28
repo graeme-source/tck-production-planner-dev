@@ -10,19 +10,20 @@
  * With one SOP attached, "Show me how" opens it directly. With several, it
  * opens a chooser modal listing each SOP by title — tap one to view it
  * (Graeme, 2026-09-08). The small + button manages the page's SOPs: attach
- * from the library, create-and-attach, or detach — the same SopPicker used
+ * from the library or create-and-attach. Removing one happens only inside
+ * the SOP, behind an "Are you sure?" (2026-09-28) — the same SopPicker used
  * at stations and checklists, so behaviour is identical everywhere.
  */
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation } from "wouter";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BookOpen, Plus, X, ChevronRight, PenLine, PlayCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { toast } from "@/hooks/use-toast";
 import { pageSopKey } from "@/lib/page-sop-key";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { SopPicker, type SopLink } from "@/components/sop-link-chips";
+import { type SopPlace } from "@/components/sop-detach";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -46,19 +47,10 @@ export function PageSopButton({ pageLabel }: {
 
   const [chooserOpen, setChooserOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
-  const [viewSopId, setViewSopId] = useState<number | null>(null);
+  const [viewSop, setViewSop] = useState<SopPlace | null>(null);
   const [editSopId, setEditSopId] = useState<number | null>(null);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey });
-
-  const detach = useMutation({
-    mutationFn: async (linkId: number) => {
-      const res = await fetch(`${BASE}/api/standards/links/${linkId}`, { method: "DELETE", credentials: "include" });
-      if (!res.ok) throw new Error("Failed to detach SOP");
-    },
-    onSuccess: invalidate,
-    onError: () => toast({ title: "Couldn't detach the SOP", variant: "destructive" }),
-  });
 
   // Same convention as SopChips: an SOP with no steps yet opens straight
   // into the editor — promising a how-to and showing nothing is worse than
@@ -66,7 +58,10 @@ export function PageSopButton({ pageLabel }: {
   function openSop(link: SopLink) {
     setChooserOpen(false);
     if (link.stepCount === 0) setEditSopId(link.sopId);
-    else setViewSopId(link.sopId);
+    // Opened with where it's attached, so the SOP's foot can offer "Wrong
+    // place for this SOP?" → confirm → remove — the only way to take it off
+    // (Graeme, 2026-09-28).
+    else setViewSop({ linkId: link.linkId, sopId: link.sopId, sopTitle: link.title, placeLabel: pageLabel, onChanged: invalidate });
   }
 
   function handleShowMeHow() {
@@ -176,17 +171,9 @@ export function PageSopButton({ pageLabel }: {
                   <button
                     onClick={() => { setManageOpen(false); openSop(l); }}
                     className="flex-1 min-w-0 truncate text-left text-sm font-medium hover:text-primary"
-                    title={l.title}
+                    title={`${l.title} — open it to read, or to remove it from ${pageLabel}`}
                   >
                     {l.title}
-                  </button>
-                  <button
-                    onClick={() => detach.mutate(l.linkId)}
-                    disabled={detach.isPending}
-                    className="p-1.5 text-muted-foreground hover:text-destructive rounded-md hover:bg-destructive/10 flex-shrink-0 disabled:opacity-50"
-                    title={`Detach ${l.title} from this page`}
-                  >
-                    <X className="w-4 h-4" />
                   </button>
                 </div>
               ))}
@@ -205,8 +192,8 @@ export function PageSopButton({ pageLabel }: {
         </div>
       ))}
 
-      {viewSopId != null && createPortal(
-        <StandardsSopsDialog open onClose={() => setViewSopId(null)} initialSopId={viewSopId} />,
+      {viewSop != null && createPortal(
+        <StandardsSopsDialog open onClose={() => setViewSop(null)} initialSopId={viewSop.sopId} detachFrom={viewSop} />,
         document.body,
       )}
       {editSopId != null && createPortal(
