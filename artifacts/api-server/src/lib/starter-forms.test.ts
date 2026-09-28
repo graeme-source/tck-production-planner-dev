@@ -32,6 +32,16 @@ describe("starter form definitions", () => {
 });
 
 describe("missingRequiredFields", () => {
+  it("payroll details asks for a payslip email in Your details, and checks it is one", () => {
+    const yours = PAYROLL_DETAILS.sections.find(s => s.title === "Your details")!;
+    expect(yours.fields.some(f => f.key === "payslip_email")).toBe(true);
+    expect(missingRequiredFields(PAYROLL_DETAILS, {})).toContain("Email address for your payslips");
+    expect(missingRequiredFields(PAYROLL_DETAILS, { payslip_email: "jane at home" }))
+      .toContain("Email address for your payslips (that doesn't look like an email address)");
+    const ok = missingRequiredFields(PAYROLL_DETAILS, { payslip_email: "jane@example.com" });
+    expect(ok.some(m => m.startsWith("Email address for your payslips"))).toBe(false);
+  });
+
   it("lists what's blank", () => {
     const missing = missingRequiredFields(PAYROLL_DETAILS, { full_name: "Jane Smith" });
     expect(missing).toContain("Sort code");

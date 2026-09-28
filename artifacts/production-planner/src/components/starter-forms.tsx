@@ -21,7 +21,7 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 // Mirrors api-server/src/lib/starter-forms.ts types (served as JSON).
 type Field =
-  | { kind: "text"; key: string; label: string; required?: boolean; help?: string; inputMode?: "numeric" }
+  | { kind: "text"; key: string; label: string; required?: boolean; help?: string; inputMode?: "numeric" | "email" }
   | { kind: "date"; key: string; label: string; required?: boolean; help?: string }
   | { kind: "textarea"; key: string; label: string; required?: boolean; help?: string }
   | { kind: "radio"; key: string; label: string; required?: boolean; help?: string; options: { value: string; label: string; help?: string }[] }
@@ -153,6 +153,8 @@ function FormSheet({ def, submission, meId, onClose }: {
           <input
             type={field.kind === "date" ? "date" : "text"}
             inputMode={"inputMode" in field ? field.inputMode : undefined}
+            autoComplete={"inputMode" in field && field.inputMode === "email" ? "email" : undefined}
+            autoCapitalize={"inputMode" in field && field.inputMode === "email" ? "none" : undefined}
             value={typeof answers[field.key] === "string" ? (answers[field.key] as string) : ""}
             onChange={e => setAnswer(field.key, e.target.value)}
             className={inputCls}

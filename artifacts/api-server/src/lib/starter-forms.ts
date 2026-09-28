@@ -17,7 +17,7 @@
  */
 
 export type StarterFormField =
-  | { kind: "text"; key: string; label: string; required?: boolean; help?: string; inputMode?: "numeric" }
+  | { kind: "text"; key: string; label: string; required?: boolean; help?: string; inputMode?: "numeric" | "email" }
   | { kind: "date"; key: string; label: string; required?: boolean; help?: string }
   | { kind: "textarea"; key: string; label: string; required?: boolean; help?: string }
   | { kind: "radio"; key: string; label: string; required?: boolean; help?: string; options: { value: string; label: string; help?: string }[] }
@@ -131,6 +131,9 @@ export const PAYROLL_DETAILS: StarterFormDefinition = {
         { kind: "text", key: "marital_status", label: "Marital status", required: true },
         { kind: "date", key: "date_of_birth", label: "Date of birth", required: true },
         { kind: "text", key: "ni_number", label: "National Insurance number", required: true },
+        // Where the payroll accountant sends each payslip (Graeme, 2026-09-28).
+        { kind: "text", key: "payslip_email", label: "Email address for your payslips", required: true, inputMode: "email",
+          help: "Your payslips will be emailed here each pay day. Use an address only you can read." },
       ],
     },
     {
@@ -219,6 +222,8 @@ function sectionActive(section: StarterFormSection, answers: StarterFormAnswers)
   return typeof v === "string" && section.showWhen.equals.includes(v);
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 /** Blank-check for signing. Drafts may be as partial as they like; a
  *  SIGNATURE requires every required field of every active section. */
 export function missingRequiredFields(def: StarterFormDefinition, answers: StarterFormAnswers): string[] {
@@ -227,8 +232,13 @@ export function missingRequiredFields(def: StarterFormDefinition, answers: Start
     if (!sectionActive(section, answers)) continue;
     for (const field of section.fields) {
       if (field.kind === "info" || field.kind === "checkboxes") continue;
-      if (!("required" in field) || !field.required) continue;
       const v = answers[field.key];
+      // An email box must hold an email address whenever it's filled in.
+      if (field.kind === "text" && field.inputMode === "email" && typeof v === "string" && v.trim() !== "" && !EMAIL_RE.test(v.trim())) {
+        missing.push(`${field.label} (that doesn't look like an email address)`);
+        continue;
+      }
+      if (!("required" in field) || !field.required) continue;
       if (field.kind === "yesno_detail") {
         if (v !== "yes" && v !== "no") missing.push(field.label);
         continue;
