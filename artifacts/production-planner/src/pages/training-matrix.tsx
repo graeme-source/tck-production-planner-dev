@@ -22,6 +22,7 @@ import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
+import { useIsRtwManager } from "@/hooks/use-rtw-manager";
 import { trainingSectionsFor } from "@/lib/training-sections";
 import { StationMatrixList } from "@/components/station-training/station-matrix-list";
 import { StationMatrixView } from "@/components/station-training/station-matrix-view";
@@ -269,7 +270,6 @@ function MatrixDetailView({ matrixId, onBack }: { matrixId: number; onBack: () =
   const [isAddPersonOpen, setIsAddPersonOpen] = useState(false);
   const [editItem, setEditItem] = useState<Item | null>(null);
   const [isEditMatrixOpen, setIsEditMatrixOpen] = useState(false);
-  const [onboardingPerson, setOnboardingPerson] = useState<{ userId: number; name: string } | null>(null);
 
   const upsertRecord = useMutation({
     mutationFn: (vars: { itemId: number; userId: number; trained: boolean; trainedAt: string | null }) =>
@@ -349,7 +349,6 @@ function MatrixDetailView({ matrixId, onBack }: { matrixId: number; onBack: () =
                     <PersonHeader
                       person={person}
                       onRemove={() => { if (confirm(`Remove ${person.name} from this matrix?`)) removeEnrolment.mutate(person.enrolmentId); }}
-                      onViewOnboarding={() => setOnboardingPerson({ userId: person.userId, name: person.name })}
                     />
                   </th>
                 ))}
@@ -394,7 +393,6 @@ function MatrixDetailView({ matrixId, onBack }: { matrixId: number; onBack: () =
       {editItem && <EditItemDialog item={editItem} onClose={() => setEditItem(null)} onDone={invalidate} />}
       {isAddPersonOpen && <AddPersonDialog matrixId={matrixId} enrolledIds={enrolments.map(e => e.userId)} onClose={() => setIsAddPersonOpen(false)} onDone={invalidate} />}
       {isEditMatrixOpen && <EditMatrixDialog matrix={matrix} onClose={() => setIsEditMatrixOpen(false)} onDone={invalidate} />}
-      {onboardingPerson && <OnboardingInfoDialog userId={onboardingPerson.userId} name={onboardingPerson.name} onClose={() => setOnboardingPerson(null)} />}
     </div>
   );
 }
@@ -453,7 +451,11 @@ function ItemRowHeader({ item, onEdit, onDelete }: { item: Item; onEdit: () => v
 }
 
 // ─── Person column header (avatar + rotated name + remove) ────────────────────
-function PersonHeader({ person, onRemove, onViewOnboarding }: { person: Enrolment; onRemove: () => void; onViewOnboarding: () => void }) {
+function PersonHeader({ person, onRemove }: { person: Enrolment; onRemove: () => void }) {
+  // Onboarding details (contact, emergency contact, uploads) live on the
+  // People record, behind People access + the private PIN — the matrix used
+  // to show them to every manager (Graeme, 2026-09-28).
+  const canOpenPeople = useIsRtwManager();
   const [open, setOpen] = useState(false);
   const initials = person.name.split(" ").map(p => p[0]).slice(0, 2).join("").toUpperCase();
   return (
@@ -474,80 +476,16 @@ function PersonHeader({ person, onRemove, onViewOnboarding }: { person: Enrolmen
       <PopoverContent className="w-52 p-1.5" align="start">
         <p className="text-sm font-medium px-2 py-1.5">{person.name}</p>
         <div className="h-px bg-border my-1" />
-        <button onClick={() => { setOpen(false); onViewOnboarding(); }} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm hover:bg-secondary transition-colors">
-          <ClipboardList className="w-4 h-4" /> View onboarding info
-        </button>
+        {canOpenPeople && (
+          <Link href={`/people/${person.userId}`} onClick={() => setOpen(false)} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm hover:bg-secondary transition-colors">
+            <ClipboardList className="w-4 h-4" /> Open People record
+          </Link>
+        )}
         <button onClick={() => { setOpen(false); onRemove(); }} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-destructive hover:bg-destructive/10 transition-colors">
           <X className="w-4 h-4" /> Remove from matrix
         </button>
       </PopoverContent>
     </Popover>
-  );
-}
-
-// Read-only view of a colleague's pre-arrival onboarding submission, so the
-// admin can tick the matching matrix items. Loads from /api/onboarding/:userId.
-function OnboardingInfoDialog({ userId, name, onClose }: { userId: number; name: string; onClose: () => void }) {
-  const { data, isLoading } = useQuery({
-    queryKey: ["onboarding", userId],
-    queryFn: () => api<{ submission: any; documents: { id: number; kind: string; fileName: string | null }[] }>(`/onboarding/${userId}`),
-  });
-  const s = data?.submission;
-  const docs = data?.documents ?? [];
-  const kindLabel: Record<string, string> = { right_to_work: "Right to work / ID", food_hygiene: "Food Hygiene certificate", other: "Document" };
-  const Row = ({ label, value }: { label: string; value: string | null | undefined }) => (
-    <div className="flex justify-between gap-3 py-1.5 border-b border-border last:border-0">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span className="text-sm text-right">{value || <span className="text-muted-foreground/60">—</span>}</span>
-    </div>
-  );
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-[440px]">
-        <DialogHeader><DialogTitle>Onboarding info — {name}</DialogTitle></DialogHeader>
-        {isLoading ? (
-          <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
-        ) : !s && docs.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-4">{name} hasn't submitted their pre-arrival form yet.</p>
-        ) : (
-          <div className="space-y-4 mt-1">
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Contact</p>
-              <Row label="Mobile" value={s?.phone} />
-              <Row label="Address" value={s?.address} />
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Emergency contact</p>
-              <Row label="Name" value={s?.emergencyContactName} />
-              <Row label="Phone" value={s?.emergencyContactPhone} />
-              <Row label="Relationship" value={s?.emergencyContactRelationship} />
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Footwear — have it ready for day one</p>
-              <Row label="Shoe size (UK)" value={s?.shoeSize} />
-              <Row label="Preference" value={s?.footwearChoice === "safety_shoes" ? "Safety shoes" : s?.footwearChoice === "crocs" ? "Crocs" : null} />
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Documents</p>
-              {docs.length === 0 ? (
-                <p className="text-sm text-muted-foreground/60">None uploaded</p>
-              ) : (
-                <ul className="space-y-1.5">
-                  {docs.map(d => (
-                    <li key={d.id} className="flex items-center justify-between gap-2 text-sm bg-secondary/40 rounded-lg px-3 py-2">
-                      <span className="flex items-center gap-2 min-w-0"><FileText className="w-4 h-4 text-primary flex-shrink-0" /><span className="truncate">{kindLabel[d.kind] ?? d.kind}</span></span>
-                      <a href={`${BASE}/api/onboarding/documents/${d.id}/file`} target="_blank" rel="noopener noreferrer" className="flex-shrink-0 inline-flex items-center gap-1 text-xs text-primary hover:underline">
-                        <ExternalLink className="w-3.5 h-3.5" /> Open
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
   );
 }
 

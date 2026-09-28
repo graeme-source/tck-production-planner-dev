@@ -10,8 +10,12 @@
  *
  * The People side (People access + private PIN set and unlocked —
  * requirePeopleUnlock, then a People-access check):
- *   GET    /api/person-documents/person/:userId     one person's documents + their
- *                                                   own onboarding uploads
+ *   GET    /api/person-documents/person/:userId     one person's documents, their
+ *                                                   own onboarding uploads, and the
+ *                                                   onboarding form they filled in
+ *                                                   (contact, emergency contact,
+ *                                                   footwear) — People-gated here
+ *                                                   ONLY (2026-09-28)
  *   POST   /api/person-documents/person/:userId     file one (multipart: file, kind,
  *                                                   title, documentDate, notes?,
  *                                                   sharedWithEmployee?, visibility?)
@@ -30,7 +34,7 @@
  */
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import * as z from "zod";
-import { db, personDocumentsTable, onboardingDocumentsTable, usersTable } from "@workspace/db";
+import { db, personDocumentsTable, onboardingDocumentsTable, onboardingSubmissionsTable, usersTable } from "@workspace/db";
 import { and, asc, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { validate, validateQuery } from "../middleware/validate";
 import { singleFileUpload } from "../middleware/upload";
@@ -192,7 +196,7 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
     const [person] = await db.select({ id: usersTable.id, name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId));
     if (!person) { res.status(404).json({ error: "Not found" }); return; }
     const viewer = await viewerOf(req);
-    const [docs, onboarding] = await Promise.all([
+    const [docs, onboarding, [form]] = await Promise.all([
       db.select(META).from(personDocumentsTable)
         .where(and(eq(personDocumentsTable.userId, userId), isNull(personDocumentsTable.deletedAt)))
         .orderBy(desc(personDocumentsTable.documentDate), desc(personDocumentsTable.uploadedAt)),
@@ -207,10 +211,24 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
         // Only uploads that actually hold a file — nothing to open otherwise.
         .where(and(eq(onboardingDocumentsTable.userId, userId), isNotNull(onboardingDocumentsTable.fileBlob)))
         .orderBy(asc(onboardingDocumentsTable.uploadedAt)),
+      // The onboarding form itself. This is the only place anyone but the
+      // person reads it — Team & Access and the training matrix used to show
+      // it to every manager and admin (Graeme, 2026-09-28).
+      db.select({
+        phone: onboardingSubmissionsTable.phone,
+        address: onboardingSubmissionsTable.address,
+        emergencyContactName: onboardingSubmissionsTable.emergencyContactName,
+        emergencyContactPhone: onboardingSubmissionsTable.emergencyContactPhone,
+        emergencyContactRelationship: onboardingSubmissionsTable.emergencyContactRelationship,
+        shoeSize: onboardingSubmissionsTable.shoeSize,
+        footwearChoice: onboardingSubmissionsTable.footwearChoice,
+        submittedAt: onboardingSubmissionsTable.submittedAt,
+      }).from(onboardingSubmissionsTable).where(eq(onboardingSubmissionsTable.userId, userId)),
     ]);
     res.json({
       person,
       canSetVisibility: viewer.isHr,
+      onboardingForm: form ?? null,
       documents: documentsForPeopleViewer(viewer, docs as MetaRow[]).map(shapeForPeople),
       onboarding: onboarding
         .filter(d => canSeeOnboardingDocument(viewer, d.kind))

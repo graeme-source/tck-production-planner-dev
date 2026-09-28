@@ -18,7 +18,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, Camera, ChevronRight, Eye, EyeOff, FilePlus2, FileText, FileUp, FolderOpen, Loader2, Lock,
+  AlertTriangle, Camera, ChevronRight, ClipboardList, Eye, EyeOff, FilePlus2, FileText, FileUp, FolderOpen, Loader2, Lock,
   Share2, Trash2, UserRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -36,7 +36,7 @@ import {
   isHrDefaultKind, visibilityLabel, documentEntries, documentFileProblem, mimeForFile, titleFromFileName,
   isFiledFounderOnly,
   type PersonDocumentsResponse, type PersonDocumentRow, type OnboardingDocumentRow, type DocumentEntry,
-  type PersonDocumentVisibility, type FiledFounderOnly,
+  type PersonDocumentVisibility, type FiledFounderOnly, type OnboardingForm,
 } from "@/lib/person-documents";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -157,6 +157,7 @@ export function PersonDocumentsSection({ data, isLoading, error, onOpen, onAdd }
           <FilePlus2 className="w-5 h-5" /> Add a document
         </button>
       </div>
+      {data?.onboardingForm && <OnboardingFormCard form={data.onboardingForm} />}
       {isLoading ? (
         <div className="flex items-center gap-3 py-4 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /> Loading documents…</div>
       ) : error ? (
@@ -170,6 +171,36 @@ export function PersonDocumentsSection({ data, isLoading, error, onOpen, onAdd }
         <Lock className="w-4 h-4 shrink-0" /> People access only. Warnings and disciplinaries are Graeme only. The person sees a document only if you share it.
       </p>
     </section>
+  );
+}
+
+/** The onboarding form they filled in before their first day — contact,
+ *  emergency contact, footwear. Lives here, on the People record, and
+ *  nowhere else (Graeme, 2026-09-28). */
+function OnboardingFormCard({ form }: { form: OnboardingForm }) {
+  const footwear = form.footwearChoice === "safety_shoes" ? "Safety shoes" : form.footwearChoice === "crocs" ? "Crocs" : null;
+  const rows: Array<[string, string | null]> = [
+    ["Mobile", form.phone],
+    ["Address", form.address],
+    ["Emergency contact", [form.emergencyContactName, form.emergencyContactRelationship && `(${form.emergencyContactRelationship})`].filter(Boolean).join(" ") || null],
+    ["Emergency phone", form.emergencyContactPhone],
+    ["Footwear", [form.shoeSize && `UK ${form.shoeSize}`, footwear].filter(Boolean).join(" · ") || null],
+  ];
+  return (
+    <div className="rounded-2xl border-2 border-border p-4 space-y-2">
+      <p className="text-lg font-bold flex items-center gap-2">
+        <ClipboardList className="w-5 h-5 text-primary" /> Onboarding form
+        {form.submittedAt && <span className="text-sm font-normal text-muted-foreground">· filled in {fmtDay(form.submittedAt, true)}</span>}
+      </p>
+      <dl className="grid grid-cols-1 sm:grid-cols-[10rem_minmax(0,1fr)] gap-x-4 gap-y-1.5">
+        {rows.map(([label, value]) => (
+          <div key={label} className="contents">
+            <dt className="text-sm text-muted-foreground">{label}</dt>
+            <dd className="text-base font-medium whitespace-pre-line break-words">{value || <span className="text-muted-foreground/60">—</span>}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
   );
 }
 

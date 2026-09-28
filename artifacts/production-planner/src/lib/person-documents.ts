@@ -87,6 +87,21 @@ export interface PersonDocumentsResponse {
   canSetVisibility: boolean;
   documents: PersonDocumentRow[];
   onboarding: OnboardingDocumentRow[];
+  /** The onboarding form they filled in — only ever sent here, behind
+   *  People access (2026-09-28). Null if they never submitted it. Optional
+   *  so an older cached server response degrades to no card. */
+  onboardingForm?: OnboardingForm | null;
+}
+
+export interface OnboardingForm {
+  phone: string | null;
+  address: string | null;
+  emergencyContactName: string | null;
+  emergencyContactPhone: string | null;
+  emergencyContactRelationship: string | null;
+  shoeSize: string | null;
+  footwearChoice: string | null;
+  submittedAt: string | null;
 }
 
 /** What the person themself sees — no notes, no visibility. */

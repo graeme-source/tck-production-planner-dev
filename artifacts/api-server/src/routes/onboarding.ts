@@ -1,9 +1,9 @@
 // New-starter onboarding — pre-arrival info a colleague provides after accepting
-// their invite. Self routes (/me) act on the logged-in user's own record; the
-// admin-view routes are gated to managers/admins. Files (right-to-work / food
+// their invite. Every route here acts on the logged-in user's OWN record; other
+// people's answers and files are People-record data (routes/person-documents.ts). Files (right-to-work / food
 // hygiene) are stored inline as bytea, mirroring the documents repository.
 
-import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import multer from "multer";
 import { db, usersTable, onboardingSubmissionsTable, onboardingDocumentsTable } from "@workspace/db";
 import { eq, and, asc } from "drizzle-orm";
@@ -18,23 +18,6 @@ const upload = multer({
 });
 
 const DOC_KINDS = ["right_to_work", "food_hygiene", "p45", "other"] as const;
-
-async function isManagerOrAdmin(req: Request): Promise<boolean> {
-  if (req.session.userRole === "admin" || req.session.userRole === "manager") return true;
-  if (req.session.userId && !req.session.userRole) {
-    const [u] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
-    if (u) {
-      req.session.userRole = u.role as "admin" | "manager" | "viewer";
-      return u.role === "admin" || u.role === "manager";
-    }
-  }
-  return false;
-}
-
-async function requireManagerOrAdmin(req: Request, res: Response, next: NextFunction) {
-  if (await isManagerOrAdmin(req)) { next(); return; }
-  res.status(403).json({ error: "Manager access required" });
-}
 
 const docMetaColumns = {
   id: onboardingDocumentsTable.id,
@@ -179,15 +162,17 @@ router.delete("/me/documents/:id", async (req: Request, res: Response) => {
   }
 });
 
-// GET /documents/:id/file — stream a file. Owner OR manager/admin only.
+// GET /documents/:id/file — stream YOUR OWN file. Anyone else's upload is
+// read from their People record (/api/person-documents/onboarding/:id/file),
+// behind People access + the private People PIN, with the P45 founder-only.
+// This route used to let any manager or admin open anyone's — P45 included
+// (closed 2026-09-28). 404, not 403: other people's files don't exist here.
 router.get("/documents/:id/file", async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
     const [row] = await db.select().from(onboardingDocumentsTable).where(eq(onboardingDocumentsTable.id, id));
-    if (!row || !row.fileBlob) { res.status(404).json({ error: "No file" }); return; }
-    const isOwner = row.userId === req.session.userId;
-    if (!isOwner && !(await isManagerOrAdmin(req))) { res.status(403).json({ error: "Forbidden" }); return; }
+    if (!row || !row.fileBlob || row.userId !== req.session.userId) { res.status(404).json({ error: "No file" }); return; }
 
     const buf = Buffer.isBuffer(row.fileBlob) ? row.fileBlob : Buffer.from(row.fileBlob as any);
     const filename = (row.fileName || "document").replace(/"/g, "");
@@ -202,16 +187,10 @@ router.get("/documents/:id/file", async (req: Request, res: Response) => {
   }
 });
 
-// GET /:userId — admin/manager view of a colleague's onboarding (for matrix reconciliation).
-router.get("/:userId", requireManagerOrAdmin, async (req: Request, res: Response) => {
-  const userId = Number(req.params.userId);
-  if (!Number.isInteger(userId)) { res.status(400).json({ error: "Invalid id" }); return; }
-  try {
-    res.json(await loadOnboarding(userId));
-  } catch (err) {
-    console.error("[onboarding] admin get failed:", err);
-    res.status(500).json({ error: "Failed to load onboarding" });
-  }
-});
+// There is deliberately no "GET /:userId" any more. A colleague's onboarding
+// form (address, phone, emergency contact) is part of their People record and
+// is served only by /api/person-documents/person/:userId — People access +
+// private PIN, decided per person by the founder, never by role
+// (Graeme, 2026-09-28: "behind a gate").
 
 export default router;
