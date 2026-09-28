@@ -786,6 +786,11 @@ const parseIdsParam = (raw: unknown): number[] =>
 // written SOP from one that was created in place and still needs writing —
 // a "Show me how" button that opens nothing is worse than no button.
 const STEP_COUNT_SQL = sql`(SELECT COUNT(*)::int FROM sop_steps st WHERE st.sop_id = s.id) AS step_count`;
+// The picture the library shows on each SOP card (its first photo), plus
+// whether any step has a video — so a "Show me how" list can show what each
+// SOP is at a glance instead of titles alone (Graeme, 2026-09-28).
+const COVER_SQL = sql`(SELECT st.id FROM sop_steps st WHERE st.sop_id = s.id AND st.image_mime IS NOT NULL ORDER BY st.position ASC LIMIT 1) AS first_image_step_id,
+  EXISTS (SELECT 1 FROM sop_steps st WHERE st.sop_id = s.id AND st.video_mime IS NOT NULL) AS has_video`;
 
 // GET /links/for-checklist?ids=1,2,3 → { [templateId]: [{linkId,sopId,title,stepCount}] }
 router.get("/links/for-checklist", requireAuth, async (req, res) => {
@@ -912,14 +917,15 @@ router.get("/links/for-sub-recipes", requireAuth, async (req, res) => {
 router.get("/links/for-station", requireAuth, async (req, res) => {
   const station = String(req.query.station ?? "").trim();
   if (!station || station.length > 64) { res.json([]); return; }
-  const rows = await db.execute<{ link_id: number; sop_id: number; title: string; step_count: number }>(sql`
-    SELECT l.id AS link_id, l.sop_id, s.title, ${STEP_COUNT_SQL}
+  const rows = await db.execute<{ link_id: number; sop_id: number; title: string; step_count: number; first_image_step_id: number | null; has_video: boolean }>(sql`
+    SELECT l.id AS link_id, l.sop_id, s.title, ${STEP_COUNT_SQL}, ${COVER_SQL}
     FROM sop_links l JOIN standards_sops s ON s.id = l.sop_id
     WHERE l.target_type = 'station' AND l.target_text = ${station}
     ORDER BY s.title
   `);
   res.json((rows.rows ?? []).map(r => ({
     linkId: r.link_id, sopId: r.sop_id, title: r.title, stepCount: Number(r.step_count) || 0,
+    coverImageStepId: r.first_image_step_id ?? null, hasVideo: r.has_video === true,
   })));
 });
 
@@ -932,14 +938,15 @@ router.get("/links/for-station", requireAuth, async (req, res) => {
 router.get("/links/for-page", requireAuth, async (req, res) => {
   const page = String(req.query.page ?? "").trim();
   if (!page || !page.startsWith("/") || page.length > 128) { res.json([]); return; }
-  const rows = await db.execute<{ link_id: number; sop_id: number; title: string; step_count: number }>(sql`
-    SELECT l.id AS link_id, l.sop_id, s.title, ${STEP_COUNT_SQL}
+  const rows = await db.execute<{ link_id: number; sop_id: number; title: string; step_count: number; first_image_step_id: number | null; has_video: boolean }>(sql`
+    SELECT l.id AS link_id, l.sop_id, s.title, ${STEP_COUNT_SQL}, ${COVER_SQL}
     FROM sop_links l JOIN standards_sops s ON s.id = l.sop_id
     WHERE l.target_type = 'page' AND l.target_text = ${page}
     ORDER BY s.title
   `);
   res.json((rows.rows ?? []).map(r => ({
     linkId: r.link_id, sopId: r.sop_id, title: r.title, stepCount: Number(r.step_count) || 0,
+    coverImageStepId: r.first_image_step_id ?? null, hasVideo: r.has_video === true,
   })));
 });
 

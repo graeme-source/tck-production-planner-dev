@@ -37,6 +37,10 @@ export interface SopLink {
   /** How many steps the SOP has. 0 means it was created here and nobody has
    *  written it yet — the chip says so instead of promising a how-to. */
   stepCount?: number;
+  /** Page and station links only: the step whose photo the library uses as
+   *  the SOP's cover, and whether any step carries a video. */
+  coverImageStepId?: number | null;
+  hasVideo?: boolean;
 }
 
 export interface SopAttachTarget {

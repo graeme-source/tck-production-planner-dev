@@ -17,7 +17,7 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Plus, X, ChevronRight, PenLine } from "lucide-react";
+import { BookOpen, Plus, X, ChevronRight, PenLine, PlayCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { pageSopKey } from "@/lib/page-sop-key";
@@ -129,15 +129,31 @@ export function PageSopButton({ pageLabel }: {
               key={l.linkId}
               onClick={() => openSop(l)}
               className={cn(
-                "w-full flex items-center gap-3 rounded-xl border p-4 text-left transition-colors",
+                "w-full flex items-center gap-4 rounded-xl border p-2.5 pr-4 text-left transition-colors",
                 l.stepCount === 0
                   ? "border-dashed border-amber-500/70 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/40"
                   : "border-border hover:border-primary hover:bg-primary/5",
               )}
             >
-              {l.stepCount === 0
-                ? <PenLine className="w-5 h-5 text-amber-600 flex-shrink-0" />
-                : <BookOpen className="w-5 h-5 text-primary flex-shrink-0" />}
+              {/* The SOP's cover photo — the same picture its library card
+                  shows — so each one is recognisable at a glance instead of
+                  reading every title (Graeme, 2026-09-28). */}
+              <span className="relative w-24 h-[4.5rem] sm:w-28 sm:h-20 rounded-lg overflow-hidden bg-secondary/50 flex items-center justify-center flex-shrink-0">
+                {l.stepCount === 0 ? (
+                  <PenLine className="w-6 h-6 text-amber-600" />
+                ) : l.coverImageStepId ? (
+                  <img src={`${BASE}/api/standards/steps/${l.coverImageStepId}/image`} alt="" loading="lazy" className="w-full h-full object-cover" />
+                ) : l.hasVideo ? (
+                  <PlayCircle className="w-8 h-8 text-primary" />
+                ) : (
+                  <BookOpen className="w-6 h-6 text-primary/60" />
+                )}
+                {l.hasVideo && l.coverImageStepId && (
+                  <span className="absolute bottom-1 right-1 rounded-full bg-black/60 p-0.5">
+                    <PlayCircle className="w-4 h-4 text-white" />
+                  </span>
+                )}
+              </span>
               <span className="flex-1 min-w-0">
                 <span className="block font-semibold text-base leading-snug">{l.title}</span>
                 {l.stepCount === 0 && (

@@ -120,6 +120,13 @@ export const analyticsSubItems: NavItem[] = [
 
 const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory", "/product-hub", "/surveys"];
 const DISPATCH_PATHS = ["/dispatches", "/locations", "/fulfilment", "/case-orders"];
+// Module-level so the top bar's page name can find these pages too.
+const DISPATCH_SUB_ITEMS = [
+  { name: "Dispatches", href: "/dispatches", icon: Truck },
+  { name: "Order Packing Live", href: "/fulfilment", icon: Scan },
+  { name: "Case Orders", href: "/case-orders", icon: Box },
+  { name: "Bin Locations", href: "/locations", icon: MapPin },
+];
 
 type AccountButtonUser = { name?: string; role?: string; avatarUrl?: string | null } | null;
 
@@ -278,12 +285,7 @@ export function NavLinks({
     if (isOnAnalyticsPage) setAnalyticsOpen(true);
   }, [isOnAnalyticsPage]);
 
-  const dispatchSubItems = [
-    { name: "Dispatches", href: "/dispatches", icon: Truck },
-    { name: "Order Packing Live", href: "/fulfilment", icon: Scan },
-    { name: "Case Orders", href: "/case-orders", icon: Box },
-    { name: "Bin Locations", href: "/locations", icon: MapPin },
-  ];
+  const dispatchSubItems = DISPATCH_SUB_ITEMS;
 
   function renderNavGroup(
     key: string, label: string, Icon: NavItem["icon"], subItems: NavItem[],
@@ -743,7 +745,10 @@ export function Layout({ children }: { children: ReactNode }) {
   const productForUser = accountantOnly ? [] : visibleProductItems;
   const inventoryForUser = accountantOnly ? [] : visibleInventoryItems;
 
-  const allNavItems = [...navItems, ...productNavItems, ...inventorySubItems, ...bottomNavItems, { name: "Finance", href: "/finance", icon: Banknote }];
+  // DISPATCH_SUB_ITEMS included so Order Packing Live, Case Orders etc. name
+  // themselves — without them the top bar (and its "Show me how" SOPs)
+  // labelled the packing page "Dashboard" (Graeme, 2026-09-28).
+  const allNavItems = [...navItems, ...productNavItems, ...inventorySubItems, ...DISPATCH_SUB_ITEMS, ...bottomNavItems, { name: "Finance", href: "/finance", icon: Banknote }];
   const currentPageName = location === "/locations"
     ? "Bin Locations"
     : location === "/inventory"
