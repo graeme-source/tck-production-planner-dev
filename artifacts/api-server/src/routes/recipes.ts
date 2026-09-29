@@ -11,6 +11,7 @@ import { generateQrCode } from "../lib/qr-code";
 import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
 import { londonDateString } from "../lib/london-time";
 import { toGrams } from "@workspace/units";
+import { buildDeck } from "../lib/ingredient-deck";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { parseOvenOverride } from "../lib/recipe-oven-override";
 import * as z from "zod";
@@ -1247,23 +1248,6 @@ export function declarationNeedsWrapper(declaration: string): boolean {
 // TICK-driven — with any declaration-vs-ticks mismatch reported so the
 // ingredient data gets fixed rather than silently diverging.
 
-interface DeckEntry {
-  type: "ingredient" | "compound";
-  name: string;
-  declaration: string;
-  percentage: number;
-  allergens: string[];
-  isQuid: boolean;
-  ingredientId?: number;
-  subRecipeId?: number;
-  subIngredients?: Array<{
-    ingredientId: number;
-    name: string;
-    declaration: string;
-    percentage: number;
-    allergens: string[];
-  }>;
-}
 
 router.get("/:id/ingredient-deck", async (req, res) => {
   const parsed = RecipeIdParams.safeParse({ id: req.params.id });
@@ -1475,105 +1459,9 @@ router.get("/:id/ingredient-deck", async (req, res) => {
       });
     }
 
-    const totalWeightG = directItems.reduce((s, i) => s + i.quantityG, 0)
-      + subRecipeGroups.reduce((s, g) => s + g.totalQuantityG, 0);
-
-    const deckEntries: DeckEntry[] = [];
-
-    for (const item of directItems) {
-      const pct = totalWeightG > 0 ? Math.round((item.quantityG / totalWeightG) * 1000) / 10 : 0;
-      const declaration = item.labelDeclaration || item.name;
-      const bolded = boldAllergens(declaration);
-
-      deckEntries.push({
-        type: "ingredient",
-        name: item.name,
-        declaration: item.isQuid ? `${bolded} (${pct}%)` : bolded,
-        percentage: pct,
-        allergens: item.allergens.map(a => ALLERGEN_DISPLAY[a] || a),
-        isQuid: item.isQuid,
-        ingredientId: item.ingredientId,
-      });
-    }
-
-    for (const group of subRecipeGroups) {
-      const pct = totalWeightG > 0 ? Math.round((group.totalQuantityG / totalWeightG) * 1000) / 10 : 0;
-
-      if (pct >= 25) {
-        const sortedSubIngs = [...group.ingredients].sort((a, b) => b.quantityG - a.quantityG);
-        const subIngTotalG = sortedSubIngs.reduce((s, i) => s + i.quantityG, 0);
-
-        const subIngEntries = sortedSubIngs.map(si => {
-          const siPct = subIngTotalG > 0 ? Math.round((si.quantityG / subIngTotalG) * 1000) / 10 : 0;
-          const dec = si.labelDeclaration || si.name;
-          return {
-            ingredientId: si.ingredientId,
-            name: si.name,
-            declaration: boldAllergens(dec),
-            percentage: siPct,
-            allergens: si.allergens.map(a => ALLERGEN_DISPLAY[a] || a),
-          };
-        });
-
-        const compoundName = group.labelDeclaration || group.name;
-        const allGroupAllergens = group.ingredients.flatMap(i => i.allergens);
-        const boldedName = boldAllergens(compoundName);
-        const subDeclarations = subIngEntries.map(s => s.declaration).join(", ");
-        const compoundDeclaration = group.isQuid
-          ? `${boldedName} (${pct}%) (${subDeclarations})`
-          : `${boldedName} (${subDeclarations})`;
-
-        deckEntries.push({
-          type: "compound",
-          name: group.name,
-          declaration: compoundDeclaration,
-          percentage: pct,
-          allergens: [...new Set(allGroupAllergens)].map(a => ALLERGEN_DISPLAY[a] || a),
-          isQuid: group.isQuid,
-          subRecipeId: group.subRecipeId,
-          subIngredients: subIngEntries,
-        });
-      } else {
-        for (const si of group.ingredients) {
-          const siGlobalPct = totalWeightG > 0 ? Math.round((si.quantityG / totalWeightG) * 1000) / 10 : 0;
-          const dec = si.labelDeclaration || si.name;
-          const bolded = boldAllergens(dec);
-
-          const existingIdx = deckEntries.findIndex(
-            e => e.type === "ingredient" && e.ingredientId === si.ingredientId
-          );
-          if (existingIdx >= 0) {
-            const existing = deckEntries[existingIdx];
-            const combinedQtyG = (existing.percentage / 100 * totalWeightG) + si.quantityG;
-            const combinedPct = totalWeightG > 0 ? Math.round((combinedQtyG / totalWeightG) * 1000) / 10 : 0;
-            existing.percentage = combinedPct;
-            const mergedAllergens = [...new Set([...existing.allergens, ...si.allergens.map(a => ALLERGEN_DISPLAY[a] || a)])];
-            existing.allergens = mergedAllergens;
-            existing.declaration = existing.isQuid
-              ? `${bolded} (${combinedPct}%)`
-              : bolded;
-          } else {
-            deckEntries.push({
-              type: "ingredient",
-              name: si.name,
-              declaration: bolded,
-              percentage: siGlobalPct,
-              allergens: si.allergens.map(a => ALLERGEN_DISPLAY[a] || a),
-              isQuid: false,
-              ingredientId: si.ingredientId,
-            });
-          }
-        }
-      }
-    }
-
-    const aboveThreshold = deckEntries
-      .filter(e => e.percentage >= 2)
-      .sort((a, b) => b.percentage - a.percentage);
-    const belowThreshold = deckEntries
-      .filter(e => e.percentage < 2)
-      .sort((a, b) => b.percentage - a.percentage);
-    const sortedEntries = [...aboveThreshold, ...belowThreshold];
+    // Assembly rules (compound threshold, combining entries that print the
+    // same, ordering, QUID) live in lib/ingredient-deck.ts with their tests.
+    const { entries: sortedEntries, deckText } = buildDeck(directItems, subRecipeGroups);
 
     const allAllergens = [...new Set([
       ...directItems.flatMap(i => i.allergens),
@@ -1597,8 +1485,6 @@ router.get("/:id/ingredient-deck", async (req, res) => {
     for (const i of directItems) checkMismatch(i.ingredientId, i.name, i.labelDeclaration, i.allergens);
     for (const g of subRecipeGroups) for (const si of g.ingredients) checkMismatch(si.ingredientId, si.name, si.labelDeclaration, si.allergens);
     const allergenMismatches = [...mismatchById.values()];
-
-    const deckText = sortedEntries.map(d => d.declaration).join(", ") + ".";
 
     const missingDeclarations = [
       ...directItems.filter(i => !i.labelDeclaration).map(i => i.name),
