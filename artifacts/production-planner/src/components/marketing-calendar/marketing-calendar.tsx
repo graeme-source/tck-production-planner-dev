@@ -6,10 +6,11 @@
  * planned far enough ahead (Black Friday can be planned in September).
  */
 import { useMemo, useState } from "react";
+import { Link } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import { format, parseISO, formatDistanceToNowStrict } from "date-fns";
 import {
-  CalendarDays, ChevronLeft, ChevronRight, GanttChartSquare, Loader2, Lock, Megaphone, Plus, Sparkles, X, AlertTriangle,
+  CalendarDays, ChevronLeft, ChevronRight, GanttChartSquare, Loader2, Lock, Megaphone, Package, Plus, Sparkles, X, AlertTriangle,
 } from "lucide-react";
 import {
   addDays, addMonths, formatRange, monthGridWeeks, monthStart, overlaps, timelineRange, type DragMode, type TimelineZoom,
@@ -75,6 +76,9 @@ export function MarketingCalendar({ gapWeeks = [] }: { gapWeeks?: string[] }) {
           <Megaphone className="w-5 h-5 text-primary" /> Marketing calendar
         </h2>
         <div className="flex items-center gap-2 flex-wrap">
+          <Link href="/test-boxes" className="px-3.5 py-2 rounded-xl border-2 border-rose-500/40 text-rose-700 dark:text-rose-300 text-sm font-semibold flex items-center gap-1.5 hover:bg-rose-500/10">
+            <Package className="w-4 h-4" /> Test boxes
+          </Link>
           <button onClick={() => setOpen({ id: null, newOn: today >= anchor && today < monthEnd ? today : anchor })}
             className="px-3.5 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center gap-1.5 hover:bg-primary/90">
             <Plus className="w-4 h-4" /> Add event

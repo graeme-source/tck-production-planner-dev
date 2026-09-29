@@ -54,6 +54,7 @@ import FounderView from "@/pages/founder";
 import FounderPnL from "@/pages/founder-pnl";
 import FounderFocus from "@/pages/founder-focus";
 import FounderSales from "@/pages/founder-sales";
+import TestBoxesPage from "@/pages/test-boxes";
 import FounderContracts from "@/pages/founder-contracts";
 import FounderFixQueue from "@/pages/founder-fix-queue";
 import DocumentViewer from "@/pages/document-viewer";
@@ -216,6 +217,9 @@ function Router() {
               <Route path="/founder/pnl" component={FounderPnL} />
               <Route path="/founder/focus" component={FounderFocus} />
               <Route path="/founder/sales" component={FounderSales} />
+              {/* Test boxes — reached from Sales & Marketing; same access. */}
+              <Route path="/test-boxes" component={TestBoxesPage} />
+              <Route path="/test-boxes/:id" component={TestBoxesPage} />
               <Route path="/founder/contracts" component={FounderContracts} />
               <Route path="/founder/fix-queue" component={FounderFixQueue} />
               <Route path="/reports">{() => <ProtectedRoute component={Reports} pageKey="/reports" />}</Route>

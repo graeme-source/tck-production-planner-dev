@@ -285,6 +285,8 @@ export function EventModal({ eventId, newOn, onClose }: {
                 onBlur={() => void fields.flush()}
                 placeholder="e.g. Black Friday"
                 autoFocus={id == null}
+                disabled={isTestBox}
+                title={isTestBox ? "Named after the test box — rename it there" : undefined}
                 maxLength={160}
                 className="w-full px-4 py-3 rounded-xl border-2 border-border bg-background text-lg font-semibold focus:outline-none focus:border-primary"
               />
