@@ -53,6 +53,7 @@
     "@workspace/api-client-react": "workspace:*",
     "@workspace/business-days": "workspace:*",
     "@workspace/feature-registry": "workspace:*",
+    "@workspace/marketing-calendar": "workspace:*",
     "@workspace/production-schedule": "workspace:*",
     "@workspace/stock-prediction": "workspace:*",
     "class-variance-authority": "catalog:",
