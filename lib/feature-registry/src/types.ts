@@ -35,4 +35,10 @@ export type FeatureDef = {
    * their fallback when no row exists.
    */
   minRole: Role;
+  /**
+   * The founder's own features (The Business). No role opens these — not
+   * even admin: only the founder account, or a grant the founder made.
+   * Only the founder can grant them. See founder.ts.
+   */
+  founderOnly?: boolean;
 };

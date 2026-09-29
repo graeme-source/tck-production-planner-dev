@@ -1,14 +1,7 @@
 /**
  * The founder's account — the one identity some decisions belong to alone
- * (an admin is not the founder). Pure, no I/O, so rules that depend on it
- * can be unit-tested; middleware/founder-access.ts re-exports it.
+ * (an admin is not the founder). The value and the exact-match rule now
+ * live in @workspace/feature-registry (founder.ts) so the screen uses the
+ * very same check; this file keeps the old import path working.
  */
-export const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
-
-/** EXACT match, like requireFounder. The email index is case-sensitive and
- *  admins can edit emails, so a case-insensitive check would let an admin
- *  give another account "GRAEME@…" and pass as the founder. A missing email
- *  is never the founder. */
-export function isFounderEmail(email: string | null | undefined): boolean {
-  return email === FOUNDER_EMAIL;
-}
+export { FOUNDER_EMAIL, isFounderEmail } from "@workspace/feature-registry";

@@ -1,6 +1,6 @@
 import { db, appFeaturesTable, appSettingsTable, featureGrantsTable, trainingMatrixItemsTable, trainingRecordsTable, usersTable } from "@workspace/db";
 import { and, eq, inArray } from "drizzle-orm";
-import { decideAccess, featureByKey, pageFeatureMap, type Role } from "@workspace/feature-registry";
+import { decideAccess, decideFounderFeatureAccess, featureByKey, pageFeatureMap, type Role } from "@workspace/feature-registry";
 import { getPageMinRoles } from "./page-access";
 
 // Feature-grant access checks (schema: lib/db/src/schema/features.ts).
@@ -77,9 +77,16 @@ export async function userHasFeature(userId: number, featureKey: string): Promis
  * (page_permissions) so an admin editing it there changes this too.
  */
 export async function userCan(userId: number | null | undefined, userRole: string, featureKey: string): Promise<boolean> {
+  const def = featureByKey(featureKey);
+  // The Business's features: founder or a grant only — admin is no shortcut.
+  if (def?.founderOnly) {
+    if (!userId) return false;
+    const [u] = await db.select({ email: usersTable.email, isActive: usersTable.isActive }).from(usersTable).where(eq(usersTable.id, userId));
+    if (!u || u.isActive === false) return false;
+    return decideFounderFeatureAccess({ email: u.email, grantedKeys: await allowedFeatureKeys(userId), featureKey });
+  }
   if (userRole === "admin") return true;
 
-  const def = featureByKey(featureKey);
   let baselineMinRole: Role | undefined;
   if (def?.kind === "page" && def.page) {
     baselineMinRole = (await getPageMinRoles()).get(def.page);
