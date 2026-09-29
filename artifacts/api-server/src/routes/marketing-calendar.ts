@@ -14,11 +14,12 @@
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { db, marketingEventsTable, marketingEventHistoryTable, usersTable } from "@workspace/db";
+import { db, marketingEventsTable, marketingEventHistoryTable, testBoxesTable, usersTable } from "@workspace/db";
 import { and, asc, desc, eq, gte, isNull, lte } from "drizzle-orm";
 import {
-  describeDateChange, describeFieldChanges, diffFields, daysBetween, type FieldChange,
+  addDays, describeDateChange, describeFieldChanges, diffFields, daysBetween, type FieldChange,
 } from "@workspace/marketing-calendar";
+import { loadBoxRecipes, scheduleForBox, syncTestBoxEvent, testBoxCalendarInfo } from "../lib/test-box-data";
 import { validate, validateQuery } from "../middleware/validate";
 import { requireFounderArea } from "../middleware/founder-area-access";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
@@ -66,7 +67,17 @@ function eventJson(e: EventRow) {
     updatedBy: e.updatedByName ? { id: e.updatedById, name: e.updatedByName } : null,
     createdAt: e.createdAt.toISOString(),
     updatedAt: e.updatedAt.toISOString(),
+    testBoxId: e.testBoxId,
   };
+}
+
+/** Events as JSON, test-box events carrying their box's name and deadlines. */
+async function eventsJson(rows: EventRow[]) {
+  const info = await testBoxCalendarInfo(rows.map(r => r.testBoxId).filter((x): x is number => x != null));
+  return rows.map(r => ({ ...eventJson(r), testBox: r.testBoxId != null ? info.get(r.testBoxId) ?? null : null }));
+}
+async function oneEventJson(row: EventRow) {
+  return (await eventsJson([row]))[0];
 }
 
 function historyJson(h: typeof marketingEventHistoryTable.$inferSelect) {
@@ -99,7 +110,7 @@ router.get("/events", validateQuery(ListQuery), async (_req: Request, res: Respo
       lte(marketingEventsTable.startDate, to),
     ))
     .orderBy(asc(marketingEventsTable.startDate), asc(marketingEventsTable.id));
-  res.json({ today: londonToday(), events: rows.map(eventJson) });
+  res.json({ today: londonToday(), events: await eventsJson(rows) });
 });
 
 // ── One event + its history ────────────────────────────────────────────────
@@ -115,7 +126,7 @@ router.get("/events/:id", async (req: Request, res: Response) => {
   if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
   const [row] = await db.select().from(marketingEventsTable).where(eq(marketingEventsTable.id, id));
   if (!row) { res.status(404).json({ error: "Event not found" }); return; }
-  res.json({ event: eventJson(row), deleted: row.deletedAt != null, deletedBy: row.deletedByName, history: await loadHistory(id) });
+  res.json({ event: await oneEventJson(row), deleted: row.deletedAt != null, deletedBy: row.deletedByName, history: await loadHistory(id) });
 });
 
 router.get("/events/:id/history", async (req: Request, res: Response) => {
@@ -168,7 +179,7 @@ router.post("/events", validate(CreateBody), async (req: Request, res: Response)
     });
     return created;
   });
-  res.status(201).json({ event: eventJson(row) });
+  res.status(201).json({ event: await oneEventJson(row) });
 });
 
 // ── Edit fields (autosave from the event modal) ────────────────────────────
@@ -255,7 +266,7 @@ router.patch("/events/:id", validate(PatchBody), async (req: Request, res: Respo
 
   if (result.status === 404) { res.status(404).json({ error: "Event not found (it may have been deleted)" }); return; }
   if (result.status === 409) { res.status(409).json({ error: result.error }); return; }
-  res.json({ event: eventJson(result.row) });
+  res.json({ event: await oneEventJson(result.row) });
 });
 
 // ── Move / resize (drag on the calendar) ───────────────────────────────────
@@ -271,6 +282,23 @@ router.put("/events/:id/dates", validate(DatesBody), async (req: Request, res: R
   const result = await db.transaction(async (tx) => {
     const [before] = await tx.select().from(marketingEventsTable).where(eq(marketingEventsTable.id, id)).for("update");
     if (!before || before.deletedAt) return { status: 404 as const };
+    if (before.testBoxId != null) {
+      // A test box's event is dragged as a whole: its delivery date (the
+      // event's end) moves by the same number of days and every deadline
+      // follows. The box keeps the calendar in step (syncTestBoxEvent).
+      const delta = daysBetween(before.endDate, b.endDate);
+      const [box] = await tx.select().from(testBoxesTable).where(eq(testBoxesTable.id, before.testBoxId)).for("update");
+      if (!box || box.deletedAt) return { status: 404 as const };
+      if (delta === 0) return { status: 200 as const, row: before };
+      const [moved] = await tx.update(testBoxesTable).set({
+        deliveryDate: addDays(box.deliveryDate, delta),
+        updatedById: user.id, updatedByName: user.name, updatedAt: new Date(),
+      }).where(eq(testBoxesTable.id, box.id)).returning();
+      const recipes = (await loadBoxRecipes(tx, [box.id])).get(box.id) ?? [];
+      await syncTestBoxEvent(tx, moved, await scheduleForBox(tx, moved, recipes), user);
+      const [after] = await tx.select().from(marketingEventsTable).where(eq(marketingEventsTable.id, id));
+      return { status: 200 as const, row: after };
+    }
     const change = describeDateChange(before, b);
     if (!change) return { status: 200 as const, row: before };
     const [after] = await tx.update(marketingEventsTable).set({
@@ -284,7 +312,7 @@ router.put("/events/:id/dates", validate(DatesBody), async (req: Request, res: R
     return { status: 200 as const, row: after };
   });
   if (result.status === 404) { res.status(404).json({ error: "Event not found (it may have been deleted)" }); return; }
-  res.json({ event: eventJson(result.row) });
+  res.json({ event: await oneEventJson(result.row) });
 });
 
 // ── Delete (soft — the row and its history stay) ───────────────────────────
@@ -295,6 +323,7 @@ router.delete("/events/:id", async (req: Request, res: Response) => {
   const result = await db.transaction(async (tx) => {
     const [before] = await tx.select().from(marketingEventsTable).where(eq(marketingEventsTable.id, id)).for("update");
     if (!before || before.deletedAt) return 404;
+    if (before.testBoxId != null) return 409;
     await tx.update(marketingEventsTable).set({
       deletedAt: new Date(), deletedById: user.id, deletedByName: user.name,
       updatedById: user.id, updatedByName: user.name, updatedAt: new Date(),
@@ -305,6 +334,7 @@ router.delete("/events/:id", async (req: Request, res: Response) => {
     return 200;
   });
   if (result === 404) { res.status(404).json({ error: "Event not found (it may already have been deleted)" }); return; }
+  if (result === 409) { res.status(409).json({ error: "This is a test box's event — delete or cancel the test box instead." }); return; }
   res.json({ ok: true });
 });
 
