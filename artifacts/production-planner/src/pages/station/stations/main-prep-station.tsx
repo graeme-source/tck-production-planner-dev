@@ -16,7 +16,7 @@ import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { useAuth } from "@/contexts/auth-context";
 import { BreakTracker } from "../shared/break-tracker";
-import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftBlocked, StockCheckStatusPanel, nativeToPackCount, packsToNative, packNoun, packDescriptor, packsWeightHint, packSizeHint } from "../shared/prep-helpers";
+import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtPrepQty, toastDraftBlocked, StockCheckStatusPanel, nativeToPackCount, packsToNative, packNoun, packDescriptor, packsWeightHint, packSizeHint } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
 import { DeferredPrepBanner } from "../shared/deferred-prep-banner";
 import { PrepSubNav } from "./prep-hub";
@@ -1031,7 +1031,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                                 <span className={cn(liDone && "line-through")}>{li.ingredientName}</span>
                               </span>
                               <span className={cn("tabular-nums font-medium", liDone ? "text-emerald-600 dark:text-emerald-400" : "text-foreground")}>
-                                {fmtQty(li.totalQty, li.unit)}
+                                {fmtPrepQty(li.totalQty, li.unit)}
                               </span>
                             </div>
                           );
@@ -1098,7 +1098,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                             )}
                           </div>
                           <p className="text-base text-muted-foreground mt-0.5">
-                            <span className="font-semibold text-foreground">{fmtQty(ing.totalQty, ing.unit)}</span>
+                            <span className="font-semibold text-foreground">{fmtPrepQty(ing.totalQty, ing.unit)}</span>
                             {ing.isBottle && ing.bottlesNeeded
                               ? ` total · ${ing.bottlesNeeded} bottle${ing.bottlesNeeded === 1 ? "" : "s"} needed`
                               : ` total · ${status.completedTinCount}/${status.totalTinCount} tins done`
@@ -1200,7 +1200,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                                   </span>
                                 </span>
                                 <span className={cn("text-lg font-bold tabular-nums flex-shrink-0", liDone ? "text-emerald-600 dark:text-emerald-400" : "text-foreground")}>
-                                  {fmtQty(li.totalQty, li.unit)}
+                                  {fmtPrepQty(li.totalQty, li.unit)}
                                 </span>
                               </button>
                             );
@@ -1229,7 +1229,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                                 </p>
                               </div>
                               <span className="text-sm text-muted-foreground tabular-nums ml-2 flex-shrink-0">
-                                {fmtQty(ing.totalQty, ing.unit)}
+                                {fmtPrepQty(ing.totalQty, ing.unit)}
                               </span>
                             </div>
 
@@ -1241,10 +1241,10 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                                 {ing.bottlesNeeded}
                               </p>
                               <p className="text-sm text-amber-600 dark:text-amber-400 mb-1">
-                                bottle{ing.bottlesNeeded === 1 ? "" : "s"} × {fmtQty(ing.bottleSize ?? 0, ing.unit)} each
+                                bottle{ing.bottlesNeeded === 1 ? "" : "s"} × {fmtPrepQty(ing.bottleSize ?? 0, ing.unit)} each
                               </p>
                               <p className="text-xs text-muted-foreground">
-                                {fmtQty(ing.totalQty, ing.unit)} total needed
+                                {fmtPrepQty(ing.totalQty, ing.unit)} total needed
                               </p>
                             </div>
 
@@ -1312,7 +1312,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                               </div>
                               <div className="flex items-center gap-2 flex-shrink-0 ml-2">
                                 <span className="text-sm text-muted-foreground tabular-nums">
-                                  {fmtQty(recipe.qtyForRecipe, ing.unit)}
+                                  {fmtPrepQty(recipe.qtyForRecipe, ing.unit)}
                                 </span>
                                 {isEditingTins ? (
                                   <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
@@ -1431,7 +1431,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                                           : deferred ? "text-amber-700 dark:text-amber-300"
                                           : "text-foreground"
                                       )}>
-                                        {fmtQty(recipe.qtyPerTin, ing.unit)}
+                                        {fmtPrepQty(recipe.qtyPerTin, ing.unit)}
                                       </span>
                                       {done && completion && (
                                         <span className="text-xs text-emerald-600 dark:text-emerald-400 mt-1 leading-tight text-center">

@@ -4,7 +4,7 @@ import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
-import { fmtQty } from "./prep-helpers";
+import { fmtPrepQty } from "./prep-helpers";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // DeferredPrepBanner
@@ -232,7 +232,7 @@ export function DeferredPrepBanner({
                         </div>
                         {item.qtyPerTin != null && item.itemUnit ? (
                           <span className="text-3xl font-bold tabular-nums text-foreground">
-                            {fmtQty(item.qtyPerTin, item.itemUnit)}
+                            {fmtPrepQty(item.qtyPerTin, item.itemUnit)}
                           </span>
                         ) : (
                           <span className="text-base font-medium text-muted-foreground italic">

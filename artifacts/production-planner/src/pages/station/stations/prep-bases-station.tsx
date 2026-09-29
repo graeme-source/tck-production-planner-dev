@@ -1,6 +1,6 @@
 import { formatBatches } from "../shared/format-batches";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { toGrams } from "@workspace/units";
+import { toGrams, formatPrepWeight, packsToOpen } from "@workspace/units";
 import {
   useListSubRecipes,
   useGetSubRecipe,
@@ -17,7 +17,7 @@ import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { BreakTracker } from "../shared/break-tracker";
-import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtQty, toastDraftBlocked, StockCheckStatusPanel } from "../shared/prep-helpers";
+import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtPrepQty, toastDraftBlocked, StockCheckStatusPanel } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
 import { PrepSubNav } from "./prep-hub";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
@@ -52,11 +52,10 @@ interface SubRecipePlanRequirement {
   }>;
 }
 
+// The prep room weighs everything: grams (whole) / kg, never litres
+// (@workspace/units formatPrepWeight — Graeme, 2026-09-29).
 function fmtScaledQty(qty: number, unit: string, batches: number): string {
-  const scaled = qty * batches;
-  if (unit === "g" && scaled >= 1000) return `${(scaled / 1000).toFixed(3)} kg`;
-  if (unit === "ml" && scaled >= 1000) return `${(scaled / 1000).toFixed(3)} l`;
-  return `${scaled % 1 === 0 ? scaled : scaled.toFixed(3)} ${unit}`;
+  return formatPrepWeight(qty * batches, unit);
 }
 
 function ScaledIngredientChecklist({
@@ -128,11 +127,12 @@ function ScaledIngredientChecklist({
             </span>
             <div className="text-right flex-shrink-0">
               {item.packWeight && item.packWeight > 0 && (() => {
-                const scaledQty = item.qty * batches;
-                // Convert to same unit as packWeight (g) for comparison —
-                // via @workspace/units so litre lines aren't read as grams.
-                const scaledG = toGrams(scaledQty, item.unit);
-                const packs = Math.ceil(scaledG / item.packWeight);
+                // Amount and pack size are both in the ingredient's own unit
+                // (kg, l, g) — packsToOpen compares like with like. Converting
+                // the amount to grams first read 3.714 kg of mayo from a 10 kg
+                // tub as "372 packs" (2026-09-29).
+                const packs = packsToOpen(item.qty * batches, item.packWeight);
+                if (packs == null) return null;
                 return (
                   <span className={cn("text-sm tabular-nums block", isDone ? "text-emerald-600/70 dark:text-emerald-400/70" : "text-muted-foreground")}>
                     {packs} {packs === 1 ? "pack" : "packs"}
@@ -338,7 +338,7 @@ export function SubRecipeMakeFlow({
           <p className="text-muted-foreground mt-1">
             {state.batches === 0
               ? "Existing stock covered today's requirement — nothing made."
-              : `${state.batches} mix${state.batches !== 1 ? "es" : ""} made · ${(yieldPerBatch * state.batches).toFixed(3)} ${sr?.yieldUnit} ready`}
+              : `${state.batches} mix${state.batches !== 1 ? "es" : ""} made · ${formatPrepWeight(yieldPerBatch * state.batches, sr?.yieldUnit)} ready`}
           </p>
         </div>
         <div className="flex gap-3">
@@ -365,7 +365,7 @@ export function SubRecipeMakeFlow({
           <div className="flex-1">
             <h3 className="font-bold text-xl">{sr?.subRecipeName}</h3>
             <p className="text-base text-muted-foreground">
-              {state.batches} mix{state.batches !== 1 ? "es" : ""} · Total yield: {(yieldPerBatch * state.batches).toFixed(3)} {sr?.yieldUnit}
+              {state.batches} mix{state.batches !== 1 ? "es" : ""} · Total yield: {formatPrepWeight(yieldPerBatch * state.batches, sr?.yieldUnit)}
             </p>
           </div>
           <div className={cn(
@@ -430,11 +430,11 @@ export function SubRecipeMakeFlow({
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-secondary/30 rounded-xl px-4 py-3">
               <p className="text-sm text-muted-foreground mb-1">Required by plan</p>
-              <p className="text-2xl font-bold tabular-nums">{sr.totalRequired.toFixed(3)} <span className="text-base font-medium text-muted-foreground">{sr.yieldUnit}</span></p>
+              <p className="text-2xl font-bold tabular-nums">{formatPrepWeight(sr.totalRequired, sr.yieldUnit)}</p>
             </div>
             <div className="bg-secondary/30 rounded-xl px-4 py-3">
               <p className="text-sm text-muted-foreground mb-1">Yield per mix</p>
-              <p className="text-2xl font-bold tabular-nums">{yieldPerBatch.toFixed(3)} <span className="text-base font-medium text-muted-foreground">{sr.yieldUnit}</span></p>
+              <p className="text-2xl font-bold tabular-nums">{formatPrepWeight(yieldPerBatch, sr.yieldUnit)}</p>
             </div>
           </div>
 
@@ -463,7 +463,7 @@ export function SubRecipeMakeFlow({
                   : "bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800"
               )}>
                 <span className="text-base font-medium">Net needed</span>
-                <span className="text-xl font-bold tabular-nums">{net.toFixed(3)} {sr.yieldUnit}</span>
+                <span className="text-xl font-bold tabular-nums">{formatPrepWeight(net, sr.yieldUnit)}</span>
               </div>
               {batchCount !== null && (
                 <div className={cn(
@@ -529,7 +529,7 @@ export function SubRecipeMakeFlow({
         <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
           <div className="bg-secondary/30 rounded-xl px-4 py-3">
             <p className="text-sm text-muted-foreground mb-1">Yield per mix</p>
-            <p className="text-xl font-bold tabular-nums">{yieldPerBatch.toFixed(3)} {sr.yieldUnit}</p>
+            <p className="text-xl font-bold tabular-nums">{formatPrepWeight(yieldPerBatch, sr.yieldUnit)}</p>
           </div>
 
           <div>
@@ -588,7 +588,7 @@ export function SubRecipeMakeFlow({
             )}
 
             <div className="mt-3 bg-primary/10 rounded-xl px-4 py-2.5">
-              <p className="text-base font-semibold text-primary">Total yield: {totalYield.toFixed(3)} {sr.yieldUnit}</p>
+              <p className="text-base font-semibold text-primary">Total yield: {formatPrepWeight(totalYield, sr.yieldUnit)}</p>
             </div>
           </div>
 
@@ -677,8 +677,8 @@ export function SubRecipeMakeFlow({
                     {isDone
                       ? "✓ Completed today"
                       : <>
-                          {sr.yield.toFixed(3)} {sr.yieldUnit} per mix
-                          {mode === "plan" && sr.totalRequired > 0 && ` · ${sr.totalRequired.toFixed(3)} ${sr.yieldUnit} required`}
+                          {formatPrepWeight(sr.yield, sr.yieldUnit)} per mix
+                          {mode === "plan" && sr.totalRequired > 0 && ` · ${formatPrepWeight(sr.totalRequired, sr.yieldUnit)} required`}
                         </>}
                   </p>
                   {onOpenSop && (
@@ -1206,7 +1206,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                             <span>{li.ingredientName}</span>
                           </span>
                           <span className="tabular-nums font-medium text-foreground">
-                            {fmtQty(li.totalQty, li.unit)}
+                            {fmtPrepQty(li.totalQty, li.unit)}
                           </span>
                         </div>
                       ))}
@@ -1304,7 +1304,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                       </h3>
                     </div>
                     <p className="text-base text-muted-foreground mt-0.5">
-                      <span className="font-semibold text-foreground">{fmtQty(ing.totalQty, ing.unit)}</span>
+                      <span className="font-semibold text-foreground">{fmtPrepQty(ing.totalQty, ing.unit)}</span>
                       {" total · "}{status.completedTinCount}/{status.totalTinCount} tins done
                     </p>
                     {isShared && (
@@ -1379,7 +1379,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                           </p>
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                          <span className="text-sm text-muted-foreground tabular-nums">{fmtQty(recipe.qtyForRecipe, ing.unit)}</span>
+                          <span className="text-sm text-muted-foreground tabular-nums">{fmtPrepQty(recipe.qtyForRecipe, ing.unit)}</span>
                           {isEditingTins ? (
                             <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                               <input
@@ -1469,7 +1469,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                                 <span className="text-base font-bold">Tin {tn}{recipe.tinSize ? ` (${recipe.tinSize})` : ""}</span>
                               </div>
                               <span className={cn("text-xl font-bold tabular-nums", done ? "text-yellow-700 dark:text-yellow-300" : "text-foreground")}>
-                                {fmtQty(recipe.qtyPerTin, ing.unit)}
+                                {fmtPrepQty(recipe.qtyPerTin, ing.unit)}
                               </span>
                               {/* Linked ingredient per-tin amount */}
                               {(linkedItems[ing.ingredientId] ?? []).map((li, liIdx) => {
@@ -1477,7 +1477,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                                 if (!liRecipe) return null;
                                 return (
                                   <span key={liIdx} className="text-sm text-yellow-600 dark:text-yellow-400 mt-1 font-medium">
-                                    + {fmtQty(liRecipe.qtyPerTin, li.unit)} {li.ingredientName}
+                                    + {fmtPrepQty(liRecipe.qtyPerTin, li.unit)} {li.ingredientName}
                                   </span>
                                 );
                               })}

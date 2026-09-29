@@ -1,4 +1,5 @@
 import { formatBatches } from "../shared/format-batches";
+import { formatPrepWeight } from "@workspace/units";
 import React from "react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
@@ -470,7 +471,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                 <div>
                   <p className="text-base font-semibold tabular-nums">{selTotalRawKg.toFixed(3)} kg raw meat</p>
                   {selTotalMarinadeG > 0 && (
-                    <p className="text-sm text-muted-foreground">+ {selTotalMarinadeG >= 1000 ? `${(selTotalMarinadeG / 1000).toFixed(3)} kg` : `${selTotalMarinadeG}g`} linked</p>
+                    <p className="text-sm text-muted-foreground">+ {formatPrepWeight(selTotalMarinadeG, "g")} linked</p>
                   )}
                   {selRawMeat.length > 1 && <p className="text-sm text-rose-600 dark:text-rose-400 font-medium mt-0.5">across {selRawMeat.length} meat types</p>}
                 </div>
@@ -492,7 +493,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                     <div className="text-center">
                       <p className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-1">Linked</p>
                       <p className="text-3xl font-bold font-display tabular-nums text-orange-500">
-                        {selTotalMarinadeG >= 1000 ? `${(selTotalMarinadeG / 1000).toFixed(3)}` : selTotalMarinadeG}
+                        {selTotalMarinadeG >= 1000 ? `${(Math.round(selTotalMarinadeG) / 1000).toFixed(3)}` : Math.round(selTotalMarinadeG)}
                         <span className="text-xl font-normal ml-1 text-muted-foreground">{selTotalMarinadeG >= 1000 ? "kg" : "g"}</span>
                       </p>
                     </div>
@@ -683,7 +684,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                             )}
                           </span>
                           <span className="text-right text-amber-800/80 dark:text-amber-300/80">
-                            goes in at cooking tomorrow · {(m.totalGrams / 1000).toFixed(2)}kg (counted in trays)
+                            goes in at cooking tomorrow · {formatPrepWeight(m.totalGrams, "g")} (counted in trays)
                           </span>
                         </div>
                       );

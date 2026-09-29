@@ -5,7 +5,7 @@ import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import type { PrepRequirementItem } from "@workspace/api-client-react";
-import { packNoun, formatPackSize } from "@workspace/units";
+import { packNoun, formatPackSize, formatPrepWeight } from "@workspace/units";
 
 export function fmtQty(q: number | string, unit: string): string {
   // Defensive coercion: pgNumeric columns come back as strings ("2.2700"),
@@ -31,6 +31,11 @@ export function fmtQty(q: number | string, unit: string): string {
   }
   return `${safe % 1 === 0 ? safe : safe.toFixed(2)} ${unit}`;
 }
+
+/** Amounts the prep room WEIGHS: grams under 1 kg, kg above, litres converted
+ *  at 1 g/ml — never litres (Graeme, 2026-09-29). fmtQty stays for stock
+ *  counts and orders, where bottles/litres are how things are bought. */
+export const fmtPrepQty = formatPrepWeight;
 
 export const toKg = (qty: number, unit: string): number =>
   unit === "g" ? qty / 1000 : unit === "mg" ? qty / 1_000_000 : qty;
@@ -205,12 +210,12 @@ export function PrepIngredientTable({ items }: { items: PrepRequirementItem[] })
                 </td>
                 <td className="py-3 px-4 text-muted-foreground text-xs">{item.recipes.join(", ")}</td>
                 <td className="py-3 px-4 text-right tabular-nums font-bold text-base">
-                  {fmtQty(prepQty, item.unit)}
+                  {fmtPrepQty(prepQty, item.unit)}
                 </td>
                 <td className="py-3 px-4 text-right tabular-nums text-muted-foreground text-xs">
                   {hasProcLoss ? (
                     <>
-                      {fmtQty(refQty, item.unit)} {refLabel}
+                      {fmtPrepQty(refQty, item.unit)} {refLabel}
                       <span className="ml-1">({((item.processingRatio ?? 1) * 100).toFixed(0)}%)</span>
                     </>
                   ) : (
