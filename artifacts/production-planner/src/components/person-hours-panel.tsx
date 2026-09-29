@@ -57,7 +57,7 @@ function ContractLine({ contract, canContracts }: { contract: ContractedHours; c
       <p className="text-sm text-muted-foreground">
         {canContracts ? (
           <>Issue them a contract from the{" "}
-            <Link href="/founder/contracts" className="font-bold text-primary underline">contract issuer</Link>
+            <Link href="/people/contracts" className="font-bold text-primary underline">contract issuer</Link>
             {" "}(it states weekly hours), or set a contract rule on their Planday profile.</>
         ) : (
           <>Set a contract rule on their Planday profile, or ask Graeme to issue a contract with their weekly hours.</>

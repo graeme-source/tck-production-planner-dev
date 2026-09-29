@@ -1,5 +1,6 @@
 import React from "react";
-import { Switch, Route, Router as WouterRouter, Redirect, useLocation } from "wouter";
+import { Switch, Route, Router as WouterRouter, Redirect, useLocation, useSearch } from "wouter";
+import { useFounderArea } from "@/hooks/use-founder-area";
 import { QueryClient, QueryClientProvider, MutationCache, QueryCache } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -146,6 +147,19 @@ function HomeRoute() {
   return <Dashboard />;
 }
 
+// /founder → the first Business tab this person may open, or home if none.
+function FounderHome() {
+  const { ready, home } = useFounderArea();
+  if (!ready) return null;
+  return <Redirect to={home ?? "/"} />;
+}
+
+// For moved pages: send old links to the new address, keeping ?query.
+function RedirectKeepingQuery({ to }: { to: string }) {
+  const search = useSearch();
+  return <Redirect to={search ? `${to}?${search}` : to} replace />;
+}
+
 function Router() {
   return (
     <Switch>
@@ -205,19 +219,23 @@ function Router() {
               <Route path="/stock-control" component={StockControl} />
               <Route path="/product-hub" component={ProductHub} />
               <Route path="/surveys">{() => <ProtectedRoute component={Surveys} pageKey="/surveys" />}</Route>
-              {/* Founder area — a site within a site. The schedule is home:
-                  /founder always lands there, and FounderNav (shared tab
-                  strip on every founder page) covers the side-trips. */}
-              {/* Numbers first: Graeme wants the business's numbers in front of
-                  him the moment he lands, and navigates to the Schedule when he
-                  wants it, not the other way round (2026-09-18). */}
-              <Route path="/founder">{() => <Redirect to="/founder/numbers" />}</Route>
+              {/* The Business — a site within a site; FounderNav (shared tab
+                  strip) covers the side-trips. /founder lands on the first tab
+                  the viewer may open: Numbers for Graeme (he wants the numbers
+                  first, 2026-09-18), Numbers or Sales & Marketing for someone
+                  he has granted them to (2026-09-29). Each page guards itself
+                  and sends anyone else to a tab they can open. */}
+              <Route path="/founder" component={FounderHome} />
               <Route path="/founder/numbers" component={FounderView} />
               <Route path="/founder/pnl" component={FounderPnL} />
               <Route path="/founder/focus" component={FounderFocus} />
               <Route path="/founder/sales" component={FounderSales} />
-              <Route path="/founder/contracts" component={FounderContracts} />
-              <Route path="/founder/fix-queue" component={FounderFixQueue} />
+              {/* Contracts moved into People, Fix queue to its own sidebar line
+                  (2026-09-29). Old links keep working, query string and all
+                  (?fromUploaded= pre-fills a new contract). */}
+              <Route path="/founder/contracts">{() => <RedirectKeepingQuery to="/people/contracts" />}</Route>
+              <Route path="/founder/fix-queue">{() => <RedirectKeepingQuery to="/fix-queue" />}</Route>
+              <Route path="/fix-queue" component={FounderFixQueue} />
               <Route path="/reports">{() => <ProtectedRoute component={Reports} pageKey="/reports" />}</Route>
               {/* Team efficiency KPI — Analytics only for now (Graeme, 2026-09-25). Managers/admins; server-enforced. */}
               <Route path="/analytics/efficiency" component={TeamEfficiencyPage} />
@@ -237,6 +255,10 @@ function Router() {
               {/* People: the list, and each person's record. Same component on
                   both so the People PIN gate stays mounted between them. */}
               <Route path="/people" component={PeopleSection} />
+              {/* Employment contracts & starter forms — founder/HR only (the
+                  page and every /api/contracts route check the account). Must
+                  come before /people/:userId. */}
+              <Route path="/people/contracts" component={FounderContracts} />
               <Route path="/people/:userId" component={PeopleSection} />
               <Route path="/hub" component={EmployeeHub} />
               <Route path="/documents/:id" component={DocumentViewer} />

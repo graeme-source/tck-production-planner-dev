@@ -41,7 +41,7 @@ import {
 import { fmtDay } from "@/lib/people-api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
-// Same account gate as /founder/contracts — only the founder issues.
+// Same account gate as /people/contracts — only the founder issues.
 const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
 
 async function jsonOrThrow<T>(res: Response): Promise<T> {
@@ -479,7 +479,7 @@ function ConfirmNewContract({ row, personName, readError, reading, onReadAgain, 
 
   const go = async () => {
     if (!(await auto.flush())) return;
-    navigate(`/founder/contracts?fromUploaded=${row.id}`);
+    navigate(`/people/contracts?fromUploaded=${row.id}`);
   };
 
   return (

@@ -10,17 +10,16 @@
  * lands in that employee's hub — theirs and the founder's eyes only.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Redirect, useSearch } from "wouter";
+import { Link, Redirect, useSearch } from "wouter";
 import { fromUploadedParam, type UploadedContractRow } from "@/lib/contract-history";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
-import { FounderNav } from "@/components/founder-nav";
 import { toast } from "@/hooks/use-toast";
 import { printContract } from "@/components/contract-print";
 import { ContractPaper } from "@/components/contract-view";
 import {
-  Check, ChevronRight, FileDown, FileSignature, Loader2, Pencil, Printer, Send, Trash2, X, AlertTriangle,
+  Check, ChevronLeft, ChevronRight, FileDown, FileSignature, Loader2, Pencil, Printer, Send, Trash2, X, AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -675,7 +674,11 @@ export default function FounderContracts() {
 
   return (
     <div className="space-y-6 max-w-4xl">
-      <FounderNav />
+      {/* Lives in People since 2026-09-29 (/people/contracts). Still the
+          founder/HR account only — it holds everyone's personal contracts. */}
+      <Link href="/people" className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl border-2 border-border text-base font-semibold hover:bg-secondary/50">
+        <ChevronLeft className="w-5 h-5" /> People
+      </Link>
       <PageHeader
         title="Contracts & Starter Forms"
         description="Your master employment contract, every contract you've issued, and each starter's signed forms. All of it goes person-to-person — visible to them and you only."
