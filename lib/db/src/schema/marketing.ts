@@ -1,6 +1,7 @@
 import { pgTable, serial, text, integer, timestamp, date, jsonb } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { usersTable } from "./users";
+import { testBoxesTable } from "./test_boxes";
 
 // Marketing calendar (migrations 0043 + 0135). Planned together by the
 // founder and the marketing team on the Sales & Marketing page. Column names
@@ -21,6 +22,8 @@ export const marketingEventsTable = pgTable("marketing_events", {
   // idea | planned | live | done
   status: text("status").notNull().default("planned"),
   source: text("source").notNull().default("manual"),
+  // Set on a test box's own event (migration 0136); dates follow the box.
+  testBoxId: integer("test_box_id").references(() => testBoxesTable.id, { onDelete: "set null" }),
   createdById: integer("created_by_id").references(() => usersTable.id, { onDelete: "set null" }),
   createdByName: text("created_by_name"),
   updatedById: integer("updated_by_id").references(() => usersTable.id, { onDelete: "set null" }),
