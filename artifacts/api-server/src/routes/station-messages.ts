@@ -24,8 +24,8 @@ router.use(requireAuth);
 router.get("/", async (req: Request, res: Response) => {
   const station = String(req.query["station"] ?? "");
   if (!station || station.length > 40) { res.status(400).json({ error: "station is required" }); return; }
-  const rows = await db.execute<{ id: number; body: string; created_by_name: string | null; created_at: string; requires_ack: boolean }>(sql`
-    SELECT id, body, created_by_name, created_at, requires_ack FROM station_messages
+  const rows = await db.execute<{ id: number; station_type: string; body: string; created_by_name: string | null; created_at: string; requires_ack: boolean }>(sql`
+    SELECT id, station_type, body, created_by_name, created_at, requires_ack FROM station_messages
     WHERE station_type = ${station}
       AND dismissed_at IS NULL
       AND created_at > NOW() - INTERVAL '48 hours'
@@ -34,43 +34,12 @@ router.get("/", async (req: Request, res: Response) => {
   `);
   res.json({ messages: rows.rows.map(r => ({
     id: Number(r.id),
-    body: r.body,
-    fromName: r.created_by_name,
-    createdAt: r.created_at,
-    requiresAck: Boolean(r.requires_ack),
-  })) });
-});
-
-/**
- * GET /must-confirm — every open must-confirm message, whatever the station.
- *
- * The blocking overlay used to render only on that station's own screen, so a
- * message sent to packing reached nobody who happened to be on the production
- * plans or the dashboard — which is exactly when an urgent one needs to land
- * (Graeme, 2026-09-17).
- *
- * Not filtered to "your" station on purpose: ticking Must be confirmed IS the
- * sender saying "stop what you are doing", and the app cannot reliably tell
- * who is stood at which station. Confirming clears it for everyone, which is
- * the same rule the station banner has always had ("everyone here has seen
- * it"). Ordinary messages are unaffected and stay on their station's screen.
- */
-router.get("/must-confirm", async (_req: Request, res: Response) => {
-  const rows = await db.execute<{ id: number; station_type: string; body: string; created_by_name: string | null; created_at: string }>(sql`
-    SELECT id, station_type, body, created_by_name, created_at FROM station_messages
-    WHERE requires_ack = true
-      AND dismissed_at IS NULL
-      AND created_at > NOW() - INTERVAL '48 hours'
-    ORDER BY created_at ASC
-    LIMIT 10
-  `);
-  res.json({ messages: rows.rows.map(r => ({
-    id: Number(r.id),
+    // So the screen can double-check it's showing its OWN station's messages.
     stationType: r.station_type,
     body: r.body,
     fromName: r.created_by_name,
     createdAt: r.created_at,
-    requiresAck: true,
+    requiresAck: Boolean(r.requires_ack),
   })) });
 });
 

@@ -33,3 +33,22 @@ export function routeStationMessages<T extends RoutableStationMessage>(messages:
     banners,
   };
 }
+
+/** "Must be confirmed" starts ticked — forgetting to tick it should never be
+ *  how an urgent message fails to land (Graeme, 2026-09-29). */
+export const DEFAULT_REQUIRES_ACK = true;
+
+/**
+ * A message is shown ONLY on the screen of the station it was sent to —
+ * must-confirm ones included (Graeme, 2026-09-29).
+ *
+ * Until then a must-confirm message also popped up on every other screen in
+ * the app, and confirming it anywhere cleared it for everyone: Graeme sent
+ * one to wrapping, it popped up on his own Business page, he dismissed it,
+ * and wrapping never saw it. Nothing tells the app which iPad stands at which
+ * station, so the station's own screen is the only place that is reliably
+ * "the station".
+ */
+export function messageShowsOnScreen(targetStation: string, screenStation: string | null | undefined): boolean {
+  return !!screenStation && targetStation === screenStation;
+}

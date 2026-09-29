@@ -4,8 +4,9 @@
  * When a fix that came from someone's issue report goes live, the issue
  * pipeline queues a notice for that reporter (resolve-issue in
  * routes/issue-pipeline-machine.ts). This takes over the screen on whatever
- * page they're on — the same app-wide pattern as the to-do and must-confirm
- * station-message interstitials, mounted beside them in QuickActionsDock.
+ * page they're on — the same app-wide pattern as the to-do interstitial,
+ * mounted beside it in QuickActionsDock. (Must-confirm station messages no
+ * longer go app-wide — they lock only their own station, 2026-09-29.)
  *
  * Two ways out, and both acknowledge (who, when and which is recorded so the
  * Fix queue shows the loop closed):
@@ -18,8 +19,8 @@
  * listing them all, with one button — never a string of separate pop-ups
  * (Graeme, 2026-09-24).
  *
- * Stacking: z-[60], deliberately UNDER the to-do takeover (z-[70]) and the
- * must-confirm station message (z-[300]) — those are work to do now; this is
+ * Stacking: z-[60], deliberately UNDER the to-do takeover (z-[70]) and a
+ * station's must-confirm lock — those are work to do now; this is
  * good news that can wait its turn.
  */
 import { createPortal } from "react-dom";

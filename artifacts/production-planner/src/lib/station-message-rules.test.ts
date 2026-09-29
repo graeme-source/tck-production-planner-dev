@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { routeStationMessages } from "./station-message-rules";
+import { DEFAULT_REQUIRES_ACK, messageShowsOnScreen } from "./station-message-rules";
 
 const msg = (id: number, createdAt: string, requiresAck?: boolean) => ({ id, createdAt, requiresAck });
 
@@ -41,5 +42,19 @@ describe("routeStationMessages", () => {
     expect(routed.blocking).toBeNull();
     expect(routed.blockedQueue).toEqual([]);
     expect(routed.banners).toEqual([]);
+  });
+});
+
+describe("where a station message shows (regression: wrapping message dismissed from the Business page, 2026-09-29)", () => {
+  it("shows only on the station it was sent to", () => {
+    expect(messageShowsOnScreen("wrapping", "wrapping")).toBe(true);
+    expect(messageShowsOnScreen("wrapping", "packing")).toBe(false);
+  });
+  it("never shows on a non-station screen (dashboard, Business page…)", () => {
+    expect(messageShowsOnScreen("wrapping", null)).toBe(false);
+    expect(messageShowsOnScreen("wrapping", undefined)).toBe(false);
+  });
+  it("sends as must-be-confirmed unless the sender switches it off", () => {
+    expect(DEFAULT_REQUIRES_ACK).toBe(true);
   });
 });
