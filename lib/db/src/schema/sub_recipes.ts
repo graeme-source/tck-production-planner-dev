@@ -32,7 +32,7 @@ export const subRecipeIngredientsTable = pgTable("sub_recipe_ingredients", {
   id: serial("id").primaryKey(),
   subRecipeId: integer("sub_recipe_id").notNull().references(() => subRecipesTable.id, { onDelete: "cascade" }),
   ingredientId: integer("ingredient_id").notNull().references(() => ingredientsTable.id, { onDelete: "restrict" }),
-  quantity: numeric("quantity", { precision: 10, scale: 4 }).notNull(),
+  quantity: numeric("quantity", { precision: 14, scale: 6 }).notNull(), // 0.001 g on kg items (migration 0134)
   // When true, this component is kept in the sub-recipe for ratio math
   // but hidden from the prep-station expansion. Used for things like the
   // "absorbed" water in a pasta sub-recipe: we need the quantity to scale
@@ -52,7 +52,7 @@ export const subRecipeSubRecipesTable = pgTable("sub_recipe_sub_recipes", {
   id: serial("id").primaryKey(),
   subRecipeId: integer("sub_recipe_id").notNull().references(() => subRecipesTable.id, { onDelete: "cascade" }),
   componentSubRecipeId: integer("component_sub_recipe_id").notNull().references(() => subRecipesTable.id, { onDelete: "restrict" }),
-  quantity: numeric("quantity", { precision: 10, scale: 4 }).notNull(),
+  quantity: numeric("quantity", { precision: 14, scale: 6 }).notNull(), // 0.001 g on kg items (migration 0134)
   // A nested sub-recipe (a rub) can be a marinade for a meat in the parent
   // sub-recipe — mirrors recipe_sub_recipes.marinade_for_ingredient_id.
   marinadeForIngredientId: integer("marinade_for_ingredient_id").references(() => ingredientsTable.id, { onDelete: "set null" }),

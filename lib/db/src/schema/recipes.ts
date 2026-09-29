@@ -68,7 +68,7 @@ export const recipeIngredientsTable = pgTable("recipe_ingredients", {
   id: serial("id").primaryKey(),
   recipeId: integer("recipe_id").notNull().references(() => recipesTable.id, { onDelete: "cascade" }),
   ingredientId: integer("ingredient_id").notNull().references(() => ingredientsTable.id, { onDelete: "restrict" }),
-  quantity: numeric("quantity", { precision: 10, scale: 4 }).notNull(),
+  quantity: numeric("quantity", { precision: 14, scale: 6 }).notNull(), // 0.001 g on kg items (migration 0134)
   marinadeForIngredientId: integer("marinade_for_ingredient_id").references(() => ingredientsTable.id, { onDelete: "set null" }),
   // Marinade timing: false (default) = added at raw meat prep the day
   // before; true = held back and added at the mixing/cooking station on
@@ -89,7 +89,7 @@ export const recipeSubRecipesTable = pgTable("recipe_sub_recipes", {
   id: serial("id").primaryKey(),
   recipeId: integer("recipe_id").notNull().references(() => recipesTable.id, { onDelete: "cascade" }),
   subRecipeId: integer("sub_recipe_id").notNull().references(() => subRecipesTable.id, { onDelete: "restrict" }),
-  quantity: numeric("quantity", { precision: 10, scale: 4 }).notNull(),
+  quantity: numeric("quantity", { precision: 14, scale: 6 }).notNull(), // 0.001 g on kg items (migration 0134)
   marinadeForIngredientId: integer("marinade_for_ingredient_id").references(() => ingredientsTable.id, { onDelete: "set null" }),
   // Marinade timing: false (default) = added at raw meat prep the day
   // before; true = held back and added at the mixing/cooking station on
