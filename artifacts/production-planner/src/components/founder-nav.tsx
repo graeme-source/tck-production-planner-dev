@@ -4,29 +4,36 @@
  * and sales/marketing is one tap from anywhere, replacing the ad-hoc
  * buttons/cards each page used to carry.
  *
- * Schedule is deliberately first: it's home. /founder redirects there, and
- * every other page is a side-trip you can always step straight back from.
+ * /founder lands on the first tab the viewer may open (Numbers for the
+ * founder). Someone with only one tab gets no strip at all.
  */
 import { Link, useLocation } from "wouter";
-import { Calendar, LineChart, Calculator, Megaphone, FileSignature, Wrench } from "lucide-react";
+import { Calendar, LineChart, Calculator, Megaphone } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useFounderArea } from "@/hooks/use-founder-area";
 
-const TABS = [
-  { href: "/founder/numbers", label: "Numbers", icon: LineChart },
-  { href: "/founder/focus", label: "Schedule", icon: Calendar },
-  { href: "/founder/pnl", label: "P&L", icon: Calculator },
-  { href: "/founder/sales", label: "Sales & Marketing", icon: Megaphone },
-  { href: "/founder/contracts", label: "Contracts", icon: FileSignature },
-  { href: "/founder/fix-queue", label: "Fix queue", icon: Wrench },
-] as const;
+// Tab list and who may open each live in @workspace/feature-registry
+// (FOUNDER_TABS) so the server rule and this strip can't drift. Contracts
+// moved to People (/people/contracts) and Fix queue to its own sidebar line
+// (/fix-queue) on 2026-09-29.
+const ICONS: Record<string, typeof LineChart> = {
+  "/founder/numbers": LineChart,
+  "/founder/focus": Calendar,
+  "/founder/pnl": Calculator,
+  "/founder/sales": Megaphone,
+};
 
 export function FounderNav() {
   const [location] = useLocation();
+  // Only the tabs this person may open — a grantee sees Numbers and/or
+  // Sales & Marketing, never a tab that would bounce them.
+  const { tabs } = useFounderArea();
+  if (tabs.length <= 1) return null;
   return (
     <nav className="flex gap-1.5 p-1.5 rounded-2xl border border-border bg-card/60 backdrop-blur-sm overflow-x-auto">
-      {TABS.map(tab => {
+      {tabs.map(tab => {
         const active = location === tab.href;
-        const Icon = tab.icon;
+        const Icon = ICONS[tab.href] ?? LineChart;
         return (
           <Link
             key={tab.href}

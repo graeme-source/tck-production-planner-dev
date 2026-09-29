@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useAuth } from "@/contexts/auth-context";
+import { useFounderArea } from "@/hooks/use-founder-area";
 import { Redirect } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
@@ -13,7 +13,6 @@ import {
 import { cn } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
-const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
 
 // ── Types (mirror the founder-sales API) ────────────────────────────────────
 interface Pace {
@@ -83,21 +82,22 @@ const shortDate = (iso: string) => format(parseISO(iso), "d MMM");
 
 // ── Page ───────────────────────────────────────────────────────────────────
 export default function FounderSales() {
-  const { state } = useAuth();
+  // The founder, or someone he granted Sales & Marketing (founder.sales).
+  // Connecting/disconnecting Klaviyo stays the founder's (server-enforced).
+  const { ready, canSales, isFounder, home } = useFounderArea();
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery<Pulse>({
     queryKey: ["founder-sales-pulse"],
     queryFn: () => api("/pulse"),
-    enabled: state.status === "authenticated" && state.user.email === FOUNDER_EMAIL,
+    enabled: canSales,
     refetchInterval: 5 * 60_000,
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["founder-sales-pulse"] });
 
-  if (state.status !== "authenticated" || state.user.email !== FOUNDER_EMAIL) {
-    return <Redirect to="/" />;
-  }
+  if (!ready) return null;
+  if (!canSales) return <Redirect to={home ?? "/"} />;
 
   return (
     <div className="space-y-6">
@@ -137,7 +137,7 @@ export default function FounderSales() {
           />
         </div>
         <div className="space-y-6 min-w-0">
-          <EmailCadenceCard email={data?.email} loading={isLoading} onChanged={invalidate} />
+          <EmailCadenceCard email={data?.email} loading={isLoading} onChanged={invalidate} canManage={isFounder} />
         </div>
       </div>
     </div>
@@ -386,10 +386,12 @@ function AddEventForm({ onAdded }: { onAdded: () => void }) {
 }
 
 // ── Email cadence + Klaviyo connection ─────────────────────────────────────
-function EmailCadenceCard({ email, loading, onChanged }: {
+function EmailCadenceCard({ email, loading, onChanged, canManage }: {
   email?: EmailStatus;
   loading: boolean;
   onChanged: () => void;
+  /** Connect/disconnect Klaviyo — the founder only. Others see the cadence. */
+  canManage: boolean;
 }) {
   const [apiKey, setApiKey] = useState("");
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -413,6 +415,8 @@ function EmailCadenceCard({ email, loading, onChanged }: {
       </h2>
       {loading ? (
         <Skeleton className="h-20 w-full" />
+      ) : !email?.configured && !canManage ? (
+        <p className="text-sm text-muted-foreground">Klaviyo isn't connected yet — Graeme connects it.</p>
       ) : !email?.configured ? (
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">
@@ -430,9 +434,11 @@ function EmailCadenceCard({ email, loading, onChanged }: {
       ) : email.error ? (
         <div className="space-y-2">
           <p className="text-sm text-amber-600 dark:text-amber-400">Klaviyo error: {email.error}</p>
-          <button onClick={() => disconnect.mutate()} className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-secondary/50">
-            Disconnect &amp; re-enter key
-          </button>
+          {canManage && (
+            <button onClick={() => disconnect.mutate()} className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-secondary/50">
+              Disconnect &amp; re-enter key
+            </button>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
@@ -456,10 +462,12 @@ function EmailCadenceCard({ email, loading, onChanged }: {
               ))}
             </ul>
           )}
-          <button onClick={() => disconnect.mutate()} disabled={disconnect.isPending}
-            className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-secondary/50 text-muted-foreground">
-            Disconnect Klaviyo
-          </button>
+          {canManage && (
+            <button onClick={() => disconnect.mutate()} disabled={disconnect.isPending}
+              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-secondary/50 text-muted-foreground">
+              Disconnect Klaviyo
+            </button>
+          )}
         </div>
       )}
     </section>

@@ -21,9 +21,16 @@ export function decideAccess(input: {
   featureKey: string;
   /** Overrides the registry's minRole — used for pages. */
   baselineMinRole?: Role;
+  /** Is this the founder's account? Only founder-only features read it. */
+  isFounder?: boolean;
 }): boolean {
   const { userRole, grantedKeys, featureKey, baselineMinRole } = input;
-  // An admin runs the place; there is no feature they can be locked out of.
+  // The Business: founder or an explicit grant, and nothing else — this
+  // check comes BEFORE the admin line so an admin doesn't sail through.
+  if (featureByKey(featureKey)?.founderOnly) {
+    return input.isFounder === true || grantedKeys.includes(featureKey);
+  }
+  // Otherwise an admin runs the place; nothing else can lock them out.
   if (userRole === "admin") return true;
   if (grantedKeys.includes(featureKey)) return true;
   const minRole = baselineMinRole ?? featureByKey(featureKey)?.minRole;

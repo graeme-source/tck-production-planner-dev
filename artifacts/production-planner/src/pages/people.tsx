@@ -8,6 +8,8 @@
  *   /people            the list — big cards, search, people needing action first
  *   /people/:userId    their record (components/people-record.tsx)
  *   /people/job-titles everyone's job title on one screen (components/job-titles-bulk.tsx)
+ *   /people/contracts  contracts & starter forms — founder/HR only (pages/founder-contracts.tsx,
+ *                      its own route in App.tsx, outside this component)
  *
  * It replaced a signpost page with three cards (Employee Records report,
  * Return-to-work forms, Reviews & Record) that sent you to three places.
@@ -21,8 +23,9 @@
 import { useMemo, useState } from "react";
 import { Link, useRoute, useSearch, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Lock, Search, HeartPulse, AlertTriangle, CalendarDays, ChevronRight, UsersRound, BadgeCheck, Clock3 } from "lucide-react";
+import { Loader2, Lock, Search, HeartPulse, AlertTriangle, CalendarDays, ChevronRight, UsersRound, BadgeCheck, Clock3, FileSignature } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isFounderEmail } from "@workspace/feature-registry";
 import { useAuth } from "@/contexts/auth-context";
 import { useIsRtwManager } from "@/hooks/use-rtw-manager";
 import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
@@ -136,6 +139,10 @@ function PersonCardView({ p, policy }: { p: PersonCard; policy: PeopleListRespon
 }
 
 function PeopleList({ ready }: { ready: boolean }) {
+  const { state } = useAuth();
+  // Contracts & starter forms: the founder/HR account only (server:
+  // middleware/hr-access.ts). People access alone does not open them.
+  const isFounder = state.status === "authenticated" && isFounderEmail(state.user.email);
   const [search, setSearch] = useState("");
   const [leavers, setLeavers] = useState(false);
   // "Hours vs contract" lives in the URL (?view=hours) so Back from
@@ -222,6 +229,14 @@ function PeopleList({ ready }: { ready: boolean }) {
             className="w-full h-14 pl-12 pr-4 rounded-2xl border-2 border-border bg-card text-lg focus:outline-none focus:ring-2 focus:ring-primary/40"
           />
         </label>
+        {isFounder && (
+          <Link
+            href="/people/contracts"
+            className="h-14 px-5 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50"
+          >
+            <FileSignature className="w-5 h-5" /> Contracts
+          </Link>
+        )}
         <Link
           href="/people/job-titles"
           className="h-14 px-5 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50"

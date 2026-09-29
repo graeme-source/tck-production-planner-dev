@@ -18,7 +18,7 @@ import {
   userTrainedOnSop,
 } from "../lib/feature-access";
 import { ensureFeaturesSynced } from "../lib/feature-sync";
-import { FEATURE_REGISTRY, featureByKey } from "@workspace/feature-registry";
+import { FEATURE_REGISTRY, canGrantFeature, featureByKey } from "@workspace/feature-registry";
 import { getPageMinRoles } from "../lib/page-access";
 
 // Feature grants: admin cherry-picks features per user, optionally gated on
@@ -79,7 +79,9 @@ router.get("/", requireAdmin, async (_req: Request, res: Response) => {
         area: def.area,
         kind: def.kind,
         target: def.page ?? def.section ?? null,
-        baselineRole: def.kind === "page" && def.page ? pageMinRoles.get(def.page) : def.minRole,
+        // A founder-only feature comes with no role — not even admin.
+        baselineRole: def.founderOnly ? null : def.kind === "page" && def.page ? pageMinRoles.get(def.page) : def.minRole,
+        founderOnly: def.founderOnly === true,
         retired: false,
       };
     });
@@ -123,9 +125,23 @@ router.patch("/:key", requireAdmin, validate(featurePatchSchema), async (req: Re
   res.json(row);
 });
 
+/**
+ * Founder-only features (The Business) can be granted and removed by the
+ * founder's account alone — being an admin isn't enough, or any admin could
+ * hand themselves the business numbers (Graeme, 2026-09-29).
+ */
+async function refuseUnlessMayGrant(req: Request, res: Response, featureKey: string): Promise<boolean> {
+  const [actor] = await db.select({ email: usersTable.email }).from(usersTable).where(eq(usersTable.id, req.session.userId ?? -1));
+  if (canGrantFeature({ actorEmail: actor?.email, featureKey })) return false;
+  res.status(403).json({ error: "Only Graeme (the founder account) can grant or remove The Business features." });
+  return true;
+}
+
 router.put("/:key/grants/:userId", requireAdmin, async (req: Request, res: Response) => {
   const userId = Number(req.params.userId);
   const featureKey = String(req.params.key);
+  if (!Number.isInteger(userId) || userId <= 0) { res.status(400).json({ error: "Invalid user" }); return; }
+  if (await refuseUnlessMayGrant(req, res, featureKey)) return;
   // A feature added to the registry in this deploy may not have its row yet.
   await ensureFeaturesSynced();
   const [feature] = await db.select().from(appFeaturesTable).where(eq(appFeaturesTable.key, featureKey));
@@ -138,6 +154,7 @@ router.put("/:key/grants/:userId", requireAdmin, async (req: Request, res: Respo
 });
 
 router.delete("/:key/grants/:userId", requireAdmin, async (req: Request, res: Response) => {
+  if (await refuseUnlessMayGrant(req, res, String(req.params.key))) return;
   await db
     .delete(featureGrantsTable)
     .where(and(eq(featureGrantsTable.featureKey, String(req.params.key)), eq(featureGrantsTable.userId, Number(req.params.userId))));

@@ -1,11 +1,13 @@
-import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { db, appSettingsTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 import type Anthropic from "@anthropic-ai/sdk";
+import { requireFounder } from "../middleware/founder-access";
+import { requireFounderArea } from "../middleware/founder-area-access";
 
-// Sales & Marketing assistant (founder-only): revenue pacing against the
+// Sales & Marketing assistant (founder + founder.sales grantees): revenue pacing against the
 // monthly target, email-cadence nudges (via Klaviyo once connected), a
 // marketing calendar with a 6-week lookahead, and AI-suggested events to
 // fill the gaps. The aim: there is ALWAYS something on, and falling behind
@@ -13,15 +15,10 @@ import type Anthropic from "@anthropic-ai/sdk";
 
 const router: IRouter = Router();
 
-const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
-async function requireFounder(req: Request, res: Response, next: NextFunction) {
-  const userId = req.session.userId;
-  if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const rows = await db.execute<{ email: string }>(sql`SELECT email FROM app_users WHERE id = ${userId} LIMIT 1`);
-  if (rows.rows[0]?.email !== FOUNDER_EMAIL) { res.status(403).json({ error: "Founder only" }); return; }
-  next();
-}
-router.use(requireFounder);
+// The founder, or someone he has granted Sales & Marketing to (Graeme,
+// 2026-09-29). Admin alone doesn't count. Connecting or disconnecting
+// Klaviyo stays the founder's own — see requireFounder on those two routes.
+router.use(requireFounderArea("founder.sales"));
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -92,7 +89,9 @@ router.get("/klaviyo", async (_req: Request, res: Response) => {
   }
 });
 
-router.post("/klaviyo", async (req: Request, res: Response) => {
+// Saving the Klaviyo key is the founder's alone — a grantee can see the
+// cadence, not change which account it reads.
+router.post("/klaviyo", requireFounder, async (req: Request, res: Response) => {
   const parsed = z.object({ apiKey: z.string().trim().min(10).max(200) }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "apiKey required" }); return; }
   try {
@@ -108,7 +107,7 @@ router.post("/klaviyo", async (req: Request, res: Response) => {
   }
 });
 
-router.delete("/klaviyo", async (_req: Request, res: Response) => {
+router.delete("/klaviyo", requireFounder, async (_req: Request, res: Response) => {
   await db.execute(sql`DELETE FROM founder_settings WHERE key = ${KLAVIYO_KEY}`);
   res.json({ configured: false });
 });

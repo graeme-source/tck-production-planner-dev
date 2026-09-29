@@ -16,6 +16,7 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/auth-context";
 import { Redirect } from "wouter";
+import { useFounderArea } from "@/hooks/use-founder-area";
 import { format, addDays, parseISO } from "date-fns";
 import { ChevronLeft, ChevronRight, ChevronDown, Settings2 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
@@ -29,6 +30,7 @@ const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
 
 export default function FounderFocus() {
   const { state } = useAuth();
+  const { home: founderHome } = useFounderArea();
   const todayStr = format(new Date(), "yyyy-MM-dd");
   const [dateStr, setDateStr] = useState(todayStr);
   const [planningOpen, setPlanningOpen] = useState(false);
@@ -40,8 +42,11 @@ export default function FounderFocus() {
     return () => clearInterval(id);
   }, []);
 
+  // Founder only — not grantable. A Business grantee who types the URL
+  // lands on a tab they can open.
+  if (state.status === "loading") return null;
   if (state.status !== "authenticated" || state.user.email !== FOUNDER_EMAIL) {
-    return <Redirect to="/" />;
+    return <Redirect to={founderHome ?? "/"} />;
   }
 
   const isToday = dateStr === todayStr;

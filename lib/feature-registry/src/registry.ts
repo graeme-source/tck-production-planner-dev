@@ -62,6 +62,15 @@ export const FEATURE_REGISTRY: FeatureDef[] = [
   { key: "settings.sops", name: "Standards & SOPs", description: "The SOP and standards library behind the station links.", area: "Settings", kind: "settings", section: "sops", minRole: "admin" },
   { key: "settings.sensors", name: "Temperature Sensors", description: "Govee fridge and freezer sensors: pairing, mapping and alerts.", area: "Settings", kind: "settings", section: "sensors", minRole: "admin" },
   { key: "settings.features", name: "Feature flags & updates", description: "Global on/off switches, banner roles and the System Updates slides.", area: "Settings", kind: "settings", section: "features", minRole: "admin" },
+
+  // ── The Business (founder's area) ────────────────────────────────────────
+  // founderOnly: being an admin does NOT give these, and only Graeme's own
+  // account can grant them (Graeme, 2026-09-29). minRole is there only
+  // because every entry has one — decideAccess never reads it for these.
+  // The rest of The Business (P&L, Schedule, Contracts, Fix queue) is not
+  // grantable at all.
+  { key: "founder.numbers", name: "Business Numbers", description: "The Business → Numbers: sales, orders, conversion, ad spend and ROAS, trend graphs.", area: "The Business", kind: "ability", minRole: "admin", founderOnly: true },
+  { key: "founder.sales", name: "Sales & Marketing", description: "The Business → Sales & Marketing: revenue pace, email cadence and the marketing calendar. Connecting Klaviyo stays Graeme's.", area: "The Business", kind: "ability", minRole: "admin", founderOnly: true },
 ];
 
 const BY_KEY = new Map(FEATURE_REGISTRY.map(f => [f.key, f]));

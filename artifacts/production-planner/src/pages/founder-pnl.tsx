@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
-import { useAuth } from "@/contexts/auth-context";
+import { useFounderArea } from "@/hooks/use-founder-area";
 import { Redirect, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
@@ -39,7 +39,6 @@ import {
 } from "recharts";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
-const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -169,11 +168,11 @@ function buildPresets() {
 // ── Main component ──────────────────────────────────────────────────────────
 
 export default function FounderPnL() {
-  const { state } = useAuth();
-  if (state.status === "loading") return null;
-  if (state.status !== "authenticated" || state.user.email !== FOUNDER_EMAIL) {
-    return <Redirect to="/" />;
-  }
+  // Founder only — not grantable. A Business grantee who types the URL
+  // lands on a tab they can open instead of a page of 403s.
+  const { ready, isFounder, home } = useFounderArea();
+  if (!ready) return null;
+  if (!isFounder) return <Redirect to={home ?? "/"} />;
   return <PnLDashboard />;
 }
 

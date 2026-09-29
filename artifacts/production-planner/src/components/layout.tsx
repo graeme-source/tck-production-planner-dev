@@ -8,6 +8,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { useIsRtwManager } from "@/hooks/use-rtw-manager";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
+import { useFounderArea } from "@/hooks/use-founder-area";
 import { FEATURE_REGISTRY } from "@workspace/feature-registry";
 import { usePageHeaderValue } from "@/contexts/page-header-context";
 import { 
@@ -347,7 +348,8 @@ export function NavLinks({
   }
 
   function renderNavItem(item: NavItem) {
-    const isActive = location === item.href;
+    // The Business stays lit on every one of its tabs.
+    const isActive = location === item.href || (item.href.startsWith("/founder/") && location.startsWith("/founder/"));
     const isDispatches = item.href === "/dispatches";
 
     if (item.href === "/reports" && (user?.role === "admin" || user?.role === "manager")) {
@@ -463,7 +465,8 @@ export function NavLinks({
   // founder's own entry, prepended only for him) sits at the very top, then
   // Dashboard and Production Plans (Graeme, 2026-09-24 — it was being swept
   // below Product with everything else).
-  const ABOVE_PRODUCT = new Set(["/founder/numbers", "/", "/plans"]);
+  // The Business's href is the viewer's first allowed tab, so any of them.
+  const ABOVE_PRODUCT = new Set(["/founder/numbers", "/founder/sales", "/fix-queue", "/", "/plans"]);
   const beforeProduct = visibleNavItems.filter(i => ABOVE_PRODUCT.has(i.href));
   const afterProduct = visibleNavItems.filter(i => !ABOVE_PRODUCT.has(i.href));
   const beforeInventory = afterProduct.filter(i => i.href === "/suppliers");
@@ -656,6 +659,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const user = state.status === "authenticated" ? state.user : null;
   const { canAccess } = usePagePermissions();
   const { can } = useFeatureAccess();
+  const founderArea = useFounderArea();
   const [mobileOpen, setMobileOpen] = useState(false);
   // Collapsible sidebar on tablet/desktop too — the hamburger in the top bar
   // is always visible, so getting it back is one obvious tap. Choice sticks
@@ -735,11 +739,18 @@ export function Layout({ children }: { children: ReactNode }) {
   // Dashboard (Graeme, 2026-09-11). Email-gated like every founder
   // surface; the /founder pages also guard themselves server-side. This
   // replaces the old "Founder Focus" button on the dashboard header.
-  if (user?.email === "graeme@thecalzonekitchen.co.uk") {
-    // Lands on Numbers — Graeme reviews the numbers first and navigates to
-    // the Schedule when he wants it (2026-09-18). Keep in step with the
-    // /founder redirect in App.tsx and the dashboard auto-open.
-    navForUser = [{ name: "The Business", href: "/founder/numbers", icon: Briefcase }, ...navForUser];
+  //
+  // Since 2026-09-29 it also shows for anyone Graeme has granted Business
+  // Numbers or Sales & Marketing (Settings → Team & Access), landing on the
+  // first tab they may open — Numbers for Graeme, who reviews the numbers
+  // first (2026-09-18). Admin role alone does not show it.
+  //
+  // Fix queue sits on its own line straight below, founder account only
+  // (it was a Business tab until 2026-09-29).
+  if (founderArea.home) {
+    const founderItems: NavItem[] = [{ name: "The Business", href: founderArea.home, icon: Briefcase }];
+    if (founderArea.isFounder) founderItems.push({ name: "Fix queue", href: "/fix-queue", icon: Wrench });
+    navForUser = [...founderItems, ...navForUser];
   }
   const productForUser = accountantOnly ? [] : visibleProductItems;
   const inventoryForUser = accountantOnly ? [] : visibleInventoryItems;
@@ -748,7 +759,11 @@ export function Layout({ children }: { children: ReactNode }) {
   // themselves — without them the top bar (and its "Show me how" SOPs)
   // labelled the packing page "Dashboard" (Graeme, 2026-09-28).
   const allNavItems = [...navItems, ...productNavItems, ...inventorySubItems, ...DISPATCH_SUB_ITEMS, ...bottomNavItems, { name: "Finance", href: "/finance", icon: Banknote }];
-  const currentPageName = location === "/locations"
+  const currentPageName = location === "/fix-queue"
+    ? "Fix queue"
+    : location.startsWith("/founder/")
+      ? "The Business"
+    : location === "/locations"
     ? "Bin Locations"
     : location === "/inventory"
       ? "Inventory"

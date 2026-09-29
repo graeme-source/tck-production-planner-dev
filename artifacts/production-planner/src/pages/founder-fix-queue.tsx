@@ -20,7 +20,6 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
-import { FounderNav } from "@/components/founder-nav";
 import { MarkdownBlock } from "@/components/lesson-media";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -710,7 +709,8 @@ export default function FounderFixQueue() {
 
   return (
     <div className="space-y-6 max-w-4xl">
-      <FounderNav />
+      {/* Its own line in the sidebar since 2026-09-29 (/fix-queue) — no
+          longer a tab of The Business. Founder account only, as before. */}
       <PageHeader
         title="Fix queue"
         description="Claude reviews every app issue the team reports and recommends what to do. Nothing gets built without your approval."
