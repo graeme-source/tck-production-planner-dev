@@ -1,6 +1,6 @@
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
-import { decideAccess, featureByKey, featureForSection, type Role } from "@workspace/feature-registry";
+import { decideAccess, featureByKey, featureForSection, isFounderEmail, type Role } from "@workspace/feature-registry";
 
 /**
  * One question, asked the same way everywhere: can this person use this?
@@ -20,6 +20,8 @@ export function useFeatureAccess() {
 
   const userRole = state.status === "authenticated" ? state.user.role : "viewer";
   const grantedKeys = state.status === "authenticated" ? (state.user.features ?? []) : [];
+  // Only The Business's founder-only features read this (admin isn't enough).
+  const isFounder = state.status === "authenticated" && isFounderEmail(state.user.email);
 
   function can(featureKey: string): boolean {
     const def = featureByKey(featureKey);
@@ -27,7 +29,7 @@ export function useFeatureAccess() {
     const baselineMinRole = def?.kind === "page" && def.page
       ? (minRoleFor(def.page) as Role)
       : undefined;
-    return decideAccess({ userRole, grantedKeys, featureKey, baselineMinRole });
+    return decideAccess({ userRole, grantedKeys, featureKey, baselineMinRole, isFounder });
   }
 
   /** Convenience for the Settings page: can this person open this section? */

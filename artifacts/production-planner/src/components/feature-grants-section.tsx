@@ -9,7 +9,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { roleMeets, type Role } from "@workspace/feature-registry";
+import { isFounderEmail, roleMeets, type Role } from "@workspace/feature-registry";
 import {
   ChevronLeft, GraduationCap, KeyRound, Loader2, Lock, Search, ShieldCheck, User as UserIcon,
 } from "lucide-react";
@@ -38,6 +38,8 @@ type Feature = {
   kind: "page" | "settings" | "ability" | "retired";
   target: string | null;
   baselineRole: Role | null;
+  /** The Business: no role opens it (not even admin); only Graeme grants it. */
+  founderOnly?: boolean;
   retired: boolean;
 };
 type Grant = { id: number; featureKey: string; userId: number };
@@ -64,6 +66,10 @@ export function FeatureGrantsSection() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  // The founder's account also sees admins in the picker: admins get
+  // everything EXCEPT The Business, which only he can hand out.
+  const viewerIsFounder = state.status === "authenticated" && isFounderEmail(state.user.email);
+  const grantable = (u: UserRow) => u.role !== "admin" || viewerIsFounder;
   const [personId, setPersonId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
   const [showTraining, setShowTraining] = useState(false);
@@ -165,7 +171,7 @@ export function FeatureGrantsSection() {
       {/* ── Pick a person ─────────────────────────────────────────────── */}
       {data && !person && (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {data.users.filter(u => u.role !== "admin").map(u => {
+          {data.users.filter(grantable).filter(u => !isFounderEmail(u.email)).map(u => {
             const n = grantCount.get(u.id) ?? 0;
             return (
               <button
@@ -188,14 +194,18 @@ export function FeatureGrantsSection() {
               </button>
             );
           })}
-          {data.users.filter(u => u.role !== "admin").length === 0 && (
+          {data.users.filter(grantable).filter(u => !isFounderEmail(u.email)).length === 0 && (
             <p className="text-sm text-muted-foreground">Everyone active is an admin — there's nothing to grant.</p>
           )}
         </div>
       )}
 
       {data && !person && (
-        <p className="text-xs text-muted-foreground">Admins aren't listed: they already have everything.</p>
+        <p className="text-xs text-muted-foreground">
+          {viewerIsFounder
+            ? "Admins are listed for The Business only — they already have everything else."
+            : "Admins aren't listed: they already have everything."}
+        </p>
       )}
 
       {/* ── One person's access ───────────────────────────────────────── */}
@@ -240,12 +250,20 @@ export function FeatureGrantsSection() {
                   const grant = data.grants.find(g => g.featureKey === f.key && g.userId === person.id);
                   const viaRole = f.baselineRole ? roleMeets(person.role, f.baselineRole) : false;
                   const trained = grant ? data.trainingByGrant[grant.id] : undefined;
+                  // The Business: Graeme's to give. Everyone else sees the
+                  // state but can't move the switch (the server refuses too).
+                  const lockedToFounder = f.founderOnly === true && !viewerIsFounder;
                   return (
                     <div key={f.key} className="flex items-start justify-between gap-3 rounded-xl border border-border px-3 py-2.5">
                       <div className="min-w-0">
                         <p className="text-sm font-medium flex items-center gap-2 flex-wrap">
                           {f.name}
                           {f.retired && <Badge variant="outline" className="text-muted-foreground">retired</Badge>}
+                          {f.founderOnly && (
+                            <Badge variant="outline" className="text-muted-foreground">
+                              <Lock className="h-3 w-3 mr-1" />only Graeme can grant this
+                            </Badge>
+                          )}
                           {viaRole && (
                             <Badge variant="outline" className="text-muted-foreground">
                               <Lock className="h-3 w-3 mr-1" />from their {f.baselineRole} access — always on
@@ -277,7 +295,7 @@ export function FeatureGrantsSection() {
                         // Role-given access can't be switched off here — grants
                         // only add. The lever for that is the page's access
                         // level or the person's role, and the badge says so.
-                        disabled={grantMutation.isPending || (viaRole && !grant)}
+                        disabled={grantMutation.isPending || (viaRole && !grant) || lockedToFounder}
                         onCheckedChange={(v) => grantMutation.mutate({ key: f.key, userId: person.id, grant: v })}
                       />
                     </div>

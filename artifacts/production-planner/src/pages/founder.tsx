@@ -1,5 +1,5 @@
 import { Fragment, useState, useMemo, useRef, useCallback, useEffect } from "react";
-import { useAuth } from "@/contexts/auth-context";
+import { useFounderArea } from "@/hooks/use-founder-area";
 import { Redirect } from "wouter";
 import { useQuery, useMutation, useQueryClient, useIsFetching } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
@@ -47,7 +47,6 @@ import { DispatchOrdersPanel } from "@/components/dispatch-orders-panel";
 import type { TrendMetricId } from "@/lib/sales-trend-view";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
-const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
 
 const CUSTOMER_TYPES = [
   { id: "newCustomer", tag: "new-customer", label: "New Customers", icon: UserPlus, color: "text-blue-500", bg: "bg-blue-500/10" },
@@ -787,12 +786,12 @@ function AddPanelForm({ onAdd, onCancel }: { onAdd: (tag: string, label: string)
 }
 
 export default function FounderView() {
-  const { state } = useAuth();
+  // The founder, or someone he granted Business Numbers (founder.numbers).
+  // Anyone else goes to the first Business tab they CAN open, or home.
+  const { ready, canNumbers, home } = useFounderArea();
 
-  if (state.status === "loading") return null;
-  if (state.status !== "authenticated" || state.user.email !== FOUNDER_EMAIL) {
-    return <Redirect to="/" />;
-  }
+  if (!ready) return null;
+  if (!canNumbers) return <Redirect to={home ?? "/"} />;
 
   return <FounderDashboard />;
 }
