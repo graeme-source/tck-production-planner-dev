@@ -294,6 +294,8 @@ function RecipeForm({
 
   const { fields: ingFields, append: appendIng, remove: removeIng } = useFieldArray({ control, name: "ingredients" });
   const { fields: subFields, append: appendSub, remove: removeSub } = useFieldArray({ control, name: "subRecipes" });
+  // The searchable picker wants {id, name, unit}; a sub-recipe's unit is its yield unit.
+  const subRecipeOptions = useMemo(() => subRecipes.map(s => ({ id: s.id, name: s.name, unit: s.yieldUnit })), [subRecipes]);
 
   const [localIngredients, setLocalIngredients] = useState(initialIngredients);
   // Sub-recipe UPF % lookup for the per-row chip in the Sub Recipes section.
@@ -881,10 +883,20 @@ function RecipeForm({
                     return (
                       <div key={field.id} className="space-y-0.5">
                         <div className="grid grid-cols-[1fr_8rem_6rem_3.5rem_2rem_2rem_2rem_4rem_1.25rem] gap-x-2 gap-y-0 items-center">
-                          <select {...register(`subRecipes.${index}.subRecipeId`)} className="min-w-0 px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30">
-                            <option value={0} disabled>Select…</option>
-                            {subRecipes.map(s => <option key={s.id} value={s.id}>{s.name} ({s.yieldUnit})</option>)}
-                          </select>
+                          {/* Type-to-search, same as the ingredient rows (Graeme, 2026-09-29). */}
+                          <Controller
+                            control={control}
+                            name={`subRecipes.${index}.subRecipeId`}
+                            render={({ field }) => (
+                              <IngredientCombobox
+                                value={Number(field.value)}
+                                onChange={id => field.onChange(id)}
+                                options={subRecipeOptions}
+                                placeholder="Select sub-recipe…"
+                                emptyText="No sub-recipes found"
+                              />
+                            )}
+                          />
                           {(() => {
                             const subUpf = formSubUpfById.get(Number(watchedSubRecipes?.[index]?.subRecipeId));
                             return subUpf != null && (subUpf.upfPercent ?? 0) > 0 ? (

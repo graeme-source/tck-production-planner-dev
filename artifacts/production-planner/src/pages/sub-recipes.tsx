@@ -774,15 +774,14 @@ function SubRecipeForm({
               return (
                 <div key={field.id}>
                 <div className="grid grid-cols-[1fr_120px_32px] gap-2 items-center">
-                  <select
-                    {...register(`subRecipeComponents.${index}.componentSubRecipeId`)}
-                    className="px-2 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 truncate"
-                  >
-                    <option value={0} disabled>Select sub-recipe...</option>
-                    {availableSubRecipes.map(sr => (
-                      <option key={sr.id} value={sr.id}>{sr.name} ({sr.yieldUnit})</option>
-                    ))}
-                  </select>
+                  {/* Type-to-search, same as the ingredient rows (Graeme, 2026-09-29). */}
+                  <IngredientCombobox
+                    value={selectedId}
+                    onChange={(id) => setValue(`subRecipeComponents.${index}.componentSubRecipeId`, id, { shouldValidate: true, shouldDirty: true })}
+                    options={availableSubRecipes.map(sr => ({ id: sr.id, name: sr.name, unit: sr.yieldUnit }))}
+                    placeholder="Select sub-recipe..."
+                    emptyText="No sub-recipes found"
+                  />
                   {(() => {
                     const isKg = unit === "kg";
                     const displayUnit = isKg ? (srDisplayUnits[index] ?? "g") : null;
