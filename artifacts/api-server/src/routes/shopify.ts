@@ -1,7 +1,8 @@
-import { Router, type Request, type Response, type NextFunction } from "express";
+import { Router } from "express";
 import { getOrdersByTag, getProducts, countProductsByTag, getOrdersByLondonDays, countOrdersByTag, getOnlineStoreConversion, type ShopifyOrder, type ProductCount } from "../services/shopify";
-import { db, recipesTable, usersTable } from "@workspace/db";
+import { db, recipesTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
+import { requireFounderArea } from "../middleware/founder-area-access";
 import { londonDateString, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
 import { FRIED_CHICKEN_CATEGORY } from "./fried-chicken";
 import {
@@ -13,30 +14,9 @@ const londonWeekdayNumber = (d: Date) => WEEKDAY_TO_NUM[londonWeekdayName(d)] ??
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
-
-async function requireFounder(req: Request, res: Response, next: NextFunction) {
-  const userId = req.session.userId;
-  if (!userId) {
-    res.status(401).json({ error: "Not authenticated" });
-    return;
-  }
-  try {
-    const [user] = await db
-      .select({ email: usersTable.email })
-      .from(usersTable)
-      .where(eq(usersTable.id, userId));
-    if (user?.email === FOUNDER_EMAIL) {
-      next();
-      return;
-    }
-    res.status(403).json({ error: "Access denied" });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("[requireFounder] DB lookup failed:", msg);
-    res.status(500).json({ error: "Internal server error" });
-  }
-}
+// The Numbers page's Shopify reads: the founder, or someone he has granted
+// Business Numbers to (founder.numbers). An admin alone is not enough.
+const requireNumbers = requireFounderArea("founder.numbers");
 
 function toDateTag(d: Date): string {
   // YYYY-MM-DD as seen in London — Shopify order tags follow the kitchen's
@@ -234,7 +214,7 @@ router.get("/weekly-orders", async (req, res) => {
 // Numbers endpoint: until 2026-09-25 they were UTC days, so in summer
 // "Yesterday" ran 1am to 1am and "Today's Sales" (London day) could
 // disagree with the Order Analysis "Today" tile.
-router.get("/sales-summary", requireFounder, async (req, res) => {
+router.get("/sales-summary", requireNumbers, async (req, res) => {
   const { from, to } = req.query as { from?: string; to?: string };
   if (!from || !to) {
     res.status(400).json({ error: "from and to query params required (YYYY-MM-DD)" });
@@ -315,7 +295,7 @@ router.get("/sales-summary", requireFounder, async (req, res) => {
 // Returns counts + order lists grouped by the four customer-type tags.
 // CUSTOMER_TYPE_TAGS lives in lib/order-revenue.ts, shared with the trend graphs.
 
-router.get("/orders-by-type", requireFounder, async (req, res) => {
+router.get("/orders-by-type", requireNumbers, async (req, res) => {
   const { from, to } = req.query as { from?: string; to?: string };
   if (!from || !to) {
     res.status(400).json({ error: "from and to query params required (YYYY-MM-DD)" });
@@ -358,7 +338,7 @@ router.get("/orders-by-type", requireFounder, async (req, res) => {
 // (a renewal never creates a storefront session). `orderCount` is the
 // implied converted-session count (rate × sessions), kept for the card's
 // sub-label and for response-shape compatibility.
-router.get("/conversion", requireFounder, async (req, res) => {
+router.get("/conversion", requireNumbers, async (req, res) => {
   const { from, to } = req.query as { from?: string; to?: string };
   if (!from || !to) {
     res.status(400).json({ error: "from and to query params required (YYYY-MM-DD)" });
@@ -380,7 +360,7 @@ router.get("/conversion", requireFounder, async (req, res) => {
 // ── Founder View: Tag Summary (for custom panels) ─────────────────────────────
 // GET /api/shopify/tag-summary?tag=...&from=YYYY-MM-DD&to=YYYY-MM-DD
 // Returns order count + total value for any single Shopify tag.
-router.get("/tag-summary", requireFounder, async (req, res) => {
+router.get("/tag-summary", requireNumbers, async (req, res) => {
   const { tag, from, to } = req.query as { tag?: string; from?: string; to?: string };
   if (!tag || !from || !to) {
     res.status(400).json({ error: "tag, from, and to are required" });

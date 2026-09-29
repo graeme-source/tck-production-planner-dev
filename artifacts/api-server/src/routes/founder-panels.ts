@@ -1,22 +1,16 @@
-import { Router, type IRouter, type Request, type Response } from "express";
+import { Router, type IRouter, type Request } from "express";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import { requireFounderArea } from "../middleware/founder-area-access";
 
 const router: IRouter = Router();
 
-// Only the founder email may access these routes
-const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
-
-async function requireFounder(req: Request, res: Response, next: () => void) {
-  const userId = req.session.userId;
-  if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const rows = await db.execute<{ email: string }>(sql`SELECT email FROM app_users WHERE id = ${userId} LIMIT 1`);
-  if (rows.rows[0]?.email !== FOUNDER_EMAIL) { res.status(403).json({ error: "Founder only" }); return; }
-  next();
-}
+// The custom tag panels on the Numbers page: the founder, or someone he has
+// granted Business Numbers to (Graeme, 2026-09-29). Admin alone isn't enough.
+const requireNumbers = requireFounderArea("founder.numbers");
 
 // GET /api/founder-panels
-router.get("/", requireFounder, async (_req, res) => {
+router.get("/", requireNumbers, async (_req, res) => {
   const rows = await db.execute<{ id: number; tag: string; label: string; created_at: string }>(
     sql`SELECT id, tag, label, created_at FROM founder_custom_panels ORDER BY created_at ASC`
   );
@@ -24,7 +18,7 @@ router.get("/", requireFounder, async (_req, res) => {
 });
 
 // POST /api/founder-panels
-router.post("/", requireFounder, async (req, res) => {
+router.post("/", requireNumbers, async (req, res) => {
   const { tag, label } = req.body as { tag?: string; label?: string };
   if (!tag || typeof tag !== "string" || !tag.trim()) {
     res.status(400).json({ error: "tag is required" });
@@ -41,7 +35,7 @@ router.post("/", requireFounder, async (req, res) => {
 });
 
 // DELETE /api/founder-panels/:id
-router.delete("/:id", requireFounder, async (req: Request<{ id: string }>, res) => {
+router.delete("/:id", requireNumbers, async (req: Request<{ id: string }>, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   await db.execute(sql`DELETE FROM founder_custom_panels WHERE id = ${id}`);

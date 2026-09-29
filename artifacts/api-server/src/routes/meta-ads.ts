@@ -1,17 +1,18 @@
 /**
  * Meta ad-spend sync — status and manual refresh.
  *
- * Founder-only, same gate as the rest of the Numbers page. Kept in its own
+ * Same gate as the rest of the Numbers page: the founder, or a
+ * founder.numbers grantee (the Refresh button is on that page). Kept in its own
  * router rather than bolted onto founder-focus.ts, which is already long.
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { validate } from "../middleware/validate";
-import { requireFounder } from "../middleware/founder-access";
+import { requireFounderArea } from "../middleware/founder-area-access";
 import { getMetaAdsStatus, runMetaAdSpendSync } from "../lib/meta-ads";
 
 const router: IRouter = Router();
-router.use(requireFounder);
+router.use(requireFounderArea("founder.numbers"));
 
 /**
  * Is Meta connected, and what did the last sync do?

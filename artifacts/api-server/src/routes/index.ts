@@ -90,6 +90,7 @@ import recipeCollectionsRouter from "./recipe-collections";
 import queuedProductionRouter from "./queued-production";
 import caseOrdersRouter from "./case-orders";
 import founderFocusRouter from "./founder-focus";
+import founderAdSpendRouter from "./founder-ad-spend";
 import metaAdsRouter from "./meta-ads";
 import todosRouter from "./todos";
 import founderSalesRouter from "./founder-sales";
@@ -232,6 +233,9 @@ router.use("/features", featuresRouter);
 // Customer surveys — admin builds/reads them here; the public submission API
 // is a separate unauthenticated router mounted directly in app.ts.
 router.use("/surveys", requireAdmin, surveysRouter);
+// Ad spend is the Numbers page's (founder + founder.numbers grantees) and
+// must be mounted before founder-focus, whose whole router is founder-only.
+router.use("/founder-focus/ad-spend", founderAdSpendRouter);
 router.use("/founder-focus", founderFocusRouter);
 // Meta Marketing API ad-spend sync — status + manual refresh for the
 // Numbers page. Founder-gated inside the router; a no-op until the

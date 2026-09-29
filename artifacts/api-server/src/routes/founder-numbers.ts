@@ -10,8 +10,9 @@
  * and are valued by the same rules (lib/order-revenue.ts); the bucketing
  * and maths are pure and tested in lib/sales-trend.ts.
  *
- * Founder account only — exact email match (middleware/founder-access.ts),
- * the same gate as the other Numbers endpoints. An admin is not the founder.
+ * The founder, or someone he has granted Business Numbers (founder.numbers,
+ * middleware/founder-area-access.ts) — the same gate as every other Numbers
+ * endpoint. An admin alone is not enough.
  *
  * Cached for a minute per period+grain: the mirror syncs at most every 30s
  * anyway, and flicking between graphs shouldn't re-read a year of orders.
@@ -20,7 +21,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import { requireFounder } from "../middleware/founder-access";
+import { requireFounderArea } from "../middleware/founder-area-access";
 import { validateQuery } from "../middleware/validate";
 import { getOrdersByLondonDays } from "../services/shopify";
 import {
@@ -29,7 +30,7 @@ import {
 } from "../lib/sales-trend";
 
 const router: IRouter = Router();
-router.use(requireFounder);
+router.use(requireFounderArea("founder.numbers"));
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
