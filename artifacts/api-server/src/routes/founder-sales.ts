@@ -2,8 +2,6 @@ import { Router, type IRouter, type Request, type Response, type NextFunction } 
 import { db, appSettingsTable } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
-import type Anthropic from "@anthropic-ai/sdk";
 
 // Sales & Marketing assistant (founder-only): revenue pacing against the
 // monthly target, email-cadence nudges (via Klaviyo once connected), a
@@ -121,7 +119,7 @@ async function listEvents(fromIso: string, toIso: string) {
   }>(sql`
     SELECT id, name, start_date::text, end_date::text, offer, notes, status, source
     FROM marketing_events
-    WHERE end_date >= ${fromIso} AND start_date <= ${toIso}
+    WHERE deleted_at IS NULL AND end_date >= ${fromIso} AND start_date <= ${toIso}
     ORDER BY start_date, id
   `);
   return rows.rows.map(r => ({
@@ -129,57 +127,6 @@ async function listEvents(fromIso: string, toIso: string) {
     offer: r.offer, notes: r.notes, status: r.status, source: r.source,
   }));
 }
-
-router.post("/events", async (req: Request, res: Response) => {
-  const parsed = z.object({
-    name: z.string().trim().min(1).max(120),
-    startDate: z.string().regex(DATE_RE),
-    endDate: z.string().regex(DATE_RE),
-    offer: z.string().trim().max(500).nullish(),
-    notes: z.string().trim().max(2000).nullish(),
-    status: z.enum(["idea", "planned"]).optional(),
-    source: z.enum(["manual", "ai"]).optional(),
-  }).refine(e => e.endDate >= e.startDate, { message: "endDate before startDate" }).safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid body" }); return; }
-  const b = parsed.data;
-  const rows = await db.execute<{ id: number }>(sql`
-    INSERT INTO marketing_events (name, start_date, end_date, offer, notes, status, source)
-    VALUES (${b.name}, ${b.startDate}, ${b.endDate}, ${b.offer ?? null}, ${b.notes ?? null}, ${b.status ?? "planned"}, ${b.source ?? "manual"})
-    RETURNING id
-  `);
-  res.status(201).json({ id: rows.rows[0].id });
-});
-
-router.patch("/events/:id", async (req: Request, res: Response) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-  const parsed = z.object({
-    name: z.string().trim().min(1).max(120).optional(),
-    startDate: z.string().regex(DATE_RE).optional(),
-    endDate: z.string().regex(DATE_RE).optional(),
-    offer: z.string().trim().max(500).nullish(),
-    status: z.enum(["idea", "planned"]).optional(),
-  }).safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: "Invalid body" }); return; }
-  const b = parsed.data;
-  await db.execute(sql`
-    UPDATE marketing_events SET
-      name = COALESCE(${b.name ?? null}, name),
-      start_date = COALESCE(${b.startDate ?? null}::date, start_date),
-      end_date = COALESCE(${b.endDate ?? null}::date, end_date),
-      offer = CASE WHEN ${b.offer !== undefined} THEN ${b.offer ?? null} ELSE offer END,
-      status = COALESCE(${b.status ?? null}, status)
-    WHERE id = ${id}
-  `);
-  res.json({ ok: true });
-});
-
-router.delete("/events/:id", async (req: Request, res: Response) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-  await db.execute(sql`DELETE FROM marketing_events WHERE id = ${id}`);
-  res.json({ ok: true });
-});
 
 // ── The pulse: pace + cadence + calendar + attention items ────────────────
 router.get("/pulse", async (req: Request, res: Response) => {
@@ -224,14 +171,14 @@ router.get("/pulse", async (req: Request, res: Response) => {
     // Calendar: 6-week lookahead + anything currently running.
     const horizonEnd = new Date(new Date(`${today}T00:00:00Z`).getTime() + 42 * 86_400_000).toISOString().slice(0, 10);
     const events = await listEvents(today, horizonEnd);
-    const liveEvents = events.filter(e => e.startDate <= today && e.endDate >= today && e.status === "planned");
+    const liveEvents = events.filter(e => e.startDate <= today && e.endDate >= today && e.status !== "idea");
 
     // Gap detection: weeks in the horizon with no planned event coverage.
     const gapWeeks: string[] = [];
     for (let w = 0; w < 6; w++) {
       const wkStart = new Date(new Date(`${today}T00:00:00Z`).getTime() + w * 7 * 86_400_000).toISOString().slice(0, 10);
       const wkEnd = new Date(new Date(`${wkStart}T00:00:00Z`).getTime() + 6 * 86_400_000).toISOString().slice(0, 10);
-      const covered = events.some(e => e.status === "planned" && e.startDate <= wkEnd && e.endDate >= wkStart);
+      const covered = events.some(e => e.status !== "idea" && e.startDate <= wkEnd && e.endDate >= wkStart);
       if (!covered) gapWeeks.push(wkStart);
     }
 
@@ -279,66 +226,6 @@ router.get("/pulse", async (req: Request, res: Response) => {
     res.json({ today, pace, email, events, liveEvents, gapWeeks, attention });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
-  }
-});
-
-// ── AI event suggestions ───────────────────────────────────────────────────
-const SUGGEST_TOOL: Anthropic.Tool = {
-  name: "suggest_events",
-  description: "Suggest marketing calendar events for The Calzone Kitchen.",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      suggestions: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            name: { type: "string", description: "Catchy event/offer name" },
-            startDate: { type: "string", description: "YYYY-MM-DD" },
-            endDate: { type: "string", description: "YYYY-MM-DD" },
-            angle: { type: "string", description: "One sentence: the hook and why now" },
-            offerIdea: { type: "string", description: "Concrete offer mechanic (e.g. free pack over £X, bundle, limited flavour)" },
-          },
-          required: ["name", "startDate", "endDate", "angle", "offerIdea"],
-        },
-      },
-    },
-    required: ["suggestions"],
-  },
-};
-
-router.post("/suggest-events", async (_req: Request, res: Response) => {
-  if (!isClaudeConfigured()) { res.status(503).json({ error: "AI is not configured on this server." }); return; }
-  try {
-    const today = londonToday();
-    const horizonEnd = new Date(new Date(`${today}T00:00:00Z`).getTime() + 56 * 86_400_000).toISOString().slice(0, 10);
-    const events = await listEvents(today, horizonEnd);
-
-    const client = getClaudeClient();
-    const response = await client.messages.create({
-      model: CLAUDE_MODELS.sonnet,
-      max_tokens: 1500,
-      system: [
-        "You plan the marketing calendar for The Calzone Kitchen — a UK artisan business delivering treat-night calzones and mac & cheese nationwide (D2C via Shopify, email via Klaviyo, Meta ads).",
-        "Their rule: there is ALWAYS a named offer or event running. Past examples: a football World Cup box, Black Friday, a summer-holiday free pack offer.",
-        "Suggest 3-5 events covering the UNCOVERED weeks in the next ~8 weeks. UK calendar awareness (bank holidays, back to school, Halloween, Bonfire Night, payday weekends). Events should feel like TCK: warm, family, treat-night — not corporate.",
-        "Dates must be realistic windows (5-14 days each), not overlapping existing planned events. Use the suggest_events tool only.",
-      ].join("\n"),
-      messages: [{
-        role: "user",
-        content: `Today: ${today}\nExisting events (do not overlap these):\n${events.map(e => `- ${e.name}: ${e.startDate} → ${e.endDate} [${e.status}]`).join("\n") || "(none)"}`,
-      }],
-      tools: [SUGGEST_TOOL],
-      tool_choice: { type: "tool", name: "suggest_events" },
-    });
-
-    const toolUse = response.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-    const input = (toolUse?.input ?? { suggestions: [] }) as { suggestions: Array<{ name: string; startDate: string; endDate: string; angle: string; offerIdea: string }> };
-    const clean = input.suggestions.filter(s => DATE_RE.test(s.startDate) && DATE_RE.test(s.endDate) && s.endDate >= s.startDate);
-    res.json({ suggestions: clean });
-  } catch (err) {
-    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 

@@ -93,6 +93,7 @@ import founderFocusRouter from "./founder-focus";
 import metaAdsRouter from "./meta-ads";
 import todosRouter from "./todos";
 import founderSalesRouter from "./founder-sales";
+import marketingCalendarRouter from "./marketing-calendar";
 import founderNumbersRouter from "./founder-numbers";
 import surveysRouter from "./surveys";
 import financeRouter from "./finance";
@@ -247,6 +248,9 @@ router.use("/contracts", contractsRouter);
 // Starter forms: owner-scoped + HR-records access, guarded inside the router.
 router.use("/starter-forms", starterFormsRouter);
 router.use("/founder-sales", founderSalesRouter);
+// Marketing calendar (Sales & Marketing page): founder + "founder.sales"
+// grantees, guarded inside the router.
+router.use("/marketing-calendar", marketingCalendarRouter);
 // Numbers page trend graphs — founder account only, gated inside the router.
 router.use("/founder-numbers", founderNumbersRouter);
 router.use("/improvements", improvementsRouter);
