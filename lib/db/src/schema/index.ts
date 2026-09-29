@@ -45,3 +45,4 @@ export * from "./incidents";
 export * from "./issue_triage";
 export * from "./people_access";
 export * from "./person_documents";
+export * from "./marketing";
