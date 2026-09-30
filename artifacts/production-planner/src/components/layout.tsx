@@ -106,7 +106,8 @@ export const bottomNavItems: NavItem[] = [
   // grants — while Settings already had a "Team & Access" tab holding users,
   // roles and page access. Two entries called Access, and you had to know
   // which held what. Feature grants moved into that tab (Graeme,
-  // 2026-09-03); see components/feature-grants-section.tsx.
+  // 2026-09-03), and into each person's Access modal on 2026-09-30; see
+  // components/team-access/.
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
