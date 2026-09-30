@@ -91,7 +91,12 @@ router.get("/needed", async (req: Request, res: Response) => {
   let klaviyo: Awaited<ReturnType<typeof klaviyoEmailsForRange>>["emails"] = [];
   let klaviyoError: string | null = null;
   try {
-    klaviyo = (await klaviyoEmailsForRange(today, to)).emails;
+    // Recent drafts too, whatever their placeholder day: a plan linked to a
+    // draft sends on the PLAN's day, so the draft itself may sit outside
+    // the range and would otherwise be missed.
+    const r = await klaviyoEmailsForRange(today, to, { withRecentDrafts: true });
+    const seen = new Set(r.emails.map(e => e.id));
+    klaviyo = [...r.emails, ...(r.recentDrafts ?? []).filter(d => !seen.has(d.id))];
   } catch (err) {
     console.error("[marketing-approvals] Klaviyo read failed:", err instanceof Error ? err.message : String(err));
     klaviyoError = "Couldn't reach Klaviyo just now — the count may be short";

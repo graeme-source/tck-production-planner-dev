@@ -305,7 +305,7 @@ export function PlannedEmailModal({ emailId, newOn, onClose, onOpenCampaign }: {
             </div>
           )}
 
-          <fieldset disabled={deleted} className="space-y-5 disabled:opacity-60">
+          <fieldset disabled={deleted} className="space-y-5 min-w-0 disabled:opacity-60">
             <div className="grid grid-cols-2 gap-3">
               <Field label="Send day">
                 <input type="date" value={draft.sendDate} onChange={e => setDate(e.target.value)}

@@ -138,6 +138,9 @@ export function ApprovalPanel({ item, row, canApprove, target, disabled }: {
         </p>
       )}
 
+      {!canApprove && item.needsApproval && (
+        <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Waiting for approval before it goes out — it's on the approver's list.</p>
+      )}
       {canApprove && target && (
         <div className="flex gap-2 flex-wrap">
           {item.state !== "approved" ? (

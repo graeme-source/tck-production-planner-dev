@@ -116,6 +116,20 @@ describe("buildApprovalItems", () => {
     expect(items.filter(i => i.needsApproval).map(i => i.key)).toEqual(["klaviyo:kSched"]);
   });
 
+  it("a linked draft with no subject line yet shows as blank (not the plan's) and needs approval again", () => {
+    const items = buildApprovalItems({
+      planned: [{ ...plans[0], klaviyoCampaignId: "kBlank" }],
+      klaviyo: [{ id: "kBlank", name: "New draft", status: "Draft", date: "2026-08-21", subject: null }],
+      approvals: [{ key: "klaviyo:kBlank", approved: true, subject: "Plan only" }],
+      today: TODAY,
+    });
+    expect(items).toHaveLength(1);
+    expect(items[0].subject).toBeNull();
+    expect(items[0].state).toBe("changed");
+    expect(items[0].date).toBe("2026-10-05");
+    expect(items[0].needsApproval).toBe(true);
+  });
+
   it("a scheduled campaign's own day wins over the plan's", () => {
     const items = buildApprovalItems({
       planned: [{ ...plans[2], klaviyoCampaignId: "kSched" }],

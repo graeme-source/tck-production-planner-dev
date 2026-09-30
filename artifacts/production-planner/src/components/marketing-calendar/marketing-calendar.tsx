@@ -64,7 +64,9 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
     if (!reviewSignal) return;
     setView("list");
     setListFilter("needs");
-    sectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    // After the List view has rendered, so the jump lands on it.
+    const t = window.setTimeout(() => sectionRef.current?.scrollIntoView({ block: "start" }), 150);
+    return () => window.clearTimeout(t);
   }, [reviewSignal]);
   const [zoom, setZoom] = useState<TimelineZoom>("weeks");
   const [anchor, setAnchor] = useState(() => monthStart(londonToday()));
@@ -94,15 +96,22 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
   // Klaviyo sends (sent + scheduled one-off campaigns) — read-only.
   // Drafts come too; they appear in the List view and wherever they're
   // linked to a plan, but never clutter the month grid or timeline.
-  const klaviyo = useKlaviyoEmails(range.from, range.to);
+  const klaviyo = useKlaviyoEmails(range.from, range.to, true, { recentDrafts: true });
   const emails = useMemo(() => klaviyo.data?.emails ?? [], [klaviyo.data]);
+  // For approvals only: recent drafts whatever their placeholder day, so a
+  // plan linked to a draft outside this range still gets its stage and
+  // subject line from Klaviyo (same as the server's reminder count).
+  const approvalKlaviyo = useMemo(() => {
+    const seen = new Set(emails.map(e => e.id));
+    return [...emails, ...(klaviyo.data?.recentDrafts ?? []).filter(d => !seen.has(d.id))];
+  }, [emails, klaviyo.data]);
   const calendarEmails = useMemo(() => emails.filter(m => m.status !== "Draft"), [emails]);
   const setDates = useSetEventDates();
   // Our planned emails in the same range.
   const plannedQ = usePlannedEmails(range.from, range.to);
   const planned = useMemo(() => plannedQ.data?.emails ?? [], [plannedQ.data]);
   // Approval status for everything in view (everyone sees it).
-  const approvals = useApprovalIndex(planned, emails, today);
+  const approvals = useApprovalIndex(planned, approvalKlaviyo, today);
   const needsCount = approvals.items.filter(i => i.needsApproval).length;
   const moveEmail = useMoveEmail();
   const onMovePlanned = (e: PlannedEmail, sendDate: string) => {

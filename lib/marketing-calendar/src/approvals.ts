@@ -149,7 +149,9 @@ export function buildApprovalItems<P extends PlanForApproval, K extends KlaviyoF
     const state = approvalState(byKey.get(key), subject);
     const date = k && k.status !== "Draft" ? k.date : p.sendDate;
     out.push({
-      key, kind: "plan", date, subject: subject ?? p.subject, stage, state,
+      // Klaviyo's subject when we can see the campaign (even if it's still
+      // blank there), otherwise the plan's own.
+      key, kind: "plan", date, subject: subject === undefined ? p.subject : subject, stage, state,
       needsApproval: needsApproval({ date, stage, approval: state, today: input.today }),
       plan: p, klaviyo: k,
     });
