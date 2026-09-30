@@ -5,33 +5,63 @@
  * planned email shows its day, subject line, offer, core message, cadence,
  * audience and the website / Meta changes at a glance. Klaviyo's real sends
  * sit in the right section as read-only cards, and a planned email linked to
- * its Klaviyo send is ONE card with a "Scheduled/Sent in Klaviyo ✓" badge.
+ * its Klaviyo send is ONE card whose stage comes from Klaviyo.
+ *
+ * Stages + approvals (2026-09-30): each card shows its stage and approval
+ * badge; Klaviyo drafts not linked to a plan show only here (dashed violet).
+ * The "Needs approval" filter keeps just what the reminder counts.
  *
  * Grouping is the pure buildEmailSections() in @workspace/marketing-calendar.
  */
 import { useMemo } from "react";
 import { format, parseISO } from "date-fns";
-import { CheckCircle2, Globe, Mail, Megaphone, MessageSquare, Plus, Repeat, Target, Users } from "lucide-react";
-import { audienceLabel, buildEmailSections, defaultEmailDate, formatDay, formatRange } from "@workspace/marketing-calendar";
+import { BadgeCheck, CheckCircle2, Globe, Mail, Megaphone, MessageSquare, Plus, Repeat, Target, Users } from "lucide-react";
+import { audienceLabel, buildEmailSections, defaultEmailDate, formatDay, formatRange, stageLabel } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
 import type { CalEvent, KlaviyoEmail, PlannedEmail } from "./api";
-import { emailStatus, typeStyle } from "./constants";
+import { emailStage, typeStyle } from "./constants";
+import { ApprovalBadge, type ApprovalIndex } from "./approvals";
 
-export function ListView({ today, events, planned, klaviyo, showPast, onOpenCampaign, onOpenEmail, onOpenKlaviyo, onAddEmail }: {
+export function ListView({ today, events, planned, klaviyo, showPast, filter = "all", approvals, onShowAll, onOpenCampaign, onOpenEmail, onOpenKlaviyo, onAddEmail }: {
   today: string;
   events: CalEvent[];
   planned: PlannedEmail[];
+  /** Klaviyo campaigns, drafts included (unlinked drafts show only here). */
   klaviyo: KlaviyoEmail[];
   showPast: boolean;
+  /** "needs": only what needs approval (the reminder's Review lands here). */
+  filter?: "all" | "needs";
+  approvals: ApprovalIndex;
+  onShowAll?: () => void;
   onOpenCampaign: (id: number) => void;
   onOpenEmail: (id: number) => void;
   onOpenKlaviyo: (k: KlaviyoEmail) => void;
   onAddEmail: (date: string) => void;
 }) {
-  const sections = useMemo(
-    () => buildEmailSections({ campaigns: events, planned, klaviyo, today, showPast }),
-    [events, planned, klaviyo, today, showPast],
-  );
+  const sections = useMemo(() => {
+    const all = buildEmailSections({ campaigns: events, planned, klaviyo, today, showPast });
+    if (filter === "all") return all;
+    // Needs approval: same sections, only the items that need it, no empty ones.
+    return all
+      .map(s => ({
+        ...s,
+        items: s.items.filter(it => (it.kind === "planned" ? approvals.forPlan(it.planned.id) : approvals.forKlaviyo(it.klaviyo.id))?.needsApproval === true),
+      }))
+      .filter(s => s.items.length > 0);
+  }, [events, planned, klaviyo, today, showPast, filter, approvals]);
+
+  if (filter === "needs" && sections.length === 0) {
+    return (
+      <div className="rounded-2xl border-2 border-dashed border-emerald-500/40 bg-emerald-500/5 p-6 text-center space-y-3">
+        <BadgeCheck className="w-8 h-8 text-emerald-600 mx-auto" />
+        <p className="text-base font-semibold">Nothing needs approval — all caught up.</p>
+        <p className="text-sm text-muted-foreground">Emails join this list once they're a draft or scheduled in Klaviyo and not yet approved.</p>
+        {onShowAll && (
+          <button type="button" onClick={onShowAll} className="px-4 py-2.5 rounded-xl border-2 border-border font-semibold">Show all emails</button>
+        )}
+      </div>
+    );
+  }
 
   if (sections.length === 0) {
     return (
@@ -85,8 +115,8 @@ export function ListView({ today, events, planned, klaviyo, showPast, onOpenCamp
                 <p className="text-sm text-muted-foreground px-1">No emails planned in this campaign yet.</p>
               )}
               {section.items.map(item => item.kind === "planned"
-                ? <PlannedCard key={`p-${item.planned.id}`} email={item.planned} klaviyo={item.klaviyo} today={today} onOpen={() => onOpenEmail(item.planned.id)} />
-                : <KlaviyoCard key={`k-${item.klaviyo.id}`} email={item.klaviyo} onOpen={() => onOpenKlaviyo(item.klaviyo)} />)}
+                ? <PlannedCard key={`p-${item.planned.id}`} email={item.planned} klaviyo={item.klaviyo} today={today} approvals={approvals} onOpen={() => onOpenEmail(item.planned.id)} />
+                : <KlaviyoCard key={`k-${item.klaviyo.id}`} email={item.klaviyo} approvals={approvals} onOpen={() => onOpenKlaviyo(item.klaviyo)} />)}
             </div>
           </section>
         );
@@ -116,8 +146,12 @@ function Line({ icon, label, children }: { icon: React.ReactNode; label: string;
   );
 }
 
-function PlannedCard({ email: e, klaviyo, today, onOpen }: { email: PlannedEmail; klaviyo: KlaviyoEmail | null; today: string; onOpen: () => void }) {
-  const st = emailStatus(e.status);
+function PlannedCard({ email: e, klaviyo, today, approvals, onOpen }: {
+  email: PlannedEmail; klaviyo: KlaviyoEmail | null; today: string; approvals: ApprovalIndex; onOpen: () => void;
+}) {
+  const ap = approvals.forPlan(e.id);
+  // Linked: the stage comes from Klaviyo; otherwise the one set by hand.
+  const st = emailStage(ap?.stage ?? e.status);
   const audience = [...e.audiences.map(audienceLabel), ...(e.audienceOther ? [e.audienceOther] : [])].join(", ");
   return (
     <button type="button" onClick={onOpen} className="w-full text-left rounded-2xl border-2 border-indigo-500/40 bg-background hover:bg-secondary/30 p-3.5 flex gap-3">
@@ -130,13 +164,14 @@ function PlannedCard({ email: e, klaviyo, today, onOpen }: { email: PlannedEmail
         <span className="flex items-center gap-1.5 flex-wrap">
           <span className={cn("px-2 py-0.5 rounded-full text-xs font-semibold", st.chip)}>{st.label}</span>
           {klaviyo && (
-            <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5" /> {klaviyo.status === "Sent" ? "Sent" : "Scheduled"} in Klaviyo
+            <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-sky-500/10 text-sky-700 dark:text-sky-300 inline-flex items-center gap-1">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Linked to Klaviyo
             </span>
           )}
           {!klaviyo && e.klaviyoCampaignId && (
             <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-secondary text-muted-foreground">Linked to Klaviyo</span>
           )}
+          {ap && <ApprovalBadge item={ap} row={approvals.row(ap.key)} />}
         </span>
         <span className="grid sm:grid-cols-2 gap-x-4 gap-y-1">
           {e.offer && <Line icon={<Target className="w-3.5 h-3.5" />} label="Offer">{e.offer}</Line>}
@@ -151,16 +186,22 @@ function PlannedCard({ email: e, klaviyo, today, onOpen }: { email: PlannedEmail
   );
 }
 
-function KlaviyoCard({ email: k, onOpen }: { email: KlaviyoEmail; onOpen: () => void }) {
+function KlaviyoCard({ email: k, approvals, onOpen }: { email: KlaviyoEmail; approvals: ApprovalIndex; onOpen: () => void }) {
+  const ap = approvals.forKlaviyo(k.id);
+  const draft = k.status === "Draft";
   return (
-    <button type="button" onClick={onOpen} className="w-full text-left rounded-2xl border-2 border-dashed border-sky-500/50 bg-sky-500/5 hover:bg-sky-500/10 p-3.5 flex gap-3">
+    <button type="button" onClick={onOpen} className={cn(
+      "w-full text-left rounded-2xl border-2 border-dashed p-3.5 flex gap-3",
+      draft ? "border-violet-500/50 bg-violet-500/5 hover:bg-violet-500/10" : "border-sky-500/50 bg-sky-500/5 hover:bg-sky-500/10",
+    )}>
       <DateBlock date={k.date} time={format(parseISO(k.sendAt), "HH:mm")} past={k.status === "Sent"} />
       <span className="flex-1 min-w-0 space-y-1">
-        <span className="block text-xs font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300">
-          Klaviyo · {k.status} · not planned here
+        <span className={cn("block text-xs font-semibold uppercase tracking-wide", draft ? "text-violet-700 dark:text-violet-300" : "text-sky-700 dark:text-sky-300")}>
+          Klaviyo · {draft ? "Draft (not scheduled)" : stageLabel(k.status === "Sent" ? "sent" : "scheduled")} · not planned here
         </span>
         <span className="block text-base font-bold truncate">{k.subject ?? k.name}</span>
         <span className="block text-sm text-muted-foreground truncate">{k.name}{k.audiences.length ? ` · ${k.audiences.join(", ")}` : ""}</span>
+        {ap && <ApprovalBadge item={ap} row={approvals.row(ap.key)} />}
       </span>
     </button>
   );

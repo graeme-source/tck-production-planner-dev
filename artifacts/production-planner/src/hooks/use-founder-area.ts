@@ -27,6 +27,9 @@ export function useFounderArea() {
     isFounder: isFounderEmail(email),
     canNumbers: decideFounderFeatureAccess({ email, grantedKeys, featureKey: FOUNDER_FEATURES.numbers }),
     canSales: decideFounderFeatureAccess({ email, grantedKeys, featureKey: FOUNDER_FEATURES.sales }),
+    /** May approve marketing emails (founder, or a marketing.approve_emails
+     *  grant). The server checks again on every approve. */
+    canApproveEmails: decideFounderFeatureAccess({ email, grantedKeys, featureKey: FOUNDER_FEATURES.approveEmails }),
     tabs,
     /** Where "The Business" lands for this person; null = no way in. */
     home: tabs[0]?.href ?? null,

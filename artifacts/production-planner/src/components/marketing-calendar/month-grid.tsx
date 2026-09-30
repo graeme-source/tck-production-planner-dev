@@ -6,7 +6,8 @@
  * Emails are one-day chips: our planned emails are SOLID indigo (drag one to
  * another day and it re-files into that day's campaign); Klaviyo's real sends
  * are OUTLINED sky blue and read-only. A plan linked to its Klaviyo send
- * shows once, as the planned chip with a tick.
+ * shows once, as the planned chip with a tick. Unlinked Klaviyo drafts stay
+ * off the grid (List view). Approval: a green tick badge or an amber dot.
  */
 import { useMemo } from "react";
 import { layoutWeek, monthGridWeeks } from "@workspace/marketing-calendar";
@@ -15,6 +16,7 @@ import type { CalEvent, KlaviyoEmail, Milestone, PlannedEmail } from "./api";
 import { CheckCircle2, Mail, MailPlus } from "lucide-react";
 import { typeStyle, firstName } from "./constants";
 import { dateFromElementsAt, useSpanDrag } from "./use-span-drag";
+import { ApprovalDot, approvalTitle, type ApprovalIndex } from "./approvals";
 import type { DragMode } from "@workspace/marketing-calendar";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -28,7 +30,7 @@ type EmailSpan = { id: number; startDate: string; endDate: string; email: Klaviy
 type PlanDrag = { id: number; startDate: string; endDate: string; email: PlannedEmail };
 type PlanSpan = { id: number; startDate: string; endDate: string; plan: PlanDrag };
 
-export function MonthGrid({ month, today, events, emails = [], planned = [], onOpen, onOpenEmail, onOpenPlanned, onMovePlanned, onAddOn, onDatesChange }: {
+export function MonthGrid({ month, today, events, emails = [], planned = [], approvals, onOpen, onOpenEmail, onOpenPlanned, onMovePlanned, onAddOn, onDatesChange }: {
   /** Any ISO day in the month shown. */
   month: string;
   today: string;
@@ -39,6 +41,8 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], onO
   onOpenEmail?: (m: KlaviyoEmail) => void;
   /** Our planned emails — draggable to another day. */
   planned?: PlannedEmail[];
+  /** Approval status (dots on the chips; everyone sees it). */
+  approvals?: ApprovalIndex;
   onOpenPlanned?: (e: PlannedEmail) => void;
   onMovePlanned?: (e: PlannedEmail, sendDate: string) => void;
   onAddOn: (date: string) => void;
@@ -134,6 +138,7 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], onO
                     const d = seg.event.plan;
                     const p = d.email;
                     const isLinked = !!p.klaviyoCampaignId;
+                    const ap = approvals?.forPlan(p.id) ?? null;
                     return (
                       <div
                         key={`plan-${p.id}`}
@@ -141,11 +146,8 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], onO
                         tabIndex={0}
                         onPointerDown={ev => planDrag.start(ev, d, "move")}
                         onKeyDown={ev => { if (ev.key === "Enter") onOpenPlanned?.(p); }}
-                        title={`Planned email: “${p.subject}”${p.campaignTitle ? ` · ${p.campaignTitle}` : ""}${isLinked ? " · linked to Klaviyo" : ""} — drag to another day`}
-                        className={cn(
-                          "absolute pointer-events-auto touch-none cursor-grab flex items-center gap-1.5 rounded-lg px-1.5 text-xs font-semibold overflow-hidden shadow-sm bg-indigo-600 text-white",
-                          p.status === "idea" && "opacity-70 outline-dashed outline-2 -outline-offset-2 outline-white/80",
-                        )}
+                        title={`Planned email: “${p.subject}”${p.campaignTitle ? ` · ${p.campaignTitle}` : ""}${isLinked ? " · linked to Klaviyo" : ""}${approvalTitle(ap, ap ? approvals?.row(ap.key) ?? null : null)} — drag to another day`}
+                        className="absolute pointer-events-auto touch-none cursor-grab flex items-center gap-1.5 rounded-lg px-1.5 text-xs font-semibold overflow-hidden shadow-sm bg-indigo-600 text-white"
                         style={{
                           left: `calc(${(seg.startCol / 7) * 100}% + 3px)`,
                           width: `calc(${(1 / 7) * 100}% - 6px)`,
@@ -154,18 +156,20 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], onO
                         }}
                       >
                         {isLinked ? <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" /> : <MailPlus className="w-3.5 h-3.5 flex-shrink-0" />}
-                        <span className="truncate">{p.subject}</span>
+                        <span className="truncate flex-1">{p.subject}</span>
+                        <ApprovalDot item={ap} />
                       </div>
                     );
                   }
                   if ("email" in seg.event) {
                     const m = seg.event.email;
+                    const ap = approvals?.forKlaviyo(m.id) ?? null;
                     return (
                       <button
                         key={`email-${m.id}`}
                         type="button"
                         onClick={() => onOpenEmail?.(m)}
-                        title={`${m.name}${m.subject ? ` — “${m.subject}”` : ""} · ${m.status}`}
+                        title={`${m.name}${m.subject ? ` — “${m.subject}”` : ""} · ${m.status}${approvalTitle(ap, ap ? approvals?.row(ap.key) ?? null : null)}`}
                         className={cn(
                           "absolute pointer-events-auto flex items-center gap-1.5 rounded-lg border-2 px-1.5 text-xs font-semibold overflow-hidden",
                           m.status === "Sent"
@@ -180,7 +184,8 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], onO
                         }}
                       >
                         <Mail className="w-3.5 h-3.5 flex-shrink-0" />
-                        <span className="truncate">{m.subject ?? m.name}</span>
+                        <span className="truncate flex-1 text-left">{m.subject ?? m.name}</span>
+                        <ApprovalDot item={ap} onLight />
                       </button>
                     );
                   }

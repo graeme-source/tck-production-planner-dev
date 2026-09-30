@@ -45,17 +45,26 @@ export function statusLabel(key: string): string {
   return STATUSES.find(s => s.key === key)?.label ?? key;
 }
 
-// Planned emails. Statuses mirror the server (EMAIL_STATUSES).
-export const EMAIL_STATUS_OPTIONS: Array<{ key: string; label: string; hint: string; chip: string }> = [
-  { key: "idea", label: "Idea", hint: "Not committed yet", chip: "bg-secondary text-muted-foreground" },
-  { key: "planned", label: "Planned", hint: "We're sending this", chip: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300" },
-  { key: "scheduled", label: "Scheduled", hint: "Built and scheduled in Klaviyo", chip: "bg-sky-500/15 text-sky-700 dark:text-sky-300" },
+// Planned emails: the STAGE (2026-09-30). Keys mirror the server
+// (EMAIL_STAGES in @workspace/marketing-calendar). Linked to Klaviyo, the
+// stage comes from Klaviyo (effectiveStage); unlinked, it's set by hand.
+export const EMAIL_STAGE_OPTIONS: Array<{ key: string; label: string; hint: string; chip: string }> = [
+  { key: "planned", label: "Planned", hint: "We'll build this email", chip: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300" },
+  { key: "created", label: "Created in Klaviyo", hint: "A draft exists in Klaviyo", chip: "bg-violet-500/15 text-violet-700 dark:text-violet-300" },
+  { key: "scheduled", label: "Scheduled", hint: "Scheduled in Klaviyo", chip: "bg-sky-500/15 text-sky-700 dark:text-sky-300" },
   { key: "sent", label: "Sent", hint: "Gone out", chip: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" },
 ];
 
-export function emailStatus(key: string) {
-  return EMAIL_STATUS_OPTIONS.find(s => s.key === key) ?? EMAIL_STATUS_OPTIONS[1];
+export function emailStage(key: string) {
+  return EMAIL_STAGE_OPTIONS.find(s => s.key === key) ?? EMAIL_STAGE_OPTIONS[0];
 }
+
+/** Badge colours for approval (approvalBadge() in @workspace/marketing-calendar gives the words). */
+export const APPROVAL_TONE: Record<"green" | "amber" | "grey", string> = {
+  green: "bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border-emerald-500/40",
+  amber: "bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/50",
+  grey: "bg-secondary text-muted-foreground border-border",
+};
 
 export function firstName(name: string | null | undefined): string {
   return name?.trim().split(/\s+/)[0] || "Someone";

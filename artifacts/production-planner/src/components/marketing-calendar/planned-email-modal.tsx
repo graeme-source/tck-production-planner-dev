@@ -23,16 +23,17 @@ import { format, parseISO, formatDistanceToNowStrict } from "date-fns";
 import {
   X, Trash2, History, Users, Loader2, AlertTriangle, Mail, Link2, Unlink, CheckCircle2, Megaphone, ExternalLink,
 } from "lucide-react";
-import { EMAIL_AUDIENCES, addDays, campaignForDate, formatRange } from "@workspace/marketing-calendar";
+import { EMAIL_AUDIENCES, addDays, campaignForDate, effectiveStage, formatRange, stageLabel } from "@workspace/marketing-calendar";
 import { useAuth } from "@/contexts/auth-context";
 import { useAutosave, type AutosaveState } from "@/hooks/use-autosave";
 import { SaveChip } from "@/components/save-chip";
 import { cn } from "@/lib/utils";
 import {
   CAL_KEY, createEmail, invalidateEmails, patchCachedEmail, patchEmail, setEmailDate, useCalendarEvents, useDeleteEmail,
-  useKlaviyoEmails, useLinkKlaviyo, usePlannedEmail, type PlannedEmail,
+  useKlaviyoEmails, useLinkKlaviyo, usePlannedEmail, type KlaviyoEmail, type PlannedEmail,
 } from "./api";
-import { EMAIL_STATUS_OPTIONS, firstName } from "./constants";
+import { EMAIL_STAGE_OPTIONS, firstName } from "./constants";
+import { ApprovalPanel, useApprovalIndex } from "./approvals";
 
 interface Draft {
   sendDate: string;
@@ -229,9 +230,30 @@ export function PlannedEmailModal({ emailId, newOn, onClose, onOpenCampaign }: {
   // Klaviyo sends a week either side of the send day, to link the plan to.
   const kFrom = validDate ? addDays(validDate, -7) : "";
   const kTo = validDate ? addDays(validDate, 7) : "";
-  const klaviyo = useKlaviyoEmails(kFrom, kTo, validDate != null && id != null);
+  // Drafts too (a week either side, plus drafts edited recently whatever
+  // their placeholder day) — link the plan as soon as it's built in Klaviyo.
+  const klaviyo = useKlaviyoEmails(kFrom, kTo, validDate != null && id != null, { recentDrafts: true });
+  const pickable = useMemo(() => {
+    const seen = new Set<string>();
+    const out: KlaviyoEmail[] = [];
+    for (const k of [...(klaviyo.data?.emails ?? []), ...(klaviyo.data?.recentDrafts ?? [])]) {
+      if (seen.has(k.id)) continue;
+      seen.add(k.id);
+      out.push(k);
+    }
+    return out;
+  }, [klaviyo.data]);
   const linkedId = email?.klaviyoCampaignId ?? null;
-  const linkedSend = linkedId ? klaviyo.data?.emails.find(k => k.id === linkedId) ?? null : null;
+  const linkedSend = linkedId ? pickable.find(k => k.id === linkedId) ?? null : null;
+
+  // STAGE: from Klaviyo once linked, otherwise set by hand.
+  const stage = effectiveStage({ status: draft.status, klaviyoCampaignId: linkedId }, linkedSend);
+  // APPROVAL: shared with the linked Klaviyo campaign (one approval).
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date());
+  const approvalPlans = useMemo(() => (email ? [email] : []), [email]);
+  const approvalKlaviyo = useMemo(() => (linkedSend ? [linkedSend] : []), [linkedSend]);
+  const approvals = useApprovalIndex(approvalPlans, approvalKlaviyo, today);
+  const approvalItem = email ? approvals.forPlan(email.id) : null;
 
   const deleted = data?.deleted === true;
   const saveState = worst(fields.state, dateSave.state);
@@ -327,12 +349,18 @@ export function PlannedEmailModal({ emailId, newOn, onClose, onOpenCampaign }: {
               />
             </Field>
 
-            <Field label="Status">
+            <Field label="Stage" hint={stage.fromKlaviyo ? "set by Klaviyo" : undefined}>
               <div className="flex flex-wrap gap-2">
-                {EMAIL_STATUS_OPTIONS.map(s => (
-                  <Chip key={s.key} active={draft.status === s.key} onClick={() => setField("status", s.key)} title={s.hint}>{s.label}</Chip>
+                {EMAIL_STAGE_OPTIONS.map(s => (
+                  <Chip key={s.key} active={stage.stage === s.key} disabled={stage.fromKlaviyo}
+                    onClick={() => setField("status", s.key)} title={s.hint}>{s.label}</Chip>
                 ))}
               </div>
+              {stage.fromKlaviyo && (
+                <p className="text-sm text-muted-foreground">
+                  Linked to Klaviyo, so the stage follows it: {linkedSend?.status === "Draft" ? "a draft there" : linkedSend?.status === "Sent" ? "sent" : "scheduled there"} → <b>{stageLabel(stage.stage)}</b>. Unlink to set it by hand.
+                </p>
+              )}
             </Field>
 
             <TextArea label="Offer" value={draft.offer} rows={2} max={2000} placeholder="e.g. 20% off everything, VIPs first"
@@ -388,7 +416,9 @@ export function PlannedEmailModal({ emailId, newOn, onClose, onOpenCampaign }: {
                   <p className="font-semibold truncate">{linkedSend?.name ?? email?.klaviyoCampaignName ?? linkedId}</p>
                   <p className="text-sm text-muted-foreground">
                     {linkedSend
-                      ? `${linkedSend.status === "Sent" ? "Sent" : "Scheduled"} in Klaviyo ✓ · ${format(parseISO(linkedSend.sendAt), "EEE d MMM, HH:mm")}${linkedSend.subject ? ` · “${linkedSend.subject}”` : ""}`
+                      ? linkedSend.status === "Draft"
+                        ? `Draft in Klaviyo ✓ (not scheduled yet)${linkedSend.subject ? ` · “${linkedSend.subject}”` : " · no subject line yet"}`
+                        : `${linkedSend.status === "Sent" ? "Sent" : "Scheduled"} in Klaviyo ✓ · ${format(parseISO(linkedSend.sendAt), "EEE d MMM, HH:mm")}${linkedSend.subject ? ` · “${linkedSend.subject}”` : ""}`
                       : "Linked — not found a week either side of this day in Klaviyo"}
                   </p>
                 </div>
@@ -404,20 +434,22 @@ export function PlannedEmailModal({ emailId, newOn, onClose, onOpenCampaign }: {
               </div>
             ) : (
               <div className="space-y-2">
-                <p className="text-sm text-muted-foreground">Klaviyo emails a week either side of this day — tap the one this plan became.</p>
+                <p className="text-sm text-muted-foreground">Klaviyo emails a week either side of this day, and recent drafts — tap the one this plan became.</p>
                 {klaviyo.isLoading && <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Checking Klaviyo…</p>}
                 {klaviyo.data && !klaviyo.data.connected && <p className="text-sm text-muted-foreground">Klaviyo isn't connected.</p>}
                 {klaviyo.data?.error && <p className="text-sm text-amber-700 dark:text-amber-400">{klaviyo.data.error}</p>}
-                {klaviyo.data?.connected && klaviyo.data.emails.length === 0 && (
-                  <p className="text-sm text-muted-foreground">None yet. Once it's scheduled in Klaviyo it shows up here.</p>
+                {klaviyo.data?.connected && pickable.length === 0 && (
+                  <p className="text-sm text-muted-foreground">None yet. Once it's a draft in Klaviyo it shows up here.</p>
                 )}
-                {klaviyo.data?.emails.map(k => (
+                {pickable.map(k => (
                   <button key={k.id} type="button" disabled={deleted || link.isPending}
                     onClick={() => link.mutate({ id, klaviyo: { id: k.id, name: k.name } })}
                     className="w-full text-left rounded-xl border-2 border-sky-500/30 p-3 flex items-center gap-3 hover:bg-sky-500/10 disabled:opacity-50">
                     <Mail className="w-5 h-5 text-sky-600 flex-shrink-0" />
                     <span className="flex-1 min-w-0">
-                      <span className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground">{format(parseISO(k.sendAt), "EEE d MMM, HH:mm")} · {k.status}</span>
+                      <span className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        {k.status === "Draft" ? `Draft · set for ${format(parseISO(k.sendAt), "EEE d MMM")}` : `${format(parseISO(k.sendAt), "EEE d MMM, HH:mm")} · ${k.status}`}
+                      </span>
                       <span className="block font-semibold truncate">{k.name}</span>
                       <span className="block text-sm text-muted-foreground truncate">{k.subject ?? "No subject line"}</span>
                     </span>
@@ -428,6 +460,17 @@ export function PlannedEmailModal({ emailId, newOn, onClose, onOpenCampaign }: {
             )}
             {link.isError && <p className="text-sm text-destructive">{(link.error as Error).message}</p>}
           </section>
+
+          {/* Approval — one per email, shared with the linked Klaviyo campaign. */}
+          {id != null && (
+            <ApprovalPanel
+              item={approvalItem}
+              row={approvalItem ? approvals.row(approvalItem.key) : null}
+              canApprove={approvals.canApprove}
+              target={{ emailId: id }}
+              disabled={deleted}
+            />
+          )}
 
           {email && (
             <p className="text-sm text-muted-foreground">
@@ -504,15 +547,18 @@ function TextArea({ label, hint, value, rows, max, placeholder, onChange, onBlur
   );
 }
 
-function Chip({ active, onClick, title, children }: { active: boolean; onClick: () => void; title?: string; children: React.ReactNode }) {
+function Chip({ active, onClick, title, disabled, children }: { active: boolean; onClick: () => void; title?: string; disabled?: boolean; children: React.ReactNode }) {
   return (
     <button
       type="button"
       onClick={onClick}
       title={title}
+      disabled={disabled}
+      aria-pressed={active}
       className={cn(
-        "px-3.5 py-2 rounded-full border-2 text-sm font-semibold inline-flex items-center gap-1.5 transition-colors",
+        "px-3.5 py-2 rounded-full border-2 text-sm font-semibold inline-flex items-center gap-1.5 transition-colors disabled:cursor-not-allowed",
         active ? "border-primary bg-primary/10 text-foreground" : "border-border bg-background text-muted-foreground hover:bg-secondary/50",
+        disabled && !active && "opacity-50",
       )}
     >
       {children}

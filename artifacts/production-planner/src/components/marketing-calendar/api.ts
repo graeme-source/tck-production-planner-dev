@@ -140,7 +140,9 @@ export function patchEvent(id: number, patch: Record<string, unknown>) {
 export interface KlaviyoEmail {
   id: string;
   name: string;
-  status: "Scheduled" | "Sending" | "Sent";
+  /** Drafts come too (2026-09-30): shown only where they help — linking,
+   *  approvals and the List view, never cluttering the month grid. */
+  status: "Draft" | "Scheduled" | "Sending" | "Sent";
   date: string;
   sendAt: string;
   subject: string | null;
@@ -153,11 +155,12 @@ export interface KlaviyoEmail {
 
 /** Sent and scheduled one-off email campaigns in the range. Refreshes each
  *  minute — the server caches Klaviyo for 3, so this stays cheap. */
-export function useKlaviyoEmails(from: string, to: string, enabled = true) {
+export function useKlaviyoEmails(from: string, to: string, enabled = true, opts: { recentDrafts?: boolean } = {}) {
+  const drafts = opts.recentDrafts ? "&recentDrafts=1" : "";
   return useQuery({
     enabled,
-    queryKey: [...CAL_KEY, "klaviyo", from, to],
-    queryFn: () => calApi<{ connected: boolean; emails: KlaviyoEmail[]; error?: string }>(`/marketing-calendar/klaviyo-emails?from=${from}&to=${to}`),
+    queryKey: [...CAL_KEY, "klaviyo", from, to, drafts],
+    queryFn: () => calApi<{ connected: boolean; emails: KlaviyoEmail[]; recentDrafts?: KlaviyoEmail[]; error?: string }>(`/marketing-calendar/klaviyo-emails?from=${from}&to=${to}${drafts}`),
     refetchInterval: 60_000,
     refetchOnWindowFocus: true,
     placeholderData: prev => prev,
@@ -195,7 +198,7 @@ export interface EmailHistoryEntry {
   id: number;
   userId: number | null;
   userName: string | null;
-  action: "created" | "edited" | "moved" | "linked" | "unlinked" | "deleted";
+  action: "created" | "edited" | "moved" | "linked" | "unlinked" | "deleted" | "approved" | "unapproved";
   summary: string;
   at: string;
 }
@@ -265,7 +268,8 @@ export function useLinkKlaviyo() {
         method: "PUT",
         body: JSON.stringify({ klaviyoCampaignId: klaviyo?.id ?? null, klaviyoCampaignName: klaviyo?.name ?? null }),
       }),
-    onSuccess: r => { patchCachedEmail(qc, r.email); void invalidateEmails(qc); },
+    // Linking can carry an approval over to the Klaviyo email — re-read those too.
+    onSuccess: r => { patchCachedEmail(qc, r.email); void invalidateEmails(qc); void qc.invalidateQueries({ queryKey: APPROVALS_KEY }); },
   });
 }
 
@@ -274,5 +278,90 @@ export function useDeleteEmail() {
   return useMutation({
     mutationFn: (id: number) => calApi<{ ok: true }>(`/marketing-calendar/emails/${id}`, { method: "DELETE" }),
     onSuccess: () => { void invalidateEmails(qc); },
+  });
+}
+
+// ── Approvals (2026-09-30) ────────────────────────────────────────────────
+// Everyone with the page sees them; approving is for the founder or a
+// marketing.approve_emails grant — the server enforces it (403 otherwise).
+export interface Approval {
+  /** 'plan:<id>' or 'klaviyo:<campaign id>' — approvalKey() decides which. */
+  key: string;
+  emailId: number | null;
+  klaviyoCampaignId: string | null;
+  approved: boolean;
+  /** Subject line as it was when approved. */
+  subject: string | null;
+  klaviyoCampaignName: string | null;
+  sendDate: string | null;
+  approvedBy: Person | null;
+  approvedAt: string | null;
+  unapprovedBy: Person | null;
+  unapprovedAt: string | null;
+}
+
+export interface NeededItem {
+  key: string;
+  kind: "plan" | "klaviyo";
+  date: string;
+  subject: string | null;
+  stage: string;
+  state: "approved" | "changed" | "none";
+  emailId: number | null;
+  klaviyoCampaignId: string | null;
+  klaviyoName: string | null;
+}
+
+const APPROVALS_KEY = [...CAL_KEY, "approvals"] as const;
+
+export function useApprovals() {
+  return useQuery({
+    queryKey: [...APPROVALS_KEY, "all"],
+    queryFn: () => calApi<{ canApprove: boolean; approvals: Approval[] }>("/marketing-calendar/approvals"),
+    refetchInterval: POLL_MS,
+    refetchOnWindowFocus: true,
+    placeholderData: prev => prev,
+  });
+}
+
+/** What needs approving from today on (the reminder banner + nav badge). */
+export function useApprovalsNeeded(enabled: boolean) {
+  return useQuery({
+    enabled,
+    queryKey: [...APPROVALS_KEY, "needed"],
+    queryFn: () => calApi<{ today: string; canApprove: boolean; count: number; klaviyoError: string | null; items: NeededItem[] }>("/marketing-calendar/approvals/needed"),
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
+    placeholderData: prev => prev,
+  });
+}
+
+export interface ApprovalHistoryEntry { id: number; action: string; summary: string; userName: string | null; at: string }
+
+export function useApprovalHistory(key: string | null) {
+  return useQuery({
+    enabled: key != null,
+    queryKey: [...APPROVALS_KEY, "history", key],
+    queryFn: () => calApi<{ approval: Approval | null; history: ApprovalHistoryEntry[] }>(
+      `/marketing-calendar/approvals/history?key=${encodeURIComponent(key ?? "")}`),
+    refetchInterval: POLL_MS,
+    refetchOnWindowFocus: true,
+  });
+}
+
+export type ApprovalTarget = { emailId: number } | { klaviyoCampaignId: string };
+
+export function useSetApproval() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ target, approve }: { target: ApprovalTarget; approve: boolean }) =>
+      calApi<{ approval: Approval | null }>(`/marketing-calendar/approvals/${approve ? "approve" : "unapprove"}`, {
+        method: "POST",
+        body: JSON.stringify(target),
+      }),
+    onSettled: (_r, _e, v) => {
+      void qc.invalidateQueries({ queryKey: APPROVALS_KEY });
+      if ("emailId" in v.target) void qc.invalidateQueries({ queryKey: [...EMAILS_KEY, "one", v.target.emailId] });
+    },
   });
 }
