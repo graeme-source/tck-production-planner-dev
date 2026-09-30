@@ -49,3 +49,52 @@ export const marketingEventHistoryTable = pgTable("marketing_event_history", {
 
 export type MarketingEvent = typeof marketingEventsTable.$inferSelect;
 export type MarketingEventHistory = typeof marketingEventHistoryTable.$inferSelect;
+
+// Planned emails (migration 0137). Each belongs to a campaign automatically
+// by date — the marketing_events row whose dates contain send_date (rule in
+// @workspace/marketing-calendar campaignForDate). Membership is never stored.
+export const marketingEmailsTable = pgTable("marketing_emails", {
+  id: serial("id").primaryKey(),
+  sendDate: date("send_date").notNull(),
+  // "HH:MM" London time, optional.
+  sendTime: text("send_time"),
+  subject: text("subject").notNull(),
+  offer: text("offer"),
+  coreMessage: text("core_message"),
+  smsSuggestion: text("sms_suggestion"),
+  cadence: text("cadence"),
+  // all | new | returning | vip | lapsed
+  audiences: text("audiences").array().notNull().default(sql`'{}'::text[]`),
+  audienceOther: text("audience_other"),
+  websiteChange: text("website_change"),
+  metaChange: text("meta_change"),
+  notes: text("notes"),
+  // idea | planned | scheduled | sent
+  status: text("status").notNull().default("planned"),
+  klaviyoCampaignId: text("klaviyo_campaign_id"),
+  klaviyoCampaignName: text("klaviyo_campaign_name"),
+  createdById: integer("created_by_id").references(() => usersTable.id, { onDelete: "set null" }),
+  createdByName: text("created_by_name"),
+  updatedById: integer("updated_by_id").references(() => usersTable.id, { onDelete: "set null" }),
+  updatedByName: text("updated_by_name"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at"),
+  deletedById: integer("deleted_by_id").references(() => usersTable.id, { onDelete: "set null" }),
+  deletedByName: text("deleted_by_name"),
+});
+
+export const marketingEmailHistoryTable = pgTable("marketing_email_history", {
+  id: serial("id").primaryKey(),
+  emailId: integer("email_id").notNull().references(() => marketingEmailsTable.id, { onDelete: "cascade" }),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  userName: text("user_name"),
+  // created | edited | moved | linked | unlinked | deleted
+  action: text("action").notNull(),
+  summary: text("summary").notNull(),
+  changes: jsonb("changes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type MarketingEmail = typeof marketingEmailsTable.$inferSelect;
+export type MarketingEmailHistory = typeof marketingEmailHistoryTable.$inferSelect;
