@@ -66,7 +66,7 @@ export function ListView({ today, events, planned, klaviyo, showPast, filter = "
   if (sections.length === 0) {
     return (
       <div className="rounded-2xl border-2 border-dashed border-border p-6 text-center space-y-3">
-        <p className="text-base text-muted-foreground">No campaigns or emails coming up yet.</p>
+        <p className="text-base text-muted-foreground">No phases or emails coming up yet.</p>
         <button type="button" onClick={() => onAddEmail(today)}
           className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white font-semibold inline-flex items-center gap-1.5">
           <Plus className="w-4 h-4" /> Add email
@@ -86,7 +86,7 @@ export function ListView({ today, events, planned, klaviyo, showPast, filter = "
             <div className="flex items-stretch gap-0 bg-secondary/30 border-b border-border">
               {style && <span className={cn("w-2 flex-shrink-0", style.dot)} />}
               {c ? (
-                <button type="button" onClick={() => onOpenCampaign(c.id)} className="flex-1 min-w-0 text-left px-4 py-3 hover:bg-secondary/50" title="Open the campaign to rename it or change its dates">
+                <button type="button" onClick={() => onOpenCampaign(c.id)} className="flex-1 min-w-0 text-left px-4 py-3 hover:bg-secondary/50" title="Open the phase to rename it or change its dates">
                   <span className="flex items-center gap-2 flex-wrap">
                     <Megaphone className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                     <span className="text-lg font-bold">{c.title}</span>
@@ -101,7 +101,7 @@ export function ListView({ today, events, planned, klaviyo, showPast, filter = "
                 </button>
               ) : (
                 <div className="flex-1 px-4 py-3">
-                  <span className="text-lg font-bold text-muted-foreground">Not in a campaign</span>
+                  <span className="text-lg font-bold text-muted-foreground">Not in a phase</span>
                 </div>
               )}
               <button type="button" onClick={() => onAddEmail(c ? defaultEmailDate(c, today) : section.items[0]?.date ?? today)}
@@ -112,7 +112,7 @@ export function ListView({ today, events, planned, klaviyo, showPast, filter = "
 
             <div className="p-3 space-y-3">
               {section.items.length === 0 && (
-                <p className="text-sm text-muted-foreground px-1">No emails planned in this campaign yet.</p>
+                <p className="text-sm text-muted-foreground px-1">No emails planned in this phase yet.</p>
               )}
               {section.items.map(item => item.kind === "planned"
                 ? <PlannedCard key={`p-${item.planned.id}`} email={item.planned} klaviyo={item.klaviyo} today={today} approvals={approvals} onOpen={() => onOpenEmail(item.planned.id)} />

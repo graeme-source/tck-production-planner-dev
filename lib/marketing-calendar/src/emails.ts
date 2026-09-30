@@ -214,7 +214,7 @@ export function describeEmailMove(
   if (fromDate === toDate) return null;
   const base = `moved it from ${formatDay(fromDate)} to ${formatDay(toDate)}`;
   if (fromCampaign === toCampaign) return base;
-  return toCampaign ? `${base} — now in “${toCampaign}”` : `${base} — now not in a campaign`;
+  return toCampaign ? `${base} — now in “${toCampaign}”` : `${base} — now not in a phase`;
 }
 
 /** Linking the plan to the real Klaviyo send, or undoing it. */

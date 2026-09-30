@@ -210,13 +210,13 @@ export function EventModal({ eventId, newOn, onClose }: {
         onClick={e => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label={draft.title || "New campaign"}
+        aria-label={draft.title || "New phase"}
       >
         {/* Header */}
         <div className="flex items-center gap-3 px-4 sm:px-5 py-3 border-b border-border">
           <span className={cn("w-3.5 h-3.5 rounded-full flex-shrink-0", style.dot)} />
           <div className="flex-1 min-w-0">
-            <h2 className="font-display font-bold text-lg leading-tight truncate">{draft.title || (id == null ? "New campaign" : "Campaign")}</h2>
+            <h2 className="font-display font-bold text-lg leading-tight truncate">{draft.title || (id == null ? "New phase" : "Phase")}</h2>
             {draft.startDate && draft.endDate && !datesInvalid && (
               <p className="text-sm text-muted-foreground">{formatRange(draft.startDate, draft.endDate)}</p>
             )}
@@ -396,12 +396,12 @@ export function EventModal({ eventId, newOn, onClose }: {
             <div className="pt-2 border-t border-border">
               {!confirmDelete ? (
                 <button onClick={() => setConfirmDelete(true)} className="px-4 py-2.5 rounded-xl border-2 border-red-500/40 text-red-600 font-semibold flex items-center gap-2 hover:bg-red-500/10">
-                  <Trash2 className="w-4 h-4" /> Delete campaign
+                  <Trash2 className="w-4 h-4" /> Delete phase
                 </button>
               ) : (
                 <div className="rounded-xl border-2 border-red-500/50 bg-red-500/10 p-4 space-y-3">
                   <p className="font-semibold text-base">Are you sure? “{draft.title}” comes off the calendar for everyone.</p>
-                  <p className="text-sm text-muted-foreground">Its history is kept, and any emails planned in it stay on the calendar (as “Not in a campaign”).</p>
+                  <p className="text-sm text-muted-foreground">Its history is kept, and any emails planned in it stay on the calendar (as “Not in a phase”).</p>
                   {del.isError && <p className="text-sm text-destructive">{(del.error as Error).message}</p>}
                   <div className="flex gap-2 flex-wrap">
                     <button

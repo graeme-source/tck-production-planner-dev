@@ -107,7 +107,7 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], app
                       type="button"
                       data-cal-date={day}
                       onClick={() => { if (!justDragged() && !planDrag.justDragged()) onAddOn(day); }}
-                      aria-label={`Add a campaign or email on ${day}`}
+                      aria-label={`Add a phase or email on ${day}`}
                       className={cn(
                         "relative flex flex-col items-start justify-start text-left border-r border-border last:border-r-0 px-1.5 pt-1 hover:bg-secondary/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
                         !inMonth && "bg-secondary/30",

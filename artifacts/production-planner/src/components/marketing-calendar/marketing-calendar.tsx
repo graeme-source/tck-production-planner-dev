@@ -280,8 +280,8 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
 
       <p className="text-sm text-muted-foreground">
         {view === "list"
-          ? "Emails belong to the campaign running on their send day · tap a campaign's name to rename it or change its dates."
-          : "Drag a campaign to move it · drag its end to stretch it · drag an email to another day · tap an empty day to add a campaign or email."}
+          ? "Emails belong to the phase running on their send day · tap a phase's name to rename it or change its dates."
+          : "Drag a phase to move it · drag its end to stretch it · drag an email to another day · tap an empty day to add a phase or email."}
       </p>
 
       {/* Legend */}
@@ -315,7 +315,7 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
                       {format(parseISO(p.sendDate), "EEE d MMM")}{p.sendTime ? `, ${p.sendTime}` : ""} · {stageLabel(approvals.forPlan(p.id)?.stage ?? p.status)}{p.klaviyoCampaignId ? " · in Klaviyo ✓" : ""}
                     </span>
                     <span className="block font-semibold truncate">{p.subject}</span>
-                    <span className="block text-sm text-muted-foreground truncate">{p.campaignTitle ? `In “${p.campaignTitle}”` : "Not in a campaign"}</span>
+                    <span className="block text-sm text-muted-foreground truncate">{p.campaignTitle ? `In “${p.campaignTitle}”` : "Not in a phase"}</span>
                     {approvals.forPlan(p.id) && <ApprovalBadge item={approvals.forPlan(p.id)!} row={approvals.row(approvals.forPlan(p.id)!.key)} />}
                   </span>
                 </button>
@@ -394,11 +394,11 @@ function AddChoice({ date, onClose, onCampaign, onEmail }: { date: string; onClo
         <div className="p-4 grid gap-3">
           <button type="button" onClick={onCampaign} autoFocus className="rounded-2xl border-2 border-violet-500/40 p-4 text-left flex items-center gap-3 hover:bg-violet-500/10">
             <Megaphone className="w-6 h-6 text-violet-600 flex-shrink-0" />
-            <span><span className="block font-bold text-base">Add campaign</span><span className="block text-sm text-muted-foreground">A period like “Early Black Friday”, starting this day</span></span>
+            <span><span className="block font-bold text-base">Add phase</span><span className="block text-sm text-muted-foreground">A period like “Early Black Friday”, starting this day</span></span>
           </button>
           <button type="button" onClick={onEmail} className="rounded-2xl border-2 border-indigo-500/40 p-4 text-left flex items-center gap-3 hover:bg-indigo-500/10">
             <MailPlus className="w-6 h-6 text-indigo-600 flex-shrink-0" />
-            <span><span className="block font-bold text-base">Add email</span><span className="block text-sm text-muted-foreground">A planned send on this day — it joins the campaign running then</span></span>
+            <span><span className="block font-bold text-base">Add email</span><span className="block text-sm text-muted-foreground">A planned send on this day — it joins the phase running then</span></span>
           </button>
         </div>
       </div>

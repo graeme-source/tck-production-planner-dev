@@ -324,10 +324,10 @@ export function PlannedEmailModal({ emailId, newOn, onClose, onOpenCampaign }: {
                 {campaign ? (
                   <>
                     <p className="text-base font-semibold truncate">In “{campaign.title}”</p>
-                    <p className="text-sm text-muted-foreground">{formatRange(campaign.startDate, campaign.endDate)} · change the send day to move it to another campaign</p>
+                    <p className="text-sm text-muted-foreground">{formatRange(campaign.startDate, campaign.endDate)} · change the send day to move it to another phase</p>
                   </>
                 ) : (
-                  <p className="text-base text-muted-foreground">Not in a campaign — no campaign runs on this day.</p>
+                  <p className="text-base text-muted-foreground">Not in a phase — no phase runs on this day.</p>
                 )}
               </div>
               {campaign && onOpenCampaign && (

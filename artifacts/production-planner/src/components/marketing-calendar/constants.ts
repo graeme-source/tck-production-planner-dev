@@ -7,7 +7,7 @@
 export interface TypeStyle { label: string; bar: string; chip: string; dot: string }
 
 export const EVENT_TYPES: Record<string, TypeStyle> = {
-  campaign:       { label: "Campaign",       bar: "bg-violet-500 text-white",  chip: "bg-violet-500/15 text-violet-700 dark:text-violet-300", dot: "bg-violet-500" },
+  campaign:       { label: "Phase",       bar: "bg-violet-500 text-white",  chip: "bg-violet-500/15 text-violet-700 dark:text-violet-300", dot: "bg-violet-500" },
   email:          { label: "Email",          bar: "bg-sky-500 text-white",     chip: "bg-sky-500/15 text-sky-700 dark:text-sky-300",          dot: "bg-sky-500" },
   offer:          { label: "Offer",          bar: "bg-amber-500 text-white",   chip: "bg-amber-500/15 text-amber-700 dark:text-amber-300",    dot: "bg-amber-500" },
   product_launch: { label: "Product launch", bar: "bg-emerald-600 text-white", chip: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300", dot: "bg-emerald-600" },

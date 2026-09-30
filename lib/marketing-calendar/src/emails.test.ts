@@ -130,7 +130,7 @@ describe("email history sentences", () => {
     expect(describeEmailMove("2026-11-10", "2026-11-11", "Early Black Friday", "Early Black Friday"))
       .toBe("moved it from Tue 10 Nov to Wed 11 Nov");
     expect(describeEmailMove("2026-11-19", "2026-12-02", "Early Black Friday", null))
-      .toBe("moved it from Thu 19 Nov to Wed 2 Dec — now not in a campaign");
+      .toBe("moved it from Thu 19 Nov to Wed 2 Dec — now not in a phase");
     expect(describeEmailMove("2026-11-19", "2026-11-19", null, null)).toBeNull();
   });
   it("linking and unlinking Klaviyo", () => {
