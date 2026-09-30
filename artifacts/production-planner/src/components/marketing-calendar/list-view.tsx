@@ -75,7 +75,7 @@ export function ListView({ today, events, planned, klaviyo, showPast, onOpenCamp
                 </div>
               )}
               <button type="button" onClick={() => onAddEmail(c ? defaultEmailDate(c, today) : section.items[0]?.date ?? today)}
-                className="px-3 sm:px-4 m-2 rounded-xl border-2 border-indigo-500/40 text-indigo-700 dark:text-indigo-300 text-sm font-semibold flex items-center gap-1.5 hover:bg-indigo-500/10 flex-shrink-0">
+                className="self-center px-3 sm:px-4 py-2.5 m-2 rounded-xl border-2 border-indigo-500/40 text-indigo-700 dark:text-indigo-300 text-sm font-semibold flex items-center gap-1.5 hover:bg-indigo-500/10 flex-shrink-0">
                 <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Add email</span><span className="sm:hidden">Email</span>
               </button>
             </div>
@@ -98,7 +98,7 @@ export function ListView({ today, events, planned, klaviyo, showPast, onOpenCamp
 function DateBlock({ date, time, past }: { date: string; time: string | null; past: boolean }) {
   const [dow, d, mon] = formatDay(date).split(" ");
   return (
-    <span className={cn("w-16 flex-shrink-0 rounded-xl border-2 text-center py-1.5", past ? "border-border text-muted-foreground" : "border-indigo-500/40")}>
+    <span className={cn("w-16 flex-shrink-0 self-start rounded-xl border-2 text-center py-1.5", past ? "border-border text-muted-foreground" : "border-indigo-500/40")}>
       <span className="block text-xs font-semibold uppercase">{dow}</span>
       <span className="block text-2xl font-bold leading-none">{d}</span>
       <span className="block text-xs font-semibold uppercase">{mon}</span>

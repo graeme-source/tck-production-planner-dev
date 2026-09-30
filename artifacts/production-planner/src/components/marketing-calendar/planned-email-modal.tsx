@@ -29,7 +29,7 @@ import { useAutosave, type AutosaveState } from "@/hooks/use-autosave";
 import { SaveChip } from "@/components/save-chip";
 import { cn } from "@/lib/utils";
 import {
-  createEmail, invalidateEmails, patchCachedEmail, patchEmail, setEmailDate, useCalendarEvents, useDeleteEmail,
+  CAL_KEY, createEmail, invalidateEmails, patchCachedEmail, patchEmail, setEmailDate, useCalendarEvents, useDeleteEmail,
   useKlaviyoEmails, useLinkKlaviyo, usePlannedEmail, type PlannedEmail,
 } from "./api";
 import { EMAIL_STATUS_OPTIONS, firstName } from "./constants";
@@ -113,22 +113,27 @@ export function PlannedEmailModal({ emailId, newOn, onClose, onOpenCampaign }: {
     [validDate, campaignsQ.data],
   );
 
-  // A brand-new email starts with its campaign's offer and summary.
-  const prefilled = useRef(emailId != null);
+  // A brand-new email starts with its campaign's offer and summary. Until it
+  // is saved, changing the day swaps them for the new campaign's — but only
+  // while they are still exactly what was filled in (never over typing).
+  const prefill = useRef<{ offer: string; coreMessage: string }>({ offer: "", coreMessage: "" });
   useEffect(() => {
-    if (prefilled.current || !campaignsQ.data || campaignsQ.isPlaceholderData) return;
-    prefilled.current = true;
-    if (!campaign) return;
+    if (emailId != null || idRef.current != null || !campaignsQ.data || campaignsQ.isPlaceholderData) return;
+    const next = { offer: campaign?.offer ?? "", coreMessage: campaign?.summary ?? "" };
+    const prev = prefill.current;
+    prefill.current = next;
     setDraft(d => ({
       ...d,
-      offer: d.offer || campaign.offer || "",
-      coreMessage: d.coreMessage || campaign.summary || "",
+      offer: d.offer === prev.offer ? next.offer : d.offer,
+      coreMessage: d.coreMessage === prev.coreMessage ? next.coreMessage : d.coreMessage,
     }));
-  }, [campaign, campaignsQ.data, campaignsQ.isPlaceholderData]);
+  }, [emailId, campaign, campaignsQ.data, campaignsQ.isPlaceholderData]);
 
   const accept = (e: PlannedEmail) => {
     lastSeen.current = e.updatedAt;
     patchCachedEmail(qc, e);
+    // Re-read so the history below shows the change straight away.
+    void qc.invalidateQueries({ queryKey: [...CAL_KEY, "emails", "one", e.id] });
   };
 
   async function ensureCreated(): Promise<{ id: number; created: boolean } | null> {
