@@ -118,10 +118,17 @@ router.get("/events", validateQuery(ListQuery), async (_req: Request, res: Respo
 // Sent and scheduled one-off email campaigns on their send day, so offers
 // and the emails announcing them sit in one place (Graeme, 2026-09-30).
 // A Klaviyo hiccup never breaks the calendar — it answers with an error flag.
-router.get("/klaviyo-emails", validateQuery(ListQuery), async (_req: Request, res: Response) => {
-  const { from, to } = res.locals["query"] as z.infer<typeof ListQuery>;
+// Drafts come too (2026-09-30) — the page shows them only where they help
+// (linking, approvals, the List view). recentDrafts=1 also returns drafts
+// edited in the last ~4 months whatever their placeholder day, for linking.
+const KlaviyoQuery = z.object({ from: IsoDate, to: IsoDate, recentDrafts: z.enum(["0", "1"]).optional() })
+  .refine(q => q.to >= q.from, { message: "to must be on or after from" })
+  .refine(q => daysBetween(q.from, q.to) <= 800, { message: "Range too long (max ~2 years)" });
+
+router.get("/klaviyo-emails", validateQuery(KlaviyoQuery), async (_req: Request, res: Response) => {
+  const { from, to, recentDrafts } = res.locals["query"] as z.infer<typeof KlaviyoQuery>;
   try {
-    res.json(await klaviyoEmailsForRange(from, to));
+    res.json(await klaviyoEmailsForRange(from, to, { withRecentDrafts: recentDrafts === "1" }));
   } catch (err) {
     console.error("[marketing-calendar] Klaviyo emails failed:", err instanceof Error ? err.message : String(err));
     res.json({ connected: true, emails: [], error: "Couldn't reach Klaviyo just now" });

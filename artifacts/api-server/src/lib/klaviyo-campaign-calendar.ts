@@ -3,9 +3,10 @@
  * "one place to see it all at once"). READ-ONLY — Klaviyo stays the master;
  * nothing here ever writes to it.
  *
- * One-off email campaigns that are Scheduled, Sending or Sent appear on the
+ * One-off email campaigns that are Draft, Scheduled, Sending or Sent appear on the
  * day they send (London time) with their campaign name, subject line,
- * preview text and audience. Drafts and cancelled campaigns are left out.
+ * preview text and audience (a draft on its placeholder send day, for linking
+ * and approvals — the page decides where drafts show). Cancelled: never.
  *
  * The mapping is pure and tested; the fetch + small caches sit below it.
  */
@@ -13,7 +14,7 @@ import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 
 import {
-  campaignsToCalendar, londonDay, type KlaviyoCalendarEmail, type RawCampaign, type RawMessage,
+  campaignSnapshot, campaignsToCalendar, londonDay, type KlaviyoCalendarEmail, type RawCampaign, type RawMessage,
 } from "./klaviyo-campaign-map";
 
 export type { KlaviyoCalendarEmail };
@@ -84,10 +85,60 @@ async function loadCampaigns(apiKey: string, from: string) {
   return pageCache;
 }
 
-export async function klaviyoEmailsForRange(from: string, to: string): Promise<{ connected: boolean; emails: KlaviyoCalendarEmail[] }> {
+// Drafts (2026-09-30), for linking and approvals. They have no scheduled_at,
+// so the list above (sorted by it) can't be trusted to reach them — fetched
+// on their own, most recently edited first, same 3-minute cache.
+let draftCache: { at: number; campaigns: RawCampaign[]; messages: RawMessage[] } | null = null;
+const MAX_DRAFT_PAGES = 3;
+
+async function loadDrafts(apiKey: string) {
+  if (draftCache && Date.now() - draftCache.at < 180_000) return draftCache;
+  const filter = encodeURIComponent("and(equals(messages.channel,'email'),equals(status,'Draft'))");
+  let url: string | null = `/api/campaigns?filter=${filter}&sort=-updated_at&include=campaign-messages`;
+  const campaigns: RawCampaign[] = [];
+  const messages: RawMessage[] = [];
+  for (let page = 0; url && page < MAX_DRAFT_PAGES; page++) {
+    const r: { data: RawCampaign[]; included?: RawMessage[]; links?: { next?: string | null } } = await kFetch(apiKey, url);
+    campaigns.push(...r.data);
+    messages.push(...(r.included ?? []));
+    url = r.links?.next ?? null;
+  }
+  draftCache = { at: Date.now(), campaigns, messages };
+  return draftCache;
+}
+
+/** Drafts edited in the last `days` days, whatever their placeholder day —
+ *  what "link the Klaviyo email this became" offers besides the ±7 days. */
+async function recentDrafts(apiKey: string, days: number): Promise<KlaviyoCalendarEmail[]> {
+  const { campaigns, messages } = await loadDrafts(apiKey);
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  const recent = campaigns.filter(c => (c.attributes.updated_at ?? "") >= since);
+  return campaignsToCalendar({ campaigns: recent, messages, audienceNames: new Map(), from: "0000-01-01", to: "9999-12-31" })
+    .sort((a, b) => (b.sendAt).localeCompare(a.sendAt));
+}
+
+/**
+ * One campaign straight from Klaviyo (read-only GET) — the subject line an
+ * approval snapshots must be the one Klaviyo has right now, not a cache.
+ */
+export async function klaviyoCampaignById(id: string) {
+  const apiKey = await getKlaviyoKey();
+  if (!apiKey) return null;
+  const r = await kFetch<{ data: RawCampaign; included?: RawMessage[] }>(
+    apiKey, `/api/campaigns/${encodeURIComponent(id)}?include=campaign-messages`,
+  );
+  return campaignSnapshot(r.data, r.included ?? []);
+}
+
+export async function klaviyoEmailsForRange(from: string, to: string, opts: { withRecentDrafts?: boolean } = {}): Promise<{
+  connected: boolean; emails: KlaviyoCalendarEmail[]; recentDrafts?: KlaviyoCalendarEmail[];
+}> {
   const apiKey = await getKlaviyoKey();
   if (!apiKey) return { connected: false, emails: [] };
-  const { campaigns, messages } = await loadCampaigns(apiKey, from);
+  const [page, drafts] = await Promise.all([loadCampaigns(apiKey, from), loadDrafts(apiKey)]);
+  // The main list may hold drafts too; the drafts list is the one to trust.
+  const campaigns = [...page.campaigns.filter(c => c.attributes.status !== "Draft"), ...drafts.campaigns];
+  const messages = [...page.messages, ...drafts.messages];
   // Names only for campaigns actually in the range being looked at.
   const inRange = campaignsToCalendar({ campaigns, messages, audienceNames: new Map(), from, to });
   const shownIds = new Set(inRange.map(e => e.id));
@@ -95,5 +146,6 @@ export async function klaviyoEmailsForRange(from: string, to: string): Promise<{
   for (const c of campaigns) if (shownIds.has(c.id)) for (const id of c.attributes.audiences?.included ?? []) ids.add(id);
   const audienceNames = new Map<string, string>();
   await Promise.all([...ids].map(async id => audienceNames.set(id, await audienceName(apiKey, id))));
-  return { connected: true, emails: campaignsToCalendar({ campaigns, messages, audienceNames, from, to }) };
+  const emails = campaignsToCalendar({ campaigns, messages, audienceNames, from, to });
+  return opts.withRecentDrafts ? { connected: true, emails, recentDrafts: await recentDrafts(apiKey, 120) } : { connected: true, emails };
 }

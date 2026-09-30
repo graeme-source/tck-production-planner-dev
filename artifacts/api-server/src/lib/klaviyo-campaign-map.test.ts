@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { campaignsToCalendar, londonDay } from "./klaviyo-campaign-map";
+import { campaignSnapshot, campaignsToCalendar, londonDay } from "./klaviyo-campaign-map";
 
 const camp = (id: string, status: string, send: string | null, msgs: string[], included: string[] = ["L1"]) => ({
   id, relationships: { "campaign-messages": { data: msgs.map(m => ({ id: m })) } },
@@ -23,8 +23,31 @@ describe("Klaviyo campaigns on the marketing calendar", () => {
   };
   const out = campaignsToCalendar(base);
 
-  it("shows sent and scheduled one-off campaigns in the range, never drafts or cancelled", () => {
+  it("shows sent and scheduled one-off campaigns in the range, never cancelled", () => {
     expect(out.map(e => e.id)).toEqual(["a", "b"]);
+  });
+
+  it("includes a draft on its planned send day (send strategy), with an edit link", () => {
+    const draft = {
+      id: "dr", relationships: { "campaign-messages": { data: [{ id: "m9" }] } },
+      attributes: {
+        name: "BF early (draft)", status: "Draft", send_time: null, scheduled_at: null,
+        send_strategy: { method: "static", options_static: { datetime: "2026-09-28T08:00:00+00:00" } },
+      },
+    };
+    const res = campaignsToCalendar({ ...base, campaigns: [...base.campaigns, draft], messages: [...base.messages, msg("m9", "Early access")] });
+    const d = res.find(e => e.id === "dr")!;
+    expect(d.status).toBe("Draft");
+    expect(d.date).toBe("2026-09-28");
+    expect(d.subject).toBe("Early access");
+    expect(d.klaviyoUrl).toContain("/campaign/dr/edit");
+    // A draft with no planned send time can't be placed — left out.
+    expect(res.find(e => e.id === "c")).toBeUndefined();
+  });
+
+  it("snapshots one campaign's current subject and status for approvals", () => {
+    const snap = campaignSnapshot(base.campaigns[1], base.messages);
+    expect(snap).toEqual({ id: "b", name: "Campaign b", status: "Scheduled", subject: "Payday Freepack 🎁", date: "2026-09-30" });
   });
 
   it("carries the campaign name, subject line, preview text and audience names", () => {
