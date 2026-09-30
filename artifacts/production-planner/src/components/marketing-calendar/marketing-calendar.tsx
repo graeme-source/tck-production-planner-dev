@@ -1,34 +1,47 @@
 /**
  * The marketing calendar on the Sales & Marketing page (Graeme, 2026-09-29).
- * Graeme and the marketing team plan here together: a month grid and a
- * Gantt-style timeline over the same events, drag to move or stretch, tap to
- * open, tap an empty day to add. Objective I — there is always something on,
- * planned far enough ahead (Black Friday can be planned in September).
+ * Graeme and the marketing team plan here together: a month grid, a List of
+ * upcoming emails grouped by campaign, and a Gantt-style timeline over the
+ * same data. Drag to move or stretch, tap to open, tap an empty day to add a
+ * campaign or an email. Objective I — there is always something on, planned
+ * far enough ahead (Black Friday can be planned in September).
+ *
+ * Campaigns are the calendar events (dated periods). Planned emails (2026-09-30)
+ * belong to a campaign automatically by their send day.
  */
 import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import { format, parseISO, formatDistanceToNowStrict } from "date-fns";
 import {
-  CalendarDays, ChevronLeft, ChevronRight, GanttChartSquare, Loader2, Lock, Mail, Megaphone, Package, Plus, Sparkles, X, AlertTriangle,
+  CalendarDays, ChevronLeft, ChevronRight, GanttChartSquare, List, Loader2, Lock, Mail, MailPlus, Megaphone, Package, Plus, Sparkles, X, AlertTriangle,
 } from "lucide-react";
 import {
   addDays, addMonths, formatRange, monthGridWeeks, monthStart, overlaps, timelineRange, type DragMode, type TimelineZoom,
 } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
-import { calApi, useCalendarEvents, useCreateEvent, useKlaviyoEmails, useSetEventDates, type CalEvent, type KlaviyoEmail, type Suggestion } from "./api";
+import {
+  calApi, useCalendarEvents, useCreateEvent, useKlaviyoEmails, useMoveEmail, usePlannedEmails, useSetEventDates,
+  type CalEvent, type KlaviyoEmail, type PlannedEmail, type Suggestion,
+} from "./api";
 import { EmailModal } from "./email-modal";
 import { EVENT_TYPES, firstName, statusLabel, typeStyle } from "./constants";
 import { MonthGrid } from "./month-grid";
 import { Timeline, timelineMonths } from "./timeline";
 import { EventModal } from "./event-modal";
+import { ListView } from "./list-view";
+import { PlannedEmailModal } from "./planned-email-modal";
 
-type View = "month" | "timeline";
+type View = "month" | "list" | "timeline";
 const VIEW_KEY = "tck_marketing_calendar_view";
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 function readView(): View {
-  try { return localStorage.getItem(VIEW_KEY) === "timeline" ? "timeline" : "month"; } catch { return "month"; }
+  try {
+    const v = localStorage.getItem(VIEW_KEY);
+    return v === "timeline" || v === "list" ? v : "month";
+  } catch { return "month"; }
 }
 function saveView(v: View) {
   try { localStorage.setItem(VIEW_KEY, v); } catch { /* per-device nicety only */ }
@@ -44,22 +57,41 @@ export function MarketingCalendar() {
   const [open, setOpen] = useState<{ id: number | null; newOn?: string } | null>(null);
   const [dragError, setDragError] = useState<string | null>(null);
   const [openEmail, setOpenEmail] = useState<KlaviyoEmail | null>(null);
+  const [openPlanned, setOpenPlanned] = useState<{ id: number | null; newOn?: string; key: number } | null>(null);
+  const [addChoice, setAddChoice] = useState<string | null>(null);
+  const [showPast, setShowPast] = useState(false);
+  const localToday = londonToday();
 
   const range = useMemo(() => {
     if (view === "month") {
       const weeks = monthGridWeeks(anchor);
       return { from: weeks[0][0], to: weeks[weeks.length - 1][6] };
     }
+    if (view === "list") {
+      // Upcoming: today to a year out; with "Show past", six months back too.
+      return { from: showPast ? addMonths(monthStart(localToday), -6) : localToday, to: addDays(localToday, 365) };
+    }
     return timelineRange(anchor, timelineMonths(zoom));
-  }, [view, anchor, zoom]);
+  }, [view, anchor, zoom, showPast, localToday]);
 
   const { data, isLoading, isError, error } = useCalendarEvents(range.from, range.to);
-  const today = data?.today ?? londonToday();
+  const today = data?.today ?? localToday;
   const events = data?.events ?? [];
   // Klaviyo sends (sent + scheduled one-off campaigns) — read-only.
   const klaviyo = useKlaviyoEmails(range.from, range.to);
   const emails = klaviyo.data?.emails ?? [];
   const setDates = useSetEventDates();
+  // Our planned emails in the same range.
+  const plannedQ = usePlannedEmails(range.from, range.to);
+  const planned = plannedQ.data?.emails ?? [];
+  const moveEmail = useMoveEmail();
+  const onMovePlanned = (e: PlannedEmail, sendDate: string) => {
+    setDragError(null);
+    moveEmail.mutate({ id: e.id, sendDate }, {
+      onError: err => setDragError(`Couldn't move “${e.subject}”: ${(err as Error).message}`),
+    });
+  };
+  const addEmail = (on: string) => setOpenPlanned({ id: null, newOn: on, key: Date.now() });
 
   const onDatesChange = (e: CalEvent, next: { startDate: string; endDate: string }, _mode: DragMode) => {
     setDragError(null);
@@ -70,7 +102,9 @@ export function MarketingCalendar() {
 
   const monthEnd = addMonths(anchor, 1);
   const monthEvents = events.filter(e => overlaps(e, anchor, addDays(monthEnd, -1)));
-  const monthEmails = emails.filter(m => m.date >= anchor && m.date < monthEnd);
+  const monthPlanned = planned.filter(p => p.sendDate >= anchor && p.sendDate < monthEnd);
+  const linkedIds = new Set(planned.map(p => p.klaviyoCampaignId).filter(Boolean));
+  const monthEmails = emails.filter(m => m.date >= anchor && m.date < monthEnd && !linkedIds.has(m.id));
 
   const changeView = (v: View) => { setView(v); saveView(v); };
 
@@ -85,15 +119,25 @@ export function MarketingCalendar() {
           <Link href="/test-boxes" className="px-3.5 py-2 rounded-xl border-2 border-rose-500/40 text-rose-700 dark:text-rose-300 text-sm font-semibold flex items-center gap-1.5 hover:bg-rose-500/10">
             <Package className="w-4 h-4" /> Test boxes
           </Link>
-          <button onClick={() => setOpen({ id: null, newOn: today >= anchor && today < monthEnd ? today : anchor })}
+          <button onClick={() => setOpen({ id: null, newOn: view === "list" || (today >= anchor && today < monthEnd) ? today : anchor })}
             className="px-3.5 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center gap-1.5 hover:bg-primary/90">
-            <Plus className="w-4 h-4" /> Add event
+            <Plus className="w-4 h-4" /> Add campaign
+          </button>
+          <button onClick={() => addEmail(view === "list" || (today >= anchor && today < monthEnd) ? today : anchor)}
+            className="px-3.5 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold flex items-center gap-1.5 hover:bg-indigo-700">
+            <MailPlus className="w-4 h-4" /> Add email
           </button>
         </div>
       </div>
 
       {/* Navigation row */}
       <div className="flex items-center gap-2 flex-wrap">
+        {view === "list" ? (
+          <label className="flex items-center gap-2 text-sm font-semibold px-3 py-2 rounded-xl border-2 border-border cursor-pointer">
+            <input type="checkbox" checked={showPast} onChange={e => setShowPast(e.target.checked)} className="w-4 h-4" />
+            Show past
+          </label>
+        ) : (<>
         <div className="flex items-center gap-1">
           <button onClick={() => setAnchor(a => addMonths(a, -1))} className="p-2 rounded-xl border-2 border-border hover:bg-secondary/50" aria-label="Previous month">
             <ChevronLeft className="w-5 h-5" />
@@ -116,6 +160,7 @@ export function MarketingCalendar() {
             aria-label="Jump to month"
           />
         </label>
+        </>)}
         <div className="flex-1" />
         {view === "timeline" && (
           <Segmented
@@ -129,6 +174,7 @@ export function MarketingCalendar() {
           onChange={v => changeView(v as View)}
           options={[
             { value: "month", label: "Month", icon: <CalendarDays className="w-4 h-4" /> },
+            { value: "list", label: "List", icon: <List className="w-4 h-4" /> },
             { value: "timeline", label: "Timeline", icon: <GanttChartSquare className="w-4 h-4" /> },
           ]}
         />
@@ -154,10 +200,25 @@ export function MarketingCalendar() {
             today={today}
             events={events}
             emails={emails}
+            planned={planned}
             onOpen={e => setOpen({ id: e.id })}
             onOpenEmail={setOpenEmail}
-            onAddOn={d => setOpen({ id: null, newOn: d })}
+            onOpenPlanned={p => setOpenPlanned({ id: p.id, key: p.id })}
+            onMovePlanned={onMovePlanned}
+            onAddOn={setAddChoice}
             onDatesChange={onDatesChange}
+          />
+        ) : view === "list" ? (
+          <ListView
+            today={today}
+            events={events}
+            planned={planned}
+            klaviyo={emails}
+            showPast={showPast}
+            onOpenCampaign={id => setOpen({ id })}
+            onOpenEmail={id => setOpenPlanned({ id, key: id })}
+            onOpenKlaviyo={setOpenEmail}
+            onAddEmail={addEmail}
           />
         ) : (
           <Timeline
@@ -168,14 +229,16 @@ export function MarketingCalendar() {
             emails={emails}
             onOpen={e => setOpen({ id: e.id })}
             onOpenEmail={setOpenEmail}
-            onAddOn={d => setOpen({ id: null, newOn: d })}
+            onAddOn={setAddChoice}
             onDatesChange={onDatesChange}
           />
         )}
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Drag an event to move it · drag its end to stretch it · tap an empty day to add one.
+        {view === "list"
+          ? "Emails belong to the campaign running on their send day · tap a campaign's name to rename it or change its dates."
+          : "Drag a campaign to move it · drag its end to stretch it · drag an email to another day · tap an empty day to add a campaign or email."}
       </p>
 
       {/* Legend */}
@@ -184,7 +247,8 @@ export function MarketingCalendar() {
           <span key={k} className="inline-flex items-center gap-1.5"><span className={cn("w-3 h-3 rounded-full", t.dot)} />{t.label}</span>
         ))}
         <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rotate-45 bg-rose-600" />Test-box deadline</span>
-        <span className="inline-flex items-center gap-1.5"><Mail className="w-3.5 h-3.5 text-sky-600" />Klaviyo email (faded = sent)</span>
+        <span className="inline-flex items-center gap-1.5"><span className="inline-flex items-center justify-center w-5 h-4 rounded bg-indigo-600"><MailPlus className="w-3 h-3 text-white" /></span>Planned email (drag to move)</span>
+        <span className="inline-flex items-center gap-1.5"><span className="inline-flex items-center justify-center w-5 h-4 rounded border-2 border-sky-500"><Mail className="w-3 h-3 text-sky-600" /></span>Klaviyo send, read-only (faded = sent)</span>
       </div>
       {klaviyo.data?.error && <p className="text-sm text-amber-700 dark:text-amber-400">Klaviyo emails: {klaviyo.data.error}</p>}
 
@@ -195,6 +259,23 @@ export function MarketingCalendar() {
           <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
             In {MONTH_NAMES[Number(anchor.slice(5, 7)) - 1]}
           </h3>
+          {monthPlanned.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {monthPlanned.map(p => (
+                <button key={p.id} type="button" onClick={() => setOpenPlanned({ id: p.id, key: p.id })}
+                  className="text-left rounded-2xl border-2 border-indigo-500/50 bg-indigo-500/5 p-4 flex gap-3 hover:bg-indigo-500/10">
+                  <MailPlus className="w-5 h-5 flex-shrink-0 mt-0.5 text-indigo-600" />
+                  <span className="min-w-0">
+                    <span className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      {format(parseISO(p.sendDate), "EEE d MMM")}{p.sendTime ? `, ${p.sendTime}` : ""} · Planned{p.klaviyoCampaignId ? " · in Klaviyo ✓" : ""}
+                    </span>
+                    <span className="block font-semibold truncate">{p.subject}</span>
+                    <span className="block text-sm text-muted-foreground truncate">{p.campaignTitle ? `In “${p.campaignTitle}”` : "Not in a campaign"}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
           {monthEmails.length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {monthEmails.map(m => (
@@ -225,6 +306,23 @@ export function MarketingCalendar() {
       <Suggestions />
 
       {openEmail && <EmailModal email={openEmail} onClose={() => setOpenEmail(null)} />}
+      {addChoice && (
+        <AddChoice
+          date={addChoice}
+          onClose={() => setAddChoice(null)}
+          onCampaign={() => { setOpen({ id: null, newOn: addChoice }); setAddChoice(null); }}
+          onEmail={() => { addEmail(addChoice); setAddChoice(null); }}
+        />
+      )}
+      {openPlanned && (
+        <PlannedEmailModal
+          key={openPlanned.key}
+          emailId={openPlanned.id}
+          newOn={openPlanned.newOn}
+          onClose={() => setOpenPlanned(null)}
+          onOpenCampaign={id => setOpen({ id })}
+        />
+      )}
       {open && (
         <EventModal
           key={open.id ?? `new-${open.newOn}`}
@@ -234,6 +332,31 @@ export function MarketingCalendar() {
         />
       )}
     </section>
+  );
+}
+
+/** Tapped an empty day: a campaign starting here, or an email sending here? */
+function AddChoice({ date, onClose, onCampaign, onEmail }: { date: string; onClose: () => void; onCampaign: () => void; onEmail: () => void }) {
+  return createPortal(
+    <div className="fixed inset-0 z-[120] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-card border-2 border-border rounded-2xl shadow-2xl w-full max-w-sm max-h-[92dvh] overflow-y-auto" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={`Add on ${date}`}>
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
+          <h2 className="flex-1 font-bold text-lg">Add on {format(parseISO(date), "EEE d MMM")}</h2>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-secondary" aria-label="Close"><X className="w-6 h-6" /></button>
+        </div>
+        <div className="p-4 grid gap-3">
+          <button type="button" onClick={onCampaign} autoFocus className="rounded-2xl border-2 border-violet-500/40 p-4 text-left flex items-center gap-3 hover:bg-violet-500/10">
+            <Megaphone className="w-6 h-6 text-violet-600 flex-shrink-0" />
+            <span><span className="block font-bold text-base">Add campaign</span><span className="block text-sm text-muted-foreground">A period like “Early Black Friday”, starting this day</span></span>
+          </button>
+          <button type="button" onClick={onEmail} className="rounded-2xl border-2 border-indigo-500/40 p-4 text-left flex items-center gap-3 hover:bg-indigo-500/10">
+            <MailPlus className="w-6 h-6 text-indigo-600 flex-shrink-0" />
+            <span><span className="block font-bold text-base">Add email</span><span className="block text-sm text-muted-foreground">A planned send on this day — it joins the campaign running then</span></span>
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

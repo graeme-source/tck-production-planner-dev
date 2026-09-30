@@ -66,8 +66,9 @@ export async function calApi<T>(path: string, init?: RequestInit): Promise<T> {
 export const CAL_KEY = ["marketing-calendar"] as const;
 const POLL_MS = 25_000;
 
-export function useCalendarEvents(from: string, to: string) {
+export function useCalendarEvents(from: string, to: string, enabled = true) {
   return useQuery({
+    enabled,
     queryKey: [...CAL_KEY, "range", from, to],
     queryFn: () => calApi<{ today: string; events: CalEvent[] }>(`/marketing-calendar/events?from=${from}&to=${to}`),
     refetchInterval: POLL_MS,
@@ -152,12 +153,126 @@ export interface KlaviyoEmail {
 
 /** Sent and scheduled one-off email campaigns in the range. Refreshes each
  *  minute — the server caches Klaviyo for 3, so this stays cheap. */
-export function useKlaviyoEmails(from: string, to: string) {
+export function useKlaviyoEmails(from: string, to: string, enabled = true) {
   return useQuery({
+    enabled,
     queryKey: [...CAL_KEY, "klaviyo", from, to],
     queryFn: () => calApi<{ connected: boolean; emails: KlaviyoEmail[]; error?: string }>(`/marketing-calendar/klaviyo-emails?from=${from}&to=${to}`),
     refetchInterval: 60_000,
     refetchOnWindowFocus: true,
     placeholderData: prev => prev,
+  });
+}
+
+// ── Planned emails (ours — Klaviyo's real sends are above) ─────────────────
+export interface PlannedEmail {
+  id: number;
+  sendDate: string;
+  sendTime: string | null;
+  subject: string;
+  offer: string | null;
+  coreMessage: string | null;
+  smsSuggestion: string | null;
+  cadence: string | null;
+  audiences: string[];
+  audienceOther: string | null;
+  websiteChange: string | null;
+  metaChange: string | null;
+  notes: string | null;
+  status: string;
+  klaviyoCampaignId: string | null;
+  klaviyoCampaignName: string | null;
+  /** The campaign it belongs to by date (worked out by the server). */
+  campaignId: number | null;
+  campaignTitle: string | null;
+  createdBy: Person | null;
+  updatedBy: Person | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EmailHistoryEntry {
+  id: number;
+  userId: number | null;
+  userName: string | null;
+  action: "created" | "edited" | "moved" | "linked" | "unlinked" | "deleted";
+  summary: string;
+  at: string;
+}
+
+const EMAILS_KEY = [...CAL_KEY, "emails"] as const;
+
+export function usePlannedEmails(from: string, to: string) {
+  return useQuery({
+    queryKey: [...EMAILS_KEY, "range", from, to],
+    queryFn: () => calApi<{ today: string; emails: PlannedEmail[] }>(`/marketing-calendar/emails?from=${from}&to=${to}`),
+    refetchInterval: POLL_MS,
+    refetchOnWindowFocus: true,
+    placeholderData: prev => prev,
+  });
+}
+
+export function usePlannedEmail(id: number | null) {
+  return useQuery({
+    queryKey: [...EMAILS_KEY, "one", id],
+    queryFn: () => calApi<{ email: PlannedEmail; deleted: boolean; deletedBy: string | null; history: EmailHistoryEntry[] }>(`/marketing-calendar/emails/${id}`),
+    enabled: id != null,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
+  });
+}
+
+/** Put a changed email straight into every cached range. */
+export function patchCachedEmail(qc: QueryClient, email: PlannedEmail) {
+  qc.setQueriesData<{ today: string; emails: PlannedEmail[] }>({ queryKey: [...EMAILS_KEY, "range"] }, old =>
+    old ? { ...old, emails: old.emails.map(e => (e.id === email.id ? email : e)) } : old);
+  qc.setQueryData([...EMAILS_KEY, "one", email.id], (old: unknown) =>
+    old && typeof old === "object" ? { ...(old as object), email } : old);
+}
+
+export function invalidateEmails(qc: QueryClient) {
+  return qc.invalidateQueries({ queryKey: EMAILS_KEY });
+}
+
+export function createEmail(body: Record<string, unknown>) {
+  return calApi<{ email: PlannedEmail }>("/marketing-calendar/emails", { method: "POST", body: JSON.stringify(body) });
+}
+export function patchEmail(id: number, patch: Record<string, unknown>) {
+  return calApi<{ email: PlannedEmail }>(`/marketing-calendar/emails/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+export function setEmailDate(id: number, sendDate: string) {
+  return calApi<{ email: PlannedEmail }>(`/marketing-calendar/emails/${id}/date`, { method: "PUT", body: JSON.stringify({ sendDate }) });
+}
+
+/** Drag a planned email to another day — optimistic, then re-read. */
+export function useMoveEmail() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, sendDate }: { id: number; sendDate: string }) => setEmailDate(id, sendDate),
+    onMutate: ({ id, sendDate }) => {
+      qc.setQueriesData<{ today: string; emails: PlannedEmail[] }>({ queryKey: [...EMAILS_KEY, "range"] }, old =>
+        old ? { ...old, emails: old.emails.map(e => (e.id === id ? { ...e, sendDate } : e)) } : old);
+    },
+    onSettled: () => { void invalidateEmails(qc); },
+  });
+}
+
+export function useLinkKlaviyo() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, klaviyo }: { id: number; klaviyo: { id: string; name: string } | null }) =>
+      calApi<{ email: PlannedEmail }>(`/marketing-calendar/emails/${id}/klaviyo`, {
+        method: "PUT",
+        body: JSON.stringify({ klaviyoCampaignId: klaviyo?.id ?? null, klaviyoCampaignName: klaviyo?.name ?? null }),
+      }),
+    onSuccess: r => { patchCachedEmail(qc, r.email); void invalidateEmails(qc); },
+  });
+}
+
+export function useDeleteEmail() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => calApi<{ ok: true }>(`/marketing-calendar/emails/${id}`, { method: "DELETE" }),
+    onSuccess: () => { void invalidateEmails(qc); },
   });
 }

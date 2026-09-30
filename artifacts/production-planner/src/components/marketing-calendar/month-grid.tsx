@@ -2,12 +2,17 @@
  * Month view: Monday-start weeks, events as bars spanning their days and
  * wrapping onto the next week. Drag a bar to move it, drag its end to
  * stretch or shrink it, tap a bar to open it, tap an empty day to add one.
+ *
+ * Emails are one-day chips: our planned emails are SOLID indigo (drag one to
+ * another day and it re-files into that day's campaign); Klaviyo's real sends
+ * are OUTLINED sky blue and read-only. A plan linked to its Klaviyo send
+ * shows once, as the planned chip with a tick.
  */
 import { useMemo } from "react";
 import { layoutWeek, monthGridWeeks } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
-import type { CalEvent, KlaviyoEmail, Milestone } from "./api";
-import { Mail } from "lucide-react";
+import type { CalEvent, KlaviyoEmail, Milestone, PlannedEmail } from "./api";
+import { CheckCircle2, Mail, MailPlus } from "lucide-react";
 import { typeStyle, firstName } from "./constants";
 import { dateFromElementsAt, useSpanDrag } from "./use-span-drag";
 import type { DragMode } from "@workspace/marketing-calendar";
@@ -19,8 +24,11 @@ const GAP_PX = 4;
 
 /** A Klaviyo email as a one-day span, so it takes a lane like an event. */
 type EmailSpan = { id: number; startDate: string; endDate: string; email: KlaviyoEmail };
+/** A planned email: `plan` is what the drag hook moves (its real id). */
+type PlanDrag = { id: number; startDate: string; endDate: string; email: PlannedEmail };
+type PlanSpan = { id: number; startDate: string; endDate: string; plan: PlanDrag };
 
-export function MonthGrid({ month, today, events, emails = [], onOpen, onOpenEmail, onAddOn, onDatesChange }: {
+export function MonthGrid({ month, today, events, emails = [], planned = [], onOpen, onOpenEmail, onOpenPlanned, onMovePlanned, onAddOn, onDatesChange }: {
   /** Any ISO day in the month shown. */
   month: string;
   today: string;
@@ -29,6 +37,10 @@ export function MonthGrid({ month, today, events, emails = [], onOpen, onOpenEma
   emails?: KlaviyoEmail[];
   onOpen: (e: CalEvent) => void;
   onOpenEmail?: (m: KlaviyoEmail) => void;
+  /** Our planned emails — draggable to another day. */
+  planned?: PlannedEmail[];
+  onOpenPlanned?: (e: PlannedEmail) => void;
+  onMovePlanned?: (e: PlannedEmail, sendDate: string) => void;
   onAddOn: (date: string) => void;
   onDatesChange: (e: CalEvent, next: { startDate: string; endDate: string }, mode: DragMode) => void;
 }) {
@@ -39,12 +51,23 @@ export function MonthGrid({ month, today, events, emails = [], onOpen, onOpenEma
     onCommit: onDatesChange,
     onTap: onOpen,
   });
+  const planDrag = useSpanDrag<PlanDrag>({
+    dateAt: dateFromElementsAt,
+    onCommit: (d, next) => onMovePlanned?.(d.email, next.startDate),
+    onTap: d => onOpenPlanned?.(d.email),
+  });
   const shown = events.map(spanOf);
+  // Klaviyo sends already linked to a plan show as the plan's chip instead.
+  const linked = useMemo(() => new Set(planned.map(p => p.klaviyoCampaignId).filter(Boolean)), [planned]);
   // Negative ids can never clash with real event ids.
   const emailSpans: EmailSpan[] = useMemo(
-    () => emails.map((m, i) => ({ id: -(i + 1), startDate: m.date, endDate: m.date, email: m })),
-    [emails],
+    () => emails.filter(m => !linked.has(m.id)).map((m, i) => ({ id: -(i + 1), startDate: m.date, endDate: m.date, email: m })),
+    [emails, linked],
   );
+  const planSpans: PlanSpan[] = planned.map(p => {
+    const d = planDrag.spanOf<PlanDrag>({ id: p.id, startDate: p.sendDate, endDate: p.sendDate, email: p });
+    return { id: -(1_000_000 + p.id), startDate: d.startDate, endDate: d.endDate, plan: d };
+  });
 
   // Test-box deadlines, drawn as markers on their days.
   const milestonesByDay = useMemo(() => {
@@ -58,13 +81,13 @@ export function MonthGrid({ month, today, events, emails = [], onOpen, onOpenEma
   }, [events]);
 
   return (
-    <div className={cn("select-none", dragging && "cursor-grabbing")}>
+    <div className={cn("select-none", (dragging || planDrag.dragging) && "cursor-grabbing")}>
       <div className="grid grid-cols-7 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
         {DAY_NAMES.map(d => <div key={d} className="px-1.5 pb-1.5">{d}</div>)}
       </div>
       <div className="rounded-xl border border-border overflow-hidden">
         {weeks.map(week => {
-          const { segments, laneCount } = layoutWeek<CalEvent | EmailSpan>(week, [...shown, ...emailSpans]);
+          const { segments, laneCount } = layoutWeek<CalEvent | EmailSpan | PlanSpan>(week, [...shown, ...planSpans, ...emailSpans]);
           const height = HEADER_PX + Math.max(laneCount, 2) * (BAR_PX + GAP_PX) + 8;
           return (
             <div key={week[0]} className="relative border-b border-border last:border-b-0" style={{ height }}>
@@ -79,8 +102,8 @@ export function MonthGrid({ month, today, events, emails = [], onOpen, onOpenEma
                       key={day}
                       type="button"
                       data-cal-date={day}
-                      onClick={() => { if (!justDragged()) onAddOn(day); }}
-                      aria-label={`Add an event on ${day}`}
+                      onClick={() => { if (!justDragged() && !planDrag.justDragged()) onAddOn(day); }}
+                      aria-label={`Add a campaign or email on ${day}`}
                       className={cn(
                         "relative flex flex-col items-start justify-start text-left border-r border-border last:border-r-0 px-1.5 pt-1 hover:bg-secondary/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
                         !inMonth && "bg-secondary/30",
@@ -107,6 +130,34 @@ export function MonthGrid({ month, today, events, emails = [], onOpen, onOpenEma
               {/* Bars. The layer ignores taps so empty days stay tappable. */}
               <div className="absolute inset-x-0 pointer-events-none" style={{ top: HEADER_PX }}>
                 {segments.map(seg => {
+                  if ("plan" in seg.event) {
+                    const d = seg.event.plan;
+                    const p = d.email;
+                    const isLinked = !!p.klaviyoCampaignId;
+                    return (
+                      <div
+                        key={`plan-${p.id}`}
+                        role="button"
+                        tabIndex={0}
+                        onPointerDown={ev => planDrag.start(ev, d, "move")}
+                        onKeyDown={ev => { if (ev.key === "Enter") onOpenPlanned?.(p); }}
+                        title={`Planned email: “${p.subject}”${p.campaignTitle ? ` · ${p.campaignTitle}` : ""}${isLinked ? " · linked to Klaviyo" : ""} — drag to another day`}
+                        className={cn(
+                          "absolute pointer-events-auto touch-none cursor-grab flex items-center gap-1.5 rounded-lg px-1.5 text-xs font-semibold overflow-hidden shadow-sm bg-indigo-600 text-white",
+                          p.status === "idea" && "opacity-70 outline-dashed outline-2 -outline-offset-2 outline-white/80",
+                        )}
+                        style={{
+                          left: `calc(${(seg.startCol / 7) * 100}% + 3px)`,
+                          width: `calc(${(1 / 7) * 100}% - 6px)`,
+                          top: seg.lane * (BAR_PX + GAP_PX),
+                          height: BAR_PX,
+                        }}
+                      >
+                        {isLinked ? <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" /> : <MailPlus className="w-3.5 h-3.5 flex-shrink-0" />}
+                        <span className="truncate">{p.subject}</span>
+                      </div>
+                    );
+                  }
                   if ("email" in seg.event) {
                     const m = seg.event.email;
                     return (

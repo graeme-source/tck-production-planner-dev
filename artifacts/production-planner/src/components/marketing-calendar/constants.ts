@@ -45,6 +45,18 @@ export function statusLabel(key: string): string {
   return STATUSES.find(s => s.key === key)?.label ?? key;
 }
 
+// Planned emails. Statuses mirror the server (EMAIL_STATUSES).
+export const EMAIL_STATUS_OPTIONS: Array<{ key: string; label: string; hint: string; chip: string }> = [
+  { key: "idea", label: "Idea", hint: "Not committed yet", chip: "bg-secondary text-muted-foreground" },
+  { key: "planned", label: "Planned", hint: "We're sending this", chip: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300" },
+  { key: "scheduled", label: "Scheduled", hint: "Built and scheduled in Klaviyo", chip: "bg-sky-500/15 text-sky-700 dark:text-sky-300" },
+  { key: "sent", label: "Sent", hint: "Gone out", chip: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" },
+];
+
+export function emailStatus(key: string) {
+  return EMAIL_STATUS_OPTIONS.find(s => s.key === key) ?? EMAIL_STATUS_OPTIONS[1];
+}
+
 export function firstName(name: string | null | undefined): string {
   return name?.trim().split(/\s+/)[0] || "Someone";
 }
