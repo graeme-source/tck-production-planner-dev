@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, timestamp, date, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, date, jsonb, boolean } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { usersTable } from "./users";
 import { testBoxesTable } from "./test_boxes";
@@ -69,7 +69,9 @@ export const marketingEmailsTable = pgTable("marketing_emails", {
   websiteChange: text("website_change"),
   metaChange: text("meta_change"),
   notes: text("notes"),
-  // idea | planned | scheduled | sent
+  // The STAGE (migration 0138): planned | created | scheduled | sent.
+  // Manual while unlinked; once linked to Klaviyo the stage shown is
+  // derived from Klaviyo (effectiveStage in @workspace/marketing-calendar).
   status: text("status").notNull().default("planned"),
   klaviyoCampaignId: text("klaviyo_campaign_id"),
   klaviyoCampaignName: text("klaviyo_campaign_name"),
@@ -89,7 +91,7 @@ export const marketingEmailHistoryTable = pgTable("marketing_email_history", {
   emailId: integer("email_id").notNull().references(() => marketingEmailsTable.id, { onDelete: "cascade" }),
   userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
   userName: text("user_name"),
-  // created | edited | moved | linked | unlinked | deleted
+  // created | edited | moved | linked | unlinked | deleted | approved | unapproved
   action: text("action").notNull(),
   summary: text("summary").notNull(),
   changes: jsonb("changes"),
@@ -98,3 +100,41 @@ export const marketingEmailHistoryTable = pgTable("marketing_email_history", {
 
 export type MarketingEmail = typeof marketingEmailsTable.$inferSelect;
 export type MarketingEmailHistory = typeof marketingEmailHistoryTable.$inferSelect;
+
+// Approvals (migration 0138). ONE row per approvable thing, keyed by
+// target_key: 'plan:<id>' for a planned email not linked to Klaviyo, or
+// 'klaviyo:<campaign id>' for a Klaviyo campaign (on its own, or the one a
+// plan is linked to — they share this row). Key rule: approvalKey() in
+// @workspace/marketing-calendar. The snapshot columns are as at approval.
+export const marketingEmailApprovalsTable = pgTable("marketing_email_approvals", {
+  id: serial("id").primaryKey(),
+  targetKey: text("target_key").notNull().unique(),
+  emailId: integer("email_id").references(() => marketingEmailsTable.id, { onDelete: "set null" }),
+  klaviyoCampaignId: text("klaviyo_campaign_id"),
+  approved: boolean("approved").notNull().default(false),
+  subject: text("subject"),
+  klaviyoCampaignName: text("klaviyo_campaign_name"),
+  sendDate: date("send_date"),
+  approvedById: integer("approved_by_id").references(() => usersTable.id, { onDelete: "set null" }),
+  approvedByName: text("approved_by_name"),
+  approvedAt: timestamp("approved_at"),
+  unapprovedById: integer("unapproved_by_id").references(() => usersTable.id, { onDelete: "set null" }),
+  unapprovedByName: text("unapproved_by_name"),
+  unapprovedAt: timestamp("unapproved_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const marketingEmailApprovalHistoryTable = pgTable("marketing_email_approval_history", {
+  id: serial("id").primaryKey(),
+  approvalId: integer("approval_id").notNull().references(() => marketingEmailApprovalsTable.id, { onDelete: "cascade" }),
+  // approved | unapproved | moved
+  action: text("action").notNull(),
+  summary: text("summary").notNull(),
+  subject: text("subject"),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  userName: text("user_name"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type MarketingEmailApproval = typeof marketingEmailApprovalsTable.$inferSelect;

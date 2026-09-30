@@ -109,11 +109,11 @@ describe("buildEmailSections", () => {
 describe("email history sentences", () => {
   it("records only real changes, in plain English", () => {
     const changes = diffEmailFields(
-      { subject: "Early access", status: "idea", audiences: ["vip"], notes: null, coreMessage: "x" },
-      { subject: "Early access!", status: "planned", audiences: ["vip"], notes: "", coreMessage: "y", name: "ignored" },
+      { subject: "Early access", status: "planned", audiences: ["vip"], notes: null, coreMessage: "x" },
+      { subject: "Early access!", status: "created", audiences: ["vip"], notes: "", coreMessage: "y", name: "ignored" },
     );
     expect(Object.keys(changes)).toEqual(["subject", "status", "coreMessage"]);
-    expect(describeEmailFieldChanges(changes)).toBe("changed the subject line to “Early access!”, changed the status to planned and edited the core message");
+    expect(describeEmailFieldChanges(changes)).toBe("changed the subject line to “Early access!”, changed the stage to Created in Klaviyo and edited the core message");
   });
   it("names audiences and clears", () => {
     expect(describeEmailFieldChanges({

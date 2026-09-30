@@ -9,6 +9,7 @@
  */
 import { daysBetween } from "./calendar";
 import { diffFields, joinWithAnd, type FieldChange, type FieldValue } from "./history";
+import { EMAIL_STAGES } from "./approvals";
 
 export interface CampaignWindow { id: number; startDate: string; endDate: string }
 
@@ -132,7 +133,17 @@ export function buildEmailSections<C extends CampaignWindow, P extends PlannedLi
 
 // ── History sentences for planned emails ────────────────────────────────────
 
-export const EMAIL_STATUSES = ["idea", "planned", "scheduled", "sent"] as const;
+/** The stored stage values (migration 0138) — see approvals.ts. */
+export const EMAIL_STATUSES = EMAIL_STAGES;
+export const EMAIL_STAGE_LABELS: Record<string, string> = {
+  planned: "Planned",
+  created: "Created in Klaviyo",
+  scheduled: "Scheduled",
+  sent: "Sent",
+};
+export function stageLabel(key: string): string {
+  return EMAIL_STAGE_LABELS[key] ?? key;
+}
 export const EMAIL_AUDIENCES: ReadonlyArray<{ key: string; label: string }> = [
   { key: "all", label: "All" },
   { key: "new", label: "New customers" },
@@ -159,7 +170,7 @@ export const EMAIL_FIELD_LABELS: Record<string, string> = {
   websiteChange: "website change",
   metaChange: "Meta change",
   notes: "notes",
-  status: "status",
+  status: "stage",
 };
 
 export function diffEmailFields(before: Record<string, FieldValue>, patch: Record<string, FieldValue>): Record<string, FieldChange> {
@@ -178,7 +189,7 @@ export function describeEmailFieldChanges(changes: Record<string, FieldChange>):
       parts.push(list.length ? `set the audience to ${list.map(audienceLabel).join(", ")}` : "cleared the audience");
     } else if (empty) parts.push(`cleared the ${label}`);
     else if (key === "subject") parts.push(`changed the subject line to “${String(to)}”`);
-    else if (key === "status") parts.push(`changed the status to ${String(to)}`);
+    else if (key === "status") parts.push(`changed the stage to ${stageLabel(String(to))}`);
     else if (key === "sendTime") parts.push(`set the send time to ${String(to)}`);
     else parts.push(`edited the ${label}`);
   }
