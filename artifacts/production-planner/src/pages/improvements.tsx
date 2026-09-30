@@ -313,8 +313,8 @@ export default function Improvements() {
           .slice(0, 40);
         return (
         <>
-          {/* Leaderboard first — start by seeing the team's tallies
-              (Graeme, 2026-09-10). */}
+          {/* Leanerboard first — start by seeing the team's tallies
+              (Graeme, 2026-09-10; renamed 2026-09-30). */}
           <Scoreboard />
 
           {/* One timeline, three controls: the review view, and two kind
@@ -1176,14 +1176,13 @@ function Scoreboard() {
 
   // Anything completed before sign-off existed was retro-credited so the
   // tallies started from real history — but nobody approved it, so the
-  // heading says "completed" and the legacy portion is named rather than
-  // quietly counted as approvals.
+  // legacy portion is named rather than quietly counted as approvals.
   const legacy = data.reduce((n, r) => n + (r.count - r.signedOff), 0);
 
   return (
     <section className="space-y-3">
       <h2 className="text-lg font-bold flex items-center gap-2">
-        <Trophy className="w-5 h-5 text-amber-500" /> Improvements completed
+        <Trophy className="w-5 h-5 text-amber-500" /> Leanerboard
       </h2>
       {legacy > 0 && (
         <p className="text-base text-muted-foreground -mt-1">

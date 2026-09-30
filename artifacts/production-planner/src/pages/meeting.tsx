@@ -3248,7 +3248,7 @@ function NewSopsSlide({ data, slide }: { data: DashboardData; slide: MeetingSlid
  *  item leaves Required by being done properly in the Improvement Centre
  *  (marked done with before/after media), never by a tap here. */
 // The Improvements slide IS the Improvements page (Graeme, 2026-09-14):
-// leaderboard on top, the same filters and feed, scrollable in the slide
+// Leanerboard on top, the same filters and feed, scrollable in the slide
 // body — one surface to learn, not two diverging ones. Rendered directly
 // in the slide switch below.
 
