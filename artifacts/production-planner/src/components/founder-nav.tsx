@@ -11,6 +11,7 @@ import { Link, useLocation } from "wouter";
 import { Calendar, LineChart, Calculator, Megaphone } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFounderArea } from "@/hooks/use-founder-area";
+import { useApprovalsNeeded } from "@/components/marketing-calendar/api";
 
 // Tab list and who may open each live in @workspace/feature-registry
 // (FOUNDER_TABS) so the server rule and this strip can't drift. Contracts
@@ -27,7 +28,10 @@ export function FounderNav() {
   const [location] = useLocation();
   // Only the tabs this person may open — a grantee sees Numbers and/or
   // Sales & Marketing, never a tab that would bounce them.
-  const { tabs } = useFounderArea();
+  const { tabs, canSales, canApproveEmails } = useFounderArea();
+  // Approvers get a count on Sales & Marketing: emails waiting for approval.
+  const needed = useApprovalsNeeded(canSales && canApproveEmails && tabs.length > 1);
+  const waiting = needed.data?.canApprove ? needed.data.count : 0;
   if (tabs.length <= 1) return null;
   return (
     <nav className="flex gap-1.5 p-1.5 rounded-2xl border border-border bg-card/60 backdrop-blur-sm overflow-x-auto">
@@ -47,6 +51,12 @@ export function FounderNav() {
           >
             <Icon className="w-4 h-4" />
             {tab.label}
+            {tab.href === "/founder/sales" && waiting > 0 && (
+              <span className="min-w-5 h-5 px-1.5 rounded-full bg-amber-500 text-white text-xs font-bold inline-flex items-center justify-center"
+                aria-label={`${waiting} email${waiting === 1 ? "" : "s"} need your approval`} title={`${waiting} email${waiting === 1 ? "" : "s"} need your approval`}>
+                {waiting}
+              </span>
+            )}
           </Link>
         );
       })}

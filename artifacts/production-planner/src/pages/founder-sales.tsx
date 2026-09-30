@@ -6,9 +6,10 @@ import { PageHeader } from "@/components/page-header";
 import { FounderNav } from "@/components/founder-nav";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format, parseISO } from "date-fns";
-import { TrendingUp, TrendingDown, Mail, Loader2, Check, AlertTriangle } from "lucide-react";
+import { TrendingUp, TrendingDown, Mail, Loader2, Check, AlertTriangle, ShieldAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MarketingCalendar } from "@/components/marketing-calendar/marketing-calendar";
+import { useApprovalsNeeded } from "@/components/marketing-calendar/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -60,8 +61,12 @@ const gbp = (n: number) => `£${Math.round(n).toLocaleString()}`;
 export default function FounderSales() {
   // The founder, or someone he granted Sales & Marketing (founder.sales).
   // Connecting/disconnecting Klaviyo stays the founder's (server-enforced).
-  const { ready, canSales, isFounder, home } = useFounderArea();
+  const { ready, canSales, isFounder, home, canApproveEmails } = useFounderArea();
   const queryClient = useQueryClient();
+  // Approvers only (founder or a marketing.approve_emails grant): how many
+  // upcoming emails wait for them. Tommy never sees this banner.
+  const needed = useApprovalsNeeded(canSales && canApproveEmails);
+  const [reviewSignal, setReviewSignal] = useState(0);
 
   const { data, isLoading } = useQuery<Pulse>({
     queryKey: ["founder-sales-pulse"],
@@ -82,6 +87,24 @@ export default function FounderSales() {
         title="Sales & Marketing"
         description="Revenue pace, email cadence and the marketing calendar — there's always something on."
       />
+
+      {/* ── Approvals waiting (approvers only) ──────────────────────────── */}
+      {canApproveEmails && needed.data?.canApprove && needed.data.count > 0 && (
+        <div className="rounded-2xl border-2 border-amber-500/50 bg-amber-500/10 px-4 py-3 flex items-center gap-3 flex-wrap" role="status">
+          <ShieldAlert className="w-6 h-6 text-amber-600 flex-shrink-0" />
+          <p className="flex-1 min-w-[12rem] text-base font-semibold text-amber-900 dark:text-amber-200">
+            {needed.data.count} upcoming email{needed.data.count === 1 ? "" : "s"} need{needed.data.count === 1 ? "s" : ""} your approval
+            <span className="block text-sm font-normal text-amber-800/80 dark:text-amber-300/80">
+              Next: “{needed.data.items[0]?.subject ?? needed.data.items[0]?.klaviyoName ?? "untitled"}” on {format(parseISO(needed.data.items[0]!.date), "EEE d MMM")}
+              {needed.data.klaviyoError ? ` · ${needed.data.klaviyoError}` : ""}
+            </span>
+          </p>
+          <button type="button" onClick={() => setReviewSignal(n => n + 1)}
+            className="px-5 py-2.5 rounded-xl bg-amber-600 text-white font-semibold hover:bg-amber-700">
+            Review
+          </button>
+        </div>
+      )}
 
       {/* ── Attention strip: the assistant speaks first ─────────────────── */}
       {isLoading ? (
@@ -108,7 +131,7 @@ export default function FounderSales() {
         <PaceCard pace={data?.pace ?? null} loading={isLoading} />
         <EmailCadenceCard email={data?.email} loading={isLoading} onChanged={invalidate} canManage={isFounder} />
       </div>
-      <MarketingCalendar />
+      <MarketingCalendar reviewSignal={reviewSignal} />
     </div>
   );
 }
