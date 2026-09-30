@@ -10,13 +10,14 @@ import { Link } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import { format, parseISO, formatDistanceToNowStrict } from "date-fns";
 import {
-  CalendarDays, ChevronLeft, ChevronRight, GanttChartSquare, Loader2, Lock, Megaphone, Package, Plus, Sparkles, X, AlertTriangle,
+  CalendarDays, ChevronLeft, ChevronRight, GanttChartSquare, Loader2, Lock, Mail, Megaphone, Package, Plus, Sparkles, X, AlertTriangle,
 } from "lucide-react";
 import {
   addDays, addMonths, formatRange, monthGridWeeks, monthStart, overlaps, timelineRange, type DragMode, type TimelineZoom,
 } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
-import { calApi, useCalendarEvents, useCreateEvent, useSetEventDates, type CalEvent, type Suggestion } from "./api";
+import { calApi, useCalendarEvents, useCreateEvent, useKlaviyoEmails, useSetEventDates, type CalEvent, type KlaviyoEmail, type Suggestion } from "./api";
+import { EmailModal } from "./email-modal";
 import { EVENT_TYPES, firstName, statusLabel, typeStyle } from "./constants";
 import { MonthGrid } from "./month-grid";
 import { Timeline, timelineMonths } from "./timeline";
@@ -36,12 +37,13 @@ function londonToday(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date());
 }
 
-export function MarketingCalendar({ gapWeeks = [] }: { gapWeeks?: string[] }) {
+export function MarketingCalendar() {
   const [view, setView] = useState<View>(readView);
   const [zoom, setZoom] = useState<TimelineZoom>("weeks");
   const [anchor, setAnchor] = useState(() => monthStart(londonToday()));
   const [open, setOpen] = useState<{ id: number | null; newOn?: string } | null>(null);
   const [dragError, setDragError] = useState<string | null>(null);
+  const [openEmail, setOpenEmail] = useState<KlaviyoEmail | null>(null);
 
   const range = useMemo(() => {
     if (view === "month") {
@@ -54,6 +56,9 @@ export function MarketingCalendar({ gapWeeks = [] }: { gapWeeks?: string[] }) {
   const { data, isLoading, isError, error } = useCalendarEvents(range.from, range.to);
   const today = data?.today ?? londonToday();
   const events = data?.events ?? [];
+  // Klaviyo sends (sent + scheduled one-off campaigns) — read-only.
+  const klaviyo = useKlaviyoEmails(range.from, range.to);
+  const emails = klaviyo.data?.emails ?? [];
   const setDates = useSetEventDates();
 
   const onDatesChange = (e: CalEvent, next: { startDate: string; endDate: string }, _mode: DragMode) => {
@@ -65,6 +70,7 @@ export function MarketingCalendar({ gapWeeks = [] }: { gapWeeks?: string[] }) {
 
   const monthEnd = addMonths(anchor, 1);
   const monthEvents = events.filter(e => overlaps(e, anchor, addDays(monthEnd, -1)));
+  const monthEmails = emails.filter(m => m.date >= anchor && m.date < monthEnd);
 
   const changeView = (v: View) => { setView(v); saveView(v); };
 
@@ -147,7 +153,9 @@ export function MarketingCalendar({ gapWeeks = [] }: { gapWeeks?: string[] }) {
             month={anchor}
             today={today}
             events={events}
+            emails={emails}
             onOpen={e => setOpen({ id: e.id })}
+            onOpenEmail={setOpenEmail}
             onAddOn={d => setOpen({ id: null, newOn: d })}
             onDatesChange={onDatesChange}
           />
@@ -157,7 +165,9 @@ export function MarketingCalendar({ gapWeeks = [] }: { gapWeeks?: string[] }) {
             zoom={zoom}
             today={today}
             events={events}
+            emails={emails}
             onOpen={e => setOpen({ id: e.id })}
+            onOpenEmail={setOpenEmail}
             onAddOn={d => setOpen({ id: null, newOn: d })}
             onDatesChange={onDatesChange}
           />
@@ -174,13 +184,10 @@ export function MarketingCalendar({ gapWeeks = [] }: { gapWeeks?: string[] }) {
           <span key={k} className="inline-flex items-center gap-1.5"><span className={cn("w-3 h-3 rounded-full", t.dot)} />{t.label}</span>
         ))}
         <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rotate-45 bg-rose-600" />Test-box deadline</span>
+        <span className="inline-flex items-center gap-1.5"><Mail className="w-3.5 h-3.5 text-sky-600" />Klaviyo email (faded = sent)</span>
       </div>
+      {klaviyo.data?.error && <p className="text-sm text-amber-700 dark:text-amber-400">Klaviyo emails: {klaviyo.data.error}</p>}
 
-      {gapWeeks.length > 0 && (
-        <p className="text-sm text-amber-700 dark:text-amber-400">
-          Nothing locked in for: {gapWeeks.map(w => `w/c ${format(parseISO(w), "d MMM")}`).join(", ")}
-        </p>
-      )}
 
       {/* This month as big cards */}
       {view === "month" && (
@@ -188,6 +195,23 @@ export function MarketingCalendar({ gapWeeks = [] }: { gapWeeks?: string[] }) {
           <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
             In {MONTH_NAMES[Number(anchor.slice(5, 7)) - 1]}
           </h3>
+          {monthEmails.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {monthEmails.map(m => (
+                <button key={m.id} type="button" onClick={() => setOpenEmail(m)}
+                  className={cn("text-left rounded-2xl border-2 p-4 flex gap-3 hover:bg-secondary/30", m.status === "Sent" ? "border-sky-500/25" : "border-sky-500/60")}>
+                  <Mail className={cn("w-5 h-5 flex-shrink-0 mt-0.5", m.status === "Sent" ? "text-sky-600/60" : "text-sky-600")} />
+                  <span className="min-w-0">
+                    <span className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      {format(parseISO(m.sendAt), "EEE d MMM, HH:mm")} · {m.status}
+                    </span>
+                    <span className="block font-semibold truncate">{m.name}</span>
+                    <span className="block text-sm text-muted-foreground truncate">{m.subject ?? "No subject line"}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
           {monthEvents.length === 0 ? (
             <p className="text-sm text-muted-foreground">Nothing planned this month yet — tap a day to add something.</p>
           ) : (
@@ -200,6 +224,7 @@ export function MarketingCalendar({ gapWeeks = [] }: { gapWeeks?: string[] }) {
 
       <Suggestions />
 
+      {openEmail && <EmailModal email={openEmail} onClose={() => setOpenEmail(null)} />}
       {open && (
         <EventModal
           key={open.id ?? `new-${open.newOn}`}

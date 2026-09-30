@@ -134,3 +134,30 @@ export function useDeleteEvent() {
 export function patchEvent(id: number, patch: Record<string, unknown>) {
   return calApi<{ event: CalEvent }>(`/marketing-calendar/events/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
 }
+
+// ── Klaviyo emails (read-only; Klaviyo is the master) ──────────────────────
+export interface KlaviyoEmail {
+  id: string;
+  name: string;
+  status: "Scheduled" | "Sending" | "Sent";
+  date: string;
+  sendAt: string;
+  subject: string | null;
+  previewText: string | null;
+  abTest: boolean;
+  audiences: string[];
+  excludedCount: number;
+  klaviyoUrl: string;
+}
+
+/** Sent and scheduled one-off email campaigns in the range. Refreshes each
+ *  minute — the server caches Klaviyo for 3, so this stays cheap. */
+export function useKlaviyoEmails(from: string, to: string) {
+  return useQuery({
+    queryKey: [...CAL_KEY, "klaviyo", from, to],
+    queryFn: () => calApi<{ connected: boolean; emails: KlaviyoEmail[]; error?: string }>(`/marketing-calendar/klaviyo-emails?from=${from}&to=${to}`),
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
+    placeholderData: prev => prev,
+  });
+}

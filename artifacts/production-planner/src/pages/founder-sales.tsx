@@ -98,19 +98,17 @@ export default function FounderSales() {
       ) : data ? (
         <div className="rounded-xl border border-primary/30 bg-primary/10 px-4 py-2.5 text-sm flex items-center gap-2.5">
           <Check className="w-4 h-4 text-primary flex-shrink-0" />
-          <span>On pace, emails flowing, calendar covered. Nothing needs you here today.</span>
+          <span>On pace and emails flowing. Nothing needs you here today.</span>
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_400px] gap-6 items-start">
-        <div className="space-y-6 min-w-0">
-          <PaceCard pace={data?.pace ?? null} loading={isLoading} />
-          <MarketingCalendar gapWeeks={data?.gapWeeks ?? []} />
-        </div>
-        <div className="space-y-6 min-w-0">
-          <EmailCadenceCard email={data?.email} loading={isLoading} onChanged={invalidate} canManage={isFounder} />
-        </div>
+      {/* Pace and email cadence side by side, stretched to the same height;
+          the calendar runs full width beneath both (Graeme, 2026-09-30). */}
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_400px] gap-6 items-stretch [&>*]:h-full">
+        <PaceCard pace={data?.pace ?? null} loading={isLoading} />
+        <EmailCadenceCard email={data?.email} loading={isLoading} onChanged={invalidate} canManage={isFounder} />
       </div>
+      <MarketingCalendar />
     </div>
   );
 }

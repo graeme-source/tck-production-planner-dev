@@ -9,24 +9,29 @@ import {
   addDays, addMonths, assignLanes, daysBetween, DAY_WIDTH, timelineRange, type DragMode, type TimelineZoom,
 } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
-import type { CalEvent } from "./api";
+import type { CalEvent, KlaviyoEmail } from "./api";
+import { Mail } from "lucide-react";
 import { typeStyle, firstName } from "./constants";
 import { useSpanDrag } from "./use-span-drag";
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const LANE_PX = 46;
 const BAR_PX = 38;
+/** A strip along the top for Klaviyo sends, above the event lanes. */
+const EMAIL_ROW_PX = 34;
 
 export function timelineMonths(zoom: TimelineZoom): number {
   return zoom === "weeks" ? 3 : 12;
 }
 
-export function Timeline({ anchor, zoom, today, events, onOpen, onAddOn, onDatesChange }: {
+export function Timeline({ anchor, zoom, today, events, emails = [], onOpen, onOpenEmail, onAddOn, onDatesChange }: {
   anchor: string;
   zoom: TimelineZoom;
   today: string;
   events: CalEvent[];
+  emails?: KlaviyoEmail[];
   onOpen: (e: CalEvent) => void;
+  onOpenEmail?: (m: KlaviyoEmail) => void;
   onAddOn: (date: string) => void;
   onDatesChange: (e: CalEvent, next: { startDate: string; endDate: string }, mode: DragMode) => void;
 }) {
@@ -101,7 +106,7 @@ export function Timeline({ anchor, zoom, today, events, onOpen, onAddOn, onDates
         <div
           ref={trackRef}
           className="relative"
-          style={{ height: laneCount * LANE_PX + 12 }}
+          style={{ height: EMAIL_ROW_PX + laneCount * LANE_PX + 12 }}
           onClick={e => { if (justDragged()) return; const d = dateAt(e.clientX); if (d) onAddOn(d); }}
         >
           {/* Week gridlines + weekend shading at the week zoom */}
@@ -110,6 +115,26 @@ export function Timeline({ anchor, zoom, today, events, onOpen, onAddOn, onDates
               {zoom === "weeks" && <div className="absolute inset-y-0 bg-secondary/40" style={{ left: 5 * dw, width: 2 * dw }} />}
             </div>
           ))}
+          {/* Klaviyo sends along the top strip — read-only, tap for details. */}
+          <div className="absolute inset-x-0 top-0 border-b border-dashed border-sky-500/30" style={{ height: EMAIL_ROW_PX }} />
+          {emails.filter(m => m.date >= range.from && m.date <= range.to).map(m => {
+            const size = Math.max(dw, 26);
+            return (
+              <button
+                key={`email-${m.id}`}
+                type="button"
+                onClick={ev => { ev.stopPropagation(); onOpenEmail?.(m); }}
+                title={`${m.date} · ${m.name}${m.subject ? ` — “${m.subject}”` : ""} · ${m.status}`}
+                className={cn(
+                  "absolute z-[3] rounded-md border-2 flex items-center justify-center",
+                  m.status === "Sent" ? "border-sky-500/40 bg-sky-50 dark:bg-sky-950/40 text-sky-700/70" : "border-sky-500 bg-sky-100 dark:bg-sky-900/60 text-sky-800",
+                )}
+                style={{ left: daysBetween(range.from, m.date) * dw + dw / 2 - size / 2, top: 4, width: size, height: EMAIL_ROW_PX - 8 }}
+              >
+                <Mail className="w-3.5 h-3.5" />
+              </button>
+            );
+          })}
           {todayLeft != null && (
             <div className="absolute inset-y-0 w-0.5 bg-primary z-[1]" style={{ left: todayLeft }} title="Today" />
           )}
@@ -142,7 +167,7 @@ export function Timeline({ anchor, zoom, today, events, onOpen, onAddOn, onDates
                     e.status === "idea" && "opacity-70 outline-dashed outline-2 -outline-offset-2 outline-white/80",
                     e.status === "done" && "opacity-50",
                   )}
-                  style={{ left, width: Math.max(w, dw), top: 6 + lane * LANE_PX, height: BAR_PX }}
+                  style={{ left, width: Math.max(w, dw), top: EMAIL_ROW_PX + 6 + lane * LANE_PX, height: BAR_PX }}
                 >
                   {resizable && (
                     <span onPointerDown={ev => start(ev, e, "resize-start")} className="absolute left-0 inset-y-0 w-3 cursor-ew-resize touch-none" aria-hidden />
@@ -167,7 +192,7 @@ export function Timeline({ anchor, zoom, today, events, onOpen, onAddOn, onDates
                     key={i}
                     title={`${m.label} — ${m.date}`}
                     className="absolute z-[3] w-3 h-3 rotate-45 bg-white border-2 border-rose-700 pointer-events-auto"
-                    style={{ left: daysBetween(range.from, m.date) * dw + dw / 2 - 6, top: 6 + lane * LANE_PX + BAR_PX - 7 }}
+                    style={{ left: daysBetween(range.from, m.date) * dw + dw / 2 - 6, top: EMAIL_ROW_PX + 6 + lane * LANE_PX + BAR_PX - 7 }}
                     onClick={ev => ev.stopPropagation()}
                   />
                 ))}

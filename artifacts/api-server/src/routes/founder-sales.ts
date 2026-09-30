@@ -212,16 +212,9 @@ router.get("/pulse", async (req: Request, res: Response) => {
           : `No email in ${email.daysSince} days (cadence target: every ${cadenceDays}). Why not send one today? Different segments can be mailed more often than the full list.`,
       });
     }
-    if (liveEvents.length === 0) {
-      attention.push({ kind: "calendar", message: "Nothing is live on the marketing calendar right now — there should always be something on." });
-    }
-    if (gapWeeks.length > 0) {
-      attention.push({
-        kind: "calendar",
-        message: `${gapWeeks.length} of the next 6 weeks have nothing locked in (from w/c ${gapWeeks[0]}). Use Suggest events to fill the gaps.`,
-      });
-    }
-
+    // Calendar-coverage warnings ("nothing is live", "N of 6 weeks empty") are
+    // switched off while the team is building the calendar up (Graeme,
+    // 2026-09-30). gapWeeks/liveEvents are still returned for later use.
     res.json({ today, pace, email, events, liveEvents, gapWeeks, attention });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });

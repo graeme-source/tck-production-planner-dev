@@ -22,6 +22,7 @@ import {
 import { loadBoxRecipes, scheduleForBox, syncTestBoxEvent, testBoxCalendarInfo } from "../lib/test-box-data";
 import { validate, validateQuery } from "../middleware/validate";
 import { requireFounderArea } from "../middleware/founder-area-access";
+import { klaviyoEmailsForRange } from "../lib/klaviyo-campaign-calendar";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 import type Anthropic from "@anthropic-ai/sdk";
 
@@ -111,6 +112,20 @@ router.get("/events", validateQuery(ListQuery), async (_req: Request, res: Respo
     ))
     .orderBy(asc(marketingEventsTable.startDate), asc(marketingEventsTable.id));
   res.json({ today: londonToday(), events: await eventsJson(rows) });
+});
+
+// ── Klaviyo emails in the range (read-only) ────────────────────────────────
+// Sent and scheduled one-off email campaigns on their send day, so offers
+// and the emails announcing them sit in one place (Graeme, 2026-09-30).
+// A Klaviyo hiccup never breaks the calendar — it answers with an error flag.
+router.get("/klaviyo-emails", validateQuery(ListQuery), async (_req: Request, res: Response) => {
+  const { from, to } = res.locals["query"] as z.infer<typeof ListQuery>;
+  try {
+    res.json(await klaviyoEmailsForRange(from, to));
+  } catch (err) {
+    console.error("[marketing-calendar] Klaviyo emails failed:", err instanceof Error ? err.message : String(err));
+    res.json({ connected: true, emails: [], error: "Couldn't reach Klaviyo just now" });
+  }
 });
 
 // ── One event + its history ────────────────────────────────────────────────

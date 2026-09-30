@@ -6,7 +6,8 @@
 import { useMemo } from "react";
 import { layoutWeek, monthGridWeeks } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
-import type { CalEvent, Milestone } from "./api";
+import type { CalEvent, KlaviyoEmail, Milestone } from "./api";
+import { Mail } from "lucide-react";
 import { typeStyle, firstName } from "./constants";
 import { dateFromElementsAt, useSpanDrag } from "./use-span-drag";
 import type { DragMode } from "@workspace/marketing-calendar";
@@ -16,12 +17,18 @@ const HEADER_PX = 30;
 const BAR_PX = 28;
 const GAP_PX = 4;
 
-export function MonthGrid({ month, today, events, onOpen, onAddOn, onDatesChange }: {
+/** A Klaviyo email as a one-day span, so it takes a lane like an event. */
+type EmailSpan = { id: number; startDate: string; endDate: string; email: KlaviyoEmail };
+
+export function MonthGrid({ month, today, events, emails = [], onOpen, onOpenEmail, onAddOn, onDatesChange }: {
   /** Any ISO day in the month shown. */
   month: string;
   today: string;
   events: CalEvent[];
+  /** Klaviyo sends — read-only, tap to see the subject line. */
+  emails?: KlaviyoEmail[];
   onOpen: (e: CalEvent) => void;
+  onOpenEmail?: (m: KlaviyoEmail) => void;
   onAddOn: (date: string) => void;
   onDatesChange: (e: CalEvent, next: { startDate: string; endDate: string }, mode: DragMode) => void;
 }) {
@@ -33,6 +40,11 @@ export function MonthGrid({ month, today, events, onOpen, onAddOn, onDatesChange
     onTap: onOpen,
   });
   const shown = events.map(spanOf);
+  // Negative ids can never clash with real event ids.
+  const emailSpans: EmailSpan[] = useMemo(
+    () => emails.map((m, i) => ({ id: -(i + 1), startDate: m.date, endDate: m.date, email: m })),
+    [emails],
+  );
 
   // Test-box deadlines, drawn as markers on their days.
   const milestonesByDay = useMemo(() => {
@@ -52,7 +64,7 @@ export function MonthGrid({ month, today, events, onOpen, onAddOn, onDatesChange
       </div>
       <div className="rounded-xl border border-border overflow-hidden">
         {weeks.map(week => {
-          const { segments, laneCount } = layoutWeek(week, shown);
+          const { segments, laneCount } = layoutWeek<CalEvent | EmailSpan>(week, [...shown, ...emailSpans]);
           const height = HEADER_PX + Math.max(laneCount, 2) * (BAR_PX + GAP_PX) + 8;
           return (
             <div key={week[0]} className="relative border-b border-border last:border-b-0" style={{ height }}>
@@ -95,6 +107,32 @@ export function MonthGrid({ month, today, events, onOpen, onAddOn, onDatesChange
               {/* Bars. The layer ignores taps so empty days stay tappable. */}
               <div className="absolute inset-x-0 pointer-events-none" style={{ top: HEADER_PX }}>
                 {segments.map(seg => {
+                  if ("email" in seg.event) {
+                    const m = seg.event.email;
+                    return (
+                      <button
+                        key={`email-${m.id}`}
+                        type="button"
+                        onClick={() => onOpenEmail?.(m)}
+                        title={`${m.name}${m.subject ? ` — “${m.subject}”` : ""} · ${m.status}`}
+                        className={cn(
+                          "absolute pointer-events-auto flex items-center gap-1.5 rounded-lg border-2 px-1.5 text-xs font-semibold overflow-hidden",
+                          m.status === "Sent"
+                            ? "border-sky-500/30 bg-sky-500/5 text-sky-800/70 dark:text-sky-200/70"
+                            : "border-sky-500 bg-sky-500/15 text-sky-800 dark:text-sky-200",
+                        )}
+                        style={{
+                          left: `calc(${(seg.startCol / 7) * 100}% + 3px)`,
+                          width: `calc(${(1 / 7) * 100}% - 6px)`,
+                          top: seg.lane * (BAR_PX + GAP_PX),
+                          height: BAR_PX,
+                        }}
+                      >
+                        <Mail className="w-3.5 h-3.5 flex-shrink-0" />
+                        <span className="truncate">{m.subject ?? m.name}</span>
+                      </button>
+                    );
+                  }
                   const e = seg.event;
                   const style = typeStyle(e.type);
                   const fixedDates = e.testBox != null;
