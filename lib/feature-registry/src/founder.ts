@@ -36,6 +36,9 @@ export function isFounderEmail(email: string | null | undefined): boolean {
 export const FOUNDER_FEATURES = {
   numbers: "founder.numbers",
   sales: "founder.sales",
+  /** Approve marketing emails (Graeme, 2026-09-30) — not a tab: an ability
+   *  inside Sales & Marketing. Founder, or someone he grants it to. */
+  approveEmails: "marketing.approve_emails",
 } as const;
 
 export type FounderFeatureKey = (typeof FOUNDER_FEATURES)[keyof typeof FOUNDER_FEATURES];

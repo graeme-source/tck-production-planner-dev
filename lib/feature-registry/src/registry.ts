@@ -71,6 +71,11 @@ export const FEATURE_REGISTRY: FeatureDef[] = [
   // grantable at all.
   { key: "founder.numbers", name: "Business Numbers", description: "The Business → Numbers: sales, orders, conversion, ad spend and ROAS, trend graphs.", area: "The Business", kind: "ability", minRole: "admin", founderOnly: true },
   { key: "founder.sales", name: "Sales & Marketing", description: "The Business → Sales & Marketing: revenue pace, email cadence and the marketing calendar. Connecting Klaviyo stays Graeme's.", area: "The Business", kind: "ability", minRole: "admin", founderOnly: true },
+  // Who may approve marketing emails before they go out (Graeme, 2026-09-30).
+  // Nobody holds it yet — Graeme's own account approves; he can hand it out
+  // here later without code changes. SEEING approval status needs only
+  // founder.sales.
+  { key: "marketing.approve_emails", name: "Approve marketing emails", description: "Sales & Marketing: approve (or undo approval of) planned emails and Klaviyo campaigns before they go out, and get the \"need your approval\" reminder.", area: "The Business", kind: "ability", minRole: "admin", founderOnly: true },
 ];
 
 const BY_KEY = new Map(FEATURE_REGISTRY.map(f => [f.key, f]));

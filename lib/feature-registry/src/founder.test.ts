@@ -73,6 +73,27 @@ describe("canGrantFeature", () => {
   });
 });
 
+describe("Approve marketing emails (Graeme, 2026-09-30)", () => {
+  const key = FOUNDER_FEATURES.approveEmails;
+  it("is a founder-only feature: founder or an explicit grant, never admin role", () => {
+    expect(key).toBe("marketing.approve_emails");
+    expect(isFounderOnlyFeature(key)).toBe(true);
+    expect(decideFounderFeatureAccess({ email: FOUNDER_EMAIL, grantedKeys: [], featureKey: key })).toBe(true);
+    expect(decideAccess({ userRole: "admin", grantedKeys: [], featureKey: key })).toBe(false);
+    expect(decideFounderFeatureAccess({ email: TOMMY, grantedKeys: [key], featureKey: key })).toBe(true);
+  });
+  it("Sales & Marketing access alone does not let you approve", () => {
+    expect(decideFounderFeatureAccess({ email: TOMMY, grantedKeys: ["founder.sales"], featureKey: key })).toBe(false);
+  });
+  it("only the founder can hand it out", () => {
+    expect(canGrantFeature({ actorEmail: FOUNDER_EMAIL, featureKey: key })).toBe(true);
+    expect(canGrantFeature({ actorEmail: JANE, featureKey: key })).toBe(false);
+  });
+  it("is not a tab of The Business", () => {
+    expect(allowedFounderTabs({ email: TOMMY, grantedKeys: [key] })).toEqual([]);
+  });
+});
+
 describe("allowedFounderTabs", () => {
   const hrefs = (email: string | null, grantedKeys: string[]) =>
     allowedFounderTabs({ email, grantedKeys }).map(t => t.href);
