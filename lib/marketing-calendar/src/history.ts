@@ -42,7 +42,7 @@ export const FIELD_LABELS: Record<string, string> = {
   status: "status",
 };
 
-type FieldValue = string | string[] | null | undefined;
+export type FieldValue = string | string[] | null | undefined;
 
 function same(a: FieldValue, b: FieldValue): boolean {
   if (Array.isArray(a) || Array.isArray(b)) {
@@ -55,20 +55,22 @@ function same(a: FieldValue, b: FieldValue): boolean {
 
 export interface FieldChange { from: FieldValue; to: FieldValue }
 
-/** Which fields actually changed (unchanged values in the patch are ignored). */
+/** Which fields actually changed (unchanged values in the patch are ignored).
+ *  Only keys in `labels` count — events by default, emails pass their own. */
 export function diffFields(
   before: Record<string, FieldValue>,
   patch: Record<string, FieldValue>,
+  labels: Record<string, string> = FIELD_LABELS,
 ): Record<string, FieldChange> {
   const out: Record<string, FieldChange> = {};
   for (const key of Object.keys(patch)) {
-    if (!(key in FIELD_LABELS)) continue;
+    if (!(key in labels)) continue;
     if (!same(before[key], patch[key])) out[key] = { from: before[key] ?? null, to: patch[key] ?? null };
   }
   return out;
 }
 
-function joinWithAnd(parts: string[]): string {
+export function joinWithAnd(parts: string[]): string {
   if (parts.length <= 1) return parts.join("");
   return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
 }
