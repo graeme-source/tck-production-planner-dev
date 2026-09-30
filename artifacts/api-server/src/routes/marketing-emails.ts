@@ -8,7 +8,8 @@
  * beside it) and F (every change attributed and kept; deletes are soft).
  *
  * Access: the founder, or anyone granted "founder.sales" — the same guard as
- * the rest of the marketing calendar. Nothing here writes to Klaviyo; a plan
+ * the rest of the marketing calendar. Stage + approval rules (2026-09-30):
+ * routes/marketing-approvals.ts. Nothing here writes to Klaviyo; a plan
  * only stores the id of the Klaviyo campaign it has been linked to.
  */
 import { Router, type IRouter, type Request, type Response } from "express";
@@ -21,6 +22,7 @@ import {
 } from "@workspace/marketing-calendar";
 import { validate, validateQuery } from "../middleware/validate";
 import { requireFounderArea } from "../middleware/founder-area-access";
+import { carryApprovalOnLink } from "./marketing-approvals";
 
 const router: IRouter = Router();
 router.use(requireFounderArea("founder.sales"));
@@ -299,6 +301,13 @@ router.put("/:id/klaviyo", validate(KlaviyoBody), async (req: Request, res: Resp
       emailId: id, userId: user.id, userName: user.name, action: change.action, summary: change.summary,
       changes: { klaviyoCampaignId: { from: before.klaviyoCampaignId, to: b.klaviyoCampaignId } },
     });
+    // The plan and its Klaviyo campaign share one approval from now on.
+    if (b.klaviyoCampaignId && await carryApprovalOnLink(tx, id, b.klaviyoCampaignId, user)) {
+      await tx.insert(marketingEmailHistoryTable).values({
+        emailId: id, userId: user.id, userName: user.name, action: "linked",
+        summary: "carried its approval over to the Klaviyo email",
+      });
+    }
     return { status: 200 as const, row: after };
   });
   if (result.status === 404) { res.status(404).json({ error: "Email not found (it may have been deleted)" }); return; }
