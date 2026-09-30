@@ -1,24 +1,21 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { useIsRtwManager } from "@/hooks/use-rtw-manager";
 import { RunRateAllowanceSetting } from "@/components/run-rate-allowance-setting";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { useListUsers, useListCategoryDefaults, useListDptSettings, useListTimingStandards, useListRecipes, useListIngredients } from "@workspace/api-client-react";
+import { useListCategoryDefaults, useListDptSettings, useListTimingStandards, useListRecipes, useListIngredients } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
-import { usePagePermissions, useSavePagePermissions } from "@/hooks/use-page-permissions";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
-import { FeatureGrantsSection } from "@/components/feature-grants-section";
-import { PeopleAccessSection } from "@/components/people-access-section";
+import { TeamAccessTab } from "@/components/team-access/team-access-tab";
 import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
 import {
-  Plus, Trash2, Edit2, Loader2, Users, ShieldCheck, Eye, Wrench,
+  Plus, Trash2, Edit2, Loader2, Users, ShieldCheck, Wrench,
   CheckCircle2, XCircle, KeyRound, Package, ChevronDown, ChevronUp,
   Lock, Timer, BarChart2, Coffee, Clock, Truck, Mail, Warehouse,
   Camera, User, CircleDot, ToggleRight, Boxes, UtensilsCrossed,
   AlertTriangle, Scale, ThermometerSnowflake, BookOpen, Megaphone, CalendarDays,
-  Copy, Check, IdCard, FileText, ExternalLink, Bell, RefreshCw, Smartphone, Thermometer,
+  Check, FileText, Bell, RefreshCw, Smartphone, Thermometer,
   AlarmClock, Search, ShieldAlert, Image as ImageIcon,
 } from "lucide-react";
 import { STATIONS } from "@/pages/station/shared/constants";
@@ -33,293 +30,13 @@ import { Switch } from "@/components/ui/switch";
 import { NumberInput } from "@/components/ui/number-input";
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { upsertDptSettingByRecipe, updateTimingStandard, getListDptSettingsQueryKey, getListTimingStandardsQueryKey } from "@workspace/api-client-react";
-import type { UpdateUser, UpdateDptSetting, CreateCategoryDefault, CategoryDefault } from "@workspace/api-client-react";
-import { useForm } from "react-hook-form";
-import * as z from "zod";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import type { UpdateDptSetting, CreateCategoryDefault, CategoryDefault } from "@workspace/api-client-react";
 import { UserAvatar } from "@/components/user-avatar";
 import { PinNumpad } from "@/components/pin-numpad";
 import { AvatarCropModal } from "@/components/avatar-crop-modal";
-import { useSearch, useLocation, Link } from "wouter";
+import { useSearch, useLocation } from "wouter";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
-
-type Role = "admin" | "manager" | "viewer";
-
-const ROLES: { value: Role; label: string; description: string; icon: typeof ShieldCheck; color: string }[] = [
-  {
-    value: "admin",
-    label: "Admin",
-    description: "Full access — manage users, all data, and settings",
-    icon: ShieldCheck,
-    color: "text-red-500 bg-red-50",
-  },
-  {
-    value: "manager",
-    label: "Manager",
-    description: "Create and edit recipes, plans, stock, and sales — no user management",
-    icon: Wrench,
-    color: "text-amber-500 bg-amber-50",
-  },
-  {
-    value: "viewer",
-    label: "Viewer",
-    description: "Read-only access — can view all data but cannot make changes",
-    icon: Eye,
-    color: "text-blue-500 bg-blue-50",
-  },
-];
-
-const passwordFieldSchema = z.string()
-  .min(9, "Password must be more than 8 characters")
-  .regex(/[A-Z]/, "Password must include a capital letter")
-  .regex(/[0-9]/, "Password must include a number");
-
-const createSchema = z.object({
-  name: z.string().min(1, "Name is required"),
-  email: z.string().email("Valid email required"),
-  password: passwordFieldSchema,
-  role: z.enum(["admin", "manager", "viewer"]),
-  isActive: z.boolean(),
-  isProductionPlanner: z.boolean().optional(),
-});
-
-const editSchema = z.object({
-  name: z.string().min(1, "Name is required"),
-  email: z.string().email("Valid email required"),
-  password: passwordFieldSchema.optional().or(z.literal("")),
-  role: z.enum(["admin", "manager", "viewer"]),
-  isActive: z.boolean(),
-  isProductionPlanner: z.boolean().optional(),
-});
-
-type CreateValues = z.infer<typeof createSchema>;
-type EditValues = z.infer<typeof editSchema>;
-
-type AppUser = {
-  id: number;
-  name: string;
-  email: string;
-  role: Role;
-  isActive: boolean;
-  isProductionPlanner?: boolean;
-  createdAt: string;
-};
-
-function RoleBadge({ role }: { role: Role }) {
-  const r = ROLES.find(x => x.value === role)!;
-  const Icon = r.icon;
-  return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${r.color}`}>
-      <Icon className="w-3.5 h-3.5" />
-      {r.label}
-    </span>
-  );
-}
-
-// Read-only view of a user's ACCOUNT. Their onboarding form (address, phone,
-// emergency contact) and uploads live on their People record only, behind
-// People access + the private PIN — this dialog used to show them to every
-// manager and admin (Graeme, 2026-09-28: "behind a gate").
-function UserDetailsDialog({ user, onClose }: { user: AppUser; onClose: () => void }) {
-  const canOpenPeople = useIsRtwManager();
-  const Row = ({ label, value }: { label: string; value: string | null | undefined }) => (
-    <div className="flex justify-between gap-3 py-1.5 border-b border-border last:border-0">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span className="text-sm text-right break-words">{value || <span className="text-muted-foreground/50">—</span>}</span>
-    </div>
-  );
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-[480px] bg-card border-border rounded-2xl max-h-[92dvh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="font-display text-xl">{user.name}</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4 mt-1">
-          <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Account</p>
-            <Row label="Email" value={user.email} />
-            <div className="flex justify-between gap-3 py-1.5 border-b border-border">
-              <span className="text-xs text-muted-foreground">Access level</span>
-              <RoleBadge role={user.role} />
-            </div>
-            <Row label="Status" value={user.isActive ? "Active" : "Inactive"} />
-            <Row label="Created" value={new Date(user.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} />
-          </div>
-          {canOpenPeople ? (
-            <Link href={`/people/${user.id}`} onClick={onClose} className="flex items-center justify-between gap-2 rounded-xl border border-border px-4 py-3 text-sm font-medium hover:border-primary hover:bg-primary/5 transition-colors">
-              <span>Contact details, emergency contact and onboarding documents are on {user.name.split(" ")[0]}'s People record</span>
-              <ExternalLink className="w-4 h-4 text-primary flex-shrink-0" />
-            </Link>
-          ) : (
-            <p className="text-sm text-muted-foreground">Personal details are kept on the People record, which only people with People access can open.</p>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function UserForm({
-  mode,
-  defaultValues,
-  onSubmit,
-  isPending,
-  onCancel,
-}: {
-  mode: "create" | "edit";
-  defaultValues: CreateValues | EditValues;
-  onSubmit: (data: CreateValues | EditValues) => void;
-  isPending: boolean;
-  onCancel: () => void;
-}) {
-  const schema = mode === "create" ? createSchema : editSchema;
-  const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<CreateValues | EditValues>({
-    resolver: zodResolver(schema),
-    defaultValues,
-  });
-  const selectedRole = watch("role");
-
-  return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-5 mt-4">
-      <div className="grid grid-cols-2 gap-4">
-        <div className="col-span-2">
-          <label className="text-sm font-medium mb-1 block">Full Name *</label>
-          <input
-            {...register("name")}
-            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-            placeholder="e.g. Jane Smith"
-          />
-          {errors.name && <span className="text-destructive text-xs">{String(errors.name.message)}</span>}
-        </div>
-        <div className="col-span-2">
-          <label className="text-sm font-medium mb-1 block">Email Address *</label>
-          <input
-            {...register("email")}
-            type="email"
-            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-            placeholder="jane@example.com"
-          />
-          {errors.email && <span className="text-destructive text-xs">{String(errors.email.message)}</span>}
-        </div>
-        <div className="col-span-2">
-          <label className="text-sm font-medium mb-1 block">
-            {mode === "edit" ? (
-              <span className="flex items-center gap-2">
-                <KeyRound className="w-3.5 h-3.5" />
-                New Password <span className="text-muted-foreground font-normal">(leave blank to keep current)</span>
-              </span>
-            ) : "Password *"}
-          </label>
-          <input
-            {...register("password")}
-            type="password"
-            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-            placeholder={mode === "edit" ? "Enter new password to change..." : "9+ chars, a capital & a number"}
-          />
-          {errors.password && <span className="text-destructive text-xs">{String(errors.password.message)}</span>}
-        </div>
-      </div>
-
-      <div>
-        <label className="text-sm font-medium mb-2 block">Access Level *</label>
-        <div className="space-y-2">
-          {ROLES.map((r) => {
-            const Icon = r.icon;
-            const selected = selectedRole === r.value;
-            return (
-              <button
-                key={r.value}
-                type="button"
-                onClick={() => setValue("role", r.value)}
-                className={`w-full flex items-center gap-3 p-3 rounded-xl border-2 transition-all text-left ${
-                  selected
-                    ? "border-primary bg-primary/5"
-                    : "border-border hover:border-border/80 hover:bg-secondary/20"
-                }`}
-              >
-                <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${r.color}`}>
-                  <Icon className="w-5 h-5" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold">{r.label}</p>
-                  <p className="text-xs text-muted-foreground leading-snug">{r.description}</p>
-                </div>
-                {selected && <CheckCircle2 className="w-5 h-5 text-primary flex-shrink-0" />}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Always shown, never hidden by role: a hidden capability is an
-          undiscoverable one (Graeme, 2026-08-28). Admins already have it, so
-          for them it reads as ticked and locked rather than vanishing. */}
-      <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-xl">
-        {selectedRole === "admin" ? (
-          <input
-            type="checkbox"
-            checked
-            disabled
-            readOnly
-            id="isProductionPlannerAdmin"
-            className="w-4 h-4 rounded accent-primary opacity-60"
-          />
-        ) : (
-          <input
-            type="checkbox"
-            {...register("isProductionPlanner")}
-            id="isProductionPlanner"
-            className="w-4 h-4 rounded accent-primary"
-          />
-        )}
-        <label
-          htmlFor={selectedRole === "admin" ? "isProductionPlannerAdmin" : "isProductionPlanner"}
-          className={cn("text-sm font-medium", selectedRole === "admin" ? "cursor-default" : "cursor-pointer")}
-        >
-          Production planner
-          <span className="text-muted-foreground font-normal ml-1">
-            {selectedRole === "admin"
-              ? "(admins always have planning access)"
-              : "(adds planning tools on top of this access level — e.g. the weekly DPT sales suggestion)"}
-          </span>
-        </label>
-      </div>
-
-      <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-xl">
-        <input
-          type="checkbox"
-          {...register("isActive")}
-          id="isActive"
-          className="w-4 h-4 rounded accent-primary"
-        />
-        <label htmlFor="isActive" className="text-sm font-medium cursor-pointer">
-          Account is active
-          <span className="text-muted-foreground font-normal ml-1">(inactive users cannot log in)</span>
-        </label>
-      </div>
-
-      <div className="flex gap-3 pt-1">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="flex-1 py-2.5 border border-border rounded-xl text-sm font-medium hover:bg-secondary/50 transition-colors"
-        >
-          Cancel
-        </button>
-        <button
-          type="submit"
-          disabled={isPending}
-          className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-        >
-          {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-          {isPending ? "Saving..." : mode === "create" ? "Create User" : "Save Changes"}
-        </button>
-      </div>
-    </form>
-  );
-}
 
 function ProfileSection() {
   const { state, refreshUser } = useAuth();
@@ -417,32 +134,6 @@ function ProfileSection() {
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-// Read-only link + copy button — used for reset links and invite links.
-function CopyableLink({ url }: { url: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    navigator.clipboard.writeText(url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-  return (
-    <div className="flex items-center gap-2">
-      <input
-        readOnly
-        value={url}
-        onFocus={(e) => e.currentTarget.select()}
-        className="flex-1 min-w-0 px-3 py-2 bg-background border border-border rounded-lg text-xs font-mono text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-      />
-      <button
-        onClick={copy}
-        className="flex-shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-secondary text-foreground text-xs font-medium hover:bg-secondary/70 transition-colors border border-border"
-      >
-        {copied ? <><Check className="w-3.5 h-3.5" /> Copied</> : <><Copy className="w-3.5 h-3.5" /> Copy</>}
-      </button>
     </div>
   );
 }
@@ -620,7 +311,7 @@ function NoAccessToArea({ what }: { what: string }) {
       <Lock className="w-8 h-8 mx-auto mb-3 opacity-50" />
       <p className="font-medium">You don't have access to this</p>
       <p className="text-sm mt-1">
-        An admin can give you {what} in Settings → Team &amp; Access → Feature grants,
+        An admin can give you {what} in Settings → Team &amp; Access (tap your name),
         without changing your role.
       </p>
     </div>
@@ -647,9 +338,9 @@ const SETTINGS_SEARCH_INDEX: { tab: SettingsSection; title: string; keywords: st
   { tab: "profile", title: "Profile & Avatar", keywords: "name email avatar photo picture my account" },
   { tab: "profile", title: "Password", keywords: "password change reset login credentials" },
   { tab: "profile", title: "Quick-Sign PIN", keywords: "pin quick sign 4 digit lock switch user" },
-  { tab: "team", title: "Team & Access", keywords: "users invite employee roles admin manager viewer deactivate accounts staff" },
-  { tab: "team", title: "Page Access Control", keywords: "permissions pages who can see access role gate" },
-  { tab: "team", title: "Feature Grants", keywords: "access feature grants cherry pick unlock sop training gate apc per person" },
+  { tab: "team", title: "Team", keywords: "users invite employee roles admin manager viewer deactivate accounts staff people access feature grants extras cherry pick unlock apc per person password" },
+  { tab: "team", title: "Page Access", keywords: "permissions pages who can see access role gate control board level" },
+  { tab: "team", title: "SOP training gate", keywords: "sop training gate feature grants signed off matrix unlock" },
   { tab: "team", title: "Broadcast notification", keywords: "announce message everyone notify team push" },
   { tab: "production", title: "Admin Date Override", keywords: "pretend date testing simulate today" },
   { tab: "production", title: "Non-dispatch days", keywords: "bank holiday shutdown closed no dispatch dates christmas" },
@@ -686,336 +377,6 @@ const SETTINGS_SEARCH_INDEX: { tab: SettingsSection; title: string; keywords: st
   { tab: "features", title: "8-Pack Orders Banner", keywords: "eight pack wholesale banner orders processing roles" },
   { tab: "features", title: "System Updates", keywords: "system updates changelog morning meeting slide automatic change feed commits what changed" },
 ];
-
-function TeamAccessContent({
-  users,
-  isLoading,
-  user,
-}: {
-  users: AppUser[] | undefined;
-  isLoading: boolean;
-  user: { role: string } | null;
-}) {
-  const { createUser, updateUser, deleteUser } = useAppMutations();
-  const { canSection } = useFeatureAccess();
-  const [isAddOpen, setIsAddOpen] = useState(false);
-  const [editingUser, setEditingUser] = useState<AppUser | null>(null);
-  const [viewingUser, setViewingUser] = useState<AppUser | null>(null);
-  const [isInviteOpen, setIsInviteOpen] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<"admin" | "manager" | "viewer">("viewer");
-  const [inviteSending, setInviteSending] = useState(false);
-  const [inviteResult, setInviteResult] = useState<{ url: string | null; email: string; emailSent: boolean } | null>(null);
-
-  const createDefaults: CreateValues = {
-    name: "", email: "", password: "", role: "viewer", isActive: true, isProductionPlanner: false,
-  };
-
-  const sendInvite = async () => {
-    setInviteSending(true);
-    setInviteResult(null);
-    try {
-      const res = await fetch(`${BASE}/api/auth/invites`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
-      });
-      const data = await res.json();
-      if (!res.ok) { toast({ title: "Invite failed", description: data.error, variant: "destructive" }); }
-      else { setInviteResult({ url: data.inviteUrl ?? null, email: data.email, emailSent: data.emailSent }); }
-    } catch {
-      toast({ title: "Invite failed", description: "Something went wrong", variant: "destructive" });
-    }
-    setInviteSending(false);
-  };
-
-  return (
-    <div className="space-y-8">
-      {/* Access Level Reference */}
-      <div>
-        <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4 text-primary" /> Access Level Reference
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {ROLES.map((r) => {
-            const Icon = r.icon;
-            return (
-              <div key={r.value} className="rounded-xl border border-border bg-card p-4 flex items-start gap-3">
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${r.color}`}>
-                  <Icon className="w-5 h-5" />
-                </div>
-                <div>
-                  <p className="font-semibold text-sm">{r.label}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5 leading-snug">{r.description}</p>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* User Management */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-semibold flex items-center gap-2">
-            <Users className="w-4 h-4 text-primary" /> Team Members
-            {users && (
-              <span className="text-xs font-normal text-muted-foreground bg-secondary/60 px-2 py-0.5 rounded-full">
-                {users.length} {users.length === 1 ? "user" : "users"}
-              </span>
-            )}
-          </h2>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => { setIsInviteOpen(true); setInviteResult(null); setInviteEmail(""); setInviteRole("viewer"); }}
-              className="px-4 py-2 bg-secondary text-foreground rounded-xl text-sm font-medium flex items-center gap-2 hover:bg-secondary/70 transition-colors border border-border"
-            >
-              <Mail className="w-4 h-4" /> Invite
-            </button>
-            <button
-              onClick={() => setIsAddOpen(true)}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium shadow-sm shadow-primary/20 flex items-center gap-2 hover:bg-primary/90 transition-colors"
-            >
-              <Plus className="w-4 h-4" /> Add User
-            </button>
-          </div>
-        </div>
-
-        {/* Invite dialog */}
-        <Dialog open={isInviteOpen} onOpenChange={(v) => { setIsInviteOpen(v); if (!v) setInviteResult(null); }}>
-          <DialogContent className="sm:max-w-[440px] bg-card border-border rounded-2xl">
-            <DialogHeader>
-              <DialogTitle className="font-display text-xl">Invite Team Member</DialogTitle>
-            </DialogHeader>
-            {inviteResult ? (
-              <div className="space-y-4">
-                {inviteResult.emailSent ? (
-                  <div className="flex items-center gap-2 text-green-700 dark:text-green-400">
-                    <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
-                    <p className="text-sm font-medium">Invite email sent to {inviteResult.email}</p>
-                  </div>
-                ) : (
-                  <>
-                    <div className="flex items-start gap-2 text-amber-600 dark:text-amber-400">
-                      <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-                      <p className="text-sm font-medium">Invite created, but the email didn't send to {inviteResult.email}. Share the link below directly.</p>
-                    </div>
-                    {inviteResult.url && (
-                      <div>
-                        <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Invite link (fallback)</label>
-                        <CopyableLink url={inviteResult.url} />
-                      </div>
-                    )}
-                  </>
-                )}
-                <p className="text-xs text-muted-foreground">The link expires in 48 hours.</p>
-                <button onClick={() => { setIsInviteOpen(false); setInviteResult(null); }}
-                  className="w-full py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90">
-                  Done
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div>
-                  <label className="text-sm font-medium mb-1.5 block">Email address</label>
-                  <input type="email" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)}
-                    placeholder="colleague@example.com"
-                    className="w-full px-3 py-2.5 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
-                </div>
-                <div>
-                  <label className="text-sm font-medium mb-1.5 block">Role</label>
-                  <select value={inviteRole} onChange={e => setInviteRole(e.target.value as "admin" | "manager" | "viewer")}
-                    className="w-full px-3 py-2.5 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
-                    <option value="viewer">Viewer — station work only</option>
-                    <option value="manager">Manager — plans &amp; reports</option>
-                    <option value="admin">Admin — full access</option>
-                  </select>
-                </div>
-                <div className="flex gap-3 pt-1">
-                  <button onClick={() => setIsInviteOpen(false)}
-                    className="flex-1 py-2.5 border border-border rounded-xl text-sm font-medium hover:bg-secondary/50">
-                    Cancel
-                  </button>
-                  <button onClick={sendInvite} disabled={!inviteEmail || inviteSending}
-                    className="flex-1 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2">
-                    {inviteSending && <Loader2 className="w-4 h-4 animate-spin" />}
-                    {inviteSending ? "Sending…" : "Send invite"}
-                  </button>
-                </div>
-              </div>
-            )}
-          </DialogContent>
-        </Dialog>
-
-        {/* Add dialog */}
-        <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
-          <DialogContent className="sm:max-w-[520px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle className="font-display text-xl">New Team Member</DialogTitle>
-            </DialogHeader>
-            <UserForm
-              mode="create"
-              defaultValues={createDefaults}
-              isPending={createUser.isPending}
-              onCancel={() => setIsAddOpen(false)}
-              onSubmit={(data) =>
-                // mode="create" guarantees the create schema (password required)
-                createUser.mutate({ data: data as CreateValues }, { onSuccess: () => setIsAddOpen(false) })
-              }
-            />
-          </DialogContent>
-        </Dialog>
-
-        {/* Edit dialog */}
-        {editingUser && (
-          <Dialog open={!!editingUser} onOpenChange={(v) => { if (!v) setEditingUser(null); }}>
-            <DialogContent className="sm:max-w-[520px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle className="font-display text-xl">Edit User</DialogTitle>
-              </DialogHeader>
-              <UserForm
-                key={editingUser.id}
-                mode="edit"
-                defaultValues={{
-                  name: editingUser.name,
-                  email: editingUser.email,
-                  password: "",
-                  role: editingUser.role,
-                  isActive: editingUser.isActive,
-                  isProductionPlanner: editingUser.isProductionPlanner ?? false,
-                }}
-                isPending={updateUser.isPending}
-                onCancel={() => setEditingUser(null)}
-                onSubmit={(data) => {
-                  const editData = data as EditValues;
-                  const payload: UpdateUser = {
-                    name: editData.name,
-                    email: editData.email,
-                    role: editData.role,
-                    isActive: editData.isActive,
-                    isProductionPlanner: editData.isProductionPlanner ?? false,
-                  } as UpdateUser & { isProductionPlanner: boolean };
-                  if (editData.password) payload.password = editData.password;
-                  updateUser.mutate({ id: editingUser.id, data: payload }, { onSuccess: () => setEditingUser(null) });
-                }}
-              />
-            </DialogContent>
-          </Dialog>
-        )}
-
-        {/* View details dialog */}
-        {viewingUser && (
-          <UserDetailsDialog user={viewingUser} onClose={() => setViewingUser(null)} />
-        )}
-
-        {isLoading ? (
-          <div className="flex justify-center py-12">
-            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-          </div>
-        ) : users?.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border p-12 text-center text-muted-foreground">
-            <Users className="w-10 h-10 mx-auto mb-3 opacity-30" />
-            <p className="font-medium">No users yet</p>
-            <p className="text-sm mt-1">Add your first team member above.</p>
-          </div>
-        ) : (
-          <div className="rounded-2xl border border-border bg-card overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-secondary/30 text-muted-foreground text-xs">
-                <tr>
-                  <th className="px-5 py-3 font-medium text-left">Name</th>
-                  <th className="px-5 py-3 font-medium text-left">Email</th>
-                  <th className="px-5 py-3 font-medium text-left">Access Level</th>
-                  <th className="px-5 py-3 font-medium text-left">Status</th>
-                  <th className="px-5 py-3 font-medium text-left">Created</th>
-                  <th className="px-5 py-3 font-medium text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/50">
-                {users?.map((u) => (
-                  <tr key={u.id} className="hover:bg-secondary/10 transition-colors">
-                    <td className="px-5 py-3.5">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-primary/15 text-primary flex items-center justify-center text-xs font-bold flex-shrink-0">
-                          {u.name.charAt(0).toUpperCase()}
-                        </div>
-                        <span className="font-medium">{u.name}</span>
-                      </div>
-                    </td>
-                    <td className="px-5 py-3.5 text-muted-foreground">{u.email}</td>
-                    <td className="px-5 py-3.5">
-                      <RoleBadge role={u.role as Role} />
-                    </td>
-                    <td className="px-5 py-3.5">
-                      {u.isActive ? (
-                        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-green-600">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Active
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                          <XCircle className="w-3.5 h-3.5" /> Inactive
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3.5 text-muted-foreground text-xs">
-                      {new Date(u.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
-                    </td>
-                    <td className="px-5 py-3.5 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => setViewingUser(u as AppUser)}
-                          className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
-                          title="View details"
-                        >
-                          <IdCard className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => setEditingUser(u as AppUser)}
-                          className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
-                          title="Edit user"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => {
-                            if (confirm(`Delete user "${u.name}"? This cannot be undone.`)) {
-                              deleteUser.mutate({ id: u.id });
-                            }
-                          }}
-                          className="p-2 text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
-                          title="Delete user"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* Deciding who gets in stays admin-only, even for someone granted
-          Team & Access: this section sets every page's access level and the
-          next one hands out the grants themselves, so granting either would
-          be a back door to admin. The rest of this tab opens up normally. */}
-      {user?.role === "admin" && <AccessControlSection />}
-
-      {/* Feature grants — was its own "Access" page in the nav until
-          2026-09-03; two places called Access was one too many. */}
-      {user?.role === "admin" && <FeatureGrantsSection />}
-
-      {/* People section access — founder-only switch per person; own component. */}
-      {user?.role === "admin" && <PeopleAccessSection />}
-
-      {/* Broadcast Notification — admin only */}
-      {canSection("team") && <BroadcastNotificationSection />}
-    </div>
-  );
-}
 
 const DEFAULT_BROADCAST_MESSAGE =
   "Please refresh your browser — a new version is available with the latest fixes.";
@@ -1425,7 +786,6 @@ function GoveeSensorsSection({ currentUserId }: { currentUserId: number | null }
 }
 
 export default function Settings() {
-  const { data: users, isLoading } = useListUsers();
   const { state, requireSensitivePin } = useAuth();
   const user = state.status === "authenticated" ? state.user : null;
   // Access to a Settings area is the role's general level OR a grant handed
@@ -1583,11 +943,10 @@ export default function Settings() {
           )}
 
           {activeSection === "team" && (
-            <TeamAccessContent
-              users={users as AppUser[] | undefined}
-              isLoading={isLoading}
-              user={user}
-            />
+            <div className="space-y-10">
+              <TeamAccessTab />
+              {canSection("team") && <BroadcastNotificationSection />}
+            </div>
           )}
 
           {activeSection === "production" && (
@@ -5733,124 +5092,6 @@ function ApcServiceCodesSection() {
             </p>
           </div>
         </div>
-    </div>
-  );
-}
-
-const ROLE_OPTIONS: { value: "viewer" | "manager" | "admin"; label: string; color: string }[] = [
-  { value: "viewer", label: "Viewer", color: "text-blue-600" },
-  { value: "manager", label: "Manager", color: "text-amber-600" },
-  { value: "admin", label: "Admin", color: "text-red-600" },
-];
-
-function AccessControlSection() {
-  const { permissions, isLoading } = usePagePermissions();
-  const savePermissions = useSavePagePermissions();
-  const [draft, setDraft] = useState<Record<string, "viewer" | "manager" | "admin">>({});
-  const [saved, setSaved] = useState(false);
-
-  const effective = (pageKey: string): "viewer" | "manager" | "admin" => {
-    if (pageKey in draft) return draft[pageKey];
-    return permissions.find(p => p.pageKey === pageKey)?.minRole ?? "viewer";
-  };
-
-  const handleChange = (pageKey: string, value: "viewer" | "manager" | "admin") => {
-    setSaved(false);
-    setDraft(d => ({ ...d, [pageKey]: value }));
-  };
-
-  const handleSave = () => {
-    const updates = permissions.map(p => ({
-      pageKey: p.pageKey,
-      minRole: effective(p.pageKey),
-    }));
-    savePermissions.mutate(updates, {
-      onSuccess: () => {
-        setDraft({});
-        setSaved(true);
-        setTimeout(() => setSaved(false), 2500);
-      },
-    });
-  };
-
-  const isDirty = Object.keys(draft).length > 0;
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-start justify-between">
-        <div>
-          <h2 className="text-base font-semibold flex items-center gap-2">
-            <Lock className="w-4 h-4 text-primary" /> Page Access Control
-          </h2>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Set the minimum role required to view each page. Admins always have full access.
-          </p>
-        </div>
-        <button
-          onClick={handleSave}
-          disabled={!isDirty || savePermissions.isPending}
-          className="px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-40 flex items-center gap-2 flex-shrink-0"
-        >
-          {savePermissions.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-          {saved ? <CheckCircle2 className="w-3.5 h-3.5" /> : null}
-          {savePermissions.isPending ? "Saving…" : saved ? "Saved" : "Save Changes"}
-        </button>
-      </div>
-
-      {isLoading ? (
-        <div className="flex justify-center py-10">
-          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-        </div>
-      ) : (
-        <div className="rounded-2xl border border-border bg-card overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-secondary/30 text-muted-foreground text-xs">
-              <tr>
-                <th className="px-5 py-3 font-medium text-left">Page</th>
-                <th className="px-5 py-3 font-medium text-left">Minimum Role Required</th>
-                <th className="px-5 py-3 font-medium text-left">Who can see it</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/50">
-              {permissions.map(p => {
-                const current = effective(p.pageKey);
-                const changed = p.pageKey in draft;
-                const whoCanSee =
-                  current === "viewer" ? "Viewer, Manager, Admin" :
-                  current === "manager" ? "Manager, Admin" :
-                  "Admin only";
-                return (
-                  <tr key={p.pageKey} className={`transition-colors ${changed ? "bg-primary/5" : "hover:bg-secondary/10"}`}>
-                    <td className="px-5 py-3.5">
-                      <span className="font-medium">{p.label}</span>
-                      <span className="text-xs text-muted-foreground ml-2">{p.pageKey}</span>
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <div className="flex gap-2">
-                        {ROLE_OPTIONS.map(r => (
-                          <button
-                            key={r.value}
-                            type="button"
-                            onClick={() => handleChange(p.pageKey, r.value)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${
-                              current === r.value
-                                ? "border-primary bg-primary/10 text-primary"
-                                : "border-border text-muted-foreground hover:border-border/60 hover:bg-secondary/30"
-                            }`}
-                          >
-                            {r.label}
-                          </button>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-5 py-3.5 text-muted-foreground text-xs">{whoCanSee}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
     </div>
   );
 }

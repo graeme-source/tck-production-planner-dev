@@ -4,7 +4,7 @@ import type { FeatureDef } from "./types";
  * Everything a person can be given access to, one entry each.
  *
  * THIS FILE IS THE LIBRARY. Add an entry here when you build something worth
- * gating and it appears in Settings → Team & Access → Feature grants on the
+ * gating and it appears in Settings → Team & Access (each person's "What they can open") on the
  * next deploy, ready to hand out — no migration, no admin data entry. The
  * server upserts these into app_features so grants have something to hang
  * off (lib/feature-sync.ts).

@@ -87,7 +87,7 @@ async function requireFulfilmentAccess(req: Request, res: Response, next: NextFu
   if (req.session.userId && (await userHasFeature(req.session.userId, "apc_label_printing"))) {
     next(); return;
   }
-  res.status(403).json({ error: "Your role doesn't have access to Order Packing Live — an admin can change this under Settings → Page Access Control" });
+  res.status(403).json({ error: "Your role doesn't have access to Order Packing Live — an admin can change this under Settings → Team & Access → Page Access" });
 }
 
 async function getAppSetting(key: string): Promise<string | null> {
