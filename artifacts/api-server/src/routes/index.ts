@@ -95,6 +95,7 @@ import metaAdsRouter from "./meta-ads";
 import todosRouter from "./todos";
 import founderSalesRouter from "./founder-sales";
 import marketingCalendarRouter from "./marketing-calendar";
+import marketingEmailsRouter from "./marketing-emails";
 import testBoxesRouter from "./test-boxes";
 import founderNumbersRouter from "./founder-numbers";
 import surveysRouter from "./surveys";
@@ -255,6 +256,8 @@ router.use("/starter-forms", starterFormsRouter);
 router.use("/founder-sales", founderSalesRouter);
 // Marketing calendar (Sales & Marketing page): founder + "founder.sales"
 // grantees, guarded inside the router.
+// Planned emails on the calendar (same access, guarded inside the router).
+router.use("/marketing-calendar/emails", marketingEmailsRouter);
 router.use("/marketing-calendar", marketingCalendarRouter);
 // Test-box scheduling (same access as Sales & Marketing, guarded inside).
 router.use("/test-boxes", testBoxesRouter);
