@@ -64,6 +64,7 @@ import recipeDesignerRouter from "./recipe-designer";
 import morningMeetingsRouter from "./morning-meetings";
 import endOfDayRouter from "./end-of-day";
 import qualityRejectsRouter from "./quality-rejects";
+import slowMeatRouter, { slowMeatPlanGuard } from "./slow-meat";
 import leanReviewsRouter from "./lean-reviews";
 import leanCurriculumRouter from "./lean-curriculum";
 import ingredientScrapeRouter from "./ingredient-scrape";
@@ -187,6 +188,10 @@ router.use("/queued-production", queuedProductionRouter);
 // production-plans router so its paths (including the wonky ones moved out
 // of it) are answered here.
 router.use("/production-plans", qualityRejectsRouter);
+// Slow-meat tray limit check on plan create/save — also ahead of the frozen
+// router, so no new code goes in production-plans.ts.
+router.use("/production-plans", slowMeatPlanGuard);
+router.use("/slow-meat", slowMeatRouter);
 router.use("/production-plans", productionPlansRouter);
 // Who is actually on each building table (last batch recorder + who opened
 // it) — read-only, feeds the dashboard chooser and the building lock.
