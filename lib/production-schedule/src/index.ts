@@ -295,3 +295,5 @@ export function formatClock(totalMinutes: number): string {
   const m = wrapped % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
+
+export * from "./target-finish";

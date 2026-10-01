@@ -9,6 +9,7 @@ import subRecipesRouter from "./sub-recipes";
 import recipesRouter from "./recipes";
 import productionPlansRouter from "./production-plans";
 import buildingTablesRouter from "./building-tables";
+import buildingTargetFinishRouter from "./building-target-finish";
 import dptSettingsRouter from "./dpt-settings";
 import timingStandardsRouter from "./timing-standards";
 import timingHealthRouter from "./timing-health";
@@ -192,6 +193,8 @@ router.use("/production-plans", productionPlansRouter);
 // Who is actually on each building table (last batch recorder + who opened
 // it) — read-only, feeds the dashboard chooser and the building lock.
 router.use("/building-tables", buildingTablesRouter);
+// Builders' target finish time at 20 batches/hour — read-only, both tables.
+router.use("/building-target-finish", buildingTargetFinishRouter);
 router.use("/dpt-settings", requireAdminOrManager, dptSettingsRouter);
 router.use("/timing-standards", timingStandardsRouter);
 // Missing/stale schedule timing inputs + suggestions (manager/admin, read-only).

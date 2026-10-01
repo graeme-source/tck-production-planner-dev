@@ -14,7 +14,7 @@
 import { db, productionPlansTable, productionPlanItemsTable, recipesTable, ingredientsTable, appSettingsTable } from "@workspace/db";
 import { eq, asc, inArray } from "drizzle-orm";
 import {
-  computeDaySchedule, parseClock, formatClock,
+  computeDaySchedule, parseClock, formatClock, applySavedBreakAnchors,
   DEFAULT_START_TIME, DEFAULT_CHANGEOVER_SECONDS, DEFAULT_BUILDERS,
   type ScheduleRecipeInput,
 } from "@workspace/production-schedule";
@@ -97,21 +97,10 @@ export async function buildPlanSchedule(planId: number) {
 
   // Default anchors ~09:15 / ~12:15; a station drag persists per-plan overrides
   // in app_settings (schedule_break_anchors_<planId> = {"morning":555,...}).
-  const breaks = [
+  const breaks = applySavedBreakAnchors([
     { id: "morning", label: "Morning break", minutes: morningMins, anchorMinutes: 9 * 60 + 15 },
     { id: "lunch", label: "Lunch", minutes: lunchMins, anchorMinutes: 12 * 60 + 15 },
-  ];
-  const savedAnchors = settings.get(`schedule_break_anchors_${planId}`);
-  if (savedAnchors) {
-    try {
-      const parsed = JSON.parse(savedAnchors) as Record<string, number>;
-      for (const br of breaks) {
-        if (Number.isFinite(parsed[br.id])) br.anchorMinutes = parsed[br.id];
-      }
-    } catch {
-      // Malformed saved anchors — fall back to defaults rather than 500.
-    }
-  }
+  ], settings.get(`schedule_break_anchors_${planId}`));
 
   // A recipe with no build time is timed at the day's typical per-batch time
   // (flagged as a guess) rather than 0 — see lib/timing-health.ts.
