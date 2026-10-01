@@ -1899,9 +1899,9 @@ export default function Orders() {
           )}>
             <button
               onClick={() => toggleSupplier(so.supplier.id)}
-              className="w-full flex items-center justify-between p-4 hover:bg-secondary/30 transition-colors"
+              className="w-full flex flex-wrap items-center justify-between gap-x-3 gap-y-2 p-4 hover:bg-secondary/30 transition-colors"
             >
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 min-w-0">
                 <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
                   <Building2 className="w-5 h-5 text-primary" />
                 </div>
@@ -1943,17 +1943,21 @@ export default function Orders() {
                   )}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 ml-auto">
+                {/* A clear button, not a grey icon (Graeme, 2026-10-01).
+                    Green OUTLINE so it can't be mistaken for the solid-green
+                    "Mark as Placed" action. */}
                 {so.supplier.website && (
                   <a
                     href={so.supplier.website}
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={e => e.stopPropagation()}
-                    className="p-2 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-                    title="Open supplier website"
+                    className="min-h-[44px] px-4 inline-flex items-center gap-2 rounded-lg border-2 border-primary bg-primary/10 text-green-800 dark:text-green-300 text-sm font-semibold hover:bg-primary/20 transition-colors"
+                    title={`Open ${so.supplier.name}'s website in a new tab`}
                   >
-                    <ExternalLink className="w-4 h-4" />
+                    <ExternalLink className="w-4 h-4 shrink-0" />
+                    Supplier website
                   </a>
                 )}
                 {!isReopened && (
