@@ -32,6 +32,7 @@ import {
 import { validate } from "../middleware/validate";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { londonDateString } from "../lib/london-time";
+import { gradeQuiz } from "../lib/lean-quiz-grade";
 import { mondayOf, getWeekFocusPrinciple } from "./morning-meetings";
 
 const router: IRouter = Router();
@@ -316,9 +317,8 @@ router.post("/complete", requireAuth, validate(completeSchema), async (req: Requ
   if (review) { res.json({ passed: true, alreadyCompleted: true }); return; }
 
   const quiz = parseQuiz(principle.quizJson ?? null);
-  const total = quiz.length;
-  const correct = quiz.filter((q, i) => answers[i] === q.answer).length;
-  if (total > 0 && (answers.length !== total || correct !== total)) {
+  const { passed, correct, total } = gradeQuiz(quiz, answers);
+  if (!passed) {
     // Not a failure state to store — just "not yet". Retries are free.
     res.json({ passed: false, correct, total });
     return;
@@ -483,9 +483,9 @@ router.get("/status", requireManagerOrAdmin, async (_req: Request, res: Response
 
 // GET /api/lean-reviews/preview — NEXT week's module, for the founder's
 // review-ahead ritual: learn next week's lesson by the end of this week,
-// swap a video, fix wording — before the team ever sees it. Returns the
-// quiz WITH its answers (this is a content review, not a test) and the
-// example ids so the page can offer inline video swapping via the existing
+// swap a video, fix wording — before the team ever sees it. The quiz comes
+// WITHOUT its answers: the preview is answered like the team's, so the
+// founder learns it too (Graeme, 2026-10-01). Returns the example ids so the page can offer inline video swapping via the existing
 // example PUT. Manager/admin only.
 router.get("/preview", requireManagerOrAdmin, async (req: Request, res: Response) => {
   const userId = req.session.userId!;
@@ -517,17 +517,28 @@ router.get("/preview", requireManagerOrAdmin, async (req: Request, res: Response
     weekStart: nextMonday,
     principle: { id: principle.id, title: principle.title, summary: principle.summary },
     lessons,
-    quiz: parseQuiz(principle.quizJson ?? null),
+    quiz: parseQuiz(principle.quizJson ?? null).map(q => ({ question: q.question, options: q.options })),
     canSelfComplete: founder,
     selfCompleted: !!nextReview,
   });
 });
 
+// POST /api/lean-reviews/preview/check — mark next week's quiz for anyone
+// previewing it, without recording anything. Count only, like the team's.
+router.post("/preview/check", requireManagerOrAdmin, validate(completeSchema), async (req: Request, res: Response) => {
+  const nextMonday = nextMondayFrom(mondayOf(londonDateString()));
+  const { principle } = (await getWeekFocusPrinciple(nextMonday)) as { principle: LeanPrincipleRow | null };
+  if (!principle) { res.status(409).json({ error: "No lean focus is set for next week" }); return; }
+  const { answers } = req.body as { answers: number[] };
+  res.json(gradeQuiz(parseQuiz(principle.quizJson ?? null), answers));
+});
+
 // POST /api/lean-reviews/preview/complete — the founder's review-ahead
 // completion: reviewing next week's module counts as their review for
 // that week (same rules as everyone, a week early), ticks their matrix
-// cell and closes the review-ahead to-do. Founder only.
-router.post("/preview/complete", requireManagerOrAdmin, async (req: Request, res: Response) => {
+// cell and closes the review-ahead to-do. Founder only, and only on
+// full marks.
+router.post("/preview/complete", requireManagerOrAdmin, validate(completeSchema), async (req: Request, res: Response) => {
   const userId = req.session.userId!;
   if (!(await isFounder(userId))) { res.status(403).json({ error: "Founder only" }); return; }
   // Deliberately NOT gated on reviewsEnabled: the launch plan is to ship
@@ -537,6 +548,9 @@ router.post("/preview/complete", requireManagerOrAdmin, async (req: Request, res
   const nextMonday = nextMondayFrom(mondayOf(londonDateString()));
   const { principle } = (await getWeekFocusPrinciple(nextMonday)) as { principle: LeanPrincipleRow | null };
   if (!principle) { res.status(409).json({ error: "No lean focus is set for next week" }); return; }
+  // Earned, not ticked: full marks on next week's quiz first (2026-10-01).
+  const grade = gradeQuiz(parseQuiz(principle.quizJson ?? null), (req.body as { answers: number[] }).answers);
+  if (!grade.passed) { res.json(grade); return; }
 
   await db.insert(leanLessonReviewsTable).values({
     userId,
@@ -566,7 +580,7 @@ router.post("/preview/complete", requireManagerOrAdmin, async (req: Request, res
     WHERE assignee_id = ${userId} AND lean_week_start = ${nextMonday} AND status <> 'done'
   `);
 
-  res.json({ passed: true });
+  res.json(grade);
 });
 
 const settingsSchema = z.object({ enabled: z.boolean() });

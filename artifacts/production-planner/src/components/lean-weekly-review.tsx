@@ -167,25 +167,15 @@ export function LeanReviewPage() {
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [lastResult, setLastResult] = useState<{ passed: boolean; correct: number; total: number } | null>(null);
 
-  // Founder review-ahead: reviewing next week counts as their completion
-  // for next week — same rules as everyone, a week early.
-  const previewComplete = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`${BASE}/api/lean-reviews/preview/complete`, { method: "POST", credentials: "include" });
-      if (!res.ok) throw new Error("Failed to record the review");
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["lean-week-preview"] });
-      queryClient.invalidateQueries({ queryKey: ["todos"] });
-      toast({ title: "Next week counted as done for you", description: "Matrix ticked, to-do closed." });
-    },
-    onError: () => toast({ title: "Couldn't record the review", variant: "destructive" }),
-  });
-
+  // The preview is answered like everyone else's (Graeme, 2026-10-01): the
+  // founder's full marks there also count as their completion for next
+  // week; anyone else previewing just gets marked.
+  const recordsPreview = isPreview && !!data?.canSelfComplete && !data?.selfCompleted;
   const submit = useMutation({
     mutationFn: async () => {
       const ordered = (data?.quiz ?? []).map((_q, i) => answers[i] ?? -1);
-      const res = await fetch(`${BASE}/api/lean-reviews/complete`, {
+      const path = !isPreview ? "complete" : recordsPreview ? "preview/complete" : "preview/check";
+      const res = await fetch(`${BASE}/api/lean-reviews/${path}`, {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ answers: ordered }),
@@ -196,8 +186,9 @@ export function LeanReviewPage() {
     onSuccess: result => {
       setLastResult(result);
       if (result.passed) {
-        queryClient.invalidateQueries({ queryKey: QUERY_KEY });
+        queryClient.invalidateQueries({ queryKey: isPreview ? ["lean-week-preview"] : QUERY_KEY });
         queryClient.invalidateQueries({ queryKey: ["todos"] });
+        if (recordsPreview) toast({ title: "Next week counted as done for you", description: "Matrix ticked, to-do closed." });
       }
     },
   });
@@ -234,8 +225,8 @@ export function LeanReviewPage() {
         <p className="text-muted-foreground mt-1">{data.principle.summary}</p>
         {isPreview && (
           <p className="mt-2 text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
-            This is what the whole team sees from Monday. Review it, swap any video by pasting a URL, and the quiz
-            answers are shown so you can sanity-check them — nothing here counts as your own weekly review.
+            This is what the whole team sees from Monday. Learn it, swap any video by pasting a URL, then answer the
+            quiz like everyone else will.{data.canSelfComplete && !data.selfCompleted && " Full marks counts as your own review for next week."}
           </p>
         )}
         {!isPreview && data.completed && (
@@ -286,24 +277,6 @@ export function LeanReviewPage() {
                 <p className="font-medium mb-2">{qi + 1}. {q.question}</p>
                 <div className="space-y-1.5">
                   {q.options.map((opt, oi) => (
-                    isPreview ? (
-                      <div
-                        key={oi}
-                        className={cn(
-                          "w-full text-left px-4 py-2.5 rounded-xl border text-sm flex items-center justify-between gap-2",
-                          q.answer === oi
-                            ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 font-semibold"
-                            : "border-border",
-                        )}
-                      >
-                        <span>{opt}</span>
-                        {q.answer === oi && (
-                          <span className="flex-shrink-0 text-xs font-bold text-emerald-600 dark:text-emerald-400 inline-flex items-center gap-1">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> correct answer
-                          </span>
-                        )}
-                      </div>
-                    ) : (
                       <button
                         key={oi}
                         onClick={() => { setAnswers(a => ({ ...a, [qi]: oi })); setLastResult(null); }}
@@ -316,7 +289,6 @@ export function LeanReviewPage() {
                       >
                         {opt}
                       </button>
-                    )
                   ))}
                 </div>
               </div>
@@ -330,11 +302,16 @@ export function LeanReviewPage() {
           )}
           {(lastResult?.passed || data.completed) && (
             <div className="rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-4 py-3 text-sm font-semibold text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4" /> Full marks — you're done for the week. Your Lean training matrix has been ticked.
+              <CheckCircle2 className="w-4 h-4" />
+              {!isPreview
+                ? "Full marks — you're done for the week. Your Lean training matrix has been ticked."
+                : data.canSelfComplete
+                  ? "Full marks — next week is counted as done for you."
+                  : "Full marks — you know next week's lesson."}
             </div>
           )}
 
-          {!isPreview && !data.completed && !lastResult?.passed && (
+          {(isPreview || !data.completed) && !lastResult?.passed && (
             <button
               onClick={() => submit.mutate()}
               disabled={!allAnswered || submit.isPending}
@@ -345,21 +322,10 @@ export function LeanReviewPage() {
             </button>
           )}
 
-          {isPreview && data.canSelfComplete && (
-            data.selfCompleted ? (
-              <div className="rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-4 py-3 text-sm font-semibold text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4" /> Next week is already counted as done for you.
-              </div>
-            ) : (
-              <button
-                onClick={() => previewComplete.mutate()}
-                disabled={previewComplete.isPending}
-                className="w-full py-3 rounded-xl bg-primary text-primary-foreground font-semibold disabled:opacity-50 inline-flex items-center justify-center gap-2"
-              >
-                {previewComplete.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                I've reviewed next week — count it as my completion
-              </button>
-            )
+          {isPreview && data.selfCompleted && !lastResult && (
+            <div className="rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-4 py-3 text-sm font-semibold text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4" /> Next week is already counted as done for you — answer again for practice if you like.
+            </div>
           )}
         </div>
       ) : lesson ? (
