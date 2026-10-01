@@ -15,9 +15,9 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { db, marketingEventsTable, marketingEventHistoryTable, testBoxesTable, usersTable } from "@workspace/db";
-import { and, asc, desc, eq, gte, isNull, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lte, ne } from "drizzle-orm";
 import {
-  addDays, describeDateChange, describeFieldChanges, diffFields, daysBetween, type FieldChange,
+  NOTE_EVENT_TYPE, addDays, describeDateChange, describeFieldChanges, diffFields, daysBetween, noteDatesValid, type FieldChange,
 } from "@workspace/marketing-calendar";
 import { loadBoxRecipes, scheduleForBox, syncTestBoxEvent, testBoxCalendarInfo } from "../lib/test-box-data";
 import { validate, validateQuery } from "../middleware/validate";
@@ -34,7 +34,10 @@ const IsoDate = z.string().regex(DATE_RE, "Use YYYY-MM-DD");
 
 // Types a person can pick. "test_box" is set only by the test-box tool —
 // those events are created, dated and deleted from the test box itself.
-export const EVENT_TYPES = ["campaign", "email", "offer", "product_launch", "seasonal", "other"] as const;
+// "note" (2026-10-01) is a one-day idea or note on a day: it is created as a
+// note and stays one (a phase can't turn into a note or back), it is always
+// one day, and it never takes emails (filingEvents in @workspace/marketing-calendar).
+export const EVENT_TYPES = ["campaign", "email", "offer", "product_launch", "seasonal", "other", NOTE_EVENT_TYPE] as const;
 export const CHANNELS = ["vip_email", "public_email", "social", "website", "ads", "sms", "in_box_insert", "other"] as const;
 export const STATUSES = ["idea", "planned", "live", "done"] as const;
 
@@ -174,7 +177,8 @@ const CreateBody = z.object({
   // "ai" = the event came from an AI suggestion; the person who locked it in
   // is still stamped as the one who added it.
   source: z.enum(["manual", "ai"]).optional(),
-}).refine(b => b.endDate >= b.startDate, { message: "The end date can't be before the start date" });
+}).refine(b => b.endDate >= b.startDate, { message: "The end date can't be before the start date" })
+  .refine(b => b.type !== NOTE_EVENT_TYPE || noteDatesValid(b), { message: "A note sits on one day" });
 
 router.post("/events", validate(CreateBody), async (req: Request, res: Response) => {
   const b = req.body as z.infer<typeof CreateBody>;
@@ -231,6 +235,9 @@ router.patch("/events/:id", validate(PatchBody), async (req: Request, res: Respo
     if (!before || before.deletedAt) return { status: 404 as const };
     if (before.eventType === "test_box" && b.type !== undefined && b.type !== ("test_box" as string)) {
       return { status: 409 as const, error: "A test box's calendar event keeps the test-box type." };
+    }
+    if (b.type !== undefined && (before.eventType === NOTE_EVENT_TYPE) !== (b.type === NOTE_EVENT_TYPE)) {
+      return { status: 409 as const, error: "A note stays a note (and a phase can't become one) — add a new one instead." };
     }
 
     // Compare in stored-column terms.
@@ -321,6 +328,7 @@ router.put("/events/:id/dates", validate(DatesBody), async (req: Request, res: R
       const [after] = await tx.select().from(marketingEventsTable).where(eq(marketingEventsTable.id, id));
       return { status: 200 as const, row: after };
     }
+    if (before.eventType === NOTE_EVENT_TYPE && !noteDatesValid(b)) return { status: 400 as const };
     const change = describeDateChange(before, b);
     if (!change) return { status: 200 as const, row: before };
     const [after] = await tx.update(marketingEventsTable).set({
@@ -334,6 +342,7 @@ router.put("/events/:id/dates", validate(DatesBody), async (req: Request, res: R
     return { status: 200 as const, row: after };
   });
   if (result.status === 404) { res.status(404).json({ error: "Event not found (it may have been deleted)" }); return; }
+  if (result.status === 400) { res.status(400).json({ error: "A note sits on one day" }); return; }
   res.json({ event: await oneEventJson(result.row) });
 });
 
@@ -392,7 +401,12 @@ router.post("/suggest-events", validate(z.object({}).passthrough()), async (_req
     const today = londonToday();
     const horizonEnd = new Date(Date.parse(`${today}T12:00:00Z`) + 56 * 86_400_000).toISOString().slice(0, 10);
     const events = await db.select().from(marketingEventsTable)
-      .where(and(isNull(marketingEventsTable.deletedAt), gte(marketingEventsTable.endDate, today), lte(marketingEventsTable.startDate, horizonEnd)))
+      .where(and(
+        isNull(marketingEventsTable.deletedAt),
+        ne(marketingEventsTable.eventType, NOTE_EVENT_TYPE), // notes aren't cover
+        gte(marketingEventsTable.endDate, today),
+        lte(marketingEventsTable.startDate, horizonEnd),
+      ))
       .orderBy(asc(marketingEventsTable.startDate));
 
     const client = getClaudeClient();

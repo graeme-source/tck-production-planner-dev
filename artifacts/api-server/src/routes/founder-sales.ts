@@ -119,6 +119,8 @@ async function listEvents(fromIso: string, toIso: string) {
     SELECT id, name, start_date::text, end_date::text, offer, notes, status, source
     FROM marketing_events
     WHERE deleted_at IS NULL AND end_date >= ${fromIso} AND start_date <= ${toIso}
+      -- Notes are ideas jotted on a day, not something running (2026-10-01).
+      AND event_type <> 'note'
     ORDER BY start_date, id
   `);
   return rows.rows.map(r => ({

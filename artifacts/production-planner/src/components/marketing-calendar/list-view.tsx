@@ -11,20 +11,32 @@
  * badge; Klaviyo drafts not linked to a plan show only here (dashed violet).
  * The "Needs approval" filter keeps just what the reminder counts.
  *
+ * Notes and to-dos (2026-10-01) sit on their day inside the same sections,
+ * ahead of that day's emails: a yellow sticky-note card, a slate to-do card.
+ *
  * Grouping is the pure buildEmailSections() in @workspace/marketing-calendar.
  */
 import { useMemo } from "react";
 import { format, parseISO } from "date-fns";
-import { BadgeCheck, CheckCircle2, Globe, Mail, Megaphone, MessageSquare, Plus, Repeat, Target, Users } from "lucide-react";
-import { audienceLabel, buildEmailSections, defaultEmailDate, formatDay, formatRange, stageLabel } from "@workspace/marketing-calendar";
+import { BadgeCheck, CheckCircle2, CheckSquare, Globe, Mail, Megaphone, MessageSquare, Plus, Repeat, Square, StickyNote, Target, Users } from "lucide-react";
+import { audienceLabel, buildEmailSections, defaultEmailDate, filingEvents, formatDay, formatRange, stageLabel } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
-import type { CalEvent, KlaviyoEmail, PlannedEmail } from "./api";
-import { emailStage, typeStyle } from "./constants";
+import type { CalEvent, CalTodo, KlaviyoEmail, PlannedEmail } from "./api";
+import { NOTE_TONE, TODO_TONE, emailStage, firstName, typeStyle } from "./constants";
+
+type ListExtra =
+  | { date: string; kind: "note"; note: CalEvent }
+  | { date: string; kind: "todo"; todo: CalTodo };
 import { ApprovalBadge, type ApprovalIndex } from "./approvals";
 
-export function ListView({ today, events, planned, klaviyo, showPast, filter = "all", approvals, onShowAll, onOpenCampaign, onOpenEmail, onOpenKlaviyo, onAddEmail }: {
+export function ListView({ today, events, planned, klaviyo, notes = [], todos = [], showPast, filter = "all", approvals, onShowAll, onOpenCampaign, onOpenEmail, onOpenKlaviyo, onOpenNote, onOpenTodo, onAddEmail }: {
   today: string;
   events: CalEvent[];
+  /** Notes and to-dos, each on its day (2026-10-01). */
+  notes?: CalEvent[];
+  todos?: CalTodo[];
+  onOpenNote?: (id: number) => void;
+  onOpenTodo?: (t: CalTodo) => void;
   planned: PlannedEmail[];
   /** Klaviyo campaigns, drafts included (unlinked drafts show only here). */
   klaviyo: KlaviyoEmail[];
@@ -39,16 +51,20 @@ export function ListView({ today, events, planned, klaviyo, showPast, filter = "
   onAddEmail: (date: string) => void;
 }) {
   const sections = useMemo(() => {
-    const all = buildEmailSections({ campaigns: events, planned, klaviyo, today, showPast });
+    const extras: ListExtra[] = [
+      ...notes.map(n => ({ date: n.startDate, kind: "note" as const, note: n })),
+      ...todos.map(t => ({ date: t.date, kind: "todo" as const, todo: t })),
+    ];
+    const all = buildEmailSections({ campaigns: filingEvents(events), planned, klaviyo, extras, today, showPast });
     if (filter === "all") return all;
     // Needs approval: same sections, only the items that need it, no empty ones.
     return all
       .map(s => ({
         ...s,
-        items: s.items.filter(it => (it.kind === "planned" ? approvals.forPlan(it.planned.id) : approvals.forKlaviyo(it.klaviyo.id))?.needsApproval === true),
+        items: s.items.filter(it => it.kind !== "extra" && (it.kind === "planned" ? approvals.forPlan(it.planned.id) : approvals.forKlaviyo(it.klaviyo.id))?.needsApproval === true),
       }))
       .filter(s => s.items.length > 0);
-  }, [events, planned, klaviyo, today, showPast, filter, approvals]);
+  }, [events, planned, klaviyo, notes, todos, today, showPast, filter, approvals]);
 
   if (filter === "needs" && sections.length === 0) {
     return (
@@ -116,7 +132,11 @@ export function ListView({ today, events, planned, klaviyo, showPast, filter = "
               )}
               {section.items.map(item => item.kind === "planned"
                 ? <PlannedCard key={`p-${item.planned.id}`} email={item.planned} klaviyo={item.klaviyo} today={today} approvals={approvals} onOpen={() => onOpenEmail(item.planned.id)} />
-                : <KlaviyoCard key={`k-${item.klaviyo.id}`} email={item.klaviyo} approvals={approvals} onOpen={() => onOpenKlaviyo(item.klaviyo)} />)}
+                : item.kind === "klaviyo"
+                  ? <KlaviyoCard key={`k-${item.klaviyo.id}`} email={item.klaviyo} approvals={approvals} onOpen={() => onOpenKlaviyo(item.klaviyo)} />
+                  : item.extra.kind === "note"
+                    ? <NoteCard key={`n-${item.extra.note.id}`} note={item.extra.note} today={today} onOpen={() => onOpenNote?.((item.extra as { note: CalEvent }).note.id)} />
+                    : <TodoCard key={`t-${item.extra.todo.id}`} todo={item.extra.todo} today={today} onOpen={() => onOpenTodo?.((item.extra as { todo: CalTodo }).todo)} />)}
             </div>
           </section>
         );
@@ -180,6 +200,39 @@ function PlannedCard({ email: e, klaviyo, today, approvals, onOpen }: {
           {audience && <Line icon={<Users className="w-3.5 h-3.5" />} label="Audience">{audience}</Line>}
           {e.websiteChange && <Line icon={<Globe className="w-3.5 h-3.5" />} label="Website">{e.websiteChange}</Line>}
           {e.metaChange && <Line icon={<Megaphone className="w-3.5 h-3.5" />} label="Meta">{e.metaChange}</Line>}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+function NoteCard({ note: n, today, onOpen }: { note: CalEvent; today: string; onOpen: () => void }) {
+  return (
+    <button type="button" onClick={onOpen} className={cn("w-full text-left rounded-2xl border-2 p-3.5 flex gap-3 hover:brightness-[0.98]", NOTE_TONE.card)}>
+      <DateBlock date={n.startDate} time={null} past={n.startDate < today} />
+      <span className="flex-1 min-w-0 space-y-1">
+        <span className="flex items-center gap-2">
+          <StickyNote className={cn("w-4 h-4 flex-shrink-0", NOTE_TONE.icon)} />
+          <span className="text-base font-bold">{n.title}</span>
+        </span>
+        {n.notes && <span className="block text-sm text-muted-foreground line-clamp-3 whitespace-pre-line">{n.notes}</span>}
+        <span className="block text-xs text-muted-foreground">Note · added by {firstName(n.createdBy?.name)}</span>
+      </span>
+    </button>
+  );
+}
+
+function TodoCard({ todo: t, today, onOpen }: { todo: CalTodo; today: string; onOpen: () => void }) {
+  return (
+    <button type="button" onClick={onOpen} className={cn("w-full text-left rounded-2xl border-2 p-3.5 flex gap-3 hover:brightness-[0.98]", TODO_TONE.card, t.done && "opacity-60")}>
+      <DateBlock date={t.date} time={null} past={t.date < today} />
+      <span className="flex-1 min-w-0 space-y-1">
+        <span className="flex items-center gap-2">
+          {t.done ? <CheckSquare className={cn("w-4 h-4 flex-shrink-0", TODO_TONE.icon)} /> : <Square className={cn("w-4 h-4 flex-shrink-0", TODO_TONE.icon)} />}
+          <span className={cn("text-base font-bold", t.done && "line-through")}>{t.title}</span>
+        </span>
+        <span className="block text-xs text-muted-foreground">
+          {t.mine ? "My to-do" : `${firstName(t.assignee.name)}'s to-do`} · {t.dateKind === "due" ? "due" : "scheduled"} this day{t.done ? " · done" : ""}
         </span>
       </span>
     </button>

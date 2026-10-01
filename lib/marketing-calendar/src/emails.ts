@@ -47,22 +47,28 @@ export function defaultEmailDate(campaign: { startDate: string; endDate: string 
 export interface PlannedLike { id: number; sendDate: string; sendTime: string | null; klaviyoCampaignId: string | null }
 export interface KlaviyoLike { id: string; date: string; sendAt: string }
 
-export type SectionItem<P, K> =
-  | { kind: "planned"; date: string; planned: P; klaviyo: K | null }
-  | { kind: "klaviyo"; date: string; klaviyo: K };
+/** Anything else shown on its day in the List view (notes, to-dos —
+ *  2026-10-01). Sorted ahead of that day's emails. */
+export interface ExtraLike { date: string }
 
-export interface EmailSection<C, P, K> {
+export type SectionItem<P, K, X = never> =
+  | { kind: "planned"; date: string; planned: P; klaviyo: K | null }
+  | { kind: "klaviyo"; date: string; klaviyo: K }
+  | { kind: "extra"; date: string; extra: X };
+
+export interface EmailSection<C, P, K, X = never> {
   key: string;
   /** null = "Not in a campaign". */
   campaign: C | null;
-  items: Array<SectionItem<P, K>>;
+  items: Array<SectionItem<P, K, X>>;
 }
 
 function londonHm(iso: string): string {
   return new Date(iso).toLocaleTimeString("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
-function timeKey<P extends PlannedLike, K extends KlaviyoLike>(it: SectionItem<P, K>): string {
+function timeKey<P extends PlannedLike, K extends KlaviyoLike, X>(it: SectionItem<P, K, X>): string {
+  if (it.kind === "extra") return ""; // notes and to-dos lead their day
   if (it.kind === "planned") return it.planned.sendTime ?? (it.klaviyo ? londonHm(it.klaviyo.sendAt) : "99:99");
   return londonHm(it.klaviyo.sendAt);
 }
@@ -74,30 +80,34 @@ function timeKey<P extends PlannedLike, K extends KlaviyoLike>(it: SectionItem<P
  * sections between them. A planned email linked to a Klaviyo send carries
  * that send with it, and the send is not listed a second time.
  * Past emails and campaigns that have ended are hidden unless `showPast`.
+ * `extras` (notes, to-dos) file by their day exactly like emails. Callers
+ * pass filingEvents() as `campaigns` so a note is never a section.
  */
-export function buildEmailSections<C extends CampaignWindow, P extends PlannedLike, K extends KlaviyoLike>(input: {
+export function buildEmailSections<C extends CampaignWindow, P extends PlannedLike, K extends KlaviyoLike, X extends ExtraLike = never>(input: {
   campaigns: readonly C[];
   planned: readonly P[];
   klaviyo: readonly K[];
+  extras?: readonly X[];
   today: string;
   showPast: boolean;
-}): Array<EmailSection<C, P, K>> {
-  const { campaigns, planned, klaviyo, today, showPast } = input;
+}): Array<EmailSection<C, P, K, X>> {
+  const { campaigns, planned, klaviyo, today, showPast, extras = [] } = input;
   const klaviyoById = new Map(klaviyo.map(k => [k.id, k]));
   const linked = new Set(planned.map(p => p.klaviyoCampaignId).filter((x): x is string => !!x));
 
-  let items: Array<SectionItem<P, K>> = [
+  let items: Array<SectionItem<P, K, X>> = [
     ...planned.map(p => ({
       kind: "planned" as const, date: p.sendDate, planned: p,
       klaviyo: p.klaviyoCampaignId ? klaviyoById.get(p.klaviyoCampaignId) ?? null : null,
     })),
     ...klaviyo.filter(k => !linked.has(k.id)).map(k => ({ kind: "klaviyo" as const, date: k.date, klaviyo: k })),
+    ...extras.map(x => ({ kind: "extra" as const, date: x.date, extra: x })),
   ];
   if (!showPast) items = items.filter(it => it.date >= today);
   items.sort((a, b) => a.date.localeCompare(b.date) || timeKey(a).localeCompare(timeKey(b)));
 
-  const byCampaign = new Map<number, Array<SectionItem<P, K>>>();
-  const loose: Array<SectionItem<P, K>> = [];
+  const byCampaign = new Map<number, Array<SectionItem<P, K, X>>>();
+  const loose: Array<SectionItem<P, K, X>> = [];
   for (const it of items) {
     const c = campaignForDate(it.date, campaigns);
     if (!c) { loose.push(it); continue; }
@@ -106,7 +116,7 @@ export function buildEmailSections<C extends CampaignWindow, P extends PlannedLi
     byCampaign.set(c.id, list);
   }
 
-  type Block = { at: string; order: number; campaign: C | null; item?: SectionItem<P, K> };
+  type Block = { at: string; order: number; campaign: C | null; item?: SectionItem<P, K, X> };
   const blocks: Block[] = [];
   for (const c of campaigns) {
     if (!showPast && c.endDate < today && !byCampaign.has(c.id)) continue;
@@ -118,7 +128,7 @@ export function buildEmailSections<C extends CampaignWindow, P extends PlannedLi
   blocks.sort((a, b) => a.at.localeCompare(b.at) || a.order - b.order
     || (a.campaign && b.campaign ? a.campaign.startDate.localeCompare(b.campaign.startDate) || a.campaign.id - b.campaign.id : 0));
 
-  const sections: Array<EmailSection<C, P, K>> = [];
+  const sections: Array<EmailSection<C, P, K, X>> = [];
   for (const b of blocks) {
     if (b.campaign) {
       sections.push({ key: `campaign-${b.campaign.id}`, campaign: b.campaign, items: byCampaign.get(b.campaign.id) ?? [] });

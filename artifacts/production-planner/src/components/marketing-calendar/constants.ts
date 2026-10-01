@@ -21,6 +21,22 @@ export const KLAVIYO_TONE = {
   icon: "text-teal-600",
 };
 
+/** Notes (2026-10-01): an idea or note on a day — a quiet yellow sticky
+ *  note, nothing like the solid email chips. */
+export const NOTE_TONE = {
+  chip: "bg-yellow-100 text-yellow-900 border border-yellow-300 dark:bg-yellow-400/15 dark:text-yellow-100 dark:border-yellow-400/40",
+  card: "border-yellow-400/60 bg-yellow-50 dark:bg-yellow-400/10",
+  icon: "text-yellow-600 dark:text-yellow-300",
+};
+
+/** To-dos (2026-10-01): slate with a checkbox; done ones faded and struck. */
+export const TODO_TONE = {
+  chip: "bg-slate-100 text-slate-800 border border-slate-300 dark:bg-slate-500/20 dark:text-slate-100 dark:border-slate-400/40",
+  done: "bg-slate-100/60 text-slate-500 border border-slate-200 line-through dark:bg-slate-500/10 dark:text-slate-400 dark:border-slate-500/30",
+  card: "border-slate-400/50 bg-slate-50 dark:bg-slate-500/10",
+  icon: "text-slate-600 dark:text-slate-300",
+};
+
 export const EVENT_TYPES: Record<string, TypeStyle> = {
   campaign:       { label: "Phase",       bar: "bg-violet-500/15 text-violet-900 dark:text-violet-100 border-y border-violet-500/30",  chip: "bg-violet-500/15 text-violet-700 dark:text-violet-300", dot: "bg-violet-500" },
   email:          { label: "Email",          bar: "bg-sky-500 text-white",     chip: "bg-sky-500/15 text-sky-700 dark:text-sky-300",          dot: "bg-sky-500" },

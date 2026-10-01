@@ -99,6 +99,7 @@ import founderSalesRouter from "./founder-sales";
 import marketingCalendarRouter from "./marketing-calendar";
 import marketingEmailsRouter from "./marketing-emails";
 import marketingApprovalsRouter from "./marketing-approvals";
+import marketingTodosRouter from "./marketing-todos";
 import testBoxesRouter from "./test-boxes";
 import founderNumbersRouter from "./founder-numbers";
 import surveysRouter from "./surveys";
@@ -265,6 +266,9 @@ router.use("/founder-sales", founderSalesRouter);
 router.use("/marketing-calendar/emails", marketingEmailsRouter);
 // Approvals (2026-09-30): see founder.sales; approve = "marketing.approve_emails".
 router.use("/marketing-calendar/approvals", marketingApprovalsRouter);
+// To-dos on the calendar (2026-10-01): your own only; the founder may add
+// other calendar users'. Read-only, guarded inside the router.
+router.use("/marketing-calendar/todos", marketingTodosRouter);
 router.use("/marketing-calendar", marketingCalendarRouter);
 // Test-box scheduling (same access as Sales & Marketing, guarded inside).
 router.use("/test-boxes", testBoxesRouter);

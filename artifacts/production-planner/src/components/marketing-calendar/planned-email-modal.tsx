@@ -23,7 +23,7 @@ import { format, parseISO, formatDistanceToNowStrict } from "date-fns";
 import {
   X, Trash2, History, Users, Loader2, AlertTriangle, Mail, Link2, Unlink, CheckCircle2, Megaphone, ExternalLink,
 } from "lucide-react";
-import { EMAIL_AUDIENCES, addDays, campaignForDate, effectiveStage, formatRange, stageLabel } from "@workspace/marketing-calendar";
+import { EMAIL_AUDIENCES, addDays, campaignForDate, effectiveStage, filingEvents, formatRange, stageLabel } from "@workspace/marketing-calendar";
 import { useAuth } from "@/contexts/auth-context";
 import { useAutosave, type AutosaveState } from "@/hooks/use-autosave";
 import { SaveChip } from "@/components/save-chip";
@@ -110,7 +110,7 @@ export function PlannedEmailModal({ emailId, newOn, onClose, onOpenCampaign }: {
   const validDate = DATE_RE.test(draft.sendDate) ? draft.sendDate : null;
   const campaignsQ = useCalendarEvents(validDate ?? "", validDate ?? "", validDate != null);
   const campaign = useMemo(
-    () => (validDate ? campaignForDate(validDate, campaignsQ.data?.events ?? []) : null),
+    () => (validDate ? campaignForDate(validDate, filingEvents(campaignsQ.data?.events ?? [])) : null),
     [validDate, campaignsQ.data],
   );
 
