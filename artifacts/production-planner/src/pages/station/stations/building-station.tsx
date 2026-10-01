@@ -34,6 +34,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 // ExtraPackControl removed — replaced by inline PackAdjustment
 import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
+import { TargetFinishChip } from "../shared/target-finish-chip";
 import { createPortal } from "react-dom";
 import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay, STATION_VIEW_ROW_SLOT_ID } from "../shared/constants";
 import { QueueDock, QueueSheet } from "../shared/station-queue";
@@ -1118,6 +1119,15 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
               />
             </div>
             <span className="text-lg font-bold tabular-nums flex-shrink-0">{overallProgress}%</span>
+            {/* Target finish at 20 batches/hr: full wording on iPad landscape,
+                just the time on narrower screens, and left off a phone's strip
+                (already full) — it's in the queue sheet below on every size. */}
+            {!buildingFinishedAt && (
+              <>
+                <TargetFinishChip planId={plan.id} className="hidden lg:inline-flex flex-shrink-0" />
+                <TargetFinishChip planId={plan.id} compact className="hidden sm:inline-flex lg:hidden flex-shrink-0" />
+              </>
+            )}
             {teamBand && !buildingFinishedAt && (
               <span
                 className={cn("flex-shrink-0 rounded-lg px-2.5 py-1 text-sm font-extrabold tabular-nums leading-none", teamBand.tile)}
@@ -1999,6 +2009,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
           {/* Pace + session KPIs + the mid-day finish button — the day's
               supervisory numbers, always one tap away under the queue. */}
           <div className="px-3 py-3 border-t border-border space-y-3">
+            <TargetFinishChip planId={plan.id} className="text-sm" />
             {teamBand && !buildingFinishedAt && (
               <div
                 className={cn(
