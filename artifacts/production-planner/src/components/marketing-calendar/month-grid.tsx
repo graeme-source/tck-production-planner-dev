@@ -9,13 +9,18 @@
  * day and it re-files into that day's phase. A plan linked to its Klaviyo send
  * shows once, as the planned chip with a tick. Unlinked Klaviyo drafts stay
  * off the grid (List view). Approval: a green tick badge or an amber dot.
+ *
+ * Notes (2026-10-01) are quiet yellow sticky-note chips on their day — drag
+ * one to another day, tap to open. To-dos are slate checkbox chips (done =
+ * faded and struck through), someone else's carrying their initials; tap
+ * opens the to-do.
  */
 import { useMemo } from "react";
-import { layoutWeek, monthGridWeeks } from "@workspace/marketing-calendar";
+import { initials, isNoteEvent, layoutWeek, monthGridWeeks } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
-import type { CalEvent, KlaviyoEmail, Milestone, PlannedEmail } from "./api";
-import { CheckCircle2, Mail, MailPlus } from "lucide-react";
-import { typeStyle, firstName, THIN_TYPES, KLAVIYO_TONE } from "./constants";
+import type { CalEvent, CalTodo, KlaviyoEmail, Milestone, PlannedEmail } from "./api";
+import { CheckCircle2, CheckSquare, Mail, MailPlus, Square, StickyNote } from "lucide-react";
+import { typeStyle, firstName, THIN_TYPES, KLAVIYO_TONE, NOTE_TONE, TODO_TONE } from "./constants";
 import { dateFromElementsAt, useSpanDrag } from "./use-span-drag";
 import { ApprovalDot, approvalTitle, type ApprovalIndex } from "./approvals";
 import type { DragMode } from "@workspace/marketing-calendar";
@@ -31,12 +36,18 @@ type EmailSpan = { id: number; startDate: string; endDate: string; email: Klaviy
 /** A planned email: `plan` is what the drag hook moves (its real id). */
 type PlanDrag = { id: number; startDate: string; endDate: string; email: PlannedEmail };
 type PlanSpan = { id: number; startDate: string; endDate: string; plan: PlanDrag };
+/** A to-do on its day (read-only here; tap opens it). */
+type TodoSpan = { id: number; startDate: string; endDate: string; todo: CalTodo };
 
-export function MonthGrid({ month, today, events, emails = [], planned = [], approvals, onOpen, onOpenEmail, onOpenPlanned, onMovePlanned, onAddOn, onDatesChange }: {
+export function MonthGrid({ month, today, events, emails = [], planned = [], todos = [], approvals, onOpen, onOpenEmail, onOpenPlanned, onMovePlanned, onOpenTodo, onAddOn, onDatesChange }: {
   /** Any ISO day in the month shown. */
   month: string;
   today: string;
+  /** Phases, events and notes (a note is a one-day event of type "note"). */
   events: CalEvent[];
+  /** To-dos shown on their day. */
+  todos?: CalTodo[];
+  onOpenTodo?: (t: CalTodo) => void;
   /** Klaviyo sends — read-only, tap to see the subject line. */
   emails?: KlaviyoEmail[];
   onOpen: (e: CalEvent) => void;
@@ -74,6 +85,7 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], app
     const d = planDrag.spanOf<PlanDrag>({ id: p.id, startDate: p.sendDate, endDate: p.sendDate, email: p });
     return { id: -(1_000_000 + p.id), startDate: d.startDate, endDate: d.endDate, plan: d };
   });
+  const todoSpans: TodoSpan[] = todos.map(t => ({ id: -(2_000_000 + t.id), startDate: t.date, endDate: t.date, todo: t }));
 
   // Test-box deadlines, drawn as markers on their days.
   const milestonesByDay = useMemo(() => {
@@ -93,11 +105,11 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], app
       </div>
       <div className="rounded-xl border border-border overflow-hidden">
         {weeks.map(week => {
-          const { segments, laneCount } = layoutWeek<CalEvent | EmailSpan | PlanSpan>(week, [...shown, ...planSpans, ...emailSpans]);
+          const { segments, laneCount } = layoutWeek<CalEvent | EmailSpan | PlanSpan | TodoSpan>(week, [...shown, ...planSpans, ...emailSpans, ...todoSpans]);
           // A lane holding only phases is a thin band; everything else full height.
           const thinLane = Array.from({ length: laneCount }, (_, l) => {
             const inLane = segments.filter(s => s.lane === l);
-            return inLane.length > 0 && inLane.every(s => !("plan" in s.event) && !("email" in s.event) && THIN_TYPES.has((s.event as CalEvent).type));
+            return inLane.length > 0 && inLane.every(s => !("plan" in s.event) && !("email" in s.event) && !("todo" in s.event) && THIN_TYPES.has((s.event as CalEvent).type));
           });
           const laneH = (l: number) => (thinLane[l] ? THIN_PX : BAR_PX);
           const laneTop = (l: number) => Array.from({ length: l }, (_, i) => laneH(i) + GAP_PX).reduce((a, b) => a + b, 0);
@@ -117,7 +129,7 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], app
                       type="button"
                       data-cal-date={day}
                       onClick={() => { if (!justDragged() && !planDrag.justDragged()) onAddOn(day); }}
-                      aria-label={`Add a phase or email on ${day}`}
+                      aria-label={`Add a phase, email or note on ${day}`}
                       className={cn(
                         "relative flex flex-col items-start justify-start text-left border-r border-border last:border-r-0 px-1.5 pt-1 hover:bg-secondary/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
                         !inMonth && "bg-secondary/30",
@@ -197,7 +209,54 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], app
                       </button>
                     );
                   }
+                  if ("todo" in seg.event) {
+                    const t = seg.event.todo;
+                    return (
+                      <button
+                        key={`todo-${t.id}`}
+                        type="button"
+                        onClick={() => onOpenTodo?.(t)}
+                        title={`To-do${t.mine ? "" : ` (${t.assignee.name})`}: ${t.title} · ${t.dateKind === "due" ? "due" : "scheduled"} this day${t.done ? " · done" : ""}`}
+                        className={cn(
+                          "absolute pointer-events-auto flex items-center gap-1 rounded-lg px-1.5 text-xs font-medium overflow-hidden",
+                          t.done ? TODO_TONE.done : TODO_TONE.chip,
+                        )}
+                        style={{
+                          left: `calc(${(seg.startCol / 7) * 100}% + 3px)`,
+                          width: `calc(${(1 / 7) * 100}% - 6px)`,
+                          top: laneTop(seg.lane),
+                          height: laneH(seg.lane),
+                        }}
+                      >
+                        {t.done ? <CheckSquare className="w-3.5 h-3.5 flex-shrink-0" /> : <Square className="w-3.5 h-3.5 flex-shrink-0" />}
+                        {!t.mine && <span className="flex-shrink-0 rounded bg-slate-700 text-white dark:bg-slate-200 dark:text-slate-900 px-1 text-[10px] font-bold no-underline">{initials(t.assignee.name)}</span>}
+                        <span className="truncate flex-1 text-left">{t.title}</span>
+                      </button>
+                    );
+                  }
                   const e = seg.event;
+                  if (isNoteEvent(e)) {
+                    return (
+                      <div
+                        key={`note-${e.id}`}
+                        role="button"
+                        tabIndex={0}
+                        onPointerDown={ev => start(ev, e, "move")}
+                        onKeyDown={ev => { if (ev.key === "Enter") onOpen(e); }}
+                        title={`Note: ${e.title}${e.notes ? ` — ${e.notes.slice(0, 120)}` : ""}${e.createdBy ? ` · added by ${firstName(e.createdBy.name)}` : ""} — drag to another day`}
+                        className={cn("absolute pointer-events-auto touch-none cursor-grab flex items-center gap-1 rounded-md px-1.5 text-xs font-medium overflow-hidden", NOTE_TONE.chip)}
+                        style={{
+                          left: `calc(${(seg.startCol / 7) * 100}% + 3px)`,
+                          width: `calc(${(1 / 7) * 100}% - 6px)`,
+                          top: laneTop(seg.lane),
+                          height: laneH(seg.lane),
+                        }}
+                      >
+                        <StickyNote className={cn("w-3.5 h-3.5 flex-shrink-0", NOTE_TONE.icon)} />
+                        <span className="truncate flex-1">{e.title}</span>
+                      </div>
+                    );
+                  }
                   const style = typeStyle(e.type);
                   const fixedDates = e.testBox != null;
                   const thin = THIN_TYPES.has(e.type);

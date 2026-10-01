@@ -8,6 +8,11 @@
  *
  * Campaigns are the calendar events (dated periods). Planned emails (2026-09-30)
  * belong to a campaign automatically by their send day.
+ *
+ * Notes + to-dos (2026-10-01): tap a day → "Add note" for an idea or note on
+ * that day (shared, attributed). Your own to-dos that are due or scheduled
+ * show on their day; the founder can also switch on another calendar user's
+ * (the server refuses anyone else). Both can be hidden per viewer.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -15,18 +20,21 @@ import { Link } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import { format, parseISO, formatDistanceToNowStrict } from "date-fns";
 import {
-  BadgeCheck, CalendarDays, ChevronLeft, ChevronRight, GanttChartSquare, List, Loader2, Lock, Mail, MailPlus, Megaphone, Package, Plus, Sparkles, X, AlertTriangle,
+  BadgeCheck, CalendarDays, ChevronLeft, ChevronRight, GanttChartSquare, List, Loader2, Lock, Mail, MailPlus, Megaphone, Package, Plus, Sparkles, Square, StickyNote, X, AlertTriangle,
 } from "lucide-react";
 import {
-  addDays, addMonths, formatRange, monthGridWeeks, monthStart, overlaps, stageLabel, timelineRange, type DragMode, type TimelineZoom,
+  addDays, addMonths, filingEvents, formatRange, isNoteEvent, monthGridWeeks, monthStart, overlaps, stageLabel, timelineRange, type DragMode, type TimelineZoom,
 } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/auth-context";
+import { TodoSheet } from "@/components/todo-lists";
 import {
-  calApi, useCalendarEvents, useCreateEvent, useKlaviyoEmails, useMoveEmail, usePlannedEmails, useSetEventDates,
+  calApi, useCalendarEvents, useCalendarTodos, useCreateEvent, useKlaviyoEmails, useMoveEmail, usePlannedEmails, useSetEventDates,
   type CalEvent, type KlaviyoEmail, type PlannedEmail, type Suggestion,
 } from "./api";
 import { EmailModal } from "./email-modal";
-import { EVENT_TYPES, KLAVIYO_TONE, THIN_TYPES, firstName, statusLabel, typeStyle } from "./constants";
+import { NoteModal } from "./note-modal";
+import { EVENT_TYPES, KLAVIYO_TONE, NOTE_TONE, THIN_TYPES, TODO_TONE, firstName, statusLabel, typeStyle } from "./constants";
 import { MonthGrid } from "./month-grid";
 import { Timeline, timelineMonths } from "./timeline";
 import { EventModal } from "./event-modal";
@@ -48,6 +56,26 @@ function readView(): View {
 function saveView(v: View) {
   try { localStorage.setItem(VIEW_KEY, v); } catch { /* per-device nicety only */ }
 }
+/** Per-viewer display choices (this device only — a nicety, never data). */
+interface Layers { notes: boolean; todos: boolean; people: number[] }
+const LAYERS_KEY = "tck_marketing_calendar_layers";
+function readLayers(meId: number | null): Layers {
+  const fallback: Layers = { notes: true, todos: true, people: [] };
+  try {
+    const raw = localStorage.getItem(`${LAYERS_KEY}:${meId ?? "anon"}`);
+    if (!raw) return fallback;
+    const v = JSON.parse(raw) as Partial<Layers>;
+    return {
+      notes: v.notes !== false,
+      todos: v.todos !== false,
+      people: Array.isArray(v.people) ? v.people.filter((n): n is number => Number.isInteger(n)) : [],
+    };
+  } catch { return fallback; }
+}
+function saveLayers(meId: number | null, l: Layers) {
+  try { localStorage.setItem(`${LAYERS_KEY}:${meId ?? "anon"}`, JSON.stringify(l)); } catch { /* per-device nicety only */ }
+}
+
 function londonToday(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date());
 }
@@ -57,6 +85,13 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
    *  List view filtered to Needs approval. */
   reviewSignal?: number;
 } = {}) {
+  const { state: auth } = useAuth();
+  const meId = auth.status === "authenticated" ? auth.user.id : null;
+  const [layers, setLayersState] = useState<Layers>(() => readLayers(meId));
+  useEffect(() => { setLayersState(readLayers(meId)); }, [meId]);
+  const setLayers = (next: Layers) => { setLayersState(next); saveLayers(meId, next); };
+  const [openNote, setOpenNote] = useState<{ id: number | null; newOn?: string; key: number } | null>(null);
+  const [openTodo, setOpenTodo] = useState<number | null>(null);
   const [view, setView] = useState<View>(readView);
   const [listFilter, setListFilter] = useState<ListFilter>("all");
   const sectionRef = useRef<HTMLElement>(null);
@@ -92,7 +127,19 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
 
   const { data, isLoading, isError, error } = useCalendarEvents(range.from, range.to);
   const today = data?.today ?? localToday;
-  const events = data?.events ?? [];
+  const allEvents = data?.events ?? [];
+  // Notes are one-day "note" events: never phases, drawn as sticky notes.
+  const events = useMemo(() => filingEvents(allEvents), [allEvents]);
+  const notes = useMemo(() => (layers.notes ? allEvents.filter(isNoteEvent) : []), [allEvents, layers.notes]);
+  const openAny = (e: CalEvent) => (isNoteEvent(e) ? setOpenNote({ id: e.id, key: e.id }) : setOpen({ id: e.id }));
+
+  // To-dos: mine, plus (founder only) the people switched on. The server
+  // decides who may see whose; the people list comes back only for the founder.
+  const [knownPeople, setKnownPeople] = useState<Array<{ id: number; name: string }>>([]);
+  const askFor = layers.people.filter(id => knownPeople.some(p => p.id === id));
+  const todosQ = useCalendarTodos(meId, range.from, range.to, askFor, layers.todos);
+  useEffect(() => { if (todosQ.data) setKnownPeople(todosQ.data.people); }, [todosQ.data]);
+  const todos = layers.todos ? todosQ.data?.todos ?? [] : [];
   // Klaviyo sends (sent + scheduled one-off campaigns) — read-only.
   // Drafts come too; they appear in the List view and wherever they're
   // linked to a plan, but never clutter the month grid or timeline.
@@ -131,6 +178,10 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
 
   const monthEnd = addMonths(anchor, 1);
   const monthEvents = events.filter(e => overlaps(e, anchor, addDays(monthEnd, -1)));
+  const togglePerson = (id: number) => setLayers({
+    ...layers,
+    people: layers.people.includes(id) ? layers.people.filter(x => x !== id) : [...layers.people, id],
+  });
   const monthPlanned = planned.filter(p => p.sendDate >= anchor && p.sendDate < monthEnd);
   const linkedIds = new Set(planned.map(p => p.klaviyoCampaignId).filter(Boolean));
   const monthEmails = calendarEmails.filter(m => m.date >= anchor && m.date < monthEnd && !linkedIds.has(m.id));
@@ -219,6 +270,19 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
         />
       </div>
 
+      {/* What else shows: notes, to-dos (and, for the founder, whose). */}
+      <div className="flex items-center gap-2 flex-wrap text-sm">
+        <span className="text-muted-foreground font-semibold">Show:</span>
+        <LayerToggle on={layers.notes} onClick={() => setLayers({ ...layers, notes: !layers.notes })} icon={<StickyNote className={cn("w-4 h-4", NOTE_TONE.icon)} />}>Notes</LayerToggle>
+        <LayerToggle on={layers.todos} onClick={() => setLayers({ ...layers, todos: !layers.todos })} icon={<Square className={cn("w-4 h-4", TODO_TONE.icon)} />}>My to-dos</LayerToggle>
+        {layers.todos && todosQ.data?.canViewOthers && knownPeople.map(p => (
+          <LayerToggle key={p.id} on={layers.people.includes(p.id)} onClick={() => togglePerson(p.id)} icon={<Plus className="w-4 h-4" />}>
+            {firstName(p.name)}'s to-dos
+          </LayerToggle>
+        ))}
+        {layers.todos && todosQ.isError && <span className="text-destructive">To-dos: {(todosQ.error as Error).message}</span>}
+      </div>
+
       {isError && (
         <p className="text-sm text-destructive flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> {(error as Error).message}</p>
       )}
@@ -237,11 +301,13 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
           <MonthGrid
             month={anchor}
             today={today}
-            events={events}
+            events={[...events, ...notes]}
             emails={calendarEmails}
             planned={planned}
+            todos={todos}
+            onOpenTodo={t => setOpenTodo(t.id)}
             approvals={approvals}
-            onOpen={e => setOpen({ id: e.id })}
+            onOpen={openAny}
             onOpenEmail={setOpenEmail}
             onOpenPlanned={p => setOpenPlanned({ id: p.id, key: p.id })}
             onMovePlanned={onMovePlanned}
@@ -254,6 +320,10 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
             events={events}
             planned={planned}
             klaviyo={emails}
+            notes={notes}
+            todos={todos}
+            onOpenNote={id => setOpenNote({ id, key: id })}
+            onOpenTodo={t => setOpenTodo(t.id)}
             showPast={listFilter === "all" && showPast}
             filter={listFilter}
             approvals={approvals}
@@ -270,7 +340,8 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
             today={today}
             events={events}
             emails={calendarEmails}
-            onOpen={e => setOpen({ id: e.id })}
+            notes={notes}
+            onOpen={openAny}
             onOpenEmail={setOpenEmail}
             onAddOn={setAddChoice}
             onDatesChange={onDatesChange}
@@ -294,6 +365,8 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
         <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rotate-45 bg-rose-600" />Test-box deadline</span>
         <span className="inline-flex items-center gap-1.5"><span className="inline-flex items-center justify-center w-5 h-4 rounded bg-indigo-600"><MailPlus className="w-3 h-3 text-white" /></span>Planned email (drag to move)</span>
         <span className="inline-flex items-center gap-1.5"><span className={cn("inline-flex items-center justify-center w-5 h-4 rounded", KLAVIYO_TONE.solid)}><Mail className="w-3 h-3" /></span>Klaviyo email, read-only (faded = sent; drafts are in the List view)</span>
+        <span className="inline-flex items-center gap-1.5"><span className={cn("inline-flex items-center justify-center w-5 h-4 rounded", NOTE_TONE.chip)}><StickyNote className={cn("w-3 h-3", NOTE_TONE.icon)} /></span>Note</span>
+        <span className="inline-flex items-center gap-1.5"><span className={cn("inline-flex items-center justify-center w-5 h-4 rounded", TODO_TONE.chip)}><Square className="w-3 h-3" /></span>To-do (struck through = done)</span>
         <span className="inline-flex items-center gap-1.5"><BadgeCheck className="w-4 h-4 text-emerald-600" />Approved</span>
         <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-amber-400" />Needs approval</span>
       </div>
@@ -361,8 +434,13 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
           onClose={() => setAddChoice(null)}
           onCampaign={() => { setOpen({ id: null, newOn: addChoice }); setAddChoice(null); }}
           onEmail={() => { addEmail(addChoice); setAddChoice(null); }}
+          onNote={() => { setOpenNote({ id: null, newOn: addChoice, key: Date.now() }); setAddChoice(null); }}
         />
       )}
+      {openNote && (
+        <NoteModal key={openNote.key} noteId={openNote.id} newOn={openNote.newOn} onClose={() => setOpenNote(null)} />
+      )}
+      <TodoSheet open={openTodo != null} initialTaskId={openTodo} onClose={() => setOpenTodo(null)} />
       {openPlanned && (
         <PlannedEmailModal
           key={openPlanned.key}
@@ -384,8 +462,8 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
   );
 }
 
-/** Tapped an empty day: a campaign starting here, or an email sending here? */
-function AddChoice({ date, onClose, onCampaign, onEmail }: { date: string; onClose: () => void; onCampaign: () => void; onEmail: () => void }) {
+/** Tapped an empty day: a campaign starting here, an email sending here, or a note? */
+function AddChoice({ date, onClose, onCampaign, onEmail, onNote }: { date: string; onClose: () => void; onCampaign: () => void; onEmail: () => void; onNote: () => void }) {
   return createPortal(
     <div className="fixed inset-0 z-[120] bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-card border-2 border-border rounded-2xl shadow-2xl w-full max-w-sm max-h-[92dvh] overflow-y-auto" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={`Add on ${date}`}>
@@ -402,10 +480,30 @@ function AddChoice({ date, onClose, onCampaign, onEmail }: { date: string; onClo
             <MailPlus className="w-6 h-6 text-indigo-600 flex-shrink-0" />
             <span><span className="block font-bold text-base">Add email</span><span className="block text-sm text-muted-foreground">A planned send on this day — it joins the phase running then</span></span>
           </button>
+          <button type="button" onClick={onNote} className="rounded-2xl border-2 border-yellow-400/60 p-4 text-left flex items-center gap-3 hover:bg-yellow-400/10">
+            <StickyNote className={cn("w-6 h-6 flex-shrink-0", NOTE_TONE.icon)} />
+            <span><span className="block font-bold text-base">Add note</span><span className="block text-sm text-muted-foreground">An idea or a note on this day — everyone on the calendar sees it</span></span>
+          </button>
         </div>
       </div>
     </div>,
     document.body,
+  );
+}
+
+function LayerToggle({ on, onClick, icon, children }: { on: boolean; onClick: () => void; icon: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={on}
+      className={cn(
+        "px-3 py-1.5 rounded-xl border-2 text-sm font-semibold inline-flex items-center gap-1.5 transition-colors",
+        on ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:bg-secondary/50 line-through decoration-1",
+      )}
+    >
+      {icon}{children}
+    </button>
   );
 }
 

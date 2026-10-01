@@ -3,6 +3,8 @@
  * sideways. Every event gets its own lane where it would otherwise collide.
  * Same gestures as the month grid: drag to move, drag an end to stretch,
  * tap to open, tap an empty spot to add an event on that day.
+ * Notes (2026-10-01) are small yellow sticky-note markers in the top strip,
+ * beside that day's Klaviyo sends; tap one to open it.
  */
 import { useEffect, useMemo, useRef } from "react";
 import {
@@ -10,8 +12,8 @@ import {
 } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
 import type { CalEvent, KlaviyoEmail } from "./api";
-import { Mail } from "lucide-react";
-import { typeStyle, firstName, THIN_TYPES } from "./constants";
+import { Mail, StickyNote } from "lucide-react";
+import { typeStyle, firstName, THIN_TYPES, NOTE_TONE } from "./constants";
 import { useSpanDrag } from "./use-span-drag";
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -24,11 +26,13 @@ export function timelineMonths(zoom: TimelineZoom): number {
   return zoom === "weeks" ? 3 : 12;
 }
 
-export function Timeline({ anchor, zoom, today, events, emails = [], onOpen, onOpenEmail, onAddOn, onDatesChange }: {
+export function Timeline({ anchor, zoom, today, events, emails = [], notes = [], onOpen, onOpenEmail, onAddOn, onDatesChange }: {
   anchor: string;
   zoom: TimelineZoom;
   today: string;
+  /** Phases and events (no notes — they go in the top strip). */
   events: CalEvent[];
+  notes?: CalEvent[];
   emails?: KlaviyoEmail[];
   onOpen: (e: CalEvent) => void;
   onOpenEmail?: (m: KlaviyoEmail) => void;
@@ -135,6 +139,28 @@ export function Timeline({ anchor, zoom, today, events, emails = [], onOpen, onO
               </button>
             );
           })}
+          {(() => {
+            // Notes sit after that day's Klaviyo sends in the strip.
+            const perDay = new Map<string, number>();
+            for (const m of emails) perDay.set(m.date, (perDay.get(m.date) ?? 0) + 1);
+            const size = Math.max(dw, 26);
+            return notes.filter(n => n.startDate >= range.from && n.startDate <= range.to).map(n => {
+              const idx = perDay.get(n.startDate) ?? 0;
+              perDay.set(n.startDate, idx + 1);
+              return (
+                <button
+                  key={`note-${n.id}`}
+                  type="button"
+                  onClick={ev => { ev.stopPropagation(); onOpen(n); }}
+                  title={`${n.startDate} · Note: ${n.title}${n.notes ? ` — ${n.notes.slice(0, 120)}` : ""}`}
+                  className={cn("absolute z-[3] rounded-md flex items-center justify-center", NOTE_TONE.chip)}
+                  style={{ left: daysBetween(range.from, n.startDate) * dw + dw / 2 - size / 2 + idx * (size + 2), top: 4, width: size, height: EMAIL_ROW_PX - 8 }}
+                >
+                  <StickyNote className={cn("w-3.5 h-3.5", NOTE_TONE.icon)} />
+                </button>
+              );
+            });
+          })()}
           {todayLeft != null && (
             <div className="absolute inset-y-0 w-0.5 bg-primary z-[1]" style={{ left: todayLeft }} title="Today" />
           )}

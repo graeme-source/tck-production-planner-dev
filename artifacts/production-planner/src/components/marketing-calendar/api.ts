@@ -136,6 +136,41 @@ export function patchEvent(id: number, patch: Record<string, unknown>) {
   return calApi<{ event: CalEvent }>(`/marketing-calendar/events/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
 }
 
+// ── To-dos on the calendar (2026-10-01; server: routes/marketing-todos.ts) ─
+// Your own; the founder may add other calendar users' (server-enforced).
+export interface CalTodo {
+  id: number;
+  title: string;
+  /** The day it shows on: its due day, else its scheduled day. */
+  date: string;
+  dateKind: "due" | "scheduled";
+  priority: string;
+  done: boolean;
+  assignee: { id: number; name: string };
+  mine: boolean;
+}
+
+export interface CalTodosResponse {
+  viewerId: number;
+  canViewOthers: boolean;
+  people: Array<{ id: number; name: string }>;
+  todos: CalTodo[];
+}
+
+/** Keyed under "todos" so ticking one off in the to-do sheet (which
+ *  invalidates ["todos"]) refreshes the calendar too. */
+export function useCalendarTodos(meId: number | null, from: string, to: string, people: number[], enabled = true) {
+  const ids = [...people].sort((a, b) => a - b).join(",");
+  return useQuery({
+    enabled: enabled && meId != null,
+    queryKey: ["todos", "marketing-calendar", meId, from, to, ids],
+    queryFn: () => calApi<CalTodosResponse>(`/marketing-calendar/todos?from=${from}&to=${to}${ids ? `&people=${ids}` : ""}`),
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
+    placeholderData: prev => prev,
+  });
+}
+
 // ── Klaviyo emails (read-only; Klaviyo is the master) ──────────────────────
 export interface KlaviyoEmail {
   id: string;
