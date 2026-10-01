@@ -45,6 +45,7 @@ import PeoplePinPage from "@/pages/people-pin";
 import PeopleSection from "@/pages/people";
 import Reports from "@/pages/reports";
 import TeamEfficiencyPage from "@/pages/team-efficiency";
+import DefectsPage from "@/pages/defects";
 import Improvements from "@/pages/improvements";
 import EmployeeHub from "@/pages/employee-hub";
 import Fulfilment from "@/pages/fulfilment";
@@ -243,6 +244,8 @@ function Router() {
               <Route path="/reports">{() => <ProtectedRoute component={Reports} pageKey="/reports" />}</Route>
               {/* Team efficiency KPI — Analytics only for now (Graeme, 2026-09-25). Managers/admins; server-enforced. */}
               <Route path="/analytics/efficiency" component={TeamEfficiencyPage} />
+              {/* Defects KPI + recorded defects (Graeme, 2026-10-01). Listed under Analytics; anyone signed in may record, so the page itself is open. */}
+              <Route path="/analytics/defects" component={DefectsPage} />
               {/* Training is for everyone: station matrices are self-service;
                   the stored matrices inside are manager-only (lib/training-sections). */}
               <Route path="/training">{() => <ProtectedRoute component={TrainingMatrix} pageKey="/training" />}</Route>
