@@ -32,6 +32,7 @@ import { feedTimestamp } from "@/lib/feed-time";
 import { ImprovementFeedMedia } from "@/components/improvement-feed-media";
 import { toast } from "@/hooks/use-toast";
 import { useMarkImprovementSeen } from "@/hooks/use-unseen-improvements";
+import { useSeenOnScroll } from "@/hooks/use-seen-on-scroll";
 import { isIdea, needsReview } from "@/lib/improvement-review";
 import { scrollAppToTop } from "@/lib/scroll";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
@@ -536,11 +537,21 @@ function SeenButton({ item }: { item: Improvement }) {
 }
 
 function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
+  // Read it and scroll past it = seen (Graeme, 2026-10-01). Recorded at
+  // once (nav count, NEW badge), but the card stays where it is — showing
+  // "Seen ✓" — until the list next refreshes, so the To review list never
+  // jumps under your thumb mid-scroll.
+  const markSeen = useMarkImprovementSeen();
+  const [autoSeen, setAutoSeen] = useState(false);
+  const seenRef = useSeenOnScroll<HTMLDivElement>(needsReview(item) && !autoSeen, () => {
+    setAutoSeen(true);
+    void markSeen(item.id);
+  });
   // A feed post, not a button: the header and metadata open the item, but
   // videos play right here in the feed — nesting a player inside a button
   // would fight every tap (Graeme, 2026-08-28: "like a WhatsApp group").
   return (
-    <div className={cn(
+    <div ref={seenRef} className={cn(
       // A thick coloured edge — amber for ideas, green for improvements — so
       // the two read apart at a glance while scrolling (Graeme, 2026-09-24).
       "w-full text-left rounded-2xl border-2 border-l-[10px] bg-card hover:border-primary/50 transition-all p-4 shadow-sm",
@@ -600,7 +611,9 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
               <VoteButton item={item} variant="feed" />
             </div>
           )}
-          {needsReview(item) && <SeenButton item={item} />}
+          {needsReview(item) && (autoSeen
+            ? <span className="h-14 px-5 rounded-2xl text-emerald-700 dark:text-emerald-400 text-lg font-bold flex items-center gap-2"><CheckCircle2 className="w-5 h-5" /> Seen</span>
+            : <SeenButton item={item} />)}
         </div>
       )}
     </div>
