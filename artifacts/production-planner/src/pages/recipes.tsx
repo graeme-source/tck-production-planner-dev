@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { toGrams } from "@workspace/units";
 import { Link, useSearch } from "wouter";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useListRecipes, useListIngredients, useListSubRecipes, useGetRecipe, useListCategoryDefaults, useGetUpfSummary, getGetRecipeQueryKey, getListRecipesQueryKey, getListIngredientsQueryKey, getGetUpfSummaryQueryKey } from "@workspace/api-client-react";
 import type { Recipe, RecipeDetail, RecipeIngredient, RecipeSubRecipe } from "@workspace/api-client-react";
 import { UpfChip, UpfPercentPill } from "@/components/upf-badge";
@@ -1475,6 +1475,7 @@ function EditRecipeDialog({
                 </div>
                 <RecipeIngredientDeckPanel id={id} active={open && !isLoading && !isFetching} refreshKey={detail?.ingredients?.length} />
               </div>
+              <RecipeNutritionSection id={id} active={open && !isLoading && !isFetching} refreshKey={JSON.stringify([detail?.ingredients?.map(i => [i.ingredientId, i.quantity]), detail?.subRecipes?.map(r => [r.subRecipeId, r.quantity]), detail?.servings, detail?.packSize])} />
             </>
           )}
         </DialogContent>
@@ -1759,6 +1760,7 @@ function RecipeCostBreakdownDialog({ id, open, onOpenChange }: { id: number; ope
               </div>
               <RecipeIngredientDeckPanel id={id} active={open && !isLoading} />
             </div>
+            <RecipeNutritionSection id={id} active={open && !isLoading} />
           </div>
         )}
       </DialogContent>
@@ -1837,94 +1839,115 @@ function MissingDeclarationLinks({ names, detail }: { names: string[]; detail?: 
   );
 }
 
-function RecipeNutritionalsDialog({ id, open, onOpenChange }: { id: number; open: boolean; onOpenChange: (v: boolean) => void }) {
-  const [data, setData] = useState<NutritionalsData | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    setLoading(true);
-    setError(null);
-    fetch(`${BASE_URL}/api/recipes/${id}/nutritionals`, { credentials: "include" })
-      .then(r => r.json())
-      .then(d => { if (d.error) throw new Error(d.error); setData(d); })
-      .catch(e => setError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setLoading(false));
-  }, [open, id]);
+/** The recipe's nutrition panel — weights, per 100g / per portion table and
+ *  completeness warning. Shown in the beaker pop-up, the cost breakdown and
+ *  at the foot of Edit Recipe, like an ingredient's own nutrition (Graeme,
+ *  2026-10-01: "I can't see nutritional values for my top-level recipes").
+ *  Reflects the SAVED recipe; refreshKey refetches after a save. */
+function RecipeNutritionPanel({ id, active = true, refreshKey }: { id: number; active?: boolean; refreshKey?: number | string }) {
+  const { data, isLoading, error } = useQuery<NutritionalsData>({
+    queryKey: ["recipe-nutritionals", id, refreshKey ?? null],
+    queryFn: async () => {
+      const r = await fetch(`${BASE_URL}/api/recipes/${id}/nutritionals`, { credentials: "include" });
+      const d = await r.json();
+      if (!r.ok || d.error) throw new Error(d.error ?? "Couldn't work out the nutrition");
+      return d;
+    },
+    enabled: active,
+    staleTime: 30_000,
+  });
 
   const nutrientLabels: Record<string, string> = {
     energyKj: "Energy (kJ)", energyKcal: "Energy (kcal)", fat: "Fat", saturates: "  of which saturates",
     carbohydrate: "Carbohydrate", sugars: "  of which sugars", protein: "Protein", fibre: "Fibre", salt: "Salt",
   };
 
+  if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+  if (error) return <p className="text-destructive text-sm py-4">{error instanceof Error ? error.message : String(error)}</p>;
+  if (!data) return null;
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+        <div className="bg-secondary/30 rounded-lg p-3 text-center">
+          <p className="text-xs text-muted-foreground">Raw Weight</p>
+          <p className="font-bold">{data.totalRawWeightG}g</p>
+        </div>
+        <div className="bg-secondary/30 rounded-lg p-3 text-center">
+          <p className="text-xs text-muted-foreground">Cooked Weight</p>
+          <p className="font-bold">{data.cookedWeightG}g</p>
+          <p className="text-[10px] text-muted-foreground">(-{data.cookingLossPercent}% loss)</p>
+        </div>
+        <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200/60 dark:border-emerald-800/40 rounded-lg p-3 text-center">
+          <p className="text-xs text-emerald-800 dark:text-emerald-300">Portion Weight</p>
+          <p className="font-bold text-emerald-900 dark:text-emerald-100">{data.portionWeightG}g</p>
+          <p className="text-[10px] text-emerald-700/70 dark:text-emerald-400/70">{data.servings === 1 ? "1 portion recipe" : `÷ ${data.servings} portions`}</p>
+        </div>
+        <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200/60 dark:border-emerald-800/40 rounded-lg p-3 text-center">
+          <p className="text-xs text-emerald-800 dark:text-emerald-300">Pack Weight</p>
+          <p className="font-bold text-emerald-900 dark:text-emerald-100">{data.declaredPackWeightG}g</p>
+          <p className="text-[10px] text-emerald-700/70 dark:text-emerald-400/70">× {data.packSize} portion{data.packSize !== 1 ? "s" : ""}/pack</p>
+        </div>
+      </div>
+
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border">
+            <th className="text-left py-1.5 font-semibold">Nutrient</th>
+            <th className="text-right py-1.5 font-semibold">Per 100g</th>
+            <th className="text-right py-1.5 font-semibold">Per portion ({data.portionWeightG}g)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {Object.entries(nutrientLabels).map(([key, label]) => (
+            <tr key={key} className="border-b border-border/50">
+              <td className={`py-1.5 ${label.startsWith("  ") ? "pl-4 text-muted-foreground text-xs" : "font-medium"}`}>{label.trim()}</td>
+              <td className="text-right py-1.5">{data.per100g[key] != null ? data.per100g[key] : "—"}{data.per100g[key] != null && (key.startsWith("energy") ? "" : "g")}</td>
+              <td className="text-right py-1.5">{data.perPortion[key] != null ? data.perPortion[key] : "—"}{data.perPortion[key] != null && (key.startsWith("energy") ? "" : "g")}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {!data.completeness.isComplete && (
+        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 space-y-1">
+          <p className="text-sm font-medium text-amber-800 dark:text-amber-200 flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> Incomplete data — the figures above are understated</p>
+          {data.completeness.missingNutritionals.length > 0 && (
+            <p className="text-xs text-amber-700 dark:text-amber-300">Missing nutritionals: {data.completeness.missingNutritionals.join(", ")}</p>
+          )}
+          {data.completeness.missingDeclarations.length > 0 && (
+            <p className="text-xs text-amber-700 dark:text-amber-300">
+              Missing label declarations:{" "}
+              <MissingDeclarationLinks names={data.completeness.missingDeclarations} detail={data.completeness.missingDeclarationDetail} />
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Section wrapper used inside the cost breakdown and Edit Recipe. */
+function RecipeNutritionSection({ id, active, refreshKey }: { id: number; active: boolean; refreshKey?: number | string }) {
+  return (
+    <div className="mt-4 border-t border-border pt-4">
+      <div className="flex items-center gap-2 mb-1">
+        <Beaker className="w-4 h-4 text-[#7cb342]" />
+        <h4 className="text-sm font-semibold">Nutritional Information</h4>
+      </div>
+      <p className="text-xs text-muted-foreground mb-3">Worked out from every ingredient, including those inside sub-recipes. Reflects the saved recipe.</p>
+      <RecipeNutritionPanel id={id} active={active} refreshKey={refreshKey} />
+    </div>
+  );
+}
+
+function RecipeNutritionalsDialog({ id, open, onOpenChange }: { id: number; open: boolean; onOpenChange: (v: boolean) => void }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[520px] bg-card border-border rounded-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display text-xl flex items-center gap-2"><Beaker className="w-5 h-5" /> Nutritional Information</DialogTitle>
         </DialogHeader>
-        {loading && <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}
-        {error && <p className="text-destructive text-sm py-4">{error}</p>}
-        {data && (
-          <div className="space-y-4 mt-2">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-              <div className="bg-secondary/30 rounded-lg p-3 text-center">
-                <p className="text-xs text-muted-foreground">Raw Weight</p>
-                <p className="font-bold">{data.totalRawWeightG}g</p>
-              </div>
-              <div className="bg-secondary/30 rounded-lg p-3 text-center">
-                <p className="text-xs text-muted-foreground">Cooked Weight</p>
-                <p className="font-bold">{data.cookedWeightG}g</p>
-                <p className="text-[10px] text-muted-foreground">(-{data.cookingLossPercent}% loss)</p>
-              </div>
-              <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200/60 dark:border-emerald-800/40 rounded-lg p-3 text-center">
-                <p className="text-xs text-emerald-800 dark:text-emerald-300">Portion Weight</p>
-                <p className="font-bold text-emerald-900 dark:text-emerald-100">{data.portionWeightG}g</p>
-                <p className="text-[10px] text-emerald-700/70 dark:text-emerald-400/70">{data.servings === 1 ? "1 portion recipe" : `÷ ${data.servings} portions`}</p>
-              </div>
-              <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200/60 dark:border-emerald-800/40 rounded-lg p-3 text-center">
-                <p className="text-xs text-emerald-800 dark:text-emerald-300">Pack Weight</p>
-                <p className="font-bold text-emerald-900 dark:text-emerald-100">{data.declaredPackWeightG}g</p>
-                <p className="text-[10px] text-emerald-700/70 dark:text-emerald-400/70">× {data.packSize} portion{data.packSize !== 1 ? "s" : ""}/pack</p>
-              </div>
-            </div>
-
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left py-1.5 font-semibold">Nutrient</th>
-                  <th className="text-right py-1.5 font-semibold">Per 100g</th>
-                  <th className="text-right py-1.5 font-semibold">Per portion ({data.portionWeightG}g)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(nutrientLabels).map(([key, label]) => (
-                  <tr key={key} className="border-b border-border/50">
-                    <td className={`py-1.5 ${label.startsWith("  ") ? "pl-4 text-muted-foreground text-xs" : "font-medium"}`}>{label.trim()}</td>
-                    <td className="text-right py-1.5">{data.per100g[key] != null ? data.per100g[key] : "—"}{data.per100g[key] != null && (key.startsWith("energy") ? "" : "g")}</td>
-                    <td className="text-right py-1.5">{data.perPortion[key] != null ? data.perPortion[key] : "—"}{data.perPortion[key] != null && (key.startsWith("energy") ? "" : "g")}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            {!data.completeness.isComplete && (
-              <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 space-y-1">
-                <p className="text-sm font-medium text-amber-800 dark:text-amber-200 flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> Incomplete Data</p>
-                {data.completeness.missingNutritionals.length > 0 && (
-                  <p className="text-xs text-amber-700 dark:text-amber-300">Missing nutritionals: {data.completeness.missingNutritionals.join(", ")}</p>
-                )}
-                {data.completeness.missingDeclarations.length > 0 && (
-                  <p className="text-xs text-amber-700 dark:text-amber-300">
-                    Missing label declarations:{" "}
-                    <MissingDeclarationLinks names={data.completeness.missingDeclarations} detail={data.completeness.missingDeclarationDetail} />
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-        )}
+        <div className="mt-2"><RecipeNutritionPanel id={id} active={open} /></div>
       </DialogContent>
     </Dialog>
   );
