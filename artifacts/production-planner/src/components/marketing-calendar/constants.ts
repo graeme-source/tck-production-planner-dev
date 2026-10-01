@@ -6,8 +6,23 @@
 
 export interface TypeStyle { label: string; bar: string; chip: string; dot: string }
 
+/** A phase is a backdrop, not an entry (Graeme, 2026-10-01): it draws as a
+ *  thin pale band across the days, so the emails inside it stand out. */
+export const THIN_TYPES = new Set(["campaign"]);
+
+/** Klaviyo emails are TEAL everywhere; our planned emails are INDIGO
+ *  (2026-10-01 — they were two shades of blue and hard to tell apart). */
+export const KLAVIYO_TONE = {
+  solid: "bg-teal-600 text-white",
+  sent: "bg-teal-500/15 text-teal-900/70 dark:text-teal-100/70",
+  soft: "bg-teal-500/15 text-teal-700 dark:text-teal-300",
+  border: "border-teal-500/50",
+  borderFaint: "border-teal-500/25",
+  icon: "text-teal-600",
+};
+
 export const EVENT_TYPES: Record<string, TypeStyle> = {
-  campaign:       { label: "Phase",       bar: "bg-violet-500 text-white",  chip: "bg-violet-500/15 text-violet-700 dark:text-violet-300", dot: "bg-violet-500" },
+  campaign:       { label: "Phase",       bar: "bg-violet-500/15 text-violet-900 dark:text-violet-100 border-y border-violet-500/30",  chip: "bg-violet-500/15 text-violet-700 dark:text-violet-300", dot: "bg-violet-500" },
   email:          { label: "Email",          bar: "bg-sky-500 text-white",     chip: "bg-sky-500/15 text-sky-700 dark:text-sky-300",          dot: "bg-sky-500" },
   offer:          { label: "Offer",          bar: "bg-amber-500 text-white",   chip: "bg-amber-500/15 text-amber-700 dark:text-amber-300",    dot: "bg-amber-500" },
   product_launch: { label: "Product launch", bar: "bg-emerald-600 text-white", chip: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300", dot: "bg-emerald-600" },

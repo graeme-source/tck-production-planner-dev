@@ -37,7 +37,7 @@ export function EmailModal({ email, today, onClose }: { email: KlaviyoEmail; tod
         aria-label={email.name}
       >
         <div className="flex items-start gap-3 p-5 border-b border-border">
-          <span className="w-10 h-10 rounded-xl bg-sky-500/15 text-sky-700 dark:text-sky-300 flex items-center justify-center flex-shrink-0">
+          <span className="w-10 h-10 rounded-xl bg-teal-500/15 text-teal-700 dark:text-teal-300 flex items-center justify-center flex-shrink-0">
             <Mail className="w-5 h-5" />
           </span>
           <div className="flex-1 min-w-0">
@@ -53,7 +53,7 @@ export function EmailModal({ email, today, onClose }: { email: KlaviyoEmail; tod
           <div className="flex flex-wrap items-center gap-2">
             <span className={cn(
               "px-2.5 py-1 rounded-full text-xs font-semibold",
-              sent ? "bg-secondary text-muted-foreground" : draft ? "bg-violet-500/15 text-violet-700 dark:text-violet-300" : "bg-sky-500/15 text-sky-700 dark:text-sky-300",
+              sent ? "bg-secondary text-muted-foreground" : draft ? "bg-violet-500/15 text-violet-700 dark:text-violet-300" : "bg-teal-500/15 text-teal-700 dark:text-teal-300",
             )}>
               {stage ? stageLabel(stage) : email.status}
             </span>

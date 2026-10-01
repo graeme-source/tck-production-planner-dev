@@ -164,7 +164,7 @@ function PlannedCard({ email: e, klaviyo, today, approvals, onOpen }: {
         <span className="flex items-center gap-1.5 flex-wrap">
           <span className={cn("px-2 py-0.5 rounded-full text-xs font-semibold", st.chip)}>{st.label}</span>
           {klaviyo && (
-            <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-sky-500/10 text-sky-700 dark:text-sky-300 inline-flex items-center gap-1">
+            <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-teal-500/10 text-teal-700 dark:text-teal-300 inline-flex items-center gap-1">
               <CheckCircle2 className="w-3.5 h-3.5" /> Linked to Klaviyo
             </span>
           )}
@@ -192,11 +192,11 @@ function KlaviyoCard({ email: k, approvals, onOpen }: { email: KlaviyoEmail; app
   return (
     <button type="button" onClick={onOpen} className={cn(
       "w-full text-left rounded-2xl border-2 border-dashed p-3.5 flex gap-3",
-      draft ? "border-violet-500/50 bg-violet-500/5 hover:bg-violet-500/10" : "border-sky-500/50 bg-sky-500/5 hover:bg-sky-500/10",
+      draft ? "border-violet-500/50 bg-violet-500/5 hover:bg-violet-500/10" : "border-teal-500/50 bg-teal-500/5 hover:bg-teal-500/10",
     )}>
       <DateBlock date={k.date} time={format(parseISO(k.sendAt), "HH:mm")} past={k.status === "Sent"} />
       <span className="flex-1 min-w-0 space-y-1">
-        <span className={cn("block text-xs font-semibold uppercase tracking-wide", draft ? "text-violet-700 dark:text-violet-300" : "text-sky-700 dark:text-sky-300")}>
+        <span className={cn("block text-xs font-semibold uppercase tracking-wide", draft ? "text-violet-700 dark:text-violet-300" : "text-teal-700 dark:text-teal-300")}>
           Klaviyo · {draft ? "Draft (not scheduled)" : stageLabel(k.status === "Sent" ? "sent" : "scheduled")} · not planned here
         </span>
         <span className="block text-base font-bold truncate">{k.subject ?? k.name}</span>

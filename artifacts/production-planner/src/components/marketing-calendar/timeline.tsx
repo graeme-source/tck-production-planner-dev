@@ -11,7 +11,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { CalEvent, KlaviyoEmail } from "./api";
 import { Mail } from "lucide-react";
-import { typeStyle, firstName } from "./constants";
+import { typeStyle, firstName, THIN_TYPES } from "./constants";
 import { useSpanDrag } from "./use-span-drag";
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -116,7 +116,7 @@ export function Timeline({ anchor, zoom, today, events, emails = [], onOpen, onO
             </div>
           ))}
           {/* Klaviyo sends along the top strip — read-only, tap for details. */}
-          <div className="absolute inset-x-0 top-0 border-b border-dashed border-sky-500/30" style={{ height: EMAIL_ROW_PX }} />
+          <div className="absolute inset-x-0 top-0 border-b border-dashed border-teal-500/30" style={{ height: EMAIL_ROW_PX }} />
           {emails.filter(m => m.date >= range.from && m.date <= range.to).map(m => {
             const size = Math.max(dw, 26);
             return (
@@ -127,7 +127,7 @@ export function Timeline({ anchor, zoom, today, events, emails = [], onOpen, onO
                 title={`${m.date} · ${m.name}${m.subject ? ` — “${m.subject}”` : ""} · ${m.status}`}
                 className={cn(
                   "absolute z-[3] rounded-md border-2 flex items-center justify-center",
-                  m.status === "Sent" ? "border-sky-500/40 bg-sky-50 dark:bg-sky-950/40 text-sky-700/70" : "border-sky-500 bg-sky-100 dark:bg-sky-900/60 text-sky-800",
+                  m.status === "Sent" ? "border-teal-500/40 bg-teal-50 dark:bg-teal-950/40 text-teal-700/70" : "border-teal-600 bg-teal-600 text-white",
                 )}
                 style={{ left: daysBetween(range.from, m.date) * dw + dw / 2 - size / 2, top: 4, width: size, height: EMAIL_ROW_PX - 8 }}
               >
@@ -182,7 +182,7 @@ export function Timeline({ anchor, zoom, today, events, emails = [], onOpen, onO
                   )}
                   {resizable && (
                     <span onPointerDown={ev => start(ev, e, "resize-end")} className="absolute right-0 inset-y-0 w-4 cursor-ew-resize touch-none flex items-center justify-center" aria-label="Drag to change the end date">
-                      <span className="w-1 h-5 rounded-full bg-white/70" />
+                      <span className={cn("w-1 h-5 rounded-full", THIN_TYPES.has(e.type) ? "bg-current opacity-40" : "bg-white/70")} />
                     </span>
                   )}
                 </div>

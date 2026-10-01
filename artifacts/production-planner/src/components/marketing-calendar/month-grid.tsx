@@ -3,9 +3,10 @@
  * wrapping onto the next week. Drag a bar to move it, drag its end to
  * stretch or shrink it, tap a bar to open it, tap an empty day to add one.
  *
- * Emails are one-day chips: our planned emails are SOLID indigo (drag one to
- * another day and it re-files into that day's campaign); Klaviyo's real sends
- * are OUTLINED sky blue and read-only. A plan linked to its Klaviyo send
+ * Phases are a thin pale band (a backdrop, not an entry). Emails are
+ * one-day chips: our planned emails are SOLID indigo, Klaviyo sends SOLID
+ * teal (faded once sent) and read-only. Drag a planned email to another
+ * day and it re-files into that day's phase. A plan linked to its Klaviyo send
  * shows once, as the planned chip with a tick. Unlinked Klaviyo drafts stay
  * off the grid (List view). Approval: a green tick badge or an amber dot.
  */
@@ -14,7 +15,7 @@ import { layoutWeek, monthGridWeeks } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
 import type { CalEvent, KlaviyoEmail, Milestone, PlannedEmail } from "./api";
 import { CheckCircle2, Mail, MailPlus } from "lucide-react";
-import { typeStyle, firstName } from "./constants";
+import { typeStyle, firstName, THIN_TYPES, KLAVIYO_TONE } from "./constants";
 import { dateFromElementsAt, useSpanDrag } from "./use-span-drag";
 import { ApprovalDot, approvalTitle, type ApprovalIndex } from "./approvals";
 import type { DragMode } from "@workspace/marketing-calendar";
@@ -22,6 +23,7 @@ import type { DragMode } from "@workspace/marketing-calendar";
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const HEADER_PX = 30;
 const BAR_PX = 28;
+const THIN_PX = 18;
 const GAP_PX = 4;
 
 /** A Klaviyo email as a one-day span, so it takes a lane like an event. */
@@ -92,7 +94,15 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], app
       <div className="rounded-xl border border-border overflow-hidden">
         {weeks.map(week => {
           const { segments, laneCount } = layoutWeek<CalEvent | EmailSpan | PlanSpan>(week, [...shown, ...planSpans, ...emailSpans]);
-          const height = HEADER_PX + Math.max(laneCount, 2) * (BAR_PX + GAP_PX) + 8;
+          // A lane holding only phases is a thin band; everything else full height.
+          const thinLane = Array.from({ length: laneCount }, (_, l) => {
+            const inLane = segments.filter(s => s.lane === l);
+            return inLane.length > 0 && inLane.every(s => !("plan" in s.event) && !("email" in s.event) && THIN_TYPES.has((s.event as CalEvent).type));
+          });
+          const laneH = (l: number) => (thinLane[l] ? THIN_PX : BAR_PX);
+          const laneTop = (l: number) => Array.from({ length: l }, (_, i) => laneH(i) + GAP_PX).reduce((a, b) => a + b, 0);
+          const lanesPx = laneTop(laneCount);
+          const height = HEADER_PX + Math.max(lanesPx, 2 * (BAR_PX + GAP_PX)) + 8;
           return (
             <div key={week[0]} className="relative border-b border-border last:border-b-0" style={{ height }}>
               {/* Day cells: tap an empty day to add an event there. */}
@@ -151,8 +161,8 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], app
                         style={{
                           left: `calc(${(seg.startCol / 7) * 100}% + 3px)`,
                           width: `calc(${(1 / 7) * 100}% - 6px)`,
-                          top: seg.lane * (BAR_PX + GAP_PX),
-                          height: BAR_PX,
+                          top: laneTop(seg.lane),
+                          height: laneH(seg.lane),
                         }}
                       >
                         {isLinked ? <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" /> : <MailPlus className="w-3.5 h-3.5 flex-shrink-0" />}
@@ -171,27 +181,26 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], app
                         onClick={() => onOpenEmail?.(m)}
                         title={`${m.name}${m.subject ? ` — “${m.subject}”` : ""} · ${m.status}${approvalTitle(ap, ap ? approvals?.row(ap.key) ?? null : null)}`}
                         className={cn(
-                          "absolute pointer-events-auto flex items-center gap-1.5 rounded-lg border-2 px-1.5 text-xs font-semibold overflow-hidden",
-                          m.status === "Sent"
-                            ? "border-sky-500/30 bg-sky-500/5 text-sky-800/70 dark:text-sky-200/70"
-                            : "border-sky-500 bg-sky-500/15 text-sky-800 dark:text-sky-200",
+                          "absolute pointer-events-auto flex items-center gap-1.5 rounded-lg px-1.5 text-xs font-semibold overflow-hidden",
+                          m.status === "Sent" ? KLAVIYO_TONE.sent : cn(KLAVIYO_TONE.solid, "shadow-sm"),
                         )}
                         style={{
                           left: `calc(${(seg.startCol / 7) * 100}% + 3px)`,
                           width: `calc(${(1 / 7) * 100}% - 6px)`,
-                          top: seg.lane * (BAR_PX + GAP_PX),
-                          height: BAR_PX,
+                          top: laneTop(seg.lane),
+                          height: laneH(seg.lane),
                         }}
                       >
                         <Mail className="w-3.5 h-3.5 flex-shrink-0" />
                         <span className="truncate flex-1 text-left">{m.subject ?? m.name}</span>
-                        <ApprovalDot item={ap} onLight />
+                        <ApprovalDot item={ap} onLight={m.status === "Sent"} />
                       </button>
                     );
                   }
                   const e = seg.event;
                   const style = typeStyle(e.type);
                   const fixedDates = e.testBox != null;
+                  const thin = THIN_TYPES.has(e.type);
                   return (
                     <div
                       key={`${e.id}-${week[0]}`}
@@ -201,18 +210,19 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], app
                       onKeyDown={ev => { if (ev.key === "Enter") onOpen(e); }}
                       title={`${e.title}${e.createdBy ? ` · added by ${firstName(e.createdBy.name)}` : ""}${e.updatedBy ? ` · last edited by ${firstName(e.updatedBy.name)}` : ""}`}
                       className={cn(
-                        "absolute pointer-events-auto touch-none cursor-grab flex items-center text-sm font-semibold shadow-sm overflow-hidden",
+                        "absolute pointer-events-auto touch-none cursor-grab flex items-center font-semibold overflow-hidden",
+                        thin ? "text-xs" : "text-sm shadow-sm",
                         style.bar,
                         seg.continuesBefore ? "rounded-l-none" : "rounded-l-lg",
                         seg.continuesAfter ? "rounded-r-none" : "rounded-r-lg",
-                        e.status === "idea" && "opacity-70 outline-dashed outline-2 -outline-offset-2 outline-white/80",
+                        e.status === "idea" && (thin ? "border-dashed" : "opacity-70 outline-dashed outline-2 -outline-offset-2 outline-white/80"),
                         e.status === "done" && "opacity-50",
                       )}
                       style={{
                         left: `calc(${(seg.startCol / 7) * 100}% + ${seg.continuesBefore ? 0 : 3}px)`,
                         width: `calc(${((seg.endCol - seg.startCol + 1) / 7) * 100}% - ${(seg.continuesBefore ? 0 : 3) + (seg.continuesAfter ? 0 : 3)}px)`,
-                        top: seg.lane * (BAR_PX + GAP_PX),
-                        height: BAR_PX,
+                        top: laneTop(seg.lane),
+                        height: laneH(seg.lane),
                       }}
                     >
                       {!seg.continuesBefore && !fixedDates && seg.endCol > seg.startCol && (
@@ -229,7 +239,7 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], app
                           className="absolute right-0 inset-y-0 w-4 cursor-ew-resize touch-none flex items-center justify-center"
                           aria-label="Drag to change the end date"
                         >
-                          <span className="w-1 h-4 rounded-full bg-white/70" />
+                          <span className={cn("w-1 rounded-full", thin ? "h-3 bg-current opacity-40" : "h-4 bg-white/70")} />
                         </span>
                       )}
                     </div>

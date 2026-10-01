@@ -26,7 +26,7 @@ import {
   type CalEvent, type KlaviyoEmail, type PlannedEmail, type Suggestion,
 } from "./api";
 import { EmailModal } from "./email-modal";
-import { EVENT_TYPES, firstName, statusLabel, typeStyle } from "./constants";
+import { EVENT_TYPES, KLAVIYO_TONE, THIN_TYPES, firstName, statusLabel, typeStyle } from "./constants";
 import { MonthGrid } from "./month-grid";
 import { Timeline, timelineMonths } from "./timeline";
 import { EventModal } from "./event-modal";
@@ -278,20 +278,22 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
         )}
       </div>
 
-      <p className="text-sm text-muted-foreground">
-        {view === "list"
-          ? "Emails belong to the phase running on their send day · tap a phase's name to rename it or change its dates."
-          : "Drag a phase to move it · drag its end to stretch it · drag an email to another day · tap an empty day to add a phase or email."}
-      </p>
+      {view === "list" && (
+        <p className="text-sm text-muted-foreground">
+          Emails belong to the phase running on their send day · tap a phase's name to rename it or change its dates.
+        </p>
+      )}
 
       {/* Legend */}
       <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
         {Object.entries(EVENT_TYPES).map(([k, t]) => (
-          <span key={k} className="inline-flex items-center gap-1.5"><span className={cn("w-3 h-3 rounded-full", t.dot)} />{t.label}</span>
+          THIN_TYPES.has(k)
+            ? <span key={k} className="inline-flex items-center gap-1.5"><span className={cn("w-6 h-2 rounded-sm", t.bar)} />{t.label}</span>
+            : <span key={k} className="inline-flex items-center gap-1.5"><span className={cn("w-3 h-3 rounded-full", t.dot)} />{t.label}</span>
         ))}
         <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rotate-45 bg-rose-600" />Test-box deadline</span>
         <span className="inline-flex items-center gap-1.5"><span className="inline-flex items-center justify-center w-5 h-4 rounded bg-indigo-600"><MailPlus className="w-3 h-3 text-white" /></span>Planned email (drag to move)</span>
-        <span className="inline-flex items-center gap-1.5"><span className="inline-flex items-center justify-center w-5 h-4 rounded border-2 border-sky-500"><Mail className="w-3 h-3 text-sky-600" /></span>Klaviyo send, read-only (faded = sent; drafts are in the List view)</span>
+        <span className="inline-flex items-center gap-1.5"><span className={cn("inline-flex items-center justify-center w-5 h-4 rounded", KLAVIYO_TONE.solid)}><Mail className="w-3 h-3" /></span>Klaviyo email, read-only (faded = sent; drafts are in the List view)</span>
         <span className="inline-flex items-center gap-1.5"><BadgeCheck className="w-4 h-4 text-emerald-600" />Approved</span>
         <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-amber-400" />Needs approval</span>
       </div>
@@ -326,8 +328,8 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {monthEmails.map(m => (
                 <button key={m.id} type="button" onClick={() => setOpenEmail(m)}
-                  className={cn("text-left rounded-2xl border-2 p-4 flex gap-3 hover:bg-secondary/30", m.status === "Sent" ? "border-sky-500/25" : "border-sky-500/60")}>
-                  <Mail className={cn("w-5 h-5 flex-shrink-0 mt-0.5", m.status === "Sent" ? "text-sky-600/60" : "text-sky-600")} />
+                  className={cn("text-left rounded-2xl border-2 p-4 flex gap-3 hover:bg-secondary/30", m.status === "Sent" ? KLAVIYO_TONE.borderFaint : KLAVIYO_TONE.border)}>
+                  <Mail className={cn("w-5 h-5 flex-shrink-0 mt-0.5", KLAVIYO_TONE.icon, m.status === "Sent" && "opacity-60")} />
                   <span className="min-w-0">
                     <span className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                       {format(parseISO(m.sendAt), "EEE d MMM, HH:mm")} · {m.status}

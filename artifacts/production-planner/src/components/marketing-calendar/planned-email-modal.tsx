@@ -403,7 +403,7 @@ export function PlannedEmailModal({ emailId, newOn, onClose, onOpenCampaign }: {
           </fieldset>
 
           {/* Link to the real Klaviyo send */}
-          <section className="rounded-2xl border-2 border-sky-500/30 p-4 space-y-3">
+          <section className="rounded-2xl border-2 border-teal-500/30 p-4 space-y-3">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
               <Link2 className="w-4 h-4" /> Klaviyo email
             </h3>
@@ -444,8 +444,8 @@ export function PlannedEmailModal({ emailId, newOn, onClose, onOpenCampaign }: {
                 {pickable.map(k => (
                   <button key={k.id} type="button" disabled={deleted || link.isPending}
                     onClick={() => link.mutate({ id, klaviyo: { id: k.id, name: k.name } })}
-                    className="w-full text-left rounded-xl border-2 border-sky-500/30 p-3 flex items-center gap-3 hover:bg-sky-500/10 disabled:opacity-50">
-                    <Mail className="w-5 h-5 text-sky-600 flex-shrink-0" />
+                    className="w-full text-left rounded-xl border-2 border-teal-500/30 p-3 flex items-center gap-3 hover:bg-teal-500/10 disabled:opacity-50">
+                    <Mail className="w-5 h-5 text-teal-600 flex-shrink-0" />
                     <span className="flex-1 min-w-0">
                       <span className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         {k.status === "Draft" ? `Draft · set for ${format(parseISO(k.sendAt), "EEE d MMM")}` : `${format(parseISO(k.sendAt), "EEE d MMM, HH:mm")} · ${k.status}`}
