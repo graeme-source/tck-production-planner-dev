@@ -150,7 +150,7 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
           </Link>
           <button onClick={() => setOpen({ id: null, newOn: view === "list" || (today >= anchor && today < monthEnd) ? today : anchor })}
             className="px-3.5 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center gap-1.5 hover:bg-primary/90">
-            <Plus className="w-4 h-4" /> Add campaign
+            <Plus className="w-4 h-4" /> Add phase
           </button>
           <button onClick={() => addEmail(view === "list" || (today >= anchor && today < monthEnd) ? today : anchor)}
             className="px-3.5 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold flex items-center gap-1.5 hover:bg-indigo-700">
