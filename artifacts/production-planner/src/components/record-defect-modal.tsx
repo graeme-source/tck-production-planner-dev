@@ -8,6 +8,7 @@
 // everything else, usually recorded after the fact (hence the date picker).
 
 import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { CheckCircle2, Loader2, Minus, Plus, Search, X, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { STATIONS } from "@/pages/station/shared/constants";
@@ -31,8 +32,10 @@ export function RecordDefectModal({ open, onClose, editing }: {
   editing?: DefectRecord | null;
 }) {
   if (!open) return null;
-  // Mounted fresh on every open, so the form always starts clean.
-  return <DefectForm onClose={onClose} editing={editing ?? null} />;
+  // Mounted fresh on every open, so the form always starts clean. Portalled
+  // to <body>: inside a page, an animated (transformed) ancestor would turn
+  // `fixed` into "fixed to the page", pushing the card off-screen on a phone.
+  return createPortal(<DefectForm onClose={onClose} editing={editing ?? null} />, document.body);
 }
 
 function DefectForm({ onClose, editing }: { onClose: () => void; editing: DefectRecord | null }) {
