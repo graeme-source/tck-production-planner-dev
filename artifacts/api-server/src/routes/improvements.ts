@@ -20,6 +20,7 @@ import { ffmpegAvailable } from "../lib/sop-video";
 import { singleFileUpload } from "../middleware/upload";
 import { sendPushToUsers } from "../services/push";
 import { queueReviewTodo } from "../lib/improvement-review-todo";
+import { leanerBoardRows } from "../lib/leaner-board";
 import { CREDIT_PAIRS, creditsFor, setImprovementCredits, pinLeadCredit } from "../lib/improvement-credits-data";
 
 const router: IRouter = Router();
@@ -912,7 +913,7 @@ router.post("/:id/stitch", async (req: Request, res: Response) => {
   }
 });
 
-// GET /scoreboard — approved improvements per person. The number that makes
+// GET /scoreboard — the Leaner-board: approved improvements per person. The number that makes
 // the whole thing worth doing (Objective E: improvements per person).
 router.get("/scoreboard", async (_req: Request, res: Response) => {
   try {
@@ -925,10 +926,11 @@ router.get("/scoreboard", async (_req: Request, res: Response) => {
     // Every credited person counts the improvement in full — something
     // Graeme did with Bodan is one on each of their tallies (migration
     // 0125). CREDIT_PAIRS is the credit rows plus the lead, de-duplicated.
-    const result = await db.execute<{ user_id: number | null; name: string | null; n: number; signed_off: number; last_at: Date | null }>(sql`
+    const result = await db.execute<{ user_id: number | null; name: string | null; email: string | null; n: number; signed_off: number; last_at: Date | null }>(sql`
       WITH pairs AS (${CREDIT_PAIRS})
       SELECT p.user_id,
              COALESCE(u.name, 'Unknown') AS name,
+             u.email,
              COUNT(*)::int AS n,
              COUNT(s.approved_at)::int AS signed_off,
              MAX(s.approved_at) AS last_at
@@ -936,10 +938,11 @@ router.get("/scoreboard", async (_req: Request, res: Response) => {
         JOIN improvement_submissions s ON s.id = p.improvement_id
         LEFT JOIN app_users u ON u.id = p.user_id
        WHERE s.progress_status = 'complete'
-       GROUP BY p.user_id, u.name
+       GROUP BY p.user_id, u.name, u.email
        ORDER BY n DESC, name ASC
     `);
-    res.json((result.rows ?? []).map(r => ({
+    // The Leaner-board leaves the founder off (Graeme, 2026-10-01).
+    res.json(leanerBoardRows(result.rows ?? []).map(r => ({
       userId: r.user_id,
       name: r.name,
       count: Number(r.n),

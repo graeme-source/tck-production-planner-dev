@@ -313,7 +313,7 @@ export default function Improvements() {
           .slice(0, 40);
         return (
         <>
-          {/* Leaderboard first — start by seeing the team's tallies
+          {/* Leaner-board first — start by seeing the team's tallies
               (Graeme, 2026-09-10). */}
           <Scoreboard />
 
@@ -1183,7 +1183,7 @@ function Scoreboard() {
   return (
     <section className="space-y-3">
       <h2 className="text-lg font-bold flex items-center gap-2">
-        <Trophy className="w-5 h-5 text-amber-500" /> Improvements completed
+        <Trophy className="w-5 h-5 text-amber-500" /> Leaner-board
       </h2>
       {legacy > 0 && (
         <p className="text-base text-muted-foreground -mt-1">
