@@ -29,6 +29,15 @@ const schema = z.object({
   leadTimeDays: z.coerce.number().int().min(0).optional(),
   cutoffTime: z.string().optional(),
   invoiceNotRequired: z.boolean().optional(),
+  // Minimum order spend in £ — blank = no minimum.
+  minimumOrderValue: z
+    .string()
+    .optional()
+    .refine(v => {
+      if (v == null || v.trim() === "") return true;
+      const n = Number(v);
+      return Number.isFinite(n) && n >= 0 && n <= 100000;
+    }, "Enter an amount in £ between 0 and 100,000, or leave blank"),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -43,6 +52,7 @@ type SupplierBody = CreateSupplier & {
   leadTimeDays?: number;
   cutoffTime?: string;
   invoiceNotRequired?: boolean;
+  minimumOrderValue?: number | null;
 };
 
 type SupplierItem = {
@@ -60,12 +70,20 @@ type SupplierItem = {
   leadTimeDays?: number;
   cutoffTime?: string;
   invoiceNotRequired?: boolean;
+  minimumOrderValue?: number | null;
   createdAt: string;
 };
 
 const defaultValues: FormValues = {
-  name: "", contactName: "", email: "", phone: "", orderingPhone: "", website: "", address: "", notes: "", orderFrequency: "daily", orderDays: "", leadTimeDays: 1, cutoffTime: "17:00", invoiceNotRequired: false,
+  name: "", contactName: "", email: "", phone: "", orderingPhone: "", website: "", address: "", notes: "", orderFrequency: "daily", orderDays: "", leadTimeDays: 1, cutoffTime: "17:00", invoiceNotRequired: false, minimumOrderValue: "",
 };
+
+/** Form text → £ amount for the API: blank or 0 = no minimum (null). */
+function minimumFromForm(v: string | undefined): number | null {
+  if (v == null || v.trim() === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
+}
 
 function SupplierForm({
   values,
@@ -220,6 +238,26 @@ function SupplierForm({
           />
           <p className="text-xs text-muted-foreground mt-1">Orders placed after this time add an extra day.</p>
         </div>
+      </div>
+
+      <div>
+        <label className="text-sm font-medium mb-1 block">Minimum order value (&pound;)</label>
+        <div className="relative max-w-[200px]">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">&pound;</span>
+          <input
+            type="number"
+            step="0.01"
+            min={0}
+            inputMode="decimal"
+            {...register("minimumOrderValue")}
+            className="w-full pl-7 pr-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            placeholder="No minimum"
+          />
+        </div>
+        {errors.minimumOrderValue && <span className="text-destructive text-xs">{errors.minimumOrderValue.message}</span>}
+        <p className="text-xs text-muted-foreground mt-1">
+          Leave blank if there&rsquo;s no minimum. The Orders page warns when an order is under it and suggests items to move across from other suppliers.
+        </p>
       </div>
 
       <div>
@@ -460,7 +498,7 @@ export default function Suppliers() {
             isEdit={false}
             isPending={createSupplier.isPending}
             onSubmit={(data) => {
-              const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00", invoiceNotRequired: data.invoiceNotRequired ?? false };
+              const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00", invoiceNotRequired: data.invoiceNotRequired ?? false, minimumOrderValue: minimumFromForm(data.minimumOrderValue) };
               createSupplier.mutate(
                 { data: body },
                 { onSuccess: () => setIsAddOpen(false) }
@@ -492,11 +530,12 @@ export default function Suppliers() {
                 leadTimeDays: editingItem.leadTimeDays ?? 1,
                 cutoffTime: editingItem.cutoffTime ?? "17:00",
                 invoiceNotRequired: editingItem.invoiceNotRequired ?? false,
+                minimumOrderValue: editingItem.minimumOrderValue != null ? String(editingItem.minimumOrderValue) : "",
               }}
               isEdit
               isPending={updateSupplier.isPending}
               onSubmit={(data) => {
-                const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00", invoiceNotRequired: data.invoiceNotRequired ?? false };
+                const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00", invoiceNotRequired: data.invoiceNotRequired ?? false, minimumOrderValue: minimumFromForm(data.minimumOrderValue) };
                 updateSupplier.mutate(
                   { id: editingItem.id, data: body },
                   { onSuccess: () => setEditingItem(null) }
@@ -615,6 +654,11 @@ export default function Suppliers() {
                 <Clock className="w-3 h-3" />
                 Cut-off {(supplier as SupplierItem).cutoffTime ?? "17:00"}
               </span>
+              {(supplier as SupplierItem).minimumOrderValue != null && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium">
+                  Min order &pound;{Number((supplier as SupplierItem).minimumOrderValue).toFixed(2)}
+                </span>
+              )}
             </div>
 
             {supplier.notes && (
