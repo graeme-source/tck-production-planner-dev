@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { RecordImprovementModal } from "@/components/record-improvement-modal";
 import { RecordIssueModal } from "@/components/record-issue-modal";
 import { PullKanbanModal } from "@/components/pull-kanban-modal";
+import { RecordDefectModal } from "@/components/record-defect-modal";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { useIsRtwManager } from "@/hooks/use-rtw-manager";
@@ -62,7 +63,7 @@ import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assista
 import { TodoSheet, TodoInterstitial, useMyOpenTodoCount } from "@/components/todo-lists";
 import { FixedNoticeInterstitial } from "@/components/fixed-notice-interstitial";
 import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
-import { Banknote, BookOpen, Bot, GraduationCap, ChevronLeft, ChevronRight, ListTodo, ScanLine } from "lucide-react";
+import { AlertOctagon, Banknote, BookOpen, Bot, GraduationCap, ChevronLeft, ChevronRight, ListTodo, ScanLine } from "lucide-react";
 
 export type NavItem = { name: string; href: string; icon: React.ComponentType<{ className?: string }> };
 
@@ -113,10 +114,13 @@ export const bottomNavItems: NavItem[] = [
 
 // Analytics becomes a group for managers/admins so its analytics pages sit
 // under it. Team efficiency lives here only for now (Graeme, 2026-09-25).
-const ANALYTICS_PATHS = ["/reports", "/analytics/efficiency"];
+const ANALYTICS_PATHS = ["/reports", "/analytics/efficiency", "/analytics/defects"];
 export const analyticsSubItems: NavItem[] = [
   { name: "Analytics", href: "/reports", icon: BarChart2 },
   { name: "Team efficiency", href: "/analytics/efficiency", icon: Gauge },
+  // Defects KPI (Graeme, 2026-10-01). Anyone may RECORD a defect from the
+  // quick-actions dock; the page sits with the other analytics.
+  { name: "Defects", href: "/analytics/defects", icon: AlertOctagon },
 ];
 
 const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory", "/product-hub", "/surveys"];
@@ -933,6 +937,7 @@ export function QuickActionsDock() {
   const [improvementOpen, setImprovementOpen] = useState(false);
   const [issueOpen, setIssueOpen] = useState(false);
   const [kanbanOpen, setKanbanOpen] = useState(false);
+  const [defectOpen, setDefectOpen] = useState(false);
   const isFounder = user?.email === "graeme@thecalzonekitchen.co.uk";
 
   if (!user) return null;
@@ -947,10 +952,12 @@ export function QuickActionsDock() {
         onOpenImprovement={() => setImprovementOpen(true)}
         onOpenIssue={() => setIssueOpen(true)}
         onOpenKanban={() => setKanbanOpen(true)}
+        onOpenDefect={() => setDefectOpen(true)}
       />
       <RecordImprovementModal open={improvementOpen} onClose={() => setImprovementOpen(false)} />
       <RecordIssueModal open={issueOpen} onClose={() => setIssueOpen(false)} />
       <PullKanbanModal open={kanbanOpen} onClose={() => setKanbanOpen(false)} />
+      <RecordDefectModal open={defectOpen} onClose={() => setDefectOpen(false)} />
       <TodoSheet open={todosOpen} onClose={() => setTodosOpen(false)} />
       <TodoInterstitial />
       {/* Station messages — must-confirm ones included — show ONLY on the
@@ -968,13 +975,14 @@ export function QuickActionsDock() {
 // where someone once expanded it greeted every later user with the menu
 // already open (Graeme, 2026-08-22). Expansion now lasts only until the
 // next full page load.
-function FloatingActionsTab({ assistantOpen, onOpenAssistant, onOpenTodos, onOpenImprovement, onOpenIssue, onOpenKanban }: {
+function FloatingActionsTab({ assistantOpen, onOpenAssistant, onOpenTodos, onOpenImprovement, onOpenIssue, onOpenKanban, onOpenDefect }: {
   assistantOpen: boolean;
   onOpenAssistant: () => void;
   onOpenTodos: () => void;
   onOpenImprovement: () => void;
   onOpenIssue: () => void;
   onOpenKanban: () => void;
+  onOpenDefect: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const toggle = () => setExpanded(prev => !prev);
@@ -1034,6 +1042,19 @@ function FloatingActionsTab({ assistantOpen, onOpenAssistant, onOpenTodos, onOpe
           >
             <AlertTriangle className="w-5 h-5" />
             <span className="text-sm font-semibold">Report issue</span>
+          </button>
+          {/* Report defect (Graeme, 2026-10-01): product that can't go out
+              as normal — a mislabel, a wrong item, a complaint. Here so it
+              can be recorded from anywhere, never as a station button. */}
+          <button
+            type="button"
+            onClick={onOpenDefect}
+            className="w-44 flex items-center justify-center gap-2 px-4 h-12 rounded-full bg-amber-600 text-white shadow-lg shadow-amber-600/30 hover:bg-amber-700 active:scale-95 transition-all"
+            aria-label="Report a defect"
+            title="Report a defect"
+          >
+            <AlertOctagon className="w-5 h-5" />
+            <span className="text-sm font-semibold">Report defect</span>
           </button>
           <button
             type="button"
