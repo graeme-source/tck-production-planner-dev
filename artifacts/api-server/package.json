@@ -23,6 +23,7 @@
     "@workspace/db": "workspace:*",
     "@workspace/marketing-calendar": "workspace:*",
     "@workspace/production-schedule": "workspace:*",
+    "@workspace/slow-meat": "workspace:*",
     "@workspace/stock-prediction": "workspace:*",
     "@workspace/units": "workspace:*",
     "bcryptjs": "^3.0.3",

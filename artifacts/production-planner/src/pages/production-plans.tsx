@@ -47,6 +47,9 @@ import { useLocation, useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 import type { PlanStartStock } from "@workspace/stock-prediction";
 import { MacStockWorking, macStockWorking } from "@/components/mac-cheese-stock-working";
+import { SlowMeatPanel, SlowMeatSaveStatus } from "@/components/slow-meat-panel";
+import { useSlowMeatProfile } from "@/hooks/use-slow-meat-profile";
+import { applySlowMeatCap, slowMeatCountForRows } from "@/lib/slow-meat-plan";
 import {
   DndContext,
   closestCenter,
@@ -152,6 +155,9 @@ interface PlanItem {
   included: boolean;
   suggestedBatches: number;
   batchesTarget: number;
+  // Uncapped suggestion while the slow-meat tray limit holds this row below
+  // it (lib/slow-meat-plan.ts) — drives the "30 → 24" notice.
+  slowMeatCappedFrom?: number;
   tinCount: number | null;
   maxBatchesPerTin: number | null;
   tinSize: string | null;
@@ -1901,6 +1907,19 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
 
   const effectiveTotalBatches = totalBatchesOverride ?? calcData?.totalDailyBatches ?? 0;
 
+  // Slow-meat tray limit: suggestions are capped to fit, typed-in batches
+  // that go over block saving (components/slow-meat-panel.tsx).
+  const slowMeat = useSlowMeatProfile(open);
+  const slowMeatRef = useRef(slowMeat.data);
+  slowMeatRef.current = slowMeat.data;
+  const capForSlowMeat = useCallback((rows: PlanItem[]) => applySlowMeatCap(rows, slowMeatRef.current, (r, n) => ({
+    ...r, suggestedBatches: n, batchesTarget: n, tinCount: recalcTins(n, r.maxBatchesPerTin),
+  })), []);
+  useEffect(() => {
+    if (slowMeat.data) setItems(prev => capForSlowMeat(prev));
+  }, [slowMeat.data, capForSlowMeat]);
+  const slowMeatOver = slowMeat.data ? slowMeatCountForRows(items, slowMeat.data).overLimit : false;
+
   const { data: allRecipes } = useListRecipes({ query: { queryKey: getListRecipesQueryKey(), enabled: open } });
   // Existing plans — used to warn when the chosen date already has a plan,
   // so a second plan on the same day is always a deliberate choice.
@@ -2242,8 +2261,8 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
         return ai - bi;
       });
     }
-    setItems(newItems);
-  }, [calcData, allocateBatches, savedOrder]);
+    setItems(capForSlowMeat(newItems));
+  }, [calcData, allocateBatches, savedOrder, capForSlowMeat]);
 
   const applyTotalBatches = useCallback((newTotal: number, opts?: { markDirty?: boolean }) => {
     // Auto-applying the rota suggestion on load must NOT mark the form dirty
@@ -2279,22 +2298,23 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
         stockAfterPacks: it.estimatedFactoryNumber - bagPackEquivalents(it) - it.dispatch2Qty - it.dispatch3Qty,
       }));
       const alloc = allocateBatches(recipesForAlloc, Math.max(0, newTotal - queuedSum));
-      return prev.map(item => {
+      return capForSlowMeat(prev.map(item => {
         if (!item.isFromDpt) return item;
         const idx = dptItems.findIndex(d => d.id === item.id);
         if (idx < 0) return item;
         const suggested = alloc[idx].suggestedBatches;
         return {
           ...item,
+          slowMeatCappedFrom: undefined,
           suggestedBatches: suggested,
           batchesTarget: suggested,
           surplusBatches: alloc[idx].surplusBatches,
           targetStockPacks: alloc[idx].targetStockPacks,
           tinCount: (() => { if (!item.maxBatchesPerTin || suggested <= 0) return null; const raw = Math.ceil(suggested / item.maxBatchesPerTin); return suggested > 5 ? Math.max(2, raw) : raw; })(),
         };
-      });
+      }));
     });
-  }, [calcData, allocateBatches]);
+  }, [calcData, allocateBatches, capForSlowMeat]);
 
   const handleTotalBatchesChange = useCallback((newTotal: number) => {
     applyTotalBatches(newTotal);
@@ -2385,23 +2405,24 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     }));
     const alloc = allocateBatches(recipesForAlloc, Math.max(0, effectiveTotalBatches - queuedSum));
     isDirty.current = true;
-    setItems(prev => prev.map(it => {
+    setItems(prev => capForSlowMeat(prev.map(it => {
       if (!it.included || it.id.startsWith("queued-")) return it;
       const idx = includedItems.findIndex(inc => inc.id === it.id);
       if (idx < 0) return it;
       const suggested = alloc[idx].suggestedBatches;
       return {
         ...it,
+        slowMeatCappedFrom: undefined,
         suggestedBatches: suggested,
         batchesTarget: suggested,
         surplusBatches: alloc[idx].surplusBatches,
         targetStockPacks: alloc[idx].targetStockPacks,
         tinCount: recalcTins(suggested, it.maxBatchesPerTin),
       };
-    }));
+    })));
     setRecalcFlash(true);
     setTimeout(() => setRecalcFlash(false), 1500);
-  }, [items, allocateBatches, effectiveTotalBatches]);
+  }, [items, allocateBatches, effectiveTotalBatches, capForSlowMeat]);
 
   const fridgeStockTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   // Last value successfully POSTed to /api/stock-entries per item, so the
@@ -2570,12 +2591,13 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     }
     if (toAdd.length === 0) return;
     isDirty.current = true;
-    setItems(prev => [...prev, ...toAdd]);
+    setItems(prev => capForSlowMeat([...prev, ...toAdd]));
   };
 
   const handleSubmit = async (targetStatus: "draft" | "active") => {
     const includedItems = items.filter(it => it.included);
     if (includedItems.length === 0) return;
+    if (slowMeatOver) return; // the red slow-meat warning says why
 
     // Guard against accidentally planning the same day twice. Deliberate
     // doubles (e.g. a second run) are still allowed after confirming.
@@ -2884,9 +2906,10 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                   <BookmarkCheck className="w-3 h-3" /> Auto-saved
                 </div>
               )}
+              <SlowMeatSaveStatus rows={items} data={slowMeat.data} />
               <button
                 onClick={() => handleSubmit("active")}
-                disabled={includedCount === 0 || isSubmitting}
+                disabled={includedCount === 0 || isSubmitting || slowMeatOver}
                 className="w-full px-5 py-2.5 text-sm bg-primary text-primary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center justify-center gap-2 transition-opacity shadow-md shadow-primary/20 hover:opacity-90"
               >
                 {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
@@ -2894,7 +2917,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
               </button>
               <button
                 onClick={() => handleSubmit("draft")}
-                disabled={includedCount === 0 || isSubmitting}
+                disabled={includedCount === 0 || isSubmitting || slowMeatOver}
                 className="w-full px-4 py-2 text-sm border border-border bg-secondary text-secondary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center justify-center gap-2 transition-colors hover:bg-secondary/80"
               >
                 {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardList className="w-4 h-4" />}
@@ -2961,6 +2984,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
             </div>
           ) : (
             <>
+              <SlowMeatPanel rows={items} data={slowMeat.data} loadError={slowMeat.isError} isAdmin={isAdmin} />
               {items.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground bg-secondary/20 rounded-xl mb-3">
                   <Info className="w-8 h-8 mx-auto mb-2 opacity-40" />
@@ -3252,7 +3276,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
         <div className="space-y-2 pt-1">
           <button
             onClick={() => { setClosePromptOpen(false); handleSubmit("active"); }}
-            disabled={includedCount === 0 || isSubmitting}
+            disabled={includedCount === 0 || isSubmitting || slowMeatOver}
             className="w-full px-4 py-2.5 text-sm bg-primary text-primary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center justify-center gap-2 hover:opacity-90 transition-opacity"
           >
             <CheckCircle2 className="w-4 h-4" />
@@ -3260,7 +3284,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
           </button>
           <button
             onClick={() => { setClosePromptOpen(false); handleSubmit("draft"); }}
-            disabled={includedCount === 0 || isSubmitting}
+            disabled={includedCount === 0 || isSubmitting || slowMeatOver}
             className="w-full px-4 py-2 text-sm border border-border bg-secondary text-secondary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center justify-center gap-2 hover:bg-secondary/80 transition-colors"
           >
             <ClipboardList className="w-4 h-4" />
