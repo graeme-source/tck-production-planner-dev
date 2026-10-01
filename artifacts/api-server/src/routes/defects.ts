@@ -5,16 +5,14 @@
  *   POST   /types            admin: add a type
  *   PATCH  /types/:id        admin: rename / switch on or off / reorder
  *   GET    /options          recipes for the record form's picker
- *   GET    /summary          the KPI for ?from=&to= (London days)
- *   GET    /                 recorded defects for ?from=&to=, newest first
+ *   GET    /summary          the KPI for ?period=today|week|month or ?from=&to=
+ *   GET    /                 recorded defects for the same ranges, newest first
  *   POST   /                 anyone signed in: record a defect
  *   PATCH  /:id              managers, admins, or whoever recorded it
  *   DELETE /:id              same people; soft delete (deleted_at)
  *
- * The KPI maths is pure and tested in lib/defects-kpi.ts. Wonkies and dog
- * bins come from production_plan_items via sumQualityRejects (the same call
- * the morning and end-of-day meetings make); packs made from the Team
- * efficiency loader + totalPacksMade, so every page tells the same story.
+ * The KPI maths is pure and tested in lib/defects-kpi.ts; the loading is
+ * shared with the meetings in services/defects-summary.ts.
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { db, defectsTable, defectTypesTable, recipesTable, usersTable } from "@workspace/db";
@@ -23,15 +21,8 @@ import * as z from "zod";
 import { validate } from "../middleware/validate";
 import { requireAdmin } from "../middleware/roles";
 import { londonDateString } from "../lib/london-time";
-import { sumQualityRejects } from "../lib/quality-rejects";
-import { madeByLine, totalPacksMade } from "../lib/team-efficiency-day";
-import { planItems } from "../services/team-efficiency-job";
-import {
-  canEditDefect,
-  summariseDefects,
-  type DefectDayInput,
-  type RejectStationInput,
-} from "../lib/defects-kpi";
+import { canEditDefect, standardPeriods } from "../lib/defects-kpi";
+import { loadDefectSummary } from "../services/defects-summary";
 import { daysBetween } from "../lib/team-efficiency-labour";
 
 const router: IRouter = Router();
@@ -53,7 +44,12 @@ async function me(req: Request): Promise<{ id: number; name: string | null; role
   return { id, name: u?.name ?? null, role: u?.role ?? null };
 }
 
+const PeriodQuery = z.object({ period: z.enum(["today", "week", "month"]) });
+
+/** ?period=today|week|month (worked out here, in London time) or ?from=&to=. */
 function parseRange(req: Request, res: Response): { from: string; to: string } | null {
+  const period = PeriodQuery.safeParse(req.query);
+  if (period.success) return standardPeriods(londonDateString())[period.data.period];
   const parsed = RangeQuery.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Pick a valid date range" });
@@ -131,44 +127,7 @@ router.get("/summary", async (req: Request, res: Response) => {
   if (!range) return;
   const { from, to } = range;
   try {
-    const [made, rejectItems, rejectEvents, recorded, types] = await Promise.all([
-      planItems(from, to),
-      db.execute<{ date: string; wonly_total: number | null; dog_bin_count: number | null }>(sql`
-        SELECT p.plan_date::text AS date, i.wonly_total, i.dog_bin_count
-        FROM production_plans p JOIN production_plan_items i ON i.plan_id = p.id
-        WHERE p.plan_date BETWEEN ${from} AND ${to}
-      `),
-      db.execute<{ kind: "wonky" | "dog_bin"; station_type: string | null; packs: number }>(sql`
-        SELECT e.kind, e.station_type, SUM(e.delta)::int AS packs
-        FROM quality_reject_events e JOIN production_plans p ON p.id = e.plan_id
-        WHERE p.plan_date BETWEEN ${from} AND ${to}
-        GROUP BY e.kind, e.station_type
-      `),
-      db.select({
-        occurredOn: defectsTable.occurredOn, typeId: defectsTable.defectTypeId, packs: defectsTable.packs, station: defectsTable.station,
-      }).from(defectsTable).where(and(isNull(defectsTable.deletedAt), gte(defectsTable.occurredOn, from), lte(defectsTable.occurredOn, to))),
-      db.select({
-        id: defectTypesTable.id, name: defectTypesTable.name, active: defectTypesTable.active, sortOrder: defectTypesTable.sortOrder,
-      }).from(defectTypesTable),
-    ]);
-
-    // Wonkies and dog bins per plan date — sumQualityRejects, as the meetings do.
-    const rejectsByDate = new Map<string, Array<{ wonlyTotal: number | null; dogBinCount: number | null }>>();
-    for (const r of rejectItems.rows) {
-      const list = rejectsByDate.get(r.date) ?? [];
-      list.push({ wonlyTotal: r.wonly_total == null ? null : Number(r.wonly_total), dogBinCount: r.dog_bin_count == null ? null : Number(r.dog_bin_count) });
-      rejectsByDate.set(r.date, list);
-    }
-    const dates = new Set<string>([...made.keys(), ...rejectsByDate.keys()]);
-    const days: DefectDayInput[] = [...dates].map(date => {
-      const q = sumQualityRejects(rejectsByDate.get(date) ?? []);
-      return { date, packsMade: totalPacksMade(madeByLine(made.get(date) ?? [])), wonky: q.wonky, dogBin: q.dogBin };
-    });
-    const rejectStations: RejectStationInput[] = rejectEvents.rows.map(r => ({
-      kind: r.kind, station: r.station_type, packs: Number(r.packs) || 0,
-    }));
-
-    res.json(summariseDefects({ from, to, days, recorded, types, rejectStations }));
+    res.json(await loadDefectSummary(from, to));
   } catch (err) {
     console.error("[defects] summary failed:", err);
     res.status(500).json({ error: "Couldn't work out the defect numbers" });
