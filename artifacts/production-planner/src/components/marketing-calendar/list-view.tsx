@@ -45,7 +45,7 @@ export function ListView({ today, events, planned, klaviyo, showPast, filter = "
     return all
       .map(s => ({
         ...s,
-        items: s.items.filter(it => (it.kind === "planned" ? approvals.forPlan(it.planned.id) : approvals.forKlaviyo(it.klaviyo.id))?.needsApproval === true),
+        items: s.items.filter(it => it.kind !== "extra" && (it.kind === "planned" ? approvals.forPlan(it.planned.id) : approvals.forKlaviyo(it.klaviyo.id))?.needsApproval === true),
       }))
       .filter(s => s.items.length > 0);
   }, [events, planned, klaviyo, today, showPast, filter, approvals]);
@@ -116,7 +116,9 @@ export function ListView({ today, events, planned, klaviyo, showPast, filter = "
               )}
               {section.items.map(item => item.kind === "planned"
                 ? <PlannedCard key={`p-${item.planned.id}`} email={item.planned} klaviyo={item.klaviyo} today={today} approvals={approvals} onOpen={() => onOpenEmail(item.planned.id)} />
-                : <KlaviyoCard key={`k-${item.klaviyo.id}`} email={item.klaviyo} approvals={approvals} onOpen={() => onOpenKlaviyo(item.klaviyo)} />)}
+                : item.kind === "klaviyo"
+                  ? <KlaviyoCard key={`k-${item.klaviyo.id}`} email={item.klaviyo} approvals={approvals} onOpen={() => onOpenKlaviyo(item.klaviyo)} />
+                  : null)}
             </div>
           </section>
         );
