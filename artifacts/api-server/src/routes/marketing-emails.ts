@@ -17,7 +17,7 @@ import { z } from "zod";
 import { db, marketingEmailsTable, marketingEmailHistoryTable, marketingEventsTable, usersTable } from "@workspace/db";
 import { and, asc, desc, eq, gte, isNull, lte, ne } from "drizzle-orm";
 import {
-  EMAIL_AUDIENCE_KEYS, EMAIL_STATUSES, campaignForDate, daysBetween, describeEmailFieldChanges,
+  EMAIL_AUDIENCE_KEYS, EMAIL_STATUSES, NOTE_EVENT_TYPE, campaignForDate, daysBetween, describeEmailFieldChanges,
   describeEmailMove, describeKlaviyoLink, diffEmailFields, type FieldChange,
 } from "@workspace/marketing-calendar";
 import { validate, validateQuery } from "../middleware/validate";
@@ -49,13 +49,19 @@ function idParam(req: Request): number | null {
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
-/** Live campaigns (calendar events) touching [from, to]. */
+/** Live campaigns (calendar events) touching [from, to]. Notes (one-day
+ *  ideas on the calendar, 2026-10-01) are not phases and never take emails. */
 async function campaignsBetween(from: string, to: string, tx: Tx | typeof db = db) {
   return tx.select({
     id: marketingEventsTable.id, title: marketingEventsTable.name,
     startDate: marketingEventsTable.startDate, endDate: marketingEventsTable.endDate,
   }).from(marketingEventsTable)
-    .where(and(isNull(marketingEventsTable.deletedAt), gte(marketingEventsTable.endDate, from), lte(marketingEventsTable.startDate, to)));
+    .where(and(
+      isNull(marketingEventsTable.deletedAt),
+      ne(marketingEventsTable.eventType, NOTE_EVENT_TYPE),
+      gte(marketingEventsTable.endDate, from),
+      lte(marketingEventsTable.startDate, to),
+    ));
 }
 
 async function campaignOn(date: string, tx: Tx | typeof db = db) {
