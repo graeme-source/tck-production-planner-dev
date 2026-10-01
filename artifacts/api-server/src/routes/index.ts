@@ -64,6 +64,7 @@ import recipeDesignerRouter from "./recipe-designer";
 import morningMeetingsRouter from "./morning-meetings";
 import endOfDayRouter from "./end-of-day";
 import qualityRejectsRouter from "./quality-rejects";
+import defectsRouter from "./defects";
 import leanReviewsRouter from "./lean-reviews";
 import leanCurriculumRouter from "./lean-curriculum";
 import ingredientScrapeRouter from "./ingredient-scrape";
@@ -306,6 +307,9 @@ router.use("/standards", standardsRouter);
 router.use("/ai", aiRouter);
 router.use("/morning-meetings", morningMeetingsRouter);
 router.use("/end-of-day", endOfDayRouter);
+// Defects: anyone signed in may record one; edits, deletes and the type list
+// are guarded inside the router (routes/defects.ts).
+router.use("/defects", defectsRouter);
 // Per-user, so NOT behind the manager guard — every team member completes
 // their own weekly lesson review (route file guards each endpoint).
 router.use("/lean-reviews", leanReviewsRouter);
