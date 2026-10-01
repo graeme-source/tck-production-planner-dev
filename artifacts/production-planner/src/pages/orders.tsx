@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
+import { Fragment, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -49,6 +49,7 @@ import { resolveDeliveryDate } from "@/lib/order-delivery";
 import { cutoffStatus, sortByCutoff, type CutoffStatus, type SupplierCutoffInfo } from "@/lib/supplier-cutoff";
 import { SupplierCutoffBadge } from "@/components/supplier-cutoff-badge";
 import { useNow } from "@/hooks/use-now";
+import { orderForSupplierSearch } from "@/lib/search-word-groups";
 import { kanbanOrderPacks, packNoun, positivePalletSize, packsToBaseQty } from "@workspace/units";
 import {
   buildOrderMessage,
@@ -1996,15 +1997,33 @@ export default function Orders() {
                       </tr>
                     </thead>
                     <tbody>
-                      {lines.map((line) => {
+                      {/* Items you'd find with the same search on the
+                          supplier's website sit together under "Search: onion"
+                          (Graeme, 2026-10-01). Pulled kanbans / manual / misc
+                          adds keep their added-at-the-bottom order. */}
+                      {orderForSupplierSearch(
+                        lines,
+                        l => l.ingredientName || l.description || "",
+                        l => !!(l.isKanban || l.isManual || l.isMisc),
+                      ).map(({ item: line, searchWord }) => {
                         // Find the real index in the full allLines array so
                         // toggleLineCheck/updatePacks/updateStock continue to
                         // mutate the correct row when the view is filtered.
                         const idx = allLines.findIndex(l => l.ingredientId === line.ingredientId);
                         const isNonOrderable = !!line.belowRequirement && !line.isKanban && !line.isManual;
                         return (
+                        <Fragment key={line.ingredientId}>
+                        {searchWord && (
+                          <tr className="bg-primary/5">
+                            <td colSpan={lines.some(l => l.costPerPack > 0) ? 11 : 10} className="px-3 pt-2 pb-1">
+                              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                                <Search className="w-3.5 h-3.5" />
+                                Search: <span className="font-semibold text-foreground">{searchWord}</span>
+                              </span>
+                            </td>
+                          </tr>
+                        )}
                         <DraggableLineRow
-                          key={line.ingredientId}
                           dragId={`line-${so.supplier.id}-${line.ingredientId}`}
                           dragDisabled={isNonOrderable}
                           className={cn(
@@ -2191,6 +2210,7 @@ export default function Orders() {
                             </button>
                           </td>
                         </DraggableLineRow>
+                        </Fragment>
                         );
                       })}
                       <tr className="bg-secondary/5">
