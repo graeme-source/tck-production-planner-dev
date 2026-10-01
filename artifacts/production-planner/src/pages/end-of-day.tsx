@@ -14,6 +14,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, Hammer, PackageCheck, AlertTriangle, Trophy } from "lucide-react";
 import { formatQualityRejects } from "@/lib/quality-rejects";
+import { defectHeadline } from "@/lib/defects-view";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 
@@ -32,6 +33,9 @@ interface EndOfDay {
    *  done, never ideas. 0 is a real zero; null means the lookup failed.
    *  Optional so a cached older server payload doesn't crash the page. */
   improvements?: { completed: number | null };
+  /** Defects KPI (wonkies + dog bins + recorded) ÷ packs made — the Defects
+   *  page figure. null = lookup failed; optional for older payloads. */
+  defects?: { count: number; pct: number | null; packsMade: number } | null;
 }
 
 const hours = (mins: number) => (mins / 60).toFixed(1);
@@ -142,7 +146,7 @@ export default function EndOfDayMeeting() {
           second={{ value: String(data.dogBins?.count ?? 0), unit: "dog bin" }}
           sub={`${formatQualityRejects(data.wonkies.count, data.dogBins?.count ?? 0)} — wonky is sold as wonky, dog bin is thrown away. ${data.wonkies.batchesTarget > 0
             ? `Across ${data.wonkies.batchesTarget} batches planned.`
-            : "No batches planned today."}`}
+            : "No batches planned today."}${data.defects ? ` All defects today: ${defectHeadline({ ...data.defects, defects: data.defects.count })}.` : ""}`}
         />
         <KpiCard
           label="Improvements completed"

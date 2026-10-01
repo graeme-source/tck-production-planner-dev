@@ -160,6 +160,23 @@ export interface DayComponents {
 export const PARTLY_COUNTED_SHARE = 0.5;
 export const PARTLY_COUNTED_MIN_SHORT = 100;
 
+/**
+ * Packs made per line — THE "packs made" figure (Team efficiency's packs,
+ * and the denominator of the Defects KPI). Good packs only (8-pack bags are
+ * reported separately), rounded per line. One definition, so the two pages
+ * can never disagree.
+ */
+export function packsByLineOf(made: Record<string, LineMade>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [cat, m] of Object.entries(made)) out[cat] = Math.round(m.packs);
+  return out;
+}
+
+/** Total packs made on a day across every line (see packsByLineOf). */
+export function totalPacksMade(made: Record<string, LineMade>): number {
+  return Object.values(packsByLineOf(made)).reduce((a, b) => a + b, 0);
+}
+
 /** Packs counted for a line, 8-pack bags as their packs. */
 function countedPacks(m: LineMade): number {
   return m.packs + (m.bagPacks ?? 0);
@@ -240,11 +257,10 @@ export function deriveDay(c: DayComponents, s: TeSettings): DerivedDay {
   const labourCost = Math.max(0, c.labourCostTotal - removed);
 
   let valueMadeNet = 0;
-  const packsByLine: Record<string, number> = {};
+  const packsByLine = packsByLineOf(c.made);
   let eightPackBags = 0;
   for (const [cat, m] of Object.entries(c.made)) {
     valueMadeNet += m.gross * (1 - discount(s, cat)) + m.bagGross * s.eightPackFactor;
-    packsByLine[cat] = Math.round(m.packs);
     eightPackBags += m.bags;
   }
   let valueDespatchedNet = 0;
