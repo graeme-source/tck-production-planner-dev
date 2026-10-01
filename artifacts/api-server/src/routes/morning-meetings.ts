@@ -51,6 +51,7 @@ import { getPreviousDispatchDayAsync, getNextDispatchDayAsync } from "./producti
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 import { leanCorpusPrompt } from "../lib/lean-corpus";
 import { sumQualityRejects } from "../lib/quality-rejects";
+import { loadDefectSummary } from "../services/defects-summary";
 import type Anthropic from "@anthropic-ai/sdk";
 
 const router: IRouter = Router();
@@ -493,7 +494,7 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
     // never the later approval. Same shared helper the end-of-day page
     // uses, so the two meetings can't disagree. Zero is a real zero;
     // null only means the lookup itself failed.
-    const [builderKpi, packingKpi, improvementsCompleted] = await Promise.all([
+    const [builderKpi, packingKpi, improvementsCompleted, defectSummary] = await Promise.all([
       computeBuilderBatchesPerHourForDay(yesterday).catch(err => {
         console.warn("[morning-meeting] builder BPH calc failed:", err);
         return { totalBatches: 0, activeMinutes: 0, batchesPerHour: null };
@@ -504,6 +505,12 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       }),
       countImprovementsCompletedForDay(yesterday).catch(err => {
         console.warn("[morning-meeting] improvements completed calc failed:", err);
+        return null;
+      }),
+      // Defects KPI (2026-10-01) — same loader as the Defects page and the
+      // end-of-day meeting. null only when the lookup failed.
+      loadDefectSummary(yesterday, yesterday).catch(err => {
+        console.warn("[morning-meeting] defects calc failed:", err);
         return null;
       }),
     ]);
@@ -748,6 +755,8 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
         packingBatchesPerHour,
         improvementsCompleted,
         batchesTarget: yesterdayBatchesTotal,
+        // Wonkies + dog bins + recorded defects, as a % of packs made.
+        defects: defectSummary ? { count: defectSummary.defects, pct: defectSummary.pct, packsMade: defectSummary.packsMade } : null,
       },
       dayNumbers,
       tomorrow,

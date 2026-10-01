@@ -29,6 +29,7 @@ import {
   countImprovementsCompletedForDay,
 } from "../lib/yesterday-kpis";
 import { sumQualityRejects } from "../lib/quality-rejects";
+import { loadDefectSummary } from "../services/defects-summary";
 
 const router: IRouter = Router();
 
@@ -78,7 +79,7 @@ router.get("/", async (req: Request, res: Response) => {
     // Improvements completed is different: zero really means "the team
     // completed nothing today" and must show as 0. Only a failed lookup
     // comes back null (rendered as "—"), never as a fake zero.
-    const [builder, packing, improvementsCompleted] = await Promise.all([
+    const [builder, packing, improvementsCompleted, defects] = await Promise.all([
       computeBuilderBatchesPerHourForDay(day).catch(err => {
         console.warn("[end-of-day] builder BPH failed:", err);
         return { totalBatches: 0, activeMinutes: 0, batchesPerHour: null };
@@ -89,6 +90,12 @@ router.get("/", async (req: Request, res: Response) => {
       }),
       countImprovementsCompletedForDay(day).catch(err => {
         console.warn("[end-of-day] improvements completed failed:", err);
+        return null;
+      }),
+      // Defects KPI (2026-10-01): wonkies + dog bins + recorded defects, as a
+      // share of packs made — the same figure as the Defects page.
+      loadDefectSummary(day, day).catch(err => {
+        console.warn("[end-of-day] defects failed:", err);
         return null;
       }),
     ]);
@@ -113,6 +120,8 @@ router.get("/", async (req: Request, res: Response) => {
       // Completed improvements only, bucketed by when the person marked the
       // work done (lib/improvements-completed.ts has the full definition).
       improvements: { completed: improvementsCompleted },
+      // null only when the lookup failed; pct null when nothing was made.
+      defects: defects ? { count: defects.defects, pct: defects.pct, packsMade: defects.packsMade } : null,
     });
   } catch (err) {
     console.error("[end-of-day] failed:", err);

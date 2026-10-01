@@ -41,6 +41,7 @@ import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { LessonDiagram, DIAGRAM_OPTIONS } from "@/components/lesson-diagrams";
 import ImprovementsPage from "@/pages/improvements";
 import { creditLabel } from "@/lib/improvement-credits";
+import { defectHeadline, pctText, plural } from "@/lib/defects-view";
 import { MarkdownBlock, YouTubeEmbed } from "@/components/lesson-media";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -121,6 +122,9 @@ export interface DashboardData {
      *  lookup failed. Optional so a cached older server payload still renders. */
     improvementsCompleted?: number | null;
     batchesTarget: number;
+    /** Defects KPI — wonkies + dog bins + recorded defects ÷ packs made
+     *  (Defects page). null = lookup failed; optional for older payloads. */
+    defects?: { count: number; pct: number | null; packsMade: number } | null;
   };
   todayDeliveries: Array<{ id: number; supplierName: string; status: string }>;
   safetyIssues: Array<{ id: number; category: string; severity: string; description: string | null; createdAt: string }>;
@@ -2071,8 +2075,11 @@ const KPI_CATALOG = {
   // Quality rejects: the Wonkies tile carries dog bins as a separate figure
   // underneath, so a slide configured before dog bins existed still shows
   // both. "Dog bins" is also its own tile for slides that want it.
-  wonkies:      { label: "Wonkies",            get: (k: DashboardData["yesterdayKpis"]) => k.wonkyCount.toString(), sub: (k: DashboardData["yesterdayKpis"]) => `+ ${k.dogBinCount ?? 0} dog bin (thrown away)`, warn: (k: DashboardData["yesterdayKpis"]) => k.wonkyCount > 20 },
+  wonkies:      { label: "Wonkies",            get: (k: DashboardData["yesterdayKpis"]) => k.wonkyCount.toString(), sub: (k: DashboardData["yesterdayKpis"]) => `+ ${k.dogBinCount ?? 0} dog bin (thrown away)${k.defects ? ` · ${defectHeadline({ ...k.defects, defects: k.defects.count })}` : ""}`, warn: (k: DashboardData["yesterdayKpis"]) => k.wonkyCount > 20 },
   dog_bins:     { label: "Dog bins",           get: (k: DashboardData["yesterdayKpis"]) => (k.dogBinCount ?? 0).toString(), warn: () => false },
+  // Every defect (wonkies + dog bins + recorded) as a % of packs made — the
+  // Defects page figure. Optional tile; "—" when it couldn't be counted.
+  defects:      { label: "Defects",            get: (k: DashboardData["yesterdayKpis"]) => k.defects ? k.defects.count.toString() : "—", sub: (k: DashboardData["yesterdayKpis"]) => k.defects ? (k.defects.pct == null ? "No packs made" : `${pctText(k.defects.pct)} of ${plural(k.defects.packsMade, "pack")}`) : "Couldn't count", warn: () => false },
   // Completed improvements only, bucketed by when the work was marked done —
   // never ideas, never the later approval (Graeme, 2026-09-18). Unlike the
   // rates, 0 is a real zero and renders as 0; "—" only when the server
