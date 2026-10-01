@@ -129,6 +129,9 @@ importers:
       '@workspace/production-schedule':
         specifier: workspace:*
         version: link:../../lib/production-schedule
+      '@workspace/slow-meat':
+        specifier: workspace:*
+        version: link:../../lib/slow-meat
       '@workspace/stock-prediction':
         specifier: workspace:*
         version: link:../../lib/stock-prediction
@@ -590,6 +593,9 @@ importers:
       '@workspace/production-schedule':
         specifier: workspace:*
         version: link:../../lib/production-schedule
+      '@workspace/slow-meat':
+        specifier: workspace:*
+        version: link:../../lib/slow-meat
       '@workspace/stock-prediction':
         specifier: workspace:*
         version: link:../../lib/stock-prediction
@@ -718,6 +724,8 @@ importers:
   lib/marketing-calendar: {}
 
   lib/production-schedule: {}
+
+  lib/slow-meat: {}
 
   lib/stock-prediction: {}
 

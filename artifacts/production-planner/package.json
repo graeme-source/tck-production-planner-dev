@@ -55,6 +55,7 @@
     "@workspace/feature-registry": "workspace:*",
     "@workspace/marketing-calendar": "workspace:*",
     "@workspace/production-schedule": "workspace:*",
+    "@workspace/slow-meat": "workspace:*",
     "@workspace/stock-prediction": "workspace:*",
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",
