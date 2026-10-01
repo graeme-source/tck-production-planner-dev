@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
+import { Fragment, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -46,6 +46,10 @@ import {
   toISODate,
 } from "@workspace/business-days";
 import { resolveDeliveryDate } from "@/lib/order-delivery";
+import { cutoffStatus, sortByCutoff, type CutoffStatus, type SupplierCutoffInfo } from "@/lib/supplier-cutoff";
+import { SupplierCutoffBadge } from "@/components/supplier-cutoff-badge";
+import { useNow } from "@/hooks/use-now";
+import { orderForSupplierSearch } from "@/lib/search-word-groups";
 import { kanbanOrderPacks, packNoun, positivePalletSize, packsToBaseQty } from "@workspace/units";
 import {
   buildOrderMessage,
@@ -515,6 +519,7 @@ export default function Orders() {
     id: number; name: string; contactName: string | null; email: string | null;
     phone: string | null; orderingPhone: string | null; website: string | null;
     leadTimeDays?: number; cutoffTime?: string;
+    orderFrequency?: string | null; orderDays?: string | null;
     lockedOpenPo?: { id: number; expectedDeliveryDate: string };
   }>>({
     queryKey: ["suppliers-directory"],
@@ -525,6 +530,9 @@ export default function Orders() {
     },
   });
   const supplierDirectory = new Map(pickerSuppliers.map(s => [s.id, s]));
+  // Re-sorts the To Order cards by cut-off once a minute (each card's own
+  // countdown ticks faster — see SupplierCutoffBadge).
+  const sortNow = useNow(60_000);
 
   // Confirmation modal state for deleting a placed PO from the inline edit
   // card (manager / admin only). Mirrors dismissConfirm — second click guard
@@ -1478,8 +1486,27 @@ export default function Orders() {
   // Operator-dismissed cards drop out of the pending list but stay tracked so
   // a "Show N dismissed" link can restore them. Reopened POs always render
   // even if dismissed — that flow is the user explicitly editing.
-  const pendingSuppliers = allPendingSuppliers.filter(s =>
-    !dismissedSupplierIds.has(s.supplier.id) || reopenedSupplierIds.has(s.supplier.id)
+  //
+  // Sorted by supplier cut-off (Graeme, 2026-10-01): soonest cut-off still
+  // ahead today at the top, then suppliers with no deadline today, then those
+  // whose cut-off has passed. Ties keep the existing order (calc suppliers
+  // A–Z, then kanban-only / manually added). A card editing an already-placed
+  // order shows "Ordered ✓" and sorts with the no-deadline group.
+  const cutoffInfoFor = (supplierId: number, card?: { cutoffTime?: string }): SupplierCutoffInfo => {
+    const dir = supplierDirectory.get(supplierId);
+    return {
+      cutoffTime: card?.cutoffTime ?? dir?.cutoffTime,
+      orderFrequency: dir?.orderFrequency,
+      orderDays: dir?.orderDays,
+    };
+  };
+  const pendingSuppliers = sortByCutoff(
+    allPendingSuppliers.filter(s =>
+      !dismissedSupplierIds.has(s.supplier.id) || reopenedSupplierIds.has(s.supplier.id)
+    ),
+    (s): CutoffStatus => reopenedSupplierIds.has(s.supplier.id)
+      ? { kind: "none", reason: "no-cutoff", cutoffMinutes: null, orderDays: [] }
+      : cutoffStatus(cutoffInfoFor(s.supplier.id, s.supplier), sortNow),
   );
   const dismissedPendingSuppliers = allPendingSuppliers.filter(s =>
     dismissedSupplierIds.has(s.supplier.id) && !reopenedSupplierIds.has(s.supplier.id)
@@ -1873,9 +1900,9 @@ export default function Orders() {
           )}>
             <button
               onClick={() => toggleSupplier(so.supplier.id)}
-              className="w-full flex items-center justify-between p-4 hover:bg-secondary/30 transition-colors"
+              className="w-full flex flex-wrap items-center justify-between gap-x-3 gap-y-2 p-4 hover:bg-secondary/30 transition-colors"
             >
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 min-w-0">
                 <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
                   <Building2 className="w-5 h-5 text-primary" />
                 </div>
@@ -1899,8 +1926,13 @@ export default function Orders() {
                   </p>
                   <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
                     <Truck className="w-3 h-3 inline shrink-0" />
-                    Est. delivery: {formatDeliveryDate(getDeliveryDateForSupplier(so.supplier.id))}
+                    Est. delivery: {orderDeliveryText}
                   </p>
+                  <SupplierCutoffBadge
+                    info={cutoffInfoFor(so.supplier.id, so.supplier)}
+                    deliveryText={orderDeliveryText}
+                    ordered={isReopened}
+                  />
                   {/* An open PO past its edit cutoff can't take these items —
                       say so plainly, or the team thinks the system forgot
                       about the order that's already on its way. */}
@@ -1912,17 +1944,21 @@ export default function Orders() {
                   )}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 ml-auto">
+                {/* A clear button, not a grey icon (Graeme, 2026-10-01).
+                    Green OUTLINE so it can't be mistaken for the solid-green
+                    "Mark as Placed" action. */}
                 {so.supplier.website && (
                   <a
                     href={so.supplier.website}
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={e => e.stopPropagation()}
-                    className="p-2 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-                    title="Open supplier website"
+                    className="min-h-[44px] px-4 inline-flex items-center gap-2 rounded-lg border-2 border-primary bg-primary/10 text-green-800 dark:text-green-300 text-sm font-semibold hover:bg-primary/20 transition-colors"
+                    title={`Open ${so.supplier.name}'s website in a new tab`}
                   >
-                    <ExternalLink className="w-4 h-4" />
+                    <ExternalLink className="w-4 h-4 shrink-0" />
+                    Supplier website
                   </a>
                 )}
                 {!isReopened && (
@@ -1961,15 +1997,33 @@ export default function Orders() {
                       </tr>
                     </thead>
                     <tbody>
-                      {lines.map((line) => {
+                      {/* Items you'd find with the same search on the
+                          supplier's website sit together under "Search: onion"
+                          (Graeme, 2026-10-01). Pulled kanbans / manual / misc
+                          adds keep their added-at-the-bottom order. */}
+                      {orderForSupplierSearch(
+                        lines,
+                        l => l.ingredientName || l.description || "",
+                        l => !!(l.isKanban || l.isManual || l.isMisc),
+                      ).map(({ item: line, searchWord }) => {
                         // Find the real index in the full allLines array so
                         // toggleLineCheck/updatePacks/updateStock continue to
                         // mutate the correct row when the view is filtered.
                         const idx = allLines.findIndex(l => l.ingredientId === line.ingredientId);
                         const isNonOrderable = !!line.belowRequirement && !line.isKanban && !line.isManual;
                         return (
+                        <Fragment key={line.ingredientId}>
+                        {searchWord && (
+                          <tr className="bg-primary/5">
+                            <td colSpan={lines.some(l => l.costPerPack > 0) ? 11 : 10} className="px-3 pt-2 pb-1">
+                              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                                <Search className="w-3.5 h-3.5" />
+                                Search: <span className="font-semibold text-foreground">{searchWord}</span>
+                              </span>
+                            </td>
+                          </tr>
+                        )}
                         <DraggableLineRow
-                          key={line.ingredientId}
                           dragId={`line-${so.supplier.id}-${line.ingredientId}`}
                           dragDisabled={isNonOrderable}
                           className={cn(
@@ -2156,6 +2210,7 @@ export default function Orders() {
                             </button>
                           </td>
                         </DraggableLineRow>
+                        </Fragment>
                         );
                       })}
                       <tr className="bg-secondary/5">
