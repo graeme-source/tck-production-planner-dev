@@ -62,6 +62,17 @@ import {
   placedLineQuantity,
 } from "@/lib/order-line-text";
 import { toast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
+import {
+  hasMinimum,
+  orderValueAtSupplier,
+  priceAtSupplier,
+  suggestTopUps,
+  type CardForTopUp,
+  type IngredientPricing,
+  type TopUpSuggestion,
+} from "@/lib/minimum-order";
+import { MinimumOrderNotice } from "@/components/minimum-order-notice";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -521,6 +532,8 @@ export default function Orders() {
     leadTimeDays?: number; cutoffTime?: string;
     orderFrequency?: string | null; orderDays?: string | null;
     lockedOpenPo?: { id: number; expectedDeliveryDate: string };
+    /** Minimum order spend in £; null = no minimum. */
+    minimumOrderValue?: number | null;
   }>>({
     queryKey: ["suppliers-directory"],
     queryFn: async () => {
@@ -530,6 +543,27 @@ export default function Orders() {
     },
   });
   const supplierDirectory = new Map(pickerSuppliers.map(s => [s.id, s]));
+
+  // Primary + secondary supplier pack prices per ingredient (Graeme,
+  // 2026-10-01). Prices every line at the supplier whose card it sits on, and
+  // powers the minimum-order top-up suggestions. See lib/minimum-order.ts.
+  const { data: supplierPricingRows = [] } = useQuery<IngredientPricing[]>({
+    queryKey: ["supplier-pricing"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/supplier-pricing`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load supplier prices");
+      return res.json();
+    },
+  });
+  const pricingById = new Map(supplierPricingRows.map(r => [r.ingredientId, r]));
+  /** The lines with each pack price set to the price at `supplierId` (the
+   *  secondary price for an item moved onto its secondary supplier). Same
+   *  order and length as the input, so row indexes still line up. */
+  const priceLinesFor = (supplierId: number, lines: EditableLine[]): EditableLine[] =>
+    lines.map(l => {
+      const p = priceAtSupplier(l, supplierId, pricingById.get(l.ingredientId));
+      return p.price === l.costPerPack ? l : { ...l, costPerPack: p.price };
+    });
   // Re-sorts the To Order cards by cut-off once a minute (each card's own
   // countdown ticks faster — see SupplierCutoffBadge).
   const sortNow = useNow(60_000);
@@ -1475,7 +1509,9 @@ export default function Orders() {
 
   const confirmPlaceOrder = () => {
     if (!confirmDialog) return;
-    const lines = editableLines[confirmDialog.supplierId] || [];
+    // Priced at THIS supplier, so a line moved onto its secondary supplier
+    // is saved on the PO at that supplier's price.
+    const lines = priceLinesFor(confirmDialog.supplierId, editableLines[confirmDialog.supplierId] || []);
     // Send exactly the date the operator was shown — never re-derive it here.
     placeMutation.mutate({
       supplierId: confirmDialog.supplierId,
@@ -1658,11 +1694,57 @@ export default function Orders() {
     toast({ title: "Item moved", description: `${drag.line.ingredientName} \u2192 ${toName}` });
   }
 
+  // Minimum order top-up (Graeme, 2026-10-01): the person tapped "Move to
+  // <supplier>" on a suggestion. Same move as drag & drop — this order only;
+  // the ingredient's normal supplier is NOT changed. Undo puts the original
+  // line back exactly as it was (position, part number, routing).
+  const moveForMinimum = (sug: TopUpSuggestion, toSid: number, toName: string) => {
+    const fromSid = sug.fromSupplierId;
+    const fromLines = editableLines[fromSid] ?? [];
+    const originalIndex = fromLines.findIndex(l => l.ingredientId === sug.ingredientId);
+    const original = fromLines[originalIndex];
+    if (!original) return;
+    const priorRouting = movedLines[sug.ingredientId];
+    moveLineToSupplier(sug.ingredientId, fromSid, toSid);
+    const undo = () => {
+      setEditableLines(prev => {
+        const toArr = (prev[toSid] ?? []).filter(l => l.ingredientId !== sug.ingredientId);
+        const fromArr = (prev[fromSid] ?? []).filter(l => l.ingredientId !== sug.ingredientId);
+        fromArr.splice(Math.min(originalIndex, fromArr.length), 0, original);
+        return { ...prev, [toSid]: toArr, [fromSid]: fromArr };
+      });
+      setMovedLines(prev => {
+        const next = { ...prev };
+        if (priorRouting == null) delete next[sug.ingredientId];
+        else next[sug.ingredientId] = priorRouting;
+        persistMovedLines(next);
+        return next;
+      });
+      setExpandedSuppliers(prev => new Set([...prev, fromSid]));
+    };
+    toast({
+      title: `Moved to ${toName}`,
+      description: `${sug.ingredientName} \u00D7${sug.packs} is now on ${toName}'s order instead of ${sug.fromSupplierName}'s — for this order only.`,
+      action: <ToastAction altText="Undo" onClick={undo}>Undo</ToastAction>,
+    });
+  };
+
+  // Every pending card's ORDERABLE lines, priced at that card's supplier —
+  // the input to the minimum-order maths. A reopened placed order can't give
+  // lines away (the calc merge never pulls lines out of one either).
+  const topUpCards: CardForTopUp[] = pendingSuppliers.map(so => ({
+    supplierId: so.supplier.id,
+    supplierName: so.supplier.name,
+    minimumOrderValue: supplierDirectory.get(so.supplier.id)?.minimumOrderValue ?? null,
+    lines: (editableLines[so.supplier.id] ?? []).filter(l => l.isKanban || l.isManual || !l.belowRequirement),
+    canGiveLines: !reopenedPlacedOrders[so.supplier.id],
+  }));
+
   const estimatedCost = (supplierLines: EditableLine[]) =>
     supplierLines.reduce((sum, l) => sum + l.editedPacks * l.costPerPack, 0);
 
-  const totalEstimatedCost = Object.values(editableLines).reduce(
-    (sum, lines) => sum + estimatedCost(lines), 0
+  const totalEstimatedCost = Object.entries(editableLines).reduce(
+    (sum, [sid, lines]) => sum + estimatedCost(priceLinesFor(Number(sid), lines)), 0
   );
 
   return (
@@ -1855,7 +1937,8 @@ export default function Orders() {
       )}
 
       {viewFilter === "pending" && pendingSuppliers.map(so => {
-        const allLines = editableLines[so.supplier.id] || [];
+        // Priced at THIS supplier (secondary price for moved-in items).
+        const allLines = priceLinesFor(so.supplier.id, editableLines[so.supplier.id] || []);
         // Orderable = things that actually go onto a PO. Non-required lines
         // are hidden by default; when shown they're informational only.
         const orderableLines = allLines.filter(l => l.isKanban || l.isManual || !l.belowRequirement);
@@ -1873,6 +1956,17 @@ export default function Orders() {
         const cost = estimatedCost(orderableLines);
         const reopenedPOId = reopenedPlacedOrders[so.supplier.id];
         const isReopened = !!reopenedPOId;
+
+        // Minimum order value (Graeme, 2026-10-01). Below it → amber notice
+        // plus suggestions to move items across; at/above it → unchanged.
+        const minimumOrderValue = supplierDirectory.get(so.supplier.id)?.minimumOrderValue ?? null;
+        const minimumState = hasMinimum(minimumOrderValue)
+          ? (() => {
+              const v = orderValueAtSupplier(orderableLines, so.supplier.id, pricingById);
+              return { minimum: minimumOrderValue, value: v, plan: suggestTopUps(so.supplier.id, topUpCards, pricingById) };
+            })()
+          : null;
+        const unconfirmedPriceIds = new Set(minimumState?.value.unconfirmedIngredientIds ?? []);
 
         // Pre-filled order message links. Email is available on EVERY order
         // with items — a supplier without a saved address opens a blank-To
@@ -1923,6 +2017,11 @@ export default function Orders() {
                       <> &middot; {nonRequiredCount} stocked</>
                     )}
                     {cost > 0 && <> &middot; &pound;{cost.toFixed(2)} est.</>}
+                    {minimumState && (
+                      <> &middot; {minimumState.plan.gap > 0
+                        ? <span className="text-amber-700 dark:text-amber-400 font-medium">under &pound;{minimumState.minimum.toFixed(2)} min</span>
+                        : <span className="text-green-700 dark:text-green-400">&pound;{minimumState.minimum.toFixed(2)} min met</span>}</>
+                    )}
                   </p>
                   <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
                     <Truck className="w-3 h-3 inline shrink-0" />
@@ -1974,6 +2073,17 @@ export default function Orders() {
                 {expanded ? <ChevronUp className="w-5 h-5 text-muted-foreground" /> : <ChevronDown className="w-5 h-5 text-muted-foreground" />}
               </div>
             </button>
+
+            {minimumState && minimumState.plan.gap > 0 && orderableLines.length > 0 && (
+              <MinimumOrderNotice
+                supplierName={so.supplier.name}
+                minimum={minimumState.minimum}
+                value={minimumState.value.value}
+                unconfirmedCount={minimumState.value.unconfirmedIngredientIds.length}
+                plan={minimumState.plan}
+                onMove={sug => moveForMinimum(sug, so.supplier.id, so.supplier.name)}
+              />
+            )}
 
             {expanded && (
               <div className="border-t border-border">
@@ -2054,6 +2164,14 @@ export default function Orders() {
                             {line.isKanban && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-500/10 text-amber-600 mt-0.5">
                                 Kanban
+                              </span>
+                            )}
+                            {unconfirmedPriceIds.has(line.ingredientId) && (
+                              <span
+                                className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-500/10 text-amber-700 dark:text-amber-400 mt-0.5 ml-1"
+                                title={`No ${so.supplier.name} price saved for this item — priced at its usual supplier's price. Add it on the ingredient (Price at secondary supplier).`}
+                              >
+                                Price not confirmed
                               </span>
                             )}
                           </td>
