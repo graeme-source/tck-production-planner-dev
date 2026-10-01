@@ -36,14 +36,22 @@ export function isMeatCookSubRecipe(input: { hasRawMeatComponent: boolean; hasMa
   return input.hasRawMeatComponent && input.hasMarinadeLinkedComponent;
 }
 
-/** Total grams across a run, converting kg-unit components. */
-export function subMarinadeTotalGrams(
+/** Unrounded grams across a run, converting kg-unit components. Per-batch
+ *  maths (the slow-meat tray limit) needs this so whole-gram rounding
+ *  doesn't multiply up across many batches. */
+export function subMarinadeExactGrams(
   s: SubMarinadeScale & { unit: string | null; portionsPerBatch: number; batchesTarget: number },
 ): number {
   const perPortion = subMarinadeQtyPerPortion(s);
   const total = perPortion * s.portionsPerBatch * s.batchesTarget;
-  const grams = (s.unit ?? "kg").toLowerCase() === "kg" || (s.unit ?? "").toLowerCase() === "l"
+  return (s.unit ?? "kg").toLowerCase() === "kg" || (s.unit ?? "").toLowerCase() === "l"
     ? total * 1000
     : total;
-  return Math.round(grams);
+}
+
+/** Total grams across a run, converting kg-unit components. */
+export function subMarinadeTotalGrams(
+  s: SubMarinadeScale & { unit: string | null; portionsPerBatch: number; batchesTarget: number },
+): number {
+  return Math.round(subMarinadeExactGrams(s));
 }

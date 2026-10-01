@@ -18,6 +18,7 @@ import { logFridgeStockChange, type FridgeChangeSource } from "../lib/fridge-sto
 import { londonDateString, londonStartOfDay } from "../lib/london-time";
 import { builtPortionWeightG } from "../lib/built-portion-weight";
 import { subMarinadeQtyPerPortion, subMarinadeTotalGrams, isMeatCookSubRecipe } from "../lib/sub-recipe-marinades";
+import { loadRawMeatMarinades, type RawMeatMarinade } from "../lib/raw-meat-marinades";
 import { productionDateFromJulianBatch } from "../lib/julian-batch";
 import { loadMinShelfDaysRules, minShelfDaysFor } from "../lib/min-shelf-days";
 import { getStandardBreakConfig, computeBatchesPerHour } from "../lib/batches-per-hour";
@@ -4664,217 +4665,21 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       });
     }
 
-    let marinades: Array<{
-      rawMeatIngredientId: number;
-      marinadeIngredientId: number | null;
-      marinadeIngredientName: string | null;
-      marinadeSubRecipeId: number | null;
-      marinadeSubRecipeName: string | null;
-      totalGrams: number;
-      // True = held back from prep day; the mixing/cooking station adds it
-      // on production day. Weight still counts toward tray capacity.
-      addAtCooking: boolean;
-    }> = [];
-
+    // Marinade gathering moved to lib/raw-meat-marinades.ts (2026-10-01) so
+    // the slow-meat tray limit on Create Plan counts the same tray weights.
+    let marinades: Omit<RawMeatMarinade, "exactGrams">[] = [];
     if (station === "prep_meat" || station === "all") {
-      const marinadeTargetAlias = alias(ingredientsTable, "marinadeTarget");
-      const marinadeIngRows = await db
-        .select({
-          ingredientId: recipeIngredientsTable.ingredientId,
-          ingredientName: ingredientsTable.name,
-          quantity: recipeIngredientsTable.quantity,
-          unit: ingredientsTable.unit,
-          marinadeForIngredientId: recipeIngredientsTable.marinadeForIngredientId,
-          marinadeAddAtCooking: recipeIngredientsTable.marinadeAddAtCooking,
-          targetCategory: marinadeTargetAlias.category,
-        })
-        .from(recipeIngredientsTable)
-        .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
-        .leftJoin(marinadeTargetAlias, eq(recipeIngredientsTable.marinadeForIngredientId, marinadeTargetAlias.id))
-        .where(eq(recipeIngredientsTable.recipeId, planItem.recipeId));
-
-      for (const mr of marinadeIngRows) {
-        if (!mr.marinadeForIngredientId) continue;
-        if (mr.targetCategory !== "raw_meat") continue;
-        hasRelevantIngredients = true;
-        const totalQty = Number(mr.quantity) * portionsPerBatch * batchesTarget;
-        const totalGrams = mr.unit === "kg" ? Math.round(totalQty * 1000) : Math.round(totalQty);
-        marinades.push({
-          rawMeatIngredientId: mr.marinadeForIngredientId,
-          marinadeIngredientId: mr.ingredientId,
-          marinadeIngredientName: mr.ingredientName ?? null,
-          marinadeSubRecipeId: null,
-          marinadeSubRecipeName: null,
-          totalGrams,
-          addAtCooking: mr.marinadeAddAtCooking ?? false,
-        });
-      }
-
-      const marinadeSubTargetAlias = alias(ingredientsTable, "marinadeSubTarget");
-      const marinadeSubRows = await db
-        .select({
-          subRecipeId: recipeSubRecipesTable.subRecipeId,
-          subRecipeName: subRecipesTable.name,
-          quantity: recipeSubRecipesTable.quantity,
-          marinadeForIngredientId: recipeSubRecipesTable.marinadeForIngredientId,
-          marinadeAddAtCooking: recipeSubRecipesTable.marinadeAddAtCooking,
-          targetCategory: marinadeSubTargetAlias.category,
-        })
-        .from(recipeSubRecipesTable)
-        .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
-        .leftJoin(marinadeSubTargetAlias, eq(recipeSubRecipesTable.marinadeForIngredientId, marinadeSubTargetAlias.id))
-        .where(eq(recipeSubRecipesTable.recipeId, planItem.recipeId));
-
-      for (const sr of marinadeSubRows) {
-        if (!sr.marinadeForIngredientId) continue;
-        if (sr.targetCategory !== "raw_meat") continue;
-        hasRelevantIngredients = true;
-        const totalQty = Number(sr.quantity) * portionsPerBatch * batchesTarget;
-        const totalGrams = Math.round(totalQty * 1000);
-        marinades.push({
-          rawMeatIngredientId: sr.marinadeForIngredientId,
-          marinadeIngredientId: null,
-          marinadeIngredientName: null,
-          marinadeSubRecipeId: sr.subRecipeId,
-          marinadeSubRecipeName: sr.subRecipeName ?? null,
-          totalGrams,
-          addAtCooking: sr.marinadeAddAtCooking ?? false,
-        });
-      }
-
-      // Marinades living INSIDE a sub-recipe this recipe uses (the Philly
-      // slow-cook beef pattern, migration 0111): the sub's marinade-flagged
-      // ingredient components and nested sub-recipes (rubs) group under
-      // their raw meat exactly like recipe-level rows, scaled by the
-      // recipe's usage of the sub over its yield.
-      {
-        const marinadeInnerTarget = alias(ingredientsTable, "marinadeInnerTarget");
-        const usedSubs = await db
-          .select({
-            subRecipeId: recipeSubRecipesTable.subRecipeId,
-            quantity: recipeSubRecipesTable.quantity,
-            subYield: subRecipesTable.yield,
-          })
-          .from(recipeSubRecipesTable)
-          .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
-          .where(and(
-            eq(recipeSubRecipesTable.recipeId, planItem.recipeId),
-            isNull(recipeSubRecipesTable.marinadeForIngredientId),
-          ));
-
-        for (const us of usedSubs) {
-          if (us.subRecipeId == null) continue;
-          const subYield = Number(us.subYield) || 0;
-          if (subYield <= 0) continue;
-          const scale = {
-            subUsagePerPortion: Number(us.quantity) || 0,
-            subYield,
-            portionsPerBatch,
-            batchesTarget,
-          };
-
-          const innerIngRows = await db
-            .select({
-              ingredientId: subRecipeIngredientsTable.ingredientId,
-              ingredientName: ingredientsTable.name,
-              quantity: subRecipeIngredientsTable.quantity,
-              unit: ingredientsTable.unit,
-              marinadeForIngredientId: subRecipeIngredientsTable.marinadeForIngredientId,
-              marinadeAddAtCooking: subRecipeIngredientsTable.marinadeAddAtCooking,
-              targetCategory: marinadeInnerTarget.category,
-            })
-            .from(subRecipeIngredientsTable)
-            .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
-            .leftJoin(marinadeInnerTarget, eq(subRecipeIngredientsTable.marinadeForIngredientId, marinadeInnerTarget.id))
-            .where(eq(subRecipeIngredientsTable.subRecipeId, us.subRecipeId));
-
-          for (const mr of innerIngRows) {
-            if (!mr.marinadeForIngredientId) continue;
-            if (mr.targetCategory !== "raw_meat") continue;
-            hasRelevantIngredients = true;
-            marinades.push({
-              rawMeatIngredientId: mr.marinadeForIngredientId,
-              marinadeIngredientId: mr.ingredientId,
-              marinadeIngredientName: mr.ingredientName ?? null,
-              marinadeSubRecipeId: null,
-              marinadeSubRecipeName: null,
-              totalGrams: subMarinadeTotalGrams({ ...scale, componentQty: Number(mr.quantity) || 0, unit: mr.unit }),
-              addAtCooking: mr.marinadeAddAtCooking ?? false,
-            });
-          }
-
-          const innerSubTarget = alias(ingredientsTable, "marinadeInnerSubTarget");
-          const innerSubAlias = alias(subRecipesTable, "marinadeInnerSub");
-          const innerSubRows = await db
-            .select({
-              componentSubRecipeId: subRecipeSubRecipesTable.componentSubRecipeId,
-              componentName: innerSubAlias.name,
-              componentYieldUnit: innerSubAlias.yieldUnit,
-              quantity: subRecipeSubRecipesTable.quantity,
-              marinadeForIngredientId: subRecipeSubRecipesTable.marinadeForIngredientId,
-              marinadeAddAtCooking: subRecipeSubRecipesTable.marinadeAddAtCooking,
-              targetCategory: innerSubTarget.category,
-            })
-            .from(subRecipeSubRecipesTable)
-            .leftJoin(innerSubAlias, eq(subRecipeSubRecipesTable.componentSubRecipeId, innerSubAlias.id))
-            .leftJoin(innerSubTarget, eq(subRecipeSubRecipesTable.marinadeForIngredientId, innerSubTarget.id))
-            .where(eq(subRecipeSubRecipesTable.subRecipeId, us.subRecipeId));
-
-          for (const mr of innerSubRows) {
-            if (!mr.marinadeForIngredientId) continue;
-            if (mr.targetCategory !== "raw_meat") continue;
-            hasRelevantIngredients = true;
-            marinades.push({
-              rawMeatIngredientId: mr.marinadeForIngredientId,
-              marinadeIngredientId: null,
-              marinadeIngredientName: null,
-              marinadeSubRecipeId: mr.componentSubRecipeId,
-              marinadeSubRecipeName: mr.componentName ?? null,
-              totalGrams: subMarinadeTotalGrams({ ...scale, componentQty: Number(mr.quantity) || 0, unit: mr.componentYieldUnit }),
-              addAtCooking: mr.marinadeAddAtCooking ?? false,
-            });
-          }
-        }
-      }
-
-      if (marinades.length === 0) {
-        const oldMarinadeIngAlias = alias(ingredientsTable, "marinadeIng");
-        const oldMarinadeSubAlias = alias(subRecipesTable, "marinadeSub");
-        const oldRawMeatAlias = alias(ingredientsTable, "oldRawMeat");
-        const oldMarinadeRows = await db
-          .select({
-            rawMeatIngredientId: recipeMeatMarinadesTable.rawMeatIngredientId,
-            marinadeIngredientId: recipeMeatMarinadesTable.marinadeIngredientId,
-            marinadeIngredientName: oldMarinadeIngAlias.name,
-            marinadeSubRecipeId: recipeMeatMarinadesTable.marinadeSubRecipeId,
-            marinadeSubRecipeName: oldMarinadeSubAlias.name,
-            gramsPerKg: recipeMeatMarinadesTable.gramsPerKg,
-            rawMeatCategory: oldRawMeatAlias.category,
-          })
-          .from(recipeMeatMarinadesTable)
-          .leftJoin(oldMarinadeIngAlias, eq(recipeMeatMarinadesTable.marinadeIngredientId, oldMarinadeIngAlias.id))
-          .leftJoin(oldMarinadeSubAlias, eq(recipeMeatMarinadesTable.marinadeSubRecipeId, oldMarinadeSubAlias.id))
-          .leftJoin(oldRawMeatAlias, eq(recipeMeatMarinadesTable.rawMeatIngredientId, oldRawMeatAlias.id))
-          .where(eq(recipeMeatMarinadesTable.recipeId, planItem.recipeId));
-
-        for (const mr of oldMarinadeRows) {
-          if (mr.rawMeatCategory !== "raw_meat") continue;
-          hasRelevantIngredients = true;
-          const rawMeatIng = ingredients.find(i => i.ingredientId === mr.rawMeatIngredientId);
-          const rawMeatKg = rawMeatIng ? rawMeatIng.rawQty / 1000 : 0;
-          const gpkg = Number(mr.gramsPerKg);
-          const totalGrams = Math.round(rawMeatKg * gpkg);
-          marinades.push({
-            rawMeatIngredientId: mr.rawMeatIngredientId,
-            marinadeIngredientId: mr.marinadeIngredientId ?? null,
-            marinadeIngredientName: mr.marinadeIngredientName ?? null,
-            marinadeSubRecipeId: mr.marinadeSubRecipeId ?? null,
-            marinadeSubRecipeName: mr.marinadeSubRecipeName ?? null,
-            totalGrams,
-            addAtCooking: false,
-          });
-        }
-      }
+      const loaded = await loadRawMeatMarinades({
+        recipeId: planItem.recipeId,
+        portionsPerBatch,
+        batchesTarget,
+        legacyRawMeatKgFor: id => {
+          const rawMeatIng = ingredients.find(i => i.ingredientId === id);
+          return rawMeatIng ? rawMeatIng.rawQty / 1000 : 0;
+        },
+      });
+      if (loaded.length > 0) hasRelevantIngredients = true;
+      marinades = loaded.map(({ exactGrams: _exactGrams, ...m }) => m);
     }
 
     if (!hasRelevantIngredients) continue;
