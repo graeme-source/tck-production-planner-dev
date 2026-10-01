@@ -13,6 +13,10 @@ export const ingredientsTable = pgTable("ingredients", {
   supplierPartNumber: text("supplier_part_number"),
   supplierId: integer("supplier_id").references(() => suppliersTable.id, { onDelete: "set null" }),
   secondarySupplierId: integer("secondary_supplier_id").references(() => suppliersTable.id, { onDelete: "set null" }),
+  // Price per pack at the SECONDARY supplier (costPerPack is the primary's).
+  // Optional — NULL = not known. Used by the Orders page to price an item
+  // moved onto the secondary supplier's order (minimum order top-ups).
+  secondaryCostPerPack: numeric("secondary_cost_per_pack", { precision: 10, scale: 4 }),
   orderingUrl: text("ordering_url"),
   // Shopify inventory link for bought-in retail items (e.g. Cakehead
   // brownies): when a delivery line for this ingredient is marked received,

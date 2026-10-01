@@ -103,6 +103,8 @@ export function IngredientFormDialog({
   const watchedUnit = watch("unit");
   const watchedPackWeight = watch("packWeight");
   const watchedCostPerPack = watch("costPerPack");
+  const watchedSecondarySupplierId = Number(watch("secondarySupplierId") ?? 0);
+  const secondarySupplierName = suppliers.find(s => s.id === watchedSecondarySupplierId)?.name ?? null;
   const watchedProcessingRatioPct = watch("processingRatioPct");
   const watchedStockCheckEnabled = watch("stockCheckEnabled");
   const watchedStockCheckFrequency = watch("stockCheckFrequency");
@@ -1088,6 +1090,33 @@ export function IngredientFormDialog({
               </select>
             </div>
           </div>
+
+          {/* Price at the secondary supplier (Graeme, 2026-10-01). Optional —
+              the Orders page uses it when this item is moved onto that
+              supplier's order to reach their minimum order value. */}
+          {watchedSecondarySupplierId > 0 && (
+            <div>
+              <label className="text-sm font-medium mb-1 block">
+                Price at {secondarySupplierName ?? "secondary supplier"} (per pack)
+              </label>
+              <div className="relative max-w-[200px]">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">£</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  inputMode="decimal"
+                  {...register("secondaryCostPerPack")}
+                  className={cn(inputClass, "pl-7")}
+                  placeholder="Not known"
+                />
+              </div>
+              {errors.secondaryCostPerPack && <span className="text-destructive text-xs">{errors.secondaryCostPerPack.message}</span>}
+              <p className="text-xs text-muted-foreground mt-1">
+                Optional. Used on the Orders page to cost moving this item onto {secondarySupplierName ?? "the secondary supplier"}&rsquo;s order. Leave blank if you don&rsquo;t know it.
+              </p>
+            </div>
+          )}
 
           <ShopifyLinkSection watch={watch} setValue={setValue} register={register} inputClass={inputClass} />
 

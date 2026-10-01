@@ -1,4 +1,4 @@
-import { pgTable, serial, text, timestamp, integer, boolean } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, timestamp, integer, boolean, numeric } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -22,6 +22,9 @@ export const suppliersTable = pgTable("suppliers", {
   // etc.) — goods-in skips the "Invoice filed" check for their deliveries.
   invoiceNotRequired: boolean("invoice_not_required").notNull().default(false),
   cutoffTime: text("cutoff_time").notNull().default("17:00"),
+  // Minimum order spend in £ (e.g. 75.00). NULL = no minimum. The Orders page
+  // warns when a draft order is below it and suggests items to move across.
+  minimumOrderValue: numeric("minimum_order_value", { precision: 10, scale: 2 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

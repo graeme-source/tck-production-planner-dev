@@ -38,6 +38,7 @@ import stockTransfersRouter from "./stock-transfers";
 import dptIngredientRequirementsRouter from "./dpt-ingredient-requirements";
 import kanbansRouter from "./kanbans";
 import ordersRouter from "./orders";
+import supplierPricingRouter from "./supplier-pricing";
 import deliveriesRouter from "./deliveries";
 import unexpectedDeliveriesRouter from "./unexpected-deliveries";
 import stockControlRouter from "./stock-control";
@@ -226,6 +227,8 @@ router.use("/stock-transfers", stockTransfersRouter);
 router.use("/dpt-ingredient-requirements", dptIngredientRequirementsRouter);
 router.use("/kanbans", kanbansRouter);
 router.use("/orders", ordersRouter);
+// Primary + secondary supplier pack prices — minimum-order top-ups on Orders.
+router.use("/supplier-pricing", supplierPricingRouter);
 // Unexpected deliveries first: the deliveries router's GET /:id would
 // otherwise read "unexpected" as a purchase-order id.
 router.use("/deliveries/unexpected", unexpectedDeliveriesRouter);

@@ -33,6 +33,9 @@ export const ingredientFormSchema = z.object({
   supplierPartNumber: z.string().optional(),
   supplierId: z.coerce.number().optional(),
   secondarySupplierId: z.coerce.number().optional(),
+  // Price per pack at the secondary supplier — optional. Prices items moved
+  // onto that supplier's order to reach its minimum (Orders page).
+  secondaryCostPerPack: nullableNumber((n) => n.min(0, "Must be positive").max(100000)),
   orderingUrl: z.string().optional(),
   notes: z.string().optional(),
   category: z.string().optional(),
@@ -143,6 +146,7 @@ export function emptyIngredientFormDefaults(
     supplierPartNumber: "",
     supplierId: 0,
     secondarySupplierId: 0,
+    secondaryCostPerPack: null,
     orderingUrl: "",
     notes: "",
     category: "",
@@ -225,6 +229,7 @@ export function ingredientToFormValues(
     supplierPartNumber: item.supplierPartNumber ?? "",
     supplierId: item.supplierId ?? 0,
     secondarySupplierId: item.secondarySupplierId ?? 0,
+    secondaryCostPerPack: num(it.secondaryCostPerPack),
     orderingUrl: item.orderingUrl ?? "",
     notes: item.notes ?? "",
     category: item.category ?? "",
@@ -295,6 +300,9 @@ export function buildIngredientPayload(data: IngredientFormValues) {
     supplierId: data.supplierId && data.supplierId > 0 ? data.supplierId : null,
     secondarySupplierId:
       data.secondarySupplierId && data.secondarySupplierId > 0 ? data.secondarySupplierId : null,
+    // Only meaningful while there is a secondary supplier.
+    secondaryCostPerPack:
+      data.secondarySupplierId && data.secondarySupplierId > 0 ? (data.secondaryCostPerPack ?? null) : null,
     orderingUrl: data.orderingUrl || null,
     notes: data.notes || null,
     category: data.category || null,
