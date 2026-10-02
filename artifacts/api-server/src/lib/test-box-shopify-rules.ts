@@ -328,8 +328,11 @@ export function newCollectionSettings(boxName: string, previous: CollectionInfo 
 }
 
 // ── Readiness ───────────────────────────────────────────────────────────────
-export function missingWriteScopes(scopes: string[]): string[] {
-  return REQUIRED_WRITE_SCOPES.filter(s => !scopes.includes(s));
+/** …and to make the discount code. */
+export const DISCOUNT_WRITE_SCOPES: readonly string[] = ["write_discounts"];
+
+export function missingWriteScopes(scopes: string[], required: readonly string[] = REQUIRED_WRITE_SCOPES): string[] {
+  return required.filter(s => !scopes.includes(s));
 }
 
 /** Launch steps the run can tick: products once EVERY recipe in the box has a
@@ -371,6 +374,22 @@ export function recipeWarnings(input: {
     warnings.push(`Already ${input.existingStatus.toLowerCase()} in Shopify — its status is left alone.`);
   }
   return { warnings, blocking };
+}
+
+/**
+ * Which of a new product's variants to link to the recipe: a one-variant
+ * product (every test-box product so far: "2 Pack") links that variant;
+ * otherwise only variants whose title matches a template variant that is the
+ * MAIN mapping of its recipe — an "8 Pack Bag" is never linked as a 2-pack.
+ */
+export function variantsToLink(
+  newVariants: Array<{ id: string; title: string }>,
+  templateVariants: Array<{ id: string; title: string }>,
+  templateMainVariantIds: string[],
+): string[] {
+  if (newVariants.length === 1) return [newVariants[0].id];
+  const mainTitles = templateVariants.filter(v => templateMainVariantIds.includes(v.id)).map(v => norm(v.title));
+  return newVariants.filter(v => mainTitles.includes(norm(v.title))).map(v => v.id);
 }
 
 /** Normalised product title, for spotting a product already made by hand. */

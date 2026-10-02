@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 // these tests never touch it — every call goes to the fake store below.
 vi.mock("../services/shopify", () => ({ shopifyGraphQL: vi.fn(), shopifyGraphQLWrite: vi.fn() }));
 
-import { applyRecipeProduct, createBoxCollection, type ApplyInput, type ShopifyPort } from "./test-box-shopify";
+import { applyRecipeProduct, createBoxCollection, createDiscountCode, type ApplyInput, type ShopifyPort } from "./test-box-shopify";
 import { MF } from "./test-box-shopify-rules";
 
 class BlockedError extends Error {}
@@ -97,6 +97,26 @@ describe("making one recipe's product (fake store, no network)", () => {
     const { port } = fakeStore();
     port.write = async <T,>() => ({ productDuplicate: { newProduct: null, userErrors: [{ message: "Access denied" }] } }) as T;
     await expect(applyRecipeProduct(port, input, async () => {})).rejects.toThrow("Access denied");
+  });
+});
+
+describe("the discount code", () => {
+  it("reports a code Shopify already has as 'taken' (so a new one is generated), other refusals as errors", async () => {
+    const port: ShopifyPort = {
+      read: async <T,>() => ({}) as T,
+      write: async <T,>() => ({ discountCodeBasicCreate: { codeDiscountNode: null, userErrors: [{ code: "TAKEN", message: "Code must be unique" }] } }) as T,
+    };
+    expect(await createDiscountCode(port, {})).toBe("taken");
+    port.write = async <T,>() => ({ discountCodeBasicCreate: { codeDiscountNode: null, userErrors: [{ code: "INVALID", message: "Access denied" }] } }) as T;
+    await expect(createDiscountCode(port, {})).rejects.toThrow("Access denied");
+    port.write = async <T,>() => ({ discountCodeBasicCreate: { codeDiscountNode: { id: "gid://shopify/DiscountCodeNode/42" }, userErrors: [] } }) as T;
+    expect(await createDiscountCode(port, {})).toEqual({ id: "42" });
+  });
+
+  it("is a write — blocked writes never reach Shopify", async () => {
+    const { port, writes } = fakeStore({ blocked: true });
+    await expect(createDiscountCode(port, {})).rejects.toThrow("switched off");
+    expect(writes).toHaveLength(0);
   });
 });
 

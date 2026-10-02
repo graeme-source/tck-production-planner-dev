@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   MF, chooseTemplate, collectionHandle, copiedFromRecipeId, decideRecipeAction, descriptionHtml, findBoxCollection,
   launchTicks, metafieldPlan, missingWriteScopes, newCollectionSettings, nutritionRows, perPackValue,
-  previousBoxCollection, recipeWarnings, sameTitle, singleLine, tagChanges, templateSearchQuery, testBoxTags,
+  previousBoxCollection, recipeWarnings, sameTitle, singleLine, tagChanges, templateSearchQuery, testBoxTags, variantsToLink,
   type CollectionInfo, type MetafieldValue,
 } from "./test-box-shopify-rules";
 
@@ -161,6 +161,7 @@ describe("readiness and ticks", () => {
   it("needs write_products", () => {
     expect(missingWriteScopes(["read_products", "write_orders"])).toEqual(["write_products"]);
     expect(missingWriteScopes(["write_products"])).toEqual([]);
+    expect(missingWriteScopes(["write_products"], ["write_discounts"])).toEqual(["write_discounts"]);
   });
   it("ticks the products step only when every recipe is linked", () => {
     expect(launchTicks({ recipeIds: [1, 2], linkedRecipeIds: [1], collectionExists: true })).toEqual({ products: false, collection: true });
@@ -176,6 +177,13 @@ describe("readiness and ticks", () => {
     expect(w.warnings.join(" ")).toContain("Chorizo");
     expect(recipeWarnings({ ...base, action: "update", existingStatus: "ACTIVE" }).warnings[0]).toContain("status is left alone");
   });
+  it("links the one 2 Pack variant; with more, only the template's main-mapped one", () => {
+    expect(variantsToLink([{ id: "a", title: "2 Pack" }], [], [])).toEqual(["a"]);
+    const tpl = [{ id: "t1", title: "2 Pack" }, { id: "t2", title: "8 Pack Bag" }];
+    expect(variantsToLink([{ id: "a", title: "2 Pack" }, { id: "b", title: "8 Pack Bag" }], tpl, ["t1"])).toEqual(["a"]);
+    expect(variantsToLink([{ id: "a", title: "2 Pack" }, { id: "b", title: "8 Pack Bag" }], tpl, [])).toEqual([]);
+  });
+
   it("spots the same product title written differently", () => {
     expect(sameTitle("Properoni Chicken & Chorizo", "properoni chicken and chorizo")).toBe(true);
     expect(sameTitle("Properoni Chicken", "Properoni Chorizo")).toBe(false);

@@ -107,6 +107,7 @@ import marketingEmailsRouter from "./marketing-emails";
 import marketingApprovalsRouter from "./marketing-approvals";
 import marketingTodosRouter from "./marketing-todos";
 import testBoxesRouter from "./test-boxes";
+import testBoxShopifyRouter from "./test-box-shopify";
 import founderNumbersRouter from "./founder-numbers";
 import surveysRouter from "./surveys";
 import financeRouter from "./finance";
@@ -284,6 +285,9 @@ router.use("/marketing-calendar/approvals", marketingApprovalsRouter);
 router.use("/marketing-calendar/todos", marketingTodosRouter);
 router.use("/marketing-calendar", marketingCalendarRouter);
 // Test-box scheduling (same access as Sales & Marketing, guarded inside).
+// /:id/shopify/* — draft Shopify products for a box (guarded inside; writes
+// also need manager/admin and go through the Shopify write guard).
+router.use("/test-boxes", testBoxShopifyRouter);
 router.use("/test-boxes", testBoxesRouter);
 // Numbers page trend graphs — founder account only, gated inside the router.
 router.use("/founder-numbers", founderNumbersRouter);

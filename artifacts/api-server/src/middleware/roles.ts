@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 // sessions created before userRole was written into the session (same pattern
 // as routes/index.ts). Roles: admin > manager > viewer.
 
-async function resolveRole(req: Request): Promise<string | undefined> {
+export async function resolveRole(req: Request): Promise<string | undefined> {
   if (req.session.userRole) return req.session.userRole;
   if (req.session.userId) {
     const [user] = await db

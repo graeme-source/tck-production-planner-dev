@@ -207,7 +207,7 @@ export function shopifyWritesBlocked(): boolean {
 
 /** Shopify admin link for a product / collection (numeric id). Server-side
  *  for the same reason as shopifyAdminOrderUrl: the store domain is an env var. */
-export function shopifyAdminUrl(kind: "products" | "collections", numericId: string | number): string {
+export function shopifyAdminUrl(kind: "products" | "collections" | "discounts", numericId: string | number): string {
   return `https://${STORE_DOMAIN}/admin/${kind}/${numericId}`;
 }
 

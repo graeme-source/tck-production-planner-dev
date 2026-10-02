@@ -12,6 +12,10 @@
  *   productVariantsBulkUpdate(productId, variants: [{ id, barcode: null }])
  *   metafieldsDelete / metafieldsSet
  *   collectionCreate(input: { title, ruleSet: TAG EQUALS box, sortOrder })
+ *   discountCodeBasicCreate(basicCodeDiscount) — needs write_discounts
+ * The app's Shopify connection had NEITHER write_products NOR write_discounts
+ * on 2026-10-02 (read-only check of currentAppInstallation.accessScopes), so
+ * the previews say so and the creates refuse until the scopes are added.
  * Every write goes through ShopifyPort.write → shopifyGraphQLWrite, which
  * refuses (throws ShopifyWritesBlockedError) on staging or with
  * BLOCK_SHOPIFY_WRITES=true. Nothing is ever published or set Active.
@@ -20,6 +24,7 @@ import { shopifyGraphQL, shopifyGraphQLWrite } from "../services/shopify";
 import {
   metafieldPlan, type CollectionInfo, type MetafieldRef, type MetafieldValue, type RecipeContent, type TemplateCandidate,
 } from "./test-box-shopify-rules";
+import type { ExistingDiscount } from "./test-box-discount-rules";
 
 export interface ShopifyPort {
   read<T>(query: string, variables?: Record<string, unknown>): Promise<T>;
@@ -283,3 +288,65 @@ export async function createBoxCollection(port: ShopifyPort, settings: { title: 
 }
 
 export const collectionGid = (id: string) => `${COLLECTION_GID}${id}`;
+
+// ── Discount codes ──────────────────────────────────────────────────────────
+type RawBasic = {
+  __typename: string;
+  title?: string;
+  appliesOncePerCustomer?: boolean;
+  usageLimit?: number | null;
+  combinesWith?: { orderDiscounts: boolean; productDiscounts: boolean; shippingDiscounts: boolean };
+  customerGets?: {
+    appliesOnOneTimePurchase: boolean;
+    appliesOnSubscription: boolean;
+    value: { __typename: string; percentage?: number };
+    items: { __typename: string; collections?: { nodes: Array<{ title: string }> } };
+  };
+};
+
+/** Earlier "CC…" codes, newest first — the test-box ones are copied. */
+export async function fetchEarlierCodes(port: ShopifyPort): Promise<ExistingDiscount[]> {
+  const r = await port.read<{ codeDiscountNodes: { nodes: Array<{ codeDiscount: RawBasic }> } }>(
+    `{ codeDiscountNodes(first: 25, query: "title:CC*", sortKey: CREATED_AT, reverse: true) { nodes { codeDiscount { __typename
+      ... on DiscountCodeBasic { title appliesOncePerCustomer usageLimit
+        combinesWith { orderDiscounts productDiscounts shippingDiscounts }
+        customerGets { appliesOnOneTimePurchase appliesOnSubscription
+          value { __typename ... on DiscountPercentage { percentage } }
+          items { __typename ... on DiscountCollections { collections(first: 5) { nodes { title } } } } } } } } } }`,
+  );
+  return r.codeDiscountNodes.nodes
+    .map(n => n.codeDiscount)
+    .filter(c => c.__typename === "DiscountCodeBasic" && c.customerGets && c.combinesWith)
+    .map(c => ({
+      title: c.title ?? "",
+      percentage: c.customerGets!.value.__typename === "DiscountPercentage" ? c.customerGets!.value.percentage ?? null : null,
+      collectionTitles: c.customerGets!.items.collections?.nodes.map(n => n.title) ?? [],
+      combinesWith: c.combinesWith!,
+      appliesOncePerCustomer: c.appliesOncePerCustomer ?? false,
+      usageLimit: c.usageLimit ?? null,
+      appliesOnOneTimePurchase: c.customerGets!.appliesOnOneTimePurchase,
+      appliesOnSubscription: c.customerGets!.appliesOnSubscription,
+    }));
+}
+
+export async function discountCodeTaken(port: ShopifyPort, code: string): Promise<boolean> {
+  const r = await port.read<{ codeDiscountNodeByCode: { id: string } | null }>(
+    `query($code: String!) { codeDiscountNodeByCode(code: $code) { id } }`, { code },
+  );
+  return r.codeDiscountNodeByCode != null;
+}
+
+/** discountCodeBasicCreate. Returns the new discount's numeric id, or
+ *  "taken" when Shopify says the code already exists. */
+export async function createDiscountCode(port: ShopifyPort, input: Record<string, unknown>): Promise<{ id: string } | "taken"> {
+  const r = await port.write<{ discountCodeBasicCreate: { codeDiscountNode: { id: string } | null; userErrors: Array<{ field?: string[] | null; code?: string | null; message: string }> } }>(
+    "discountCodeBasicCreate",
+    `mutation($d: DiscountCodeBasicInput!) { discountCodeBasicCreate(basicCodeDiscount: $d) { codeDiscountNode { id } userErrors { field code message } } }`,
+    { d: input },
+  );
+  const errs = r.discountCodeBasicCreate.userErrors;
+  if (errs.some(e => e.code === "TAKEN" || /already|unique|taken/i.test(e.message))) return "taken";
+  check("the discount code", errs);
+  if (!r.discountCodeBasicCreate.codeDiscountNode) throw new Error("Shopify didn't return the new discount");
+  return { id: numericId(r.discountCodeBasicCreate.codeDiscountNode.id) };
+}
