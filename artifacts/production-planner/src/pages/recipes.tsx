@@ -2525,7 +2525,7 @@ export default function Recipes() {
 
       {/* Drafts · On the menu · Archived (migrations 0141, 0142). Nothing is
           deleted in any move; drafts and archived recipes are kept in full. */}
-      <div className="flex max-w-full overflow-x-auto rounded-xl border border-border bg-card p-1 gap-1 w-fit" role="tablist" aria-label="Which recipes">
+      <div className="grid grid-cols-3 sm:inline-flex w-full sm:w-fit rounded-xl border border-border bg-card p-1 gap-1" role="tablist" aria-label="Which recipes">
         {([
           { key: "drafts", label: "Drafts", count: stageCounts.draft, icon: <FlaskConical className="w-4 h-4" /> },
           { key: "menu", label: "On the menu", count: stageCounts.active, icon: null },
@@ -2537,7 +2537,7 @@ export default function Recipes() {
             role="tab"
             aria-selected={view === t.key}
             onClick={() => setView(t.key)}
-            className={cn("min-h-11 px-4 sm:px-5 rounded-lg text-base font-medium transition-colors inline-flex items-center gap-2 whitespace-nowrap", view === t.key ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+            className={cn("min-h-11 px-2 sm:px-5 py-1 rounded-lg text-sm sm:text-base font-medium leading-tight transition-colors inline-flex items-center justify-center text-center gap-1.5 sm:gap-2 sm:whitespace-nowrap", view === t.key ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
           >
             {t.icon}{t.label} ({t.count})
           </button>
