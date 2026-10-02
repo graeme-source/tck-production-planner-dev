@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeRecipes, archivedLabel, archivedRecipeIds, archivedRecipes, archiveWarnings, isArchived, menuFlagQuestion, planDayPhrase } from "./recipe-archive";
+import { activeRecipes, archivedLabel, archivedRecipeIds, archivedRecipes, archiveWarnings, draftMenuQuestion, draftMenuTickNotice, draftRecipeIds, draftRecipes, isArchived, isDraftRecipe, menuFlagQuestion, notArchivedRecipes, planDayPhrase, recipeStage, recipeStageCounts } from "./recipe-archive";
 
 const list = [
   { id: 1, name: "Philly", archivedAt: null },
@@ -30,6 +30,52 @@ describe("activeRecipes / archivedRecipes", () => {
   it("copes with no data yet", () => {
     expect(activeRecipes(undefined)).toEqual([]);
     expect(archivedRecipes(null)).toEqual([]);
+  });
+});
+
+describe("recipe stages: draft → on the menu → archived (migration 0142)", () => {
+  const mixed = [
+    { id: 1, name: "Philly", archivedAt: null, isDraft: false },
+    { id: 2, name: "Old Pepperoni", archivedAt: "2026-10-02T09:00:00.000Z", isDraft: false },
+    { id: 3, name: "Meatball" },
+    { id: 4, name: "Piri Piri (DRAFT)", archivedAt: null, isDraft: true },
+    { id: 5, name: "Abandoned idea", archivedAt: "2026-10-01T09:00:00.000Z", isDraft: true },
+  ];
+  it("stage = archived if archivedAt, else draft if isDraft, else active", () => {
+    expect(mixed.map(r => recipeStage(r))).toEqual(["active", "archived", "active", "draft", "archived"]);
+    expect(isDraftRecipe(mixed[3])).toBe(true);
+    expect(isDraftRecipe(mixed[4])).toBe(false);
+    expect(recipeStage(undefined)).toBe("active");
+  });
+  it("production pickers hide drafts exactly as they hide archived recipes", () => {
+    expect(activeRecipes(mixed).map(r => r.id)).toEqual([1, 3]);
+  });
+  it("keeps a draft (or archived recipe) that's already chosen, so a saved selection never goes blank", () => {
+    expect(activeRecipes(mixed, [4]).map(r => r.id)).toEqual([1, 3, 4]);
+    expect(activeRecipes(mixed, [5, null]).map(r => r.id)).toEqual([1, 3, 5]);
+  });
+  it("development tools (test boxes, Product Hub, P&L) include drafts but never archived", () => {
+    expect(notArchivedRecipes(mixed).map(r => r.id)).toEqual([1, 3, 4]);
+    expect(notArchivedRecipes(mixed, [2]).map(r => r.id)).toEqual([1, 2, 3, 4]);
+  });
+  it("the Recipes page views and counts", () => {
+    expect(draftRecipes(mixed).map(r => r.id)).toEqual([4]);
+    expect(archivedRecipes(mixed).map(r => r.id)).toEqual([2, 5]);
+    expect(recipeStageCounts(mixed)).toEqual({ draft: 1, active: 2, archived: 2 });
+    expect([...draftRecipeIds(mixed)]).toEqual([4]);
+  });
+  it("asks before moving a core-menu / special recipe to drafts", () => {
+    expect(draftMenuQuestion({ isCoreMenu: false, isCurrentSpecial: false })).toBeNull();
+    const q = draftMenuQuestion({ isCoreMenu: true })!;
+    expect(q.confirmLabel).toBe("Take it off the menu and make it a draft");
+    expect(q.message).toMatch(/core menu recipe\. A draft can't be on the menu/);
+    expect(draftMenuQuestion({ isCurrentSpecial: true })!.message).toMatch(/won't re-tick it as the special or replace whatever is the special/);
+  });
+  it("warns in Edit Recipe that ticking Core menu / Special on a draft puts it on the menu", () => {
+    expect(draftMenuTickNotice(false, { isCoreMenu: true })).toBeNull();
+    expect(draftMenuTickNotice(true, {})).toBeNull();
+    expect(draftMenuTickNotice(true, { isCoreMenu: true })).toMatch(/draft\. Core menu is ticked, so saving puts it on the menu/);
+    expect(draftMenuTickNotice(true, { isCoreMenu: true, isCurrentSpecial: true })).toMatch(/Core menu and Special are ticked/);
   });
 });
 
