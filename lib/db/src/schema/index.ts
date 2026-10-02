@@ -48,3 +48,4 @@ export * from "./person_documents";
 export * from "./marketing";
 export * from "./test_boxes";
 export * from "./defects";
+export * from "./contacts";

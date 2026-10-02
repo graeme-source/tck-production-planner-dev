@@ -54,6 +54,7 @@ import notificationsRouter from "./notifications";
 import employeesRouter from "./employees";
 import returnToWorkRouter from "./return-to-work";
 import stationMessagesRouter from "./station-messages";
+import contactsRouter from "./contacts";
 import employeeReviewsRouter from "./employee-reviews";
 import peopleRouter from "./people";
 import { requirePeopleUnlock } from "../middleware/people-unlock";
@@ -301,6 +302,9 @@ router.use("/employees", employeesRouter);
 // per-route inside via middleware/rtw-access.ts.
 router.use("/return-to-work", returnToWorkRouter);
 router.use("/station-messages", stationMessagesRouter);
+// Contacts directory: anyone signed in reads; managers/admins edit (guarded
+// inside routes/contacts.ts).
+router.use("/contacts", contactsRouter);
 // People section: anyone with People access must have SET their private
 // PIN (428 until they do) and unlocked People with it recently (423)
 // (middleware/people-unlock.ts); everyone else passes straight through to
