@@ -20,7 +20,7 @@ import { FOUNDER_FEATURES, isFounderEmail } from "@workspace/feature-registry";
 import { daysBetween, decideTodoViewers, parseIdList, todosInRange } from "@workspace/marketing-calendar";
 import { validateQuery } from "../middleware/validate";
 import { requireFounderArea } from "../middleware/founder-area-access";
-import { allowedFeatureKeys } from "../lib/feature-access";
+import { salesGrantPeople } from "../lib/sales-area-people";
 
 const router: IRouter = Router();
 router.use(requireFounderArea(FOUNDER_FEATURES.sales));
@@ -37,25 +37,7 @@ const Query = z.object({
 
 /** The other people who can open the marketing calendar (founder excluded —
  *  the founder sees the calendar by being the founder, not by a grant). */
-async function calendarPeople(excludeId: number): Promise<Array<{ id: number; name: string }>> {
-  const rows = await db.execute<{ id: number; name: string; email: string | null }>(sql`
-    SELECT u.id, u.name, u.email
-    FROM feature_grants g
-    JOIN app_users u ON u.id = g.user_id
-    WHERE g.feature_key = ${FOUNDER_FEATURES.sales}
-      AND u.is_active IS NOT FALSE
-      AND u.id <> ${excludeId}
-    ORDER BY u.name
-  `);
-  const out: Array<{ id: number; name: string }> = [];
-  for (const r of rows.rows) {
-    if (isFounderEmail(r.email)) continue;
-    // Same answer the door gives (SOP gate included): a grant that doesn't
-    // currently open the calendar doesn't put someone on this list.
-    if ((await allowedFeatureKeys(r.id)).includes(FOUNDER_FEATURES.sales)) out.push({ id: r.id, name: r.name });
-  }
-  return out;
-}
+const calendarPeople = (excludeId: number) => salesGrantPeople(excludeId);
 
 interface TodoRow {
   [key: string]: unknown;

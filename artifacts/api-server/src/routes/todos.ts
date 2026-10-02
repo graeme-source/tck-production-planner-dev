@@ -3,6 +3,7 @@ import multer from "multer";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
+import { onTodoDoneChanged } from "../lib/test-box-todos";
 
 // ── Per-user to-do lists ────────────────────────────────────────────────────
 // Every user has their own list. Managers and admins can put tasks on
@@ -383,6 +384,9 @@ async function setDone(req: Request, res: Response, done: boolean) {
     `);
     const name = await userName(user.id);
     await addTimeline(task.id, user.id, name, "event", done ? `${name} marked this done` : `${name} reopened this task`);
+    // A test-box to-do: the tick on the box is the source of truth — carry
+    // this across (lib/test-box-todos.ts; logs, never throws).
+    await onTodoDoneChanged(task.id, done, user.id);
     if (done && task.created_by && task.created_by !== user.id) {
       await notify(task.created_by, `${name} completed: ${task.title}`);
     }

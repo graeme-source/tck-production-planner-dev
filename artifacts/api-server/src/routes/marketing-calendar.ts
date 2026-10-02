@@ -14,12 +14,12 @@
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { db, marketingEventsTable, marketingEventHistoryTable, testBoxesTable, usersTable } from "@workspace/db";
-import { and, asc, desc, eq, gte, isNull, lte, ne } from "drizzle-orm";
+import { db, marketingEventsTable, marketingEventHistoryTable, testBoxesTable, testBoxDeliveriesTable, usersTable } from "@workspace/db";
+import { and, asc, desc, eq, gte, isNull, lte, ne, sql } from "drizzle-orm";
 import {
   NOTE_EVENT_TYPE, addDays, describeDateChange, describeFieldChanges, diffFields, daysBetween, noteDatesValid, type FieldChange,
 } from "@workspace/marketing-calendar";
-import { loadBoxRecipes, scheduleForBox, syncTestBoxEvent, testBoxCalendarInfo } from "../lib/test-box-data";
+import { syncTestBox, testBoxCalendarInfo } from "../lib/test-box-data";
 import { validate, validateQuery } from "../middleware/validate";
 import { requireFounderArea } from "../middleware/founder-area-access";
 import { klaviyoEmailsForRange } from "../lib/klaviyo-campaign-calendar";
@@ -312,19 +312,24 @@ router.put("/events/:id/dates", validate(DatesBody), async (req: Request, res: R
     const [before] = await tx.select().from(marketingEventsTable).where(eq(marketingEventsTable.id, id)).for("update");
     if (!before || before.deletedAt) return { status: 404 as const };
     if (before.testBoxId != null) {
-      // A test box's event is dragged as a whole: its delivery date (the
-      // event's end) moves by the same number of days and every deadline
-      // follows. The box keeps the calendar in step (syncTestBoxEvent).
-      const delta = daysBetween(before.endDate, b.endDate);
+      // A test box's event is dragged as a whole: its VIP launch, public
+      // launch and every delivery date still OPEN move by the same number of
+      // days (closed ones are already committed) and every deadline follows.
+      // The box keeps the calendar, email, note and to-dos in step.
+      const delta = daysBetween(before.startDate, b.startDate) || daysBetween(before.endDate, b.endDate);
       const [box] = await tx.select().from(testBoxesTable).where(eq(testBoxesTable.id, before.testBoxId)).for("update");
       if (!box || box.deletedAt) return { status: 404 as const };
       if (delta === 0) return { status: 200 as const, row: before };
-      const [moved] = await tx.update(testBoxesTable).set({
-        deliveryDate: addDays(box.deliveryDate, delta),
+      await tx.update(testBoxesTable).set({
+        launchDate: addDays(box.launchDate, delta),
+        publicLaunchDate: box.publicLaunchDate ? addDays(box.publicLaunchDate, delta) : null,
         updatedById: user.id, updatedByName: user.name, updatedAt: new Date(),
-      }).where(eq(testBoxesTable.id, box.id)).returning();
-      const recipes = (await loadBoxRecipes(tx, [box.id])).get(box.id) ?? [];
-      await syncTestBoxEvent(tx, moved, await scheduleForBox(tx, moved, recipes), user);
+      }).where(eq(testBoxesTable.id, box.id));
+      await tx.update(testBoxDeliveriesTable).set({
+        deliveryDate: sql`${testBoxDeliveriesTable.deliveryDate} + ${delta}::int`,
+        updatedById: user.id, updatedByName: user.name, updatedAt: new Date(),
+      }).where(and(eq(testBoxDeliveriesTable.testBoxId, box.id), eq(testBoxDeliveriesTable.status, "open"), isNull(testBoxDeliveriesTable.deletedAt)));
+      await syncTestBox(tx, box.id, user);
       const [after] = await tx.select().from(marketingEventsTable).where(eq(marketingEventsTable.id, id));
       return { status: 200 as const, row: after };
     }
