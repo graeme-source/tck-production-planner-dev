@@ -125,7 +125,7 @@ router.get("/", async (_req, res) => {
 // Declared before /:id so "recipe-options" isn't swallowed as an id.
 router.get("/recipe-options", async (_req, res) => {
   const recipes = await db
-    .select({ id: recipesTable.id, name: recipesTable.name, category: recipesTable.category })
+    .select({ id: recipesTable.id, name: recipesTable.name, category: recipesTable.category, archivedAt: recipesTable.archivedAt })
     .from(recipesTable)
     .orderBy(asc(recipesTable.category), asc(recipesTable.name));
   const images = await getRecipeImagesByName(recipes.map(r => r.name));
@@ -134,6 +134,9 @@ router.get("/recipe-options", async (_req, res) => {
     name: r.name,
     category: r.category,
     imageUrl: images.get(r.name.trim().toLowerCase()) ?? null,
+    // Archived recipes (migration 0141) stay in the list so saved questions
+    // keep their name; the builder's picker hides them on the client.
+    archivedAt: r.archivedAt ? r.archivedAt.toISOString() : null,
   })));
 });
 

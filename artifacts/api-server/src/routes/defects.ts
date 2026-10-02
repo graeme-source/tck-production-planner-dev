@@ -115,8 +115,10 @@ router.patch("/types/:id", requireAdmin, validate(UpdateTypeBody), async (req: R
 // ── Options for the record form ───────────────────────────────────────────
 
 router.get("/options", async (_req: Request, res: Response) => {
+  // Archived recipes (migration 0141) aren't offered; a defect already
+  // recorded against one keeps its name via recipeName on the record.
   const recipes = await db.select({ id: recipesTable.id, name: recipesTable.name, category: recipesTable.category })
-    .from(recipesTable).orderBy(asc(recipesTable.name));
+    .from(recipesTable).where(isNull(recipesTable.archivedAt)).orderBy(asc(recipesTable.name));
   res.json({ recipes });
 });
 

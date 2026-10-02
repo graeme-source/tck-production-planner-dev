@@ -122,10 +122,12 @@ router.patch("/case-types/:id", async (req: Request, res: Response) => {
 
 router.get("/recipe-limits", async (_req: Request, res: Response) => {
   const rows = await db
-    .select({ id: recipesTable.id, name: recipesTable.name, maxBatchesPerDay: recipesTable.maxBatchesPerDay })
+    .select({ id: recipesTable.id, name: recipesTable.name, maxBatchesPerDay: recipesTable.maxBatchesPerDay, archivedAt: recipesTable.archivedAt })
     .from(recipesTable)
     .orderBy(asc(recipesTable.name));
-  res.json(rows);
+  // Archived recipes (migration 0141) stay in the list so a case type that
+  // already uses one keeps its name; the pickers hide them on the client.
+  res.json(rows.map(r => ({ ...r, archivedAt: r.archivedAt ? r.archivedAt.toISOString() : null })));
 });
 
 router.put("/recipe-limits/:recipeId", async (req: Request, res: Response) => {
