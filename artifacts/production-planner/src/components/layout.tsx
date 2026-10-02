@@ -63,7 +63,7 @@ import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assista
 import { TodoSheet, TodoInterstitial, useMyOpenTodoCount } from "@/components/todo-lists";
 import { FixedNoticeInterstitial } from "@/components/fixed-notice-interstitial";
 import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
-import { AlertOctagon, Banknote, BookOpen, Bot, GraduationCap, ChevronLeft, ChevronRight, ListTodo, ScanLine } from "lucide-react";
+import { AlertOctagon, Banknote, BookOpen, BookUser, Bot, GraduationCap, ChevronLeft, ChevronRight, ListTodo, ScanLine } from "lucide-react";
 
 export type NavItem = { name: string; href: string; icon: React.ComponentType<{ className?: string }> };
 
@@ -72,6 +72,10 @@ export const navItems: NavItem[] = [
   { name: "Production Plans", href: "/plans", icon: CalendarDays },
   { name: "Dispatches", href: "/dispatches", icon: Truck },
   { name: "Suppliers", href: "/suppliers", icon: Building2 },
+  // Contacts (2026-10-02): everyone's phone numbers in one place —
+  // emergency, carriers, services, and suppliers read from their records.
+  // Beside Suppliers because that's where people already look for a number.
+  { name: "Contacts", href: "/contacts", icon: BookUser },
   { name: "Improvements", href: "/improvements", icon: TrendingUp },
   { name: "Training", href: "/training", icon: GraduationCap },
   { name: "Analytics", href: "/reports", icon: BarChart2 },

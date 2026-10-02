@@ -466,6 +466,17 @@ export default function Suppliers() {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<SupplierItem | null>(null);
 
+  // /suppliers?edit=12 opens that supplier's record — the Contacts page
+  // links supplier cards here, since their numbers are edited on the record
+  // (2026-10-02). Once only: the param is dropped so closing doesn't reopen.
+  useEffect(() => {
+    const id = Number(new URLSearchParams(window.location.search).get("edit"));
+    if (!id || !suppliers) return;
+    const s = suppliers.find(x => x.id === id);
+    if (s) setEditingItem(s as SupplierItem);
+    window.history.replaceState(null, "", window.location.pathname);
+  }, [suppliers]);
+
   const filtered = suppliers?.filter(s =>
     s.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
     s.contactName?.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
