@@ -20,3 +20,14 @@ export function isIdea(item: Pick<ReviewableImprovement, "stage">): boolean {
 export function needsReview(item: ReviewableImprovement): boolean {
   return !isIdea(item) && !item.seenByMe && !item.isMine;
 }
+
+/** Improvements shown at a time in the feed, and added each time the reader
+ *  reaches the bottom — like scrolling back in WhatsApp (Graeme, 2026-10-02:
+ *  the full feed was getting long and slow). */
+export const FEED_PAGE_SIZE = 10;
+
+/** How many feed items to render: what the reader has scrolled to, but never
+ *  fewer than reach the oldest unseen one (it must be reachable to be seen). */
+export function feedShownCount(total: number, requested: number, lastUnseenIndex: number): number {
+  return Math.min(total, Math.max(requested, lastUnseenIndex + 1));
+}

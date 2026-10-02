@@ -33,7 +33,7 @@ import { ImprovementFeedMedia } from "@/components/improvement-feed-media";
 import { toast } from "@/hooks/use-toast";
 import { useMarkImprovementSeen, useUnseenImprovementCount } from "@/hooks/use-unseen-improvements";
 import { useSeenOnScroll } from "@/hooks/use-seen-on-scroll";
-import { isIdea, needsReview } from "@/lib/improvement-review";
+import { isIdea, needsReview, FEED_PAGE_SIZE, feedShownCount } from "@/lib/improvement-review";
 import { scrollAppToTop } from "@/lib/scroll";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { CreditPeoplePicker, ImprovementCreditEditor } from "@/components/credit-people-picker";
@@ -186,6 +186,9 @@ export default function Improvements() {
   const [showImprovements, setShowImprovements] = useState(true);
   const [showIdeas, setShowIdeas] = useState(true);
   const [showAdmin, setShowAdmin] = useState(false);
+  // How far down the feed the reader has got — 10 at a time (2026-10-02).
+  const [feedRequested, setFeedRequested] = useState(FEED_PAGE_SIZE);
+  useEffect(() => { setFeedRequested(FEED_PAGE_SIZE); }, [showImprovements, showIdeas]);
   const queryClient = useQueryClient();
 
   // Deep link from the notification bell: /improvements?open=123 lands on
@@ -312,10 +315,11 @@ export default function Improvements() {
         const sorted = items
           .filter(i => (isIdea(i) ? showIdeas : showImprovements))
           .sort(byFeedNewest);
-        // Never cut off something still unseen — it must be reachable to be
-        // scrolled past.
+        // Ten at a time, more as the reader reaches the bottom — but never
+        // cut off something still unseen: it must be reachable to be seen.
         const lastUnseenIdx = sorted.reduce((n, i, idx) => (needsReview(i) ? idx : n), -1);
-        const timeline = sorted.slice(0, Math.max(40, lastUnseenIdx + 1));
+        const timeline = sorted.slice(0, feedShownCount(sorted.length, feedRequested, lastUnseenIdx));
+        const olderCount = sorted.length - timeline.length;
         return (
         <>
           {/* Leaner-board first — start by seeing the team's tallies
@@ -361,6 +365,12 @@ export default function Improvements() {
             empty="Nothing here yet — the feed starts with the first one logged."
           >
             {timeline.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
+            {olderCount > 0 && (
+              <LoadOlder
+                remaining={olderCount}
+                onLoad={() => setFeedRequested(timeline.length + FEED_PAGE_SIZE)}
+              />
+            )}
           </Section>
 
           {/* The feed invites scrolling — meet the reader at the bottom of
@@ -505,6 +515,33 @@ function SeenButton({ item }: { item: Improvement }) {
     >
       {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <EyeOff className="w-5 h-5" />}
       I've seen this
+    </button>
+  );
+}
+
+/** Bottom of the feed: loads the next ten as it comes into view (like
+ *  scrolling back in WhatsApp), with a button as a fallback. */
+function LoadOlder({ remaining, onLoad }: { remaining: number; onLoad: () => void }) {
+  const ref = useRef<HTMLButtonElement | null>(null);
+  const onLoadRef = useRef(onLoad);
+  onLoadRef.current = onLoad;
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) onLoadRef.current();
+    }, { rootMargin: "400px 0px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [remaining]);
+  return (
+    <button
+      ref={ref}
+      type="button"
+      onClick={onLoad}
+      className="w-full h-14 rounded-2xl border-2 border-dashed border-border text-base font-semibold text-muted-foreground hover:text-foreground hover:bg-secondary/40"
+    >
+      Show older ({remaining} more)
     </button>
   );
 }
