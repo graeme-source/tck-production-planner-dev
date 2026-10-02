@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
-import { db, recipesTable, recipeIngredientsTable, recipeSubRecipesTable, recipeMeatMarinadesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, appSettingsTable, kanbanItemsTable, productionPlansTable, productionPlanItemsTable, productSpecificationsTable, companyProfileTable, skuBarcodesTable } from "@workspace/db";
+import { db, recipesTable, recipeIngredientsTable, recipeSubRecipesTable, recipeMeatMarinadesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, appSettingsTable, kanbanItemsTable, productionPlansTable, productionPlanItemsTable, productSpecificationsTable, companyProfileTable, skuBarcodesTable, usersTable } from "@workspace/db";
 import { eq, inArray, ne, and, gte } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
@@ -14,6 +14,7 @@ import { toGrams } from "@workspace/units";
 import { buildDeck } from "../lib/ingredient-deck";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { parseOvenOverride } from "../lib/recipe-oven-override";
+import { decideCreateStage, decideMenuTick } from "../lib/recipe-archive-rules";
 import * as z from "zod";
 
 function requireAdmin(req: Request, res: Response, next: NextFunction) {
@@ -25,6 +26,20 @@ function requireAdmin(req: Request, res: Response, next: NextFunction) {
 }
 
 const RecipeIdParams = z.object({ id: z.coerce.number().int().positive() });
+
+// Draft lifecycle keys (migration 0142) the generated Create/Update bodies
+// don't know yet. isDraft: start a new recipe as a draft. publishDraft: this
+// save puts a draft on the menu (Edit Recipe, when Core menu / Special is
+// ticked on a draft). Moving between stages otherwise goes through
+// routes/recipe-archive.ts (/draft, /publish).
+const RecipeLifecycleExtras = z.object({
+  isDraft: z.boolean().optional(),
+  publishDraft: z.boolean().optional(),
+});
+function lifecycleExtras(body: unknown): z.infer<typeof RecipeLifecycleExtras> | null {
+  const parsed = RecipeLifecycleExtras.safeParse(body ?? {});
+  return parsed.success ? parsed.data : null;
+}
 
 // One microbiological criterion row as stored in product_specifications.micro_criteria (jsonb).
 type ProductSpecMicro = { organism?: string; target?: string; maximum?: string; lastTestDate?: string; lastTestLab?: string; lastTestResult?: string };
@@ -68,6 +83,13 @@ function mapRecipe(r: typeof recipesTable.$inferSelect) {
     archivedAt: r.archivedAt ? r.archivedAt.toISOString() : null,
     archivedById: r.archivedById ?? null,
     archivedByName: r.archivedByName ?? null,
+    // Draft (migration 0142): returned for every recipe; production pickers
+    // hide drafts with activeRecipes(), development tools label them.
+    isDraft: r.isDraft === true,
+    draftedAt: r.draftedAt ? r.draftedAt.toISOString() : null,
+    draftedByName: r.draftedByName ?? null,
+    publishedAt: r.publishedAt ? r.publishedAt.toISOString() : null,
+    publishedByName: r.publishedByName ?? null,
     createdAt: r.createdAt.toISOString(),
   };
 }
@@ -228,6 +250,12 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
   const oven = parseOvenOverride(req.body);
   if (!oven.ok) { res.status(400).json({ error: oven.error }); return; }
 
+  // Start as a draft (migration 0142)? Omitted = on the menu, as before.
+  const extras = lifecycleExtras(req.body);
+  if (!extras) { res.status(400).json({ error: "isDraft must be true or false" }); return; }
+  const stage = decideCreateStage(extras.isDraft, { isCoreMenu, isCurrentSpecial });
+  if (!stage.ok) { res.status(400).json({ error: stage.message, code: "DRAFT_ON_MENU" }); return; }
+
   const insertValues = {
     name, description,
     servings: String(servings),
@@ -252,6 +280,8 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
     builderFillingDeductionGrams: builderFillingDeductionGrams != null ? Math.round(Number(builderFillingDeductionGrams)) : 0,
     dietaryCategory: dietaryCategory ?? null,
     tags: normaliseTags(tags),
+    isDraft: stage.isDraft,
+    draftedAt: stage.isDraft ? new Date() : null,
     ...oven.fields,
   };
 
@@ -551,6 +581,18 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
   const oven = parseOvenOverride(req.body);
   if (!oven.ok) { res.status(400).json({ error: oven.error }); return; }
 
+  // A draft can't be Core menu or the special (migration 0142): ticking
+  // either on a draft only saves when this save puts it on the menu.
+  const extras = lifecycleExtras(req.body);
+  if (!extras) { res.status(400).json({ error: "publishDraft must be true or false" }); return; }
+  const [current] = await db.select({ isDraft: recipesTable.isDraft }).from(recipesTable).where(eq(recipesTable.id, id));
+  if (!current) { res.status(404).json({ error: "Not found" }); return; }
+  const menuTick = decideMenuTick(current.isDraft, { isCoreMenu, isCurrentSpecial }, extras.publishDraft === true);
+  if (!menuTick.ok) { res.status(409).json({ error: menuTick.message, code: "DRAFT_ON_MENU" }); return; }
+  const publishedBy = menuTick.publish && req.session.userId != null
+    ? (await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, req.session.userId)))[0]?.name ?? null
+    : null;
+
   const recipeFields = {
     name, description,
     servings: String(servings),
@@ -575,6 +617,7 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
     ...(dietaryCategory !== undefined ? { dietaryCategory: dietaryCategory ?? null } : {}),
     ...(isCurrentSpecial !== undefined ? { isCurrentSpecial } : {}),
     ...(tags !== undefined ? { tags: normaliseTags(tags) } : {}),
+    ...(menuTick.publish ? { isDraft: false, publishedAt: new Date(), publishedByName: publishedBy } : {}),
     // Only the oven keys the body actually carries — a client that doesn't
     // send them never wipes a saved override.
     ...oven.fields,
@@ -698,6 +741,12 @@ router.patch("/:id/special", async (req, res) => {
   if (typeof isCurrentSpecial !== "boolean") {
     res.status(400).json({ error: "isCurrentSpecial must be a boolean" });
     return;
+  }
+  // A draft can't be the special (migration 0142) — put it on the menu first.
+  if (isCurrentSpecial) {
+    const [current] = await db.select({ isDraft: recipesTable.isDraft }).from(recipesTable).where(eq(recipesTable.id, id));
+    const tick = decideMenuTick(current?.isDraft === true, { isCurrentSpecial: true }, false);
+    if (!tick.ok) { res.status(409).json({ error: tick.message, code: "DRAFT_ON_MENU" }); return; }
   }
 
   let updatedRow: typeof recipesTable.$inferSelect | undefined;
