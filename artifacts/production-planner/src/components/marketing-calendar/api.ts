@@ -30,7 +30,7 @@ export interface CalEvent {
   createdAt: string;
   updatedAt: string;
   /** Set when this event belongs to a test box (dates follow the box). */
-  testBox?: { id: number; name: string; deliveryDate: string; milestones: Milestone[] } | null;
+  testBox?: { id: number; name: string; launchDate: string; vipWindowEnds: string; lastDeliveryDate: string | null; milestones: Milestone[] } | null;
 }
 
 export interface HistoryEntry {

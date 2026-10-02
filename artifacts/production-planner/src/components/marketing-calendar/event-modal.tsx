@@ -257,7 +257,11 @@ export function EventModal({ eventId, newOn, onClose }: {
                 <Package className="w-6 h-6 text-rose-600 flex-shrink-0" />
                 <div className="flex-1 min-w-0">
                   <p className="font-semibold text-base">Test box: {event.testBox.name}</p>
-                  <p className="text-sm text-muted-foreground">Selling window to delivery on {format(parseISO(event.testBox.deliveryDate), "EEE d MMM")}. Dates follow the test box — change them there.</p>
+                  <p className="text-sm text-muted-foreground">
+                    VIP launch {format(parseISO(event.testBox.launchDate), "EEE d MMM")} · VIP-only until {format(parseISO(event.testBox.vipWindowEnds), "EEE d MMM")}
+                    {event.testBox.lastDeliveryDate ? ` · last delivery ${format(parseISO(event.testBox.lastDeliveryDate), "EEE d MMM")}` : " · no delivery date yet"}.
+                    {" "}Dates follow the test box — change them there.
+                  </p>
                 </div>
                 <Link href={`/test-boxes/${event.testBox.id}`} className="px-3 py-2 rounded-xl bg-rose-600 text-white text-sm font-semibold flex items-center gap-1.5 flex-shrink-0">
                   Open <ExternalLink className="w-4 h-4" />
