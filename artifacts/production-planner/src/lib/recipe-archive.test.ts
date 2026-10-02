@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeRecipes, archivedLabel, archivedRecipeIds, archivedRecipes, archiveWarnings, isArchived, planDayPhrase } from "./recipe-archive";
+import { activeRecipes, archivedLabel, archivedRecipeIds, archivedRecipes, archiveWarnings, isArchived, menuFlagQuestion, planDayPhrase } from "./recipe-archive";
 
 const list = [
   { id: 1, name: "Philly", archivedAt: null },
@@ -80,10 +80,12 @@ describe("archiveWarnings", () => {
     const w = archiveWarnings({ upcomingPlans: ["2026-09-30", "2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06"].map(planDate => ({ planDate })) }, today);
     expect(w[0]).toBe("It's on today's plan, tomorrow's plan, Friday's plan and 2 more — it'll still be made; it just won't be offered for new plans.");
   });
-  it("flags core menu and current special", () => {
-    const w = archiveWarnings({ upcomingPlans: [], isCoreMenu: true, isCurrentSpecial: true }, today);
-    expect(w).toHaveLength(2);
-    expect(w[0]).toMatch(/Core menu/);
-    expect(w[1]).toMatch(/current special/);
+  it("core menu / special are a question, not a warning (2026-10-02)", () => {
+    expect(archiveWarnings({ upcomingPlans: [], isCoreMenu: true, isCurrentSpecial: true }, today)).toHaveLength(0);
+    expect(menuFlagQuestion({ isCoreMenu: false, isCurrentSpecial: false })).toBeNull();
+    expect(menuFlagQuestion({ isCoreMenu: true })!.confirmLabel).toBe("Untick core menu and archive");
+    const both = menuFlagQuestion({ isCoreMenu: true, isCurrentSpecial: true })!;
+    expect(both.message).toMatch(/core menu recipe and the current special/);
+    expect(both.message).toMatch(/won't replace whatever is the special/);
   });
 });

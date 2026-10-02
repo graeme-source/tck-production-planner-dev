@@ -18,7 +18,7 @@ import { Archive, ArchiveRestore, AlertTriangle, Loader2, Pencil } from "lucide-
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ToastAction } from "@/components/ui/toast";
 import { toast } from "@/hooks/use-toast";
-import { archivedLabel, archiveWarnings } from "@/lib/recipe-archive";
+import { archivedLabel, archiveWarnings, menuFlagQuestion } from "@/lib/recipe-archive";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -28,12 +28,12 @@ type ArchiveCheckResponse = {
   today: string;
 };
 
-async function postJson<T>(path: string): Promise<T> {
+async function postJson<T>(path: string, payload: Record<string, unknown> = {}): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: "{}",
+    body: JSON.stringify(payload),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
@@ -54,8 +54,9 @@ export function useRecipeArchiveActions() {
     queryClient.invalidateQueries({ queryKey: ["case-recipe-limits"] });
   };
   const archive = useMutation({
-    mutationFn: (id: number) => postJson(`/api/recipes/${id}/archive`),
-    onSuccess: (_d, id) => refresh(id),
+    mutationFn: ({ id, clearMenuFlags }: { id: number; clearMenuFlags?: boolean }) =>
+      postJson(`/api/recipes/${id}/archive`, clearMenuFlags ? { clearMenuFlags: true } : {}),
+    onSuccess: (_d, v) => refresh(v.id),
   });
   const restore = useMutation({
     mutationFn: (id: number) => postJson(`/api/recipes/${id}/restore`),
@@ -71,9 +72,9 @@ export function useRecipeArchiveActions() {
     }
   }
 
-  async function archiveWithToast(recipe: { id: number; name: string }): Promise<boolean> {
+  async function archiveWithToast(recipe: { id: number; name: string }, clearMenuFlags = false): Promise<boolean> {
     try {
-      await archive.mutateAsync(recipe.id);
+      await archive.mutateAsync({ id: recipe.id, clearMenuFlags });
       toast({
         title: `Archived "${recipe.name}"`,
         description: "Nothing was deleted — find it under Archived to restore it.",
@@ -110,6 +111,7 @@ export function ArchiveRecipeDialog({ recipe, onClose, onArchived }: {
       return res.json();
     },
   });
+  const question = check.data ? menuFlagQuestion(check.data.recipe) : null;
   const warnings = check.data
     ? archiveWarnings({ upcomingPlans: check.data.upcomingPlans, isCoreMenu: check.data.recipe.isCoreMenu, isCurrentSpecial: check.data.recipe.isCurrentSpecial }, check.data.today)
     : [];
@@ -141,26 +143,33 @@ export function ArchiveRecipeDialog({ recipe, onClose, onArchived }: {
           </ul>
         )}
 
+        {question && (
+          <div className="flex gap-3 rounded-xl border-2 border-red-400/60 bg-red-50 dark:bg-red-950/30 p-3 text-base text-red-950 dark:text-red-100">
+            <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5 text-red-600" />
+            <span>{question.message}</span>
+          </div>
+        )}
+
         <div className="flex flex-col-reverse sm:flex-row gap-3 pt-2">
           <button
             type="button"
             onClick={onClose}
             className="flex-1 min-h-12 rounded-xl border border-border px-4 text-base font-medium hover:bg-secondary/60 transition-colors"
           >
-            Keep it
+            {question ? "Don't archive" : "Keep it"}
           </button>
           <button
             type="button"
-            disabled={archive.isPending || !recipe}
+            disabled={archive.isPending || !recipe || check.isLoading}
             onClick={async () => {
               if (!recipe) return;
-              const ok = await archiveWithToast(recipe);
+              const ok = await archiveWithToast(recipe, !!question);
               if (ok) { onClose(); onArchived?.(); }
             }}
             className="flex-1 min-h-12 rounded-xl bg-foreground text-background px-4 text-base font-semibold inline-flex items-center justify-center gap-2 hover:opacity-90 disabled:opacity-50 transition-opacity"
           >
             {archive.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Archive className="w-5 h-5" />}
-            Archive recipe
+            {question ? question.confirmLabel : "Archive recipe"}
           </button>
         </div>
       </DialogContent>

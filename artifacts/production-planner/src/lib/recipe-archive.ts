@@ -101,11 +101,19 @@ export function archiveWarnings(check: ArchiveCheck, today: string): string[] {
     if (days.length > 3) shown.push(`${days.length - 3} more`);
     out.push(`It's on ${joinAnd(shown)} — it'll still be made; it just won't be offered for new plans.`);
   }
-  if (check.isCoreMenu) {
-    out.push("It's still ticked as Core menu, so newly calculated plans will keep including it. Untick Core menu in Edit Recipe if you want it off new plans too.");
-  }
-  if (check.isCurrentSpecial) {
-    out.push("It's set as the current special, so special sales still count towards it until you choose another special.");
-  }
   return out;
+}
+
+/** The question asked before archiving a core-menu or special recipe — an
+ *  archived recipe can't stay on the menu (Graeme, 2026-10-02). null when
+ *  there's nothing to untick. */
+export function menuFlagQuestion(check: Pick<ArchiveCheck, "isCoreMenu" | "isCurrentSpecial">): { message: string; confirmLabel: string } | null {
+  const core = !!check.isCoreMenu, special = !!check.isCurrentSpecial;
+  if (!core && !special) return null;
+  const what = core && special ? "a core menu recipe and the current special" : core ? "a core menu recipe" : "the current special";
+  const untick = core && special ? "Take it off the core menu and as the special" : core ? "Take it off the core menu" : "Stop it being the special";
+  return {
+    message: `This is ${what}. It can't stay on the menu once archived. ${untick}, and archive it? If you restore it later it comes back off the menu${special ? " and won't replace whatever is the special then" : ""}.`,
+    confirmLabel: core && special ? "Untick both and archive" : core ? "Untick core menu and archive" : "Remove as special and archive",
+  };
 }

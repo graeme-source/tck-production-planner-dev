@@ -8,7 +8,9 @@
  *   POST /api/recipes/:id/archive        managers + admins; records who/when
  *   POST /api/recipes/:id/restore        managers + admins
  *
- * Archiving writes ONLY the three archived_* columns. Recipe lines, costs,
+ * Archiving writes the three archived_* columns — plus, for a core-menu or
+ * special recipe, unticks those flags, but only when the person chose
+ * "untick and archive" (otherwise 409 ON_MENU). Recipe lines, costs,
  * Shopify mappings, labels, DPT settings and every plan that used the recipe
  * are untouched, and GET /api/recipes keeps returning it (with archivedAt)
  * so existing plans, history and stations still show it. The warnings never
@@ -21,13 +23,14 @@ import * as z from "zod";
 import { validate } from "../middleware/validate";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { londonDateString } from "../lib/london-time";
+import { decideArchive } from "../lib/recipe-archive-rules";
 
 const router: IRouter = Router();
 
 const IdParams = z.object({ id: z.coerce.number().int().positive() });
-// No fields today (validate() passes unknown keys through, so extras are
-// simply ignored) — a future option gets declared here.
-const ArchiveBody = z.object({});
+// clearMenuFlags: the person chose "untick Core menu / Special and archive".
+const ArchiveBody = z.object({ clearMenuFlags: z.boolean().optional() });
+const RestoreBody = z.object({});
 
 function recipeId(req: Request, res: Response): number | null {
   const parsed = IdParams.safeParse(req.params);
@@ -79,23 +82,36 @@ router.get("/:id/archive-check", async (req: Request, res: Response) => {
 router.post("/:id/archive", requireManagerOrAdmin, validate(ArchiveBody), async (req: Request, res: Response) => {
   const id = recipeId(req, res);
   if (id == null) return;
-  const [existing] = await db.select(archiveColumns).from(recipesTable).where(eq(recipesTable.id, id));
+  const [existing] = await db
+    .select({ ...archiveColumns, isCoreMenu: recipesTable.isCoreMenu, isCurrentSpecial: recipesTable.isCurrentSpecial })
+    .from(recipesTable).where(eq(recipesTable.id, id));
   if (!existing) { res.status(404).json({ error: "Recipe not found" }); return; }
   // Already archived: leave the original who/when alone (idempotent).
   if (existing.archivedAt) { res.json({ recipe: toDto(existing) }); return; }
+  // Never archived while still on the menu (Graeme, 2026-10-02).
+  const decision = decideArchive(
+    { isCoreMenu: !!existing.isCoreMenu, isCurrentSpecial: !!existing.isCurrentSpecial },
+    (req.body as { clearMenuFlags?: boolean }).clearMenuFlags === true,
+  );
+  if (!decision.ok) {
+    res.status(409).json({ error: decision.message, code: "ON_MENU", ...decision.flags });
+    return;
+  }
 
   const userId = req.session.userId ?? null;
   const [user] = userId != null
     ? await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId))
     : [];
   const [row] = await db.update(recipesTable)
-    .set({ archivedAt: new Date(), archivedById: userId, archivedByName: user?.name ?? null })
+    .set({ archivedAt: new Date(), archivedById: userId, archivedByName: user?.name ?? null, ...(decision.clear ?? {}) })
     .where(eq(recipesTable.id, id))
     .returning(archiveColumns);
   res.json({ recipe: toDto(row) });
 });
 
-router.post("/:id/restore", requireManagerOrAdmin, validate(ArchiveBody), async (req: Request, res: Response) => {
+// Restore only un-archives: it never re-ticks Core menu or Special, so it
+// can't overwrite whatever is the special now (Graeme, 2026-10-02).
+router.post("/:id/restore", requireManagerOrAdmin, validate(RestoreBody), async (req: Request, res: Response) => {
   const id = recipeId(req, res);
   if (id == null) return;
   const [row] = await db.update(recipesTable)
