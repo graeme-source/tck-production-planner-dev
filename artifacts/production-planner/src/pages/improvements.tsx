@@ -15,13 +15,13 @@
 // The manager's table lives behind a toggle at the bottom, out of the way of
 // the people who just want to log what they did.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearch } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Loader2, Camera, CheckCircle2, Clock, ThumbsUp, RotateCcw,
   Trophy, ChevronLeft, X, AlertCircle, Settings2, Clapperboard, Trash2, ArrowBigUp, HandHelping, BookOpen,
-  Lightbulb, Eye, EyeOff,
+  Lightbulb, EyeOff,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/contexts/auth-context";
@@ -31,7 +31,7 @@ import { cn } from "@/lib/utils";
 import { feedTimestamp } from "@/lib/feed-time";
 import { ImprovementFeedMedia } from "@/components/improvement-feed-media";
 import { toast } from "@/hooks/use-toast";
-import { useMarkImprovementSeen } from "@/hooks/use-unseen-improvements";
+import { useMarkImprovementSeen, useUnseenImprovementCount } from "@/hooks/use-unseen-improvements";
 import { useSeenOnScroll } from "@/hooks/use-seen-on-scroll";
 import { isIdea, needsReview } from "@/lib/improvement-review";
 import { scrollAppToTop } from "@/lib/scroll";
@@ -179,11 +179,10 @@ export default function Improvements() {
 
   const [logging, setLogging] = useState(false);
   const [openId, setOpenId] = useState<number | null>(null);
-  // "review" surfaces what this person hasn't opened yet; otherwise one
-  // combined timeline with Improvements/Ideas as toggleable FILTERS, not
-  // exclusive tabs (Graeme, 2026-09-10). null = auto: review while
-  // anything's unread, the feed once it isn't.
-  const [tab, setTab] = useState<"review" | "feed" | null>(null);
+  // One combined timeline with Improvements/Ideas as toggleable FILTERS
+  // (Graeme, 2026-09-10). The separate "To review" view went on 2026-10-02:
+  // new improvements are at the top of the feed anyway, and scrolling past
+  // one marks it seen.
   const [showImprovements, setShowImprovements] = useState(true);
   const [showIdeas, setShowIdeas] = useState(true);
   const [showAdmin, setShowAdmin] = useState(false);
@@ -198,22 +197,28 @@ export default function Improvements() {
     if (Number.isInteger(id)) setOpenId(id);
   }, [search]);
 
+  // Kept fresh (2026-10-02): the nav badge refetches on its own, and a feed
+  // loaded earlier in the day missed an improvement the badge was counting
+  // — so it could never be scrolled past and the badge never cleared. The
+  // feed now refreshes every minute and whenever the unseen count changes.
   const { data: items = [], isLoading } = useQuery<Improvement[]>({
     queryKey: ["improvements"],
     queryFn: () => api<Improvement[]>("/improvements"),
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
   });
+  const unseenCount = useUnseenImprovementCount();
+  const lastUnseen = useRef(unseenCount);
+  useEffect(() => {
+    if (unseenCount !== lastUnseen.current) {
+      lastUnseen.current = unseenCount;
+      queryClient.invalidateQueries({ queryKey: ["improvements"], exact: true });
+    }
+  }, [unseenCount, queryClient]);
 
   // The approval step is a setting, OFF by default (Graeme, 2026-09-07):
   // with it off, a finished improvement goes straight into the feed and the
   // page copy stops promising a sign-off that isn't coming.
-  // "Once I've reviewed, it changes to improvements as the standard":
-  // when the unread list drains while the review view is open, hand the
-  // page back to the feed rather than leaving an empty room.
-  useEffect(() => {
-    if (tab === "review" && items.length > 0 && items.filter(needsReview).length === 0) {
-      setTab("feed");
-    }
-  }, [items, tab]);
 
   const { data: settings } = useQuery<{ approvalRequired: boolean }>({
     queryKey: ["improvements", "settings"],
@@ -294,12 +299,8 @@ export default function Improvements() {
           <Loader2 className="w-6 h-6 animate-spin" /> Loading…
         </div>
       ) : (() => {
-        // Review wins while anything's unread; the feed thereafter.
-        const activeTab = tab ?? (toReview.length > 0 ? "review" : "feed");
-        // Filter chips: at least one stays on — a feed of nothing helps no
-        // one. Clicking a chip from review mode jumps to the feed with it.
+        // Filter chips: at least one stays on — a feed of nothing helps no one.
         const toggleKind = (kind: "improvements" | "ideas") => {
-          if (activeTab === "review") { setTab("feed"); return; }
           if (kind === "improvements") {
             if (showImprovements && !showIdeas) return;
             setShowImprovements(v => !v);
@@ -308,39 +309,27 @@ export default function Improvements() {
             setShowIdeas(v => !v);
           }
         };
-        const timeline = items
+        const sorted = items
           .filter(i => (isIdea(i) ? showIdeas : showImprovements))
-          .sort(byFeedNewest)
-          .slice(0, 40);
+          .sort(byFeedNewest);
+        // Never cut off something still unseen — it must be reachable to be
+        // scrolled past.
+        const lastUnseenIdx = sorted.reduce((n, i, idx) => (needsReview(i) ? idx : n), -1);
+        const timeline = sorted.slice(0, Math.max(40, lastUnseenIdx + 1));
         return (
         <>
           {/* Leaner-board first — start by seeing the team's tallies
               (Graeme, 2026-09-10). */}
           <Scoreboard />
 
-          {/* One timeline, three controls: the review view, and two kind
-              FILTERS that combine rather than exclude. */}
+          {/* One timeline, two kind FILTERS that combine rather than exclude. */}
           <div className="flex gap-2">
             <button
-              onClick={() => setTab("review")}
-              className={cn(
-                "flex-1 py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
-                activeTab === "review" ? "border-blue-500 text-blue-600 dark:text-blue-400" : "border-border text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Eye className="w-5 h-5" /> To review
-              {toReview.length > 0 && (
-                <span className="min-w-[22px] h-[22px] px-1.5 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center tabular-nums">
-                  {toReview.length}
-                </span>
-              )}
-            </button>
-            <button
               onClick={() => toggleKind("improvements")}
-              aria-pressed={activeTab !== "review" && showImprovements}
+              aria-pressed={showImprovements}
               className={cn(
                 "flex-1 py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
-                activeTab !== "review" && showImprovements
+                showImprovements
                   ? "border-emerald-500 text-emerald-600 dark:text-emerald-400"
                   : "border-border text-muted-foreground hover:text-foreground",
               )}
@@ -349,10 +338,10 @@ export default function Improvements() {
             </button>
             <button
               onClick={() => toggleKind("ideas")}
-              aria-pressed={activeTab !== "review" && showIdeas}
+              aria-pressed={showIdeas}
               className={cn(
                 "flex-1 py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
-                activeTab !== "review" && showIdeas
+                showIdeas
                   ? "border-amber-500 text-amber-600 dark:text-amber-400"
                   : "border-border text-muted-foreground hover:text-foreground",
               )}
@@ -361,34 +350,18 @@ export default function Improvements() {
             </button>
           </div>
 
-          {activeTab === "review" ? (
-            toReview.length === 0 ? (
-              <div className="rounded-2xl border-2 border-dashed border-border p-10 text-center text-muted-foreground">
-                <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-emerald-500" />
-                <p className="text-lg font-semibold text-foreground">All caught up</p>
-                <p>You've seen everything the team has logged.</p>
-              </div>
-            ) : (
-              <Section title={`New since you last looked (${toReview.length})`} icon={<Eye className="w-5 h-5 text-blue-500" />}>
-                {toReview.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
-              </Section>
-            )
-          ) : (
-            <>
-              {isManager && waiting.length > 0 && (
-                <Section title={`Waiting for you to check (${waiting.length})`} icon={<Clock className="w-5 h-5 text-amber-500" />}>
-                  {waiting.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
-                </Section>
-              )}
-              <Section
-                title="Latest"
-                icon={<CheckCircle2 className="w-5 h-5 text-emerald-500" />}
-                empty="Nothing here yet — the feed starts with the first one logged."
-              >
-                {timeline.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
-              </Section>
-            </>
+          {isManager && waiting.length > 0 && (
+            <Section title={`Waiting for you to check (${waiting.length})`} icon={<Clock className="w-5 h-5 text-amber-500" />}>
+              {waiting.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
+            </Section>
           )}
+          <Section
+            title={toReview.length > 0 ? `Latest · ${toReview.length} new` : "Latest"}
+            icon={<CheckCircle2 className="w-5 h-5 text-emerald-500" />}
+            empty="Nothing here yet — the feed starts with the first one logged."
+          >
+            {timeline.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
+          </Section>
 
           {/* The feed invites scrolling — meet the reader at the bottom of
               it with the same call to action as the top. */}
