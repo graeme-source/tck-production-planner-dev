@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  NOTE_EVENT_TYPE, decideTodoViewers, filingEvents, initials, isNoteEvent, noteDatesValid, parseIdList,
+  NOTE_EVENT_TYPE, PHASE_EVENT_TYPE, decideTodoViewers, emailFilingEvents, filingEvents, initials, isPhaseEvent, isNoteEvent, noteDatesValid, parseIdList,
   todoCalendarDay, todosInRange, campaignForDate, buildEmailSections,
 } from "./index";
 
@@ -18,6 +18,19 @@ describe("notes are not phases", () => {
     // Without the filter the note (started later, shorter) would win the day.
     expect(campaignForDate("2026-10-10", [phase, note])?.id).toBe(2);
     expect(campaignForDate("2026-10-10", filingEvents([phase, note]))?.id).toBe(1);
+  });
+
+  it("emails are filed under phases only — never a test box, offer or note (regression 2026-10-02)", () => {
+    // A test box bar starting inside a phase used to take every email in its
+    // window, because the most recently started window wins.
+    const box = { id: 3, startDate: "2026-10-02", endDate: "2026-10-16", type: "test_box" };
+    const offer = { id: 4, startDate: "2026-10-05", endDate: "2026-10-06", eventType: "offer" };
+    expect(campaignForDate("2026-10-05", filingEvents([phase, note, box, offer]))?.id).toBe(4);
+    expect(emailFilingEvents([phase, note, box, offer]).map(e => e.id)).toEqual([1]);
+    expect(campaignForDate("2026-10-05", emailFilingEvents([phase, note, box, offer]))?.id).toBe(1);
+    expect(campaignForDate("2026-10-12", emailFilingEvents([box]))).toBeNull();
+    expect(isPhaseEvent({ eventType: PHASE_EVENT_TYPE })).toBe(true);
+    expect(isPhaseEvent(box)).toBe(false);
   });
 
   it("a note is one day", () => {

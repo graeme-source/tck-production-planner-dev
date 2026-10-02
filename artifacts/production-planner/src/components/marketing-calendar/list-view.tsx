@@ -19,7 +19,7 @@
 import { useMemo } from "react";
 import { format, parseISO } from "date-fns";
 import { BadgeCheck, CheckCircle2, CheckSquare, Globe, Mail, Megaphone, MessageSquare, Plus, Repeat, Square, StickyNote, Target, Users } from "lucide-react";
-import { audienceLabel, buildEmailSections, defaultEmailDate, filingEvents, formatDay, formatRange, stageLabel } from "@workspace/marketing-calendar";
+import { audienceLabel, buildEmailSections, defaultEmailDate, emailFilingEvents, formatDay, formatRange, stageLabel } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
 import type { CalEvent, CalTodo, KlaviyoEmail, PlannedEmail } from "./api";
 import { NOTE_TONE, TODO_TONE, emailStage, firstName, typeStyle } from "./constants";
@@ -55,7 +55,7 @@ export function ListView({ today, events, planned, klaviyo, notes = [], todos = 
       ...notes.map(n => ({ date: n.startDate, kind: "note" as const, note: n })),
       ...todos.map(t => ({ date: t.date, kind: "todo" as const, todo: t })),
     ];
-    const all = buildEmailSections({ campaigns: filingEvents(events), planned, klaviyo, extras, today, showPast });
+    const all = buildEmailSections({ campaigns: emailFilingEvents(events), planned, klaviyo, extras, today, showPast });
     if (filter === "all") return all;
     // Needs approval: same sections, only the items that need it, no empty ones.
     return all

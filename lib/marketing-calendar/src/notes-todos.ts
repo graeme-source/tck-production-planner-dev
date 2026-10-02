@@ -25,9 +25,27 @@ export function isNoteEvent(e: { type?: string | null; eventType?: string | null
   return (e.type ?? e.eventType) === NOTE_EVENT_TYPE;
 }
 
-/** The events that can hold emails / count as cover — everything but notes. */
+/** The events drawn as bars / counted as cover — everything but notes. */
 export function filingEvents<T extends { type?: string | null; eventType?: string | null }>(events: readonly T[]): T[] {
   return events.filter(e => !isNoteEvent(e));
+}
+
+/** The stored event_type of a phase (shown as "Phase"). */
+export const PHASE_EVENT_TYPE = "campaign";
+
+export function isPhaseEvent(e: { type?: string | null; eventType?: string | null }): boolean {
+  return (e.type ?? e.eventType) === PHASE_EVENT_TYPE;
+}
+
+/**
+ * The events an EMAIL can be filed under: phases only (2026-10-02). A test
+ * box's bar, an offer, a product launch or a note sits on the calendar but
+ * never takes the emails sent inside its dates — without this, a test box
+ * that starts later than the surrounding phase would win every email in its
+ * window (campaignForDate prefers the most recently started).
+ */
+export function emailFilingEvents<T extends { type?: string | null; eventType?: string | null }>(events: readonly T[]): T[] {
+  return events.filter(isPhaseEvent);
 }
 
 /** A note is one day: its end is its start. */
