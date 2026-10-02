@@ -45,7 +45,10 @@ export function londonDay(d: Date): string {
  * Every ingredient the recipes use — directly and through sub-recipes, however
  * deeply nested — grouped by its main supplier, split into normal and
  * SPECIALIST (not used by any recipe on the menu: not archived, not a draft —
- * same rule as isOnMenu in recipe-archive-rules.ts). Ingredients with no
+ * same rule as isOnMenu in recipe-archive-rules.ts — OTHER than the box's own
+ * recipes: a test recipe on the menu would otherwise make its own new
+ * ingredient look ordinary. Fixed 2026-10-02 on the Properoni box, whose
+ * Hot Paprika Crumble is used by nothing else). Ingredients with no
  * supplier come back as one group with supplierId null.
  */
 export async function loadSupplierLeads(conn: Db, recipeIds: number[]): Promise<SupplierLead[]> {
@@ -69,12 +72,14 @@ export async function loadSupplierLeads(conn: Db, recipeIds: number[]): Promise<
     menu_subs(sub_recipe_id) AS (
       SELECT rsr.sub_recipe_id FROM recipe_sub_recipes rsr JOIN recipes r ON r.id = rsr.recipe_id
        WHERE r.archived_at IS NULL AND r.is_draft = FALSE
+         AND r.id <> ALL(${ids}::int[])
       UNION
       SELECT ssr.component_sub_recipe_id FROM sub_recipe_sub_recipes ssr JOIN menu_subs m ON ssr.sub_recipe_id = m.sub_recipe_id
     ),
     menu_ings(ingredient_id) AS (
       SELECT ri.ingredient_id FROM recipe_ingredients ri JOIN recipes r ON r.id = ri.recipe_id
        WHERE r.archived_at IS NULL AND r.is_draft = FALSE
+         AND r.id <> ALL(${ids}::int[])
       UNION
       SELECT ingredient_id FROM sub_recipe_ingredients WHERE sub_recipe_id IN (SELECT sub_recipe_id FROM menu_subs)
     )

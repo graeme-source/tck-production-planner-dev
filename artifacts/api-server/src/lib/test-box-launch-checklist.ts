@@ -80,7 +80,7 @@ export const LAUNCH_CHECKLIST: readonly LaunchStepTemplate[] = [
   {
     key: "social-post",
     title: () => "Post on social media",
-    how: () => "Launch-day post — it's on the marketing calendar as a note.",
+    how: () => "Launch-day post on social media — this to-do is on the marketing calendar on launch day.",
     from: "launch", workingDaysBefore: 0, automated: false,
   },
   {
