@@ -174,8 +174,17 @@ describe("the launch checklist", () => {
     }
   });
 
-  it("only the Shopify products and collection steps are done by the app; the hand steps it leaves stay", () => {
-    expect(LAUNCH_CHECKLIST.filter(s => s.automated).map(s => s.key)).toEqual(["shopify-products", "shopify-collection"]);
+  it("decide on recipes comes first, with a nudge under 2 recipes", () => {
+    expect(LAUNCH_CHECKLIST[0].key).toBe("decide-recipes");
+    const one = buildLaunchTasks({ ...base, recipes: ["A"] }).tasks.find(t => t.key === "launch:decide-recipes")!;
+    expect(one.detail).toContain("1 recipe");
+    expect(buildLaunchTasks({ ...base, recipes: ["A", "B"] }).tasks.find(t => t.key === "launch:decide-recipes")!.detail).toBeUndefined();
+  });
+
+  it("products, collection and discount code have the app's buttons; the old keys are kept so ticks survive", () => {
+    expect(LAUNCH_CHECKLIST.filter(s => s.automated).map(s => [s.key, s.action])).toEqual([
+      ["shopify-products", "shopify-products"], ["shopify-collection", "shopify-collection"], ["discount-code", "discount-code"],
+    ]);
     const keys = LAUNCH_CHECKLIST.map(s => s.key);
     for (const k of ["shopify-barcodes", "shopify-nutrition", "shopify-images", "shopify-price", "shopify-go-live"]) expect(keys).toContain(k);
   });
@@ -186,7 +195,10 @@ describe("the launch checklist", () => {
   it("dates count back from the launch in working days", () => {
     // Launch Mon 5 Oct.
     expect(byKey["launch:shopify-products"].date).toBe("2026-09-30"); // Wed, −3
-    expect(byKey["launch:shopify-collection"].label).toBe("Shopify collection 'Autumn Box' (tag = box name)");
+    expect(byKey["launch:shopify-collection"].label).toBe("Create the Shopify collection");
+    expect(byKey["launch:shopify-collection"].action).toBe("shopify-collection");
+    expect(byKey["launch:decide-recipes"].date).toBe("2026-09-30");    // with the products, listed first
+    expect(tasks.findIndex(t => t.key === "launch:decide-recipes")).toBeLessThan(tasks.findIndex(t => t.key === "launch:shopify-products"));
     expect(byKey["launch:shopify-barcodes"].date).toBe("2026-10-01");  // Thu, −2
     expect(byKey["launch:shopify-go-live"].date).toBe("2026-10-05");   // launch day
     expect(byKey["launch:discount-code"].date).toBe("2026-10-01");   // Thu, −2

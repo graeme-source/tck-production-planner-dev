@@ -22,7 +22,12 @@ export interface LaunchStepContext {
   boxName: string;
   /** "Fri 16 Oct" — only for the per-delivery Zapiet step. */
   deliveryLabel?: string;
+  /** How many recipes the box has (for the "decide on recipes" hint). */
+  recipeCount?: number;
 }
+
+/** A step the app can do: the page shows its button on the step. */
+export type LaunchAction = "shopify-products" | "shopify-collection" | "discount-code";
 
 export interface LaunchStepTemplate {
   /** Stable — ticks and to-dos are stored against "launch:<key>". */
@@ -41,20 +46,40 @@ export interface LaunchStepTemplate {
   perDelivery?: boolean;
   /** Done by the app (with a button on the box) rather than by a person. */
   automated: boolean;
+  /** The app's button for this step (automated steps only). */
+  action?: LaunchAction;
+  /** A nudge shown under the step, or nothing. */
+  hint?: (c: LaunchStepContext) => string | undefined;
 }
 
 export const LAUNCH_CHECKLIST: readonly LaunchStepTemplate[] = [
   {
+    key: "decide-recipes",
+    title: () => "Decide on recipes",
+    how: () => "Pick the 2–4 recipes for the box (above) and tick this when they're settled. The Shopify collection waits for this tick.",
+    hint: c => (c.recipeCount ?? 0) < 2 ? `The box has ${c.recipeCount ?? 0} recipe${c.recipeCount === 1 ? "" : "s"} — a test box works best with 2–4.` : undefined,
+    // Same day as the Shopify steps (listed first): any earlier would make
+    // every box planned a week out look like a "tight timeline".
+    from: "launch", workingDaysBefore: 3, automated: false,
+  },
+  {
+    // Key kept from the hand-made version so earlier ticks stay.
     key: "shopify-products",
-    title: () => "Make each recipe's Shopify product as a draft, hidden from the main website",
-    how: c => `The app does this: 'Create Shopify products' below duplicates the last test-box product for each recipe as a draft — tags show, no-wholesale, calzones and '${c.boxName}', the app's ingredient deck, description and pack size, no barcode — and links it to the recipe so its sales reach the planner. Ticks itself once every recipe has a product. By hand: Shopify → Products → the last test-box product → Duplicate.`,
-    from: "launch", workingDaysBefore: 3, automated: true,
+    title: () => "Create Shopify products",
+    how: c => `The app duplicates the last test-box product for each recipe as a draft — tags show, no-wholesale, calzones and '${c.boxName}', the app's ingredient deck, description and pack size, no barcode — and links it to the recipe so its sales reach the planner. One at a time or all together; or link a product made by hand. Ticks itself once every recipe has a product.`,
+    from: "launch", workingDaysBefore: 3, automated: true, action: "shopify-products",
   },
   {
     key: "shopify-collection",
-    title: c => `Shopify collection '${c.boxName}' (tag = box name)`,
-    how: c => `The app makes it with the first product: a smart collection named '${c.boxName}' that picks up every product tagged '${c.boxName}'. By hand: Shopify → Collections → Create → Smart, condition "Product tag is equal to ${c.boxName}".`,
-    from: "launch", workingDaysBefore: 3, automated: true,
+    title: () => "Create the Shopify collection",
+    how: c => `A smart collection named '${c.boxName}' that picks up every product tagged '${c.boxName}', set up like the last test box's. Ready once the recipes are decided and every recipe has a Shopify product. Ticks itself.`,
+    from: "launch", workingDaysBefore: 3, automated: true, action: "shopify-collection",
+  },
+  {
+    key: "discount-code",
+    title: () => "Create the 20% discount code",
+    how: c => `One shared code, 20% off the '${c.boxName}' collection only, set up like the last test box's code. Ready once the collection exists. Ticks itself.`,
+    from: "launch", workingDaysBefore: 2, automated: true, action: "discount-code",
   },
   {
     key: "shopify-barcodes",
@@ -65,7 +90,7 @@ export const LAUNCH_CHECKLIST: readonly LaunchStepTemplate[] = [
   {
     key: "shopify-nutrition",
     title: () => "Upload each new product's nutrition table image",
-    how: () => "The website's nutrition table is an image (custom.nutritional_info), so the app can't write it — it removes the copied product's one. The numbers are under 'Create Shopify products' on this box.",
+    how: () => "The website's nutrition table is an image (custom.nutritional_info), so the app can't write it — it removes the copied product's one. The numbers are in 'Create Shopify products' on this box.",
     from: "launch", workingDaysBefore: 2, automated: false,
   },
   {
@@ -78,12 +103,6 @@ export const LAUNCH_CHECKLIST: readonly LaunchStepTemplate[] = [
     key: "shopify-price",
     title: () => "Check each new product's price",
     how: () => "The price is copied from the product it was duplicated from — set this recipe's price in Shopify.",
-    from: "launch", workingDaysBefore: 2, automated: false,
-  },
-  {
-    key: "discount-code",
-    title: () => "Create a 20% discount code for the box",
-    how: c => `Shopify → Discounts → Create discount → Amount off products: 20%, applied to the '${c.boxName}' collection.`,
     from: "launch", workingDaysBefore: 2, automated: false,
   },
   {

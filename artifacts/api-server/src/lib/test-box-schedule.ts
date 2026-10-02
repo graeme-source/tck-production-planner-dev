@@ -43,7 +43,7 @@
  * an unticked step still goes overdue rather than drifting forward forever.
  */
 import { isDeliveryDay } from "./production-cutoff";
-import { LAUNCH_CHECKLIST, launchTaskKey } from "./test-box-launch-checklist";
+import { LAUNCH_CHECKLIST, launchTaskKey, type LaunchAction } from "./test-box-launch-checklist";
 
 /** VIP Calzoney Club members always get this long to buy from launch. */
 export const VIP_GUARANTEE_HOURS = 48;
@@ -129,6 +129,8 @@ export interface ScheduleTask {
   clamped?: boolean;
   /** Done by the app rather than a person (launch checklist). */
   automated?: boolean;
+  /** The app's button for this launch step (test-box-launch-checklist.ts). */
+  action?: LaunchAction;
   /** Belongs to this delivery (absent = launch checklist). */
   deliveryId?: number;
   /** The date is already behind us. */
@@ -251,7 +253,7 @@ export function deliveryTaskKey(deliveryId: number, step: string): string {
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 // ── The launch checklist ────────────────────────────────────────────────────
-export function buildLaunchTasks(input: Pick<ScheduleInput, "boxName" | "launchDate" | "publicLaunchDate" | "plannedOn" | "deliveries" | "today">): { tasks: ScheduleTask[]; tightTimeline: boolean } {
+export function buildLaunchTasks(input: Pick<ScheduleInput, "boxName" | "launchDate" | "publicLaunchDate" | "plannedOn" | "deliveries" | "today"> & { recipes?: string[] }): { tasks: ScheduleTask[]; tightTimeline: boolean } {
   const tasks: ScheduleTask[] = [];
   let tight = false;
   const windowEnd = vipWindowEnd(input.launchDate);
@@ -269,12 +271,15 @@ export function buildLaunchTasks(input: Pick<ScheduleInput, "boxName" | "launchD
       let date = clamped ? input.plannedOn : normal;
       // A delivery added later can't have been switched on before it existed.
       if (inst.addedOn) date = maxDate(date, inst.addedOn);
-      const ctx = { boxName: input.boxName, deliveryLabel: inst.deliveryLabel };
+      const ctx = { boxName: input.boxName, deliveryLabel: inst.deliveryLabel, recipeCount: input.recipes?.length ?? 0 };
+      const hint = step.hint?.(ctx);
       tasks.push({
         key: inst.key, date, kind: "launch",
         label: step.title(ctx), how: step.how(ctx),
+        ...(hint ? { detail: hint } : {}),
         ...(clamped ? { clamped: true } : {}),
         automated: step.automated,
+        ...(step.action ? { action: step.action } : {}),
         past: date < input.today,
       });
     }
