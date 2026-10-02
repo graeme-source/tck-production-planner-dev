@@ -17,7 +17,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Loader2, AlertTriangle, CalendarClock, Mail, Tag, CheckCircle2, X, ExternalLink, Truck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
-import { PostcodeServiceCard } from "@/components/apc-postcode-service";
+import { PostcodeServiceCard, type PostcodeServiceFacts } from "@/components/apc-postcode-service";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -37,7 +37,7 @@ interface ReschedulePreview {
    *  the manual spreadsheet check, now done by the server. */
   postcodeCheck?: {
     summary: string;
-    service: { nextDay: boolean; saturdayDelivery: boolean; transitDays: number | null; matchedOn: string; depot: string; weekdayCutoff: string | null; saturday: string | null } | null;
+    service: { nextDay: boolean; saturdayDelivery: boolean; transitDays: number | null; matchedOn: string; depot: string; weekdayCutoff: string | null; saturday: string | null; restrictions?: PostcodeServiceFacts["restrictions"] } | null;
   } | null;
 }
 

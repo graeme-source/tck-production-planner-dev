@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils";
 import { mergeRows, countRows, replaceRow } from "@/lib/booking-report";
 import { RescheduleOrderDialog } from "@/components/reschedule-order-dialog";
 import { toast } from "@/hooks/use-toast";
-import { PostcodeServiceCard, type PostcodeServiceFacts } from "@/components/apc-postcode-service";
+import { PostcodeServiceCard, type PostcodeServiceFacts, type PostcodeCall } from "@/components/apc-postcode-service";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
@@ -85,9 +85,14 @@ interface BookResult {
   postcodeCheck?: string;
   /** The same check as separate facts, for the two ticked lines. */
   postcodeService?: PostcodeServiceFacts;
-  /** Set when APC refused a service the table says this depot normally
-   *  offers — a temporary depot restriction. */
+  /** What to do about a coverage refusal: call APC (the table says the
+   *  depot normally offers it), or reschedule (APC's answer is on record). */
   postcodeAdvice?: string;
+  postcodeAdviceKind?: "call_depot" | "reschedule_confirmed" | "reschedule_temporary";
+  postcodeAdviceService?: "saturday" | "weekday";
+  /** Present with call_depot: who to call and the outward code/depot the
+   *  recorded answer applies to. */
+  postcodeCall?: PostcodeCall;
 }
 
 interface BookResponse {
@@ -656,7 +661,13 @@ export function ApcBatchBookingDialog({ tag, adminBase, onClose, onBooked }: {
                         before deciding whether to reschedule — what APC's
                         own postcode sheet says this address can take. */}
                     {r.postcodeService ? (
-                      <PostcodeServiceCard service={r.postcodeService} advice={r.postcodeAdvice} className="mt-1.5" />
+                      <PostcodeServiceCard
+                        service={r.postcodeService}
+                        advice={r.postcodeAdvice}
+                        call={r.postcodeCall}
+                        callService={r.postcodeAdviceService}
+                        className="mt-1.5"
+                      />
                     ) : r.postcodeCheck && (
                       <span className="block text-sm text-blue-800 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/30 rounded px-2 py-1.5 mt-1">
                         {r.postcodeCheck}
