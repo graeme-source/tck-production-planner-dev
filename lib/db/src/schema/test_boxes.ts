@@ -19,6 +19,9 @@ export const testBoxesTable = pgTable("test_boxes", {
   // with marketing.ts; the foreign keys are in the migration.
   launchEmailId: integer("launch_email_id"),
   socialNoteEventId: integer("social_note_event_id"),
+  // The box's Shopify smart collection (rule: tag = box name), made once by
+  // "Create Shopify products" (0147). Shopify's numeric id, as text.
+  shopifyCollectionId: text("shopify_collection_id"),
   // LEGACY (0136) — superseded by test_box_deliveries in 0146; not written.
   deliveryDate: date("delivery_date"),
   // LEGACY (0136) — no longer used: the launch is always VIP first.
@@ -92,5 +95,26 @@ export const testBoxDeliveriesTable = pgTable("test_box_deliveries", {
   deletedByName: text("deleted_by_name"),
 });
 export type TestBoxDelivery = typeof testBoxDeliveriesTable.$inferSelect;
+
+// Shopify products the app created for a box's recipes (0147) — so a re-run
+// updates them instead of duplicating. The recipe → variant link itself is
+// in recipe_shopify_mappings, like every other product.
+export const testBoxShopifyProductsTable = pgTable("test_box_shopify_products", {
+  id: serial("id").primaryKey(),
+  testBoxId: integer("test_box_id").notNull().references(() => testBoxesTable.id, { onDelete: "cascade" }),
+  recipeId: integer("recipe_id").notNull().references(() => recipesTable.id, { onDelete: "cascade" }),
+  shopifyProductId: text("shopify_product_id").notNull(),
+  productTitle: text("product_title"),
+  templateProductId: text("template_product_id"),
+  imagesCopied: boolean("images_copied").notNull().default(true),
+  // created (duplicated, details not all written yet) | complete
+  state: text("state").notNull().default("created"),
+  lastError: text("last_error"),
+  createdById: integer("created_by_id").references(() => usersTable.id, { onDelete: "set null" }),
+  createdByName: text("created_by_name"),
+  updatedByName: text("updated_by_name"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => [unique().on(t.testBoxId, t.recipeId)]);
 
 export type TestBox = typeof testBoxesTable.$inferSelect;
