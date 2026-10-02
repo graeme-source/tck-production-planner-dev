@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
 import { Loader2, Printer, Copy, Check, AlertTriangle, Tag } from "lucide-react";
+import { activeRecipes } from "@/lib/recipe-archive";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -55,12 +56,12 @@ export default function LabelLiveTest() {
   const [copied, setCopied] = useState<string | null>(null);
   const [recipeId, setRecipeId] = useState<number>(1); // Margherita
 
-  const { data: recipes } = useQuery<Array<{ id: number; name: string }>>({
+  const { data: recipes } = useQuery<Array<{ id: number; name: string; archivedAt?: string | null }>>({
     queryKey: ["recipes-for-label-test"],
     queryFn: async () => {
       const res = await fetch(`${BASE}/api/recipes`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load recipes");
-      return res.json();
+      return activeRecipes(await res.json() as Array<{ id: number; name: string; archivedAt?: string | null }>);
     },
   });
 

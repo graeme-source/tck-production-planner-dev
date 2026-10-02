@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
+import { activeRecipes } from "@/lib/recipe-archive";
 import { toast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,7 +54,7 @@ interface SurveyListItem {
   collectionTitle: string | null;
 }
 
-interface RecipeOption { id: number; name: string; category: string | null; imageUrl: string | null }
+interface RecipeOption { id: number; name: string; category: string | null; imageUrl: string | null; archivedAt?: string | null }
 
 interface CollectionOption { id: number; title: string }
 
@@ -181,7 +182,9 @@ function RecipePicker({ recipes, value, onChange }: {
   value: number | null;
   onChange: (id: number | null) => void;
 }) {
-  const groups = useMemo(() => groupRecipeOptions(recipes), [recipes]);
+  // Archived recipes (migration 0141) aren't offered, except the one this
+  // question already uses.
+  const groups = useMemo(() => groupRecipeOptions(activeRecipes(recipes, [value])), [recipes, value]);
   return (
     <Select
       value={value == null ? "none" : String(value)}

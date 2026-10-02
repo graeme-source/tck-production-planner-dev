@@ -12,6 +12,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NumberInput } from "@/components/ui/number-input";
+import { activeRecipes } from "@/lib/recipe-archive";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -775,7 +776,7 @@ export default function Stock() {
               <label className="text-sm font-medium mb-1 block">Select Item</label>
               {(watchedFinishedOnly || selectedType === "recipe") ? (
                 <select {...register("recipeId")} className="w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring appearance-none">
-                  {recipes?.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                  {activeRecipes(recipes as (NonNullable<typeof recipes> & Array<{ id: number; name: string; archivedAt?: string | null }>) | undefined).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                 </select>
               ) : selectedType === "stock_item" ? (
                 <select {...register("stockItemId")} className="w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring appearance-none">

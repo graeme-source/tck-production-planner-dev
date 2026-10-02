@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import { useListRecipes } from "@workspace/api-client-react";
+import { activeRecipes } from "@/lib/recipe-archive";
 import type { Recipe } from "@workspace/api-client-react";
 
 type FilterCategory = "all" | string;
@@ -46,7 +47,8 @@ type EnrichedRecipe = Recipe & {
 
 export default function RecipePnLReport() {
   const { data: recipes, isLoading } = useListRecipes();
-  const enriched = (recipes ?? []) as EnrichedRecipe[];
+  // Current menu P&L: archived recipes (migration 0141) are left out.
+  const enriched = useMemo(() => activeRecipes((recipes ?? []) as Array<EnrichedRecipe & { archivedAt?: string | null }>), [recipes]);
 
   // ── Filter state ──────────────────────────────────────────────────────────
   const [categoryFilter, setCategoryFilter] = useState<FilterCategory>("all");

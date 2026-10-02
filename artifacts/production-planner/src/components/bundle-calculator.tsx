@@ -3,6 +3,7 @@ import { useListRecipes, useListIngredients } from "@workspace/api-client-react"
 import { Loader2, Trash2, Save, FilePlus2, Package, Plus, Carrot } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { activeRecipes } from "@/lib/recipe-archive";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
@@ -151,7 +152,7 @@ export function BundleCalculator() {
     } catch { toast({ title: "Delete failed", variant: "destructive" }); }
   };
 
-  const unaddedRecipes = recipes.filter(r => !lines.some(l => l.kind === "recipe" && l.recipeId === r.id));
+  const unaddedRecipes = activeRecipes(recipes as Array<Recipe & { archivedAt?: string | null }>).filter(r => !lines.some(l => l.kind === "recipe" && l.recipeId === r.id));
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

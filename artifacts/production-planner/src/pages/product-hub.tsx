@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { BundleCalculator } from "@/components/bundle-calculator";
 import { IngredientFormDialog } from "@/components/ingredient-form-dialog";
 import { buildIngredientPayload, type IngredientFormValues } from "@/lib/ingredient-form";
+import { activeRecipes } from "@/lib/recipe-archive";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -1076,8 +1077,8 @@ export default function ProductHub() {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   // /api/recipes only returns full recipes (sub-recipes live on their own
-  // endpoint), so no type filtering is needed here.
-  const recipeList: RecipeItem[] = (recipes ?? [])
+  // endpoint). Archived recipes (migration 0141) are left out.
+  const recipeList: RecipeItem[] = activeRecipes(recipes as Array<{ id: number; name: string; archivedAt?: string | null }> | undefined)
     .map((r) => ({ id: r.id, name: r.name }))
     .sort((a, b) => a.name.localeCompare(b.name));
 

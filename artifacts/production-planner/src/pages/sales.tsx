@@ -8,6 +8,7 @@ import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { format } from "date-fns";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { activeRecipes } from "@/lib/recipe-archive";
 
 const schema = z.object({
   recipeId: z.coerce.number().min(1, "Select product"),
@@ -56,7 +57,7 @@ export default function Sales() {
                   <label className="text-sm font-medium mb-1 block">Product Sold</label>
                   <select {...register("recipeId")} className="w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring appearance-none">
                      <option value={0} disabled>Select product...</option>
-                     {recipes?.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                     {activeRecipes(recipes as (NonNullable<typeof recipes> & Array<{ id: number; name: string; archivedAt?: string | null }>) | undefined).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                   </select>
                 </div>
                 <div className="grid grid-cols-2 gap-4">

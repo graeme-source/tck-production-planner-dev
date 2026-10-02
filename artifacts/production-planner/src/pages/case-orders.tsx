@@ -24,6 +24,7 @@ import {
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { activeRecipes } from "@/lib/recipe-archive";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -73,7 +74,7 @@ interface SuggestionResponse {
   shortfall: Array<RecipeProgress & { bagsUnplaced: number }>;
 }
 
-interface RecipeLimit { id: number; name: string; maxBatchesPerDay: number | null }
+interface RecipeLimit { id: number; name: string; maxBatchesPerDay: number | null; archivedAt?: string | null }
 interface SupplierLite { id: number; name: string }
 
 async function jsonOrThrow(res: Response, fallback: string) {
@@ -747,7 +748,7 @@ function CaseTypesDialog({ caseTypes, recipes, onClose }: {
                         className="flex-1 px-3 py-2.5 border border-border rounded-xl bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
                       >
                         <option value="">Recipe…</option>
-                        {recipes.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                        {activeRecipes(recipes, [line.recipeId === "" ? null : Number(line.recipeId)]).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                       </select>
                       <button
                         onClick={() => setEditing(ed => ed && ed.lines.length > 1 ? { ...ed, lines: ed.lines.filter((_, j) => j !== i) } : ed)}
@@ -842,7 +843,7 @@ function RecipeLimitsEditor({ limits }: { limits: RecipeLimit[] }) {
 
   return (
     <div className="px-4 pb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-      {limits.map(r => {
+      {activeRecipes(limits).map(r => {
         const draft = drafts[r.id] ?? (r.maxBatchesPerDay == null ? "" : String(r.maxBatchesPerDay));
         const dirty = drafts[r.id] !== undefined;
         return (

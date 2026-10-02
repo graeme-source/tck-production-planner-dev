@@ -5,6 +5,7 @@ import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { Thermometer, Snowflake, Package, RefreshCw, ChevronRight, ChevronDown, Settings2, Plus, Pencil, Trash2, X, Save, Loader2, Lock, LockOpen, Check, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ProcessFulfilledTodayButton } from "@/components/process-fulfilled-today-button";
+import { activeRecipes } from "@/lib/recipe-archive";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -633,7 +634,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
           >
             <option value="">Select {addItemType}…</option>
             {addItemType === "recipe"
-              ? (recipes ?? []).map(r => <option key={r.id} value={r.id}>{r.name}</option>)
+              ? activeRecipes(recipes as (NonNullable<typeof recipes> & Array<{ id: number; name: string; archivedAt?: string | null }>) | undefined).map(r => <option key={r.id} value={r.id}>{r.name}</option>)
               : (ingredients ?? []).map(i => <option key={i.id} value={i.id}>{i.name}</option>)
             }
           </select>
