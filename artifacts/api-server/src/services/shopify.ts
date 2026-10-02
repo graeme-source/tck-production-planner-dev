@@ -175,6 +175,42 @@ export async function shopifyGraphQL<T>(query: string, variables?: Record<string
   throw new Error("Shopify GraphQL: retries exhausted");
 }
 
+/** Thrown by shopifyGraphQLWrite when this machine must not write to Shopify
+ *  (staging, or BLOCK_SHOPIFY_WRITES=true). The message is shown to people. */
+export class ShopifyWritesBlockedError extends Error {
+  readonly code = "SHOPIFY_WRITES_BLOCKED";
+  constructor(readonly operation: string) {
+    super("Shopify writes are switched off on this server (BLOCK_SHOPIFY_WRITES / staging), so nothing was created or changed in Shopify.");
+    this.name = "ShopifyWritesBlockedError";
+  }
+}
+
+/**
+ * A GraphQL MUTATION against the store, behind the side-effect guard: when
+ * shouldSkipSideEffect() is true it logs and THROWS (never pretends to have
+ * written), so a caller can't mistake a skipped write for a real product id.
+ * Every new Shopify write should come through here rather than calling
+ * shopifyGraphQL with a mutation directly.
+ */
+export async function shopifyGraphQLWrite<T>(operation: string, query: string, variables?: Record<string, unknown>): Promise<T> {
+  if (shouldSkipSideEffect()) {
+    logSkippedSideEffect(`shopify.${operation}`, { variables: variables ? Object.keys(variables) : [] });
+    throw new ShopifyWritesBlockedError(operation);
+  }
+  return shopifyGraphQL<T>(query, variables);
+}
+
+/** True when this server would refuse Shopify writes (for previews). */
+export function shopifyWritesBlocked(): boolean {
+  return shouldSkipSideEffect();
+}
+
+/** Shopify admin link for a product / collection (numeric id). Server-side
+ *  for the same reason as shopifyAdminOrderUrl: the store domain is an env var. */
+export function shopifyAdminUrl(kind: "products" | "collections", numericId: string | number): string {
+  return `https://${STORE_DOMAIN}/admin/${kind}/${numericId}`;
+}
+
 /**
  * Shopify's OWN online-store conversion metric for the inclusive date range,
  * straight from ShopifyQL: `FROM sessions SHOW sessions, conversion_rate`.

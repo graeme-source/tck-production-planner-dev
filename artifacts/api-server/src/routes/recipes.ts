@@ -1597,19 +1597,8 @@ router.get("/:id/ingredient-deck", async (req, res) => {
 // metafield on every Shopify PRODUCT linked to this recipe (via the main /
 // wonky / 8-pack variant mappings). That metafield is what the storefront
 // theme renders on product pages, so this replaces the old copy-paste flow.
-
-type RichRun = { type: "text"; value: string; bold?: boolean };
-
-/** Convert the deck's markdown-style **Allergen** markers into Shopify
- *  rich-text runs. Split on `**`: odd segments are the bolded ones. */
-function mdBoldToRichRuns(text: string): RichRun[] {
-  const runs: RichRun[] = [];
-  text.split("**").forEach((part, i) => {
-    if (!part) return;
-    runs.push(i % 2 === 1 ? { type: "text", value: part, bold: true } : { type: "text", value: part });
-  });
-  return runs;
-}
+// The document itself is built by lib/shopify-rich-text.ts (shared with the
+// test-box product creator); the write goes through the side-effect guard.
 
 router.post("/:id/push-ingredient-deck", requireAdmin, async (req, res) => {
   const parsed = RecipeIdParams.safeParse({ id: req.params.id });
@@ -1618,7 +1607,8 @@ router.post("/:id/push-ingredient-deck", requireAdmin, async (req, res) => {
   // ?dryRun=1 builds everything and reports which products WOULD be updated
   // without writing — the UI uses it as the confirm step before publishing.
   const dryRun = req.query["dryRun"] === "1";
-  const { shopifyGraphQL } = await import("../services/shopify");
+  const { shopifyGraphQL, shopifyGraphQLWrite, ShopifyWritesBlockedError } = await import("../services/shopify");
+  const { ingredientDeckDocument } = await import("../lib/shopify-rich-text");
 
   try {
     const [recipe] = await db.select().from(recipesTable).where(eq(recipesTable.id, recipeId));
@@ -1696,40 +1686,20 @@ router.post("/:id/push-ingredient-deck", requireAdmin, async (req, res) => {
 
     // Shopify rich-text document: deck paragraph, allergen statement,
     // legal disclaimer.
-    const children: Array<{ type: "paragraph"; children: RichRun[] }> = [
-      { type: "paragraph", children: mdBoldToRichRuns(deck.deckText) },
-    ];
-    const allergenRuns: RichRun[] = [
-      { type: "text", value: "Allergens are shown in " },
-      { type: "text", value: "Bold", bold: true },
-      { type: "text", value: "." },
-    ];
-    if (deck.mayContainStatement) {
-      allergenRuns.push({ type: "text", value: ` ${deck.mayContainStatement.trim().replace(/\.?$/, ".")}` });
-    }
-    children.push({ type: "paragraph", children: allergenRuns });
-    if (disclaimer) {
-      children.push({
-        type: "paragraph",
-        children: [
-          { type: "text", value: "Legal Disclaimer: ", bold: true },
-          { type: "text", value: disclaimer },
-        ],
-      });
-    }
-    const value = JSON.stringify({ type: "root", children });
+    const value = JSON.stringify(ingredientDeckDocument({ deckText: deck.deckText, mayContainStatement: deck.mayContainStatement, disclaimer }));
 
     if (dryRun) {
       res.json({ dryRun: true, wouldPush: [...products.values()], metafield: "custom.ingredient_deck", richTextValue: value });
       return;
     }
 
-    const result = await shopifyGraphQL<{
+    const result = await shopifyGraphQLWrite<{
       metafieldsSet: {
         metafields: Array<{ id: string }> | null;
         userErrors: Array<{ field: string[] | null; message: string }>;
       };
     }>(
+      "pushIngredientDeck",
       `mutation ($metafields: [MetafieldsSetInput!]!) {
         metafieldsSet(metafields: $metafields) {
           metafields { id }
@@ -1756,6 +1726,7 @@ router.post("/:id/push-ingredient-deck", requireAdmin, async (req, res) => {
       metafield: "custom.ingredient_deck",
     });
   } catch (err: unknown) {
+    if (err instanceof ShopifyWritesBlockedError) { res.status(503).json({ error: err.message, code: err.code }); return; }
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[recipes] push-ingredient-deck error:", msg);
     res.status(502).json({ error: msg });
