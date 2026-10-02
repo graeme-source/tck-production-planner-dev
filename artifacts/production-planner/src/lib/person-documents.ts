@@ -96,9 +96,6 @@ export interface PersonDocumentsResponse {
 export interface OnboardingForm {
   phone: string | null;
   address: string | null;
-  emergencyContactName: string | null;
-  emergencyContactPhone: string | null;
-  emergencyContactRelationship: string | null;
   shoeSize: string | null;
   footwearChoice: string | null;
   submittedAt: string | null;

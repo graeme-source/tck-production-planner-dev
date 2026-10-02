@@ -214,12 +214,13 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
       // The onboarding form itself. This is the only place anyone but the
       // person reads it — Team & Access and the training matrix used to show
       // it to every manager and admin (Graeme, 2026-09-28).
+      // The emergency contact is NOT sent with it: the current one is
+      // revealed on the record through /api/staff-emergency-contacts, which
+      // logs every read (Graeme, 2026-10-02), and the form's copy was
+      // carried into that table by migration 0145.
       db.select({
         phone: onboardingSubmissionsTable.phone,
         address: onboardingSubmissionsTable.address,
-        emergencyContactName: onboardingSubmissionsTable.emergencyContactName,
-        emergencyContactPhone: onboardingSubmissionsTable.emergencyContactPhone,
-        emergencyContactRelationship: onboardingSubmissionsTable.emergencyContactRelationship,
         shoeSize: onboardingSubmissionsTable.shoeSize,
         footwearChoice: onboardingSubmissionsTable.footwearChoice,
         submittedAt: onboardingSubmissionsTable.submittedAt,

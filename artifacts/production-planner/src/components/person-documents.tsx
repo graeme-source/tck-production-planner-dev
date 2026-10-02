@@ -175,15 +175,15 @@ export function PersonDocumentsSection({ data, isLoading, error, onOpen, onAdd }
 }
 
 /** The onboarding form they filled in before their first day — contact,
- *  emergency contact, footwear. Lives here, on the People record, and
- *  nowhere else (Graeme, 2026-09-28). */
+ *  footwear. Lives here, on the People record, and nowhere else (Graeme,
+ *  2026-09-28). The emergency contact they gave is NOT repeated here: the
+ *  current one is the "Emergency contact" panel on the record, revealed
+ *  with a tap that is logged (2026-10-02). */
 function OnboardingFormCard({ form }: { form: OnboardingForm }) {
   const footwear = form.footwearChoice === "safety_shoes" ? "Safety shoes" : form.footwearChoice === "crocs" ? "Crocs" : null;
   const rows: Array<[string, string | null]> = [
     ["Mobile", form.phone],
     ["Address", form.address],
-    ["Emergency contact", [form.emergencyContactName, form.emergencyContactRelationship && `(${form.emergencyContactRelationship})`].filter(Boolean).join(" ") || null],
-    ["Emergency phone", form.emergencyContactPhone],
     ["Footwear", [form.shoeSize && `UK ${form.shoeSize}`, footwear].filter(Boolean).join(" · ") || null],
   ];
   return (

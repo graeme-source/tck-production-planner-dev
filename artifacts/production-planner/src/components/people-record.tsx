@@ -54,6 +54,7 @@ import {
   type OpenDocument,
 } from "@/components/person-documents";
 import { documentEntries, isFiledFounderOnly } from "@/lib/person-documents";
+import { PersonEmergencyContactPanel } from "@/components/emergency-contacts/person-emergency-contact-panel";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -611,6 +612,9 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
           onAdd={() => setAddingContract(true)}
         />
       )}
+
+      {/* Their emergency contact — tap to show; every look is logged. */}
+      <PersonEmergencyContactPanel userId={userId} personName={p.name} />
 
       <PersonDocumentsSection
         data={documents.data}

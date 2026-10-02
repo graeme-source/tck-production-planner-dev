@@ -152,7 +152,8 @@ router.post("/team/:userId/view", validate(viewBody), async (req: Request, res: 
 router.put("/team/:userId", validate(emergencyContactBody), async (req: Request, res: Response) => {
   const userId = parseId(req.params["userId"]);
   if (userId == null) { res.status(400).json({ error: "Invalid person" }); return; }
-  const source: ViewSource = req.query["source"] === "station" ? "station" : "contacts_page";
+  const q = req.query["source"];
+  const source: ViewSource = q === "station" || q === "people_record" ? q : "contacts_page";
   try {
     const out = await saveContact(store, await viewerOf(req), userId, req.body as EmergencyContactInput, source);
     res.status(out.status).json(out.body);
