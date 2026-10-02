@@ -62,6 +62,12 @@ function mapRecipe(r: typeof recipesTable.$inferSelect) {
     builderFillingDeductionGrams: r.builderFillingDeductionGrams != null ? Number(r.builderFillingDeductionGrams) : 0,
     dietaryCategory: r.dietaryCategory ?? null,
     tags: r.tags ?? [],
+    // Archive (migration 0141): the list endpoint returns archived recipes
+    // too — plans, history and stations still need their names and data —
+    // and every picker hides them with activeRecipes() on the client.
+    archivedAt: r.archivedAt ? r.archivedAt.toISOString() : null,
+    archivedById: r.archivedById ?? null,
+    archivedByName: r.archivedByName ?? null,
     createdAt: r.createdAt.toISOString(),
   };
 }
