@@ -25,6 +25,7 @@ import { SaveChip } from "@/components/save-chip";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { RecipeDraftBadge } from "@/components/recipe-archive";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -545,11 +546,14 @@ function RecipePicker({ ids, names, onChange }: { ids: number[]; names: Array<{ 
   const [q, setQ] = useState("");
   const { data } = useQuery({
     queryKey: ["test-boxes", "recipe-options"],
-    queryFn: () => api<{ recipes: Array<{ id: number; name: string; category: string | null }> }>("/recipe-options"),
+    // Drafts are included (flagged isDraft) — a test box is how a draft gets
+    // trialled. Archived recipes aren't.
+    queryFn: () => api<{ recipes: Array<{ id: number; name: string; category: string | null; isDraft?: boolean }> }>("/recipe-options"),
     staleTime: 5 * 60_000,
   });
   const all = data?.recipes ?? [];
   const nameOf = (id: number) => all.find(r => r.id === id)?.name ?? names.find(r => r.id === id)?.name ?? `Recipe ${id}`;
+  const draftIds = new Set(all.filter(r => r.isDraft).map(r => r.id));
   const matches = useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle) return [];
@@ -564,6 +568,7 @@ function RecipePicker({ ids, names, onChange }: { ids: number[]; names: Array<{ 
         {ids.map(id => (
           <span key={id} className="pl-3.5 pr-1.5 py-1.5 rounded-full bg-rose-500/10 text-rose-900 dark:text-rose-100 text-base font-semibold inline-flex items-center gap-1.5">
             {nameOf(id)}
+            {draftIds.has(id) && <RecipeDraftBadge />}
             <button onClick={() => onChange(ids.filter(x => x !== id))} className="p-1 rounded-full hover:bg-rose-500/20" aria-label={`Remove ${nameOf(id)}`}><X className="w-4 h-4" /></button>
           </span>
         ))}
@@ -581,6 +586,7 @@ function RecipePicker({ ids, names, onChange }: { ids: number[]; names: Array<{ 
                 <li key={r.id}>
                   <button onClick={() => { onChange([...ids, r.id]); setQ(""); }} className="w-full text-left px-4 py-2.5 hover:bg-secondary/60 text-base">
                     {r.name}{r.category && <span className="text-sm text-muted-foreground"> · {r.category}</span>}
+                    {r.isDraft && <span className="ml-2 align-middle"><RecipeDraftBadge /></span>}
                   </button>
                 </li>
               ))}
@@ -589,6 +595,9 @@ function RecipePicker({ ids, names, onChange }: { ids: number[]; names: Array<{ 
         </div>
       )}
       {full && <p className="text-sm text-muted-foreground">Four recipes is the most a test box takes.</p>}
+      {ids.some(id => draftIds.has(id)) && (
+        <p className="text-sm text-muted-foreground">A draft can go in a test box, but it won't be offered on a production plan until it's put on the menu — from <Link href="/recipes?view=drafts" className="font-semibold text-primary underline underline-offset-2">Recipes → Drafts</Link>.</p>
+      )}
     </div>
   );
 }

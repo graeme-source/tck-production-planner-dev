@@ -12,7 +12,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import { useListRecipes } from "@workspace/api-client-react";
-import { activeRecipes } from "@/lib/recipe-archive";
+import { isDraftRecipe, notArchivedRecipes } from "@/lib/recipe-archive";
 import type { Recipe } from "@workspace/api-client-react";
 
 type FilterCategory = "all" | string;
@@ -47,14 +47,17 @@ type EnrichedRecipe = Recipe & {
 
 export default function RecipePnLReport() {
   const { data: recipes, isLoading } = useListRecipes();
-  // Current menu P&L: archived recipes (migration 0141) are left out.
-  const enriched = useMemo(() => activeRecipes((recipes ?? []) as Array<EnrichedRecipe & { archivedAt?: string | null }>), [recipes]);
+  // Archived recipes (migration 0141) are left out. Drafts (0142) are in,
+  // marked "Draft" — costing a draft is part of developing it — and can be
+  // left out with "Include drafts" for a menu-only print.
+  const enriched = useMemo(() => notArchivedRecipes((recipes ?? []) as Array<EnrichedRecipe & { archivedAt?: string | null; isDraft?: boolean }>), [recipes]);
 
   // ── Filter state ──────────────────────────────────────────────────────────
   const [categoryFilter, setCategoryFilter] = useState<FilterCategory>("all");
   const [coreFilter, setCoreFilter] = useState<CoreFilter>("all");
   const [hideNoRrp, setHideNoRrp] = useState(false);
   const [includeSpecials, setIncludeSpecials] = useState(true);
+  const [includeDrafts, setIncludeDrafts] = useState(true);
 
   useEffect(() => {
     document.title = "Recipe P&L Report — TCK";
@@ -75,13 +78,14 @@ export default function RecipePnLReport() {
         return true;
       })
       .filter(r => (includeSpecials ? true : !r.isCurrentSpecial))
+      .filter(r => (includeDrafts ? true : !isDraftRecipe(r)))
       .filter(r => !hideNoRrp || (Number(r.rrp) || 0) > 0)
       .sort((a, b) => {
         const ca = (a.category ?? "").localeCompare(b.category ?? "");
         if (ca !== 0) return ca;
         return a.name.localeCompare(b.name);
       });
-  }, [enriched, categoryFilter, coreFilter, hideNoRrp, includeSpecials]);
+  }, [enriched, categoryFilter, coreFilter, hideNoRrp, includeSpecials, includeDrafts]);
 
   // ── Totals / summary calcs ────────────────────────────────────────────────
   const totals = useMemo(() => {
@@ -224,6 +228,10 @@ export default function RecipePnLReport() {
             <input type="checkbox" checked={includeSpecials} onChange={e => setIncludeSpecials(e.target.checked)} />
             Include current specials
           </label>
+          <label className="pnl-checkbox">
+            <input type="checkbox" checked={includeDrafts} onChange={e => setIncludeDrafts(e.target.checked)} />
+            Include drafts
+          </label>
           <button className="pnl-print-btn" onClick={() => window.print()}>
             Print / Save as PDF
           </button>
@@ -240,6 +248,7 @@ export default function RecipePnLReport() {
               {coreFilter === "core" && " · core menu only"}
               {coreFilter === "non_core" && " · non-core only"}
               {hideNoRrp && " · priced recipes only"}
+              {!includeDrafts && " · drafts left out"}
             </p>
           </div>
           <div className="pnl-meta">
@@ -287,11 +296,9 @@ export default function RecipePnLReport() {
                       </td>
                       <td>
                         <div className="pnl-name">{r.name}</div>
-                        {(r.category || r.isCoreMenu) && (
+                        {(r.category || r.isCoreMenu || isDraftRecipe(r)) && (
                           <div className="pnl-category">
-                            {r.category ?? ""}
-                            {r.category && r.isCoreMenu ? " · " : ""}
-                            {r.isCoreMenu ? "Core" : ""}
+                            {[r.category, r.isCoreMenu ? "Core" : null, isDraftRecipe(r) ? "Draft" : null].filter(Boolean).join(" · ")}
                           </div>
                         )}
                       </td>

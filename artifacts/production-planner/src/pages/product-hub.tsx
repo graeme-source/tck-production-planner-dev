@@ -12,7 +12,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { BundleCalculator } from "@/components/bundle-calculator";
 import { IngredientFormDialog } from "@/components/ingredient-form-dialog";
 import { buildIngredientPayload, type IngredientFormValues } from "@/lib/ingredient-form";
-import { activeRecipes } from "@/lib/recipe-archive";
+import { isDraftRecipe, notArchivedRecipes } from "@/lib/recipe-archive";
+import { RecipeDraftBadge } from "@/components/recipe-archive";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -63,7 +64,7 @@ type DeckData = {
   }[];
 };
 
-type RecipeItem = { id: number; name: string };
+type RecipeItem = { id: number; name: string; isDraft?: boolean };
 
 const NUTRIENT_LABELS: Record<string, string> = {
   energyKj: "Energy (kJ)", energyKcal: "Energy (kcal)", fat: "Fat", saturates: "  of which saturates",
@@ -1077,9 +1078,11 @@ export default function ProductHub() {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   // /api/recipes only returns full recipes (sub-recipes live on their own
-  // endpoint). Archived recipes (migration 0141) are left out.
-  const recipeList: RecipeItem[] = activeRecipes(recipes as Array<{ id: number; name: string; archivedAt?: string | null }> | undefined)
-    .map((r) => ({ id: r.id, name: r.name }))
+  // endpoint). Archived recipes (migration 0141) are left out. Drafts (0142)
+  // stay, marked "Draft": checking a draft's deck, nutrition and label is
+  // part of developing it.
+  const recipeList: RecipeItem[] = notArchivedRecipes(recipes as Array<{ id: number; name: string; archivedAt?: string | null; isDraft?: boolean }> | undefined)
+    .map((r) => ({ id: r.id, name: r.name, isDraft: isDraftRecipe(r) }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
   const openDetail = (recipe: RecipeItem) => {
@@ -1142,7 +1145,10 @@ export default function ProductHub() {
                     {activeTab === "nutritionals" ? <Beaker className="w-4 h-4 text-primary" /> : activeTab === "labels" ? <Tag className="w-4 h-4 text-primary" /> : <ClipboardList className="w-4 h-4 text-primary" />}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold truncate group-hover:text-primary transition-colors">{recipe.name}</p>
+                    <p className="text-sm font-semibold group-hover:text-primary transition-colors flex items-center gap-2 min-w-0">
+                      <span className="truncate">{recipe.name}</span>
+                      {recipe.isDraft && <RecipeDraftBadge />}
+                    </p>
                     <p className="text-xs text-muted-foreground">
                       {activeTab === "nutritionals" ? "View nutritional breakdown" : activeTab === "labels" ? "View label preview" : "View ingredient deck"}
                     </p>

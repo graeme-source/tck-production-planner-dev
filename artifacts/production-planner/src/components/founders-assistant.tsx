@@ -466,6 +466,9 @@ export function FoundersAssistant({ open, onClose, isFounder }: FoundersAssistan
         baseWeightGrams: recipeDraft.baseWeightGrams ?? null,
         isCoreMenu: recipeDraft.isCoreMenu ?? false,
         isCurrentSpecial: recipeDraft.isCurrentSpecial ?? false,
+        // A designed recipe starts life as a draft (migration 0142) unless
+        // it was proposed straight onto the menu (a draft can't be either).
+        isDraft: !(recipeDraft.isCoreMenu || recipeDraft.isCurrentSpecial),
         ingredients: (recipeDraft.ingredients ?? [])
           .filter(l => l.ingredientId)
           .map(l => ({
@@ -500,7 +503,9 @@ export function FoundersAssistant({ open, onClose, isFounder }: FoundersAssistan
       setMessages(prev => [...prev, {
         id: nextIdRef.current++,
         role: "assistant",
-        content: `✓ Saved recipe "${created.name}" (id ${created.id}).`,
+        content: created.isDraft
+          ? `✓ Saved recipe "${created.name}" (id ${created.id}) as a draft — find it under Recipes → Drafts and tap "Put on the menu" when it's ready.`
+          : `✓ Saved recipe "${created.name}" (id ${created.id}).`,
       }]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save recipe");
