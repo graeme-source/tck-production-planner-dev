@@ -10,6 +10,8 @@
 --                              that fails part-way still knows the product.
 --   test_boxes.shopify_collection_id  the box's smart collection (rule: tag =
 --                              box name), created once per box.
+--   test_boxes.discount_code / shopify_discount_id / discount_ends_on  the
+--                              box's 20% code, created once per box.
 -- Ids are Shopify's numeric ids as text (same as recipe_shopify_mappings).
 -- The recipe → variant link itself lives in recipe_shopify_mappings, as for
 -- every other product; this table is only "the app made this one".
@@ -34,3 +36,9 @@ CREATE TABLE IF NOT EXISTS test_box_shopify_products (
 );
 
 ALTER TABLE test_boxes ADD COLUMN IF NOT EXISTS shopify_collection_id TEXT;
+
+-- The box's one shared 20% code (e.g. CCOCT26-7K2P9Q), made by the
+-- "Create the 20% discount code" step, and Shopify's id for it.
+ALTER TABLE test_boxes ADD COLUMN IF NOT EXISTS discount_code TEXT;
+ALTER TABLE test_boxes ADD COLUMN IF NOT EXISTS shopify_discount_id TEXT;
+ALTER TABLE test_boxes ADD COLUMN IF NOT EXISTS discount_ends_on DATE;

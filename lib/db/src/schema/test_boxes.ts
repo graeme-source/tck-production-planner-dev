@@ -22,6 +22,10 @@ export const testBoxesTable = pgTable("test_boxes", {
   // The box's Shopify smart collection (rule: tag = box name), made once by
   // "Create Shopify products" (0147). Shopify's numeric id, as text.
   shopifyCollectionId: text("shopify_collection_id"),
+  // The box's one shared 20% code (0147), e.g. CCOCT26-7K2P9Q.
+  discountCode: text("discount_code"),
+  shopifyDiscountId: text("shopify_discount_id"),
+  discountEndsOn: date("discount_ends_on"),
   // LEGACY (0136) — superseded by test_box_deliveries in 0146; not written.
   deliveryDate: date("delivery_date"),
   // LEGACY (0136) — no longer used: the launch is always VIP first.
