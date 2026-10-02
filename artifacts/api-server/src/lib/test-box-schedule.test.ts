@@ -171,8 +171,13 @@ describe("the launch checklist", () => {
     for (const s of LAUNCH_CHECKLIST) {
       expect(s.title({ boxName: "X", deliveryLabel: "1 Jan" }).length).toBeGreaterThan(5);
       expect(s.how({ boxName: "X" }).length).toBeGreaterThan(5);
-      expect(s.automated).toBe(false);
     }
+  });
+
+  it("only the Shopify products and collection steps are done by the app; the hand steps it leaves stay", () => {
+    expect(LAUNCH_CHECKLIST.filter(s => s.automated).map(s => s.key)).toEqual(["shopify-products", "shopify-collection"]);
+    const keys = LAUNCH_CHECKLIST.map(s => s.key);
+    for (const k of ["shopify-barcodes", "shopify-nutrition", "shopify-images", "shopify-price", "shopify-go-live"]) expect(keys).toContain(k);
   });
 
   const { tasks, tightTimeline } = buildLaunchTasks(base);
@@ -181,7 +186,9 @@ describe("the launch checklist", () => {
   it("dates count back from the launch in working days", () => {
     // Launch Mon 5 Oct.
     expect(byKey["launch:shopify-products"].date).toBe("2026-09-30"); // Wed, −3
-    expect(byKey["launch:shopify-collection"].label).toBe("Create a Shopify collection named 'Autumn Box' and add the products");
+    expect(byKey["launch:shopify-collection"].label).toBe("Shopify collection 'Autumn Box' (tag = box name)");
+    expect(byKey["launch:shopify-barcodes"].date).toBe("2026-10-01");  // Thu, −2
+    expect(byKey["launch:shopify-go-live"].date).toBe("2026-10-05");   // launch day
     expect(byKey["launch:discount-code"].date).toBe("2026-10-01");   // Thu, −2
     expect(byKey["launch:zapiet-collection"].date).toBe("2026-10-01");
     expect(byKey["launch:vip-email"].date).toBe("2026-10-05");

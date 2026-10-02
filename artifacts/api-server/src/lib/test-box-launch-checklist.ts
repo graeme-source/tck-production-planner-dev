@@ -5,10 +5,13 @@
  * tasks become to-dos on the box owner's list, and the page shows them. The
  * UI never names a step itself.
  *
- * Nothing here talks to Shopify, Zapiet or Klaviyo — every step is done by a
- * person and ticked. When one gets automated later, flip `automated` (the
- * scheduler passes it through so the page and to-do list can say "done by
- * the app") and wire the automation to tick the task by its key.
+ * Nothing here talks to Shopify, Zapiet or Klaviyo. Steps marked `automated`
+ * are done by the app when someone presses its button — "Create Shopify
+ * products" on the box (routes/test-box-shopify.ts) makes the drafts and the
+ * collection and ticks shopify-products / shopify-collection by key; they can
+ * still be ticked by hand. Everything else is done by a person and ticked;
+ * the shopify-* hand steps are what the app's products still need (read from
+ * the live store, 2026-10-02 — see lib/test-box-shopify-rules.ts).
  *
  * Due dates are in WORKING days (Mon–Fri) before the date named in `from`:
  * Shopify set-up a few days ahead so there's time to check it, the emails
@@ -36,22 +39,46 @@ export interface LaunchStepTemplate {
   onlyWithPublicLaunch?: boolean;
   /** Repeated once per delivery date (key gets "-d<deliveryId>"). */
   perDelivery?: boolean;
-  /** Done by the app rather than a person (none yet). */
+  /** Done by the app (with a button on the box) rather than by a person. */
   automated: boolean;
 }
 
 export const LAUNCH_CHECKLIST: readonly LaunchStepTemplate[] = [
   {
     key: "shopify-products",
-    title: () => "Duplicate the previous test-box product in Shopify for each recipe — same settings, hidden from the main website",
-    how: () => "Shopify → Products → open the last test-box product → Duplicate. Rename it for the recipe, keep the same settings, and keep it out of the main website's collections.",
-    from: "launch", workingDaysBefore: 3, automated: false,
+    title: () => "Make each recipe's Shopify product as a draft, hidden from the main website",
+    how: c => `The app does this: 'Create Shopify products' below duplicates the last test-box product for each recipe as a draft — tags show, no-wholesale, calzones and '${c.boxName}', the app's ingredient deck, description and pack size, no barcode — and links it to the recipe so its sales reach the planner. Ticks itself once every recipe has a product. By hand: Shopify → Products → the last test-box product → Duplicate.`,
+    from: "launch", workingDaysBefore: 3, automated: true,
   },
   {
     key: "shopify-collection",
-    title: c => `Create a Shopify collection named '${c.boxName}' and add the products`,
-    how: c => `Shopify → Products → Collections → Create collection. Name it '${c.boxName}' and add each recipe's product.`,
-    from: "launch", workingDaysBefore: 3, automated: false,
+    title: c => `Shopify collection '${c.boxName}' (tag = box name)`,
+    how: c => `The app makes it with the first product: a smart collection named '${c.boxName}' that picks up every product tagged '${c.boxName}'. By hand: Shopify → Collections → Create → Smart, condition "Product tag is equal to ${c.boxName}".`,
+    from: "launch", workingDaysBefore: 3, automated: true,
+  },
+  {
+    key: "shopify-barcodes",
+    title: () => "Add GS1 barcodes to the new Shopify products",
+    how: () => "The new products have no barcode. Get a number for each from GS1 and add it to the product's 2 Pack variant in Shopify.",
+    from: "launch", workingDaysBefore: 2, automated: false,
+  },
+  {
+    key: "shopify-nutrition",
+    title: () => "Upload each new product's nutrition table image",
+    how: () => "The website's nutrition table is an image (custom.nutritional_info), so the app can't write it — it removes the copied product's one. The numbers are under 'Create Shopify products' on this box.",
+    from: "launch", workingDaysBefore: 2, automated: false,
+  },
+  {
+    key: "shopify-images",
+    title: () => "Check or replace the new products' images",
+    how: () => "The products start with the copied product's photos (unless that was switched off). Swap in this recipe's photos when you have them.",
+    from: "launch", workingDaysBefore: 2, automated: false,
+  },
+  {
+    key: "shopify-price",
+    title: () => "Check each new product's price",
+    how: () => "The price is copied from the product it was duplicated from — set this recipe's price in Shopify.",
+    from: "launch", workingDaysBefore: 2, automated: false,
   },
   {
     key: "discount-code",
@@ -70,6 +97,12 @@ export const LAUNCH_CHECKLIST: readonly LaunchStepTemplate[] = [
     title: c => `Enable ${c.deliveryLabel ?? "the delivery date"} in Zapiet for '${c.boxName}'`,
     how: c => `Zapiet → Delivery → open the '${c.boxName}' rule and allow ${c.deliveryLabel ?? "this date"}.`,
     from: "launch", workingDaysBefore: 2, perDelivery: true, automated: false,
+  },
+  {
+    key: "shopify-go-live",
+    title: c => `Put the '${c.boxName}' products live: set them Active and publish the collection`,
+    how: c => `The app only makes drafts and never publishes. On launch day: each product → Status Active (check its sales channels), and publish the '${c.boxName}' collection to the Online Store.`,
+    from: "launch", workingDaysBefore: 0, automated: false,
   },
   {
     key: "vip-email",
