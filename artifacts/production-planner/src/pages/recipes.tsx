@@ -11,19 +11,21 @@ import { PageHeader } from "@/components/page-header";
 import { TimingHealthCard } from "@/components/timing-health-card";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
 import { IngredientCombobox } from "@/components/ingredient-combobox";
-import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, Check, QrCode, Filter, Scale, LayoutGrid, Table2, ArrowUp, ArrowDown, ArrowUpDown, Archive } from "lucide-react";
+import { Plus, Trash2, ChefHat, FlaskConical, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, Check, QrCode, Filter, Scale, LayoutGrid, Table2, ArrowUp, ArrowDown, ArrowUpDown, Archive } from "lucide-react";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
-import { activeRecipes, archivedRecipes, archivedLabel } from "@/lib/recipe-archive";
-import { ArchiveRecipeDialog, ArchivedRecipesPanel, RecipeArchiveFooter } from "@/components/recipe-archive";
+import { activeRecipes, archivedRecipes, archivedLabel, draftRecipes, draftMenuTickNotice, isDraftRecipe, recipeStageCounts } from "@/lib/recipe-archive";
+import { ArchiveRecipeDialog, ArchivedRecipesPanel, DraftRecipesPanel, MoveToDraftDialog, RecipeArchiveFooter, RecipeDraftBadge } from "@/components/recipe-archive";
 
 // Archive fields GET /api/recipes and /api/recipes/:id return (migration
 // 0141) that the generated OpenAPI types don't describe yet.
-type ArchiveFields = { archivedAt?: string | null; archivedByName?: string | null };
+type ArchiveFields = { archivedAt?: string | null; archivedByName?: string | null; isDraft?: boolean; draftedAt?: string | null; draftedByName?: string | null };
+// Which of the three lifecycle views the Recipes page shows (migration 0142).
+type RecipeView = "drafts" | "menu" | "archived";
 
 const schema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -58,6 +60,9 @@ const schema = z.object({
   ovenTempC: z.preprocess(v => (v === "" || v == null ? null : Number(v)), z.number().int("Whole degrees only").min(50, "Min 50°C").max(450, "Max 450°C").nullable().optional()),
   ovenTimeMinutes: z.preprocess(v => (v === "" || v == null ? null : Number(v)), z.number().min(0.5, "Min 0.5 min").max(60, "Max 60 min").nullable().optional()),
   tags: z.array(z.string()).optional(),
+  // New recipes only: start it as a draft (migration 0142). Sent as isDraft
+  // on create; never part of the update body.
+  startAsDraft: z.boolean().optional(),
   ingredients: z.array(z.object({
     ingredientId: z.coerce.number().min(1, "Select ingredient"),
     quantity: z.coerce.number().min(0.001, "Must be > 0"),
@@ -261,7 +266,10 @@ function RecipeForm({
   onDirtyChange,
   submitRef,
   allTags,
+  isDraft = false,
 }: {
+  /** Edit mode: the recipe is currently a draft (migration 0142). */
+  isDraft?: boolean;
   defaultValues: FormValues;
   onSubmit: (data: FormValues) => void;
   isPending: boolean;
@@ -291,6 +299,15 @@ function RecipeForm({
   useEffect(() => {
     onDirtyChange?.(isDirty);
   }, [isDirty, onDirtyChange]);
+
+  // Drafts (migration 0142): a draft can't be Core menu or the special.
+  // Editing a draft with either ticked → saving puts it on the menu (said
+  // plainly above the Save button). Creating: "Start as a draft" is off
+  // while either is ticked.
+  const wantsCore = watch("isCoreMenu") === true;
+  const wantsSpecial = watch("isCurrentSpecial") === true;
+  const draftTickNotice = isEdit ? draftMenuTickNotice(isDraft, { isCoreMenu: wantsCore, isCurrentSpecial: wantsSpecial }) : null;
+  const createAsDraft = !isEdit && watch("startAsDraft") === true && !wantsCore && !wantsSpecial;
 
   useEffect(() => {
     if (submitRef) {
@@ -1024,9 +1041,53 @@ function RecipeForm({
           <textarea {...register("notes")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[60px] resize-none" placeholder="Allergens, packaging notes, shelf life…" />
         </div>
 
+        {!isEdit && (
+          <label
+            className={cn(
+              "flex items-start gap-3 rounded-2xl border-2 p-4 cursor-pointer transition-colors",
+              createAsDraft ? "border-amber-400/70 bg-amber-50 dark:bg-amber-950/30" : "border-border",
+              (wantsCore || wantsSpecial) && "opacity-70 cursor-not-allowed",
+            )}
+            data-testid="start-as-draft"
+          >
+            <input
+              type="checkbox"
+              {...register("startAsDraft")}
+              disabled={wantsCore || wantsSpecial}
+              checked={createAsDraft}
+              className="mt-1 w-5 h-5 rounded border-border accent-amber-500"
+            />
+            <span className="flex-1">
+              <span className="text-base font-semibold flex items-center gap-2"><FlaskConical className="w-4 h-4 text-amber-600" /> Start as a draft</span>
+              <span className="block text-sm text-muted-foreground mt-0.5">
+                {wantsCore || wantsSpecial
+                  ? "Core menu and Special recipes go straight on the menu — untick them to start this as a draft."
+                  : "Kept out of plans, stock and sales while you work on it. You can still cost it, check its deck and label, and trial it in a test box. Put it on the menu when it's ready."}
+              </span>
+            </span>
+          </label>
+        )}
+
+        {draftTickNotice && (
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-2xl border-2 border-amber-400/70 bg-amber-50 dark:bg-amber-950/30 p-4" data-testid="draft-menu-tick-notice">
+            <AlertTriangle className="w-5 h-5 shrink-0 text-amber-600" />
+            <p className="flex-1 text-base text-amber-950 dark:text-amber-100">{draftTickNotice}</p>
+            <button
+              type="button"
+              onClick={() => {
+                setValue("isCoreMenu", false, { shouldDirty: true });
+                setValue("isCurrentSpecial", false, { shouldDirty: true });
+              }}
+              className="min-h-11 rounded-xl border border-border bg-card px-4 text-sm font-medium hover:bg-secondary/60 transition-colors"
+            >
+              Keep it a draft
+            </button>
+          </div>
+        )}
+
         <button type="submit" disabled={isPending} className="w-full py-2.5 bg-primary text-primary-foreground rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
           {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-          {isPending ? "Saving..." : isEdit ? "Save Changes" : "Create Recipe"}
+          {isPending ? "Saving..." : isEdit ? (draftTickNotice ? "Save and put on the menu" : "Save Changes") : createAsDraft ? "Create draft" : "Create Recipe"}
         </button>
       </form>
     </>
@@ -1051,7 +1112,7 @@ interface ShopifyMapping {
 }
 
 function EditRecipeDialog({
-  id, open, onOpenChange, ingredients, subRecipes, categoryDefaults, allTags, onArchive,
+  id, open, onOpenChange, ingredients, subRecipes, categoryDefaults, allTags, onArchive, onMoveToDraft,
 }: {
   id: number; open: boolean; onOpenChange: (v: boolean) => void;
   ingredients: IngredientOption[];
@@ -1059,6 +1120,7 @@ function EditRecipeDialog({
   categoryDefaults: { category: string; defaultPackagingCost: number; defaultLabourCost: number }[];
   allTags?: string[];
   onArchive?: (recipe: { id: number; name: string }) => void;
+  onMoveToDraft?: (recipe: { id: number; name: string }) => void;
 }) {
   const { state: authState } = useAuth();
   const canEditShopify = authState.status === "authenticated" &&
@@ -1295,6 +1357,7 @@ function EditRecipeDialog({
           <DialogHeader>
             <DialogTitle className="font-display text-xl flex items-center gap-2 flex-wrap">
               Edit Recipe
+              {isDraftRecipe(detail as ArchiveFields | undefined) && <RecipeDraftBadge className="text-sm font-sans" />}
               {(detail as ArchiveFields | undefined)?.archivedAt && (
                 <span className="text-sm font-sans font-medium rounded-full bg-secondary text-muted-foreground px-3 py-1">
                   {archivedLabel((detail as ArchiveFields).archivedAt, (detail as ArchiveFields).archivedByName)}
@@ -1319,12 +1382,17 @@ function EditRecipeDialog({
                 onDirtyChange={setFormIsDirty}
                 submitRef={submitRef}
                 allTags={allTags}
+                isDraft={isDraftRecipe(detail as ArchiveFields | undefined)}
                 onSubmit={(data) => {
                   // isFridgeProduct rides its own endpoint — the main update
                   // body's validator is OpenAPI-generated and would drop it.
-                  const { targetBuildMinutes, isFridgeProduct, ovenTimeMinutes, ...rest } = data;
+                  const { targetBuildMinutes, isFridgeProduct, ovenTimeMinutes, startAsDraft: _startAsDraft, ...rest } = data;
+                  // Core menu / Special ticked on a draft: this save puts it
+                  // on the menu (the form said so above Save). Migration 0142.
+                  const publishDraft = isDraftRecipe(detail as ArchiveFields | undefined) && (rest.isCoreMenu === true || rest.isCurrentSpecial === true);
                   const payload = {
                     ...rest,
+                    ...(publishDraft ? { publishDraft: true } : {}),
                     targetBuildSeconds: targetBuildMinutes != null ? Math.round(targetBuildMinutes * 60) : null,
                     ovenTempC: rest.ovenTempC ?? null,
                     ovenTimeSeconds: ovenTimeMinutes != null ? Math.round(ovenTimeMinutes * 60) : null,
@@ -1494,8 +1562,9 @@ function EditRecipeDialog({
               <RecipeNutritionSection id={id} active={open && !isLoading && !isFetching} refreshKey={JSON.stringify([detail?.ingredients?.map(i => [i.ingredientId, i.quantity]), detail?.subRecipes?.map(r => [r.subRecipeId, r.quantity]), detail?.servings, detail?.packSize])} />
               {canEditShopify && detail && (
                 <RecipeArchiveFooter
-                  recipe={{ id, name: detail.name, archivedAt: (detail as ArchiveFields).archivedAt ?? null, archivedByName: (detail as ArchiveFields).archivedByName ?? null }}
+                  recipe={{ id, name: detail.name, archivedAt: (detail as ArchiveFields).archivedAt ?? null, archivedByName: (detail as ArchiveFields).archivedByName ?? null, isDraft: (detail as ArchiveFields).isDraft === true }}
                   onArchive={() => onArchive?.({ id, name: detail.name })}
+                  onMoveToDraft={onMoveToDraft ? () => onMoveToDraft({ id, name: detail.name }) : undefined}
                 />
               )}
             </>
@@ -2107,7 +2176,7 @@ type RecipeUpfInfo = {
   unclassifiedIngredients: string[];
 };
 
-function RecipeCard({ recipe, upf, onEdit, onDelete, onBreakdown, onDuplicate, onArchive }: { recipe: RecipeItem; upf?: RecipeUpfInfo; onEdit: () => void; onDelete: () => void; onBreakdown: () => void; onDuplicate: () => void; onArchive?: () => void }) {
+function RecipeCard({ recipe, upf, onEdit, onDelete, onBreakdown, onDuplicate, onArchive, onMoveToDraft }: { recipe: RecipeItem; upf?: RecipeUpfInfo; onEdit: () => void; onDelete: () => void; onBreakdown: () => void; onDuplicate: () => void; onArchive?: () => void; onMoveToDraft?: () => void }) {
   const margin = recipe.grossMargin;
   const recipeColor = (recipe as any).color as string | null;
   const [nutritionalsOpen, setNutritionalsOpen] = useState(false);
@@ -2154,6 +2223,9 @@ function RecipeCard({ recipe, upf, onEdit, onDelete, onBreakdown, onDuplicate, o
             >
               {kanbanCreating ? <Loader2 className="w-3 h-3 animate-spin" /> : <QrCode className="w-3 h-3" />}
             </button>
+            {onMoveToDraft && (
+              <button onClick={onMoveToDraft} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-amber-600 transition-colors shadow-sm" title="Move to drafts (stop offering it, keep everything)" aria-label={`Move ${recipe.name} to drafts`}><FlaskConical className="w-3 h-3" /></button>
+            )}
             {onArchive && (
               <button onClick={onArchive} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors shadow-sm" title="Archive (hide, keep everything)" aria-label={`Archive ${recipe.name}`}><Archive className="w-3 h-3" /></button>
             )}
@@ -2232,10 +2304,13 @@ export default function Recipes() {
   const [breakdownId, setBreakdownId] = useState<number | null>(null);
   const [duplicatingId, setDuplicatingId] = useState<number | null>(null);
   const [duplicateDefaults, setDuplicateDefaults] = useState<FormValues | null>(null);
-  // Archive (migration 0141): the Active / Archived switch and the recipe
-  // whose Archive confirm is open. Managers and admins only.
-  const [showArchived, setShowArchived] = useState(false);
+  // Lifecycle (migrations 0141, 0142): the Drafts · On the menu · Archived
+  // switch (default On the menu; /recipes?view=drafts opens Drafts) and the
+  // recipe whose Archive / Move-to-drafts confirm is open. The moves are for
+  // managers and admins only.
+  const [view, setView] = useState<RecipeView>("menu");
   const [archiving, setArchiving] = useState<{ id: number; name: string } | null>(null);
+  const [drafting, setDrafting] = useState<{ id: number; name: string } | null>(null);
   const { state: pageAuthState } = useAuth();
   const canArchive = pageAuthState.status === "authenticated" &&
     (pageAuthState.user.role === "admin" || pageAuthState.user.role === "manager");
@@ -2253,6 +2328,12 @@ export default function Recipes() {
     editParamConsumedRef.current = searchStr;
     if (recipes.some(r => r.id === editId)) setEditingId(editId);
   }, [recipes, searchStr]);
+  // Deep link: /recipes?view=drafts (or archived) opens that view — the
+  // test-box page links to Drafts.
+  useEffect(() => {
+    const v = new URLSearchParams(searchStr).get("view");
+    if (v === "drafts" || v === "archived" || v === "menu") setView(v);
+  }, [searchStr]);
 
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -2348,15 +2429,22 @@ export default function Recipes() {
   const addDefaults: FormValues = {
     name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "",
     packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined,
-    tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", cookingLossPercent: 3, builderFillingDeductionGrams: 0, dietaryCategory: null, ovenTempC: null, ovenTimeMinutes: null, tags: [], ingredients: [], subRecipes: [],
+    tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", cookingLossPercent: 3, builderFillingDeductionGrams: 0, dietaryCategory: null, ovenTempC: null, ovenTimeMinutes: null, tags: [],
+    // New recipes start as drafts (Graeme's order: draft → menu → archive).
+    startAsDraft: true,
+    ingredients: [], subRecipes: [],
   };
 
-  // Shared filter for both card and table views. Archived recipes never
-  // appear here — they have their own Archived view.
+  // Shared filter for both card and table views ("On the menu"). Drafts and
+  // archived recipes never appear here — they have their own views.
+  const matchesSearch = (name: string) => !searchQuery.trim() || name.toLowerCase().includes(searchQuery.trim().toLowerCase());
   const archivedList = archivedRecipes(recipes as Array<NonNullable<typeof recipes>[number] & ArchiveFields> | undefined)
-    .filter(r => !searchQuery.trim() || r.name.toLowerCase().includes(searchQuery.trim().toLowerCase()))
+    .filter(r => matchesSearch(r.name))
     .sort((a, b) => a.name.localeCompare(b.name));
-  const archivedCount = archivedRecipes(recipes as Array<{ id: number } & ArchiveFields> | undefined).length;
+  const draftList = draftRecipes(recipes as Array<NonNullable<typeof recipes>[number] & ArchiveFields> | undefined)
+    .filter(r => matchesSearch(r.name))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const stageCounts = recipeStageCounts(recipes as Array<{ id: number } & ArchiveFields> | undefined);
   const filteredRecipes = activeRecipes(recipes as Array<NonNullable<typeof recipes>[number] & ArchiveFields> | undefined).filter(r => {
     if (coreMenuOnly && !(r as RecipeItem).isCoreMenu) return false;
     if (categoryFilter !== "all" && r.category !== categoryFilter) return false;
@@ -2435,31 +2523,29 @@ export default function Recipes() {
 
       <TimingHealthCard onEditRecipe={setEditingId} />
 
-      {/* Active / Archived switch (migration 0141). Archived recipes are kept
-          in full and can be restored any time. */}
-      <div className="inline-flex rounded-xl border border-border bg-card p-1 gap-1" role="tablist" aria-label="Which recipes">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={!showArchived}
-          onClick={() => setShowArchived(false)}
-          className={cn("min-h-11 px-5 rounded-lg text-base font-medium transition-colors", !showArchived ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
-        >
-          Active ({(recipes?.length ?? 0) - archivedCount})
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={showArchived}
-          onClick={() => setShowArchived(true)}
-          className={cn("min-h-11 px-5 rounded-lg text-base font-medium transition-colors inline-flex items-center gap-2", showArchived ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
-        >
-          <Archive className="w-4 h-4" /> Archived ({archivedCount})
-        </button>
+      {/* Drafts · On the menu · Archived (migrations 0141, 0142). Nothing is
+          deleted in any move; drafts and archived recipes are kept in full. */}
+      <div className="flex max-w-full overflow-x-auto rounded-xl border border-border bg-card p-1 gap-1 w-fit" role="tablist" aria-label="Which recipes">
+        {([
+          { key: "drafts", label: "Drafts", count: stageCounts.draft, icon: <FlaskConical className="w-4 h-4" /> },
+          { key: "menu", label: "On the menu", count: stageCounts.active, icon: null },
+          { key: "archived", label: "Archived", count: stageCounts.archived, icon: <Archive className="w-4 h-4" /> },
+        ] as const).map(t => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={view === t.key}
+            onClick={() => setView(t.key)}
+            className={cn("min-h-11 px-4 sm:px-5 rounded-lg text-base font-medium transition-colors inline-flex items-center gap-2 whitespace-nowrap", view === t.key ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+          >
+            {t.icon}{t.label} ({t.count})
+          </button>
+        ))}
       </div>
 
-      {/* Margin legend + category filter (not used by the Archived view) */}
-      <div className={cn("flex items-center justify-between gap-4 flex-wrap", showArchived && "hidden")}>
+      {/* Margin legend + category filter (only used by the On the menu view) */}
+      <div className={cn("flex items-center justify-between gap-4 flex-wrap", view !== "menu" && "hidden")}>
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-green-500 inline-block" /> ≥80% — Great</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-400 inline-block" /> 75–79% — OK</span>
@@ -2535,7 +2621,7 @@ export default function Recipes() {
             </button>
           )}
         </div>
-        {allTags.length > 0 && !showArchived && (
+        {allTags.length > 0 && view === "menu" && (
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-xs text-muted-foreground mr-1">Tags:</span>
             {allTags.map(tag => {
@@ -2588,15 +2674,21 @@ export default function Recipes() {
             onSubmit={(data) => {
               // isFridgeProduct rides its own endpoint — the create body's
               // validator is OpenAPI-generated and would drop it.
-              const { targetBuildMinutes, isFridgeProduct, ovenTimeMinutes, ...rest } = data;
+              const { targetBuildMinutes, isFridgeProduct, ovenTimeMinutes, startAsDraft, ...rest } = data;
+              // Start as a draft (migration 0142) — never while Core menu or
+              // Special is ticked (the form shows that too).
+              const isDraft = startAsDraft === true && rest.isCoreMenu !== true && rest.isCurrentSpecial !== true;
               const payload = {
                 ...rest,
+                isDraft,
                 targetBuildSeconds: targetBuildMinutes != null ? Math.round(targetBuildMinutes * 60) : null,
                 ovenTempC: rest.ovenTempC ?? null,
                 ovenTimeSeconds: ovenTimeMinutes != null ? Math.round(ovenTimeMinutes * 60) : null,
               } as unknown as typeof data;
               createRecipe.mutate({ data: payload }, {
                 onSuccess: (created) => {
+                  // Show the new recipe where it now lives.
+                  setView(isDraft ? "drafts" : "menu");
                   const newId = (created as { id?: number } | undefined)?.id;
                   if (isFridgeProduct === true && newId) {
                     fetch(`/api/recipes/${newId}/fridge-product`, {
@@ -2639,6 +2731,7 @@ export default function Recipes() {
           categoryDefaults={catDefaults}
           allTags={allTags}
           onArchive={setArchiving}
+          onMoveToDraft={canArchive ? setDrafting : undefined}
         />
       )}
 
@@ -2646,6 +2739,11 @@ export default function Recipes() {
         recipe={archiving}
         onClose={() => setArchiving(null)}
         onArchived={() => setEditingId(null)}
+      />
+      <MoveToDraftDialog
+        recipe={drafting}
+        onClose={() => setDrafting(null)}
+        onMoved={() => setEditingId(null)}
       />
 
       {isLoading && <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}
@@ -2658,8 +2756,16 @@ export default function Recipes() {
         </div>
       )}
 
-      {showArchived ? (
+      {view === "archived" ? (
         <ArchivedRecipesPanel recipes={archivedList} canManage={canArchive} onOpen={setEditingId} />
+      ) : view === "drafts" ? (
+        <DraftRecipesPanel
+          recipes={draftList as Array<(typeof draftList)[number] & { grossMargin?: number | null }>}
+          canManage={canArchive}
+          onOpen={setEditingId}
+          onArchive={canArchive ? setArchiving : undefined}
+          onBreakdown={setBreakdownId}
+        />
       ) : viewMode === "cards" ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {filteredRecipes.map((recipe) => (
@@ -2672,6 +2778,7 @@ export default function Recipes() {
               onBreakdown={() => setBreakdownId(recipe.id)}
               onDuplicate={() => setDuplicatingId(recipe.id)}
               onArchive={canArchive ? () => setArchiving({ id: recipe.id, name: recipe.name }) : undefined}
+              onMoveToDraft={canArchive ? () => setDrafting({ id: recipe.id, name: recipe.name }) : undefined}
             />
           ))}
         </div>
@@ -2687,7 +2794,7 @@ export default function Recipes() {
                 {sortTh("Gross profit", "grossProfit", "right")}
                 {sortTh("GP margin", "gpm", "right")}
                 {sortTh("UPF", "upf", "right")}
-                <th className={canArchive ? "w-20" : "w-10"} />
+                <th className={canArchive ? "w-28" : "w-10"} />
               </tr>
             </thead>
             <tbody>
@@ -2737,6 +2844,17 @@ export default function Recipes() {
                       >
                         <BarChart2 className="w-4 h-4" />
                       </button>
+                      {canArchive && (
+                        <button
+                          type="button"
+                          onClick={() => setDrafting({ id: r.id, name: r.name })}
+                          title="Move to drafts (stop offering it, keep everything)"
+                          aria-label={`Move ${r.name} to drafts`}
+                          className="text-muted-foreground hover:text-amber-600 p-1 ml-1"
+                        >
+                          <FlaskConical className="w-4 h-4" />
+                        </button>
+                      )}
                       {canArchive && (
                         <button
                           type="button"

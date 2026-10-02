@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeRecipes, archivedLabel, archivedRecipeIds, archivedRecipes, archiveWarnings, draftMenuQuestion, draftMenuTickNotice, draftRecipeIds, draftRecipes, isArchived, isDraftRecipe, menuFlagQuestion, notArchivedRecipes, planDayPhrase, recipeStage, recipeStageCounts } from "./recipe-archive";
+import { activeRecipes, archivedLabel, archivedRecipeIds, archivedRecipes, archiveWarnings, draftedLabel, draftMenuQuestion, draftMenuTickNotice, draftRecipeIds, draftRecipes, isArchived, isDraftRecipe, menuFlagQuestion, notArchivedRecipes, planDayPhrase, recipeStage, recipeStageCounts } from "./recipe-archive";
 
 const list = [
   { id: 1, name: "Philly", archivedAt: null },
@@ -76,6 +76,17 @@ describe("recipe stages: draft → on the menu → archived (migration 0142)", (
     expect(draftMenuTickNotice(true, {})).toBeNull();
     expect(draftMenuTickNotice(true, { isCoreMenu: true })).toMatch(/draft\. Core menu is ticked, so saving puts it on the menu/);
     expect(draftMenuTickNotice(true, { isCoreMenu: true, isCurrentSpecial: true })).toMatch(/Core menu and Special are ticked/);
+  });
+});
+
+describe("draftedLabel", () => {
+  const now = new Date("2026-10-05T12:00:00Z");
+  it("reads 'Draft since 2 Oct (Graeme)', London day, first name only", () => {
+    expect(draftedLabel("2026-10-01T23:30:00.000Z", "Graeme Carter", now)).toBe("Draft since 2 Oct (Graeme)");
+  });
+  it("is just 'Draft' when we don't know when", () => {
+    expect(draftedLabel(null, null, now)).toBe("Draft");
+    expect(draftedLabel("2026-10-02T09:00:00Z", null, now)).toBe("Draft since 2 Oct");
   });
 });
 

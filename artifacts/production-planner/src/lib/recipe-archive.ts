@@ -122,6 +122,16 @@ export function archivedLabel(archivedAt: string | Date | null | undefined, byNa
   return `Archived ${shortDate(londonDay(at), londonDay(now))}${first ? ` by ${first}` : ""}`;
 }
 
+/** "Draft since 2 Oct (Graeme)" — or just "Draft" when we don't know when
+ *  (a recipe created before drafts existed). */
+export function draftedLabel(draftedAt: string | Date | null | undefined, byName: string | null | undefined, now: Date = new Date()): string {
+  if (draftedAt == null || draftedAt === "") return "Draft";
+  const at = draftedAt instanceof Date ? draftedAt : new Date(draftedAt);
+  if (Number.isNaN(at.getTime())) return "Draft";
+  const first = (byName ?? "").trim().split(/\s+/)[0];
+  return `Draft since ${shortDate(londonDay(at), londonDay(now))}${first ? ` (${first})` : ""}`;
+}
+
 /** How a plan day reads next to today: "today's plan", "tomorrow's plan",
  *  "Friday's plan" (within the coming week), else "the plan for 14 Oct". */
 export function planDayPhrase(planDate: string, today: string): string {
