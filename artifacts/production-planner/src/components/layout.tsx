@@ -64,6 +64,8 @@ import { TodoSheet, TodoInterstitial, useMyOpenTodoCount } from "@/components/to
 import { FixedNoticeInterstitial } from "@/components/fixed-notice-interstitial";
 import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
 import { AlertOctagon, Banknote, BookOpen, BookUser, Bot, GraduationCap, ChevronLeft, ChevronRight, ListTodo, ScanLine } from "lucide-react";
+import { StationPinnedContacts, StationContactsButton, StationContactsDialog } from "@/components/contacts/station-contacts";
+import { PAGE_STATION_KEYS } from "@/components/contacts/contacts-api";
 
 export type NavItem = { name: string; href: string; icon: React.ComponentType<{ className?: string }> };
 
@@ -1109,6 +1111,12 @@ function FloatingActionsTab({ assistantOpen, onOpenAssistant, onOpenTodos, onOpe
 function TopBar({ onMenu, fallbackTitle, onOpenSops }: { onMenu: () => void; fallbackTitle: string; onOpenSops: () => void }) {
   const header = usePageHeaderValue();
   const title = header?.title ?? fallbackTitle;
+  // Pages that ARE a station's working screen (Order Packing Live is the
+  // packing station) carry that station's contacts like a station screen
+  // does: pinned numbers always visible, the rest behind Contacts.
+  const [location] = useLocation();
+  const pageStations = PAGE_STATION_KEYS[location];
+  const [contactsOpen, setContactsOpen] = useState(false);
 
   return (
     <header className="min-h-[56px] border-b border-border bg-background/80 backdrop-blur-md flex items-center px-4 md:px-5 xl:px-8 gap-3 z-10 min-w-0">
@@ -1125,7 +1133,9 @@ function TopBar({ onMenu, fallbackTitle, onOpenSops }: { onMenu: () => void; fal
       <h1 className="font-display font-bold text-xl text-foreground tracking-tight truncate min-w-0 flex-1">
         {title}
       </h1>
-      {header?.description && (
+      {/* On a station's working screen the pinned contact chip takes this
+          slot — a number to call beats a subtitle on an iPad-width bar. */}
+      {header?.description && !pageStations && (
         <span className="hidden lg:block text-sm text-muted-foreground flex-shrink-0 truncate max-w-xs">
           {header.description}
         </span>
@@ -1134,6 +1144,15 @@ function TopBar({ onMenu, fallbackTitle, onOpenSops }: { onMenu: () => void; fal
           keyed by route. fallbackTitle (the nav name) labels it, not the
           header title: pages like packing retitle per order, and an SOP
           created here should be named for the PAGE, not order #133647. */}
+      {pageStations && (
+        <>
+          <StationPinnedContacts stationKeys={pageStations} />
+          <StationContactsButton onClick={() => setContactsOpen(true)} />
+          {contactsOpen && (
+            <StationContactsDialog stationKeys={pageStations} stationLabel={fallbackTitle} onClose={() => setContactsOpen(false)} />
+          )}
+        </>
+      )}
       <PageSopButton pageLabel={fallbackTitle} />
       <CurrentUserBadge />
       <button

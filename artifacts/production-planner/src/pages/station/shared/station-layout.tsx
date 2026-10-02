@@ -2,8 +2,9 @@ import React, { useState, useEffect } from "react";
 import { useLocation, useSearch } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ChevronLeft, BarChart2, ClipboardList, Layers, Beef, Menu, X, BookOpen, MoreVertical, MessageSquare, BookPlus,
+  ChevronLeft, BarChart2, ClipboardList, Layers, Beef, Menu, X, BookOpen, MoreVertical, MessageSquare, BookPlus, BookUser,
 } from "lucide-react";
+import { StationPinnedContacts, StationContactsDialog } from "@/components/contacts/station-contacts";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -70,6 +71,14 @@ function useAndonBadge(stationKey: string) {
   return severity;
 }
 
+/** The station keys whose contacts show here: a prep sub-section is the
+ *  Prep station as far as contacts go. */
+function contactStationKeys(stationType: StationType): string[] {
+  return stationType === "main_prep" || stationType === "prep_bases" || stationType === "prep_meat"
+    ? [stationType, "prep"]
+    : [stationType];
+}
+
 interface StationLayoutProps {
   planId: number;
   stationType: StationType;
@@ -95,6 +104,7 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
   const [moreOpen, setMoreOpen] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [manageSopsOpen, setManageSopsOpen] = useState(false);
+  const [contactsOpen, setContactsOpen] = useState(false);
   const { state, logout, lockStation } = useAuth();
   const { canAccess } = usePagePermissions();
   const andonBadge = useAndonBadge(stationType);
@@ -237,6 +247,10 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
+              {/* This station's pinned contacts — tap to call, always in
+                  view (Graeme, 2026-10-02). Renders nothing when none. Prep
+                  sub-sections count as the Prep station. */}
+              <StationPinnedContacts stationKeys={contactStationKeys(stationType)} />
               {headerSlot}
               <BreakTracker planId={planId} stationType={stationType} onBreakActiveChange={onBreakActiveChange} />
 
@@ -266,6 +280,13 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
                       >
                         <MessageSquare className="w-4 h-4 text-sky-600 flex-shrink-0" />
                         Message a station
+                      </button>
+                      <button
+                        onClick={() => { setMoreOpen(false); setContactsOpen(true); }}
+                        className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-medium text-left hover:bg-secondary/60 transition-colors"
+                      >
+                        <BookUser className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+                        Contacts for this station
                       </button>
                       <button
                         onClick={() => { setMoreOpen(false); setStandardsOpen(true); }}
@@ -335,6 +356,13 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
 
       {composeOpen && (
         <SendStationMessageDialog onClose={() => setComposeOpen(false)} />
+      )}
+      {contactsOpen && (
+        <StationContactsDialog
+          stationKeys={contactStationKeys(stationType)}
+          stationLabel={meta.label}
+          onClose={() => setContactsOpen(false)}
+        />
       )}
       {manageSopsOpen && (
         <StationSopManageModal
