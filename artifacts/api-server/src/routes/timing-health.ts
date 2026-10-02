@@ -40,9 +40,9 @@ router.get("/", requireManagerOrAdmin, async (_req, res) => {
       category: recipesTable.category,
       targetBuildSeconds: recipesTable.targetBuildSeconds,
       portionsPerBatch: recipesTable.portionsPerBatch,
+      archivedAt: recipesTable.archivedAt,
     })
     .from(recipesTable);
-  const timelineRecipes = recipes.filter(r => isOnDayTimeline(r.category));
 
   const plannedRows = await db
     .select({ recipeId: productionPlanItemsTable.recipeId, n: sql<number>`count(*)::int` })
@@ -51,6 +51,10 @@ router.get("/", requireManagerOrAdmin, async (_req, res) => {
     .where(gte(productionPlansTable.planDate, planSince))
     .groupBy(productionPlanItemsTable.recipeId);
   const timesPlanned = new Map(plannedRows.map(r => [r.recipeId, Number(r.n)]));
+  // Archived recipes (migration 0141) only count while they're still on a
+  // plan in the window — no nagging for a build time on one we don't make.
+  const liveRecipes = recipes.filter(r => !r.archivedAt || timesPlanned.has(r.id));
+  const timelineRecipes = liveRecipes.filter(r => isOnDayTimeline(r.category));
 
   const completions = await db
     .select({
@@ -152,7 +156,7 @@ router.get("/", requireManagerOrAdmin, async (_req, res) => {
   }));
 
   const health = assembleTimingHealth({
-    recipes: recipes.map(r => ({
+    recipes: liveRecipes.map(r => ({
       recipeId: r.id,
       name: r.name,
       category: r.category,
