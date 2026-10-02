@@ -68,6 +68,15 @@ export const recipesTable = pgTable("recipes", {
   archivedAt: timestamp("archived_at"),
   archivedById: integer("archived_by_id"),
   archivedByName: text("archived_by_name"),
+  // Draft (migration 0142). Stage = archived if archivedAt; else draft if
+  // isDraft; else on the menu. A draft is being developed: hidden from
+  // production pickers, never Core menu or the current special. isDraft
+  // survives archiving, so restoring an archived draft returns it to Drafts.
+  isDraft: boolean("is_draft").notNull().default(false),
+  draftedAt: timestamp("drafted_at"),
+  draftedByName: text("drafted_by_name"),
+  publishedAt: timestamp("published_at"),
+  publishedByName: text("published_by_name"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
