@@ -76,6 +76,10 @@ function boxJson(b: TestBoxRow, recipes: Array<{ id: number; name: string; isDra
     expectedBoxes: b.expectedBoxes,
     recipes,
     launchEmailId: b.launchEmailId,
+    // What the launch steps made in Shopify (routes/test-box-shopify.ts).
+    shopifyCollectionId: b.shopifyCollectionId,
+    discountCode: b.discountCode,
+    discountEndsOn: b.discountEndsOn,
     socialNoteEventId: b.socialNoteEventId,
     createdBy: b.createdByName,
     updatedBy: b.updatedByName,

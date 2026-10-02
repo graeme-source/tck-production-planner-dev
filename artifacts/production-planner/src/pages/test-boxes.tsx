@@ -11,7 +11,10 @@
  *   - Every step is also a to-do on the owner's list, and the box sits on the
  *     marketing calendar with its VIP launch email and social-post note.
  *
- * Nothing on this page touches Shopify, Zapiet or Klaviyo, or sends email.
+ * The launch checklist's Shopify steps (products, collection, 20% code)
+ * carry the app's buttons — components/test-boxes/launch-step-actions.tsx —
+ * each previewed first and confirmed; drafts only, nothing published.
+ * Nothing touches Zapiet or Klaviyo, or sends email.
  * Objectives A, C and I. Same access as Sales & Marketing.
  *
  * /test-boxes       every box, as big cards
@@ -34,6 +37,7 @@ import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { RecipeDraftBadge } from "@/components/recipe-archive";
+import { LaunchStepAction, type LaunchAction } from "@/components/test-boxes/launch-step-actions";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -55,6 +59,9 @@ interface Box {
   recipes: Array<{ id: number; name: string; isDraft: boolean }>;
   launchEmailId: number | null;
   socialNoteEventId: number | null;
+  shopifyCollectionId: string | null;
+  discountCode: string | null;
+  discountEndsOn: string | null;
   createdBy: string | null;
   updatedBy: string | null;
   createdAt: string;
@@ -82,6 +89,7 @@ interface Task {
   beforeOrdersClose?: boolean;
   clamped?: boolean;
   automated?: boolean;
+  action?: LaunchAction;
   past: boolean;
   done: boolean;
   doneBy: string | null;
@@ -424,6 +432,7 @@ function TestBoxDetail({ id }: { id: number }) {
   const tickErr = tick.error as Error | null;
   const inVipWindow = today <= schedule.vipWindowEnds;
   const launchDone = schedule.launchTasks.filter(t => t.done).length;
+  const launchVersion = schedule.launchTasks.filter(t => t.done).map(t => t.key).join(",") + `|${data.box.recipes.length}`;
   const ownerList = owners.data?.people ?? (data.box.owner ? [data.box.owner] : []);
 
   return (
@@ -523,7 +532,10 @@ function TestBoxDetail({ id }: { id: number }) {
         </div>
         {tickErr && <p className="text-sm text-destructive flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Couldn't save the tick: {tickErr.message}</p>}
         <ol className="space-y-2.5">
-          {schedule.launchTasks.map(t => <TaskRow key={t.key} task={t} onToggle={done => tick.mutate({ taskKey: t.key, done })} />)}
+          {schedule.launchTasks.map(t => (
+            <TaskRow key={t.key} task={t} onToggle={done => tick.mutate({ taskKey: t.key, done })}
+              extra={t.action ? <LaunchStepAction action={t.action} box={data.box} version={launchVersion} /> : undefined} />
+          ))}
         </ol>
       </section>
 
@@ -789,7 +801,7 @@ function DateTile({ label, date, strong }: { label: string; date: string; strong
   );
 }
 
-function TaskRow({ task: t, onToggle }: { task: Task; onToggle: (done: boolean) => void }) {
+function TaskRow({ task: t, onToggle, extra }: { task: Task; onToggle: (done: boolean) => void; extra?: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const overdue = t.past && !t.done;
   return (
@@ -812,13 +824,14 @@ function TaskRow({ task: t, onToggle }: { task: Task; onToggle: (done: boolean) 
           <span className={cn("text-base font-semibold", t.done && "line-through")}>{t.label}</span>
           {overdue && <span className="px-2 py-0.5 rounded-full bg-red-600 text-white text-xs font-bold uppercase">Overdue</span>}
           {t.clamped && !t.done && <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-300 text-xs font-semibold">Tight timeline — due straight away</span>}
-          {t.automated && <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 text-xs font-semibold">Done by the app</span>}
+          {t.automated && !t.done && <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 text-xs font-semibold">The app does this — ticks itself</span>}
           {t.specialist && <span className="px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-800 dark:text-violet-300 text-xs font-semibold">Specialist — extra lead time</span>}
           {t.assumed && <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-300 text-xs font-semibold">Lead time assumed</span>}
           {t.beforeOrdersClose && !t.done && <span className="px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-800 dark:text-sky-300 text-xs font-semibold">Before orders close — order on forecast + buffer</span>}
         </p>
         {t.how && <p className="text-sm text-muted-foreground">{t.how}</p>}
         {t.detail && <p className="text-sm text-muted-foreground">{t.detail}</p>}
+        {extra && <div className="pt-1.5">{extra}</div>}
         {t.link && (
           <Link href={t.link} className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary underline underline-offset-2">
             Open Queued production <ExternalLink className="w-3.5 h-3.5" />
