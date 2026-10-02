@@ -5,7 +5,7 @@
 
 import { Router, type IRouter, type Request, type Response } from "express";
 import multer from "multer";
-import { db, usersTable, onboardingSubmissionsTable, onboardingDocumentsTable } from "@workspace/db";
+import { db, usersTable, onboardingSubmissionsTable, onboardingDocumentsTable, staffEmergencyContactsTable } from "@workspace/db";
 import { eq, and, asc } from "drizzle-orm";
 import { tickPreArrivalDetails, starterGateStatus } from "../lib/starter-paperwork";
 
@@ -101,6 +101,23 @@ router.put("/me", async (req: Request, res: Response) => {
         target: onboardingSubmissionsTable.userId,
         set: { ...values, submittedAt: new Date(), updatedAt: new Date() },
       });
+
+    // The emergency contact is kept current in staff_emergency_contacts
+    // (migration 0145) — the copy managers reach in an emergency and the
+    // person updates later. Write it through so a new starter is never
+    // asked twice; any second contact they've added there is kept.
+    const contact = {
+      name: values.emergencyContactName!,
+      phone: values.emergencyContactPhone!,
+      relationship: values.emergencyContactRelationship,
+      source: "onboarding",
+      updatedById: userId,
+      updatedByName: null,
+      updatedAt: new Date(),
+    };
+    await db.insert(staffEmergencyContactsTable)
+      .values({ userId, ...contact })
+      .onConflictDoUpdate({ target: staffEmergencyContactsTable.userId, set: contact });
 
     // Details alone don't finish onboarding: the gate also wants the starter
     // forms and contract signed, and even then it lifts only when the

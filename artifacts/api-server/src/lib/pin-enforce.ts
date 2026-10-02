@@ -65,6 +65,10 @@ export const ATTRIBUTING_WRITES: readonly Rule[] = [
   // "APC told me it's permanent/temporary" — shown on the postcode card as
   // "reported 2 Oct by <name>", so the name must be whoever made the call.
   { method: "POST", pattern: /^\/apc-postcode-overrides\/?$/, what: "APC postcode answer" },
+  // "My emergency contact" is saved against the signed-in person — a
+  // session left signed in overnight must not file the morning person's
+  // next of kin on someone else's record.
+  { method: "PUT", pattern: /^\/staff-emergency-contacts\/me\/?$/, what: "your emergency contact" },
   { method: "POST", pattern: new RegExp(`^/deliveries/${ID}/receive/?$`), what: "goods-in" },
   { method: "POST", pattern: /^\/kanbans\/scan\/?$/, what: "kanban scan" },
   { method: "POST", pattern: new RegExp(`^/kanbans/${ID}/pull/?$`), what: "kanban pull" },
