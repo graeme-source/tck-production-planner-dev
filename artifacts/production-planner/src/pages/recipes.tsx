@@ -11,13 +11,19 @@ import { PageHeader } from "@/components/page-header";
 import { TimingHealthCard } from "@/components/timing-health-card";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
 import { IngredientCombobox } from "@/components/ingredient-combobox";
-import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, Check, QrCode, Filter, Scale, LayoutGrid, Table2, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
+import { Plus, Trash2, ChefHat, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, Check, QrCode, Filter, Scale, LayoutGrid, Table2, ArrowUp, ArrowDown, ArrowUpDown, Archive } from "lucide-react";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import { activeRecipes, archivedRecipes, archivedLabel } from "@/lib/recipe-archive";
+import { ArchiveRecipeDialog, ArchivedRecipesPanel, RecipeArchiveFooter } from "@/components/recipe-archive";
+
+// Archive fields GET /api/recipes and /api/recipes/:id return (migration
+// 0141) that the generated OpenAPI types don't describe yet.
+type ArchiveFields = { archivedAt?: string | null; archivedByName?: string | null };
 
 const schema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -1045,13 +1051,14 @@ interface ShopifyMapping {
 }
 
 function EditRecipeDialog({
-  id, open, onOpenChange, ingredients, subRecipes, categoryDefaults, allTags,
+  id, open, onOpenChange, ingredients, subRecipes, categoryDefaults, allTags, onArchive,
 }: {
   id: number; open: boolean; onOpenChange: (v: boolean) => void;
   ingredients: IngredientOption[];
   subRecipes: SubRecipeOption[];
   categoryDefaults: { category: string; defaultPackagingCost: number; defaultLabourCost: number }[];
   allTags?: string[];
+  onArchive?: (recipe: { id: number; name: string }) => void;
 }) {
   const { state: authState } = useAuth();
   const canEditShopify = authState.status === "authenticated" &&
@@ -1285,7 +1292,16 @@ function EditRecipeDialog({
 
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent className="sm:max-w-[min(96vw,1100px)] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle className="font-display text-xl">Edit Recipe</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl flex items-center gap-2 flex-wrap">
+              Edit Recipe
+              {(detail as ArchiveFields | undefined)?.archivedAt && (
+                <span className="text-sm font-sans font-medium rounded-full bg-secondary text-muted-foreground px-3 py-1">
+                  {archivedLabel((detail as ArchiveFields).archivedAt, (detail as ArchiveFields).archivedByName)}
+                </span>
+              )}
+            </DialogTitle>
+          </DialogHeader>
           {(isLoading || isFetching) ? (
             <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
           ) : (
@@ -1476,6 +1492,12 @@ function EditRecipeDialog({
                 <RecipeIngredientDeckPanel id={id} active={open && !isLoading && !isFetching} refreshKey={detail?.ingredients?.length} />
               </div>
               <RecipeNutritionSection id={id} active={open && !isLoading && !isFetching} refreshKey={JSON.stringify([detail?.ingredients?.map(i => [i.ingredientId, i.quantity]), detail?.subRecipes?.map(r => [r.subRecipeId, r.quantity]), detail?.servings, detail?.packSize])} />
+              {canEditShopify && detail && (
+                <RecipeArchiveFooter
+                  recipe={{ id, name: detail.name, archivedAt: (detail as ArchiveFields).archivedAt ?? null, archivedByName: (detail as ArchiveFields).archivedByName ?? null }}
+                  onArchive={() => onArchive?.({ id, name: detail.name })}
+                />
+              )}
             </>
           )}
         </DialogContent>
@@ -2085,7 +2107,7 @@ type RecipeUpfInfo = {
   unclassifiedIngredients: string[];
 };
 
-function RecipeCard({ recipe, upf, onEdit, onDelete, onBreakdown, onDuplicate }: { recipe: RecipeItem; upf?: RecipeUpfInfo; onEdit: () => void; onDelete: () => void; onBreakdown: () => void; onDuplicate: () => void }) {
+function RecipeCard({ recipe, upf, onEdit, onDelete, onBreakdown, onDuplicate, onArchive }: { recipe: RecipeItem; upf?: RecipeUpfInfo; onEdit: () => void; onDelete: () => void; onBreakdown: () => void; onDuplicate: () => void; onArchive?: () => void }) {
   const margin = recipe.grossMargin;
   const recipeColor = (recipe as any).color as string | null;
   const [nutritionalsOpen, setNutritionalsOpen] = useState(false);
@@ -2132,6 +2154,9 @@ function RecipeCard({ recipe, upf, onEdit, onDelete, onBreakdown, onDuplicate }:
             >
               {kanbanCreating ? <Loader2 className="w-3 h-3 animate-spin" /> : <QrCode className="w-3 h-3" />}
             </button>
+            {onArchive && (
+              <button onClick={onArchive} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors shadow-sm" title="Archive (hide, keep everything)" aria-label={`Archive ${recipe.name}`}><Archive className="w-3 h-3" /></button>
+            )}
             <button onClick={onDelete} className="w-7 h-7 rounded-full bg-background/90 backdrop-blur text-destructive flex items-center justify-center hover:bg-destructive hover:text-white transition-colors shadow-sm" title="Delete"><Trash2 className="w-3 h-3" /></button>
           </div>
         </div>
@@ -2207,6 +2232,13 @@ export default function Recipes() {
   const [breakdownId, setBreakdownId] = useState<number | null>(null);
   const [duplicatingId, setDuplicatingId] = useState<number | null>(null);
   const [duplicateDefaults, setDuplicateDefaults] = useState<FormValues | null>(null);
+  // Archive (migration 0141): the Active / Archived switch and the recipe
+  // whose Archive confirm is open. Managers and admins only.
+  const [showArchived, setShowArchived] = useState(false);
+  const [archiving, setArchiving] = useState<{ id: number; name: string } | null>(null);
+  const { state: pageAuthState } = useAuth();
+  const canArchive = pageAuthState.status === "authenticated" &&
+    (pageAuthState.user.role === "admin" || pageAuthState.user.role === "manager");
 
   // Deep link: /recipes?edit=<id> opens that recipe's edit form once the list
   // loads — the schedule's "No build time set" flags link here (2026-09-25).
@@ -2319,8 +2351,13 @@ export default function Recipes() {
     tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", cookingLossPercent: 3, builderFillingDeductionGrams: 0, dietaryCategory: null, ovenTempC: null, ovenTimeMinutes: null, tags: [], ingredients: [], subRecipes: [],
   };
 
-  // Shared filter for both card and table views.
-  const filteredRecipes = (recipes ?? []).filter(r => {
+  // Shared filter for both card and table views. Archived recipes never
+  // appear here — they have their own Archived view.
+  const archivedList = archivedRecipes(recipes as Array<NonNullable<typeof recipes>[number] & ArchiveFields> | undefined)
+    .filter(r => !searchQuery.trim() || r.name.toLowerCase().includes(searchQuery.trim().toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const archivedCount = archivedRecipes(recipes as Array<{ id: number } & ArchiveFields> | undefined).length;
+  const filteredRecipes = activeRecipes(recipes as Array<NonNullable<typeof recipes>[number] & ArchiveFields> | undefined).filter(r => {
     if (coreMenuOnly && !(r as RecipeItem).isCoreMenu) return false;
     if (categoryFilter !== "all" && r.category !== categoryFilter) return false;
     if (searchQuery.trim()) {
@@ -2397,6 +2434,29 @@ export default function Recipes() {
       />
 
       <TimingHealthCard onEditRecipe={setEditingId} />
+
+      {/* Active / Archived switch (migration 0141). Archived recipes are kept
+          in full and can be restored any time. */}
+      <div className="inline-flex rounded-xl border border-border bg-card p-1 gap-1" role="tablist" aria-label="Which recipes">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={!showArchived}
+          onClick={() => setShowArchived(false)}
+          className={cn("min-h-11 px-5 rounded-lg text-base font-medium transition-colors", !showArchived ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+        >
+          Active ({(recipes?.length ?? 0) - archivedCount})
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={showArchived}
+          onClick={() => setShowArchived(true)}
+          className={cn("min-h-11 px-5 rounded-lg text-base font-medium transition-colors inline-flex items-center gap-2", showArchived ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+        >
+          <Archive className="w-4 h-4" /> Archived ({archivedCount})
+        </button>
+      </div>
 
       {/* Margin legend + category filter */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -2578,8 +2638,15 @@ export default function Recipes() {
           subRecipes={subRecipeList}
           categoryDefaults={catDefaults}
           allTags={allTags}
+          onArchive={setArchiving}
         />
       )}
+
+      <ArchiveRecipeDialog
+        recipe={archiving}
+        onClose={() => setArchiving(null)}
+        onArchived={() => setEditingId(null)}
+      />
 
       {isLoading && <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}
 
@@ -2591,7 +2658,9 @@ export default function Recipes() {
         </div>
       )}
 
-      {viewMode === "cards" ? (
+      {showArchived ? (
+        <ArchivedRecipesPanel recipes={archivedList} canManage={canArchive} onOpen={setEditingId} />
+      ) : viewMode === "cards" ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {filteredRecipes.map((recipe) => (
             <RecipeCard
@@ -2602,6 +2671,7 @@ export default function Recipes() {
               onDelete={() => { if (confirm(`Delete "${recipe.name}"?`)) deleteRecipe.mutate({ id: recipe.id }); }}
               onBreakdown={() => setBreakdownId(recipe.id)}
               onDuplicate={() => setDuplicatingId(recipe.id)}
+              onArchive={canArchive ? () => setArchiving({ id: recipe.id, name: recipe.name }) : undefined}
             />
           ))}
         </div>
@@ -2617,7 +2687,7 @@ export default function Recipes() {
                 {sortTh("Gross profit", "grossProfit", "right")}
                 {sortTh("GP margin", "gpm", "right")}
                 {sortTh("UPF", "upf", "right")}
-                <th className="w-10" />
+                <th className={canArchive ? "w-20" : "w-10"} />
               </tr>
             </thead>
             <tbody>
@@ -2667,6 +2737,17 @@ export default function Recipes() {
                       >
                         <BarChart2 className="w-4 h-4" />
                       </button>
+                      {canArchive && (
+                        <button
+                          type="button"
+                          onClick={() => setArchiving({ id: r.id, name: r.name })}
+                          title="Archive (hide, keep everything)"
+                          aria-label={`Archive ${r.name}`}
+                          className="text-muted-foreground hover:text-foreground p-1 ml-1"
+                        >
+                          <Archive className="w-4 h-4" />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
