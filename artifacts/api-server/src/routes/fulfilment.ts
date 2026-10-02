@@ -2,7 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db, skuLocationsTable, variantLocationsTable, skuBarcodesTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable, apcConsignmentsTable, pagePermissionsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
-import { postcodeServiceFor } from "../services/apc-postinfo";
+import { postcodeServiceFor, postcodeServiceView, postcodeRefusalAdvice } from "../services/apc-postinfo";
 import { removeTagFromOrder, shopifyAdminOrderUrl, shopifyAdminOrderBase, getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
 import { nextAvailableDeliveryDate, rescheduleTags, withDeliveryDate, rescheduleEmailText, rescheduleEmailHtml, friendlyDate, firstNameOf, toZapietDate } from "../lib/order-reschedule";
 import { validate } from "../middleware/validate";
@@ -2150,13 +2150,27 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
         // spreadsheet and look the postcode up before deciding what to do.
         // Done here instead, so the answer sits under the failure itself
         // (Graeme, 2026-09-04). Local table only — no network, can't throw.
-        const postcodeCheck = postcodeServiceFor(sa.zip)?.summary;
+        const postcodeLookup = postcodeServiceFor(sa.zip);
+        const postcodeCheck = postcodeLookup?.summary;
+        // The same answer as separate facts, plus advice when APC refused a
+        // service the table says this depot normally offers — a temporary
+        // depot restriction (Graeme, 2026-10-02). Saturday delivery = the
+        // Friday-dispatch service codes.
+        const postcodeService = postcodeLookup?.service ? postcodeServiceView(postcodeLookup.service) : undefined;
+        const postcodeAdvice = postcodeService
+          ? postcodeRefusalAdvice(postcodeService, {
+              saturdayDelivery: serviceCode === smallFriday || serviceCode === largeFriday,
+              refusedNoService: isNoServiceFailure(msg),
+            })
+          : null;
 
         results.push({
           orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id),
           status: "failed", reason: msg,
           usedServiceCode: serviceCode,
           ...(postcodeCheck ? { postcodeCheck } : {}),
+          ...(postcodeService ? { postcodeService } : {}),
+          ...(postcodeAdvice ? { postcodeAdvice } : {}),
           ...(suggestedRetryCode ? { suggestedRetryCode } : {}),
           ...(taggedNoService ? { taggedNoService } : {}),
           ...(isDataFixableFailure(msg) ? { dataFixable: true } : {}),

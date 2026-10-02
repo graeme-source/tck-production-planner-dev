@@ -17,6 +17,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Loader2, AlertTriangle, CalendarClock, Mail, Tag, CheckCircle2, X, ExternalLink, Truck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { PostcodeServiceCard } from "@/components/apc-postcode-service";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -36,7 +37,7 @@ interface ReschedulePreview {
    *  the manual spreadsheet check, now done by the server. */
   postcodeCheck?: {
     summary: string;
-    service: { nextDay: boolean; saturdayDelivery: boolean; transitDays: number | null; matchedOn: string } | null;
+    service: { nextDay: boolean; saturdayDelivery: boolean; transitDays: number | null; matchedOn: string; depot: string; weekdayCutoff: string | null; saturday: string | null } | null;
   } | null;
 }
 
@@ -170,7 +171,9 @@ export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, 
                   reschedule decision, shown even when the news is good.
                   Blue when the sheet was found and read; amber when the
                   postcode isn't in it at all. */}
-              {preview.postcodeCheck && (
+              {preview.postcodeCheck?.service ? (
+                <PostcodeServiceCard service={{ ...preview.postcodeCheck.service, saturdayCutoff: preview.postcodeCheck.service.saturday }} />
+              ) : preview.postcodeCheck && (
                 <div className={cn(
                   "rounded-lg border px-3 py-2 text-sm flex items-start gap-2",
                   preview.postcodeCheck.service

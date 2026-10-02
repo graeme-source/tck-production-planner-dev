@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 import { mergeRows, countRows, replaceRow } from "@/lib/booking-report";
 import { RescheduleOrderDialog } from "@/components/reschedule-order-dialog";
 import { toast } from "@/hooks/use-toast";
+import { PostcodeServiceCard, type PostcodeServiceFacts } from "@/components/apc-postcode-service";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
@@ -82,6 +83,11 @@ interface BookResult {
   /** What APC's POSTINFO postcode sheet says this postcode can take — the
    *  spreadsheet check, done server-side, that drives the reschedule call. */
   postcodeCheck?: string;
+  /** The same check as separate facts, for the two ticked lines. */
+  postcodeService?: PostcodeServiceFacts;
+  /** Set when APC refused a service the table says this depot normally
+   *  offers — a temporary depot restriction. */
+  postcodeAdvice?: string;
 }
 
 interface BookResponse {
@@ -649,8 +655,10 @@ export function ApcBatchBookingDialog({ tag, adminBase, onClose, onBooked }: {
                     {/* The spreadsheet lookup Graeme used to do by hand
                         before deciding whether to reschedule — what APC's
                         own postcode sheet says this address can take. */}
-                    {r.postcodeCheck && (
-                      <span className="block text-xs text-blue-800 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/30 rounded px-1.5 py-1 mt-1">
+                    {r.postcodeService ? (
+                      <PostcodeServiceCard service={r.postcodeService} advice={r.postcodeAdvice} className="mt-1.5" />
+                    ) : r.postcodeCheck && (
+                      <span className="block text-sm text-blue-800 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/30 rounded px-2 py-1.5 mt-1">
                         {r.postcodeCheck}
                       </span>
                     )}

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  parsePostinfo, outwardCode, lookupPostcodeService, postcodeServiceFor, postinfoSize,
+  parsePostinfo, outwardCode, lookupPostcodeService, postcodeServiceFor, postinfoSize, postcodeRefusalAdvice,
 } from "./apc-postinfo";
 
 const FIXTURE = [
@@ -92,5 +92,24 @@ describe("lookupPostcodeService (against the real APC sheet)", () => {
   it("returns nothing for a missing postcode rather than guessing", () => {
     expect(postcodeServiceFor("")).toBeNull();
     expect(postcodeServiceFor(null)).toBeNull();
+  });
+});
+
+describe("refusal advice when the table says the depot normally delivers (2026-10-02)", () => {
+  const ka3 = { depot: "274", nextDay: true, weekdayCutoff: "10:30", saturdayDelivery: true, saturdayCutoff: "10:30" };
+  it("Saturday listed but refused → temporary Saturday restriction, reschedule, check with a manager", () => {
+    const a = postcodeRefusalAdvice(ka3, { saturdayDelivery: true, refusedNoService: true })!;
+    expect(a).toMatch(/Depot 274 normally takes Saturday deliveries by 10:30/);
+    expect(a).toMatch(/temporary Saturday restriction/);
+    expect(a).toMatch(/check with a manager/);
+  });
+  it("weekday listed but refused → temporary restriction", () => {
+    expect(postcodeRefusalAdvice(ka3, { saturdayDelivery: false, refusedNoService: true })).toMatch(/next-day weekday deliveries by 10:30/);
+  });
+  it("no advice when the table already says there's no Saturday service", () => {
+    expect(postcodeRefusalAdvice({ ...ka3, saturdayDelivery: false, saturdayCutoff: null }, { saturdayDelivery: true, refusedNoService: true })).toBeNull();
+  });
+  it("no advice for failures that aren't coverage refusals", () => {
+    expect(postcodeRefusalAdvice(ka3, { saturdayDelivery: true, refusedNoService: false })).toBeNull();
   });
 });

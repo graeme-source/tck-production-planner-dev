@@ -163,3 +163,45 @@ export function postcodeServiceFor(postcode: string | null | undefined): { summa
   const service = lookupPostcodeService(postcode);
   return { summary: service ? service.summary : unlistedPostcodeSummary(postcode), service };
 }
+
+/** The postcode facts for a booking screen, as separate fields — two ticked
+ *  lines read faster than one long sentence (Graeme, 2026-10-02). */
+export interface PostcodeServiceView {
+  matchedOn: string;
+  depot: string;
+  nextDay: boolean;
+  weekdayCutoff: string | null;
+  transitDays: number | null;
+  saturdayDelivery: boolean;
+  saturdayCutoff: string | null;
+  source: string;
+}
+
+export function postcodeServiceView(s: PostcodeServiceAnswer): PostcodeServiceView {
+  return {
+    matchedOn: s.matchedOn, depot: s.depot, nextDay: s.nextDay, weekdayCutoff: s.weekdayCutoff,
+    transitDays: s.transitDays, saturdayDelivery: s.saturdayDelivery, saturdayCutoff: s.saturday, source: POSTINFO_SOURCE,
+  };
+}
+
+/**
+ * What to do when APC refuses a service the postcode table says the depot
+ * normally offers (Graeme, 2026-10-02: KA1/KA3, depot 274, list Saturday by
+ * 10:30 yet "NO Services available"). That points to a temporary
+ * restriction at the depot, so the advice is: reschedule, but check with a
+ * manager. null when the refusal matches the table (nothing surprising) or
+ * the failure wasn't a coverage refusal. Pure.
+ */
+export function postcodeRefusalAdvice(
+  s: Pick<PostcodeServiceView, "depot" | "nextDay" | "weekdayCutoff" | "saturdayDelivery" | "saturdayCutoff">,
+  booking: { saturdayDelivery: boolean; refusedNoService: boolean },
+): string | null {
+  if (!booking.refusedNoService) return null;
+  if (booking.saturdayDelivery && s.saturdayDelivery) {
+    return `Depot ${s.depot} normally takes Saturday deliveries${s.saturdayCutoff ? ` by ${s.saturdayCutoff}` : ""}, but APC refused this one. It looks like a temporary Saturday restriction at this depot — rescheduling is probably best, but check with a manager first.`;
+  }
+  if (!booking.saturdayDelivery && s.nextDay) {
+    return `Depot ${s.depot} normally takes next-day weekday deliveries${s.weekdayCutoff ? ` by ${s.weekdayCutoff}` : ""}, but APC refused this one. It looks like a temporary restriction at this depot — rescheduling is probably best, but check with a manager first.`;
+  }
+  return null;
+}
