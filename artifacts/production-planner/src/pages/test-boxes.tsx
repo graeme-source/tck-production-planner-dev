@@ -83,6 +83,7 @@ interface Task {
   detail?: string;
   how?: string;
   link?: string;
+  linkLabel?: string;
   items?: string[];
   assumed?: boolean;
   specialist?: boolean;
@@ -399,6 +400,15 @@ function TestBoxDetail({ id }: { id: number }) {
     if (now) void auto.flush();
   };
 
+  // Completed steps are hidden until asked for (Graeme, 2026-10-02) — the
+  // checklist reads as "what's left". Remembered per device.
+  const [showDone, setShowDoneState] = useState<boolean>(() => {
+    try { return localStorage.getItem("testBox.showDone") === "1"; } catch { return false; }
+  });
+  const setShowDone = (v: boolean) => {
+    setShowDoneState(v);
+    try { localStorage.setItem("testBox.showDone", v ? "1" : "0"); } catch { /* private mode */ }
+  };
   const tick = useMutation({
     mutationFn: ({ taskKey, done }: { taskKey: string; done: boolean }) =>
       api<Full>(`/${id}/tasks/${taskKey}`, { method: "PUT", body: JSON.stringify({ done }) }),
@@ -528,15 +538,19 @@ function TestBoxDetail({ id }: { id: number }) {
       <section className="space-y-3">
         <div className="flex items-baseline gap-3 flex-wrap">
           <h2 className="text-xl font-bold">Launch checklist</h2>
-          <span className="text-sm text-muted-foreground">{launchDone} of {schedule.launchTasks.length} done · on {firstName(data.box.owner?.name)}'s to-do list</span>
+          <span className="text-sm text-muted-foreground flex-1">{launchDone} of {schedule.launchTasks.length} done · on {firstName(data.box.owner?.name)}'s to-do list</span>
+          <ShowDoneToggle showDone={showDone} onChange={setShowDone} />
         </div>
         {tickErr && <p className="text-sm text-destructive flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Couldn't save the tick: {tickErr.message}</p>}
         <ol className="space-y-2.5">
-          {schedule.launchTasks.map(t => (
+          {schedule.launchTasks.filter(t => showDone || !t.done).map(t => (
             <TaskRow key={t.key} task={t} onToggle={done => tick.mutate({ taskKey: t.key, done })}
               extra={t.action ? <LaunchStepAction action={t.action} box={data.box} version={launchVersion} /> : undefined} />
           ))}
         </ol>
+        {!showDone && launchDone > 0 && (
+          <p className="text-sm text-muted-foreground">{launchDone} completed step{launchDone === 1 ? "" : "s"} hidden.</p>
+        )}
       </section>
 
       {/* ── Delivery dates ── */}
@@ -557,7 +571,7 @@ function TestBoxDetail({ id }: { id: number }) {
         ) : (
           schedule.deliveries.map(d => (
             <DeliveryCard key={d.id} boxId={id} boxName={data.box.name} delivery={d} today={today}
-              specialistExtraDays={schedule.specialistExtraDays}
+              specialistExtraDays={schedule.specialistExtraDays} showDone={showDone}
               onWritten={afterWrite} onToggle={(taskKey, done) => tick.mutate({ taskKey, done })} />
           ))
         )}
@@ -648,8 +662,8 @@ function AddDeliveryModal({ boxId, launchDate, expectedBoxes, onClose, onAdded }
   );
 }
 
-function DeliveryCard({ boxId, boxName, delivery: d, today, specialistExtraDays, onWritten, onToggle }: {
-  boxId: number; boxName: string; delivery: Delivery; today: string; specialistExtraDays: number;
+function DeliveryCard({ boxId, boxName, delivery: d, today, specialistExtraDays, showDone, onWritten, onToggle }: {
+  boxId: number; boxName: string; delivery: Delivery; today: string; specialistExtraDays: number; showDone: boolean;
   onWritten: (r: Full) => void; onToggle: (taskKey: string, done: boolean) => void;
 }) {
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -760,8 +774,11 @@ function DeliveryCard({ boxId, boxName, delivery: d, today, specialistExtraDays,
 
       {d.tasks.length > 0 && (
         <ol className="space-y-2.5">
-          {d.tasks.map(t => <TaskRow key={t.key} task={t} onToggle={done => onToggle(t.key, done)} />)}
+          {d.tasks.filter(t => showDone || !t.done).map(t => <TaskRow key={t.key} task={t} onToggle={done => onToggle(t.key, done)} />)}
         </ol>
+      )}
+      {!showDone && d.tasks.some(t => t.done) && (
+        <p className="text-sm text-muted-foreground">{d.tasks.filter(t => t.done).length} completed hidden — "Show completed" at the top of the checklist shows them.</p>
       )}
       {d.afterClose.length > 0 && (
         <div className="rounded-2xl border-2 border-dashed border-border p-4 space-y-1.5">
@@ -801,6 +818,20 @@ function DateTile({ label, date, strong }: { label: string; date: string; strong
   );
 }
 
+function ShowDoneToggle({ showDone, onChange }: { showDone: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!showDone)}
+      aria-pressed={showDone}
+      className={cn("h-10 px-4 rounded-xl border-2 text-sm font-semibold inline-flex items-center gap-2",
+        showDone ? "border-primary text-primary" : "border-border text-muted-foreground hover:text-foreground")}
+    >
+      <Check className="w-4 h-4" /> {showDone ? "Hide completed" : "Show completed"}
+    </button>
+  );
+}
+
 function TaskRow({ task: t, onToggle, extra }: { task: Task; onToggle: (done: boolean) => void; extra?: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const overdue = t.past && !t.done;
@@ -834,7 +865,7 @@ function TaskRow({ task: t, onToggle, extra }: { task: Task; onToggle: (done: bo
         {extra && <div className="pt-1.5">{extra}</div>}
         {t.link && (
           <Link href={t.link} className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary underline underline-offset-2">
-            Open Queued production <ExternalLink className="w-3.5 h-3.5" />
+            {t.linkLabel ?? "Open Queued production"} <ExternalLink className="w-3.5 h-3.5" />
           </Link>
         )}
         {t.items && t.items.length > 0 && (

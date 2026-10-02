@@ -174,6 +174,21 @@ describe("the launch checklist", () => {
     }
   });
 
+  it("back labels before the first production, survey after the first delivery (2026-10-02)", () => {
+    // d1 = Sat 17 Oct → despatch Fri 16, production Thu 15 → labels Wed 14; survey 2 working days after the delivery → Tue 20.
+    const { tasks } = buildLaunchTasks(base);
+    const labels = tasks.find(t => t.key === "launch:back-labels")!;
+    const survey = tasks.find(t => t.key === "launch:survey")!;
+    expect(labels.date).toBe("2026-10-14");
+    expect(labels.link).toBe("/product-hub");
+    expect(survey.date).toBe("2026-10-20");
+    expect(survey.linkLabel).toBe("Open Surveys");
+    // No delivery yet → neither step exists.
+    const none = buildLaunchTasks({ ...base, deliveries: [] }).tasks.map(t => t.key);
+    expect(none).not.toContain("launch:back-labels");
+    expect(none).not.toContain("launch:survey");
+  });
+
   it("decide on recipes comes first, with a nudge under 2 recipes", () => {
     expect(LAUNCH_CHECKLIST[0].key).toBe("decide-recipes");
     const one = buildLaunchTasks({ ...base, recipes: ["A"] }).tasks.find(t => t.key === "launch:decide-recipes")!;

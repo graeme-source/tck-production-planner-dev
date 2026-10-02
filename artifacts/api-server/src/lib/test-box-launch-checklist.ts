@@ -35,11 +35,17 @@ export interface LaunchStepTemplate {
   title: (c: LaunchStepContext) => string;
   /** A short "how", shown under the step and in the to-do's notes. */
   how: (c: LaunchStepContext) => string;
-  /** Which date the due date counts back from ("vip-window-end" = launch +
-   *  the VIP guarantee, VIP_GUARANTEE_HOURS in test-box-schedule.ts). */
-  from: "launch" | "public-launch" | "vip-window-end";
+  /** Which date the due date counts from ("vip-window-end" = launch + the
+   *  VIP guarantee, VIP_GUARANTEE_HOURS in test-box-schedule.ts; "first-
+   *  production" / "first-delivery" = the box's earliest open delivery —
+   *  the step is left out until the box has one). */
+  from: "launch" | "public-launch" | "vip-window-end" | "first-production" | "first-delivery";
   /** Working days before that date (0 = on the day itself, weekend or not). */
   workingDaysBefore: number;
+  /** Working days AFTER that date instead (e.g. the survey after delivery). */
+  workingDaysAfter?: number;
+  /** An in-app page that does the job, with its button label. */
+  link?: (c: LaunchStepContext) => { href: string; label: string };
   /** Only when the box has a public launch date. */
   onlyWithPublicLaunch?: boolean;
   /** Repeated once per delivery date (key gets "-d<deliveryId>"). */
@@ -140,6 +146,20 @@ export const LAUNCH_CHECKLIST: readonly LaunchStepTemplate[] = [
     title: () => "VIP window over — decide: keep selling, open to the public, or close",
     how: () => "VIP Calzoney Club members have had their guaranteed 48 hours. Keep selling to VIPs, add a public launch date, or close orders.",
     from: "vip-window-end", workingDaysBefore: 0, automated: false,
+  },
+  {
+    key: "back-labels",
+    title: () => "Create the back labels",
+    how: c => `A back label for each '${c.boxName}' recipe, from its ingredient deck, allergens and nutrition (Product Hub → Labels). Print and check them before the first production day.`,
+    link: () => ({ href: "/product-hub", label: "Open Product Hub" }),
+    from: "first-production", workingDaysBefore: 1, automated: false,
+  },
+  {
+    key: "survey",
+    title: () => "Create and send the customer survey",
+    how: c => `In Surveys: create a survey from the '${c.boxName}' collection asking customers to rate each product, then email it to everyone who bought.`,
+    link: () => ({ href: "/surveys", label: "Open Surveys" }),
+    from: "first-delivery", workingDaysAfter: 2, workingDaysBefore: 0, automated: false,
   },
   {
     key: "public-email",

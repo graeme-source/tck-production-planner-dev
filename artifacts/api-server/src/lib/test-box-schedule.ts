@@ -118,6 +118,8 @@ export interface ScheduleTask {
   how?: string;
   /** In-app page that does the job ("/plans/queued?date=…"). */
   link?: string;
+  /** The button text for `link` (default "Open Queued production"). */
+  linkLabel?: string;
   items?: string[];
   /** The date rests on an assumption (no supplier set / default lead time). */
   assumed?: boolean;
@@ -203,6 +205,16 @@ export function isWorkingDay(iso: string): boolean {
   return w >= 1 && w <= 5;
 }
 /** The working day before `iso`. */
+/** `n` working days after `iso`. */
+export function addWorkingDays(iso: string, n: number): string {
+  let d = iso;
+  for (let i = 0; i < n; i++) {
+    d = addDays(d, 1);
+    while (!isWorkingDay(d)) d = addDays(d, 1);
+  }
+  return d;
+}
+
 export function prevWorkingDay(iso: string): string {
   let d = addDays(iso, -1);
   while (!isWorkingDay(d)) d = addDays(d, -1);
@@ -258,10 +270,17 @@ export function buildLaunchTasks(input: Pick<ScheduleInput, "boxName" | "launchD
   let tight = false;
   const windowEnd = vipWindowEnd(input.launchDate);
   const live = input.deliveries.filter(d => d.status !== "cancelled");
+  const firstDelivery = live.map(d => d.deliveryDate).sort()[0] ?? null;
   for (const step of LAUNCH_CHECKLIST) {
     if (step.onlyWithPublicLaunch && !input.publicLaunchDate) continue;
-    const base = step.from === "public-launch" ? input.publicLaunchDate! : step.from === "vip-window-end" ? windowEnd : input.launchDate;
-    const normal = step.workingDaysBefore === 0 ? base : subtractWorkingDays(base, step.workingDaysBefore);
+    if ((step.from === "first-production" || step.from === "first-delivery") && !firstDelivery) continue;
+    const base = step.from === "public-launch" ? input.publicLaunchDate!
+      : step.from === "vip-window-end" ? windowEnd
+      : step.from === "first-delivery" ? firstDelivery!
+      : step.from === "first-production" ? prevWorkingDay(prevWorkingDay(firstDelivery!))
+      : input.launchDate;
+    const normal = step.workingDaysAfter ? addWorkingDays(base, step.workingDaysAfter)
+      : step.workingDaysBefore === 0 ? base : subtractWorkingDays(base, step.workingDaysBefore);
     const instances = step.perDelivery
       ? live.map(d => ({ key: launchTaskKey(step.key, d.id), deliveryLabel: dayMonth(d.deliveryDate), addedOn: d.addedOn as string | null }))
       : [{ key: launchTaskKey(step.key), deliveryLabel: undefined, addedOn: null as string | null }];
@@ -273,6 +292,7 @@ export function buildLaunchTasks(input: Pick<ScheduleInput, "boxName" | "launchD
       if (inst.addedOn) date = maxDate(date, inst.addedOn);
       const ctx = { boxName: input.boxName, deliveryLabel: inst.deliveryLabel, recipeCount: input.recipes?.length ?? 0 };
       const hint = step.hint?.(ctx);
+      const link = step.link?.(ctx);
       tasks.push({
         key: inst.key, date, kind: "launch",
         label: step.title(ctx), how: step.how(ctx),
@@ -280,6 +300,7 @@ export function buildLaunchTasks(input: Pick<ScheduleInput, "boxName" | "launchD
         ...(clamped ? { clamped: true } : {}),
         automated: step.automated,
         ...(step.action ? { action: step.action } : {}),
+        ...(link ? { link: link.href, linkLabel: link.label } : {}),
         past: date < input.today,
       });
     }
