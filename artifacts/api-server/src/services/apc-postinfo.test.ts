@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  parsePostinfo, outwardCode, lookupPostcodeService, postcodeServiceFor, postinfoSize, postcodeRefusalAdvice,
+  parsePostinfo, outwardCode, lookupPostcodeService, postcodeServiceFor, postinfoSize, postcodeRefusalAdvice, postcodeServiceView,
 } from "./apc-postinfo";
 
 const FIXTURE = [
@@ -96,20 +96,52 @@ describe("lookupPostcodeService (against the real APC sheet)", () => {
 });
 
 describe("refusal advice when the table says the depot normally delivers (2026-10-02)", () => {
-  const ka3 = { depot: "274", nextDay: true, weekdayCutoff: "10:30", saturdayDelivery: true, saturdayCutoff: "10:30" };
-  it("Saturday listed but refused → temporary Saturday restriction, reschedule, check with a manager", () => {
-    const a = postcodeRefusalAdvice(ka3, { saturdayDelivery: true, refusedNoService: true })!;
-    expect(a).toMatch(/Depot 274 normally takes Saturday deliveries by 10:30/);
-    expect(a).toMatch(/temporary Saturday restriction/);
-    expect(a).toMatch(/check with a manager/);
+  const ka3 = postcodeServiceView(lookupPostcodeService("KA3 1AA")!);
+  const apc = { name: "APC Customer Service (Milton Keynes Depot)", phone: "01908 586999" };
+  it("Saturday listed but refused → call APC and ask whether it's temporary or permanent", () => {
+    const a = postcodeRefusalAdvice(ka3, { saturdayDelivery: true, refusedNoService: true }, apc)!;
+    expect(a.kind).toBe("call_depot");
+    expect(a.text).toMatch(/Depot 274 normally takes Saturday deliveries by 10:30/);
+    expect(a.text).toContain("Call APC Customer Service (Milton Keynes Depot) on 01908 586999 and ask whether the Saturday restriction to KA3 (depot 274) is temporary or permanent.");
+    expect(a.text).not.toMatch(/check with a manager/);
+    expect(a.call).toEqual({ outward: "KA3", depot: "274", contactName: apc.name, phone: "01908 586999" });
   });
-  it("weekday listed but refused → temporary restriction", () => {
-    expect(postcodeRefusalAdvice(ka3, { saturdayDelivery: false, refusedNoService: true })).toMatch(/next-day weekday deliveries by 10:30/);
+  it("weekday listed but refused → call about the next-day weekday restriction", () => {
+    const a = postcodeRefusalAdvice(ka3, { saturdayDelivery: false, refusedNoService: true }, apc)!;
+    expect(a.text).toMatch(/next-day weekday deliveries by 10:30/);
+    expect(a.service).toBe("weekday");
   });
   it("no advice when the table already says there's no Saturday service", () => {
-    expect(postcodeRefusalAdvice({ ...ka3, saturdayDelivery: false, saturdayCutoff: null }, { saturdayDelivery: true, refusedNoService: true })).toBeNull();
+    const ka18 = postcodeServiceView(lookupPostcodeService("KA18 1AA")!);
+    expect(postcodeRefusalAdvice(ka18, { saturdayDelivery: true, refusedNoService: true }, apc)).toBeNull();
   });
   it("no advice for failures that aren't coverage refusals", () => {
-    expect(postcodeRefusalAdvice(ka3, { saturdayDelivery: true, refusedNoService: false })).toBeNull();
+    expect(postcodeRefusalAdvice(ka3, { saturdayDelivery: true, refusedNoService: false }, apc)).toBeNull();
+  });
+});
+
+describe("lookupPostcodeService applies recorded APC answers", () => {
+  const now = new Date("2026-10-02T12:00:00Z");
+  const base = { id: 1, outward: "KA3", depot: "274", note: null, recordedByName: "Grant", recordedAt: "2026-10-02T09:00:00Z", clearedAt: null };
+  it("a permanent Saturday answer removes Saturday service and says so in the summary", () => {
+    const s = lookupPostcodeService("KA3 1AA", undefined, [{ ...base, service: "saturday", kind: "permanent" }], now)!;
+    expect(s.saturdayDelivery).toBe(false);
+    expect(s.saturday).toBeNull();
+    expect(s.listed.saturdayDelivery).toBe(true);
+    expect(s.nextDay).toBe(true);
+    expect(s.summary).toMatch(/NO Saturday delivery/);
+    expect(s.summary).toMatch(/confirmed by APC on 2 Oct, permanent/);
+    const view = postcodeServiceView(s);
+    expect(view.tableSaturdayDelivery).toBe(true);
+    expect(view.restrictions.saturday?.kind).toBe("permanent");
+  });
+  it("other outward codes on the same depot are untouched", () => {
+    const s = lookupPostcodeService("KA1 1AA", undefined, [{ ...base, service: "saturday", kind: "permanent" }], now)!;
+    expect(s.saturdayDelivery).toBe(true);
+    expect(s.restrictions.saturday).toBeNull();
+  });
+  it("postcodeServiceFor passes overrides through (the Reschedule pop-up's source)", () => {
+    const r = postcodeServiceFor("KA3 1AA", [{ ...base, service: "saturday", kind: "permanent" }], now)!;
+    expect(r.service?.saturdayDelivery).toBe(false);
   });
 });

@@ -21,6 +21,10 @@
  */
 import { readFileSync } from "fs";
 import { resolve } from "path";
+import {
+  mergeOverrides, restrictionsFor, refusalAdvice,
+  type PostcodeOverride, type PostcodeRestrictions, type CallContact, type RefusalAdvice,
+} from "./apc-postcode-overrides";
 
 /** Where the sheet came from, so the advice can say what it checked. */
 export const POSTINFO_SOURCE = "APC's POSTINFO postcode table (issued August 2026)";
@@ -49,6 +53,13 @@ export interface PostcodeServiceAnswer extends PostinfoRow {
   /** Days in transit when there is NO next-day service (2, 3, 5). */
   transitDays: number | null;
   saturdayDelivery: boolean;
+  /** What APC customer service told us since the table was issued (see
+   *  apc-postcode-overrides.ts). A PERMANENT one has already been applied
+   *  to nextDay / saturdayDelivery above; a temporary one only rides along. */
+  restrictions: PostcodeRestrictions;
+  /** The table's own answer, before any override — what the depot
+   *  "normally" offers, which is what makes a refusal surprising. */
+  listed: { nextDay: boolean; weekdayCutoff: string | null; saturdayDelivery: boolean; saturday: string | null };
   /** One plain-English line, ready to show to whoever is packing. */
   summary: string;
 }
@@ -103,9 +114,16 @@ export function outwardCode(postcode: string): string {
     : clean;
 }
 
-/** Look one postcode up in the sheet. Returns null when it isn't listed —
- *  which is itself worth saying out loud rather than papering over. */
-export function lookupPostcodeService(postcode: string | null | undefined, rowsOverride?: Map<string, PostinfoRow>): PostcodeServiceAnswer | null {
+/** Look one postcode up in the sheet, with any recorded APC answers
+ *  (`overrides`, from the apc_postcode_overrides table) applied on top.
+ *  Returns null when it isn't listed — which is itself worth saying out
+ *  loud rather than papering over. */
+export function lookupPostcodeService(
+  postcode: string | null | undefined,
+  rowsOverride?: Map<string, PostinfoRow>,
+  overrides: readonly PostcodeOverride[] = [],
+  now: Date = new Date(),
+): PostcodeServiceAnswer | null {
   if (!postcode?.trim()) return null;
   const rows = rowsOverride ?? table();
   let key = outwardCode(postcode);
@@ -124,15 +142,20 @@ export function lookupPostcodeService(postcode: string | null | undefined, rowsO
 
   const cutoffMatch = /^\d{1,2}:\d{2}$/.test(row.weekday);
   const transitMatch = row.weekday.match(/^(\d+)\s*days?$/i);
-  const answer: Omit<PostcodeServiceAnswer, "summary"> = {
+  const listed = {
+    nextDay: cutoffMatch,
+    weekdayCutoff: cutoffMatch ? row.weekday : null,
+    saturdayDelivery: row.saturday !== null,
+    saturday: row.saturday,
+  };
+  const answer: Omit<PostcodeServiceAnswer, "summary"> = mergeOverrides({
     ...row,
     postcode: postcode.trim().toUpperCase(),
     matchedOn: key,
-    nextDay: cutoffMatch,
-    weekdayCutoff: cutoffMatch ? row.weekday : null,
+    ...listed,
     transitDays: transitMatch ? Number(transitMatch[1]) : null,
-    saturdayDelivery: row.saturday !== null,
-  };
+    listed,
+  }, restrictionsFor(key, overrides, now));
   return { ...answer, summary: summarise(answer) };
 }
 
@@ -147,7 +170,8 @@ function summarise(a: Omit<PostcodeServiceAnswer, "summary">): string {
   const saturday = a.saturdayDelivery
     ? `Saturday delivery by ${a.saturday}`
     : "NO Saturday delivery";
-  return `Checked ${POSTINFO_SOURCE} for ${a.matchedOn}: ${weekday}, ${saturday}. Depot ${a.depot}.`;
+  const notes = [a.restrictions.weekday, a.restrictions.saturday].map(r => (r ? ` ${r.label}.` : "")).join("");
+  return `Checked ${POSTINFO_SOURCE} for ${a.matchedOn}: ${weekday}, ${saturday}. Depot ${a.depot}.${notes}`;
 }
 
 /** The line to show when the postcode isn't in the sheet at all. Fail loud:
@@ -158,9 +182,13 @@ export function unlistedPostcodeSummary(postcode: string): string {
 
 /** The whole answer for one postcode, listed or not, ready to hand to the
  *  browser. */
-export function postcodeServiceFor(postcode: string | null | undefined): { summary: string; service: PostcodeServiceAnswer | null } | null {
+export function postcodeServiceFor(
+  postcode: string | null | undefined,
+  overrides: readonly PostcodeOverride[] = [],
+  now: Date = new Date(),
+): { summary: string; service: PostcodeServiceAnswer | null } | null {
   if (!postcode?.trim()) return null;
-  const service = lookupPostcodeService(postcode);
+  const service = lookupPostcodeService(postcode, undefined, overrides, now);
   return { summary: service ? service.summary : unlistedPostcodeSummary(postcode), service };
 }
 
@@ -175,33 +203,38 @@ export interface PostcodeServiceView {
   saturdayDelivery: boolean;
   saturdayCutoff: string | null;
   source: string;
+  restrictions: PostcodeRestrictions;
+  /** The table's own answer before overrides (see PostcodeServiceAnswer). */
+  tableNextDay: boolean;
+  tableWeekdayCutoff: string | null;
+  tableSaturdayDelivery: boolean;
+  tableSaturdayCutoff: string | null;
 }
 
 export function postcodeServiceView(s: PostcodeServiceAnswer): PostcodeServiceView {
   return {
     matchedOn: s.matchedOn, depot: s.depot, nextDay: s.nextDay, weekdayCutoff: s.weekdayCutoff,
     transitDays: s.transitDays, saturdayDelivery: s.saturdayDelivery, saturdayCutoff: s.saturday, source: POSTINFO_SOURCE,
+    restrictions: s.restrictions,
+    tableNextDay: s.listed.nextDay, tableWeekdayCutoff: s.listed.weekdayCutoff,
+    tableSaturdayDelivery: s.listed.saturdayDelivery, tableSaturdayCutoff: s.listed.saturday,
   };
 }
 
 /**
- * What to do when APC refuses a service the postcode table says the depot
- * normally offers (Graeme, 2026-10-02: KA1/KA3, depot 274, list Saturday by
- * 10:30 yet "NO Services available"). That points to a temporary
- * restriction at the depot, so the advice is: reschedule, but check with a
- * manager. null when the refusal matches the table (nothing surprising) or
- * the failure wasn't a coverage refusal. Pure.
+ * What to do when APC refuses a service. When the table says the depot
+ * normally offers it (Graeme, 2026-10-02: KA1/KA3, depot 274, list Saturday
+ * by 10:30 yet "NO Services available"), the packer is told to ring APC
+ * customer service (`contact`, the use_for = 'apc_customer_service' entry
+ * in Contacts) and record whether it's temporary or permanent; once that
+ * answer is on record the advice is simply to reschedule. null when the
+ * refusal matches the table or the failure wasn't a coverage refusal.
+ * Pure — the rules live in apc-postcode-overrides.ts.
  */
 export function postcodeRefusalAdvice(
-  s: Pick<PostcodeServiceView, "depot" | "nextDay" | "weekdayCutoff" | "saturdayDelivery" | "saturdayCutoff">,
+  s: PostcodeServiceView,
   booking: { saturdayDelivery: boolean; refusedNoService: boolean },
-): string | null {
-  if (!booking.refusedNoService) return null;
-  if (booking.saturdayDelivery && s.saturdayDelivery) {
-    return `Depot ${s.depot} normally takes Saturday deliveries${s.saturdayCutoff ? ` by ${s.saturdayCutoff}` : ""}, but APC refused this one. It looks like a temporary Saturday restriction at this depot — rescheduling is probably best, but check with a manager first.`;
-  }
-  if (!booking.saturdayDelivery && s.nextDay) {
-    return `Depot ${s.depot} normally takes next-day weekday deliveries${s.weekdayCutoff ? ` by ${s.weekdayCutoff}` : ""}, but APC refused this one. It looks like a temporary restriction at this depot — rescheduling is probably best, but check with a manager first.`;
-  }
-  return null;
+  contact: CallContact | null = null,
+): RefusalAdvice | null {
+  return refusalAdvice(s, booking, contact);
 }

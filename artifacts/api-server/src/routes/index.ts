@@ -55,6 +55,7 @@ import employeesRouter from "./employees";
 import returnToWorkRouter from "./return-to-work";
 import stationMessagesRouter from "./station-messages";
 import contactsRouter from "./contacts";
+import apcPostcodeOverridesRouter from "./apc-postcode-overrides";
 import employeeReviewsRouter from "./employee-reviews";
 import peopleRouter from "./people";
 import { requirePeopleUnlock } from "../middleware/people-unlock";
@@ -305,6 +306,9 @@ router.use("/station-messages", stationMessagesRouter);
 // Contacts directory: anyone signed in reads; managers/admins edit (guarded
 // inside routes/contacts.ts).
 router.use("/contacts", contactsRouter);
+// What APC customer service said about a postcode restriction: anyone
+// signed in records (the packer makes the call); clearing is guarded inside.
+router.use("/apc-postcode-overrides", apcPostcodeOverridesRouter);
 // People section: anyone with People access must have SET their private
 // PIN (428 until they do) and unlocked People with it recently (423)
 // (middleware/people-unlock.ts); everyone else passes straight through to

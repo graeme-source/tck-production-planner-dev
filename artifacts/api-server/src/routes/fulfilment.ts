@@ -3,6 +3,8 @@ import { db, skuLocationsTable, variantLocationsTable, skuBarcodesTable, appSett
 import { eq } from "drizzle-orm";
 import * as z from "zod";
 import { postcodeServiceFor, postcodeServiceView, postcodeRefusalAdvice } from "../services/apc-postinfo";
+import { rescheduleDateWarnings } from "../services/apc-postcode-overrides";
+import { loadPostcodeContext } from "../lib/apc-postcode-context";
 import { removeTagFromOrder, shopifyAdminOrderUrl, shopifyAdminOrderBase, getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
 import { nextAvailableDeliveryDate, rescheduleTags, withDeliveryDate, rescheduleEmailText, rescheduleEmailHtml, friendlyDate, firstNameOf, toZapietDate } from "../lib/order-reschedule";
 import { validate } from "../middleware/validate";
@@ -1489,17 +1491,13 @@ router.get("/orders/:orderId/reschedule-preview", requireManagerForCourierAction
     // check Graeme did by hand on the desktop spreadsheet before every
     // reschedule decision (2026-09-04). Shown on the dialog, and turned into
     // a hard warning when the chosen date lands on a day the sheet rules out.
-    const postcodeCheck = postcodeServiceFor(plan.order.shippingPostcode);
+    // What APC customer service has since told us (a permanent "no Saturday
+    // service" recorded from a booking failure) is applied on top, so the
+    // Saturday warning respects it (Graeme, 2026-10-02).
+    const { overrides } = await loadPostcodeContext();
+    const postcodeCheck = postcodeServiceFor(plan.order.shippingPostcode, overrides);
     if (postcodeCheck?.service) {
-      // getUTCDay is safe here: toDate is a plain YYYY-MM-DD, parsed as UTC
-      // midnight, and the weekday of a date label doesn't shift with DST.
-      const isSaturday = new Date(`${toDate}T00:00:00Z`).getUTCDay() === 6;
-      if (isSaturday && !postcodeCheck.service.saturdayDelivery) {
-        warnings.push(`${toDate} is a Saturday, and APC's postcode sheet lists NO Saturday delivery for ${postcodeCheck.service.matchedOn}. Pick a weekday.`);
-      }
-      if (!postcodeCheck.service.nextDay && postcodeCheck.service.transitDays) {
-        warnings.push(`No next-day service for ${postcodeCheck.service.matchedOn} — APC quote ${postcodeCheck.service.transitDays} days in transit, so the parcel must leave ${postcodeCheck.service.transitDays} days before this date.`);
-      }
+      warnings.push(...rescheduleDateWarnings(postcodeCheck.service, toDate));
     }
 
     res.json({
@@ -1981,6 +1979,9 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
        *  reschedule decision can be made from the report. */
       postcodeCheck?: string;
     }> = [];
+    // Recorded APC postcode answers + who to call — fetched on the first
+    // failure only, then shared by the rest of the batch.
+    let postcodeContext: ReturnType<typeof loadPostcodeContext> | undefined;
 
     for (const order of orders) {
       const tagsLower = order.tags.split(",").map(t => t.trim().toLowerCase());
@@ -2149,20 +2150,26 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
         // The manual step this failure used to trigger: open APC's POSTINFO
         // spreadsheet and look the postcode up before deciding what to do.
         // Done here instead, so the answer sits under the failure itself
-        // (Graeme, 2026-09-04). Local table only — no network, can't throw.
-        const postcodeLookup = postcodeServiceFor(sa.zip);
+        // (Graeme, 2026-09-04). Local table plus what APC customer service
+        // has told us since (apc_postcode_overrides) — loaded once per batch,
+        // only when something fails; degrades to the table alone.
+        postcodeContext ??= loadPostcodeContext();
+        const { overrides: postcodeOverrides, contact: apcContact } = await postcodeContext;
+        const postcodeLookup = postcodeServiceFor(sa.zip, postcodeOverrides);
         const postcodeCheck = postcodeLookup?.summary;
         // The same answer as separate facts, plus advice when APC refused a
-        // service the table says this depot normally offers — a temporary
-        // depot restriction (Graeme, 2026-10-02). Saturday delivery = the
-        // Friday-dispatch service codes.
+        // service the table says this depot normally offers: call APC
+        // customer service (number from Contacts) and record whether the
+        // restriction is temporary or permanent (Graeme, 2026-10-02).
+        // Saturday delivery = the Friday-dispatch service codes.
         const postcodeService = postcodeLookup?.service ? postcodeServiceView(postcodeLookup.service) : undefined;
-        const postcodeAdvice = postcodeService
+        const advice = postcodeService
           ? postcodeRefusalAdvice(postcodeService, {
               saturdayDelivery: serviceCode === smallFriday || serviceCode === largeFriday,
               refusedNoService: isNoServiceFailure(msg),
-            })
+            }, apcContact)
           : null;
+        const postcodeAdvice = advice?.text ?? null;
 
         results.push({
           orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id),
@@ -2171,6 +2178,8 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
           ...(postcodeCheck ? { postcodeCheck } : {}),
           ...(postcodeService ? { postcodeService } : {}),
           ...(postcodeAdvice ? { postcodeAdvice } : {}),
+          ...(advice ? { postcodeAdviceKind: advice.kind, postcodeAdviceService: advice.service } : {}),
+          ...(advice?.call ? { postcodeCall: advice.call } : {}),
           ...(suggestedRetryCode ? { suggestedRetryCode } : {}),
           ...(taggedNoService ? { taggedNoService } : {}),
           ...(isDataFixableFailure(msg) ? { dataFixable: true } : {}),

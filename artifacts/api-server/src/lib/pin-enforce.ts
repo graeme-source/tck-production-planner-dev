@@ -62,6 +62,9 @@ export const ATTRIBUTING_WRITES: readonly Rule[] = [
   // Wrapping / packing / goods-in / stock
   { method: "POST", pattern: new RegExp(`^/case-orders/plan-items/${ID}/freezer-bags/?$`), what: "freezer bag count" },
   { method: "POST", pattern: /^\/fulfilment\/verify-label-scan\/?$/, what: "packing label check" },
+  // "APC told me it's permanent/temporary" — shown on the postcode card as
+  // "reported 2 Oct by <name>", so the name must be whoever made the call.
+  { method: "POST", pattern: /^\/apc-postcode-overrides\/?$/, what: "APC postcode answer" },
   { method: "POST", pattern: new RegExp(`^/deliveries/${ID}/receive/?$`), what: "goods-in" },
   { method: "POST", pattern: /^\/kanbans\/scan\/?$/, what: "kanban scan" },
   { method: "POST", pattern: new RegExp(`^/kanbans/${ID}/pull/?$`), what: "kanban pull" },
