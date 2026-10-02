@@ -43,6 +43,7 @@ import LeanCave from "@/pages/lean-cave";
 import LeanStart from "@/pages/lean-start";
 import ReturnToWorkPage from "@/pages/return-to-work";
 import PeoplePinPage from "@/pages/people-pin";
+import MyEmergencyContactPage from "@/pages/my-emergency-contact";
 import PeopleSection from "@/pages/people";
 import Reports from "@/pages/reports";
 import TeamEfficiencyPage from "@/pages/team-efficiency";
@@ -82,6 +83,7 @@ import { Loader2 } from "lucide-react";
 import { PinLockOverlay } from "@/components/pin-lock-overlay";
 import { PeoplePinOverlay } from "@/components/people-pin-overlay";
 import { PeoplePinSetupCard } from "@/components/people-pin-setup-card";
+import { EmergencyContactPrompt } from "@/components/emergency-contacts/emergency-contact-prompt";
 import { PasswordResetGate } from "@/components/password-reset-gate";
 import { LeanReviewPage } from "@/components/lean-weekly-review";
 import { toast } from "@/hooks/use-toast";
@@ -261,6 +263,7 @@ function Router() {
               <Route path="/lean-start" component={LeanStart} />
               <Route path="/return-to-work" component={ReturnToWorkPage} />
               <Route path="/account/people-pin" component={PeoplePinPage} />
+              <Route path="/account/emergency-contact" component={MyEmergencyContactPage} />
               {/* People: the list, and each person's record. Same component on
                   both so the People PIN gate stays mounted between them. */}
               <Route path="/people" component={PeopleSection} />
@@ -335,6 +338,9 @@ function AuthGate() {
       {pinLocked && <PinLockOverlay />}
       {!pinLocked && peoplePinPrompt && <PeoplePinOverlay />}
       {!pinLocked && peoplePinSetupPrompt && <PeoplePinSetupCard />}
+      {/* "Add your emergency contact" — at sign-in only, never over the PIN pad
+          or the People prompts; "Not now" lasts until the next sign-in. */}
+      <EmergencyContactPrompt />
     </>
   );
 }

@@ -63,7 +63,7 @@ import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assista
 import { TodoSheet, TodoInterstitial, useMyOpenTodoCount } from "@/components/todo-lists";
 import { FixedNoticeInterstitial } from "@/components/fixed-notice-interstitial";
 import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
-import { AlertOctagon, Banknote, BookOpen, BookUser, Bot, GraduationCap, ChevronLeft, ChevronRight, ListTodo, ScanLine } from "lucide-react";
+import { AlertOctagon, Banknote, BookOpen, BookUser, Bot, GraduationCap, ChevronLeft, ChevronRight, HeartPulse, ListTodo, ScanLine } from "lucide-react";
 import { StationPinnedContacts, StationContactsButton, StationContactsDialog } from "@/components/contacts/station-contacts";
 import { PAGE_STATION_KEYS } from "@/components/contacts/contacts-api";
 
@@ -214,6 +214,14 @@ export function AccountButton({
             >
               <KeyRound className="w-4 h-4 text-muted-foreground" />
               Change PIN
+            </Link>
+            <Link
+              href="/account/emergency-contact"
+              onClick={() => { setOpen(false); onNavigate?.(); }}
+              className="flex items-center gap-3 px-4 py-3 text-sm text-foreground hover:bg-secondary/50 transition-colors"
+            >
+              <HeartPulse className="w-4 h-4 text-muted-foreground" />
+              My emergency contact
             </Link>
             {canSeePeople && (
               <Link
