@@ -12,6 +12,7 @@ import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
 import { londonDateString } from "../lib/london-time";
 import { toGrams } from "@workspace/units";
 import { buildDeck } from "../lib/ingredient-deck";
+import { linkVariantToRecipe } from "../lib/recipe-shopify-mapping";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { parseOvenOverride } from "../lib/recipe-oven-override";
 import { decideCreateStage, decideMenuTick } from "../lib/recipe-archive-rules";
@@ -870,17 +871,7 @@ router.post("/:id/shopify-mapping", async (req, res) => {
   try {
     const [recipe] = await db.select({ id: recipesTable.id }).from(recipesTable).where(eq(recipesTable.id, recipeId));
     if (!recipe) { res.status(404).json({ error: "Recipe not found" }); return; }
-    await db.execute(sql`
-      INSERT INTO recipe_shopify_mappings (recipe_id, shopify_variant_id, shopify_product_title, shopify_variant_title, wonky_variant_id, wonky_product_title, wonky_variant_title)
-      VALUES (${recipeId}, ${shopifyVariantId}, ${shopifyProductTitle ?? null}, ${shopifyVariantTitle ?? null}, ${wonkyVariantId ?? null}, ${wonkyProductTitle ?? null}, ${wonkyVariantTitle ?? null})
-      ON CONFLICT (shopify_variant_id) DO UPDATE SET
-        recipe_id             = EXCLUDED.recipe_id,
-        shopify_product_title = EXCLUDED.shopify_product_title,
-        shopify_variant_title = EXCLUDED.shopify_variant_title,
-        wonky_variant_id      = EXCLUDED.wonky_variant_id,
-        wonky_product_title   = EXCLUDED.wonky_product_title,
-        wonky_variant_title   = EXCLUDED.wonky_variant_title
-    `);
+    await linkVariantToRecipe(db, { recipeId, shopifyVariantId, shopifyProductTitle, shopifyVariantTitle, wonkyVariantId, wonkyProductTitle, wonkyVariantTitle }, "reassign");
     // Pull the SKU off Shopify and stash it on the mapping so the
     // packing checklists can sort recipes in SKU order. Best-effort —
     // network failures don't fail the mapping save.
@@ -916,17 +907,7 @@ router.put("/:id/shopify-mapping", async (req, res) => {
   try {
     const [recipe] = await db.select({ id: recipesTable.id }).from(recipesTable).where(eq(recipesTable.id, recipeId));
     if (!recipe) { res.status(404).json({ error: "Recipe not found" }); return; }
-    await db.execute(sql`
-      INSERT INTO recipe_shopify_mappings (recipe_id, shopify_variant_id, shopify_product_title, shopify_variant_title, wonky_variant_id, wonky_product_title, wonky_variant_title)
-      VALUES (${recipeId}, ${shopifyVariantId}, ${shopifyProductTitle ?? null}, ${shopifyVariantTitle ?? null}, ${wonkyVariantId ?? null}, ${wonkyProductTitle ?? null}, ${wonkyVariantTitle ?? null})
-      ON CONFLICT (shopify_variant_id) DO UPDATE SET
-        recipe_id             = EXCLUDED.recipe_id,
-        shopify_product_title = EXCLUDED.shopify_product_title,
-        shopify_variant_title = EXCLUDED.shopify_variant_title,
-        wonky_variant_id      = EXCLUDED.wonky_variant_id,
-        wonky_product_title   = EXCLUDED.wonky_product_title,
-        wonky_variant_title   = EXCLUDED.wonky_variant_title
-    `);
+    await linkVariantToRecipe(db, { recipeId, shopifyVariantId, shopifyProductTitle, shopifyVariantTitle, wonkyVariantId, wonkyProductTitle, wonkyVariantTitle }, "reassign");
     // Pull the SKU off Shopify and stash it on the mapping so the
     // packing checklists can sort recipes in SKU order. Best-effort —
     // network failures don't fail the mapping save.
