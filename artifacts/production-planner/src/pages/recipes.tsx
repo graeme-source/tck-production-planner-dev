@@ -2458,8 +2458,8 @@ export default function Recipes() {
         </button>
       </div>
 
-      {/* Margin legend + category filter */}
-      <div className="flex items-center justify-between gap-4 flex-wrap">
+      {/* Margin legend + category filter (not used by the Archived view) */}
+      <div className={cn("flex items-center justify-between gap-4 flex-wrap", showArchived && "hidden")}>
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-green-500 inline-block" /> ≥80% — Great</span>
           <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-400 inline-block" /> 75–79% — OK</span>
@@ -2535,7 +2535,7 @@ export default function Recipes() {
             </button>
           )}
         </div>
-        {allTags.length > 0 && (
+        {allTags.length > 0 && !showArchived && (
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-xs text-muted-foreground mr-1">Tags:</span>
             {allTags.map(tag => {

@@ -25,8 +25,9 @@ import { londonDateString } from "../lib/london-time";
 const router: IRouter = Router();
 
 const IdParams = z.object({ id: z.coerce.number().int().positive() });
-// No fields today — validated so a future option can't arrive unchecked.
-const ArchiveBody = z.object({}).strict();
+// No fields today (validate() passes unknown keys through, so extras are
+// simply ignored) — a future option gets declared here.
+const ArchiveBody = z.object({});
 
 function recipeId(req: Request, res: Response): number | null {
   const parsed = IdParams.safeParse(req.params);

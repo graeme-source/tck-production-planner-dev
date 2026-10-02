@@ -11,6 +11,7 @@
  * Pure rules (filtering, labels, warning wording) live in
  * lib/recipe-archive.ts and are unit-tested there.
  */
+import { useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getListRecipesQueryKey } from "@workspace/api-client-react";
 import { Archive, ArchiveRestore, AlertTriangle, Loader2, Pencil } from "lucide-react";
@@ -94,6 +95,10 @@ export function ArchiveRecipeDialog({ recipe, onClose, onArchived }: {
   onArchived?: () => void;
 }) {
   const open = recipe != null;
+  // Keep the last recipe's name on screen while the dialog animates closed.
+  const lastRef = useRef(recipe);
+  if (recipe) lastRef.current = recipe;
+  const shown = recipe ?? lastRef.current;
   const { archive, archiveWithToast } = useRecipeArchiveActions();
   const check = useQuery<ArchiveCheckResponse>({
     queryKey: ["recipe-archive-check", recipe?.id],
@@ -113,7 +118,7 @@ export function ArchiveRecipeDialog({ recipe, onClose, onArchived }: {
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
       <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-lg max-h-[92dvh] overflow-y-auto bg-card border-border rounded-2xl p-6">
         <DialogHeader>
-          <DialogTitle className="font-display text-2xl pr-6">Archive "{recipe?.name}"?</DialogTitle>
+          <DialogTitle className="font-display text-2xl pr-6">Archive "{shown?.name}"?</DialogTitle>
           <DialogDescription className="text-base text-foreground/80 pt-1">
             It disappears from lists and pickers but nothing is deleted — restore any time from Archived.
           </DialogDescription>
@@ -229,7 +234,7 @@ export function ArchivedRecipesPanel({ recipes, canManage, onOpen }: {
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
       {recipes.map(r => {
         const busy = restore.isPending && restore.variables === r.id;
         return (
