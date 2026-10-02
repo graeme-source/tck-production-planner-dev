@@ -114,8 +114,9 @@ router.get("/", async (_req: Request, res: Response) => {
 // ── Recipes to pick from ───────────────────────────────────────────────────
 router.get("/recipe-options", async (_req: Request, res: Response) => {
   // Archived recipes (migration 0141) aren't offered; a box that already
-  // has one keeps showing it (names come from the box itself).
-  const rows = await db.select({ id: recipesTable.id, name: recipesTable.name, category: recipesTable.category })
+  // has one keeps showing it (names come from the box itself). Drafts (0142)
+  // ARE offered, flagged isDraft: a test box is how a draft gets trialled.
+  const rows = await db.select({ id: recipesTable.id, name: recipesTable.name, category: recipesTable.category, isDraft: recipesTable.isDraft })
     .from(recipesTable).where(isNull(recipesTable.archivedAt)).orderBy(asc(recipesTable.name));
   res.json({ recipes: rows });
 });

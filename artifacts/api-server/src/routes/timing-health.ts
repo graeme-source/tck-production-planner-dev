@@ -18,6 +18,7 @@ import { requireManagerOrAdmin } from "../middleware/roles";
 import { rawMeatsForRecipe } from "../lib/day-schedule";
 import { assembleTimingHealth, isOnDayTimeline, type HealthMeatInput } from "../lib/timing-health";
 import { suggestBuildSeconds, suggestCookMinutes } from "../lib/timing-suggestions";
+import { isOnMenu } from "../lib/recipe-archive-rules";
 
 const router: IRouter = Router();
 
@@ -41,6 +42,7 @@ router.get("/", requireManagerOrAdmin, async (_req, res) => {
       targetBuildSeconds: recipesTable.targetBuildSeconds,
       portionsPerBatch: recipesTable.portionsPerBatch,
       archivedAt: recipesTable.archivedAt,
+      isDraft: recipesTable.isDraft,
     })
     .from(recipesTable);
 
@@ -51,9 +53,10 @@ router.get("/", requireManagerOrAdmin, async (_req, res) => {
     .where(gte(productionPlansTable.planDate, planSince))
     .groupBy(productionPlanItemsTable.recipeId);
   const timesPlanned = new Map(plannedRows.map(r => [r.recipeId, Number(r.n)]));
-  // Archived recipes (migration 0141) only count while they're still on a
-  // plan in the window — no nagging for a build time on one we don't make.
-  const liveRecipes = recipes.filter(r => !r.archivedAt || timesPlanned.has(r.id));
+  // Archived (migration 0141) and draft (0142) recipes only count while
+  // they're on a plan in the window — no nagging for a build time on one we
+  // don't (or don't yet) make.
+  const liveRecipes = recipes.filter(r => isOnMenu(r) || timesPlanned.has(r.id));
   const timelineRecipes = liveRecipes.filter(r => isOnDayTimeline(r.category));
 
   const completions = await db

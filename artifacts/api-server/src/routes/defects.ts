@@ -115,10 +115,11 @@ router.patch("/types/:id", requireAdmin, validate(UpdateTypeBody), async (req: R
 // ── Options for the record form ───────────────────────────────────────────
 
 router.get("/options", async (_req: Request, res: Response) => {
-  // Archived recipes (migration 0141) aren't offered; a defect already
+  // Only recipes on the menu are offered — not archived (migration 0141),
+  // not drafts (0142, never made, so never defective). A defect already
   // recorded against one keeps its name via recipeName on the record.
   const recipes = await db.select({ id: recipesTable.id, name: recipesTable.name, category: recipesTable.category })
-    .from(recipesTable).where(isNull(recipesTable.archivedAt)).orderBy(asc(recipesTable.name));
+    .from(recipesTable).where(and(isNull(recipesTable.archivedAt), eq(recipesTable.isDraft, false))).orderBy(asc(recipesTable.name));
   res.json({ recipes });
 });
 
