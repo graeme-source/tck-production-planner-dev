@@ -61,6 +61,13 @@ export const recipesTable = pgTable("recipes", {
   builderFillingDeductionGrams: integer("builder_filling_deduction_grams").notNull().default(0),
   fillingAssemblyOrder: integer("filling_assembly_order"),
   tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
+  // Archive (migration 0141). NULL = active. An archived recipe is hidden
+  // from the Recipes list and every "choose a recipe" picker but never
+  // deleted or altered; plans that used it keep showing it. FK to app_users
+  // (ON DELETE SET NULL) lives in the migration.
+  archivedAt: timestamp("archived_at"),
+  archivedById: integer("archived_by_id"),
+  archivedByName: text("archived_by_name"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
