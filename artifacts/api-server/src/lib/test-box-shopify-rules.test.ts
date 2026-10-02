@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   MF, chooseTemplate, collectionHandle, copiedFromRecipeId, decideRecipeAction, descriptionHtml, findBoxCollection,
   launchTicks, metafieldPlan, missingWriteScopes, newCollectionSettings, nutritionRows, perPackValue,
-  previousBoxCollection, recipeWarnings, sameTitle, singleLine, tagChanges, templateSearchQuery, testBoxTags, variantsToLink,
+  previousBoxCollection, productSearchQuery, recipeWarnings, sameTitle, singleLine, tagChanges, templateSearchQuery, testBoxTags, variantsToLink,
   type CollectionInfo, type MetafieldValue,
 } from "./test-box-shopify-rules";
 
@@ -145,6 +145,15 @@ describe("the box's collection", () => {
     expect(findBoxCollection("Properoni Test Box", null, cols)).toBeNull();
     expect(collectionHandle("Sabores de México!")).toBe("sabores-de-mexico");
   });
+  it("never mistakes a menu collection for the previous box's (found on the live store: 'Meals')", () => {
+    const withMenu: CollectionInfo[] = [
+      { id: "689111466358", title: "Meals", handle: "meals", sortOrder: "MANUAL", templateSuffix: "", rules: [{ column: "TAG", relation: "EQUALS", condition: "Meals" }, { column: "VARIANT_TITLE", relation: "NOT_EQUALS", condition: "8 Pack Bag" }] },
+      { id: "685963608438", title: "6-Week No Takeaway Challenge", handle: "6-week", sortOrder: "MANUAL", templateSuffix: "", rules: [{ column: "TAG", relation: "EQUALS", condition: "6 Week" }] },
+      ...cols,
+    ];
+    expect(previousBoxCollection(["Meals", "6 Week", "Summer Test Box", "current-special"], "Properoni Test Box", withMenu)?.title).toBe("August Test Box");
+  });
+
   it("copies the previous box's sort order, found through the template's box tag", () => {
     const prev = previousBoxCollection(["calzones", "no-wholesale", "show", "Summer Test Box", "Meals"], "Properoni Test Box", cols);
     expect(prev?.title).toBe("August Test Box");
@@ -176,12 +185,22 @@ describe("readiness and ticks", () => {
     expect(w.warnings.join(" ")).toContain("no description");
     expect(w.warnings.join(" ")).toContain("Chorizo");
     expect(recipeWarnings({ ...base, action: "update", existingStatus: "ACTIVE" }).warnings[0]).toContain("status is left alone");
+    // Names repeat when an ingredient is used twice; a linked product gets no warnings at all.
+    expect(recipeWarnings({ ...base, templateFound: true, nutritionComplete: false, nutritionMissing: ["Sauce", "Sauce"] }).warnings.join(" ")).toContain("(Sauce)");
+    expect(recipeWarnings({ ...base, action: "linked", description: "", deckComplete: false })).toEqual({ warnings: [], blocking: [] });
   });
   it("links the one 2 Pack variant; with more, only the template's main-mapped one", () => {
     expect(variantsToLink([{ id: "a", title: "2 Pack" }], [], [])).toEqual(["a"]);
     const tpl = [{ id: "t1", title: "2 Pack" }, { id: "t2", title: "8 Pack Bag" }];
     expect(variantsToLink([{ id: "a", title: "2 Pack" }, { id: "b", title: "8 Pack Bag" }], tpl, ["t1"])).toEqual(["a"]);
     expect(variantsToLink([{ id: "a", title: "2 Pack" }, { id: "b", title: "8 Pack Bag" }], tpl, [])).toEqual([]);
+  });
+
+  it("searches Shopify by the meaningful words of a title", () => {
+    expect(productSearchQuery("The Texican Fajita Calzone 2.0")).toBe("title:*texican* title:*fajita*");
+    expect(productSearchQuery("Properoni Chicken & Chorizo")).toBe("title:*properoni* title:*chicken* title:*chorizo*");
+    expect(productSearchQuery("Sabores de México")).toBe("title:*sabores* title:*mexico*");
+    expect(productSearchQuery("2 & a")).toBeNull();
   });
 
   it("spots the same product title written differently", () => {

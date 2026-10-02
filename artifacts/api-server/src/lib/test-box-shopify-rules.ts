@@ -310,11 +310,21 @@ export function findBoxCollection(boxName: string, storedId: string | null, coll
   return collections.find(c => norm(c.title) === norm(boxName)) ?? collections.find(c => c.handle === collectionHandle(boxName)) ?? null;
 }
 
-/** The previous box's collection: a smart collection whose rule is TAG EQUALS
- *  one of the template's non-base tags. Its sort order is copied. */
+/**
+ * The previous box's collection: a smart collection whose ONLY rule is TAG
+ * EQUALS one of the template's non-base tags (a box collection has exactly
+ * that one rule; "Meals" also excludes 8-pack bags, so it's skipped). When
+ * several match (the template also carries e.g. "6 Week"), the newest
+ * collection wins — Shopify ids only grow. Its sort order is copied.
+ */
 export function previousBoxCollection(templateTags: string[], boxName: string, collections: CollectionInfo[]): CollectionInfo | null {
   const tags = extraTags(templateTags, boxName).map(norm);
-  return collections.find(c => (c.rules ?? []).some(r => r.column === "TAG" && r.relation === "EQUALS" && tags.includes(norm(r.condition)))) ?? null;
+  const matches = collections.filter(c => {
+    const rules = c.rules ?? [];
+    return rules.length === 1 && rules[0].column === "TAG" && rules[0].relation === "EQUALS" && tags.includes(norm(rules[0].condition));
+  });
+  matches.sort((a, b) => (BigInt(b.id) > BigInt(a.id) ? 1 : BigInt(b.id) < BigInt(a.id) ? -1 : 0));
+  return matches[0] ?? null;
 }
 
 export function newCollectionSettings(boxName: string, previous: CollectionInfo | null) {
@@ -359,6 +369,9 @@ export function recipeWarnings(input: {
 }): { warnings: string[]; blocking: string[] } {
   const warnings: string[] = [];
   const blocking: string[] = [];
+  // Already in Shopify and left alone — nothing here is about to be written.
+  if (input.action === "linked") return { warnings, blocking };
+  input = { ...input, deckMissing: [...new Set(input.deckMissing)], nutritionMissing: [...new Set(input.nutritionMissing)] };
   if (input.action === "create" && !input.templateFound) blocking.push("No template product found — pick one to duplicate.");
   if (!input.description?.trim()) warnings.push("The recipe has no description — the product's description will be left empty. Add one on the recipe (or write it in Shopify).");
   if (!input.deckComplete) {
@@ -390,6 +403,20 @@ export function variantsToLink(
   if (newVariants.length === 1) return [newVariants[0].id];
   const mainTitles = templateVariants.filter(v => templateMainVariantIds.includes(v.id)).map(v => norm(v.title));
   return newVariants.filter(v => mainTitles.includes(norm(v.title))).map(v => v.id);
+}
+
+/**
+ * Shopify product search from what a person typed (or a recipe name):
+ * every meaningful word must appear somewhere in the title, so "The Texican
+ * Fajita Calzone 2.0" finds "The Texican - Fajita Calzone 2.0" (a plain
+ * search for the whole name finds nothing). Null when nothing is searchable.
+ */
+const SEARCH_SKIP = new Set(["the", "and", "with", "calzone", "calzones"]);
+export function productSearchQuery(text: string): string | null {
+  const words = text.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").split(/[^a-z0-9]+/)
+    .filter(w => w.length >= 3 && !SEARCH_SKIP.has(w));
+  const unique = [...new Set(words)].slice(0, 4);
+  return unique.length ? unique.map(w => `title:*${w}*`).join(" ") : null;
 }
 
 /** Normalised product title, for spotting a product already made by hand. */

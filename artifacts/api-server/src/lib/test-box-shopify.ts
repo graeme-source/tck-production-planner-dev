@@ -22,7 +22,7 @@
  */
 import { shopifyGraphQL, shopifyGraphQLWrite } from "../services/shopify";
 import {
-  metafieldPlan, type CollectionInfo, type MetafieldRef, type MetafieldValue, type RecipeContent, type TemplateCandidate,
+  metafieldPlan, productSearchQuery, type CollectionInfo, type MetafieldRef, type MetafieldValue, type RecipeContent, type TemplateCandidate,
 } from "./test-box-shopify-rules";
 import type { ExistingDiscount } from "./test-box-discount-rules";
 
@@ -144,7 +144,7 @@ export interface SearchHit { productId: string; title: string; status: string; t
 
 /** Read-only product search for "Link an existing product". */
 export async function searchProducts(port: ShopifyPort, text: string): Promise<SearchHit[]> {
-  const q = text.replace(/[^\p{L}\p{N}\s&'-]/gu, " ").replace(/\s+/g, " ").trim();
+  const q = productSearchQuery(text);
   if (!q) return [];
   const r = await port.read<{ products: { nodes: Array<{ id: string; title: string; status: string; tags: string[]; featuredMedia: { preview: { image: { url: string } | null } | null } | null; variants: { nodes: Array<{ id: string; title: string; sku: string | null }> } }> } }>(
     `query($q: String!) { products(first: 12, query: $q, sortKey: RELEVANCE) { nodes { id title status tags featuredMedia { preview { image { url } } } variants(first: 10) { nodes { id title sku } } } } }`,

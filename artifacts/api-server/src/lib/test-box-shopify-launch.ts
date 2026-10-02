@@ -69,7 +69,7 @@ async function collectionContext(boxId: number, port: ShopifyPort, writesBlocked
   const status: CollectionStatus = {
     boxName: box.name,
     existing: existing ? { title: existing.title, adminUrl: shopifyAdminUrl("collections", existing.id) } : null,
-    plan: { title: settings.title, rule: `Product tag is equal to ${box.name}`, sortOrder: settings.sortOrder, copiedFrom: settings.copiedFrom },
+    plan: { title: settings.title, rule: `product tag is equal to '${box.name}'`, sortOrder: settings.sortOrder, copiedFrom: settings.copiedFrom },
     gate: collectionGate({ recipesDecided: decided, recipeCount: links.recipeIds.length, linkedCount: links.linkedRecipeIds.length }),
     missingScopes: missingWriteScopes(scopes),
     writesBlocked,
