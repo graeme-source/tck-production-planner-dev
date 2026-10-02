@@ -15,6 +15,7 @@ import { CATEGORY_GROUPS, useContacts, type Contact, type ContactCategory, type 
 import { ContactCard, SupplierContactCard } from "@/components/contacts/contact-card";
 import { ContactEditDialog } from "@/components/contacts/contact-edit-dialog";
 import { ApcPostcodeOverridesList } from "@/components/apc-postcode-overrides";
+import { TeamEmergencyContacts } from "@/components/emergency-contacts/team-emergency-contacts";
 
 /** The contact the APC booking-failure flow uses; its recorded postcode
  *  answers are listed under its card. Matched on the machine key, not on
@@ -57,6 +58,10 @@ export default function ContactsPage() {
           </button>
         ) : undefined}
       />
+
+      {/* Managers and admins only (renders nothing for anyone else): the
+          team's own emergency contacts, tap to reveal — every look logged. */}
+      <TeamEmergencyContacts source="contacts_page" className="rounded-3xl border-2 border-red-200 dark:border-red-900/60 bg-red-50/40 dark:bg-red-950/20 p-4 sm:p-5" />
 
       <div className="relative">
         <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />

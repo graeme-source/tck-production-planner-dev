@@ -12,6 +12,7 @@ import { Phone, X, BookUser, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { chipLabel, contactsForStation, telHref, useContacts } from "./contacts-api";
 import { ContactCard } from "./contact-card";
+import { TeamEmergencyContacts } from "@/components/emergency-contacts/team-emergency-contacts";
 
 export function StationPinnedContacts({ stationKeys, className }: { stationKeys: readonly string[]; className?: string }) {
   const { data } = useContacts();
@@ -83,6 +84,9 @@ export function StationContactsDialog({ stationKeys, stationLabel, onClose }: {
             <p className="text-muted-foreground">No contacts are set to show on {stationLabel} yet.</p>
           )}
           {sorted.map(c => <ContactCard key={c.id} contact={c} />)}
+          {/* Managers and admins: the team's emergency contacts, right here on
+              the floor (renders nothing for anyone else; every look logged). */}
+          <TeamEmergencyContacts source="station" className="pt-3 border-t border-border" />
         </div>
         <div className="px-4 sm:px-5 py-3 border-t border-border shrink-0">
           <Link href="/contacts" onClick={onClose} className="h-12 w-full rounded-xl border-2 border-border font-semibold flex items-center justify-center gap-2 hover:bg-secondary/60">
