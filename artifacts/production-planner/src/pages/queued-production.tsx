@@ -16,6 +16,7 @@ import {
   Plus, Trash2, Loader2, ChevronDown, ChevronUp,
   ShoppingCart, CheckCircle2, AlertTriangle, Truck, ArrowLeft,
 } from "lucide-react";
+import { activeRecipes } from "@/lib/recipe-archive";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -198,10 +199,10 @@ function AddQueueForm({ initialDate, onSaved }: { initialDate: string; onSaved: 
   const { data: recipes } = useListRecipes({ query: { queryKey: getListRecipesQueryKey() } });
 
   const sorted = useMemo(() => {
-    const list = [...(recipes ?? [])].sort((a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name));
+    const list = activeRecipes(recipes as Array<{ id: number; name: string; archivedAt?: string | null }> | undefined, Object.keys(selected).map(Number)).sort((a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name));
     const q = search.trim().toLowerCase();
     return q ? list.filter((r: { name: string }) => r.name.toLowerCase().includes(q)) : list;
-  }, [recipes, search]);
+  }, [recipes, search, selected]);
 
   const toggle = (id: number) => setSelected(prev => {
     const next = { ...prev };

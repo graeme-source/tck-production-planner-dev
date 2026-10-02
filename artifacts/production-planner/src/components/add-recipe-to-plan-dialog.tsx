@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { useListRecipes, getListRecipesQueryKey } from "@workspace/api-client-react";
 import { Loader2, Plus } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { activeRecipes } from "@/lib/recipe-archive";
 
 /**
  * Adds a recipe to an existing production plan in place — no reset, no lost
@@ -25,10 +26,12 @@ export function AddRecipeToPlanDialog({
 
   const existing = new Set(existingRecipeIds);
   const sorted = useMemo(() => {
-    return ((recipes as Array<{ id: number; name: string }> | undefined) ?? [])
+    // Archived recipes (migration 0141) aren't offered - unless already on
+    // this plan, where adding tops it up.
+    return activeRecipes(recipes as Array<{ id: number; name: string; archivedAt?: string | null }> | undefined, existingRecipeIds)
       .slice()
       .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
-  }, [recipes]);
+  }, [recipes, existingRecipeIds]);
 
   const n = Number(batches);
   const valid = !!recipeId && Number.isInteger(n) && n >= 1;

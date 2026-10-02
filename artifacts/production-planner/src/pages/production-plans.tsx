@@ -45,6 +45,7 @@ import {
 } from "@/components/ui/dialog";
 import { useLocation, useSearch } from "wouter";
 import { cn } from "@/lib/utils";
+import { activeRecipes, archivedRecipeIds } from "@/lib/recipe-archive";
 import type { PlanStartStock } from "@workspace/stock-prediction";
 import { MacStockWorking, macStockWorking } from "@/components/mac-cheese-stock-working";
 import { SlowMeatPanel, SlowMeatSaveStatus } from "@/components/slow-meat-panel";
@@ -1138,7 +1139,11 @@ function queuedToPlanItem(q: QueuedProductionRow, prev?: PlanItem): PlanItem {
 // excluded. Fail-loud by design: forgetting an exclusion means one visible
 // row with an Exclude button, never silently missing demand. Take no action
 // and the plan is completely normal — rows only join via the button.
-function AdditionalChilledPanel({ suggestions, unmatched, excluded, dispatchDates, addedRecipeIds, onAddSelected, onSetExclusion }: {
+function AdditionalChilledPanel({ suggestions, unmatched, excluded, dispatchDates, addedRecipeIds, onAddSelected, onSetExclusion, archivedRecipeIds }: {
+  // Archived recipes (migration 0141) are NOT hidden here: these rows are
+  // real orders in the window, and this panel exists so orders never vanish.
+  // They're marked so the operator knows; Exclude still works as before.
+  archivedRecipeIds?: Set<number>;
   suggestions: ChilledSuggestion[];
   unmatched: UnmatchedWindowProduct[];
   excluded: Array<{ productTitle: string; totalQuantity: number }>;
@@ -1216,6 +1221,9 @@ function AdditionalChilledPanel({ suggestions, unmatched, excluded, dispatchDate
                       </td>
                       <td className="py-1.5 pr-2">
                         <span className="font-medium" style={s.color ? { color: s.color } : undefined}>{s.recipeName}</span>
+                        {archivedRecipeIds?.has(s.recipeId) && (
+                          <span className="ml-1.5 rounded-full bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground" title="This recipe is archived, but customers have ordered it for this window">Archived</span>
+                        )}
                       </td>
                       <td className="py-1.5 px-2 text-center">{s.dispatch2Qty}</td>
                       <td className="py-1.5 px-2 text-center">{s.dispatch3Qty}</td>
@@ -2663,7 +2671,9 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   };
 
   const includedCount = items.filter(it => it.included).length;
-  const availableToAdd = (allRecipes ?? []).filter((r: Recipe) => !items.some(it => it.recipeId === r.id));
+  // Archived recipes (migration 0141) aren't offered for new plans.
+  const availableToAdd = activeRecipes(allRecipes as Array<Recipe & { archivedAt?: string | null }> | undefined).filter(r => !items.some(it => it.recipeId === r.id));
+  const archivedIds = useMemo(() => archivedRecipeIds(allRecipes as Array<Recipe & { archivedAt?: string | null }> | undefined), [allRecipes]);
   const deliveryDates = calcData?.deliveryDates ?? [];
   const dispatchDates = (calcData as { dispatchDates?: string[] } | undefined)?.dispatchDates ?? [];
   // Which of d1 / d2 / d3 is the production day. /calculate constructs
@@ -3175,6 +3185,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                 excluded={calcData?.excludedWindowProducts ?? []}
                 dispatchDates={dispatchDates}
                 addedRecipeIds={new Set(items.map(it => it.recipeId))}
+                archivedRecipeIds={archivedIds}
                 onAddSelected={addRecipesToList}
                 onSetExclusion={setChilledExclusion}
               />
@@ -3857,7 +3868,10 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   };
 
   const includedCount = items.filter(it => it.included).length;
-  const availableToAdd = ((allRecipes as Recipe[] | undefined) ?? []).filter(r => !items.some(it => it.recipeId === r.id));
+  // Archived recipes (migration 0141) aren't offered; ones already on the
+  // plan stay on it (items carry their own name and data).
+  const availableToAdd = activeRecipes(allRecipes as Array<Recipe & { archivedAt?: string | null }> | undefined).filter(r => !items.some(it => it.recipeId === r.id));
+  const archivedIds = useMemo(() => archivedRecipeIds(allRecipes as Array<Recipe & { archivedAt?: string | null }> | undefined), [allRecipes]);
 
   return (
     <>
@@ -4061,6 +4075,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
             excluded={editCalcData?.excludedWindowProducts ?? []}
             dispatchDates={(editCalcData as { dispatchDates?: string[] } | undefined)?.dispatchDates ?? []}
             addedRecipeIds={new Set(items.map(it => it.recipeId))}
+            archivedRecipeIds={archivedIds}
             onAddSelected={addRecipesToList}
             onSetExclusion={setChilledExclusion}
           />
