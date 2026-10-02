@@ -782,6 +782,8 @@ export function Layout({ children }: { children: ReactNode }) {
     ? "Fix queue"
     : location.startsWith("/founder/")
       ? "The Business"
+    : location === "/test-boxes" || location.startsWith("/test-boxes/")
+      ? "Test boxes"
     : location === "/locations"
     ? "Bin Locations"
     : location === "/inventory"
