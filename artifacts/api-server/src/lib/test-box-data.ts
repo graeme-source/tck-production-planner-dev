@@ -9,7 +9,7 @@
  *     "test_box") spans VIP launch → last live delivery, with a history line
  *     for every visible change;
  *   - ONE planned VIP launch email (marketing_emails, stage Planned) and ONE
- *     social-post note on launch day, remembered on the box so a re-save
+ *     (no social-post note any more — it is a launch-checklist to-do), remembered on the box so a re-save
  *     never duplicates them, and moved with the launch while still only a
  *     plan (an email linked to Klaviyo or past Planned is left alone);
  *   - every task as a to-do on the owner's list (test-box-todos.ts).
@@ -20,7 +20,7 @@ import {
   testBoxesTable, testBoxRecipesTable, testBoxDeliveriesTable, testBoxTasksTable, recipesTable,
 } from "@workspace/db";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { NOTE_EVENT_TYPE, describeDateChange, describeEmailMove } from "@workspace/marketing-calendar";
+import { describeDateChange, describeEmailMove } from "@workspace/marketing-calendar";
 import { intArrayLiteral } from "./int-array-literal";
 import {
   buildTestBoxSchedule, calendarMilestones, calendarSpan,
@@ -241,11 +241,10 @@ export async function syncTestBoxEvent(tx: Tx, box: TestBoxRow, schedule: TestBo
 }
 
 export const launchEmailSubject = (boxName: string) => `${boxName} — VIP launch`;
-export const socialNoteTitle = (boxName: string) => `Post on social media — ${boxName}`;
 
 /**
- * The box's ONE planned VIP launch email and ONE social-post note, on the
- * launch day. Created once (ids remembered on the box); afterwards only moved
+ * The box's ONE planned VIP launch email, on the launch day (the social
+ * post is a to-do on the launch checklist, not a separate note). Created once (ids remembered on the box); afterwards only moved
  * / renamed while still the box's own plan. A person deleting either is
  * respected — it isn't recreated. A removed or cancelled box takes them off
  * (soft) while they're still unsent plans.
@@ -253,7 +252,6 @@ export const socialNoteTitle = (boxName: string) => `Post on social media — ${
 export async function syncLaunchMarketing(tx: Tx, box: TestBoxRow, user: Actor): Promise<void> {
   const live = isLive(box);
   const subject = launchEmailSubject(box.name);
-  const noteTitle = socialNoteTitle(box.name);
   const patch: Partial<Pick<TestBoxRow, "launchEmailId" | "socialNoteEventId">> = {};
 
   // ── The email ──
@@ -301,40 +299,19 @@ export async function syncLaunchMarketing(tx: Tx, box: TestBoxRow, user: Actor):
     });
   }
 
-  // ── The social-post note ──
+  // ── The social-post note ── no longer made (Graeme, 2026-10-02): the
+  // launch checklist's "Post on social media" to-do already shows on the
+  // calendar, so a note too was a duplicate. Any note made before is taken
+  // off (soft) the next time the box is saved.
   const [note] = box.socialNoteEventId != null
     ? await tx.select().from(marketingEventsTable).where(eq(marketingEventsTable.id, box.socialNoteEventId))
     : [];
-  if (!note && box.socialNoteEventId == null && live) {
-    const [created] = await tx.insert(marketingEventsTable).values({
-      name: noteTitle, startDate: box.launchDate, endDate: box.launchDate, eventType: NOTE_EVENT_TYPE, status: "planned",
-      notes: `Launch-day social post for the test box “${box.name}” — on the box's launch checklist.`,
-      channels: ["social"], source: "manual",
-      createdById: user.id, createdByName: user.name, updatedById: user.id, updatedByName: user.name,
-    }).returning();
-    await tx.insert(marketingEventHistoryTable).values({
-      eventId: created.id, userId: user.id, userName: user.name, action: "created", summary: `added this (launch of the test box “${box.name}”)`,
-    });
-    patch.socialNoteEventId = created.id;
-  } else if (note && note.deletedAt == null && live) {
-    const change = describeDateChange(note, { startDate: box.launchDate, endDate: box.launchDate });
-    const rename = note.name !== noteTitle && note.name.startsWith("Post on social media — ");
-    if (change || rename) {
-      await tx.update(marketingEventsTable).set({
-        startDate: box.launchDate, endDate: box.launchDate, ...(rename ? { name: noteTitle } : {}),
-        updatedById: user.id, updatedByName: user.name, updatedAt: new Date(),
-      }).where(eq(marketingEventsTable.id, note.id));
-      await tx.insert(marketingEventHistoryTable).values({
-        eventId: note.id, userId: user.id, userName: user.name, action: change ? change.action : "edited",
-        summary: `${[change?.summary, rename ? `renamed it to “${noteTitle}”` : ""].filter(Boolean).join(" and ")} (test box launch changed)`,
-      });
-    }
-  } else if (note && note.deletedAt == null && !live) {
+  if (note && note.deletedAt == null) {
     await tx.update(marketingEventsTable).set({ deletedAt: new Date(), deletedById: user.id, deletedByName: user.name, updatedAt: new Date() })
       .where(eq(marketingEventsTable.id, note.id));
     await tx.insert(marketingEventHistoryTable).values({
       eventId: note.id, userId: user.id, userName: user.name, action: "deleted",
-      summary: box.deletedAt ? "deleted this (test box removed)" : "took this off the calendar (test box cancelled)",
+      summary: "took this off the calendar (the box's 'Post on social media' to-do replaces it)",
     });
   }
 

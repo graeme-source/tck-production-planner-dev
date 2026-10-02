@@ -15,11 +15,14 @@
  * faded and struck through), someone else's carrying their initials; tap
  * opens the to-do.
  */
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { initials, isNoteEvent, layoutWeek, monthGridWeeks } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
 import type { CalEvent, CalTodo, KlaviyoEmail, Milestone, PlannedEmail } from "./api";
-import { CheckCircle2, CheckSquare, Mail, MailPlus, Square, StickyNote } from "lucide-react";
+import { CheckCircle2, CheckSquare, ListTodo, Mail, MailPlus, Square, StickyNote } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { format, parseISO } from "date-fns";
+import { groupTodosByDay, todoGroupLabel } from "@/lib/calendar-todo-groups";
 import { typeStyle, firstName, THIN_TYPES, KLAVIYO_TONE, NOTE_TONE, TODO_TONE } from "./constants";
 import { dateFromElementsAt, useSpanDrag } from "./use-span-drag";
 import { ApprovalDot, approvalTitle, type ApprovalIndex } from "./approvals";
@@ -38,6 +41,8 @@ type PlanDrag = { id: number; startDate: string; endDate: string; email: Planned
 type PlanSpan = { id: number; startDate: string; endDate: string; plan: PlanDrag };
 /** A to-do on its day (read-only here; tap opens it). */
 type TodoSpan = { id: number; startDate: string; endDate: string; todo: CalTodo };
+/** A busy day's to-dos as one chip (2026-10-02). */
+type TodoGroupSpan = { id: number; startDate: string; endDate: string; todoGroup: CalTodo[] };
 
 export function MonthGrid({ month, today, events, emails = [], planned = [], todos = [], approvals, onOpen, onOpenEmail, onOpenPlanned, onMovePlanned, onOpenTodo, onAddOn, onDatesChange }: {
   /** Any ISO day in the month shown. */
@@ -85,7 +90,10 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], tod
     const d = planDrag.spanOf<PlanDrag>({ id: p.id, startDate: p.sendDate, endDate: p.sendDate, email: p });
     return { id: -(1_000_000 + p.id), startDate: d.startDate, endDate: d.endDate, plan: d };
   });
-  const todoSpans: TodoSpan[] = todos.map(t => ({ id: -(2_000_000 + t.id), startDate: t.date, endDate: t.date, todo: t }));
+  const todoSpans: Array<TodoSpan | TodoGroupSpan> = groupTodosByDay(todos).map(item => item.kind === "one"
+    ? { id: -(2_000_000 + item.todo.id), startDate: item.date, endDate: item.date, todo: item.todo }
+    : { id: -(3_000_000 + Number(item.date.replace(/-/g, "")) % 1_000_000), startDate: item.date, endDate: item.date, todoGroup: item.todos });
+  const [openGroup, setOpenGroup] = useState<{ date: string; todos: CalTodo[] } | null>(null);
 
   // Test-box deadlines, drawn as markers on their days.
   const milestonesByDay = useMemo(() => {
@@ -105,11 +113,11 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], tod
       </div>
       <div className="rounded-xl border border-border overflow-hidden">
         {weeks.map(week => {
-          const { segments, laneCount } = layoutWeek<CalEvent | EmailSpan | PlanSpan | TodoSpan>(week, [...shown, ...planSpans, ...emailSpans, ...todoSpans]);
+          const { segments, laneCount } = layoutWeek<CalEvent | EmailSpan | PlanSpan | TodoSpan | TodoGroupSpan>(week, [...shown, ...planSpans, ...emailSpans, ...todoSpans]);
           // A lane holding only phases is a thin band; everything else full height.
           const thinLane = Array.from({ length: laneCount }, (_, l) => {
             const inLane = segments.filter(s => s.lane === l);
-            return inLane.length > 0 && inLane.every(s => !("plan" in s.event) && !("email" in s.event) && !("todo" in s.event) && THIN_TYPES.has((s.event as CalEvent).type));
+            return inLane.length > 0 && inLane.every(s => !("plan" in s.event) && !("email" in s.event) && !("todo" in s.event) && !("todoGroup" in s.event) && THIN_TYPES.has((s.event as CalEvent).type));
           });
           const laneH = (l: number) => (thinLane[l] ? THIN_PX : BAR_PX);
           const laneTop = (l: number) => Array.from({ length: l }, (_, i) => laneH(i) + GAP_PX).reduce((a, b) => a + b, 0);
@@ -206,6 +214,28 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], tod
                         <Mail className="w-3.5 h-3.5 flex-shrink-0" />
                         <span className="truncate flex-1 text-left">{m.subject ?? m.name}</span>
                         <ApprovalDot item={ap} onLight={m.status === "Sent"} />
+                      </button>
+                    );
+                  }
+                  if ("todoGroup" in seg.event) {
+                    const list = seg.event.todoGroup;
+                    const date = seg.event.startDate;
+                    return (
+                      <button
+                        key={`todo-group-${date}`}
+                        type="button"
+                        onClick={() => setOpenGroup({ date, todos: list })}
+                        title={list.map(t => `${t.done ? "✓" : "•"} ${t.title}`).join("\n")}
+                        className={cn("absolute pointer-events-auto flex items-center gap-1 rounded-lg px-1.5 text-xs font-semibold overflow-hidden", TODO_TONE.chip)}
+                        style={{
+                          left: `calc(${(seg.startCol / 7) * 100}% + 3px)`,
+                          width: `calc(${(1 / 7) * 100}% - 6px)`,
+                          top: laneTop(seg.lane),
+                          height: laneH(seg.lane),
+                        }}
+                      >
+                        <ListTodo className="w-3.5 h-3.5 flex-shrink-0" />
+                        <span className="truncate flex-1 text-left">{todoGroupLabel(list)}</span>
                       </button>
                     );
                   }
@@ -309,6 +339,31 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], tod
           );
         })}
       </div>
+
+      {/* A busy day's to-dos, opened from its "N to-dos" chip. */}
+      <Dialog open={openGroup != null} onOpenChange={v => { if (!v) setOpenGroup(null); }}>
+        <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-md max-h-[92dvh] overflow-y-auto bg-card border-border rounded-2xl p-5">
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl pr-6">
+              To-dos · {openGroup ? format(parseISO(openGroup.date), "EEE d MMM") : ""}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            {openGroup?.todos.map(t => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => { setOpenGroup(null); onOpenTodo?.(t); }}
+                className={cn("w-full min-h-12 rounded-xl px-3 py-2 flex items-center gap-2 text-left text-base", t.done ? TODO_TONE.done : TODO_TONE.chip)}
+              >
+                {t.done ? <CheckSquare className="w-5 h-5 flex-shrink-0" /> : <Square className="w-5 h-5 flex-shrink-0" />}
+                {!t.mine && <span className="flex-shrink-0 rounded bg-slate-700 text-white dark:bg-slate-200 dark:text-slate-900 px-1.5 text-xs font-bold">{initials(t.assignee.name)}</span>}
+                <span className="flex-1 min-w-0">{t.title}</span>
+              </button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
