@@ -35,6 +35,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/utils";
 import { packDayName, packDayNameCap } from "@/lib/pack-day";
 import { resetScrollWithin } from "@/lib/scroll";
+import { planSlideProductionTotals } from "@/lib/meeting-plan-totals";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
@@ -2486,8 +2487,8 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
   const sumHave = withStock.reduce((s, r) => s + r.stock!.have, 0);
   const sumNeed = withStock.reduce((s, r) => s + r.stock!.need, 0);
   const sumSurplus = sumHave - sumNeed;
-  const calzoneBatches = rows.reduce((s, r) => s + (r.unit === "batches" ? (r.target ?? 0) : 0), 0);
-  const totalPacks = rows.reduce((s, r) => s + (r.packs ?? 0), 0);
+  // Production totals are main kitchen only (fried chicken is made elsewhere).
+  const { calzoneBatches, totalPacks } = planSlideProductionTotals(rows);
 
   // The oversell pre-warning: recipes where fridge + today's entire
   // production still doesn't cover what's left to dispatch. Last week this
