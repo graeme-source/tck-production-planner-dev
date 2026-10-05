@@ -3460,9 +3460,13 @@ async function startup() {
     // the Zapiet delivery-date changeover) is what moves the storefront
     // — every 5 minutes, so a changeover lands within minutes without
     // any manual Shopify edits. See lib/special-shopify-sync.ts.
+    // Scheduled Club Special changeovers switch first (0148), then the sync
+    // brings Shopify in line. See lib/club-special-changeover.ts.
     const { syncSpecialToShopify } = await import("./lib/special-shopify-sync");
-    setTimeout(() => void syncSpecialToShopify().catch(err => console.error("[special-sync] startup run failed:", err)), 30_000).unref();
-    setInterval(() => void syncSpecialToShopify().catch(err => console.error("[special-sync] run failed:", err)), 5 * 60_000).unref();
+    const { runDueChangeovers } = await import("./lib/club-special-changeover");
+    const specialRun = async () => { await runDueChangeovers(); await syncSpecialToShopify(); };
+    setTimeout(() => void specialRun().catch(err => console.error("[special-sync] startup run failed:", err)), 30_000).unref();
+    setInterval(() => void specialRun().catch(err => console.error("[special-sync] run failed:", err)), 5 * 60_000).unref();
 
     // Meta ad-spend sync — fills the Numbers page's Ad Spend figure from the
     // Meta Marketing API instead of Graeme typing it each morning. Self-

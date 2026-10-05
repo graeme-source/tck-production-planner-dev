@@ -1,5 +1,5 @@
-import { db, recipesTable } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { db, recipesTable, clubSpecialChangeoversTable } from "@workspace/db";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { shopifyGraphQL } from "../services/shopify";
 import { shouldSkipSideEffect, logSkippedSideEffect } from "./app-env";
 
@@ -19,6 +19,14 @@ import { shouldSkipSideEffect, logSkippedSideEffect } from "./app-env";
  *   - product tag `current-special` — drives the menu badge and which
  *     product the cart upsell offers to swap onto the club plan.
  *
+ * Since 0148 the snapshot also carries what the website says about the
+ * changeover (from club_special_changeovers): delivering_from (the first
+ * delivery date of this recipe — the portal's "Delivering from" line),
+ * announcement (the announcement-bar slide) and next (the changeover still
+ * to come). Changeovers are normally scheduled in the planner and switched
+ * by club-special-changeover.ts; a manual tick in the recipe dialog still
+ * works and this sync follows it.
+ *
  * Changeover procedure (Graeme, Sep 2026): the operator updates the
  * Club Special's Zapiet delivery dates, then flips is_current_special
  * in the planner. THIS sync notices the flip and updates Shopify —
@@ -37,6 +45,35 @@ interface SpecialSnapshot {
   title: string;
   display: string;
   image: string;
+  delivering_from?: string | null;
+  announcement?: string | null;
+  next?: { display: string; delivering_from: string } | null;
+}
+
+/** The changeover facts the website shows for the current special. */
+async function loadChangeoverFacts(recipeId: number): Promise<Pick<SpecialSnapshot, "delivering_from" | "announcement" | "next">> {
+  const [current] = await db.select({ deliveringFrom: clubSpecialChangeoversTable.deliveringFrom, announcement: clubSpecialChangeoversTable.announcement })
+    .from(clubSpecialChangeoversTable)
+    .where(and(eq(clubSpecialChangeoversTable.recipeId, recipeId), eq(clubSpecialChangeoversTable.status, "switched")))
+    .orderBy(desc(clubSpecialChangeoversTable.deliveringFrom))
+    .limit(1);
+  const [next] = await db.select({ name: recipesTable.name, deliveringFrom: clubSpecialChangeoversTable.deliveringFrom })
+    .from(clubSpecialChangeoversTable)
+    .innerJoin(recipesTable, eq(recipesTable.id, clubSpecialChangeoversTable.recipeId))
+    .where(eq(clubSpecialChangeoversTable.status, "scheduled"))
+    .orderBy(asc(clubSpecialChangeoversTable.switchOn))
+    .limit(1);
+  return {
+    delivering_from: current?.deliveringFrom ?? null,
+    announcement: current?.announcement?.trim() || null,
+    next: next ? { display: next.name, delivering_from: next.deliveringFrom } : null,
+  };
+}
+
+/** The parts of the snapshot that, when different, need a rewrite. */
+function snapshotKey(s: SpecialSnapshot | null): string {
+  if (!s) return "";
+  return JSON.stringify([String(s.variant_id), s.display, s.delivering_from ?? null, s.announcement ?? null, s.next ?? null]);
 }
 
 let shopGidCache: string | null = null;
@@ -81,7 +118,9 @@ export async function syncSpecialToShopify(): Promise<void> {
   if (!planner) return; // no special flagged, or recipe unmapped — leave Shopify alone
 
   const current = await readShopifySnapshot();
-  if (current && String(current.variant_id) === planner.variantId) return; // in sync
+  const facts = await loadChangeoverFacts(planner.recipeId);
+  if (current && String(current.variant_id) === planner.variantId
+      && snapshotKey(current) === snapshotKey({ ...current, display: planner.name, ...facts })) return; // in sync
 
   // Resolve the mapped variant's product for the new snapshot.
   const v = await shopifyGraphQL<{
@@ -110,6 +149,7 @@ export async function syncSpecialToShopify(): Promise<void> {
     title: product.title,
     display: planner.name,
     image: product.featuredMedia?.preview?.image?.url ?? "",
+    ...facts,
   };
 
   if (shouldSkipSideEffect()) {
@@ -138,6 +178,11 @@ export async function syncSpecialToShopify(): Promise<void> {
   }
 
   // 2. Move the current-special product tag: off the old special (if any), onto the new.
+  //    (Only the changeover facts changed? The tag is already right.)
+  if (current?.handle === product.handle) {
+    console.log(`[special-sync] Shopify special details updated for ${snapshot.display}`);
+    return;
+  }
   if (current?.handle && current.handle !== product.handle) {
     const prev = await shopifyGraphQL<{ products: { nodes: Array<{ id: string }> } }>(
       `query($q: String!) { products(first: 1, query: $q) { nodes { id } } }`,
