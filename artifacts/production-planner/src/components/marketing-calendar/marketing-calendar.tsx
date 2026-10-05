@@ -199,6 +199,9 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
           <Link href="/test-boxes" className="px-3.5 py-2 rounded-xl border-2 border-rose-500/40 text-rose-700 dark:text-rose-300 text-sm font-semibold flex items-center gap-1.5 hover:bg-rose-500/10">
             <Package className="w-4 h-4" /> Test boxes
           </Link>
+          <Link href="/club-special" className="px-3.5 py-2 rounded-xl border-2 border-[#d6c38c] text-[#8a7638] dark:text-[#d6c38c] text-sm font-semibold flex items-center gap-1.5 hover:bg-[#d6c38c]/15">
+            <Sparkles className="w-4 h-4" /> Club Special
+          </Link>
           <button onClick={() => setOpen({ id: null, newOn: view === "list" || (today >= anchor && today < monthEnd) ? today : anchor })}
             className="px-3.5 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center gap-1.5 hover:bg-primary/90">
             <Plus className="w-4 h-4" /> Add phase

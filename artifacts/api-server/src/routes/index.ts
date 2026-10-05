@@ -107,6 +107,7 @@ import marketingEmailsRouter from "./marketing-emails";
 import marketingApprovalsRouter from "./marketing-approvals";
 import marketingTodosRouter from "./marketing-todos";
 import testBoxesRouter from "./test-boxes";
+import clubSpecialRouter from "./club-special";
 import testBoxShopifyRouter from "./test-box-shopify";
 import founderNumbersRouter from "./founder-numbers";
 import surveysRouter from "./surveys";
@@ -289,6 +290,7 @@ router.use("/marketing-calendar", marketingCalendarRouter);
 // also need manager/admin and go through the Shopify write guard).
 router.use("/test-boxes", testBoxShopifyRouter);
 router.use("/test-boxes", testBoxesRouter);
+router.use("/club-special", clubSpecialRouter);
 // Numbers page trend graphs — founder account only, gated inside the router.
 router.use("/founder-numbers", founderNumbersRouter);
 router.use("/improvements", improvementsRouter);

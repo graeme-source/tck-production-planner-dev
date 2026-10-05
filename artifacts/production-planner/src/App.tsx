@@ -59,6 +59,7 @@ import FounderPnL from "@/pages/founder-pnl";
 import FounderFocus from "@/pages/founder-focus";
 import FounderSales from "@/pages/founder-sales";
 import TestBoxesPage from "@/pages/test-boxes";
+import ClubSpecialPage from "@/pages/club-special";
 import FounderContracts from "@/pages/founder-contracts";
 import FounderFixQueue from "@/pages/founder-fix-queue";
 import DocumentViewer from "@/pages/document-viewer";
@@ -245,6 +246,8 @@ function Router() {
               {/* Test boxes — reached from Sales & Marketing; same access. */}
               <Route path="/test-boxes" component={TestBoxesPage} />
               <Route path="/test-boxes/:id" component={TestBoxesPage} />
+              {/* Club Special changeovers — reached from Sales & Marketing; same access. */}
+              <Route path="/club-special" component={ClubSpecialPage} />
               <Route path="/reports">{() => <ProtectedRoute component={Reports} pageKey="/reports" />}</Route>
               {/* Team efficiency KPI — Analytics only for now (Graeme, 2026-09-25). Managers/admins; server-enforced. */}
               <Route path="/analytics/efficiency" component={TeamEfficiencyPage} />

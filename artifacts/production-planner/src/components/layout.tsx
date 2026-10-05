@@ -784,6 +784,8 @@ export function Layout({ children }: { children: ReactNode }) {
       ? "The Business"
     : location === "/test-boxes" || location.startsWith("/test-boxes/")
       ? "Test boxes"
+    : location === "/club-special"
+      ? "Club Special"
     : location === "/locations"
     ? "Bin Locations"
     : location === "/inventory"
