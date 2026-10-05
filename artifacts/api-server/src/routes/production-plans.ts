@@ -4,6 +4,7 @@ import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as driz
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
 import { FRIED_CHICKEN_CATEGORY } from "./fried-chicken";
+import { allocateDailyBatches } from "../lib/daily-batch-allocation";
 // Aliased: this file has its own in-handler requireManagerOrAdmin() helper
 // (returns boolean, used mid-handler) — the middleware form guards routes.
 import { requireManagerOrAdmin as requireManagerOrAdminMw } from "../middleware/roles";
@@ -40,22 +41,6 @@ function calcTinCount(batchesTarget: number, maxBatchesPerTin: number | null): n
   if (!maxBatchesPerTin || batchesTarget <= 0) return null;
   const raw = Math.ceil(batchesTarget / maxBatchesPerTin);
   return batchesTarget > 5 ? Math.max(2, raw) : raw;
-}
-
-/** Round fractional allocations to integers that sum to `total`: floor each,
- *  then hand the leftover units to the largest remainders. */
-function largestRemainderRound(exact: number[], total: number): number[] {
-  const floors = exact.map(e => Math.floor(e));
-  let leftover = total - floors.reduce((s, f) => s + f, 0);
-  const order = exact
-    .map((e, idx) => ({ idx, remainder: e - Math.floor(e) }))
-    .sort((a, b) => b.remainder - a.remainder);
-  for (const { idx } of order) {
-    if (leftover <= 0) break;
-    floors[idx] += 1;
-    leftover--;
-  }
-  return floors;
 }
 
 const router: IRouter = Router();
@@ -1443,58 +1428,21 @@ export async function calculatePlanData(planDate: string) {
     r.salesPercent = totalPacksSold > 0 ? Math.round(((r.packsSold / totalPacksSold) * 100) * 10) / 10 : 0;
   }
 
-  const totalDeficitBatches = recipesWithData.reduce((s, r) => s + r.deficitBatches, 0);
-  const remainingCapacity = Math.max(0, totalDailyBatches - totalDeficitBatches);
-
-  // Target-stock allocation (Graeme, 2026-08-06): the plan should RESULT in
-  // end-of-horizon factory numbers split by the DPT percentages. Batch counts
-  // are whatever closes each flavour's gap to its target — a flavour with a
-  // massive deficit gets heavily produced; one sitting above its share gets
-  // nothing until sales pull it back down (stock can't be unmade).
-  //
-  // Mechanics: find the level λ (end-stock packs per weight point) whose
-  // per-recipe targets λ·weight are exactly affordable with the day's
-  // capacity, i.e. Σ gap-batches = totalDailyBatches. Overstocked flavours
-  // contribute no gap; everyone else lands ON the DPT split around them.
-  // Weight 0 (retiring specials with DPT 0) means target 0 — the gap formula
-  // still produces up to zero stock when real orders drove it negative, so
-  // genuine demand is honoured without ever building surplus. If no DPT
-  // packs are configured at all, fall back to the live sales split.
+  // The allocation maths lives in lib/daily-batch-allocation.ts (pure,
+  // tested); fried chicken rides along here for its stock but never takes
+  // batches. If no DPT packs are configured at all, it falls back to the
+  // live sales split.
   const useDptWeights = totalDptPacksSold > 0;
-  const allocPool = recipesWithData.map((r) => ({
+  const allocation = allocateDailyBatches(recipesWithData.map(r => ({
+    category: r.recipeCategory ?? null,
     weight: useDptWeights ? r.dptPercent : (totalPacksSold > 0 ? r.salesPercent : 0),
-    ppb: r.packsPerBatch > 0 ? r.packsPerBatch : 1,
-    // Projected end-of-horizon packs with NO production (can be negative).
+    ppb: r.packsPerBatch,
     proj: r.estimatedFactoryNumber - r.bagPackEquivalents - (r.dispatch2Qty + r.dispatch3Qty),
-  }));
-  // Batches needed to lift every under-target recipe to its λ-target.
-  const needBatches = (lambda: number) =>
-    allocPool.reduce((s, p) => s + Math.max(0, lambda * p.weight - p.proj) / p.ppb, 0);
-
-  let suggestedByIdx: number[];
-  let targetByIdx: Array<number | null>;
-  const floorNeed = needBatches(0); // just covering shortfalls to zero stock
-  if (floorNeed >= totalDailyBatches) {
-    // Capacity can't even cover the shortfalls — scale each gap pro-rata.
-    const gaps = allocPool.map(p => Math.max(0, -p.proj) / p.ppb);
-    const scale = floorNeed > 0 ? totalDailyBatches / floorNeed : 0;
-    suggestedByIdx = largestRemainderRound(gaps.map(g => g * scale), totalDailyBatches);
-    targetByIdx = allocPool.map(() => null);
-  } else {
-    // Bisect λ until the targets exactly spend the day's capacity.
-    let lo = 0, hi = 1;
-    while (needBatches(hi) < totalDailyBatches && hi < 1e9) hi *= 2;
-    for (let i = 0; i < 60; i++) {
-      const mid = (lo + hi) / 2;
-      if (needBatches(mid) < totalDailyBatches) lo = mid; else hi = mid;
-    }
-    const lambda = (lo + hi) / 2;
-    const exact = allocPool.map(p => Math.max(0, lambda * p.weight - p.proj) / p.ppb);
-    suggestedByIdx = largestRemainderRound(exact, totalDailyBatches);
-    // The target shown in the UI: this flavour's DPT share of the achievable
-    // end-stock pool. Null for weight-0 recipes — they have no share.
-    targetByIdx = allocPool.map(p => p.weight > 0 ? Math.round(lambda * p.weight) : null);
-  }
+    deficitBatches: r.deficitBatches,
+  })), totalDailyBatches);
+  const { totalDeficitBatches, remainingCapacity } = allocation;
+  const suggestedByIdx = allocation.suggestedBatches;
+  const targetByIdx = allocation.targetStockPacks;
 
   const result = recipesWithData.map((r, idx) => {
     const suggestedBatches = suggestedByIdx[idx];
