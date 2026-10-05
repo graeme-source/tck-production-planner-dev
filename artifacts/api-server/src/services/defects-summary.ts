@@ -59,7 +59,10 @@ export async function loadDefectSummary(from: string, to: string): Promise<Defec
   const dates = new Set<string>([...made.keys(), ...rejectsByDate.keys()]);
   const days: DefectDayInput[] = [...dates].map(date => {
     const q = sumQualityRejects(rejectsByDate.get(date) ?? []);
-    return { date, packsMade: totalPacksMade(madeByLine(made.get(date) ?? [])), wonky: q.wonky, dogBin: q.dogBin };
+    // Main kitchen only — Team efficiency's made figure keeps fried chicken
+    // (it shares the day's labour), the defect rate doesn't (2026-10-05).
+    const mainKitchenMade = (made.get(date) ?? []).filter(r => isMainKitchen(r.category));
+    return { date, packsMade: totalPacksMade(madeByLine(mainKitchenMade)), wonky: q.wonky, dogBin: q.dogBin };
   });
   const rejectStations: RejectStationInput[] = rejectEvents.rows.filter(r => isMainKitchen(r.category)).map(r => ({
     kind: r.kind, station: r.station_type, packs: Number(r.packs) || 0,

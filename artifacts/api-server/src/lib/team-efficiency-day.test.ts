@@ -1,5 +1,4 @@
 import { describe, it, expect } from "vitest";
-import { FRIED_CHICKEN_CATEGORY } from "@workspace/production-schedule";
 import { madeByLine, deriveDay, FALLBACK_SETTINGS, type DayComponents, type PlanItemInput, type TeSettings } from "./team-efficiency-day";
 
 // Category names here are test data, standing in for whatever the recipes
@@ -168,62 +167,5 @@ describe("deriveDay", () => {
     const made = madeByLine([item({ category: LINE_C, batchesTarget: 5 })]);
     const d = deriveDay(comps({ made, lineLabour: { [LINE_B]: 150 }, ignoredUnapproved: 2, pendingShifts: 1 }), settings);
     for (const f of d.flags) expect(f.message).not.toMatch(/£|\d+\.\d{2}/);
-  });
-});
-
-// Regression (Graeme, 2026-10-05): fried chicken is made in a separate
-// facility and is outside this KPI. It had been counted as a line — its packs
-// and despatch value credited, its staff's pay charged, and a planned-but-
-// uncounted run (7 Sep 2026) excluded a whole main-kitchen day.
-describe("fried chicken is outside team efficiency", () => {
-  const FC = FRIED_CHICKEN_CATEGORY;
-  const fcSettings: TeSettings = { ...settings, linePositions: { [FC]: ["Frying", "Breading"] } };
-
-  it("madeByLine leaves the fried chicken line out", () => {
-    const m = madeByLine([
-      item({ fridgeQty: 400, batchesTarget: 40 }),
-      item({ category: FC, batchesTarget: 160, batchesComplete: 157, portionsPerBatch: 1, packSize: 1, rrp: 14.95 }),
-    ]);
-    expect(Object.keys(m)).toEqual([LINE_A]);
-  });
-
-  it("re-derives a stored day that still carries the fried chicken line (21 Sep 2026 shape)", () => {
-    const stored = comps({
-      made: {
-        [LINE_A]: { packs: 400, gross: 4000, bags: 0, bagPacks: 0, bagGross: 0, plannedBatches: 40, plannedPacks: 200, fromBatches: false },
-        [FC]: { packs: 157, gross: 2347, bags: 0, bagPacks: 0, bagGross: 0, plannedBatches: 160, plannedPacks: 160, fromBatches: true },
-      },
-      despatched: {
-        [LINE_A]: { packs: 300, gross: 3000, bagPacks: 0, bagGross: 0 },
-        [FC]: { packs: 15, gross: 224, bagPacks: 0, bagGross: 0 },
-      },
-      labourCostTotal: 1300,
-      lineLabour: { [FC]: 300 },
-    });
-    const d = deriveDay(stored, fcSettings);
-    const clean = deriveDay(comps({
-      made: { [LINE_A]: stored.made[LINE_A] },
-      despatched: { [LINE_A]: stored.despatched[LINE_A] },
-      labourCostTotal: 1000,
-    }), fcSettings);
-    expect(d.packsByLine).toEqual({ [LINE_A]: 400 });
-    expect(d.packsDespatched).toBe(300);
-    expect(d.labourCost).toBe(1000);
-    expect(d.valueCredited).toBeCloseTo(clean.valueCredited, 6);
-    expect(d.efficiencyPct).toBeCloseTo(clean.efficiencyPct!, 6);
-    expect(d.flags).toEqual([]); // by design — no daily "staff left out" noise
-  });
-
-  it("no longer excludes a day because a fried chicken run was planned but not counted (7 Sep 2026 shape)", () => {
-    const d = deriveDay(comps({
-      made: {
-        [LINE_A]: { packs: 390, gross: 3900, bags: 0, bagPacks: 0, bagGross: 0, plannedBatches: 40, plannedPacks: 200, fromBatches: false },
-        [FC]: { packs: 0, gross: 0, bags: 0, bagPacks: 0, bagGross: 0, plannedBatches: 160, plannedPacks: 160, fromBatches: false },
-      },
-      lineLabour: { [FC]: 302 },
-    }), fcSettings);
-    expect(d.status).toBe("ok");
-    expect(d.flags.some(f => f.line === FC)).toBe(false);
-    expect(d.labourCost).toBe(698);
   });
 });

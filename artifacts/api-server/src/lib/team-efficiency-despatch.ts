@@ -13,7 +13,6 @@
  * (team-efficiency-day.ts), on the same basis as production, so it cancels
  * out of the percentage.
  */
-import { isMainKitchen } from "@workspace/production-schedule";
 import { isCollectionOrder } from "./dispatch-tag";
 import { EIGHT_PACK_TITLE_MARKER } from "./shopify-stock-check";
 import { addDaysIso } from "./team-efficiency-labour";
@@ -78,9 +77,7 @@ export function despatchByDay(
         ? recipeByProductTitle.get((li.title ?? "").trim().toLowerCase())
         : (li.variantId ? recipeByVariant.get(String(li.variantId)) : undefined);
       const r = rid != null ? recipes.get(rid) : undefined;
-      // Separate-facility lines (fried chicken) are outside this KPI; the
-      // order itself still counts above — it left the main despatch.
-      if (!r || !r.category || r.packSize <= 0 || !isMainKitchen(r.category)) continue;
+      if (!r || !r.category || r.packSize <= 0) continue;
       const line = d.lines[r.category] ?? { packs: 0, gross: 0, bagPacks: 0, bagGross: 0 };
       if (isBag) {
         const packs = qty * (8 / r.packSize);

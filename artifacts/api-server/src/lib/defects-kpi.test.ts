@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { FRIED_CHICKEN_CATEGORY } from "@workspace/production-schedule";
+import { FRIED_CHICKEN_CATEGORY, isMainKitchen } from "@workspace/production-schedule";
 import {
   attributeRejectStations,
   canEditDefect,
@@ -135,11 +135,13 @@ describe("packs made is the Team efficiency figure", () => {
 
   // Regression (2026-10-05): on 21 Sep 2026 the 157 fried chicken bags (made
   // in a separate facility) were counted as packs made, diluting the defect %.
-  it("leaves fried chicken out of packs made", () => {
-    const made = madeByLine([
+  // Team efficiency keeps fried chicken (shared labour); the defect rate
+  // filters it out before counting (services/defects-summary.ts).
+  it("leaves fried chicken out of the defect rate's packs made", () => {
+    const rows = [
       { category: "Calzones", fridgeQty: 540, eightPackBags: 0, batchesTarget: 108, batchesComplete: 108, portionsPerBatch: 10, packSize: 2, rrp: 10 },
       { category: FRIED_CHICKEN_CATEGORY, fridgeQty: 0, eightPackBags: 0, batchesTarget: 160, batchesComplete: 157, portionsPerBatch: 1, packSize: 1, rrp: 14.95 },
-    ]);
-    expect(totalPacksMade(made)).toBe(540);
+    ];
+    expect(totalPacksMade(madeByLine(rows.filter(r => isMainKitchen(r.category))))).toBe(540);
   });
 });
