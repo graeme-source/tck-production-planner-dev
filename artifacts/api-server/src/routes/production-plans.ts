@@ -5,6 +5,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
 import { FRIED_CHICKEN_CATEGORY } from "./fried-chicken";
 import { allocateDailyBatches } from "../lib/daily-batch-allocation";
+import { calzoneLineBatches } from "@workspace/production-schedule";
 // Aliased: this file has its own in-handler requireManagerOrAdmin() helper
 // (returns boolean, used mid-handler) — the middleware form guards routes.
 import { requireManagerOrAdmin as requireManagerOrAdminMw } from "../middleware/roles";
@@ -5277,9 +5278,6 @@ router.get("/:id/kpi", async (req, res) => {
     .where(eq(productionPlanItemsTable.planId, planId));
   const itemIds = planItems.map(i => i.id);
   const macItemIds = new Set(planItems.filter(i => i.category === MAC_CHEESE_CATEGORY).map(i => i.id));
-  const calzoneBatchesTarget = planItems
-    .filter(i => i.category !== MAC_CHEESE_CATEGORY)
-    .reduce((s, i) => s + (Number(i.batchesTarget) || 0), 0);
   if (itemIds.length === 0) {
     res.json({ batchesCompleted: 0, activeMinutes: 0, breakMinutes: 0, batchesPerHour: 0, macPacksCompleted: 0, macPacksPerHour: 0 });
     return;
@@ -5391,9 +5389,8 @@ router.get("/:id/kpi", async (req, res) => {
   // Per-user "all done" target = sum of batchesTarget across the plan items
   // this station owns. When the user finishes their share, freeze the clock
   // at their last completion so BPH stops decaying.
-  const userStationTarget = planItems
-    .filter(i => i.category !== MAC_CHEESE_CATEGORY)
-    .reduce((s, i) => s + (Number(i.batchesTarget) || 0), 0);
+  // (Calzone line only — fried chicken is a separate facility.)
+  const userStationTarget = calzoneLineBatches(planItems);
 
   let activeMinutes = 0;
   if (completions.length > 0) {

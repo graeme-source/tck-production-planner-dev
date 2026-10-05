@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  FRIED_CHICKEN_CATEGORY, MAC_CHEESE_CATEGORY, isMainKitchen, kitchenLine, mainKitchenItems, mainKitchenLines,
+  FRIED_CHICKEN_CATEGORY, MAC_CHEESE_CATEGORY, calzoneLineBatches, isMainKitchen, kitchenLine, mainKitchenItems, mainKitchenLines,
 } from "./kitchen-scope";
 
 describe("kitchenLine", () => {
@@ -35,6 +35,20 @@ describe("mainKitchenItems", () => {
       { id: 3, recipeCategory: MAC_CHEESE_CATEGORY, batchesTarget: 15 },
     ];
     expect(mainKitchenItems(items).map(i => i.id)).toEqual([1, 3]);
+  });
+});
+
+describe("calzoneLineBatches", () => {
+  // Regression (2026-10-05): the station KPI's "all done" target summed every
+  // non-mac item, so on a fried chicken day (105 + 154) a mixer who finished
+  // never froze their clock and their batches/hour decayed all evening.
+  it("counts calzone-line batches only", () => {
+    expect(calzoneLineBatches([
+      { category: "Calzones", batchesTarget: 105 },
+      { category: FRIED_CHICKEN_CATEGORY, batchesTarget: 154 },
+      { category: MAC_CHEESE_CATEGORY, batchesTarget: 15 },
+      { category: null, batchesTarget: "3" },
+    ])).toBe(108);
   });
 });
 

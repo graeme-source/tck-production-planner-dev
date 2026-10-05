@@ -42,6 +42,15 @@ export function mainKitchenItems<T extends { recipeCategory?: string | null }>(i
   return items.filter(it => isMainKitchen(it.recipeCategory));
 }
 
+/** Calzone-line batches planned — the target behind the stations' "all done"
+ *  checks and calzone totals. Mac cheese (packs) and the separate facility
+ *  are both left out. */
+export function calzoneLineBatches(items: ReadonlyArray<{ category: string | null | undefined; batchesTarget: number | string | null | undefined }>): number {
+  return items
+    .filter(i => kitchenLine(i.category) === "calzone")
+    .reduce((s, i) => s + (Number(i.batchesTarget) || 0), 0);
+}
+
 /** Keep only main-kitchen entries of a per-category record (e.g. a team
  *  efficiency day's lines keyed by recipe category). */
 export function mainKitchenLines<V>(byCategory: Record<string, V>): Record<string, V> {
