@@ -39,6 +39,7 @@ import { eq, and, inArray, asc, desc, sql } from "drizzle-orm";
 import * as z from "zod";
 import { londonDateString } from "../lib/london-time";
 import { earliestProductionDay } from "../lib/production-cutoff";
+import { mainKitchenBatches } from "@workspace/production-schedule";
 import { datesWithPosition } from "../services/planday";
 
 const router: IRouter = Router();
@@ -375,8 +376,10 @@ router.get("/:id/schedule-suggestion", async (req: Request, res: Response) => {
           planId: productionPlanItemsTable.planId,
           recipeId: productionPlanItemsTable.recipeId,
           batchesTarget: productionPlanItemsTable.batchesTarget,
+          category: recipesTable.category,
         })
         .from(productionPlanItemsTable)
+        .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
         .where(inArray(productionPlanItemsTable.planId, plans.map(p => p.id)))
     : [];
   const planDateById = new Map(plans.map(p => [p.id, p.planDate]));
@@ -385,7 +388,9 @@ router.get("/:id/schedule-suggestion", async (req: Request, res: Response) => {
   const existingRecipeBatches = new Map<string, number>(); // `${date}|${recipeId}`
   for (const it of items) {
     const date = planDateById.get(it.planId)!;
-    existingBatchesByDate.set(date, (existingBatchesByDate.get(date) ?? 0) + it.batchesTarget);
+    // Headroom against the day's capacity is main kitchen only — fried
+    // chicken is made in a separate facility (shared rule).
+    existingBatchesByDate.set(date, (existingBatchesByDate.get(date) ?? 0) + mainKitchenBatches([it]));
     const k = `${date}|${it.recipeId}`;
     existingRecipeBatches.set(k, (existingRecipeBatches.get(k) ?? 0) + it.batchesTarget);
   }

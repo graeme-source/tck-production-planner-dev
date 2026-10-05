@@ -50,6 +50,14 @@ export function splitByKitchenLine<T>(items: readonly T[], categoryOf: (t: T) =>
   return out;
 }
 
+/** Main-kitchen batches planned (calzone batches + mac cheese packs, the
+ *  long-standing meaning of a day's "batches" against the 110/80 capacity). */
+export function mainKitchenBatches(items: ReadonlyArray<{ category: string | null | undefined; batchesTarget: number | string | null | undefined }>): number {
+  return items
+    .filter(i => isMainKitchen(i.category))
+    .reduce((s, i) => s + (Number(i.batchesTarget) || 0), 0);
+}
+
 /** Calzone-line batches planned — the target behind the stations' "all done"
  *  checks and calzone totals. Mac cheese (packs) and the separate facility
  *  are both left out. */

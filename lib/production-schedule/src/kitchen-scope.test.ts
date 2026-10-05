@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  FRIED_CHICKEN_CATEGORY, MAC_CHEESE_CATEGORY, calzoneLineBatches, splitByKitchenLine, isMainKitchen, kitchenLine, mainKitchenItems, mainKitchenLines,
+  FRIED_CHICKEN_CATEGORY, MAC_CHEESE_CATEGORY, calzoneLineBatches, mainKitchenBatches, splitByKitchenLine, isMainKitchen, kitchenLine, mainKitchenItems, mainKitchenLines,
 } from "./kitchen-scope";
 
 describe("kitchenLine", () => {
@@ -48,6 +48,19 @@ describe("splitByKitchenLine", () => {
     expect(s.calzone.map(x => x.n)).toEqual(["a", "b"]);
     expect(s.mac.map(x => x.n)).toEqual(["m"]);
     expect(s.separate.map(x => x.n)).toEqual(["fc"]);
+  });
+});
+
+describe("mainKitchenBatches", () => {
+  // Regression (2026-10-05): case-order scheduling measured a day's headroom
+  // against the 110/80 capacity using every item, so a fried chicken run
+  // (154 bags) made the day look full.
+  it("counts calzone batches and mac packs, not fried chicken bags", () => {
+    expect(mainKitchenBatches([
+      { category: "Calzones", batchesTarget: 105 },
+      { category: FRIED_CHICKEN_CATEGORY, batchesTarget: 154 },
+      { category: MAC_CHEESE_CATEGORY, batchesTarget: 15 },
+    ])).toBe(120);
   });
 });
 
