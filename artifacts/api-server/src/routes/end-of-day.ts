@@ -19,7 +19,7 @@
  * happen again.
  */
 import { Router, type IRouter, type Request, type Response } from "express";
-import { db, productionPlansTable, productionPlanItemsTable } from "@workspace/db";
+import { db, productionPlansTable, productionPlanItemsTable, recipesTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
 import { londonDateString } from "../lib/london-time";
@@ -28,7 +28,7 @@ import {
   computePackingOrdersPerHourForDay,
   countImprovementsCompletedForDay,
 } from "../lib/yesterday-kpis";
-import { sumQualityRejects } from "../lib/quality-rejects";
+import { meetingDayTotals } from "../lib/meeting-day-totals";
 import { loadDefectSummary } from "../services/defects-summary";
 
 const router: IRouter = Router();
@@ -65,13 +65,16 @@ router.get("/", async (req: Request, res: Response) => {
           wonlyTotal: productionPlanItemsTable.wonlyTotal,
           dogBinCount: productionPlanItemsTable.dogBinCount,
           batchesTarget: productionPlanItemsTable.batchesTarget,
+          recipeCategory: recipesTable.category,
         })
         .from(productionPlanItemsTable)
+        .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
         .where(eq(productionPlanItemsTable.planId, plan.id));
-      const rejects = sumQualityRejects(items);
-      wonkyCount = rejects.wonky;
-      dogBinCount = rejects.dogBin;
-      for (const it of items) batchesTarget += it.batchesTarget ?? 0;
+      // Main kitchen only — fried chicken is made in a separate facility.
+      const day = meetingDayTotals(items);
+      wonkyCount = day.wonky;
+      dogBinCount = day.dogBin;
+      batchesTarget = day.batchesTarget;
     }
 
     // A KPI that can't be worked out yet must come back as null and say so on

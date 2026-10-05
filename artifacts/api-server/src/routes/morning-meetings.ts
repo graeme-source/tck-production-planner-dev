@@ -50,7 +50,7 @@ import {
 import { getPreviousDispatchDayAsync, getNextDispatchDayAsync } from "./production-plans";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 import { leanCorpusPrompt } from "../lib/lean-corpus";
-import { sumQualityRejects } from "../lib/quality-rejects";
+import { meetingDayTotals } from "../lib/meeting-day-totals";
 import { loadDefectSummary } from "../services/defects-summary";
 import type Anthropic from "@anthropic-ai/sdk";
 
@@ -468,18 +468,19 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
           shortCount: productionPlanItemsTable.shortCount,
           leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
           batchesTarget: productionPlanItemsTable.batchesTarget,
+          recipeCategory: recipesTable.category,
         })
         .from(productionPlanItemsTable)
+        .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
         .where(eq(productionPlanItemsTable.planId, yesterdayPlan.id));
 
-      const rejects = sumQualityRejects(items);
-      wonkyCount = rejects.wonky;
-      dogBinCount = rejects.dogBin;
-      for (const it of items) {
-        shortCount += it.shortCount ?? 0;
-        leftoverFillingGrams += it.leftoverFillingGrams ?? 0;
-        yesterdayBatchesTotal += it.batchesTarget ?? 0;
-      }
+      // Main kitchen only — fried chicken is made in a separate facility.
+      const day = meetingDayTotals(items);
+      wonkyCount = day.wonky;
+      dogBinCount = day.dogBin;
+      shortCount = day.shortCount;
+      leftoverFillingGrams = day.leftoverFillingGrams;
+      yesterdayBatchesTotal = day.batchesTarget;
     }
 
     // Yesterday's builder + packing rates come from the same helpers
