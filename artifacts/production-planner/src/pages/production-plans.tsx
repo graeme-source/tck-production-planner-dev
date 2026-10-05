@@ -36,6 +36,7 @@ import { AddDoughToPlanDialog } from "@/components/add-dough-to-plan-dialog";
 import { AddFriedChickenDialog } from "@/components/fried-chicken/add-fried-chicken-dialog";
 import { FriedChickenPrepSheetDialog } from "@/components/fried-chicken/prep-sheet";
 import { FRIED_CHICKEN_CATEGORY, type StationPlanItem } from "@/pages/station/shared/constants";
+import { mainKitchenItems } from "@workspace/production-schedule";
 import { netTwoPacks } from "@/pages/station/shared/recipe-completion";
 import { toast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -5241,11 +5242,13 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const StatusIcon = statusConfig.icon;
   // Totals: calzones are counted in batches, mac cheese in packs (1 mac
   // batch_completion row = 1 pack because portionsPerBatch=2, packsPerBatch=1).
-  // totalBatchesTarget/Complete stays as the combined count so existing
-  // station-progress denominators (building tables build both categories)
-  // keep working. calzone* / macPacks* are exposed for display splits.
-  const totalBatchesTarget = plan.items?.reduce((s, it) => s + (it.batchesTarget ?? 0), 0) ?? 0;
-  const totalBatchesComplete = plan.items?.reduce((s, it) => s + (it.batchesComplete ?? 0), 0) ?? 0;
+  // totalBatchesTarget/Complete is the main kitchen's combined count
+  // (calzone batches + mac packs). Fried chicken, made in a separate
+  // facility, is left out by the shared rule (2026-10-05: the Totals row read
+  // 274 on a 105-batch day). calzone* / macPacks* are exposed for splits.
+  const mainItems = mainKitchenItems(plan.items ?? []);
+  const totalBatchesTarget = mainItems.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
+  const totalBatchesComplete = mainItems.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
   // Fried chicken is counted in BAGS and never touches the calzone line, so
   // it is excluded from every calzone figure below rather than quietly
   // inflating them — batches, packs, and the station progress denominators
@@ -5934,6 +5937,11 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                   {macPacksTarget > 0 && (
                     <span className="block text-[10px] font-normal text-muted-foreground">
                       {calzoneBatchesTarget} calzone + {macPacksTarget} mac packs
+                    </span>
+                  )}
+                  {chickenBagsTarget > 0 && (
+                    <span className="block text-[10px] font-normal text-muted-foreground">
+                      {FRIED_CHICKEN_CATEGORY}: {chickenBagsTarget} bags, made separately — not in these totals
                     </span>
                   )}
                 </td>
