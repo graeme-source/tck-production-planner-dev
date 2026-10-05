@@ -42,6 +42,14 @@ export function mainKitchenItems<T extends { recipeCategory?: string | null }>(i
   return items.filter(it => isMainKitchen(it.recipeCategory));
 }
 
+/** Split a list three ways by kitchen line, keeping each group's order —
+ *  for documents that list everything but total each line separately. */
+export function splitByKitchenLine<T>(items: readonly T[], categoryOf: (t: T) => string | null | undefined): Record<KitchenLine, T[]> {
+  const out: Record<KitchenLine, T[]> = { calzone: [], mac: [], separate: [] };
+  for (const it of items) out[kitchenLine(categoryOf(it))].push(it);
+  return out;
+}
+
 /** Calzone-line batches planned — the target behind the stations' "all done"
  *  checks and calzone totals. Mac cheese (packs) and the separate facility
  *  are both left out. */

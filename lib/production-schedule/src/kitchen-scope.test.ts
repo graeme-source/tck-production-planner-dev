@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  FRIED_CHICKEN_CATEGORY, MAC_CHEESE_CATEGORY, calzoneLineBatches, isMainKitchen, kitchenLine, mainKitchenItems, mainKitchenLines,
+  FRIED_CHICKEN_CATEGORY, MAC_CHEESE_CATEGORY, calzoneLineBatches, splitByKitchenLine, isMainKitchen, kitchenLine, mainKitchenItems, mainKitchenLines,
 } from "./kitchen-scope";
 
 describe("kitchenLine", () => {
@@ -35,6 +35,19 @@ describe("mainKitchenItems", () => {
       { id: 3, recipeCategory: MAC_CHEESE_CATEGORY, batchesTarget: 15 },
     ];
     expect(mainKitchenItems(items).map(i => i.id)).toEqual([1, 3]);
+  });
+});
+
+describe("splitByKitchenLine", () => {
+  // Regression (2026-10-05): the locked plan PDF's "Calzone" group (and its
+  // batch total) was every non-mac item, fried chicken bags included.
+  it("gives fried chicken its own group", () => {
+    const s = splitByKitchenLine([
+      { n: "a", c: "Calzones" }, { n: "fc", c: FRIED_CHICKEN_CATEGORY }, { n: "m", c: MAC_CHEESE_CATEGORY }, { n: "b", c: null },
+    ], x => x.c);
+    expect(s.calzone.map(x => x.n)).toEqual(["a", "b"]);
+    expect(s.mac.map(x => x.n)).toEqual(["m"]);
+    expect(s.separate.map(x => x.n)).toEqual(["fc"]);
   });
 });
 

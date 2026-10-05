@@ -4,6 +4,7 @@
 // needs to run the day. Layout is print-optimised (not a screenshot of
 // the UI), one document covering all stations.
 
+import { splitByKitchenLine } from "@workspace/production-schedule";
 import {
   Document,
   Page,
@@ -272,10 +273,11 @@ const HeaderSection = ({ plan, generatedAt }: { plan: PdfPlan; generatedAt: stri
 );
 
 const BatchesSection = ({ items }: { items: PdfItem[] }) => {
-  const calzone = items.filter(i => (i.category ?? "").toLowerCase() !== "macaroni cheese");
-  const macCheese = items.filter(i => (i.category ?? "").toLowerCase() === "macaroni cheese");
+  // Shared main-kitchen rule: fried chicken (separate facility, in bags) is
+  // listed in its own group, never inside the calzone total.
+  const { calzone, mac: macCheese, separate } = splitByKitchenLine(items, i => i.category);
 
-  const renderGroup = (label: string, group: PdfItem[]) => {
+  const renderGroup = (label: string, group: PdfItem[], unit = "batches") => {
     if (group.length === 0) return null;
     const totalBatches = group.reduce((s, i) => s + (i.batchesTarget ?? 0), 0);
     const totalPortions = group.reduce(
@@ -284,7 +286,7 @@ const BatchesSection = ({ items }: { items: PdfItem[] }) => {
     );
     return (
       <View wrap={false}>
-        <Text style={styles.subHeading}>{label} — {totalBatches} batches · {totalPortions} portions</Text>
+        <Text style={styles.subHeading}>{label} — {totalBatches} {unit} · {totalPortions} portions</Text>
         <View style={styles.table}>
           <View style={styles.tableHeaderRow}>
             <Text style={[styles.tableCellBold, cellWidth(colsBatches.recipe)]}>Recipe</Text>
@@ -317,6 +319,7 @@ const BatchesSection = ({ items }: { items: PdfItem[] }) => {
       <Text style={styles.sectionHeading}>Recipe batches</Text>
       {renderGroup("Calzone", calzone)}
       {renderGroup("Macaroni Cheese", macCheese)}
+      {renderGroup(`${separate[0]?.category ?? ""} (separate facility)`, separate, "bags")}
     </View>
   );
 };
