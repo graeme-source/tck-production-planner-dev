@@ -1,12 +1,14 @@
 import { describe, it, expect } from "vitest";
+import { FRIED_CHICKEN_CATEGORY } from "@workspace/production-schedule";
 import { deliveryDateTag, despatchDay, despatchByDay, type OrderInput, type RecipeInput } from "./team-efficiency-despatch";
 
 const recipes = new Map<number, RecipeInput>([
   [1, { id: 1, category: "Line A", packSize: 2, rrp: 12 }],
   [2, { id: 2, category: "Line B", packSize: 1, rrp: 15 }],
   [3, { id: 3, category: null, packSize: 1, rrp: 4 }],
+  [4, { id: 4, category: FRIED_CHICKEN_CATEGORY, packSize: 1, rrp: 14.95 }],
 ]);
-const byVariant = new Map([["111", 1], ["222", 2], ["333", 3]]);
+const byVariant = new Map([["111", 1], ["222", 2], ["333", 3], ["666", 4]]);
 const byTitle = new Map([["the margherita", 1]]);
 
 const order = (p: Partial<OrderInput>): OrderInput => ({
@@ -60,5 +62,21 @@ describe("despatchByDay", () => {
     const out = despatchByDay([order({ lineItems: [{ variantId: "444", variantTitle: null, title: null, quantity: 1 }] })],
       byVariant, byTitle, recipes);
     expect(out.get("2026-09-22")!.orders).toBe(1);
+  });
+
+  // Regression (2026-10-05): fried chicken is made in a separate facility and
+  // is outside team efficiency — its packs earn no despatch credit, but the
+  // order still left the main despatch and counts.
+  it("leaves fried chicken lines out but still counts the order", () => {
+    const out = despatchByDay([
+      order({ lineItems: [{ variantId: "666", variantTitle: "500g", title: "Fried chicken", quantity: 2 }] }),
+      order({ lineItems: [
+        { variantId: "111", variantTitle: "2 Pack", title: "The Margherita", quantity: 1 },
+        { variantId: "666", variantTitle: "500g", title: "Fried chicken", quantity: 1 },
+      ] }),
+    ], byVariant, byTitle, recipes);
+    const d = out.get("2026-09-22")!;
+    expect(d.orders).toBe(2);
+    expect(Object.keys(d.lines)).toEqual(["Line A"]);
   });
 });

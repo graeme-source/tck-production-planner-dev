@@ -393,9 +393,24 @@ export function recomputeHistory(): boolean {
   return true;
 }
 
+/** Bump when a pure derivation rule changes how stored components become a
+ *  day's figures: the first run after deploy re-derives every stored day
+ *  (restateAll — no Planday). 2026-10-05: fried chicken (separate facility)
+ *  left out of made, despatched and labour; it had been counted since March. */
+const DERIVE_RULES_VERSION = "2026-10-05-main-kitchen-only";
+
+async function restateIfRulesChanged(): Promise<void> {
+  const state = await readJobState("job_rules") as { version?: string } | null;
+  if (state?.version === DERIVE_RULES_VERSION) return;
+  const days = await restateAll();
+  await writeJobState("job_rules", { version: DERIVE_RULES_VERSION, restatedAt: new Date().toISOString(), days });
+  console.log(`[team-efficiency] rules ${DERIVE_RULES_VERSION}: restated ${days} stored day(s)`);
+}
+
 async function tick(): Promise<void> {
   if (!isPlandayConfigured()) return;
   if (!(await tableReady())) return; // first boot before migrations — next hour
+  await restateIfRulesChanged();
   await backfillIfNeeded();
   await nightlyIfDue();
 }

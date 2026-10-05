@@ -9,8 +9,13 @@
  * history without another trip to Planday.
  *
  * No product, recipe or category names in here: lines are recipe categories
- * as data, and the rates/positions per category come from settings.
+ * as data, and the rates/positions per category come from settings. Which
+ * categories the main kitchen makes is the shared kitchen-scope rule: a line
+ * made in a separate facility (fried chicken) is left out of made, despatched
+ * and labour alike — "as if fried chicken wasn't in the system" (Graeme,
+ * 2026-10-05).
  */
+import { isMainKitchen, mainKitchenLines } from "@workspace/production-schedule";
 import { creditedValue } from "./team-efficiency";
 
 // ── Settings ──────────────────────────────────────────────────────────────
@@ -97,7 +102,7 @@ function bagPacks(packSize: number): number {
 export function madeByLine(items: PlanItemInput[]): Record<string, LineMade> {
   const byCat = new Map<string, PlanItemInput[]>();
   for (const it of items) {
-    if (!it.category) continue;
+    if (!it.category || !isMainKitchen(it.category)) continue;
     const list = byCat.get(it.category) ?? [];
     list.push(it);
     byCat.set(it.category, list);
@@ -217,9 +222,15 @@ export function deriveDay(c: DayComponents, s: TeSettings): DerivedDay {
   const flags: DayFlag[] = [];
   let excluded = false;
 
+  // Separate-facility lines are dropped here too, not only in madeByLine and
+  // despatchByDay: stored days computed before the rule still carry them, and
+  // re-deriving (restateAll) must put them right without Planday.
+  const made = mainKitchenLines(c.made);
+  const despatched = mainKitchenLines(c.despatched);
+
   // A line that was planned but has nothing counted: its output is missing,
   // not zero. Showing the day would be a false low, so flag and leave it out.
-  for (const [cat, m] of Object.entries(c.made)) {
+  for (const [cat, m] of Object.entries(made)) {
     if (m.plannedBatches > 0 && m.packs === 0 && m.bags === 0) {
       flags.push({ code: "uncounted_output", line: cat, message: `Uncounted output: ${cat} was planned but nothing was counted` });
       excluded = true;
@@ -241,7 +252,13 @@ export function deriveDay(c: DayComponents, s: TeSettings): DerivedDay {
   // charge the rest of the team for output we can't see.
   let removed = 0;
   for (const cat of Object.keys(s.linePositions)) {
-    const m = c.made[cat];
+    // A separate facility's own staff never count against the main kitchen —
+    // by design, so no flag (it would show on every day they work).
+    if (!isMainKitchen(cat)) {
+      removed += c.lineLabour[cat] ?? 0;
+      continue;
+    }
+    const m = made[cat];
     const ran = m && (m.plannedBatches > 0 || m.packs > 0 || m.bags > 0);
     const pay = c.lineLabour[cat] ?? 0;
     if (!ran && pay > 0) {
@@ -257,15 +274,15 @@ export function deriveDay(c: DayComponents, s: TeSettings): DerivedDay {
   const labourCost = Math.max(0, c.labourCostTotal - removed);
 
   let valueMadeNet = 0;
-  const packsByLine = packsByLineOf(c.made);
+  const packsByLine = packsByLineOf(made);
   let eightPackBags = 0;
-  for (const [cat, m] of Object.entries(c.made)) {
+  for (const [cat, m] of Object.entries(made)) {
     valueMadeNet += m.gross * (1 - discount(s, cat)) + m.bagGross * s.eightPackFactor;
     eightPackBags += m.bags;
   }
   let valueDespatchedNet = 0;
   let packsDespatched = 0;
-  for (const [cat, d] of Object.entries(c.despatched)) {
+  for (const [cat, d] of Object.entries(despatched)) {
     valueDespatchedNet += d.gross * (1 - discount(s, cat)) + d.bagGross * s.eightPackFactor;
     packsDespatched += d.packs + d.bagPacks;
   }
