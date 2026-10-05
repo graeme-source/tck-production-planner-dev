@@ -33,10 +33,12 @@ import { requireManagerOrAdmin } from "../middleware/roles";
 import { resolveRecipeIngredients } from "../lib/ingredient-resolver";
 import { sectionTotalKg } from "../lib/prep-sections";
 import { getProducts, adjustInventoryLevel } from "../services/shopify";
+import { FRIED_CHICKEN_CATEGORY } from "@workspace/production-schedule";
 
 const router: IRouter = Router();
 
-export const FRIED_CHICKEN_CATEGORY = "Fried Chicken";
+// One home for the category string: the shared main-kitchen rule.
+export { FRIED_CHICKEN_CATEGORY };
 
 async function setting(key: string, fallback: string): Promise<string> {
   const [row] = await db.select().from(appSettingsTable).where(eq(appSettingsTable.key, key));

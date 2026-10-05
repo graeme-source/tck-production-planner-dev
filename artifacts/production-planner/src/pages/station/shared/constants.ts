@@ -1,5 +1,6 @@
 import { Construction, Waves, Flame, Gift, Box, Salad, Layers, UtensilsCrossed, Drumstick } from "lucide-react";
 import type { ProductionPlanItem } from "@workspace/api-client-react";
+import { MAC_CHEESE_CATEGORY, FRIED_CHICKEN_CATEGORY } from "@workspace/production-schedule";
 
 /**
  * A production plan item as the API actually serialises it. The server's
@@ -25,8 +26,8 @@ export type StationPlanItem = ProductionPlanItem & {
  *  share one line instead of stacking (Graeme, 2026-09-16). */
 export const STATION_VIEW_ROW_SLOT_ID = "station-view-row-slot";
 
-export const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
-export const FRIED_CHICKEN_CATEGORY = "Fried Chicken";
+// Category strings come from the shared main-kitchen rule.
+export { MAC_CHEESE_CATEGORY, FRIED_CHICKEN_CATEGORY };
 
 export function isFriedChicken(item: { recipeCategory?: string | null }): boolean {
   return item.recipeCategory === FRIED_CHICKEN_CATEGORY;

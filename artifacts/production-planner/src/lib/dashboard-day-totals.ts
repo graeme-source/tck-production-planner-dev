@@ -5,17 +5,17 @@
  * calzone batches showed "82 / 259" on a 105-batch day (Graeme, 2026-10-05).
  * Pure.
  */
-export const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
-export const FRIED_CHICKEN_CATEGORY = "Fried Chicken";
+import { kitchenLine } from "@workspace/production-schedule";
+
+export { MAC_CHEESE_CATEGORY, FRIED_CHICKEN_CATEGORY } from "@workspace/production-schedule";
 
 export type DayKind = "calzone" | "mac" | "other";
 
-/** Which tile family an item belongs to. Only the named exceptions are
- *  pulled out, so a new calzone category still counts as calzone. */
+/** Which tile family an item belongs to — the shared main-kitchen rule
+ *  (kitchenLine), with the separate facility reported as "other". */
 export function dayKind(category: string | null | undefined): DayKind {
-  if (category === MAC_CHEESE_CATEGORY) return "mac";
-  if (category === FRIED_CHICKEN_CATEGORY) return "other";
-  return "calzone";
+  const line = kitchenLine(category);
+  return line === "separate" ? "other" : line;
 }
 
 export interface DayItem {

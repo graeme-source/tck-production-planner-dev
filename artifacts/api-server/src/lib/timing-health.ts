@@ -18,6 +18,7 @@
  *  - A raw meat missing both can't be given a start time at all. It used to
  *    vanish from the card; now it's listed on the card as "No cook time set".
  */
+import { kitchenLine } from "@workspace/production-schedule";
 import { meatLeadMinutes, meatLeadWarning, type MeatLead } from "./meat-lead-time";
 import type { TimingSuggestion } from "./timing-suggestions";
 
@@ -29,15 +30,12 @@ import type { TimingSuggestion } from "./timing-suggestions";
  *    logged on a building station), one bag per "batch". Before 2026-09-25 it
  *    sat on the timeline at 0 minutes, which only cost a phantom changeover;
  *    timed at a typical calzone rate it would have added hours to the day.
- * (Same strings as routes/fried-chicken.ts and the MAC_CHEESE_CATEGORY copies;
- * redeclared because this module must stay DB-free for its tests. Charter
- * rule 8 bent, as everywhere else that splits by station today.)
+ * The category rule itself is the shared kitchenLine (@workspace/production-schedule).
  */
-export const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
-export const FRIED_CHICKEN_CATEGORY = "Fried Chicken";
+export { MAC_CHEESE_CATEGORY, FRIED_CHICKEN_CATEGORY } from "@workspace/production-schedule";
 
 export function isOnDayTimeline(category: string | null | undefined): boolean {
-  return category !== MAC_CHEESE_CATEGORY && category !== FRIED_CHICKEN_CATEGORY;
+  return kitchenLine(category) === "calzone";
 }
 
 // ── Build time ───────────────────────────────────────────────────────────────
