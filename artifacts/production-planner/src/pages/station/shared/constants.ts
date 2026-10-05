@@ -1,6 +1,6 @@
 import { Construction, Waves, Flame, Gift, Box, Salad, Layers, UtensilsCrossed, Drumstick } from "lucide-react";
 import type { ProductionPlanItem } from "@workspace/api-client-react";
-import { MAC_CHEESE_CATEGORY, FRIED_CHICKEN_CATEGORY } from "@workspace/production-schedule";
+import { MAC_CHEESE_CATEGORY, FRIED_CHICKEN_CATEGORY, mainKitchenItems } from "@workspace/production-schedule";
 
 /**
  * A production plan item as the API actually serialises it. The server's
@@ -35,6 +35,14 @@ export function isFriedChicken(item: { recipeCategory?: string | null }): boolea
 
 export function isMacCheese(item: { recipeCategory?: string | null }): boolean {
   return item.recipeCategory === MAC_CHEESE_CATEGORY;
+}
+
+/** The plan items a main-kitchen station (dough, sheeting, mixing, building,
+ *  ovens, wrapping) works on. Fried chicken is made in a separate facility on
+ *  its own station, so it never appears in these lists, totals or progress
+ *  bars (Graeme, 2026-10-05: 154 bags were showing as calzone batches). */
+export function mainKitchenStationItems<T extends { recipeCategory?: string | null }>(items: readonly T[] | null | undefined): T[] {
+  return mainKitchenItems(items ?? []);
 }
 
 /** Stable comparator for plan items across every station and the plans

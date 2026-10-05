@@ -13,7 +13,7 @@ import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { BreakTracker } from "../shared/break-tracker";
 import { createPortal } from "react-dom";
-import { getStationCount, compareItemsForDisplay, isMacCheese, STATION_VIEW_ROW_SLOT_ID } from "../shared/constants";
+import { getStationCount, compareItemsForDisplay, isMacCheese, mainKitchenStationItems, STATION_VIEW_ROW_SLOT_ID } from "../shared/constants";
 import { QueueDock, QueueSheet } from "../shared/station-queue";
 import { useDoughPrepData } from "./dough-prep-station";
 
@@ -91,7 +91,7 @@ export function DoughSheetingStation({ plan, isOnBreak = false }: { plan: Produc
   // display-only "No sheeting required" note at the bottom, never in the
   // work list or its totals (they were inflating the target count and
   // showing sheeting buttons for products with no dough, 2026-08-20).
-  const items = [...(plan.items ?? [])]
+  const items = mainKitchenStationItems(plan.items)
     .filter(it => !isMacCheese(it as { recipeCategory?: string | null }))
     .sort(compareItemsForDisplay);
 

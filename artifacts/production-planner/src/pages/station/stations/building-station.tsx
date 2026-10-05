@@ -36,7 +36,7 @@ import { BreakTracker } from "../shared/break-tracker";
 import { KpiBar } from "../shared/kpi-bar";
 import { TargetFinishChip } from "../shared/target-finish-chip";
 import { createPortal } from "react-dom";
-import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay, STATION_VIEW_ROW_SLOT_ID } from "../shared/constants";
+import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay, mainKitchenStationItems, STATION_VIEW_ROW_SLOT_ID } from "../shared/constants";
 import { QueueDock, QueueSheet } from "../shared/station-queue";
 import { packsPerBatch } from "../shared/recipe-completion";
 import { splitToppings, isToppingEntry, toppingQuantities } from "../shared/assembly-groups";
@@ -642,7 +642,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     return bp?.[stationType] ?? { extraPacks: 0 };
   }
 
-  const items = [...(plan.items ?? [])].sort(compareItemsForDisplay);
+  const items = mainKitchenStationItems(plan.items).sort(compareItemsForDisplay);
 
   // Recipe-level SOP links for every recipe on today's build list, in one
   // call — so "making the Godfather" carries the Godfather's build SOP

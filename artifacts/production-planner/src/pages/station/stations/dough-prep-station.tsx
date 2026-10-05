@@ -19,7 +19,7 @@ import { ClientError } from "@/lib/with-retry";
 import { BreakTracker } from "../shared/break-tracker";
 import { AddDoughToPlanDialog } from "@/components/add-dough-to-plan-dialog";
 import { PrepDateBanner, PrepDraftBanner, toastDraftBlocked } from "../shared/prep-helpers";
-import { getStationCount, compareItemsForDisplay } from "../shared/constants";
+import { getStationCount, compareItemsForDisplay, mainKitchenStationItems } from "../shared/constants";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Dough Prep Station
@@ -354,7 +354,7 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
     },
   });
 
-  const items = [...(plan.items ?? [])].sort(compareItemsForDisplay);
+  const items = mainKitchenStationItems(plan.items).sort(compareItemsForDisplay);
 
   // Dough prep tracks completions against the NEXT day's plan items (the ones we're prepping for).
   // The display target comes from doughData.recipes (next day), so tracking must match.

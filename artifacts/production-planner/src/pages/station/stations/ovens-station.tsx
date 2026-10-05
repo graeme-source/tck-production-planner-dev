@@ -18,7 +18,7 @@ import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { BreakTracker } from "../shared/break-tracker";
 import { useModalScrollKeeper, useNoScrollAutoFocus } from "@/hooks/use-modal-scroll";
 import { createPortal } from "react-dom";
-import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay, STATION_VIEW_ROW_SLOT_ID, type StationPlanItem } from "../shared/constants";
+import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay, mainKitchenStationItems, STATION_VIEW_ROW_SLOT_ID, type StationPlanItem } from "../shared/constants";
 import { QueueDock, QueueSheet } from "../shared/station-queue";
 import { effectiveBatchesTarget, netTwoPacks as computeNetTwoPacks, packsTargetForItem, packsDoneForItem, packsPerBatch } from "../shared/recipe-completion";
 import { RECIPE_RACK_COLOURS } from "./dough-sheeting-station";
@@ -164,7 +164,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
     return null;
   };
 
-  const items: StationPlanItem[] = [...(plan.items ?? [])].sort(compareItemsForDisplay);
+  const items: StationPlanItem[] = mainKitchenStationItems<StationPlanItem>(plan.items).sort(compareItemsForDisplay);
   const combinedBuildingCount = (it: ProductionPlanItem) =>
     getStationCount(it, "building_1") + getStationCount(it, "building_2");
   const effTarget = (it: ProductionPlanItem) =>

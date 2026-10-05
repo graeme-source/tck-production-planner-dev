@@ -68,7 +68,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { BreakTracker } from "../shared/break-tracker";
 import { useModalScrollKeeper, useNoScrollAutoFocus } from "@/hooks/use-modal-scroll";
 import { createPortal } from "react-dom";
-import { getStationCount, isMacCheese, STATION_VIEW_ROW_SLOT_ID } from "../shared/constants";
+import { getStationCount, isMacCheese, mainKitchenStationItems, STATION_VIEW_ROW_SLOT_ID } from "../shared/constants";
 import { tinsCompleteFrom } from "../shared/tin-math";
 import type { PrepRecipeDetail, PrepMarinadeDetail, PrepIngredientDetail } from "./prep-hub";
 
@@ -544,7 +544,7 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
   });
 
   // Mac cheese has its own dedicated station and doesn't flow through mixing.
-  const items = [...(plan.items ?? [])]
+  const items = mainKitchenStationItems(plan.items)
     .filter(it => !isMacCheese(it as any))
     .sort((a, b) => a.orderPosition - b.orderPosition);
 

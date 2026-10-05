@@ -17,7 +17,7 @@ import { BreakTracker } from "../shared/break-tracker";
 import { PaceKpiStrip, type PaceBands } from "../shared/pace-kpi-strip";
 import { useModalScrollKeeper } from "@/hooks/use-modal-scroll";
 import { createPortal } from "react-dom";
-import { getStationCount, getAvailableFromPrev, compareItemsForDisplay, STATION_VIEW_ROW_SLOT_ID, type StationPlanItem } from "../shared/constants";
+import { getStationCount, getAvailableFromPrev, compareItemsForDisplay, mainKitchenStationItems, STATION_VIEW_ROW_SLOT_ID, type StationPlanItem } from "../shared/constants";
 import { QueueDock, QueueSheet } from "../shared/station-queue";
 import { netTwoPacks as computeNetTwoPacks, effectiveBatchesTarget } from "../shared/recipe-completion";
 import { QualityRejectSteppers, useQualityRejects } from "../shared/quality-rejects-control";
@@ -272,7 +272,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
 
   const STACK_SIZE = 24;
 
-  const items: StationPlanItem[] = [...(plan.items ?? [])].sort(compareItemsForDisplay);
+  const items: StationPlanItem[] = mainKitchenStationItems<StationPlanItem>(plan.items).sort(compareItemsForDisplay);
 
   const plannedPacks = (item: ProductionPlanItem) =>
     Math.floor(((item.batchesTarget ?? 0) * (item.portionsPerBatch ?? 10)) / 2);
