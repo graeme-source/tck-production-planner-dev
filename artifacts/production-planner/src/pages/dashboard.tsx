@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { planTargetForStation, pinsPlan } from "@/lib/station-plan-target";
 import { FreshnessBadge } from "@/components/govee-freshness";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
+import { addDayItems, dayKind, EMPTY_DAY_TOTALS, MAC_CHEESE_CATEGORY } from "@/lib/dashboard-day-totals";
 
 interface AndonIssueSummary {
   id: number;
@@ -191,8 +192,9 @@ function AndonBanner({ userRole }: { userRole?: string }) {
 function TodayPlanRecipes({ planId }: { planId: number }) {
   const { data: plan, isLoading } = useGetProductionPlan(planId) as { data: any; isLoading: boolean };
   if (isLoading) return <p className="text-xs text-muted-foreground px-1">Loading…</p>;
+  // Fried chicken is made elsewhere and kept out of the dashboard (2026-10-05).
   const items = (plan?.items ?? [])
-    .filter((it: any) => (it.batchesTarget ?? 0) > 0)
+    .filter((it: any) => (it.batchesTarget ?? 0) > 0 && dayKind(it.recipeCategory) !== "other")
     .sort(compareItemsForDisplay);
   if (items.length === 0) return <p className="text-xs text-muted-foreground px-1">No recipes with batches.</p>;
   return (
@@ -219,7 +221,6 @@ function TodayPlanRecipes({ planId }: { planId: number }) {
   );
 }
 
-const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
 
 /** Returns separate totals so calzone batches (10-portion batches) aren't
  *  conflated with mac cheese packs (1 mac batch = 1 pack). Also sums how far
@@ -236,41 +237,14 @@ async function fetchTodayBatchCount(planIds: number[]): Promise<{
   packsTotal: number;
   packsWrapped: number;
 }> {
-  const empty = { calzoneBatches: 0, macPacks: 0, calzoneBuilt: 0, calzoneMixed: 0, ovensDone: 0, packsTotal: 0, packsWrapped: 0 };
-  if (planIds.length === 0) return empty;
-  const totals = { ...empty };
+  if (planIds.length === 0) return EMPTY_DAY_TOTALS;
+  let totals = EMPTY_DAY_TOTALS;
   for (const id of planIds) {
     const res = await fetch(`${BASE}/api/production-plans/${id}`, { credentials: "include" });
     if (!res.ok) continue;
     const plan = await res.json();
-    for (const it of plan.items ?? []) {
-      const target = it.batchesTarget ?? 0;
-      const sc = it.stationCompletions ?? {};
-      const built = (sc.building_1 ?? 0) + (sc.building_2 ?? 0);
-      // Ovens process everything (mac packs go through the blast-chiller
-      // flow on the same station), so the ovens bar spans all items.
-      totals.ovensDone += Math.min(sc.ovens ?? 0, target);
-      if (it.recipeCategory === MAC_CHEESE_CATEGORY) {
-        totals.macPacks += target;
-      } else {
-        totals.calzoneBatches += target;
-        // Cap per item so extra packs can't push the day past its total
-        totals.calzoneBuilt += Math.min(built, target);
-        totals.calzoneMixed += Math.min(sc.mixing ?? 0, target);
-      }
-      if (target > 0) {
-        // Planned pack units for the day: 2-packs after the 8-pack bags take
-        // their 4 two-packs' worth of portions, plus the bags themselves.
-        // (Mac cheese falls out naturally: 2 portions/batch ÷ pack of 2.)
-        const bags = it.eightPackBagCount ?? 0;
-        const plannedTwoPacks = Math.max(0, Math.floor((target * (it.portionsPerBatch ?? 10)) / 2) - bags * 4);
-        const itemTotal = plannedTwoPacks + bags;
-        // Wrapped = pack units that have physically landed in storage.
-        const wrapped = (it.fridgeQty ?? 0) + (it.fridgeEightPackQty ?? 0) + (it.freezerEightPackQty ?? 0);
-        totals.packsTotal += itemTotal;
-        totals.packsWrapped += Math.min(wrapped, itemTotal);
-      }
-    }
+    // Calzones and mac only — fried chicken has its own station (lib/dashboard-day-totals).
+    totals = addDayItems(totals, plan.items ?? []);
   }
   return totals;
 }
@@ -330,7 +304,7 @@ function UpcomingProductionPanel() {
     .map(p => {
       const items = p.items ?? [];
       const calzoneBatches = items
-        .filter(it => (it.recipeCategory ?? "") !== MAC_CHEESE_CATEGORY)
+        .filter(it => dayKind(it.recipeCategory) === "calzone")
         .reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
       const macPacks = items
         .filter(it => (it.recipeCategory ?? "") === MAC_CHEESE_CATEGORY)
