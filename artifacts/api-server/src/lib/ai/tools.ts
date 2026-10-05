@@ -15,8 +15,8 @@ import { and, desc, eq, ilike, isNull, sql } from "drizzle-orm";
 import type Anthropic from "@anthropic-ai/sdk";
 import { getPlandayShifts, isPlandayConfigured } from "../../services/planday";
 import { isDueToday, getOrderDayLabel } from "../order-day-scheduler";
+import { planSummaryText } from "./plan-summary";
 
-const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
 
 const STATION_LABELS: Record<string, string> = {
   dough_prep: "Dough Prep", dough_sheeting: "Dough Sheeting", prep: "Prep",
@@ -130,37 +130,7 @@ async function getTodaysProductionPlan(): Promise<string> {
     return `Plan exists for today (${today}) but has no items.`;
   }
 
-  const calzones = items.filter(i => i.recipeCategory !== MAC_CHEESE_CATEGORY);
-  const macCheese = items.filter(i => i.recipeCategory === MAC_CHEESE_CATEGORY);
-
-  const calzoneBatches = calzones.reduce((sum, i) => sum + i.batchesTarget, 0);
-  const calzoneComplete = calzones.reduce((sum, i) => sum + i.batchesComplete, 0);
-  // Mac cheese is tracked in packs rather than batches: packSize × batchesTarget.
-  const macCheesePacks = macCheese.reduce((sum, i) => sum + i.batchesTarget * Number(i.packSize ?? 1), 0);
-  const macCheesePacksComplete = macCheese.reduce((sum, i) => sum + i.batchesComplete * Number(i.packSize ?? 1), 0);
-
-  const topProducts = [...items]
-    .sort((a, b) => b.batchesTarget - a.batchesTarget)
-    .slice(0, 8)
-    .map(i => {
-      const unit = i.recipeCategory === MAC_CHEESE_CATEGORY ? "packs" : "batches";
-      const qty = i.recipeCategory === MAC_CHEESE_CATEGORY ? i.batchesTarget * Number(i.packSize ?? 1) : i.batchesTarget;
-      const done = i.recipeCategory === MAC_CHEESE_CATEGORY ? i.batchesComplete * Number(i.packSize ?? 1) : i.batchesComplete;
-      return `  - ${i.recipeName ?? "Unknown"}: ${qty} ${unit}${done > 0 ? ` (${done} complete)` : ""}`;
-    })
-    .join("\n");
-
-  const lines = [
-    `Production plan for ${today} (status: ${plan.status}, name: ${plan.name}):`,
-  ];
-  if (calzones.length > 0) {
-    lines.push(`- Calzones: ${calzoneBatches} batches across ${calzones.length} product${calzones.length === 1 ? "" : "s"}${calzoneComplete > 0 ? ` — ${calzoneComplete} batches complete so far` : ""}.`);
-  }
-  if (macCheese.length > 0) {
-    lines.push(`- Macaroni Cheese: ${macCheesePacks} packs across ${macCheese.length} product${macCheese.length === 1 ? "" : "s"}${macCheesePacksComplete > 0 ? ` — ${macCheesePacksComplete} packs complete so far` : ""}.`);
-  }
-  lines.push(`Products:\n${topProducts}`);
-  return lines.join("\n");
+  return planSummaryText(today, plan, items);
 }
 
 // ─── Tool: get_open_andon_issues ───────────────────────────────────────────
