@@ -127,6 +127,7 @@ export type PeriodPresetId =
   | "yesterday"
   | "today"
   | "last7"
+  | "last30"
   | "monthToDate"
   | "lastMonth"
   | "last6Months"
@@ -151,6 +152,8 @@ export const PERIOD_PRESETS: readonly PeriodPreset[] = [
   { id: "today", label: "Today" },
   { id: "yesterday", label: "Yesterday" },
   { id: "last7", label: "Last 7 days" },
+  // 30 full days ending yesterday — a rolling month (Graeme, 2026-10-06).
+  { id: "last30", label: "Last 30 days" },
   { id: "monthToDate", label: "Month to date" },
   { id: "lastMonth", label: "Last month" },
   { id: "last6Months", label: "Last 6 months" },
@@ -196,6 +199,8 @@ export function periodWindow(id: PeriodPresetId, now: number | Date): PeriodWind
       return windowFrom(id, label, yesterday, yesterday, false);
     case "last7":
       return windowFrom(id, label, addDays(yesterday, -6), yesterday, false);
+    case "last30":
+      return windowFrom(id, label, addDays(yesterday, -29), yesterday, false);
     case "monthToDate":
       return windowFrom(id, label, startOfMonth(todayStr), todayStr, true);
     case "lastMonth": {

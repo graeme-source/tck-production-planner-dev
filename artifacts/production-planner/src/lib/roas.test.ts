@@ -395,6 +395,16 @@ describe("periodWindow", () => {
     expect(w.to).toBe("2025-12-31");
   });
 
+  it("Last 30 days is 30 full days ending yesterday (2026-10-06)", () => {
+    const w = periodWindow("last30", now);
+    expect(w.to).toBe("2026-09-17");
+    expect(w.from).toBe("2026-08-19");
+    expect(w.dayCount).toBe(30);
+    expect(w.includesToday).toBe(false);
+    const ids = PERIOD_PRESETS.map((p) => p.id);
+    expect(ids.indexOf("last30")).toBe(ids.indexOf("last7") + 1);
+  });
+
   it("Last 6 and 12 months end yesterday", () => {
     expect(periodWindow("last6Months", now).from).toBe("2026-03-17");
     expect(periodWindow("last6Months", now).to).toBe("2026-09-17");
