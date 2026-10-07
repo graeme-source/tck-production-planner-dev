@@ -21,6 +21,9 @@ export interface FridgeStockChange {
   source: FridgeChangeSource;
   userId?: number | null;
   note?: string | null;
+  /** Log even a zero delta — used to flag a despatch the record couldn't
+   *  cover (nothing left to take, but the shortfall must show). */
+  keepZero?: boolean;
 }
 
 /** Insert one change-log row. Accepts a transaction or the base db so it can
@@ -30,7 +33,7 @@ export async function logFridgeStockChange(
   tx: Pick<typeof db, "execute">,
   change: FridgeStockChange,
 ): Promise<void> {
-  if (!Math.round(change.delta)) return;
+  if (!Math.round(change.delta) && !change.keepZero) return;
   await tx.execute(sql`
     INSERT INTO fridge_stock_changes (recipe_id, pack_size, delta, resulting_qty, source, user_id, note)
     VALUES (

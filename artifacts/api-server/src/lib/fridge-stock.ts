@@ -35,6 +35,7 @@ import {
 } from "@workspace/db";
 import { logFridgeStockChange, type FridgeChangeSource } from "./fridge-stock-log";
 import { productionDateFromJulianBatch } from "./julian-batch";
+import { planBagDecrement } from "./eight-pack-bags";
 
 /** Sentinel batch number used when an operator adds packs to the fridge
  *  but doesn't supply a real batch number. Stored as a real row in
@@ -63,6 +64,12 @@ export interface AdjustFridgeStockInput {
 export interface AdjustFridgeStockResult {
   recipeId: number;
   newAggregateQty: number;
+  /** The change actually applied to the aggregate — a removal stops at 0,
+   *  so this can be smaller than the requested delta. */
+  appliedDelta: number;
+  /** When delta < 0: units asked for that the aggregate didn't hold (the
+   *  record said fewer than went out). 0 when the record covered it. */
+  aggregateShortfall: number;
   /** When delta > 0: the batch row that was inserted/updated. */
   added?: { batchNumber: number; useByDate: string; quantity: number };
   /** When delta < 0: the batches FIFO-consumed, in order. */
@@ -88,8 +95,8 @@ export async function adjustFridgeStock(
   const packSize = input.packSize ?? 2;
 
   if (delta === 0) {
-    const currentAgg = await readAggregate(recipeId, packSize);
-    return { recipeId, newAggregateQty: currentAgg };
+    const currentAgg = await readFridgeAggregate(recipeId, packSize);
+    return { recipeId, newAggregateQty: currentAgg, appliedDelta: 0, aggregateShortfall: 0 };
   }
 
   return await db.transaction(async (tx) => {
@@ -104,11 +111,23 @@ export async function adjustFridgeStock(
         eq(stockEntriesTable.packSize, packSize),
       ))
       .orderBy(desc(stockEntriesTable.checkedAt))
-      .limit(1);
+      .limit(1)
+      // Row lock: two despatches of the same recipe processed at once (the
+      // Process Fulfilled Today button runs orders in parallel) must not
+      // both read the same starting level.
+      .for("update");
+
+    // Never below zero: a removal takes at most what the record holds and
+    // the rest is reported as a shortfall (planBagDecrement is the shared
+    // rule — it isn't bag-specific).
+    const previousQty = existing.length > 0 ? Math.max(0, Math.round(Number(existing[0].quantity) || 0)) : 0;
+    const removal = delta < 0 ? planBagDecrement(previousQty, -delta) : null;
+    const appliedDelta = removal ? removal.delta : delta;
+    const aggregateShortfall = removal ? removal.shortfall : 0;
 
     let newAggregateQty: number;
     if (existing.length > 0) {
-      newAggregateQty = Math.max(0, Number(existing[0].quantity) + delta);
+      newAggregateQty = previousQty + appliedDelta;
       await tx.update(stockEntriesTable)
         .set({
           quantity: String(newAggregateQty),
@@ -117,7 +136,7 @@ export async function adjustFridgeStock(
         })
         .where(eq(stockEntriesTable.id, existing[0].id));
     } else {
-      newAggregateQty = Math.max(0, delta);
+      newAggregateQty = Math.max(0, appliedDelta);
       await tx.insert(stockEntriesTable).values({
         recipeId,
         itemType: "recipe",
@@ -131,14 +150,21 @@ export async function adjustFridgeStock(
 
     // Audit-log row (covers both add and remove). Keeps the Stock Control
     // history complete alongside wrapping/despatch changes.
+    // The history records what actually changed (a floored removal logs
+    // the smaller number), so the Change column always adds up to Total.
     await logFridgeStockChange(tx, {
       recipeId,
       packSize,
-      delta,
+      delta: appliedDelta,
       resultingQty: newAggregateQty,
       source: input.source ?? "manual",
-      note: reason,
+      // A removal the record couldn't cover is flagged in the history (and
+      // logged even when nothing was left to take), so a wrong count shows.
+      note: aggregateShortfall > 0
+        ? `${reason} — record was ${aggregateShortfall} short, stopped at 0; recount`
+        : reason,
       userId: input.userId ?? null,
+      keepZero: aggregateShortfall > 0,
     });
 
     // ── Batch-level update ───────────────────────────────────────────
@@ -182,6 +208,8 @@ export async function adjustFridgeStock(
       return {
         recipeId,
         newAggregateQty,
+        appliedDelta,
+        aggregateShortfall,
         added: { batchNumber, useByDate, quantity: delta },
         unknownBatchUsed,
       };
@@ -223,6 +251,8 @@ export async function adjustFridgeStock(
     return {
       recipeId,
       newAggregateQty,
+      appliedDelta,
+      aggregateShortfall,
       consumed,
       shortfall: remaining > 0 ? remaining : undefined,
     };
@@ -265,7 +295,9 @@ export async function addRecipeFreezerStock(recipeId: number, delta: number, not
   return newQty;
 }
 
-async function readAggregate(recipeId: number, packSize: number): Promise<number> {
+/** Current production-fridge level for a recipe at one pack size (2-packs
+ *  or 8-pack bags) — the newest stock_entries row, 0 when there is none. */
+export async function readFridgeAggregate(recipeId: number, packSize: number): Promise<number> {
   const [row] = await db
     .select({ quantity: stockEntriesTable.quantity })
     .from(stockEntriesTable)
