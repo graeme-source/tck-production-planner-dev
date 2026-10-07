@@ -17,7 +17,7 @@ import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { validate } from "../middleware/validate";
 import { requireAdmin } from "../middleware/roles";
-import { londonDateString } from "../lib/london-time";
+import { rotaMapping, rosteredStationsForUser } from "../lib/station-rota";
 import { stationsForLink } from "../lib/station-sop-scope";
 import {
   gateDecision,
@@ -26,7 +26,6 @@ import {
   reviewStatus,
   rosteredStations,
   type GatePass,
-  type RotaMapping,
 } from "../lib/station-sop-training";
 
 const router: IRouter = Router();
@@ -141,51 +140,12 @@ async function enforceOn(): Promise<boolean> {
   return (r.rows ?? [])[0]?.value !== "false";
 }
 
-// Today's rota changes rarely and Planday costs round trips, so keep it a
-// few minutes. Keyed by London date so it can never serve yesterday's rota.
-let rotaCache: { date: string; at: number; byEmployee: Map<number, string[]> } | null = null;
-const ROTA_TTL_MS = 5 * 60 * 1000;
-
-async function todaysPositionsByEmployee(): Promise<Map<number, string[]>> {
-  const today = londonDateString();
-  if (rotaCache && rotaCache.date === today && Date.now() - rotaCache.at < ROTA_TTL_MS) return rotaCache.byEmployee;
-  const { isPlandayConfigured, getPlandayShifts, getPlandayPositions } = await import("../services/planday");
-  const byEmployee = new Map<number, string[]>();
-  if (isPlandayConfigured()) {
-    const [shifts, positions] = await Promise.all([getPlandayShifts(today, today), getPlandayPositions()]);
-    const posName = new Map(positions.map(p => [p.id, p.name]));
-    for (const s of shifts) {
-      if (s.employeeId == null || s.positionId == null) continue;
-      const name = posName.get(s.positionId);
-      if (!name) continue;
-      const list = byEmployee.get(s.employeeId) ?? [];
-      list.push(name);
-      byEmployee.set(s.employeeId, list);
-    }
-  }
-  rotaCache = { date: today, at: Date.now(), byEmployee };
-  return byEmployee;
-}
-
-async function rotaMapping(): Promise<RotaMapping> {
-  const r = await db.execute<{ value: string }>(sql`SELECT value FROM app_settings WHERE key = 'station_assignments_mapping'`);
-  try { return JSON.parse((r.rows ?? [])[0]?.value ?? "") as RotaMapping; } catch { return { stations: [] }; }
-}
-
 /** Does today's Planday rota put this person on this station? Fails OPEN
  *  (false → "just checking" stays available): a Planday outage must never
- *  lock anyone out of a station. */
+ *  lock anyone out of a station. The lookup lives in lib/station-rota.ts,
+ *  shared with team messages. */
 async function isRostered(userId: number, station: string): Promise<boolean> {
-  try {
-    const u = await db.execute<{ planday_employee_id: number | null }>(sql`SELECT planday_employee_id FROM app_users WHERE id = ${userId}`);
-    const empId = (u.rows ?? [])[0]?.planday_employee_id;
-    if (empId == null) return false;
-    const [positions, mapping] = await Promise.all([todaysPositionsByEmployee(), rotaMapping()]);
-    return rosteredStations(positions.get(Number(empId)) ?? [], mapping).has(station);
-  } catch (err) {
-    console.error("[station-training] rota lookup failed:", err);
-    return false;
-  }
+  return (await rosteredStationsForUser(userId)).has(station);
 }
 
 async function activePass(userId: number, station: string): Promise<GatePass | null> {
