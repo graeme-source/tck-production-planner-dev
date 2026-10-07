@@ -19,6 +19,9 @@ import { db, appSettingsTable, fridgeStockBatchesTable, recipesTable } from "@wo
 import { eq, and, gt, asc, sql } from "drizzle-orm";
 import { syncRecipeFridgeStock } from "../routes/production-plans";
 import type { ShopifyLineItem } from "../services/shopify";
+import { adjustFridgeStock } from "./fridge-stock";
+import { EIGHT_PACK_SIZE, isBagLine, resolveBagLines, type BagLineContext } from "./eight-pack-bags";
+import { loadEightPackVariantToRecipe, loadProductTitleToRecipe } from "./eight-pack-recipe-map";
 
 /**
  * Runtime feature flag: limit the factory-number loop to core-menu
@@ -175,6 +178,12 @@ async function loadCurrentSpecial(): Promise<{ recipeId: number; isCoreMenu: boo
 
 export interface DecrementResult {
   decremented: Array<{ recipeId: number; packs: number }>;
+  /** 8-pack bags taken out of the production fridge. shortfall > 0 means
+   *  the stock record held fewer bags than went out (the count was wrong);
+   *  the record stops at 0 and the shortfall is flagged in the log. */
+  bagsDecremented: Array<{ recipeId: number; bags: number; shortfall: number }>;
+  /** Bag lines whose product couldn't be matched to a recipe. */
+  unmappedBags: string[];
   unmapped: string[]; // variant IDs we couldn't resolve to a recipe (only logged in non-core-only mode)
   skippedNonCore: number; // count of line items skipped because the recipe isn't core menu
 }
@@ -197,21 +206,33 @@ export interface DecrementResult {
 const SPECIAL_PRODUCT_TITLE_LC = "calzone club special";
 
 export async function decrementFridgeForShopifyOrder(
-  _orderId: number,
+  orderId: number,
   lineItems: ShopifyLineItem[],
+  /** Order name (e.g. "#12345") for the stock history note. */
+  orderRef?: string | null,
 ): Promise<DecrementResult> {
-  const result: DecrementResult = { decremented: [], unmapped: [], skippedNonCore: 0 };
-  const [variantMap, coreMenuOnly, currentSpecial] = await Promise.all([
+  const result: DecrementResult = { decremented: [], bagsDecremented: [], unmappedBags: [], unmapped: [], skippedNonCore: 0 };
+  const [variantMap, coreMenuOnly, currentSpecial, eightPackVariantToRecipe, titleToRecipe] = await Promise.all([
     loadVariantMap(),
     getFactoryNumberCoreMenuOnly(),
     loadCurrentSpecial(),
+    loadEightPackVariantToRecipe(),
+    loadProductTitleToRecipe(),
   ]);
+  const bagCtx: BagLineContext = {
+    eightPackVariantToRecipe,
+    productTitleToRecipe: new Map([...titleToRecipe].map(([title, r]) => [title, r.recipeId])),
+  };
 
   // Aggregate per recipe so orders with multiple variants of the same
   // recipe only do one update.
   const perRecipe = new Map<number, number>();
 
   for (const line of lineItems) {
+    // 8-pack bag lines are their own stock (pack size 8) — handled below,
+    // never counted as 2-packs.
+    if (isBagLine(line, bagCtx)) continue;
+
     // "Calzone Club Special" routes by product title, not variant id —
     // it's the only product on Shopify that doesn't have a stable
     // per-recipe variant. Resolve it to whichever recipe is currently
@@ -261,6 +282,10 @@ export async function decrementFridgeForShopifyOrder(
         .from(fridgeStockBatchesTable)
         .where(and(
           eq(fridgeStockBatchesTable.recipeId, recipeId),
+          // 2-pack batches only — bag batches (pack size 8) are consumed
+          // by the bag path below. Without this a 2-pack despatch ate
+          // freshly-wrapped bag batches.
+          eq(fridgeStockBatchesTable.packSize, 2),
           gt(fridgeStockBatchesTable.quantity, 0),
         ))
         .orderBy(asc(fridgeStockBatchesTable.useByDate));
@@ -281,6 +306,38 @@ export async function decrementFridgeForShopifyOrder(
       result.decremented.push({ recipeId, packs });
     } catch (err) {
       console.error(`[inventory-sync] syncRecipeFridgeStock failed for recipe ${recipeId}:`, err);
+    }
+  }
+
+  // ── 8-pack bags out of the production fridge (Graeme, 2026-10-07) ──
+  // Same idempotency as the 2-packs: every caller only reaches here once
+  // per order (shopify_fulfilment_tracking / factory-number-adjusted tag).
+  // Bags are decremented whatever the core-menu flag says — wrapping adds
+  // bags for every recipe, so despatch must take them out for every recipe.
+  const bags = resolveBagLines(lineItems, bagCtx);
+  result.unmappedBags = bags.unmapped;
+  if (bags.unmapped.length > 0) {
+    console.warn(`[inventory-sync] order ${orderRef ?? orderId} — 8-pack bag lines with no recipe:`, bags.unmapped.join(", "));
+  }
+  const ref = orderRef?.trim() || `order ${orderId}`;
+  for (const [recipeId, bagCount] of bags.bagsByRecipe) {
+    try {
+      const r = await adjustFridgeStock({
+        recipeId,
+        delta: -bagCount,
+        packSize: EIGHT_PACK_SIZE,
+        source: "fulfilment",
+        reason: `Despatched ${ref} (${bagCount} bag${bagCount === 1 ? "" : "s"})`,
+      });
+      if (r.aggregateShortfall > 0) {
+        // Never below zero — flag it so the count gets checked.
+        console.warn(
+          `[inventory-sync] ${ref}: ${bagCount} × 8-pack bags of recipe ${recipeId} despatched but stock showed only ${bagCount - r.aggregateShortfall} — count stopped at 0; recount the bags in Stock Control.`,
+        );
+      }
+      result.bagsDecremented.push({ recipeId, bags: bagCount, shortfall: r.aggregateShortfall });
+    } catch (err) {
+      console.error(`[inventory-sync] 8-pack bag decrement failed for recipe ${recipeId} (${ref}):`, err);
     }
   }
 

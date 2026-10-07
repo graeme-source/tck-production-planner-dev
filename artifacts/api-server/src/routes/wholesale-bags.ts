@@ -35,10 +35,11 @@ import {
 } from "../lib/production-cutoff";
 import { getRecentUnfulfilledOrders, getOrderById, addTagsToOrder } from "../services/shopify";
 import { suggestDeliveryDateFromNote } from "../lib/note-delivery-date";
+import { isEightPackLine } from "../lib/eight-pack-bags";
+import { loadProductTitleToRecipe } from "../lib/eight-pack-recipe-map";
 
 const router: IRouter = Router();
 
-const EIGHT_PACK_MATCH = "8 pack bag";
 const PRODUCTION_TAG = "production";
 const WHOLESALE_TAG = "wholesale";
 const DATE_TAG_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -76,26 +77,11 @@ function hasProductionTag(tags: string): boolean {
 function hasWholesaleTag(tags: string): boolean {
   return tags.split(",").map(t => t.trim().toLowerCase()).includes(WHOLESALE_TAG);
 }
-function is8PackLine(li: { variant_title: string | null }): boolean {
-  return (li.variant_title ?? "").toLowerCase().includes(EIGHT_PACK_MATCH);
-}
-
-/** Map normalised product title → recipe. The 8-pack is a variant of the same
- *  product as the 2-pack, so the product title resolves the recipe. */
-async function loadTitleToRecipe(): Promise<Map<string, { recipeId: number; recipeName: string }>> {
-  const rows = await db.execute<{ title: string; recipe_id: number; name: string }>(sql`
-    SELECT DISTINCT m.shopify_product_title AS title, m.recipe_id, r.name
-    FROM recipe_shopify_mappings m
-    JOIN recipes r ON r.id = m.recipe_id
-    WHERE m.shopify_product_title IS NOT NULL
-  `);
-  const map = new Map<string, { recipeId: number; recipeName: string }>();
-  for (const row of rows.rows) {
-    const key = (row.title ?? "").trim().toLowerCase();
-    if (key && !map.has(key)) map.set(key, { recipeId: row.recipe_id, recipeName: row.name });
-  }
-  return map;
-}
+// The bag-line rule and the product-title → recipe map are shared with the
+// despatch decrement (lib/eight-pack-bags.ts, lib/eight-pack-recipe-map.ts),
+// so the bags put on a plan are exactly the bags taken out of the fridge.
+const is8PackLine = isEightPackLine;
+const loadTitleToRecipe = loadProductTitleToRecipe;
 
 interface PlanInfo { planId: number; planDate: string; status: string; recipeIds: number[]; }
 

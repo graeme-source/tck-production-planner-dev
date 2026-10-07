@@ -585,7 +585,7 @@ router.post("/orders/:id/scan-complete", requireFulfilmentAccess, async (req: Re
       const order = await getOrderById(orderId);
       if (order?.line_items && order.line_items.length > 0) {
         try {
-          const result = await decrementFridgeForShopifyOrder(orderId, order.line_items);
+          const result = await decrementFridgeForShopifyOrder(orderId, order.line_items, order.name);
           if (result.unmapped.length > 0) {
             console.warn(`[scan-complete] order ${orderId} — unmapped variant ids:`, result.unmapped.join(", "));
           }
@@ -2555,7 +2555,7 @@ router.post("/orders/:id/complete", requireFulfilmentAccess, async (req: Request
     if (!existing) {
       if (!order) order = await getOrderById(orderId);
       if (order?.line_items && order.line_items.length > 0) {
-        const result = await decrementFridgeForShopifyOrder(orderId, order.line_items);
+        const result = await decrementFridgeForShopifyOrder(orderId, order.line_items, order.name);
         if (result.unmapped.length > 0) {
           console.warn(`[Fulfilment] order ${orderId} — unmapped variant ids:`, result.unmapped.join(", "));
         }
@@ -2635,7 +2635,9 @@ interface GqlOrderNode {
     edges: Array<{
       node: {
         quantity: number;
+        currentQuantity?: number | null;
         title: string;
+        variantTitle?: string | null;
         sku: string | null;
         variant: { id: string } | null;
       };
@@ -2664,7 +2666,7 @@ router.post("/process-fulfilled-today", async (_req: Request, res: Response) => 
         edges { node {
           id name updatedAt tags
           lineItems(first: 100) {
-            edges { node { quantity title sku variant { id } } }
+            edges { node { quantity currentQuantity title variantTitle sku variant { id } } }
           }
         } }
         pageInfo { hasNextPage }
@@ -2691,6 +2693,8 @@ router.post("/process-fulfilled-today", async (_req: Request, res: Response) => 
     const unmappedSet = new Set<string>();
     let processedCount = 0;
     let decrementedPacks = 0;
+    let decrementedBags = 0;
+    let bagShortfall = 0;
     let skippedNonCore = 0;
     const errors: Array<{ orderId: number; orderName: string; stage: "decrement" | "tag"; message: string }> = [];
 
@@ -2715,20 +2719,23 @@ router.post("/process-fulfilled-today", async (_req: Request, res: Response) => 
           variant_id: li.node.variant?.id ? (Number(li.node.variant.id.split("/").pop()) || null) : null,
           product_id: null, // not fetched via GraphQL; unused downstream
           title: li.node.title,
-          variant_title: null,
+          // Needed to recognise 8-pack bag lines (variant "8 Pack Bag").
+          variant_title: li.node.variantTitle ?? null,
           quantity: li.node.quantity,
+          current_quantity: li.node.currentQuantity ?? null,
           sku: li.node.sku ?? "",
           price: "0", // unused
         }));
 
         // 1. Decrement production_fridge stock
         try {
-          const dec = await decrementFridgeForShopifyOrder(orderIdNum, lineItems);
+          const dec = await decrementFridgeForShopifyOrder(orderIdNum, lineItems, node.name);
           for (const r of dec.decremented) {
             perRecipeMap.set(r.recipeId, (perRecipeMap.get(r.recipeId) ?? 0) + r.packs);
             decrementedPacks += r.packs;
           }
           for (const u of dec.unmapped) unmappedSet.add(u);
+          for (const b of dec.bagsDecremented) { decrementedBags += b.bags; bagShortfall += b.shortfall; }
           skippedNonCore += dec.skippedNonCore;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -2763,6 +2770,8 @@ router.post("/process-fulfilled-today", async (_req: Request, res: Response) => 
       processedCount,
       alreadyTaggedCount: 0, // GraphQL -tag filter means we never fetch already-tagged orders; kept in the response shape for future symmetry
       decrementedPacks,
+      decrementedBags,
+      bagShortfall,
       perRecipe,
       unmappedVariants: [...unmappedSet],
       skippedNonCore,
@@ -2770,7 +2779,7 @@ router.post("/process-fulfilled-today", async (_req: Request, res: Response) => 
     };
 
     console.log(
-      `[process-fulfilled-today] processed ${processedCount}/${edges.length} orders, decremented ${decrementedPacks} packs across ${perRecipe.length} recipes, ${unmappedSet.size} unmapped variants, ${errors.length} errors`,
+      `[process-fulfilled-today] processed ${processedCount}/${edges.length} orders, decremented ${decrementedPacks} packs + ${decrementedBags} 8-pack bags (${bagShortfall} short) across ${perRecipe.length} recipes, ${unmappedSet.size} unmapped variants, ${errors.length} errors`,
     );
     res.json(response);
   } catch (err) {

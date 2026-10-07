@@ -90,7 +90,7 @@ async function pollOnce(): Promise<void> {
         }).onConflictDoNothing();
         continue;
       }
-      const result = await decrementFridgeForShopifyOrder(orderId, order.line_items);
+      const result = await decrementFridgeForShopifyOrder(orderId, order.line_items, order.name);
       if (result.unmapped.length > 0) {
         console.warn(`[fulfilment-poller] order ${orderId} — unmapped variant ids:`, result.unmapped.join(", "));
       }
