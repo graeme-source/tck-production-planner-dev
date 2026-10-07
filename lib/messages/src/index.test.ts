@@ -143,7 +143,10 @@ describe("must-confirm", () => {
   });
   it("person-addressed ones once per person; never the sender", () => {
     expect(pendingAckTargets(m, viewer({ userId: 9 }))).toEqual(["user:9"]);
-    expect(pendingAckTargets(m, viewer({ userId: 1, stations: ["packing"] }))).toEqual([]);
+    expect(pendingAckTargets(m, viewer({ userId: 1 }))).toEqual([]);
+  });
+  it("a station screen signed in as the sender can still clear its own lock", () => {
+    expect(pendingAckTargets(m, viewer({ userId: 1, stations: ["packing"] }))).toEqual(["station:packing"]);
   });
   it("nothing to confirm when it isn't must-confirm or was deleted", () => {
     expect(pendingAckTargets({ ...m, requiresAck: false }, viewer({ stations: ["packing"] }))).toEqual([]);

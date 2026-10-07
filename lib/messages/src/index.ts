@@ -191,11 +191,14 @@ export interface AckFacts extends MessageFacts {
  *  for the station, as before); a person-addressed one once per person. */
 export function pendingAckTargets(m: AckFacts, v: Viewer): string[] {
   if (!m.requiresAck || m.deleted) return [];
-  if (m.senderUserId === v.userId) return [];
   const out: string[] = [];
+  // Whoever is at the station confirms for it — the sender included: a
+  // station iPad signed in as the person who sent the note must still be
+  // able to clear its own lock screen (it can never be a trap).
   for (const s of m.audience.stations) {
     if (v.stations.includes(s) && !m.ackedTargets.includes(stationTarget(s))) out.push(stationTarget(s));
   }
+  if (m.senderUserId === v.userId) return out;
   const personally = (m.audience.everyone && !v.accountantOnly)
     || m.audience.userIds.includes(v.userId)
     || m.mentionedUserIds.includes(v.userId);
