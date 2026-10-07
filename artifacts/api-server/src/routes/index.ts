@@ -55,6 +55,7 @@ import notificationsRouter from "./notifications";
 import employeesRouter from "./employees";
 import returnToWorkRouter from "./return-to-work";
 import stationMessagesRouter from "./station-messages";
+import messagesRouter from "./messages";
 import contactsRouter from "./contacts";
 import apcPostcodeOverridesRouter from "./apc-postcode-overrides";
 import staffEmergencyContactsRouter from "./staff-emergency-contacts";
@@ -309,7 +310,12 @@ router.use("/employees", employeesRouter);
 // Return-to-work forms: private (colleague + named RTW managers), guarded
 // per-route inside via middleware/rtw-access.ts.
 router.use("/return-to-work", returnToWorkRouter);
+// Old station-message endpoints: a shim over team messages for screens
+// still running yesterday's app (routes/station-messages.ts).
 router.use("/station-messages", stationMessagesRouter);
+// Team messages — the WhatsApp-style chat (stations, people, Everyone,
+// replies, @mentions). Signed-in only; who sees what is enforced inside.
+router.use("/messages", messagesRouter);
 // Contacts directory: anyone signed in reads; managers/admins edit (guarded
 // inside routes/contacts.ts).
 router.use("/contacts", contactsRouter);

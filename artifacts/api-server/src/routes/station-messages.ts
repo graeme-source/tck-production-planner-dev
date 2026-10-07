@@ -1,108 +1,74 @@
 /**
- * Station messages (Graeme, 2026-09-15): a note sent to a station shows as
- * a banner on that station's screen until someone there dismisses it.
- * Anyone signed in can send — passing word to a station is exactly the
- * kind of communication we want more of, not gatekept. Messages older
- * than 48 hours stop showing (stale operational notes are noise), but
- * stay in the table as history.
+ * The OLD station-messages endpoints, kept as a thin shim over team
+ * messages (2026-10-07). Station messages now live in the team chat
+ * (routes/messages.ts, migration 0148, which carried every old message
+ * over). A station iPad still running yesterday's app talks to these until
+ * it reloads, so they read and write the NEW tables — nothing sent or
+ * confirmed from an old screen is lost. Nothing in today's app calls them;
+ * delete this file once every screen has reloaded.
  */
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
-import { db } from "@workspace/db";
-import { sql } from "drizzle-orm";
 import { validate } from "../middleware/validate";
+import { normaliseAudience, STATION_KEY_RE, stationTarget } from "@workspace/messages";
+import { loadViewer, sendMessage, stationBanner, ackTargets, visibleMessageRow, notifySenderOfAck } from "../lib/team-messages";
 
 const router: IRouter = Router();
 
-function requireAuth(req: Request, res: Response, next: NextFunction) {
+router.use((req: Request, res: Response, next: NextFunction) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   next();
-}
-router.use(requireAuth);
+});
 
 // GET /?station=packing — open messages for one station, newest first.
 router.get("/", async (req: Request, res: Response) => {
   const station = String(req.query["station"] ?? "");
-  if (!station || station.length > 40) { res.status(400).json({ error: "station is required" }); return; }
-  const rows = await db.execute<{ id: number; station_type: string; body: string; created_by_name: string | null; created_at: string; requires_ack: boolean }>(sql`
-    SELECT id, station_type, body, created_by_name, created_at, requires_ack FROM station_messages
-    WHERE station_type = ${station}
-      AND dismissed_at IS NULL
-      AND created_at > NOW() - INTERVAL '48 hours'
-    ORDER BY created_at DESC
-    LIMIT 10
-  `);
-  res.json({ messages: rows.rows.map(r => ({
-    id: Number(r.id),
-    // So the screen can double-check it's showing its OWN station's messages.
-    stationType: r.station_type,
-    body: r.body,
-    fromName: r.created_by_name,
-    createdAt: r.created_at,
-    requiresAck: Boolean(r.requires_ack),
+  if (!STATION_KEY_RE.test(station)) { res.status(400).json({ error: "station is required" }); return; }
+  const v = await loadViewer(req, [station]);
+  if (!v) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const list = await stationBanner(v, station);
+  res.json({ messages: list.map(m => ({
+    id: m.id,
+    stationType: station,
+    body: m.body ?? "",
+    fromName: m.senderName,
+    createdAt: m.createdAt,
+    requiresAck: m.requiresAck,
   })) });
 });
 
 const sendSchema = z.object({
-  stationType: z.string().min(1).max(40),
-  body: z.string().min(1).max(1000),
-  // Must-acknowledge mode: locks the station's screen behind the message
-  // until someone there explicitly confirms they'll action it.
+  stationType: z.string().regex(STATION_KEY_RE),
+  body: z.string().trim().min(1).max(1000),
   requiresAck: z.boolean().optional(),
 });
 
 // POST / — send a message to a station.
 router.post("/", validate(sendSchema), async (req: Request, res: Response) => {
   const { stationType, body, requiresAck } = req.body as z.infer<typeof sendSchema>;
-  const me = await db.execute<{ name: string }>(sql`SELECT name FROM app_users WHERE id = ${req.session.userId}`);
-  await db.execute(sql`
-    INSERT INTO station_messages (station_type, body, created_by_user_id, created_by_name, requires_ack)
-    VALUES (${stationType}, ${body.trim()}, ${req.session.userId}, ${me.rows[0]?.name ?? null}, ${requiresAck ?? false})
-  `);
+  const v = await loadViewer(req, []);
+  if (!v) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const audience = normaliseAudience({ everyone: false, stations: [stationType], userIds: [] }, v.userId);
+  await sendMessage(v, { audience, body, requiresAck: requiresAck ?? false, parent: null });
   res.json({ ok: true });
 });
 
-// POST /:id/dismiss — the station has read it.
-//
-// Tells the SENDER it landed. Sending a message into a station and never
-// learning whether anyone saw it is how people stop trusting the channel and
-// go back to walking over (Graeme, 2026-09-17). Only for must-confirm
-// messages: a notification for every routine "Got it" would be noise, and
-// noisy notifications get ignored, including the ones that matter.
+// POST /:id/dismiss — the station has read it. Old screens send the
+// message id they were shown, which is now a team_messages id.
 router.post("/:id/dismiss", async (req: Request, res: Response) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid message" }); return; }
-  const me = await db.execute<{ name: string }>(sql`SELECT name FROM app_users WHERE id = ${req.session.userId}`);
-  const who = me.rows[0]?.name ?? null;
-
-  // RETURNING tells us whether this call is the one that closed it — a second
-  // tap, or another person confirming at the same moment, must not notify twice.
-  const updated = await db.execute<{ created_by_user_id: number | null; requires_ack: boolean; station_type: string; body: string }>(sql`
-    UPDATE station_messages SET dismissed_at = NOW(), dismissed_by_name = ${who}
-    WHERE id = ${id} AND dismissed_at IS NULL
-    RETURNING created_by_user_id, requires_ack, station_type, body
-  `);
-
-  const row = updated.rows[0];
-  if (row?.requires_ack && row.created_by_user_id && row.created_by_user_id !== req.session.userId) {
-    const preview = row.body.length > 60 ? `${row.body.slice(0, 60)}…` : row.body;
-    try {
-      await db.execute(sql`
-        INSERT INTO notifications (user_id, type, message, read)
-        VALUES (
-          ${row.created_by_user_id},
-          'station_message_ack',
-          ${`${who ?? "Someone"} confirmed your message to ${row.station_type.replace(/_/g, " ")}: "${preview}"`},
-          false
-        )
-      `);
-    } catch (err) {
-      // A missed bell must never fail the confirmation itself — the person
-      // at the station has acknowledged it, and that is what matters.
-      console.warn("[station-messages] ack notification failed:", err);
-    }
-  }
+  const id = Number(req.params["id"]);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid message" }); return; }
+  const first = await loadViewer(req, []);
+  if (!first) { res.status(401).json({ error: "Not authenticated" }); return; }
+  // The old screen doesn't say which station it is; the message does.
+  const peek = await visibleMessageRow({ ...first, role: "admin" }, id);
+  const stations = peek?.facts.audience.stations ?? [];
+  const v = await loadViewer(req, stations);
+  const found = v ? await visibleMessageRow(v, id) : null;
+  if (!v || !found) { res.json({ ok: true }); return; }
+  const closed = await ackTargets(v, id, stations.map(stationTarget));
   res.json({ ok: true });
+  void notifySenderOfAck(v, found.row, closed);
 });
 
 export default router;

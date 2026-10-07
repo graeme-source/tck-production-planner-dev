@@ -75,6 +75,10 @@ export const ATTRIBUTING_WRITES: readonly Rule[] = [
   { method: "POST", pattern: /^\/stock-entries\/?$/, what: "stock count" },
   { method: "PUT", pattern: new RegExp(`^/eight-pack-stock/${ID}/?$`), what: "8-pack bag count" },
   { method: "POST", pattern: /^\/print-jobs\/?$/, what: "prep label" },
+  // Team messages: a message (and "Got it — I'll action this") goes out
+  // under a person's name, so it must be whoever is actually there.
+  { method: "POST", pattern: /^\/messages\/?$/, what: "team message" },
+  { method: "POST", pattern: new RegExp(`^/messages/${ID}/ack/?$`), what: "message confirmation" },
   // Training sign-offs
   { method: "POST", pattern: /^\/station-training\/reviews\/?$/, what: "SOP review" },
   { method: "POST", pattern: /^\/training-ack\/confirm\/?$/, what: "read-and-understood" },

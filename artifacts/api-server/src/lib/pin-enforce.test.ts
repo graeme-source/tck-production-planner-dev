@@ -55,6 +55,8 @@ describe("matchAttributingWrite", () => {
     ["POST", "/production-plans/180/items/9/dog-bin"], // dog bin reject (+1)
     ["PUT", "/staff-emergency-contacts/me"], // saved under the signed-in person
     ["PUT", "/eight-pack-stock/12"], // 8-pack bag count, logged against the counter
+    ["POST", "/messages"], // a team message goes out under a name
+    ["POST", "/messages/42/ack"], // "I understand and will action this"
   ])("guards %s %s", (method, path) => {
     expect(matchAttributingWrite(method, path)).not.toBeNull();
   });
@@ -73,6 +75,7 @@ describe("matchAttributingWrite", () => {
     ["PUT", "/production-plans/180"], // planning edit
     ["POST", "/production-plans/180/items/9/fridge-extra"], // not an exact match
     ["PUT", "/staff-emergency-contacts/team/12"], // a manager's correction, attributed by account
+    ["POST", "/messages/conversations/u:1,u:2/read"], // reading a chat records nothing
   ])("leaves %s %s alone", (method, path) => {
     expect(matchAttributingWrite(method, path)).toBeNull();
   });
