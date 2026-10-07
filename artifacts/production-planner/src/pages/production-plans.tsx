@@ -52,6 +52,7 @@ import { MacStockWorking, macStockWorking } from "@/components/mac-cheese-stock-
 import { SlowMeatPanel, SlowMeatSaveStatus } from "@/components/slow-meat-panel";
 import { useSlowMeatProfile } from "@/hooks/use-slow-meat-profile";
 import { applySlowMeatCap, slowMeatCountForRows } from "@/lib/slow-meat-plan";
+import { BagsInFridgeNote } from "@/components/eight-pack-bags-on-hand";
 import {
   DndContext,
   closestCenter,
@@ -712,6 +713,7 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
             >
               {gross} − {bagEquiv} to bags
               <div className="font-semibold">= {net} packs</div>
+              <BagsInFridgeNote recipeId={item.recipeId} needed={item.eightPackBagCount} className="text-[9px] font-normal" />
             </div>
           );
         })()}
@@ -5898,6 +5900,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                         title={!itemsEditable ? "Unlock the table to edit" : "Add one 8-pack bag"}
                       >+</button>
                     </div>
+                    <BagsInFridgeNote recipeId={item.recipeId} className="mt-0.5" />
                   </td>
                   <td className="py-3 px-4 text-right text-muted-foreground text-xs">
                     {item.tinSize ?? <span className="opacity-40">—</span>}

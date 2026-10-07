@@ -5,6 +5,8 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { ShopifyOrderNumber } from "@/components/shopify-order-link";
 import { OrderDateCalendar } from "@/components/order-date-calendar";
+import { useEightPackBagsOnHand } from "@/components/eight-pack-bags-on-hand";
+import { allocateBagsOnHand } from "@/lib/eight-pack-shortfall";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
@@ -271,6 +273,22 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
   const eightPackOrders = data.orders.filter(o => o.kind === "eight_pack");
   const wholesaleOrders = data.orders.filter(o => o.kind === "wholesale_2pack");
 
+  // 8-pack bags already in the production fridge, shared across the
+  // unprocessed bag orders earliest delivery first, so each line can say
+  // "N in fridge · make M". A suggestion only — Process still puts the
+  // order's full bag count on the plan; the planner trims it if the fridge
+  // bags really are spare.
+  const { bagsOnHand } = useEightPackBagsOnHand();
+  const bagAllocation = allocateBagsOnHand(
+    eightPackOrders
+      .filter(o => !done.has(o.orderId))
+      .sort((a, b) => (selected[a.orderId] ?? "").localeCompare(selected[b.orderId] ?? ""))
+      .flatMap(o => o.lines
+        .filter(l => l.recipeId != null)
+        .map(l => ({ key: `${o.orderId}:${l.lineId}`, recipeId: l.recipeId as number, bags: l.quantity }))),
+    bagsOnHand,
+  );
+
   async function processAllReady() {
     for (const o of remaining) {
       if (evaluate(o, selected[o.orderId], selectedProduction[o.orderId], data.plansByDespatchDate).ok) {
@@ -341,6 +359,18 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
               {isWholesale
                 ? l.variantTitle && <span className="text-muted-foreground"> · {l.variantTitle}</span>
                 : l.recipeId == null && " (unrecognised)"}
+              {!isWholesale && !isDone && l.recipeId != null && (() => {
+                const a = bagAllocation.get(`${order.orderId}:${l.lineId}`);
+                if (!a || a.fromFridge <= 0) return null;
+                return (
+                  <span
+                    className="ml-1.5 text-xs px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/40 text-indigo-800 dark:text-indigo-300 tabular-nums"
+                    title="8-pack bags already in the production fridge (Stock Control), shared across these orders earliest delivery first. Suggestion only — check they aren't already promised to another order."
+                  >
+                    {a.fromFridge} in fridge · make {a.toMake}
+                  </span>
+                );
+              })()}
             </span>
           ))}
         </div>
