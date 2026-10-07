@@ -73,10 +73,9 @@ export const navItems: NavItem[] = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Production Plans", href: "/plans", icon: CalendarDays },
   { name: "Dispatches", href: "/dispatches", icon: Truck },
-  { name: "Suppliers", href: "/suppliers", icon: Building2 },
+  // Suppliers moved into Inventory (Graeme, 2026-10-07: a tidier menu).
   // Contacts (2026-10-02): everyone's phone numbers in one place —
   // emergency, carriers, services, and suppliers read from their records.
-  // Beside Suppliers because that's where people already look for a number.
   { name: "Contacts", href: "/contacts", icon: BookUser },
   { name: "Improvements", href: "/improvements", icon: TrendingUp },
   { name: "Training", href: "/training", icon: GraduationCap },
@@ -90,9 +89,10 @@ export const inventorySubItems: NavItem[] = [
   { name: "Orders", href: "/orders", icon: ShoppingCart },
   { name: "Deliveries", href: "/deliveries", icon: PackageCheck },
   { name: "Tools", href: "/inventory/tools", icon: Wrench },
+  { name: "Suppliers", href: "/suppliers", icon: Building2 },
 ];
 
-const INVENTORY_PATHS = ["/inventory", "/orders", "/deliveries", "/stock-control"];
+const INVENTORY_PATHS = ["/inventory", "/orders", "/deliveries", "/stock-control", "/suppliers"];
 // Routes that count as "inside Inventory" for the auto-expand logic. Anything
 // under /inventory/... (e.g. /inventory/tools, /inventory/tools/label-stock-check)
 // should keep the sidebar group expanded.
@@ -120,13 +120,16 @@ export const bottomNavItems: NavItem[] = [
 
 // Analytics becomes a group for managers/admins so its analytics pages sit
 // under it. Team efficiency lives here only for now (Graeme, 2026-09-25).
-const ANALYTICS_PATHS = ["/reports", "/analytics/efficiency", "/analytics/defects"];
+const ANALYTICS_PATHS = ["/reports", "/analytics/efficiency", "/analytics/defects", "/finance"];
 export const analyticsSubItems: NavItem[] = [
   { name: "Analytics", href: "/reports", icon: BarChart2 },
   { name: "Team efficiency", href: "/analytics/efficiency", icon: Gauge },
   // Defects KPI (Graeme, 2026-10-01). Anyone may RECORD a defect from the
   // quick-actions dock; the page sits with the other analytics.
   { name: "Defects", href: "/analytics/defects", icon: AlertOctagon },
+  // Finance moved under Analytics (Graeme, 2026-10-07). Admins and
+  // bookkeepers only — filtered where the group is drawn.
+  { name: "Finance", href: "/finance", icon: Banknote },
 ];
 
 const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory", "/product-hub", "/surveys"];
@@ -271,7 +274,7 @@ export function NavLinks({
   visibleInventoryItems: NavItem[];
   location: string;
   search: string;
-  user: { name?: string; role?: string } | null;
+  user: { name?: string; role?: string; isBookkeeper?: boolean } | null;
   onNavigate?: () => void;
   /** Accountant (finance-only) users: hide Lean Cave / Settings. */
   hideBottomNav?: boolean;
@@ -372,7 +375,9 @@ export function NavLinks({
     const isDispatches = item.href === "/dispatches";
 
     if (item.href === "/reports" && (user?.role === "admin" || user?.role === "manager")) {
-      return renderNavGroup("analytics", item.name, item.icon, analyticsSubItems, analyticsOpen, setAnalyticsOpen, isOnAnalyticsPage);
+      const seesFinance = user?.role === "admin" || Boolean(user?.isBookkeeper);
+      const subs = analyticsSubItems.filter(i => i.href !== "/finance" || seesFinance);
+      return renderNavGroup("analytics", item.name, item.icon, subs, analyticsOpen, setAnalyticsOpen, isOnAnalyticsPage);
     }
 
     if (isDispatches && user?.role === "admin") {
@@ -723,7 +728,10 @@ export function Layout({ children }: { children: ReactNode }) {
   // app is noise to them, and they are noise to it.
   const isBookkeeper = Boolean((user as { isBookkeeper?: boolean } | null)?.isBookkeeper);
   const accountantOnly = isBookkeeper && userRole !== "admin";
-  if (userRole === "admin" || isBookkeeper) {
+  // Finance lives inside the Analytics group for admins (2026-10-07); an
+  // accountant's finance-only sidebar has no Analytics group, so it keeps
+  // its own top-level entry there.
+  if (accountantOnly) {
     visibleNavItems.push({ name: "Finance", href: "/finance", icon: Banknote });
   }
 
