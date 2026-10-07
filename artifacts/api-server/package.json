@@ -22,6 +22,7 @@
     "@workspace/feature-registry": "workspace:*",
     "@workspace/db": "workspace:*",
     "@workspace/marketing-calendar": "workspace:*",
+    "@workspace/messages": "workspace:*",
     "@workspace/production-schedule": "workspace:*",
     "@workspace/slow-meat": "workspace:*",
     "@workspace/stock-prediction": "workspace:*",

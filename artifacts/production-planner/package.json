@@ -54,6 +54,7 @@
     "@workspace/business-days": "workspace:*",
     "@workspace/feature-registry": "workspace:*",
     "@workspace/marketing-calendar": "workspace:*",
+    "@workspace/messages": "workspace:*",
     "@workspace/production-schedule": "workspace:*",
     "@workspace/slow-meat": "workspace:*",
     "@workspace/stock-prediction": "workspace:*",

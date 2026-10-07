@@ -126,6 +126,9 @@ importers:
       '@workspace/marketing-calendar':
         specifier: workspace:*
         version: link:../../lib/marketing-calendar
+      '@workspace/messages':
+        specifier: workspace:*
+        version: link:../../lib/messages
       '@workspace/production-schedule':
         specifier: workspace:*
         version: link:../../lib/production-schedule
@@ -590,6 +593,9 @@ importers:
       '@workspace/marketing-calendar':
         specifier: workspace:*
         version: link:../../lib/marketing-calendar
+      '@workspace/messages':
+        specifier: workspace:*
+        version: link:../../lib/messages
       '@workspace/production-schedule':
         specifier: workspace:*
         version: link:../../lib/production-schedule
@@ -722,6 +728,8 @@ importers:
   lib/feature-registry: {}
 
   lib/marketing-calendar: {}
+
+  lib/messages: {}
 
   lib/production-schedule: {}
 
