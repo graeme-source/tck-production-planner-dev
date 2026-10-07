@@ -52,6 +52,7 @@ import {
 import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/user-avatar";
 import { NotificationBell } from "@/components/notification-bell";
+import { MessagesButton } from "@/components/messages/messages-button";
 import { CurrentUserBadge } from "@/components/current-user-badge";
 import { PageSopButton } from "@/components/page-sop-rail";
 import { useUnseenImprovementCount } from "@/hooks/use-unseen-improvements";
@@ -899,7 +900,7 @@ export function Layout({ children }: { children: ReactNode }) {
 
       {/* ── Main content ────────────────────────────────────────────────── */}
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
-        <TopBar onMenu={handleMenuButton} fallbackTitle={currentPageName} onOpenSops={() => setSopsOpen(true)} />
+        <TopBar onMenu={handleMenuButton} fallbackTitle={currentPageName} onOpenSops={() => setSopsOpen(true)} showMessages={!accountantOnly} />
         {/* THE app scroll container for sidebar pages. The id is load-bearing:
             lib/scroll.ts and the modal scroll-keeper target it. overscroll-
             contain stops a top-of-page drag chaining into the browser's
@@ -984,10 +985,11 @@ export function QuickActionsDock() {
       <RecordDefectModal open={defectOpen} onClose={() => setDefectOpen(false)} />
       <TodoSheet open={todosOpen} onClose={() => setTodosOpen(false)} />
       <TodoInterstitial />
-      {/* Station messages — must-confirm ones included — show ONLY on the
-          station they were sent to (StationMessagesBanner in StationLayout),
-          never app-wide: the app-wide pop-up let a sender dismiss a message
-          before the station saw it (Graeme, 2026-09-29). */}
+      {/* Station messages — must-confirm ones included — lock/banner ONLY on
+          the station they were sent to (StationMessagesBanner in
+          StationLayout), never app-wide: the app-wide pop-up let a sender
+          dismiss a message before the station saw it (Graeme, 2026-09-29).
+          Everywhere else they're in the Messages panel (top bar). */}
       <FixedNoticeInterstitial />
     </>
   );
@@ -1126,7 +1128,7 @@ function FloatingActionsTab({ assistantOpen, onOpenAssistant, onOpenTodos, onOpe
   );
 }
 
-function TopBar({ onMenu, fallbackTitle, onOpenSops }: { onMenu: () => void; fallbackTitle: string; onOpenSops: () => void }) {
+function TopBar({ onMenu, fallbackTitle, onOpenSops, showMessages }: { onMenu: () => void; fallbackTitle: string; onOpenSops: () => void; showMessages: boolean }) {
   const header = usePageHeaderValue();
   const title = header?.title ?? fallbackTitle;
   // Pages that ARE a station's working screen (Order Packing Live is the
@@ -1181,6 +1183,11 @@ function TopBar({ onMenu, fallbackTitle, onOpenSops }: { onMenu: () => void; fal
         <BookOpen className="w-4 h-4" />
         <span className="hidden sm:inline">SOPs</span>
       </button>
+      {/* Team messages — the same button, in the same place, on every page
+          (station screens put it in the same spot of their own bar). On a
+          page that IS a station's screen (Order Packing Live) it shows that
+          station's messages too. Not for external accountants. */}
+      {showMessages && <MessagesButton at={pageStations ?? []} />}
       <NotificationBell />
       {header?.action && (
         <div className="flex-shrink-0">

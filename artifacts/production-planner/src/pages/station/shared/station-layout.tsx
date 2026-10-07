@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useLocation, useSearch } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ChevronLeft, BarChart2, ClipboardList, Layers, Beef, Menu, X, BookOpen, MoreVertical, MessageSquare, BookPlus, BookUser,
+  ChevronLeft, BarChart2, ClipboardList, Layers, Beef, Menu, X, BookOpen, MoreVertical, BookPlus, BookUser,
 } from "lucide-react";
 import { StationPinnedContacts, StationContactsDialog } from "@/components/contacts/station-contacts";
 import { format, parseISO } from "date-fns";
@@ -12,7 +12,9 @@ import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import { STATIONS, type StationType } from "./constants";
 import { BreakTracker } from "./break-tracker";
 import { StationReminderBanner } from "./timed-reminders";
-import { StationMessagesBanner, SendStationMessageDialog } from "@/components/station-messages";
+import { StationMessagesBanner } from "@/components/station-messages";
+import { MessagesButton } from "@/components/messages/messages-button";
+import { messageStationKeys } from "@/components/messages/messages-api";
 import {
   NavLinks,
   AccountButton,
@@ -98,11 +100,10 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
   const fromSuffix = fromDashboard ? "?from=dashboard" : "";
   const [navOpen, setNavOpen] = useState(false);
   const [standardsOpen, setStandardsOpen] = useState(false);
-  // The ⋯ menu next to Exit Station: message a station, view the SOP
-  // library, attach an SOP to this station. Folded away so the top bar fits
-  // one line on iPad landscape (Graeme, 2026-09-16).
+  // The ⋯ menu next to Exit Station: contacts, the SOP library, attach an
+  // SOP to this station. Folded away so the top bar fits one line on iPad
+  // landscape (Graeme, 2026-09-16). Messaging is its own button now.
   const [moreOpen, setMoreOpen] = useState(false);
-  const [composeOpen, setComposeOpen] = useState(false);
   const [manageSopsOpen, setManageSopsOpen] = useState(false);
   const [contactsOpen, setContactsOpen] = useState(false);
   const { state, logout, lockStation } = useAuth();
@@ -254,8 +255,12 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
               {headerSlot}
               <BreakTracker planId={planId} stationType={stationType} onBreakActiveChange={onBreakActiveChange} />
 
-              {/* ⋯ menu — everything that used to be its own button (message
-                  a station, SOPs) lives here so the bar stays one line. */}
+              {/* Team messages — the same button as the top bar on every other
+                  page. This station's messages (and Prep's, on a Prep
+                  sub-section) show to whoever is signed in here. */}
+              <MessagesButton at={messageStationKeys(stationType)} />
+
+              {/* ⋯ menu — contacts and SOPs live here so the bar stays one line. */}
               <div className="relative">
                 <button
                   onClick={() => setMoreOpen(v => !v)}
@@ -274,13 +279,6 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
                   <>
                     <div className="fixed inset-0 z-30" onClick={() => setMoreOpen(false)} />
                     <div className="absolute right-0 top-full mt-1.5 z-40 w-60 rounded-xl border border-border bg-card shadow-xl overflow-hidden py-1">
-                      <button
-                        onClick={() => { setMoreOpen(false); setComposeOpen(true); }}
-                        className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-medium text-left hover:bg-secondary/60 transition-colors"
-                      >
-                        <MessageSquare className="w-4 h-4 text-sky-600 flex-shrink-0" />
-                        Message a station
-                      </button>
                       <button
                         onClick={() => { setMoreOpen(false); setContactsOpen(true); }}
                         className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-medium text-left hover:bg-secondary/60 transition-colors"
@@ -341,10 +339,13 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
             after they change) by whoever works this station on its live plan. */}
         <StationSopGate stationType={stationType} stationLabel={meta.label} planDate={plan?.planDate} />
         <StationReminderBanner stationType={stationType} plan={plan} />
-        {/* Messages sent to THIS station — banner until someone taps Got it. */}
-        <div className="mb-3 empty:hidden">
-          <StationMessagesBanner stationType={stationType} />
-        </div>
+        {/* Messages sent to THIS station — banner until someone taps Got it
+            (a Prep sub-section shows Prep's messages too). */}
+        {messageStationKeys(stationType).map(key => (
+          <div key={key} className="mb-3 empty:hidden">
+            <StationMessagesBanner stationType={key} />
+          </div>
+        ))}
         {children}
       </div>
 
@@ -354,9 +355,6 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
         currentStationType={stationType}
       />
 
-      {composeOpen && (
-        <SendStationMessageDialog onClose={() => setComposeOpen(false)} />
-      )}
       {contactsOpen && (
         <StationContactsDialog
           stationKeys={contactStationKeys(stationType)}

@@ -1,3 +1,5 @@
+import { STATION_DEFAULT_REQUIRES_ACK } from "@workspace/messages";
+
 /**
  * Which station messages block the screen, and in what order.
  *
@@ -34,9 +36,10 @@ export function routeStationMessages<T extends RoutableStationMessage>(messages:
   };
 }
 
-/** "Must be confirmed" starts ticked — forgetting to tick it should never be
- *  how an urgent message fails to land (Graeme, 2026-09-29). */
-export const DEFAULT_REQUIRES_ACK = true;
+/** "Must be confirmed" starts ticked for station messages — forgetting to
+ *  tick it should never be how an urgent message fails to land (Graeme,
+ *  2026-09-29). The one copy lives with the team-message rules. */
+export const DEFAULT_REQUIRES_ACK = STATION_DEFAULT_REQUIRES_ACK;
 
 /**
  * A message is shown ONLY on the screen of the station it was sent to —

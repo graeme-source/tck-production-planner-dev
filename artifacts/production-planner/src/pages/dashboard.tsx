@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from "react";
 import { useListProductionPlans, useListDispatchOrders, useGetProductionPlan } from "@workspace/api-client-react";
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
-import { SendStationMessageButton } from "@/components/station-messages";
 import { EightPackOrdersBanner } from "@/components/eight-pack-orders-banner";
 import { DispatchOrdersPanel, fetchWeeklyOrders, getMonday } from "@/components/dispatch-orders-panel";
 import { StockGateBanner } from "@/components/stock-gate-banner";
@@ -583,14 +582,10 @@ export default function Dashboard() {
       <PageHeader
         title="Kitchen Dashboard"
         description={format(new Date(), "EEEE, MMMM do, yyyy")}
-        action={
-          <div className="flex items-center gap-2">
-            <SendStationMessageButton />
-            {/* Visitor Check-In lives on the Front Door — Deliveries page
-                now (Graeme, 2026-09-16); the founder entry moved to the
-                top of the sidebar as "The Business" (2026-09-11). */}
-          </div>
-        }
+        // "Message a station" became the Messages button in the top bar
+        // (team messages, 2026-10-07). Visitor Check-In lives on the Front
+        // Door — Deliveries page (2026-09-16); the founder entry is "The
+        // Business" at the top of the sidebar (2026-09-11).
       />
 
       {showIssueBanner && <AndonBanner userRole={userRole} />}
