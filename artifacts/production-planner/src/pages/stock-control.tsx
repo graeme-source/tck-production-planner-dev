@@ -11,6 +11,9 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface StockItem {
   stockEntryIds: number[];
+  /** 2 = 2-pack recipe row, 8 = 8-pack bag row, null = ingredient. Optional
+   *  so an older server response degrades to "everything is packs". */
+  packSize?: number | null;
   id: number;
   name: string;
   color: string | null;
@@ -31,11 +34,13 @@ interface StockLocation {
   tempMinC: number | null;
   tempMaxC: number | null;
   totalPacks: number;
+  totalBags?: number;
   items: StockItem[];
 }
 
 interface StockControlData {
   productionFridgeTotal: number;
+  productionFridgeBags?: number;
   locations: StockLocation[];
 }
 
@@ -170,6 +175,27 @@ async function createStockEntry(data: {
   }
 }
 
+/** 8-pack bags are real stock (Graeme, 2026-10-07). Counting them goes
+ *  through their own endpoint so the server records the change against
+ *  pack size 8 — never the recipe's 2-pack row. */
+const EIGHT_PACK = 8;
+function isBagItem(item: StockItem): boolean {
+  return item.type === "recipe" && item.packSize === EIGHT_PACK;
+}
+
+async function setEightPackBags(recipeId: number, quantity: number): Promise<void> {
+  const res = await fetch(`${BASE}/api/eight-pack-stock/${recipeId}`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ quantity: Math.round(quantity) }),
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}));
+    throw new Error((json as { error?: string }).error ?? "Failed to save the bag count");
+  }
+}
+
 interface FridgeStockBatch {
   id: number;
   batchNumber: number;
@@ -210,8 +236,10 @@ async function fetchAdjustmentHistory(
   itemType: "recipe" | "ingredient",
   itemId: number,
   days = 7,
+  packSize?: number,
 ): Promise<AdjustmentHistoryResponse> {
   const q = new URLSearchParams({ location, itemType, itemId: String(itemId), days: String(days) });
+  if (packSize) q.set("packSize", String(packSize));
   const res = await fetch(`${BASE}/api/stock-control/history?${q}`, { credentials: "include" });
   if (!res.ok) throw new Error("Failed to fetch adjustment history");
   return res.json();
@@ -274,8 +302,13 @@ interface FocusPanelProps {
 function FocusPanel({ location, onRefresh }: FocusPanelProps) {
   const queryClient = useQueryClient();
   const colors = zoneColors(location.zone);
-  const totalQty = location.items.reduce((s, i) => s + i.qty, 0);
-  const maxQty = Math.max(1, ...location.items.map(i => i.qty));
+  // Packs and bags are different units — total, bar and % are per unit.
+  const packItems = location.items.filter(i => !isBagItem(i));
+  const bagItems = location.items.filter(isBagItem);
+  const totalQty = packItems.reduce((s, i) => s + i.qty, 0);
+  const totalBags = bagItems.reduce((s, i) => s + i.qty, 0);
+  const maxQty = Math.max(1, ...packItems.map(i => i.qty));
+  const maxBags = Math.max(1, ...bagItems.map(i => i.qty));
 
   const [editingEntryId, setEditingEntryId] = useState<number | null>(null);
   const [editQty, setEditQty] = useState("");
@@ -286,6 +319,8 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
   const [addSelectedId, setAddSelectedId] = useState<number | null>(null);
   const [addQty, setAddQty] = useState("");
   const [addUnit, setAddUnit] = useState("packs");
+  // Production fridge only: is the new entry 2-packs or 8-pack bags?
+  const [addAsBags, setAddAsBags] = useState(false);
   const [stockError, setStockError] = useState<string | null>(null);
 
   // Row expansion. Keyed as "recipe:ID" or "ingredient:ID" so any item
@@ -298,7 +333,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
   const expandedRecipeIdForBatches = (() => {
     if (!expandedKey || !isFridgeLocation) return null;
     const [kind, idStr] = expandedKey.split(":");
-    if (kind !== "recipe") return null;
+    if (kind !== "recipe" && kind !== "bags") return null;
     const id = parseInt(idStr, 10);
     return Number.isFinite(id) ? id : null;
   })();
@@ -310,17 +345,23 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
     staleTime: 30_000,
   });
 
+  // "bags:ID" is a recipe's 8-pack bag row; "recipe:ID" its 2-pack row.
   const expandedItemParsed = (() => {
     if (!expandedKey) return null;
     const [kind, idStr] = expandedKey.split(":");
     const id = parseInt(idStr, 10);
-    if (!Number.isFinite(id) || (kind !== "recipe" && kind !== "ingredient")) return null;
-    return { itemType: kind as "recipe" | "ingredient", itemId: id };
+    if (!Number.isFinite(id) || (kind !== "recipe" && kind !== "ingredient" && kind !== "bags")) return null;
+    return {
+      itemType: (kind === "ingredient" ? "ingredient" : "recipe") as "recipe" | "ingredient",
+      itemId: id,
+      packSize: kind === "bags" ? EIGHT_PACK : kind === "recipe" && isFridgeLocation ? 2 : undefined,
+    };
   })();
+  const expandedPackSize = expandedKey?.startsWith("bags:") ? EIGHT_PACK : 2;
 
   const { data: historyData, isLoading: historyLoading } = useQuery<AdjustmentHistoryResponse>({
     queryKey: ["adjustment-history", location.key, expandedKey],
-    queryFn: () => fetchAdjustmentHistory(location.key, expandedItemParsed!.itemType, expandedItemParsed!.itemId, 7),
+    queryFn: () => fetchAdjustmentHistory(location.key, expandedItemParsed!.itemType, expandedItemParsed!.itemId, 7, expandedItemParsed!.packSize),
     enabled: expandedItemParsed !== null,
     staleTime: 30_000,
   });
@@ -360,6 +401,12 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
         const parsed = raw !== undefined ? parseFloat(raw) : NaN;
         const qtyChanged = !isNaN(parsed) && parsed >= 0 && parsed !== item.qty;
         const hasDuplicates = item.stockEntryIds.length > 1;
+
+        // 8-pack bags: a straight count through the bag endpoint.
+        if (isBagItem(item)) {
+          if (qtyChanged && item.recipeId != null) ops.push(setEightPackBags(item.recipeId, parsed));
+          continue;
+        }
 
         // Zero-stock core recipes injected by the server have no stock entry
         // yet — any entered value (including an explicit 0, which refreshes
@@ -451,8 +498,25 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
     // operator's fresh reading instead of cached data.
     queryClient.invalidateQueries({ queryKey: ["production-plan-calculate"] });
     queryClient.invalidateQueries({ queryKey: ["factory-numbers"] });
+    queryClient.invalidateQueries({ queryKey: ["eight-pack-stock"] });
+    queryClient.invalidateQueries({ queryKey: ["adjustment-history"] });
+    queryClient.invalidateQueries({ queryKey: ["fridge-batches"] });
     onRefresh();
   };
+
+  const bagMutation = useMutation({
+    mutationFn: ({ recipeId, quantity }: { recipeId: number; quantity: number }) => setEightPackBags(recipeId, quantity),
+    onSuccess: () => {
+      invalidate();
+      setEditingEntryId(null);
+      setDeletingEntryId(null);
+      setAddingStock(false);
+      setAddSelectedId(null);
+      setAddQty("");
+      setStockError(null);
+    },
+    onError: (err: unknown) => setStockError(err instanceof Error ? err.message : String(err)),
+  });
 
   const updateMutation = useMutation({
     mutationFn: ({ id, ...data }: { id: number; recipeId?: number | null; ingredientId?: number | null; itemType: string; quantity: number; unit: string; location: string }) =>
@@ -492,6 +556,11 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
   const saveEdit = (item: StockItem) => {
     const qty = parseFloat(editQty);
     if (isNaN(qty) || qty < 0) { setStockError("Please enter a valid quantity"); return; }
+    if (isBagItem(item)) {
+      if (!Number.isInteger(qty)) { setStockError("Bags are counted in whole numbers"); return; }
+      if (item.recipeId != null) bagMutation.mutate({ recipeId: item.recipeId, quantity: qty });
+      return;
+    }
     // Injected zero-stock core recipe with no entry yet — create a snapshot.
     if (item.stockEntryIds.length === 0) {
       createMutation.mutate({
@@ -519,10 +588,17 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
     });
   };
 
+  const addingBags = isFridgeLocation && addItemType === "recipe" && addAsBags;
+
   const handleAddStock = () => {
     const qty = parseFloat(addQty);
     if (isNaN(qty) || qty <= 0) { setStockError("Please enter a valid quantity"); return; }
     if (!addSelectedId) { setStockError("Please select an item"); return; }
+    if (addingBags) {
+      if (!Number.isInteger(qty)) { setStockError("Bags are counted in whole numbers"); return; }
+      bagMutation.mutate({ recipeId: addSelectedId, quantity: qty });
+      return;
+    }
     createMutation.mutate({
       recipeId: addItemType === "recipe" ? addSelectedId : null,
       ingredientId: addItemType === "ingredient" ? addSelectedId : null,
@@ -550,13 +626,19 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
               <span className="font-semibold tabular-nums text-foreground">
                 {Math.round(
                   bulkEdit
-                    ? location.items.reduce((s, i) => {
+                    ? packItems.reduce((s, i) => {
                         const v = parseFloat(bulkValues[rowKeyOf(i)] ?? String(i.qty));
                         return s + (isNaN(v) ? i.qty : v);
                       }, 0)
                     : totalQty
                 ).toLocaleString()}
               </span>{" "}packs
+              {(bagItems.length > 0 || (location.totalBags ?? 0) > 0) && (
+                <>
+                  <span className="mx-1.5 text-border">·</span>
+                  <span className="font-semibold tabular-nums text-foreground">{Math.round(totalBags).toLocaleString()}</span> 8-pack bags
+                </>
+              )}
               <span className="mx-1.5 text-border">·</span>
               {location.items.length} {location.items.length === 1 ? "item" : "items"}
             </p>
@@ -627,6 +709,18 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
               className={cn("px-3 py-1.5 text-xs rounded-lg border transition-colors", addItemType === "ingredient" ? "bg-primary text-primary-foreground border-transparent" : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary")}
             >Ingredient</button>
           </div>
+          {isFridgeLocation && addItemType === "recipe" && (
+            <div className="flex gap-2">
+              <button
+                onClick={() => setAddAsBags(false)}
+                className={cn("px-3 py-1.5 text-xs rounded-lg border transition-colors", !addAsBags ? "bg-primary text-primary-foreground border-transparent" : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary")}
+              >2-packs</button>
+              <button
+                onClick={() => setAddAsBags(true)}
+                className={cn("px-3 py-1.5 text-xs rounded-lg border transition-colors", addAsBags ? "bg-indigo-600 text-white border-transparent" : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary")}
+              >8-pack bags</button>
+            </div>
+          )}
           <select
             className="w-full px-2.5 py-1.5 text-xs bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
             value={addSelectedId ?? ""}
@@ -648,13 +742,17 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
               value={addQty}
               onChange={e => setAddQty(e.target.value)}
             />
-            <input
-              type="text"
-              placeholder="Unit"
-              className="w-24 px-2.5 py-1.5 text-xs bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
-              value={addUnit}
-              onChange={e => setAddUnit(e.target.value)}
-            />
+            {addingBags ? (
+              <span className="w-24 px-2.5 py-1.5 text-xs text-muted-foreground">bags</span>
+            ) : (
+              <input
+                type="text"
+                placeholder="Unit"
+                className="w-24 px-2.5 py-1.5 text-xs bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
+                value={addUnit}
+                onChange={e => setAddUnit(e.target.value)}
+              />
+            )}
           </div>
           {stockError && <p className="text-xs text-destructive">{stockError}</p>}
           <div className="flex gap-2 justify-end">
@@ -663,11 +761,11 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
               className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg"
             >Cancel</button>
             <button
-              disabled={!addSelectedId || !addQty || createMutation.isPending}
+              disabled={!addSelectedId || !addQty || createMutation.isPending || bagMutation.isPending}
               onClick={handleAddStock}
               className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
             >
-              {createMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+              {createMutation.isPending || bagMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
               Save
             </button>
           </div>
@@ -692,9 +790,19 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
         ) : (
           <div className="divide-y divide-border/40">
             {location.items.map((item, idx) => {
-              const barWidth = Math.max(3, (item.qty / maxQty) * 100);
-              const pct = totalQty > 0 ? Math.round((item.qty / totalQty) * 100) : 0;
+              const bag = isBagItem(item);
+              const barWidth = Math.max(3, (item.qty / (bag ? maxBags : maxQty)) * 100);
+              const unitTotal = bag ? totalBags : totalQty;
+              const pct = unitTotal > 0 ? Math.round((item.qty / unitTotal) * 100) : 0;
               const primaryId = rowKeyOf(item);
+              // The bag rows sit together after the 2-packs (server order);
+              // a header marks where they start.
+              const bagSectionHeader = bag && (idx === 0 || !isBagItem(location.items[idx - 1])) ? (
+                <div className="px-6 pt-4 pb-1.5 bg-indigo-50/60 dark:bg-indigo-950/20 border-t border-indigo-200/60 dark:border-indigo-900/40">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">8-pack bags</p>
+                  <p className="text-[11px] text-muted-foreground">Wrapping adds them, despatch takes them out. Tap the pencil to set a count.</p>
+                </div>
+              ) : null;
               const hasEntries = item.stockEntryIds.length > 0;
               const isEditing = editingEntryId === primaryId;
               const isDeleting = deletingEntryId === primaryId;
@@ -702,8 +810,8 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
               if (isDeleting) {
                 return (
                   <div key={primaryId} className="px-6 py-4 bg-destructive/5">
-                    <p className="text-xs font-medium text-destructive mb-1">Remove "{item.name}" from this location?</p>
-                    <p className="text-xs text-muted-foreground mb-3">This will delete the stock entry.</p>
+                    <p className="text-xs font-medium text-destructive mb-1">{bag ? `Set "${item.name}" to 0?` : `Remove "${item.name}" from this location?`}</p>
+                    <p className="text-xs text-muted-foreground mb-3">{bag ? "Records a count of 0 bags (kept in the history)." : "This will delete the stock entry."}</p>
                     {stockError && <p className="text-xs text-destructive mb-2">{stockError}</p>}
                     <div className="flex gap-2">
                       <button
@@ -711,12 +819,15 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                         className="flex-1 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg"
                       >Cancel</button>
                       <button
-                        disabled={deleteMutation.isPending}
-                        onClick={() => { for (const eid of item.stockEntryIds) { deleteMutation.mutate(eid); } }}
+                        disabled={deleteMutation.isPending || bagMutation.isPending}
+                        onClick={() => {
+                          if (bag) { if (item.recipeId != null) bagMutation.mutate({ recipeId: item.recipeId, quantity: 0 }); return; }
+                          for (const eid of item.stockEntryIds) { deleteMutation.mutate(eid); }
+                        }}
                         className="flex-1 px-3 py-1.5 text-xs bg-destructive text-destructive-foreground rounded-lg font-medium hover:bg-destructive/90 disabled:opacity-50 flex items-center justify-center gap-1"
                       >
-                        {deleteMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
-                        Delete
+                        {deleteMutation.isPending || bagMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                        {bag ? "Set to 0" : "Delete"}
                       </button>
                     </div>
                   </div>
@@ -745,13 +856,17 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                         onChange={e => setEditQty(e.target.value)}
                         onKeyDown={e => { if (e.key === "Enter") saveEdit(item); if (e.key === "Escape") setEditingEntryId(null); }}
                       />
-                      <input
-                        type="text"
-                        className="w-24 px-2.5 py-1.5 text-xs bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
-                        value={editUnit}
-                        onChange={e => setEditUnit(e.target.value)}
-                        placeholder="Unit"
-                      />
+                      {bag ? (
+                        <span className="w-24 px-2.5 py-1.5 text-xs text-muted-foreground">bags</span>
+                      ) : (
+                        <input
+                          type="text"
+                          className="w-24 px-2.5 py-1.5 text-xs bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
+                          value={editUnit}
+                          onChange={e => setEditUnit(e.target.value)}
+                          placeholder="Unit"
+                        />
+                      )}
                     </div>
                     {stockError && <p className="text-xs text-destructive mb-2">{stockError}</p>}
                     <div className="flex gap-2 justify-end">
@@ -762,11 +877,11 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                         <X className="w-3 h-3" /> Cancel
                       </button>
                       <button
-                        disabled={updateMutation.isPending}
+                        disabled={updateMutation.isPending || bagMutation.isPending}
                         onClick={() => saveEdit(item)}
                         className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1"
                       >
-                        {updateMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                        {updateMutation.isPending || bagMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
                         Save
                       </button>
                     </div>
@@ -780,7 +895,9 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                 const parsed = parseFloat(bulkVal);
                 const changed = !isNaN(parsed) && parsed !== item.qty;
                 return (
-                  <div key={primaryId} className={cn("px-6 py-3 transition-colors", changed && "bg-primary/5")}>
+                  <div key={primaryId}>
+                  {bagSectionHeader}
+                  <div className={cn("px-6 py-3 transition-colors", changed && "bg-primary/5")}>
                     <div className="flex items-center gap-3">
                       <span className="text-xs font-semibold text-muted-foreground w-5 tabular-nums shrink-0">{idx + 1}</span>
                       <span
@@ -806,6 +923,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                       </div>
                     </div>
                   </div>
+                  </div>
                 );
               }
 
@@ -815,6 +933,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
               // additionally show their per-batch breakdown in the same
               // panel (preserving the prior UX).
               const itemKey =
+                bag && item.recipeId !== null ? `bags:${item.recipeId}` :
                 item.type === "recipe" && item.recipeId !== null ? `recipe:${item.recipeId}` :
                 item.type === "ingredient" && item.ingredientId !== null ? `ingredient:${item.ingredientId}` :
                 null;
@@ -824,6 +943,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
 
               return (
                 <div key={primaryId}>
+                  {bagSectionHeader}
                   <div
                     className={cn("px-6 py-4 hover:bg-secondary/30 transition-colors group", canExpand && "cursor-pointer")}
                     onClick={canExpand ? () => setExpandedKey(isExpanded ? null : itemKey) : undefined}
@@ -887,7 +1007,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                         <div className="px-6 py-3 flex items-center gap-2 text-xs text-muted-foreground">
                           <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading batch data…
                         </div>
-                      ) : !batchData || batchData.length === 0 ? (
+                      ) : !batchData || batchData.filter(b => (b.packSize === EIGHT_PACK) === (expandedPackSize === EIGHT_PACK)).length === 0 ? (
                         <div className="px-6 py-3 text-xs text-muted-foreground italic">
                           No batch data available — tracking starts from next wrapping
                         </div>
@@ -900,7 +1020,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                             <span className="w-24 text-right">Use by</span>
                             <span className="w-5 shrink-0" />
                           </div>
-                          {batchData.map((batch) => {
+                          {batchData.filter(b => (b.packSize === EIGHT_PACK) === (expandedPackSize === EIGHT_PACK)).map((batch) => {
                             const status = useByDateStatus(batch.useByDate);
                             const ubDate = new Date(batch.useByDate + "T00:00:00");
                             return (
@@ -1199,7 +1319,8 @@ export default function StockControl() {
 
               {data?.locations.map((loc) => {
                 const colors = zoneColors(loc.zone);
-                const qty = Math.round(loc.items.reduce((s, i) => s + i.qty, 0));
+                // Packs only — 8-pack bags are a different unit (shown in the panel).
+                const qty = Math.round(loc.items.filter(i => !isBagItem(i)).reduce((s, i) => s + i.qty, 0));
                 const isSelected = loc.key === selectedKey;
                 const locDbId = loc.dbId;
                 const isEditing = managing && editingId !== null && editingId === locDbId;
