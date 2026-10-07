@@ -3,11 +3,17 @@ import { db, stockEntriesTable, recipesTable, ingredientsTable, storageLocations
 import { productionPlanItemsTable, productionPlansTable } from "@workspace/db";
 import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
 import { LOCATION_DEFS } from "../lib/storage-location-defs";
+import { latestRowPerKey, stockRowKey, isBagRow, bagRowName } from "../lib/stock-control-rows";
+import { EIGHT_PACK_SIZE } from "../lib/eight-pack-bags";
+import { z } from "zod";
+import { validateQuery } from "../middleware/validate";
 
 const router: IRouter = Router();
 
 interface AggItem {
   stockEntryIds: number[];
+  /** 2 for 2-pack recipe rows, 8 for 8-pack bag rows, null for ingredients. */
+  packSize: number | null;
   id: number;
   name: string;
   color: string | null;
@@ -35,25 +41,17 @@ router.get("/", async (_req, res) => {
     .from(stockEntriesTable)
     .orderBy(desc(stockEntriesTable.checkedAt));
 
-  // 8-pack bag rows are NOT stock — bags are made to order and leave the
-  // building the same day (wrapping still logs them, nothing decrements
-  // them). Without this filter a freshly-wrapped bag row is the NEWEST
-  // entry for its recipe and the latest-row snapshot below would display
-  // the BAG count as that recipe's factory number.
-  const rows = allRows.filter(r => !(r.itemType === "recipe" && Number(r.packSize) === 8));
+  // Latest entry per item+location (+ packs-vs-bags for recipes) is the
+  // current stock level (snapshot model). 8-pack bags are real stock in the
+  // production fridge (Graeme, 2026-10-07) and get their own row — keying by
+  // pack size is what stops a freshly-wrapped bag row being read as the
+  // recipe's 2-pack number (see stock-control-rows.ts).
+  const latestRows = latestRowPerKey(allRows);
 
-  // Use latest entry per item+location as the current stock level (snapshot model).
-  // Each stock entry represents the cumulative quantity at that point in time.
-  const latestSeen = new Set<string>();
-  const latestRows = rows.filter(r => {
-    const itemId = r.itemType === "recipe" ? `r:${r.recipeId}` : `i:${r.ingredientId}`;
-    const key = `${r.location}|${itemId}`;
-    if (latestSeen.has(key)) return false;
-    latestSeen.add(key);
-    return true;
-  });
-
-  const positiveRows = latestRows.filter(r => parseFloat(String(r.quantity)) > 0);
+  // Bag rows stay listed at 0 so a recipe that makes bags can always be
+  // counted; everything else drops off at zero as before.
+  const positiveRows = latestRows.filter(r =>
+    parseFloat(String(r.quantity)) > 0 || (isBagRow(r) && r.location === "production_fridge"));
 
   const recipeIds = [...new Set(positiveRows.filter(r => r.recipeId).map(r => r.recipeId as number))];
   const ingredientIds = [...new Set(positiveRows.filter(r => r.ingredientId).map(r => r.ingredientId as number))];
@@ -103,6 +101,8 @@ router.get("/", async (_req, res) => {
     tempMinC: number | null;
     tempMaxC: number | null;
     totalPacks: number;
+    /** 8-pack bags in this location — kept out of totalPacks (different unit). */
+    totalBags: number;
     items: AggItem[];
   }>();
 
@@ -122,6 +122,7 @@ router.get("/", async (_req, res) => {
       tempMinC: dbLoc.tempMinC != null ? Number(dbLoc.tempMinC) : null,
       tempMaxC: dbLoc.tempMaxC != null ? Number(dbLoc.tempMaxC) : null,
       totalPacks: 0,
+      totalBags: 0,
       items: [],
     });
   }
@@ -137,6 +138,7 @@ router.get("/", async (_req, res) => {
       tempMinC: ul.tempMinC != null ? Number(ul.tempMinC) : null,
       tempMaxC: ul.tempMaxC != null ? Number(ul.tempMaxC) : null,
       totalPacks: 0,
+      totalBags: 0,
       items: [],
     });
   }
@@ -148,8 +150,9 @@ router.get("/", async (_req, res) => {
   const aggMap = new Map<string, AggItem>();
 
   for (const row of positiveRows) {
-    const qty = parseFloat(String(row.quantity)) || 0;
-    if (qty <= 0) continue;
+    const qty = Math.max(0, parseFloat(String(row.quantity)) || 0);
+    const bag = isBagRow(row);
+    if (qty <= 0 && !bag) continue;
 
     // Enforce item-type restrictions: e.g. production_fridge only allows "recipe"
     const allowed = allowedTypes.get(row.location);
@@ -166,6 +169,7 @@ router.get("/", async (_req, res) => {
         tempMinC: null,
         tempMaxC: null,
         totalPacks: 0,
+        totalBags: 0,
         items: [],
       };
       locationMap.set(row.location, locEntry);
@@ -178,6 +182,7 @@ router.get("/", async (_req, res) => {
     if (row.itemType === "recipe" && row.recipeId) {
       const rec = recipeNames.get(row.recipeId);
       name = rec?.name ?? `Recipe #${row.recipeId}`;
+      if (bag) name = bagRowName(name);
       color = rec?.color ?? null;
       id = row.recipeId;
     } else if (row.ingredientId) {
@@ -185,25 +190,27 @@ router.get("/", async (_req, res) => {
       id = row.ingredientId;
     }
 
-    locEntry.totalPacks += qty;
+    if (bag) locEntry.totalBags += qty;
+    else locEntry.totalPacks += qty;
 
-    const aggKey = `${row.location}|${row.itemType}|${id}`;
+    const aggKey = stockRowKey(row);
     const existing = aggMap.get(aggKey);
     if (existing) {
       existing.qty += qty;
       existing.stockEntryIds.push(row.id);
-      if (!existing.unit || existing.unit === "packs") {
+      if (!bag && (!existing.unit || existing.unit === "packs")) {
         existing.unit = row.unit ?? "packs";
       }
     } else {
       const orderPos = (row.itemType === "recipe" && row.recipeId) ? (recipeOrder.get(row.recipeId) ?? 9999) : 9999;
       const item: AggItem = {
         stockEntryIds: [row.id],
+        packSize: row.itemType === "recipe" ? (bag ? EIGHT_PACK_SIZE : 2) : null,
         id,
         name,
         color,
         qty,
-        unit: row.unit ?? "packs",
+        unit: bag ? "bags" : (row.unit ?? "packs"),
         type: row.itemType,
         recipeId: row.recipeId ?? null,
         ingredientId: row.ingredientId ?? null,
@@ -225,11 +232,14 @@ router.get("/", async (_req, res) => {
       .select({ id: recipesTable.id, name: recipesTable.name, color: recipesTable.color })
       .from(recipesTable)
       .where(eq(recipesTable.isCoreMenu, true));
-    const present = new Set(fridgeLoc.items.filter(i => i.type === "recipe").map(i => i.recipeId));
+    // Only the 2-pack rows count as "present" — a recipe holding just a bag
+    // row still needs its zero 2-pack row.
+    const present = new Set(fridgeLoc.items.filter(i => i.type === "recipe" && i.packSize !== EIGHT_PACK_SIZE).map(i => i.recipeId));
     for (const r of coreRecipes) {
       if (present.has(r.id)) continue;
       fridgeLoc.items.push({
         stockEntryIds: [],
+        packSize: 2,
         id: r.id,
         name: r.name,
         color: r.color ?? null,
@@ -244,13 +254,17 @@ router.get("/", async (_req, res) => {
   }
 
   for (const loc of locationMap.values()) {
-    loc.items.sort((a, b) => a.orderPosition - b.orderPosition || a.name.localeCompare(b.name));
+    // 2-packs first, then the 8-pack bags as their own group, each in plan order.
+    const bagRank = (i: AggItem) => (i.packSize === EIGHT_PACK_SIZE ? 1 : 0);
+    loc.items.sort((a, b) => bagRank(a) - bagRank(b) || a.orderPosition - b.orderPosition || a.name.localeCompare(b.name));
   }
 
   const productionFridgeTotal = locationMap.get("production_fridge")?.totalPacks ?? 0;
+  const productionFridgeBags = locationMap.get("production_fridge")?.totalBags ?? 0;
 
   res.json({
     productionFridgeTotal: Math.round(productionFridgeTotal),
+    productionFridgeBags: Math.round(productionFridgeBags),
     locations: [...locationMap.values()].filter(l =>
       l.items.length > 0 ||
       LOCATION_DEFS.some(d => d.key === l.key) ||
@@ -266,7 +280,16 @@ router.get("/", async (_req, res) => {
 // fridge deductions against fulfilment/wrap counts without needing a separate
 // audit-log schema. We fetch one extra row just before the window so the
 // first displayed entry has an accurate delta baseline.
-router.get("/history", async (req: Request, res: Response) => {
+// Shape check only — the handler keeps its own friendlier 400 messages.
+const HistoryQuery = z.object({
+  location: z.string().optional(),
+  itemType: z.string().optional(),
+  itemId: z.string().optional(),
+  days: z.string().optional(),
+  packSize: z.enum(["2", "8"]).optional(),
+});
+
+router.get("/history", validateQuery(HistoryQuery), async (req: Request, res: Response) => {
   const location = typeof req.query.location === "string" ? req.query.location : "";
   const itemType = typeof req.query.itemType === "string" ? req.query.itemType : "";
   const itemIdRaw = typeof req.query.itemId === "string" ? req.query.itemId : "";
@@ -289,11 +312,19 @@ router.get("/history", async (req: Request, res: Response) => {
   // additions and despatch decrements show alongside manual checks. The
   // delta/source are stored directly (no row-to-row diffing needed).
   if (location === "production_fridge" && itemType === "recipe") {
+    // Optional packSize: the bag row asks for 8, the 2-pack row for 2, so
+    // each row's history shows only its own stock. Omitted = both (old UI).
+    const packSizeRaw = typeof req.query.packSize === "string" ? parseInt(req.query.packSize, 10) : NaN;
+    const packFilter = packSizeRaw === EIGHT_PACK_SIZE
+      ? sql`AND pack_size = ${EIGHT_PACK_SIZE}`
+      : packSizeRaw === 2
+        ? sql`AND pack_size <> ${EIGHT_PACK_SIZE}`
+        : sql``;
     const changeRows = ((r: unknown) => (r as { rows?: any[] }).rows ?? (r as any[]))(
       await db.execute(sql`
         SELECT id, pack_size, delta, resulting_qty, source, note, created_at
         FROM fridge_stock_changes
-        WHERE recipe_id = ${itemId} AND created_at >= ${since}
+        WHERE recipe_id = ${itemId} AND created_at >= ${since} ${packFilter}
         ORDER BY created_at DESC
       `),
     ) as Array<{ id: number; pack_size: number; delta: number; resulting_qty: number; source: string; note: string | null; created_at: Date | string }>;
@@ -308,7 +339,7 @@ router.get("/history", async (req: Request, res: Response) => {
         checkedAt: r.created_at instanceof Date ? r.created_at.toISOString() : r.created_at,
         quantity: Number(r.resulting_qty),
         delta: Number(r.delta),
-        unit: Number(r.pack_size) === 8 ? "8-pack bags" : "packs",
+        unit: Number(r.pack_size) === EIGHT_PACK_SIZE ? "bags" : "packs",
         notes: r.note,
         source: r.source,
       })),

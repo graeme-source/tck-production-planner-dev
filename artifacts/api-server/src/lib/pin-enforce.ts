@@ -73,6 +73,7 @@ export const ATTRIBUTING_WRITES: readonly Rule[] = [
   { method: "POST", pattern: /^\/kanbans\/scan\/?$/, what: "kanban scan" },
   { method: "POST", pattern: new RegExp(`^/kanbans/${ID}/pull/?$`), what: "kanban pull" },
   { method: "POST", pattern: /^\/stock-entries\/?$/, what: "stock count" },
+  { method: "PUT", pattern: new RegExp(`^/eight-pack-stock/${ID}/?$`), what: "8-pack bag count" },
   { method: "POST", pattern: /^\/print-jobs\/?$/, what: "prep label" },
   // Training sign-offs
   { method: "POST", pattern: /^\/station-training\/reviews\/?$/, what: "SOP review" },

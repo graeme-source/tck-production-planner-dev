@@ -54,6 +54,7 @@ describe("matchAttributingWrite", () => {
     ["POST", "/production-plans/180/items/9/wonly"], // wonky reject (+1)
     ["POST", "/production-plans/180/items/9/dog-bin"], // dog bin reject (+1)
     ["PUT", "/staff-emergency-contacts/me"], // saved under the signed-in person
+    ["PUT", "/eight-pack-stock/12"], // 8-pack bag count, logged against the counter
   ])("guards %s %s", (method, path) => {
     expect(matchAttributingWrite(method, path)).not.toBeNull();
   });

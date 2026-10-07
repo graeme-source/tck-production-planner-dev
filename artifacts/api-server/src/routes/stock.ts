@@ -383,18 +383,23 @@ router.put("/:id", validate(UpdateStockEntryBody), async (req, res) => {
   // and reconcile fridge_stock_batches. In the normal case these are the
   // same row — the stock-control UI only ever PUTs the latest per item.
   if (recipeId != null && isFifoTracked(itemType, location)) {
-    const packSize = (req.body.packSize as number | undefined) ?? 2;
     const [target] = await db
-      .select({ quantity: stockEntriesTable.quantity })
+      .select({ quantity: stockEntriesTable.quantity, packSize: stockEntriesTable.packSize })
       .from(stockEntriesTable)
       .where(eq(stockEntriesTable.id, id));
     if (!target) { res.status(404).json({ error: "Not found" }); return; }
+    // The row being edited decides the pack size — never a default. Editing
+    // an 8-pack bag row with the old default of 2 would have applied the
+    // bag delta to the recipe's 2-pack stock.
+    const packSize = Number(target.packSize) || 2;
     const delta = Math.round(Number(quantity)) - Math.round(Number(target.quantity));
     await adjustFridgeStock({
       recipeId,
       delta,
       packSize,
       reason: notes ?? "Manual stock-control edit",
+      source: "manual",
+      userId: req.session.userId ?? null,
     });
     const row = await readLatestProductionFridgeRow(recipeId, packSize);
     if (!row) { res.status(500).json({ error: "Adjustment failed to produce a row" }); return; }
