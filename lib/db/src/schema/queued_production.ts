@@ -26,6 +26,11 @@ export const queuedProductionTable = pgTable("queued_production", {
   planId: integer("plan_id").references(() => productionPlansTable.id, { onDelete: "set null" }),
   notes: text("notes"),
   createdByUserId: integer("created_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  // The test-box delivery this row was queued from (0150) — the box keeps
+  // its own rows in step with its sales. NULL = queued by hand. (FK to
+  // test_box_deliveries is in the migration; not declared here to keep the
+  // schema files free of a cycle.)
+  testBoxDeliveryId: integer("test_box_delivery_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (t) => ({
   dateIdx: index("ix_queued_production_date").on(t.productionDate),

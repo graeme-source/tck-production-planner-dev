@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, timestamp, date, boolean, unique } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, date, boolean, unique, jsonb } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 import { recipesTable } from "./recipes";
 
@@ -88,6 +88,12 @@ export const testBoxDeliveriesTable = pgTable("test_box_deliveries", {
   closedByName: text("closed_by_name"),
   // test_only | test_plus_normal | null (not decided)
   productionMix: text("production_mix"),
+  // 0150: "+1 safety batch per recipe" when production is queued from sales,
+  // and what was last queued ([{recipeId, name, packs, batches}]).
+  safetyBatch: boolean("safety_batch").notNull().default(false),
+  queuedAt: timestamp("queued_at"),
+  queuedByName: text("queued_by_name"),
+  queuedSummary: jsonb("queued_summary"),
   createdById: integer("created_by_id").references(() => usersTable.id, { onDelete: "set null" }),
   createdByName: text("created_by_name"),
   updatedById: integer("updated_by_id").references(() => usersTable.id, { onDelete: "set null" }),
