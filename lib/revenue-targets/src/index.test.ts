@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   addMonths, applyChanges, DEFAULT_MINIMUM_TARGET, describeChanges, diffTargets, formatGbpShort,
-  invertChanges, isMonthKey, minimumFromSetting, monthLabel, monthsFrom, paceAgainstTargets,
+  invertChanges, isFounderManagedSetting, isMonthKey, minimumFromSetting, monthLabel, monthsFrom, paceAgainstTargets,
   parseAmount, resolveStretch, stretchBelowMinimum, targetsForMonths, type TargetsState,
 } from "./index";
 
@@ -43,6 +43,13 @@ describe("stretch carries forward", () => {
     expect(minimumFromSetting("abc")).toBe(DEFAULT_MINIMUM_TARGET);
     expect(minimumFromSetting("0")).toBe(DEFAULT_MINIMUM_TARGET);
     expect(minimumFromSetting("135000")).toBe(135000);
+  });
+});
+
+describe("the minimum's setting key", () => {
+  it("is founder-managed, so the generic settings route can't change it", () => {
+    expect(isFounderManagedSetting("monthly_revenue_target")).toBe(true);
+    expect(isFounderManagedSetting("marketing_email_cadence_days")).toBe(false);
   });
 });
 

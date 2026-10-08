@@ -19,6 +19,14 @@ export type MonthKey = string;
  *  always used). The only number written into the code. */
 export const DEFAULT_MINIMUM_TARGET = 120000;
 
+/** Where the minimum lives (app_settings). Only the founder's targets
+ *  editor may write it — the generic settings route refuses it. */
+export const MINIMUM_SETTING_KEY = "monthly_revenue_target";
+
+export function isFounderManagedSetting(key: string): boolean {
+  return key === MINIMUM_SETTING_KEY;
+}
+
 export const MONTH_KEY_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 export function isMonthKey(s: unknown): s is MonthKey {

@@ -3,6 +3,7 @@ import { db, appSettingsTable, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
 import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
+import { isFounderManagedSetting } from "@workspace/revenue-targets";
 
 const router: IRouter = Router();
 
@@ -15,6 +16,13 @@ async function requireAuthForWrite(req: Request, res: Response, next: NextFuncti
   // req.params (params only exist on the matched route layer) — so the key
   // must come from the path. All write routes here are shaped "/:key".
   const key = decodeURIComponent(req.path.split("/")[1] ?? "");
+  // The monthly revenue minimum is the founder's alone, changed through
+  // routes/revenue-targets.ts (double-confirmed, with history) — an admin
+  // must not be able to change it here (Graeme, 2026-10-08).
+  if (isFounderManagedSetting(key)) {
+    res.status(403).json({ error: "Revenue targets are changed on Numbers → Edit targets (founder only)." });
+    return;
+  }
   const isStationKey = STATION_KEY_PREFIXES.some(p => key.startsWith(p));
   if (isStationKey && req.session.userId) { next(); return; }
   if (req.session.userRole === "admin") { next(); return; }

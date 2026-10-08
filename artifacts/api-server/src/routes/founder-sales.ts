@@ -4,6 +4,8 @@ import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { requireFounder } from "../middleware/founder-access";
 import { requireFounderArea } from "../middleware/founder-area-access";
+import { formatGbp, monthOf, paceAgainstTargets, targetsForMonth } from "@workspace/revenue-targets";
+import { loadRevenueTargetsState } from "../lib/revenue-targets-store";
 
 // Sales & Marketing assistant (founder + founder.sales grantees): revenue pacing against the
 // monthly target, email-cadence nudges (via Klaviyo once connected), a
@@ -154,17 +156,28 @@ router.get("/pulse", async (req: Request, res: Response) => {
       } catch { /* pace shows unavailable */ }
     }
 
-    const target = Number(await getSetting("monthly_revenue_target")) || 120000;
+    // Minimum + this month's stretch (carried forward if not set) — the
+    // same reader and rules as the Numbers page (lib/revenue-targets).
+    const targetsState = await loadRevenueTargetsState();
+    const monthTargets = targetsForMonth(monthOf(today), targetsState.minimum, targetsState.rows);
+    const target = monthTargets.minimum;
     const cadenceDays = Number(await getSetting("marketing_email_cadence_days")) || 3;
 
-    const pace = sales ? {
+    const twoTargets = sales ? paceAgainstTargets(
+      { monthToDate: sales.totalRevenue, projected: sales.estimatedMonthlyRevenue, dayOfMonth, daysInMonth },
+      monthTargets.minimum,
+      monthTargets.stretch,
+    ) : null;
+    const pace = sales && twoTargets ? {
       monthToDate: sales.totalRevenue,
       orderCount: sales.orderCount,
       projected: sales.estimatedMonthlyRevenue,
+      // target / onPace / requiredDailyRate are against the MINIMUM.
       target,
-      onPace: sales.estimatedMonthlyRevenue >= target,
+      stretch: monthTargets.stretch,
+      onPace: twoTargets.minimum.onPace,
       // What the remaining days each need to average to still hit target.
-      requiredDailyRate: Math.max(0, (target - sales.totalRevenue) / Math.max(1, daysInMonth - dayOfMonth)),
+      requiredDailyRate: twoTargets.minimum.neededPerDay,
       averageDailyRevenue: sales.averageDailyRevenue,
       daysLeft: daysInMonth - dayOfMonth,
     } : null;
@@ -203,7 +216,7 @@ router.get("/pulse", async (req: Request, res: Response) => {
     if (pace && !pace.onPace) {
       attention.push({
         kind: "pace",
-        message: `Behind pace: projecting £${Math.round(pace.projected).toLocaleString()} against the £${target.toLocaleString()} target. The remaining ${pace.daysLeft} days need to average £${Math.round(pace.requiredDailyRate).toLocaleString()}/day (current average £${Math.round(pace.averageDailyRevenue).toLocaleString()}).`,
+        message: `Behind pace: projecting ${formatGbp(pace.projected)} against the ${formatGbp(target)} minimum. The remaining ${pace.daysLeft} days need to average £${Math.round(pace.requiredDailyRate).toLocaleString()}/day (current average £${Math.round(pace.averageDailyRevenue).toLocaleString()}).`,
       });
     }
     if (email.configured && !email.error && (email.daysSince == null || email.daysSince >= cadenceDays)) {

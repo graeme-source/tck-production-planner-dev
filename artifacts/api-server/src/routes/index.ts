@@ -104,6 +104,7 @@ import founderAdSpendRouter from "./founder-ad-spend";
 import metaAdsRouter from "./meta-ads";
 import todosRouter from "./todos";
 import founderSalesRouter from "./founder-sales";
+import revenueTargetsRouter from "./revenue-targets";
 import marketingCalendarRouter from "./marketing-calendar";
 import marketingEmailsRouter from "./marketing-emails";
 import marketingApprovalsRouter from "./marketing-approvals";
@@ -277,6 +278,9 @@ router.use("/contracts", contractsRouter);
 // Starter forms: owner-scoped + HR-records access, guarded inside the router.
 router.use("/starter-forms", starterFormsRouter);
 router.use("/founder-sales", founderSalesRouter);
+// Monthly revenue targets (minimum + per-month stretch): read by founder.numbers
+// and founder.sales grantees, changed by the founder only — guarded inside.
+router.use("/revenue-targets", revenueTargetsRouter);
 // Marketing calendar (Sales & Marketing page): founder + "founder.sales"
 // grantees, guarded inside the router.
 // Planned emails on the calendar (same access, guarded inside the router).
