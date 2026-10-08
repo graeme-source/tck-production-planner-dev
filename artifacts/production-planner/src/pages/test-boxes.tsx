@@ -8,8 +8,14 @@
  *   - Delivery dates: each one works BACKWARDS to its own deadlines; orders
  *     close BY HAND ("Close orders for 16 Oct"), and the card shows the
  *     latest day they can close (specialist ingredients pull it earlier).
- *   - Every step is also a to-do on the owner's list, and the box sits on the
- *     marketing calendar with its VIP launch email and social-post note.
+ *   - Only the out-of-the-norm steps are to-dos on the owner's list (launch
+ *     checklist; per delivery: close orders, order the NEW ingredients —
+ *     one tickable line each — Zapiet off, test-or-normal). Ingredients in,
+ *     prep & dough, production, despatch and delivery are small dated
+ *     milestones, not checkboxes (Graeme, 2026-10-08).
+ *   - Closing orders queues the production from the box's SALES (preview
+ *     first, one confirm) — components/test-boxes/delivery-production.tsx.
+ *   - The box sits on the marketing calendar with its VIP launch email.
  *
  * The launch checklist's Shopify steps (products, collection, 20% code)
  * carry the app's buttons — components/test-boxes/launch-step-actions.tsx —
@@ -38,6 +44,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { RecipeDraftBadge } from "@/components/recipe-archive";
 import { LaunchStepAction, type LaunchAction } from "@/components/test-boxes/launch-step-actions";
+import { CloseOrdersModal, ProductionPanel } from "@/components/test-boxes/delivery-production";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -74,8 +81,23 @@ interface ListBox extends Box {
   nextTask: { label: string; date: string; time: string | null; past: boolean } | null;
   overdue: number;
 }
+interface SubItem {
+  key: string;
+  ingredientId: number;
+  name: string;
+  supplier: string | null;
+  orderBy: string;
+  time?: string;
+  link: string | null;
+  assumed: boolean;
+  past: boolean;
+  done: boolean;
+  doneBy: string | null;
+}
 interface Task {
   key: string;
+  /** true = a tickable to-do; false = a dated milestone (reference only). */
+  todo: boolean;
   date: string;
   time?: string;
   kind: string;
@@ -85,9 +107,9 @@ interface Task {
   link?: string;
   linkLabel?: string;
   items?: string[];
+  subItems?: SubItem[];
   assumed?: boolean;
   specialist?: boolean;
-  beforeOrdersClose?: boolean;
   clamped?: boolean;
   automated?: boolean;
   action?: LaunchAction;
@@ -110,6 +132,9 @@ interface Delivery {
   closedOn: string | null;
   closedBy: string | null;
   productionMix: ProductionMix | null;
+  safetyBatch: boolean;
+  queuedAt: string | null;
+  queuedBy: string | null;
   expectedBoxes: number | null;
   packsPerRecipe: number | null;
   tasks: Task[];
@@ -127,7 +152,9 @@ interface Schedule {
   launchTasks: Task[];
   deliveries: Delivery[];
 }
-interface Full { today: string; box: Box; schedule: Schedule; calendarEventId: number | null }
+/** What closing / reopening did to the queued production (close, tick and status writes). */
+interface Notice { queued?: boolean; blockedBy?: string[]; batches?: number; productionDate?: string; warnings: string[] }
+interface Full { today: string; box: Box; schedule: Schedule; calendarEventId: number | null; notice?: Notice | null }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}/api/test-boxes${path}`, {
@@ -413,7 +440,10 @@ function TestBoxDetail({ id }: { id: number }) {
     mutationFn: ({ taskKey, done }: { taskKey: string; done: boolean }) =>
       api<Full>(`/${id}/tasks/${taskKey}`, { method: "PUT", body: JSON.stringify({ done }) }),
     onMutate: ({ taskKey, done }) => {
-      const flip = (t: Task) => (t.key === taskKey ? { ...t, done, doneBy: done ? (me?.name ?? null) : null } : t);
+      const flip = (t: Task): Task => ({
+        ...(t.key === taskKey ? { ...t, done, doneBy: done ? (me?.name ?? null) : null } : t),
+        ...(t.subItems ? { subItems: t.subItems.map(i => (i.key === taskKey ? { ...i, done, doneBy: done ? (me?.name ?? null) : null } : i)) } : {}),
+      });
       qc.setQueryData<Full>(key, old => old ? {
         ...old,
         schedule: { ...old.schedule, launchTasks: old.schedule.launchTasks.map(flip), deliveries: old.schedule.deliveries.map(d => ({ ...d, tasks: d.tasks.map(flip) })) },
@@ -666,35 +696,50 @@ function DeliveryCard({ boxId, boxName, delivery: d, today, specialistExtraDays,
   boxId: number; boxName: string; delivery: Delivery; today: string; specialistExtraDays: number; showDone: boolean;
   onWritten: (r: Full) => void; onToggle: (taskKey: string, done: boolean) => void;
 }) {
+  const qc = useQueryClient();
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [expected, setExpected] = useState<number | null>(d.expectedBoxes);
   const dirty = useRef(false);
   useEffect(() => { if (!dirty.current) setExpected(d.expectedBoxes); }, [d.expectedBoxes]);
 
+  const written = (r: Full) => {
+    onWritten(r);
+    if (r.notice && (r.notice.warnings.length > 0 || r.notice.queued != null || r.notice.blockedBy)) setNotice(r.notice);
+    void qc.invalidateQueries({ queryKey: ["test-boxes", boxId, "production", d.id] });
+  };
   const patch = async (body: Record<string, unknown>) => {
     const r = await api<Full>(`/${boxId}/deliveries/${d.id}`, { method: "PATCH", body: JSON.stringify(body) });
-    onWritten(r);
+    written(r);
   };
   const auto = useAutosave<Record<string, unknown>>(async body => { await patch(body); dirty.current = false; }, 700);
   const now = useMutation({
     mutationFn: (body: Record<string, unknown>) => api<Full>(`/${boxId}/deliveries/${d.id}`, { method: "PATCH", body: JSON.stringify(body) }),
-    onSuccess: onWritten,
+    onSuccess: written,
   });
   const close = useMutation({
-    mutationFn: (closed: boolean) => api<Full>(`/${boxId}/deliveries/${d.id}/close`, { method: "POST", body: JSON.stringify({ closed }) }),
-    onSuccess: onWritten,
+    mutationFn: (v: { closed: boolean; safetyBatch?: boolean }) => api<Full>(`/${boxId}/deliveries/${d.id}/close`, { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: r => { written(r); setClosing(false); },
   });
   const remove = useMutation({
     mutationFn: () => api<Full>(`/${boxId}/deliveries/${d.id}`, { method: "DELETE" }),
-    onSuccess: onWritten,
+    onSuccess: written,
   });
+  const refreshBox = () => {
+    void qc.invalidateQueries({ queryKey: ["test-boxes", boxId], exact: true });
+    void qc.invalidateQueries({ queryKey: ["todos"] });
+  };
 
   const st = statusOf(d.status);
   const isOpen = d.status === "open";
   const cancelled = d.status === "cancelled";
   const pastClose = isOpen && d.latestClose < today;
-  const writeErr = (now.error ?? close.error ?? remove.error) as Error | null;
+  const writeErr = (now.error ?? (closing ? null : close.error) ?? remove.error) as Error | null;
   const saveState: AutosaveState = now.isPending || close.isPending ? "saving" : auto.state;
+  const todos = d.tasks.filter(t => t.todo);
+  const milestones = d.tasks.filter(t => !t.todo);
+  const backTo: DeliveryStatus = d.queuedAt ? "queued" : d.closedOn ? "closed" : "open";
 
   return (
     <article className={cn("rounded-2xl border-2 bg-card p-5 space-y-4", cancelled ? "border-border opacity-70" : "border-rose-500/30")}>
@@ -716,8 +761,8 @@ function DeliveryCard({ boxId, boxName, delivery: d, today, specialistExtraDays,
               <p className={cn("text-xl font-bold", pastClose && "text-amber-700 dark:text-amber-300")}>{day(d.latestClose)}</p>
               <p className="text-sm text-muted-foreground">
                 {d.closeDriver.reason === "specialist"
-                  ? <>Set by <b>{d.closeDriver.items?.join(", ")}</b> from {d.closeDriver.supplier} — a specialist ingredient (+{specialistExtraDays} working days' lead time).</>
-                  : "Production minus the orders-close days (no specialist ingredients pulling it earlier)."}
+                  ? <>Set by <b>{d.closeDriver.items?.join(", ")}</b> from {d.closeDriver.supplier} — new ingredient{(d.closeDriver.items?.length ?? 0) === 1 ? "" : "s"} (+{specialistExtraDays} working days' lead time).</>
+                  : "Production minus the orders-close days (no new ingredients pulling it earlier)."}
               </p>
             </>) : (<>
               <p className="text-sm text-muted-foreground">Orders closed</p>
@@ -725,37 +770,46 @@ function DeliveryCard({ boxId, boxName, delivery: d, today, specialistExtraDays,
             </>)}
           </div>
           {isOpen && (
-            <button onClick={() => close.mutate(true)} disabled={close.isPending}
+            <button onClick={() => { close.reset(); setClosing(true); }} disabled={close.isPending}
               className="px-5 py-3 rounded-xl bg-rose-600 text-white text-base font-bold flex items-center gap-2 hover:bg-rose-700 disabled:opacity-60">
-              {close.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Lock className="w-5 h-5" />} Close orders for {dayMonth(d.deliveryDate)}
+              <Lock className="w-5 h-5" /> Close orders for {dayMonth(d.deliveryDate)}
             </button>
           )}
-          {d.status === "closed" && (
-            <button onClick={() => close.mutate(false)} disabled={close.isPending}
+          {(d.status === "closed" || d.status === "queued") && (
+            <button onClick={() => close.mutate({ closed: false })} disabled={close.isPending}
               className="px-4 py-2.5 rounded-xl border-2 border-border text-base font-semibold hover:bg-secondary/60 disabled:opacity-60">
-              Reopen orders
+              Reopen orders{d.status === "queued" ? " (takes the queue off)" : ""}
             </button>
           )}
         </div>
       )}
 
-      {!cancelled && (
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-          <DateTile label="Ingredients in by" date={d.ingredientsInBy} />
-          <DateTile label="Prep & dough" date={d.prepDate} />
-          <DateTile label="Production" date={d.productionDate} strong />
-          <DateTile label="Despatch" date={d.despatchDate} />
-          <DateTile label="Delivery" date={d.deliveryDate} strong />
+      {notice && (
+        <div className={cn("rounded-xl border-2 px-4 py-3 space-y-1.5", notice.blockedBy?.length ? "border-amber-500/50 bg-amber-500/10" : "border-violet-500/40 bg-violet-500/10")}>
+          <div className="flex items-start gap-2">
+            <span className="flex-1 text-base font-semibold">
+              {notice.blockedBy?.length ? <>Orders closed — production not queued yet: put {notice.blockedBy.join(", ")} on the menu, then “Recount from sales”.</>
+                : notice.queued ? <>Queued {notice.batches} batch{notice.batches === 1 ? "" : "es"} for {notice.productionDate ? day(notice.productionDate) : "production"}.</>
+                : notice.queued === false ? <>Orders closed — no sales for this date, so nothing was queued.</>
+                : <>Done.</>}
+            </span>
+            <button onClick={() => setNotice(null)} aria-label="Dismiss" className="p-1"><X className="w-4 h-4" /></button>
+          </div>
+          {notice.warnings.map((w, i) => <p key={i} className="text-sm flex items-start gap-2"><AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" /> {w}</p>)}
         </div>
+      )}
+
+      {!cancelled && d.status !== "made" && d.status !== "delivered" && (
+        <ProductionPanel boxId={boxId} deliveryId={d.id} status={d.status} safetyBatch={d.safetyBatch} onSaved={refreshBox} />
       )}
 
       <div className="grid sm:grid-cols-2 gap-4 items-start">
         <div className="space-y-1.5">
-          <span className="block text-sm font-semibold">Expected boxes for this date <span className="font-normal text-muted-foreground">— optional</span></span>
+          <span className="block text-sm font-semibold">Expected boxes for this date <span className="font-normal text-muted-foreground">— optional, before orders are in</span></span>
           <NumberField value={expected} allowEmpty min={0} max={100000}
             onChange={v => { dirty.current = true; setExpected(v); auto.schedule({ expectedBoxes: v }); }}
             onBlur={() => void auto.flush()} />
-          {d.packsPerRecipe != null && <p className="text-sm">Make <b>{d.packsPerRecipe} packs of each recipe</b> (with the buffer).</p>}
+          {d.packsPerRecipe != null && <p className="text-sm">Forecast: <b>{d.packsPerRecipe} packs of each recipe</b> (with the buffer) — for ordering before orders close.</p>}
         </div>
         {!isOpen && !cancelled && (
           <div className="space-y-1.5">
@@ -765,6 +819,7 @@ function DeliveryCard({ boxId, boxName, delivery: d, today, specialistExtraDays,
                 <Chip key={k} active={d.productionMix === k} onClick={() => now.mutate({ productionMix: d.productionMix === k ? null : k })}>{label}</Chip>
               ))}
             </div>
+            <p className="text-xs text-muted-foreground">For the planner's information — the test batches are queued either way.</p>
           </div>
         )}
       </div>
@@ -772,13 +827,13 @@ function DeliveryCard({ boxId, boxName, delivery: d, today, specialistExtraDays,
       {d.warnings.length > 0 && <Warnings list={d.warnings} />}
       {writeErr && <p className="text-sm text-destructive flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> {writeErr.message}</p>}
 
-      {d.tasks.length > 0 && (
+      {todos.length > 0 && (
         <ol className="space-y-2.5">
-          {d.tasks.filter(t => showDone || !t.done).map(t => <TaskRow key={t.key} task={t} onToggle={done => onToggle(t.key, done)} />)}
+          {todos.filter(t => showDone || !t.done).map(t => <TaskRow key={t.key} task={t} onToggle={done => onToggle(t.key, done)} onToggleKey={onToggle} />)}
         </ol>
       )}
-      {!showDone && d.tasks.some(t => t.done) && (
-        <p className="text-sm text-muted-foreground">{d.tasks.filter(t => t.done).length} completed hidden — "Show completed" at the top of the checklist shows them.</p>
+      {!showDone && todos.some(t => t.done) && (
+        <p className="text-sm text-muted-foreground">{todos.filter(t => t.done).length} completed hidden — "Show completed" at the top of the checklist shows them.</p>
       )}
       {d.afterClose.length > 0 && (
         <div className="rounded-2xl border-2 border-dashed border-border p-4 space-y-1.5">
@@ -787,10 +842,25 @@ function DeliveryCard({ boxId, boxName, delivery: d, today, specialistExtraDays,
         </div>
       )}
 
+      {milestones.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-sm font-semibold text-muted-foreground">Milestones <span className="font-normal">— for reference; nothing to tick</span></p>
+          <ul className="rounded-2xl bg-secondary/40 divide-y divide-border/60">
+            {milestones.map(m => (
+              <li key={m.key} className="flex items-baseline gap-3 px-4 py-2">
+                <span className={cn("w-28 flex-shrink-0 text-sm font-bold tabular-nums", m.past ? "text-muted-foreground" : "")}>{day(m.date)}</span>
+                <span className={cn("text-sm font-semibold", (m.kind === "production" || m.kind === "delivery") && "text-rose-700 dark:text-rose-300")}>{m.label}</span>
+                {m.detail && <span className="text-sm text-muted-foreground hidden md:inline">— {m.detail}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <footer className="flex items-center gap-2 flex-wrap pt-2 border-t border-border">
         <span className="text-sm font-semibold mr-1">Status</span>
-        {DELIVERY_STATUSES.filter(s => s.key !== "open" && s.key !== "closed").map(s => (
-          <Chip key={s.key} active={d.status === s.key} onClick={() => now.mutate({ status: d.status === s.key ? (d.closedOn ? "closed" : "open") : s.key })}>{s.label}</Chip>
+        {DELIVERY_STATUSES.filter(s => s.key === "made" || s.key === "delivered" || s.key === "cancelled").map(s => (
+          <Chip key={s.key} active={d.status === s.key} onClick={() => now.mutate({ status: d.status === s.key ? backTo : s.key })}>{s.label}</Chip>
         ))}
         <span className="flex-1" />
         {!confirmRemove ? (
@@ -798,23 +868,21 @@ function DeliveryCard({ boxId, boxName, delivery: d, today, specialistExtraDays,
             <Trash2 className="w-4 h-4" /> Remove date
           </button>
         ) : (
-          <span className="flex items-center gap-2">
-            <span className="text-sm font-semibold">Remove {dayMonth(d.deliveryDate)} from “{boxName}”? Its open to-dos go too.</span>
+          <span className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-semibold">Remove {dayMonth(d.deliveryDate)} from “{boxName}”? Its open to-dos and queued production go too.</span>
             <button onClick={() => remove.mutate()} disabled={remove.isPending} className="px-3 py-2 rounded-xl bg-red-600 text-white font-semibold">Remove</button>
             <button onClick={() => setConfirmRemove(false)} className="px-3 py-2 rounded-xl border-2 border-border font-semibold">Keep</button>
           </span>
         )}
       </footer>
-    </article>
-  );
-}
 
-function DateTile({ label, date, strong }: { label: string; date: string; strong?: boolean }) {
-  return (
-    <div className={cn("rounded-2xl p-3.5", strong ? "bg-rose-600 text-white" : "bg-secondary/50")}>
-      <p className={cn("text-sm", strong ? "text-white/85" : "text-muted-foreground")}>{label}</p>
-      <p className="text-lg font-bold">{day(date)}</p>
-    </div>
+      {closing && (
+        <CloseOrdersModal boxId={boxId} deliveryId={d.id} deliveryLabel={dayMonth(d.deliveryDate)} safetyBatch={d.safetyBatch}
+          onClose={() => setClosing(false)} pending={close.isPending}
+          error={close.error ? (close.error as Error).message : null}
+          onConfirm={safetyBatch => close.mutate({ closed: true, safetyBatch })} />
+      )}
+    </article>
   );
 }
 
@@ -832,7 +900,7 @@ function ShowDoneToggle({ showDone, onChange }: { showDone: boolean; onChange: (
   );
 }
 
-function TaskRow({ task: t, onToggle, extra }: { task: Task; onToggle: (done: boolean) => void; extra?: React.ReactNode }) {
+function TaskRow({ task: t, onToggle, onToggleKey, extra }: { task: Task; onToggle: (done: boolean) => void; onToggleKey?: (key: string, done: boolean) => void; extra?: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const overdue = t.past && !t.done;
   return (
@@ -856,9 +924,8 @@ function TaskRow({ task: t, onToggle, extra }: { task: Task; onToggle: (done: bo
           {overdue && <span className="px-2 py-0.5 rounded-full bg-red-600 text-white text-xs font-bold uppercase">Overdue</span>}
           {t.clamped && !t.done && <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-300 text-xs font-semibold">Tight timeline — due straight away</span>}
           {t.automated && !t.done && <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 text-xs font-semibold">The app does this — ticks itself</span>}
-          {t.specialist && <span className="px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-800 dark:text-violet-300 text-xs font-semibold">Specialist — extra lead time</span>}
+          {t.specialist && <span className="px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-800 dark:text-violet-300 text-xs font-semibold">New ingredients — extra lead time</span>}
           {t.assumed && <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-300 text-xs font-semibold">Lead time assumed</span>}
-          {t.beforeOrdersClose && !t.done && <span className="px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-800 dark:text-sky-300 text-xs font-semibold">Before orders close — order on forecast + buffer</span>}
         </p>
         {t.how && <p className="text-sm text-muted-foreground">{t.how}</p>}
         {t.detail && <p className="text-sm text-muted-foreground">{t.detail}</p>}
@@ -867,6 +934,38 @@ function TaskRow({ task: t, onToggle, extra }: { task: Task; onToggle: (done: bo
           <Link href={t.link} className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary underline underline-offset-2">
             {t.linkLabel ?? "Open Queued production"} <ExternalLink className="w-3.5 h-3.5" />
           </Link>
+        )}
+        {t.subItems && t.subItems.length > 0 && (
+          <ul className="space-y-1.5 pt-1">
+            {t.subItems.map(i => {
+              const late = i.past && !i.done;
+              return (
+                <li key={i.key} className={cn("rounded-xl border-2 flex items-center gap-3 px-3 py-2 flex-wrap", i.done ? "border-border opacity-60" : late ? "border-red-500/50" : "border-border")}>
+                  <button onClick={() => onToggleKey?.(i.key, !i.done)} aria-pressed={i.done} aria-label={i.done ? `Untick ${i.name}` : `Tick ${i.name} as ordered`}
+                    className={cn("w-9 h-9 rounded-lg border-2 flex items-center justify-center flex-shrink-0",
+                      i.done ? "bg-primary border-primary text-primary-foreground" : "border-border hover:border-primary")}>
+                    {i.done && <Check className="w-4 h-4" />}
+                  </button>
+                  <span className="flex-1 min-w-[10rem]">
+                    <span className={cn("text-base font-semibold", i.done && "line-through")}>{i.name}</span>
+                    <span className="block text-sm text-muted-foreground">
+                      {i.supplier ?? "No supplier set"} · order by <b className={cn(late && "text-red-600")}>{day(i.orderBy)}{i.time ? `, ${i.time}` : ""}</b>
+                      {i.assumed && " · lead time assumed"}
+                      {i.done && i.doneBy && ` · ordered (ticked by ${firstName(i.doneBy)})`}
+                    </span>
+                  </span>
+                  {i.link ? (
+                    <a href={i.link} target="_blank" rel="noopener noreferrer"
+                      className="px-3 py-2 rounded-xl border-2 border-border text-sm font-semibold inline-flex items-center gap-1.5 hover:bg-secondary/60">
+                      Order from {i.supplier ?? "supplier"} <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">No ordering link set on the ingredient</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
         )}
         {t.items && t.items.length > 0 && (
           <div>
