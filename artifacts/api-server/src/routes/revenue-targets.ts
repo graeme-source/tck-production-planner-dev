@@ -123,7 +123,7 @@ async function applyTargetChanges(userId: number, changes: TargetChange[]): Prom
     const below = stretchBelowMinimum(after, window);
     if (below.length > 0) {
       throw new TargetsInvalid(
-        `A stretch target has to be above the minimum (${formatGbp(after.minimum)}) — check ${below.map(m => monthLabel(m)).join(", ")}.`,
+        `A stretch target has to be above the minimum (${formatGbp(after.minimum)}) — check ${monthLabel(below[0]!)}${below.length > 1 ? ` and ${below.length - 1} later month${below.length === 2 ? "" : "s"}` : ""}.`,
       );
     }
     // Only what really differs (a no-op change records nothing).
