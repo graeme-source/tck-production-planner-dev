@@ -45,6 +45,8 @@ import { revenueForTags } from "@/lib/order-type-totals";
 import { SalesTrendPanel, TrendChip } from "@/components/sales-trend-panel";
 import { DispatchOrdersPanel } from "@/components/dispatch-orders-panel";
 import type { TrendMetricId } from "@/lib/sales-trend-view";
+import { TargetsProgress } from "@/components/revenue-targets/targets-progress";
+import { EditTargetsButton } from "@/components/revenue-targets/edit-targets-dialog";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -399,11 +401,17 @@ function KpiCard({
   loading,
   error,
   trend,
+  extra,
+  className,
 }: {
   title: string;
   /** Small grey words under the title that pin down what it means, e.g.
    *  "Sales this month" under "Average Daily". */
   qualifier?: string;
+  /** More below the figure (e.g. progress against the monthly targets). */
+  extra?: React.ReactNode;
+  /** Extra grid classes, e.g. a wider tile. */
+  className?: string;
   value: string;
   sub?: string;
   icon: React.ElementType;
@@ -414,7 +422,7 @@ function KpiCard({
   trend?: TrendToggle;
 }) {
   return (
-    <TileShell trend={trend} className="glass-panel p-6 rounded-2xl flex flex-col gap-3">
+    <TileShell trend={trend} className={`glass-panel p-6 rounded-2xl flex flex-col gap-3 ${className ?? ""}`}>
       <div className="flex items-center gap-3">
         <div className={`p-3 rounded-xl ${bg} ${color}`}>
           <Icon className="w-5 h-5" />
@@ -436,6 +444,7 @@ function KpiCard({
         <>
           <p className="text-3xl font-display font-bold">{value}</p>
           {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
+          {extra}
         </>
       )}
       <TrendFooter trend={trend} />
@@ -1194,8 +1203,15 @@ function FounderDashboard() {
 
       {/* ── Section 1: Fixed At-a-Glance KPIs (always this month) ──────────── */}
       <section>
-        {sectionHeading("At a Glance — " + format(today, "MMMM yyyy"))}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 grid-flow-row-dense">
+        {/* The monthly targets live here (Graeme, 2026-10-08): progress on
+            the Month to Date tile, and the founder's Edit targets button. */}
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+          <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            {"At a Glance — " + format(today, "MMMM yyyy")}
+          </h2>
+          <EditTargetsButton />
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 grid-flow-row-dense">
           <KpiCard
             title="Today's Sales"
             value={monthSummary ? formatGBP(monthSummary.todayRevenue) : "—"}
@@ -1232,6 +1248,16 @@ function FounderDashboard() {
             loading={monthLoading}
             error={!!monthError}
             trend={glanceToggle("monthToDate")}
+            // Two columns wide: sales so far against the minimum and this
+            // month's stretch, and the projected month-end against each.
+            className="sm:col-span-2"
+            extra={monthSummary ? (
+              <TargetsProgress
+                compact
+                monthToDate={monthSummary.totalRevenue}
+                projected={monthSummary.estimatedMonthlyRevenue}
+              />
+            ) : undefined}
           />
           {glanceTrend === "monthToDate" && (
             <div className="col-span-full">
