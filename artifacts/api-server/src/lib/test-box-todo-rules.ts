@@ -2,9 +2,13 @@
  * Test-box tasks ↔ the owner's to-do list — the pure rules (tested in
  * test-box-todo-rules.test.ts; the database side is test-box-todos.ts).
  *
- * SOURCE OF TRUTH: the tick on the box (test_box_tasks.done). Every task on
- * the box — launch checklist and each delivery's chain — is SHOWN as a
- * to-do on the box owner's list, linked by test_box_tasks.todo_task_id.
+ * SOURCE OF TRUTH: the tick on the box (test_box_tasks.done). Every TO-DO
+ * task on the box (becomesTodo in test-box-schedule.ts: the launch
+ * checklist and each delivery's out-of-the-norm steps — not the milestones)
+ * is SHOWN as a to-do on the box owner's list, linked by
+ * test_box_tasks.todo_task_id. Milestones (prep, production, despatch…) are
+ * never wanted, so any open to-do made for one before 2026-10-08 is removed
+ * by the rule below; done ones and every tick row are kept.
  * Ticking either side writes the tick and sets the to-do to match in the
  * same transaction; this plan then re-derives every to-do from the ticks
  * and the dates whenever the box changes, so the two can't drift:
@@ -17,7 +21,7 @@
  *     cleared, supplier dropped) or whose box is gone/cancelled is removed
  *     if still open — the tick row stays, so nothing ticked is lost.
  */
-import { dayMonth, type ScheduleTask } from "./test-box-schedule";
+import { dayMonth, shortDay, type ScheduleTask } from "./test-box-schedule";
 
 export interface LinkState { key: string; done: boolean; todoId: number | null }
 export interface TodoState { id: number; status: "open" | "done"; assigneeId: number; title: string; dueDate: string | null; notes: string | null }
@@ -40,15 +44,44 @@ export function todoTitle(boxName: string, task: Pick<ScheduleTask, "label">, de
   return t.slice(0, 300);
 }
 
-/** The to-do's notes: how / detail, ingredients, and a pointer back. */
-export function todoNotes(task: Pick<ScheduleTask, "how" | "detail" | "items" | "time">): string {
+/** The to-do's notes: how / detail, ingredients (one line each for the new
+ *  ingredients to order: supplier, order-by, where to order), and a pointer back. */
+export function todoNotes(task: Pick<ScheduleTask, "how" | "detail" | "items" | "time" | "subItems">): string {
   return [
     task.time ? `By ${task.time}.` : "",
     task.how ?? "",
     task.detail ?? "",
     task.items?.length ? `Ingredients: ${task.items.join(", ")}.` : "",
+    ...(task.subItems ?? []).map(i =>
+      `• ${i.name} — ${i.supplier ?? "no supplier set"}, order by ${shortDay(i.orderBy)}${i.time ? ` ${i.time}` : ""}${i.link ? ` — ${i.link}` : ""}`),
+    task.subItems?.length ? "Tick each ingredient on the box as it's ordered; this ticks itself when they all are." : "",
     "From the test box — tick it here or on the box; both stay in step.",
   ].filter(Boolean).join("\n").slice(0, 5000);
+}
+
+/**
+ * Ticking inside "Order the new ingredients for …" (pure; the database side
+ * is cascadeOrderTicks in test-box-todos.ts):
+ *   - ticking the parent ticks (or unticks) every ingredient line with it;
+ *   - ticking an ingredient line ticks the parent once every line is done,
+ *     and unticking one reopens the parent.
+ * Returns the OTHER ticks to write (the one ticked is already written).
+ */
+export function orderTickCascade(input: {
+  key: string;
+  done: boolean;
+  parentKey: string;
+  subKeys: readonly string[];
+  doneKeys: ReadonlySet<string>;
+}): Array<{ key: string; done: boolean }> {
+  const { key, done, parentKey, subKeys, doneKeys } = input;
+  if (subKeys.length === 0) return [];
+  if (key === parentKey) {
+    return subKeys.filter(k => doneKeys.has(k) !== done).map(k => ({ key: k, done }));
+  }
+  if (!subKeys.includes(key)) return [];
+  const allDone = subKeys.every(k => (k === key ? done : doneKeys.has(k)));
+  return doneKeys.has(parentKey) !== allDone ? [{ key: parentKey, done: allDone }] : [];
 }
 
 export function planTodoSync(input: {

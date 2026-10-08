@@ -25,14 +25,14 @@ import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { validate } from "../middleware/validate";
 import { requireFounderArea } from "../middleware/founder-area-access";
 import {
-  loadBoxDeliveries, loadBoxRecipes, loadDoneKeys, loadSupplierLeads, londonToday, scheduleFrom, syncTestBox,
+  loadBoxDeliveries, loadBoxRecipes, loadDoneKeys, loadSpecialistIngredients, londonToday, scheduleForBox, scheduleFrom, syncTestBox,
   type Actor, type DeliveryRow, type TestBoxRow, type Tx,
 } from "../lib/test-box-data";
-import { setDeliveryClosed, tickTestBoxTask } from "../lib/test-box-todos";
+import { cascadeOrderTicks, setDeliveryClosed, tickTestBoxTask } from "../lib/test-box-todos";
 import { salesAreaPeople } from "../lib/sales-area-people";
 import {
   DELIVERY_STATUSES, PRODUCTION_MIXES, QUEUE_AHEAD_DAYS, SPECIALIST_EXTRA_WORKING_DAYS, VIP_GUARANTEE_HOURS,
-  allTasks, deliveryTaskKey, type ScheduleTask, type TestBoxSchedule,
+  deliveryTaskKey, todoTasks, type ScheduleTask, type TestBoxSchedule,
 } from "../lib/test-box-schedule";
 
 const router: IRouter = Router();
@@ -93,6 +93,12 @@ function withTick(t: ScheduleTask, ticks: Map<string, Tick>) {
   const tick = ticks.get(t.key);
   return {
     ...t,
+    ...(t.subItems ? {
+      subItems: t.subItems.map(i => {
+        const st = ticks.get(i.key);
+        return { ...i, done: st?.done ?? false, doneBy: st?.done ? st.doneByName : null };
+      }),
+    } : {}),
     done: tick?.done ?? false,
     doneBy: tick?.done ? tick.doneByName : null,
     doneAt: tick?.done && tick.doneAt ? tick.doneAt.toISOString() : null,
@@ -129,10 +135,10 @@ async function fullBox(id: number) {
   if (!box || box.deletedAt) return null;
   const recipes = (await loadBoxRecipes(db, [id])).get(id) ?? [];
   const deliveries = (await loadBoxDeliveries(db, [id])).get(id) ?? [];
-  const suppliers = await loadSupplierLeads(db, recipes.map(r => r.id));
+  const specialists = await loadSpecialistIngredients(db, recipes.map(r => r.id));
   const tickRows = await db.select().from(testBoxTasksTable).where(eq(testBoxTasksTable.testBoxId, id));
   const ticks = new Map(tickRows.map(t => [t.taskKey, t]));
-  const schedule = scheduleFrom(box, recipes, deliveries, suppliers, tickRows.filter(t => t.done).map(t => t.taskKey));
+  const schedule = scheduleFrom(box, recipes, deliveries, specialists, tickRows.filter(t => t.done).map(t => t.taskKey));
   const [event] = await db.select({ id: marketingEventsTable.id }).from(marketingEventsTable)
     .where(and(eq(marketingEventsTable.testBoxId, id), isNull(marketingEventsTable.deletedAt)));
   const owners = await ownerNames([box.ownerId ?? box.createdById].filter((x): x is number => x != null));
@@ -158,9 +164,10 @@ router.get("/", async (_req: Request, res: Response) => {
     const r = recipes.get(b.id) ?? [];
     const ds = deliveries.get(b.id) ?? [];
     const done = await loadDoneKeys(db, b.id);
-    const schedule = scheduleFrom(b, r, ds, await loadSupplierLeads(db, r.map(x => x.id)), done);
+    const schedule = scheduleFrom(b, r, ds, await loadSpecialistIngredients(db, r.map(x => x.id)), done);
     const doneSet = new Set(done);
-    const tasks = allTasks(schedule);
+    // Progress counts the to-dos only — milestones aren't ticked.
+    const tasks = todoTasks(schedule);
     const open = tasks.filter(t => !doneSet.has(t.key)).sort((a, c) => a.date.localeCompare(c.date));
     out.push({
       ...boxJson(b, r, owners),
@@ -475,7 +482,10 @@ router.put("/:id/tasks/:key", validate(TickBody), async (req: Request, res: Resp
       const d = await deliveryOf(tx, id, Number(m[1]));
       if (d) await setDeliveryClosed(tx, d, done, user);
     }
+    // "Order the new ingredients" and its ingredient lines tick together.
+    const before = new Set(await loadDoneKeys(tx, id));
     await tickTestBoxTask(tx, id, key, done, user);
+    await cascadeOrderTicks(tx, id, key, done, await scheduleForBox(tx, box), before, user);
     await syncTestBox(tx, id, user);
     return 200;
   });

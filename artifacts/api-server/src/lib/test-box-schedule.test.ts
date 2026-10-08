@@ -2,14 +2,17 @@ import { describe, it, expect } from "vitest";
 import {
   buildTestBoxSchedule, buildDeliverySchedule, buildLaunchTasks, calendarMilestones, calendarSpan, allTasks,
   latestOrderDay, prevWorkingDay, subtractWorkingDays, supplierOrderBy, vipWindowEnd, deliveryTaskKey,
+  becomesTodo, orderSubParent, todoTasks,
   DEFAULT_LEAD_DAYS, SPECIALIST_EXTRA_WORKING_DAYS, VIP_GUARANTEE_HOURS,
-  type DeliveryInput, type ScheduleInput, type SupplierLead,
+  type DeliveryInput, type ScheduleInput, type SpecialistIngredient,
 } from "./test-box-schedule";
 import { LAUNCH_CHECKLIST, launchTaskKey } from "./test-box-launch-checklist";
 
-const daily: SupplierLead = { supplierId: 1, name: "Daily Foods", leadTimeDays: 1, cutoffTime: "17:00", orderFrequency: "daily", orderDays: null, items: ["Flour"], specialistItems: [] };
-const weekly: SupplierLead = { supplierId: 2, name: "Weekly Meats", leadTimeDays: 2, cutoffTime: "16:00", orderFrequency: "weekly", orderDays: "Monday", items: ["Pork"], specialistItems: [] };
-const none: SupplierLead = { supplierId: null, name: "No supplier set", leadTimeDays: null, cutoffTime: null, orderFrequency: null, orderDays: null, items: ["Sage"], specialistItems: [] };
+// New ("specialist") ingredients — the only ones the box orders.
+const pepperoni: SpecialistIngredient = { ingredientId: 300, name: "Classic Sliced Pepperoni", supplierId: 1, supplierName: "Salvo 1968", leadTimeDays: 3, cutoffTime: "14:00", orderFrequency: "daily", orderDays: null, orderingUrl: "https://example.test/pepperoni" };
+const crumble: SpecialistIngredient = { ...pepperoni, ingredientId: 326, name: "Hot Paprika Crumble", orderingUrl: null };
+const weeklyHerb: SpecialistIngredient = { ingredientId: 9, name: "Odd herb", supplierId: 2, supplierName: "Weekly Herbs", leadTimeDays: 1, cutoffTime: "16:00", orderFrequency: "weekly", orderDays: "Monday", orderingUrl: null };
+const noSupplier: SpecialistIngredient = { ingredientId: 11, name: "Sage", supplierId: null, supplierName: null, leadTimeDays: null, cutoffTime: null, orderFrequency: null, orderDays: null, orderingUrl: null };
 
 const d1: DeliveryInput = { id: 7, deliveryDate: "2026-10-17", expectedBoxes: 40, status: "open", addedOn: "2026-09-29", closedOn: null, productionMix: null };
 
@@ -22,7 +25,7 @@ const base: ScheduleInput = {
   bufferDays: 2,
   bufferPct: 25,
   recipes: ["Recipe A", "Recipe B"],
-  suppliers: [daily, weekly, none],
+  specialists: [],
   deliveries: [d1],
   today: "2026-09-29",
 };
@@ -63,37 +66,55 @@ describe("one delivery's chain", () => {
     expect(byKey["d7:close-orders"]).toMatchObject({ date: "2026-10-13", label: "Close orders for 17 Oct (latest)" });
   });
 
-  it("works out each supplier's order-by date, keyed to the delivery", () => {
-    expect(byKey["d7:order-supplier-1"]).toMatchObject({ date: "2026-10-09", time: "17:00", beforeOrdersClose: true, deliveryId: 7 });
-    expect(byKey["d7:order-supplier-2"]).toMatchObject({ date: "2026-10-05", time: "16:00" }); // Mon only
-    expect(byKey["d7:order-supplier-none"]).toMatchObject({ date: "2026-10-07", assumed: true });
-    expect(byKey["d7:order-supplier-none"].detail).toContain(`${DEFAULT_LEAD_DAYS} working days`);
+  it("no new ingredients → no ordering step at all (normal ordering covers the rest)", () => {
+    expect(s.tasks.some(t => t.kind === "ingredients" && t.todo)).toBe(false);
+    expect(s.tasks.some(t => /:order-(new|supplier)/.test(t.key))).toBe(false);
   });
 
-  it("specialist ingredients get +2 working days and set the latest close date", () => {
-    const special: SupplierLead = { ...daily, items: ["Flour"], specialistItems: ["Properoni pepperoni"] };
-    const sp = buildDeliverySchedule(d1, { ...base, suppliers: [special, weekly] });
-    const t = Object.fromEntries(sp.tasks.map(x => [x.key, x]));
-    // Normal: in by Mon 12 − 1 = Fri 9. Specialist: − (1 + 2) = Wed 7.
+  it("new ingredients: ONE to-do per delivery, a tickable line per ingredient with supplier, order-by and link", () => {
+    const sp = buildDeliverySchedule(d1, { ...base, specialists: [pepperoni, crumble] });
+    const t = sp.tasks.find(x => x.key === "d7:order-new")!;
+    // In by Mon 12 − (3 + 2) working days = Mon 5.
     expect(SPECIALIST_EXTRA_WORKING_DAYS).toBe(2);
-    expect(t["d7:order-supplier-1"].date).toBe("2026-10-09");
-    expect(t["d7:order-supplier-1-specialist"]).toMatchObject({ date: "2026-10-07", specialist: true, items: ["Properoni pepperoni"] });
-    expect(sp.latestClose).toBe("2026-10-07");
-    expect(sp.closeDriver).toEqual({ reason: "specialist", supplier: "Daily Foods", items: ["Properoni pepperoni"] });
-    expect(t["d7:close-orders"].detail).toContain("Properoni pepperoni");
+    expect(t).toMatchObject({ date: "2026-10-05", time: "14:00", todo: true, specialist: true, kind: "ingredients" });
+    expect(t.label).toBe("Order the new ingredients for 17 Oct: Classic Sliced Pepperoni, Hot Paprika Crumble");
+    expect(t.subItems).toEqual([
+      { key: "d7:order-new-i300", ingredientId: 300, name: "Classic Sliced Pepperoni", supplier: "Salvo 1968", orderBy: "2026-10-05", time: "14:00", link: "https://example.test/pepperoni", assumed: false, past: false },
+      { key: "d7:order-new-i326", ingredientId: 326, name: "Hot Paprika Crumble", supplier: "Salvo 1968", orderBy: "2026-10-05", time: "14:00", link: null, assumed: false, past: false },
+    ]);
+    expect(sp.tasks.filter(x => x.kind === "ingredients" && x.todo)).toHaveLength(1);
+  });
+
+  it("the earliest new-ingredient order-by sets the latest close", () => {
+    const sp = buildDeliverySchedule(d1, { ...base, specialists: [pepperoni, crumble] });
+    expect(sp.latestClose).toBe("2026-10-05");
+    expect(sp.closeDriver).toEqual({ reason: "specialist", supplier: "Salvo 1968", items: ["Classic Sliced Pepperoni", "Hot Paprika Crumble"] });
+    expect(sp.tasks.find(x => x.key === "d7:close-orders")!.detail).toContain("Classic Sliced Pepperoni");
+  });
+
+  it("each line rolls to its supplier's order day; a line with no supplier is flagged assumed", () => {
+    const sp = buildDeliverySchedule(d1, { ...base, specialists: [weeklyHerb, noSupplier] });
+    const t = sp.tasks.find(x => x.key === "d7:order-new")!;
+    const byName = Object.fromEntries(t.subItems!.map(i => [i.name, i]));
+    // Weekly herb: in by Mon 12 − 3 = Wed 7 → back to Mon 5. No supplier: − (3 + 2) = Mon 5.
+    expect(byName["Odd herb"]).toMatchObject({ orderBy: "2026-10-05", time: "16:00", assumed: false });
+    expect(byName["Sage"]).toMatchObject({ orderBy: "2026-10-05", assumed: true, supplier: null });
+    expect(byName["Sage"].time).toBeUndefined();
+    expect(t.assumed).toBe(true);
+    expect(sp.warnings.join(" ")).toContain("no supplier set");
   });
 
   it("a specialist order-by later than the standard close never pushes the close later", () => {
-    const quick: SupplierLead = { ...daily, leadTimeDays: 0, items: [], specialistItems: ["Odd herb"] };
-    const sp = buildDeliverySchedule(d1, { ...base, suppliers: [quick], ordersCloseDays: 6 });
+    const quick: SpecialistIngredient = { ...pepperoni, leadTimeDays: 0 };
+    const sp = buildDeliverySchedule(d1, { ...base, specialists: [quick], ordersCloseDays: 6 });
     expect(sp.latestClose).toBe(subtractWorkingDays("2026-10-15", 6));
     expect(sp.closeDriver.reason).toBe("standard");
   });
 
   it("a bigger buffer brings the ingredient deadlines forward", () => {
-    const wider = buildDeliverySchedule(d1, { ...base, bufferDays: 4 });
+    const wider = buildDeliverySchedule(d1, { ...base, bufferDays: 4, specialists: [pepperoni] });
     expect(wider.ingredientsInBy).toBe("2026-10-08");
-    expect(wider.tasks.find(t => t.key === "d7:order-supplier-1")!.date).toBe("2026-10-07");
+    expect(wider.tasks.find(t => t.key === "d7:order-new")!.date).toBe("2026-10-01");
   });
 
   it("packs to make = expected boxes plus the buffer, rounded up", () => {
@@ -114,20 +135,22 @@ describe("one delivery's chain", () => {
   it("while open, the after-close steps are listed but are not tasks yet", () => {
     expect(s.tasks.some(t => t.key === "d7:zapiet-off")).toBe(false);
     expect(s.afterClose.join(" ")).toContain("Turn off 17 Oct in Zapiet");
+    expect(s.afterClose.join(" ")).toContain("queued from the box's sales, automatically");
   });
 
-  it("closing unlocks Zapiet off, queue production and the test/normal decision", () => {
+  it("closing unlocks Zapiet off and the test/normal decision — no 'queue the production' step (it's automatic)", () => {
     const closed = buildDeliverySchedule({ ...d1, status: "closed", closedOn: "2026-10-12" }, base);
     const t = Object.fromEntries(closed.tasks.map(x => [x.key, x]));
-    expect(t["d7:zapiet-off"]).toMatchObject({ date: "2026-10-12", label: "Turn off 17 Oct in Zapiet for 'Autumn Box'" });
-    expect(t["d7:queue-production"]).toMatchObject({ date: "2026-10-12", label: "Queue the test production for Thu 15 Oct", link: "/plans/queued?date=2026-10-15" });
+    expect(t["d7:zapiet-off"]).toMatchObject({ date: "2026-10-12", todo: true, label: "Turn off 17 Oct in Zapiet for 'Autumn Box'" });
+    expect(t["d7:queue-production"]).toBeUndefined();
+    expect(t["d7:decide-mix"]).toMatchObject({ date: "2026-10-12", todo: true });
     expect(t["d7:decide-mix"].label).toContain("test batches only, or test + normal production");
     expect(closed.afterClose).toEqual([]);
   });
 
-  it("closing early: the queue step waits until a week before production", () => {
+  it("closing early: the decision waits until a week before production", () => {
     const closed = buildDeliverySchedule({ ...d1, status: "closed", closedOn: "2026-10-01" }, base);
-    expect(closed.tasks.find(t => t.key === "d7:queue-production")!.date).toBe("2026-10-08");
+    expect(closed.tasks.find(t => t.key === "d7:decide-mix")!.date).toBe("2026-10-08");
   });
 
   it("a cancelled delivery has no tasks and no warnings", () => {
@@ -136,10 +159,10 @@ describe("one delivery's chain", () => {
     expect(c.warnings).toEqual([]);
   });
 
-  it("warns about a non-delivery day, missing suppliers and no recipes", () => {
+  it("warns about a non-delivery day and no recipes", () => {
     expect(buildDeliverySchedule({ ...d1, deliveryDate: "2026-10-19" }, base).warnings.join(" ")).toContain("Tuesday to Saturday");
-    expect(s.warnings.join(" ")).toContain("no supplier set");
-    expect(buildDeliverySchedule(d1, { ...base, recipes: [], suppliers: [] }).warnings.join(" ")).toContain("No recipes yet");
+    expect(s.warnings.join(" ")).not.toContain("no supplier set");
+    expect(buildDeliverySchedule(d1, { ...base, recipes: [], specialists: [] }).warnings.join(" ")).toContain("No recipes yet");
   });
 
   it("warns when still open past the latest close date", () => {
@@ -149,11 +172,14 @@ describe("one delivery's chain", () => {
     expect(closed.warnings.join(" ")).not.toContain("Still open");
   });
 
-  it("past deadlines count only when not ticked", () => {
-    const soon = { ...base, today: "2026-10-10" };
+  it("past deadlines count only when they're to-dos and not ticked (milestones just happen)", () => {
+    const soon = { ...base, today: "2026-10-10", specialists: [pepperoni] };
     expect(buildDeliverySchedule(d1, soon).warnings.join(" ")).toContain("already behind us");
-    const ticked = buildDeliverySchedule(d1, { ...soon, doneKeys: ["d7:order-supplier-1", "d7:order-supplier-2", "d7:order-supplier-none"] });
+    const ticked = buildDeliverySchedule(d1, { ...soon, doneKeys: ["d7:order-new", "d7:close-orders"] });
     expect(ticked.warnings.join(" ")).not.toContain("already behind us");
+    // Past milestones (ingredients in Mon 12) never nag.
+    const later = buildDeliverySchedule({ ...d1, status: "closed", closedOn: "2026-10-09" }, { ...base, today: "2026-10-13", doneKeys: ["d7:close-orders", "d7:zapiet-off", "d7:decide-mix"] });
+    expect(later.warnings.join(" ")).not.toContain("already behind us");
   });
 
   it("warns when orders would have to close inside the VIP 48 hours", () => {
@@ -161,6 +187,41 @@ describe("one delivery's chain", () => {
     // Production Wed 7 → close Mon 5, before the window ends Wed 7.
     expect(tooSoon.latestClose).toBe("2026-10-05");
     expect(tooSoon.warnings.join(" ")).toContain(`guaranteed ${VIP_GUARANTEE_HOURS} hours`);
+  });
+});
+
+describe("to-do or milestone (Graeme, 2026-10-08: only what's outside the norm)", () => {
+  const sp = buildDeliverySchedule({ ...d1, status: "closed", closedOn: "2026-10-05" }, { ...base, specialists: [pepperoni] });
+  const kinds = Object.fromEntries(sp.tasks.map(t => [t.key.split(":")[1], t.todo]));
+
+  it("close orders, order the new ingredients, Zapiet off and the test/normal decision are to-dos", () => {
+    expect(kinds).toMatchObject({ "close-orders": true, "order-new": true, "zapiet-off": true, "decide-mix": true });
+  });
+
+  it("ingredients in, prep & dough, production, despatch and delivery are milestones", () => {
+    expect(kinds).toMatchObject({ "ingredients-in": false, prep: false, production: false, despatch: false, delivery: false });
+  });
+
+  it("every launch-checklist step is a to-do; the rule reads the key, not the label", () => {
+    expect(buildLaunchTasks(base).tasks.every(t => t.todo)).toBe(true);
+    expect(becomesTodo({ kind: "launch", key: "launch:anything" })).toBe(true);
+    expect(becomesTodo({ kind: "production", key: "d3:production" })).toBe(false);
+    expect(becomesTodo({ kind: "ingredients", key: "d3:order-supplier-4" })).toBe(false); // the old per-supplier steps
+    expect(becomesTodo({ kind: "production", key: "d3:queue-production" })).toBe(false);  // automatic now
+    expect(becomesTodo({ kind: "orders", key: "d3:close-orders" })).toBe(true);
+  });
+
+  it("todoTasks leaves the milestones out", () => {
+    const box = buildTestBoxSchedule({ ...base, specialists: [pepperoni] });
+    expect(todoTasks(box).every(t => t.todo)).toBe(true);
+    expect(todoTasks(box).some(t => t.key === "d7:prep")).toBe(false);
+    expect(allTasks(box).some(t => t.key === "d7:prep")).toBe(true);
+  });
+
+  it("an ingredient line knows its parent", () => {
+    expect(orderSubParent("d12:order-new-i300")).toBe("d12:order-new");
+    expect(orderSubParent("d12:order-new")).toBeNull();
+    expect(orderSubParent("launch:order-new-i3")).toBeNull();
   });
 });
 
@@ -303,7 +364,7 @@ describe("the whole box", () => {
   it("the Properoni example: launch Fri 2 Oct, deliver Fri 16 Oct", () => {
     const s = buildTestBoxSchedule({
       ...base, boxName: "Properoni Test Box", launchDate: "2026-10-02", plannedOn: "2026-10-02", today: "2026-10-02",
-      recipes: [], suppliers: [],
+      recipes: [], specialists: [],
       deliveries: [{ id: 1, deliveryDate: "2026-10-16", expectedBoxes: null, status: "open", addedOn: "2026-10-02", closedOn: null, productionMix: null }],
     });
     const d = s.deliveries[0];

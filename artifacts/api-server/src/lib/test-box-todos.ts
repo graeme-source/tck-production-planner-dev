@@ -19,8 +19,8 @@
 import { db, testBoxesTable, testBoxDeliveriesTable, testBoxTasksTable, usersTable } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
 import { intArrayLiteral } from "./int-array-literal";
-import { allTasks, type TestBoxSchedule } from "./test-box-schedule";
-import { planTodoSync, todoNotes, todoTitle, type TodoState, type WantedTodo } from "./test-box-todo-rules";
+import { orderSubParent, todoTasks, type TestBoxSchedule } from "./test-box-schedule";
+import { orderTickCascade, planTodoSync, todoNotes, todoTitle, type TodoState, type WantedTodo } from "./test-box-todo-rules";
 import type { Actor, DeliveryRow, TestBoxRow, Tx } from "./test-box-data";
 
 /** Task keys that, ticked, close the delivery's orders (and unticked, reopen them). */
@@ -37,7 +37,8 @@ export async function syncTestBoxTodos(
   tx: Tx, box: TestBoxRow, schedule: TestBoxSchedule, deliveries: DeliveryRow[], user: Actor, active: boolean,
 ): Promise<void> {
   const deliveryDate = new Map(deliveries.map(d => [d.id, d.deliveryDate]));
-  const wanted: WantedTodo[] = allTasks(schedule).map(t => ({
+  // Only the out-of-the-norm tasks are to-dos; milestones never are.
+  const wanted: WantedTodo[] = todoTasks(schedule).map(t => ({
     key: t.key,
     title: todoTitle(box.name, t, t.deliveryId != null ? deliveryDate.get(t.deliveryId) : null),
     dueDate: t.date,
@@ -111,6 +112,23 @@ export async function tickTestBoxTask(tx: Tx, boxId: number, key: string, done: 
   return row;
 }
 
+/**
+ * Keep "Order the new ingredients for …" and its ingredient lines in step
+ * after `key` was ticked (orderTickCascade has the rule). `schedule` must be
+ * the box's current schedule; `doneKeys` the ticks BEFORE this one.
+ */
+export async function cascadeOrderTicks(
+  tx: Tx, boxId: number, key: string, done: boolean, schedule: TestBoxSchedule, doneKeys: ReadonlySet<string>, user: Actor,
+): Promise<void> {
+  const parentKey = orderSubParent(key) ?? (/^d\d+:order-new$/.test(key) ? key : null);
+  if (!parentKey) return;
+  const parent = schedule.deliveries.flatMap(d => d.tasks).find(t => t.key === parentKey);
+  const subKeys = parent?.subItems?.map(i => i.key) ?? [];
+  for (const w of orderTickCascade({ key, done, parentKey, subKeys, doneKeys })) {
+    await tickTestBoxTask(tx, boxId, w.key, w.done, user);
+  }
+}
+
 /** Close (or reopen) a delivery's orders. Returns false if nothing changed. */
 export async function setDeliveryClosed(tx: Tx, delivery: DeliveryRow, closed: boolean, user: Actor): Promise<boolean> {
   if (closed && delivery.status !== "open") return false;
@@ -135,12 +153,14 @@ export async function onTodoDoneChanged(todoId: number, done: boolean, userId: n
     if (!link) return;
     const [u] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId));
     const user = { id: userId, name: u?.name ?? "Someone" };
-    const { syncTestBox } = await import("./test-box-data");
+    const { loadDoneKeys, scheduleForBox, syncTestBox } = await import("./test-box-data");
     await db.transaction(async (tx) => {
       const [box] = await tx.select().from(testBoxesTable).where(eq(testBoxesTable.id, link.testBoxId)).for("update");
       if (!box || box.deletedAt) return;
+      const before = new Set(await loadDoneKeys(tx, box.id));
       const values = { done, doneById: done ? user.id : null, doneByName: done ? user.name : null, doneAt: done ? new Date() : null };
       await tx.update(testBoxTasksTable).set(values).where(eq(testBoxTasksTable.id, link.id));
+      await cascadeOrderTicks(tx, box.id, link.taskKey, done, await scheduleForBox(tx, box), before, user);
       const m = CLOSE_ORDERS.exec(link.taskKey);
       if (m) {
         const [delivery] = await tx.select().from(testBoxDeliveriesTable)

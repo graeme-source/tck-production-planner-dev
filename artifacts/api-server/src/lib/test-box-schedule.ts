@@ -20,18 +20,33 @@
  *   prep / dough  the working day before production
  *   ingredients   in by prep day minus bufferDays working days (the
  *                 test-box safety buffer)
- *   order-by      per supplier: arrive-by minus the supplier's lead time in
- *                 working days, rolled back to one of its order days when it
- *                 only takes orders on set days. SPECIALIST ingredients
- *                 (not used by any recipe on the menu — suppliers often don't
- *                 stock them) get SPECIALIST_EXTRA_WORKING_DAYS more.
+ *   order-by      only for NEW ingredients (see "specialist" below), each
+ *                 one: arrive-by minus its supplier's lead time plus
+ *                 SPECIALIST_EXTRA_WORKING_DAYS in working days, rolled back
+ *                 to one of the supplier's order days when it only takes
+ *                 orders on set days. Every other ingredient is ordered the
+ *                 normal way (kanban / Orders page) once production is on a
+ *                 plan, so it gets no step here (Graeme, 2026-10-08).
  *   close orders  the LATEST day orders can close: the earliest specialist
  *                 order-by (orders must be in before they're ordered), or
  *                 production minus ordersCloseDays working days if that is
  *                 earlier / there are no specialist ingredients.
  *   after close   (only once someone has closed orders) turn the date off
- *                 in Zapiet, queue the test production, decide test-only or
- *                 test + normal production.
+ *                 in Zapiet and decide test-only or test + normal. The
+ *                 production itself is queued AUTOMATICALLY from the box's
+ *                 sales when orders close (test-box-production.ts).
+ *
+ * SPECIALIST ("new") ingredient: used by the box's recipes, NOT used by any
+ * core-menu recipe, and NOT on a kanban — normal ordering would never pick it
+ * up. Worked out in test-box-data.ts (loadSpecialistIngredients).
+ *
+ * TO-DO OR MILESTONE (Graeme, 2026-10-08: "a simple to-do list of things
+ * that happen OUTSIDE the norm"). Only the launch checklist and, per
+ * delivery, close orders / order the new ingredients / Zapiet off / the
+ * test-or-normal decision go on the owner's to-do list (becomesTodo). The
+ * rest — ingredients in, prep & dough, production, despatch, delivery — are
+ * dated MILESTONES shown on the box and calendar for reference: prep and
+ * dough follow automatically once production is on the plan.
  *
  * Working days are Monday–Friday. Bank holidays are not known to the system
  * yet, so a deadline landing on one needs a human eye (the page says so).
@@ -59,19 +74,20 @@ export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
 export const PRODUCTION_MIXES = ["test_only", "test_plus_normal"] as const;
 export type ProductionMix = (typeof PRODUCTION_MIXES)[number];
 
-export interface SupplierLead {
-  /** null = these ingredients have no supplier set. */
-  supplierId: number | null;
+/** A NEW ingredient the box needs ordering specially (see the header). */
+export interface SpecialistIngredient {
+  ingredientId: number;
   name: string;
+  /** null = no supplier set on the ingredient. */
+  supplierId: number | null;
+  supplierName: string | null;
   leadTimeDays: number | null;
   cutoffTime: string | null;
   orderFrequency: string | null;
   /** "Monday,Thursday" when the supplier only takes orders on set days. */
   orderDays: string | null;
-  /** Ingredients a menu recipe also uses — normal lead time. */
-  items: string[];
-  /** Ingredients no menu recipe uses — lead time + SPECIALIST_EXTRA_WORKING_DAYS. */
-  specialistItems: string[];
+  /** Where to order it: the ingredient's ordering link, else the supplier's website. */
+  orderingUrl: string | null;
 }
 
 export interface DeliveryInput {
@@ -96,7 +112,7 @@ export interface ScheduleInput {
   bufferDays: number;
   bufferPct: number;
   recipes: string[];
-  suppliers: SupplierLead[];
+  specialists: SpecialistIngredient[];
   deliveries: DeliveryInput[];
   /** Task keys already ticked (for the "deadlines behind us" warning). */
   doneKeys?: readonly string[];
@@ -105,9 +121,29 @@ export interface ScheduleInput {
 
 export type TaskKind = "launch" | "orders" | "ingredients" | "prep" | "production" | "despatch" | "delivery";
 
+/** One ingredient line inside "Order the new ingredients for …" — ticked on
+ *  its own (key "d12:order-new-i300"); never a to-do by itself. */
+export interface OrderSubItem {
+  key: string;
+  ingredientId: number;
+  name: string;
+  supplier: string | null;
+  orderBy: string;
+  /** The supplier's cut-off on that day. */
+  time?: string;
+  /** Where to order it (ingredient ordering link, else supplier website). */
+  link: string | null;
+  /** No supplier / no lead time set — DEFAULT_LEAD_DAYS assumed. */
+  assumed: boolean;
+  past: boolean;
+}
+
 export interface ScheduleTask {
   /** Stable across recalculations — ticks and to-dos are stored against it. */
   key: string;
+  /** true = on the owner's to-do list and ticked; false = a dated milestone
+   *  shown for reference only (becomesTodo). */
+  todo: boolean;
   date: string;
   /** Wall-clock deadline on that day, when there is one (supplier cut-off). */
   time?: string;
@@ -121,12 +157,12 @@ export interface ScheduleTask {
   /** The button text for `link` (default "Open Queued production"). */
   linkLabel?: string;
   items?: string[];
+  /** "Order the new ingredients": one tickable line per ingredient. */
+  subItems?: OrderSubItem[];
   /** The date rests on an assumption (no supplier set / default lead time). */
   assumed?: boolean;
   /** Specialist ingredients (extra lead time). */
   specialist?: boolean;
-  /** Needs ordering before orders can close — order on forecast + buffer. */
-  beforeOrdersClose?: boolean;
   /** Due the planning day because its normal date had already gone. */
   clamped?: boolean;
   /** Done by the app rather than a person (launch checklist). */
@@ -242,7 +278,7 @@ export function latestOrderDay(iso: string, orderDays: string | null): string {
 /** When to order from one supplier so the goods are in by `arriveBy`. */
 export function supplierOrderBy(
   arriveBy: string,
-  s: Pick<SupplierLead, "leadTimeDays" | "orderFrequency" | "orderDays">,
+  s: Pick<SpecialistIngredient, "leadTimeDays" | "orderFrequency" | "orderDays">,
   extraWorkingDays = 0,
 ): { date: string; assumed: boolean } {
   const assumed = s.leadTimeDays == null;
@@ -263,6 +299,26 @@ export function deliveryTaskKey(deliveryId: number, step: string): string {
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** The delivery steps that go on the owner's to-do list — everything else
+ *  on a delivery is a milestone. */
+export const TODO_DELIVERY_STEPS = ["close-orders", "order-new", "zapiet-off", "decide-mix"] as const;
+
+/**
+ * Does this task become a to-do (and a tickable row)? The launch checklist
+ * always does; on a delivery only the out-of-the-norm steps do.
+ */
+export function becomesTodo(t: Pick<ScheduleTask, "kind" | "key">): boolean {
+  if (t.kind === "launch") return true;
+  const step = t.key.slice(t.key.indexOf(":") + 1);
+  return (TODO_DELIVERY_STEPS as readonly string[]).includes(step);
+}
+
+/** "d12:order-new-i300" → the parent "d12:order-new"; null if not a sub-line. */
+export function orderSubParent(key: string): string | null {
+  const m = /^(d\d+:order-new)-i\d+$/.exec(key);
+  return m ? m[1] : null;
+}
 
 // ── The launch checklist ────────────────────────────────────────────────────
 export function buildLaunchTasks(input: Pick<ScheduleInput, "boxName" | "launchDate" | "publicLaunchDate" | "plannedOn" | "deliveries" | "today"> & { recipes?: string[] }): { tasks: ScheduleTask[]; tightTimeline: boolean } {
@@ -294,7 +350,7 @@ export function buildLaunchTasks(input: Pick<ScheduleInput, "boxName" | "launchD
       const hint = step.hint?.(ctx);
       const link = step.link?.(ctx);
       tasks.push({
-        key: inst.key, date, kind: "launch",
+        key: inst.key, todo: true, date, kind: "launch",
         label: step.title(ctx), how: step.how(ctx),
         ...(hint ? { detail: hint } : {}),
         ...(clamped ? { clamped: true } : {}),
@@ -314,7 +370,7 @@ export function buildLaunchTasks(input: Pick<ScheduleInput, "boxName" | "launchD
 // ── One delivery's chain ────────────────────────────────────────────────────
 export function buildDeliverySchedule(
   d: DeliveryInput,
-  input: Pick<ScheduleInput, "boxName" | "launchDate" | "ordersCloseDays" | "bufferDays" | "bufferPct" | "recipes" | "suppliers" | "doneKeys" | "today">,
+  input: Pick<ScheduleInput, "boxName" | "launchDate" | "ordersCloseDays" | "bufferDays" | "bufferPct" | "recipes" | "specialists" | "doneKeys" | "today">,
 ): DeliverySchedule {
   const warnings: string[] = [];
   const delivery = d.deliveryDate;
@@ -329,53 +385,49 @@ export function buildDeliverySchedule(
   const cancelled = d.status === "cancelled";
   const isOpen = d.status === "open";
 
-  // Supplier orders: normal and specialist ingredients separately.
-  type Order = { s: SupplierLead; specialist: boolean; items: string[]; date: string; assumed: boolean };
-  const orders: Order[] = [];
-  for (const s of input.suppliers) {
-    if (s.items.length > 0) orders.push({ s, specialist: false, items: s.items, ...supplierOrderBy(inBy, s) });
-    if (s.specialistItems.length > 0) orders.push({ s, specialist: true, items: s.specialistItems, ...supplierOrderBy(inBy, s, SPECIALIST_EXTRA_WORKING_DAYS) });
-  }
-  const firstSpecialist = orders.filter(o => o.specialist).sort((a, b) => a.date.localeCompare(b.date))[0];
-  const latestClose = firstSpecialist ? minDate(firstSpecialist.date, standardClose) : standardClose;
-  const closeDriver: CloseDriver = firstSpecialist && firstSpecialist.date <= standardClose
-    ? { reason: "specialist", supplier: firstSpecialist.s.name, items: firstSpecialist.items }
+  // Only NEW ingredients are ordered from here, each on its own order-by.
+  const label = dayMonth(delivery);
+  const subs: OrderSubItem[] = input.specialists.map(i => {
+    const o = supplierOrderBy(inBy, i, SPECIALIST_EXTRA_WORKING_DAYS);
+    return {
+      key: deliveryTaskKey(d.id, `order-new-i${i.ingredientId}`),
+      ingredientId: i.ingredientId, name: i.name, supplier: i.supplierName,
+      orderBy: o.date, ...(i.supplierId != null && i.cutoffTime ? { time: i.cutoffTime } : {}),
+      link: i.orderingUrl, assumed: o.assumed || i.supplierId == null, past: past(o.date),
+    };
+  }).sort((a, b) => a.orderBy.localeCompare(b.orderBy) || a.name.localeCompare(b.name));
+  const firstSub = subs[0];
+  const latestClose = firstSub ? minDate(firstSub.orderBy, standardClose) : standardClose;
+  const firstItems = firstSub ? subs.filter(x => x.orderBy === firstSub.orderBy) : [];
+  const closeDriver: CloseDriver = firstSub && firstSub.orderBy <= standardClose
+    ? { reason: "specialist", supplier: firstSub.supplier ?? "no supplier set", items: firstItems.map(x => x.name) }
     : { reason: "standard" };
 
-  const label = dayMonth(delivery);
   const tasks: ScheduleTask[] = [];
-  const add = (step: string, t: Omit<ScheduleTask, "key" | "past" | "deliveryId">) =>
-    tasks.push({ key: deliveryTaskKey(d.id, step), deliveryId: d.id, past: past(t.date), ...t });
+  const add = (step: string, t: Omit<ScheduleTask, "key" | "past" | "deliveryId" | "todo">) => {
+    const key = deliveryTaskKey(d.id, step);
+    tasks.push({ key, todo: becomesTodo({ kind: t.kind, key }), deliveryId: d.id, past: past(t.date), ...t });
+  };
 
   if (!cancelled) {
     add("close-orders", {
       date: latestClose, kind: "orders",
       label: `Close orders for ${label} (latest)`,
       detail: closeDriver.reason === "specialist"
-        ? `Latest day, because ${closeDriver.items!.join(", ")} from ${closeDriver.supplier} ${closeDriver.items!.length === 1 ? "is a specialist ingredient" : "are specialist ingredients"} (+${SPECIALIST_EXTRA_WORKING_DAYS} working days' lead time) and must be ordered from the orders.`
-        : `Latest day: ${plural(input.ordersCloseDays, "working day")} before production, to count the orders and set quantities.`,
+        ? `Latest day, because ${closeDriver.items!.join(", ")} ${closeDriver.items!.length === 1 ? "is a new ingredient" : "are new ingredients"} (+${SPECIALIST_EXTRA_WORKING_DAYS} working days' lead time) and must be ordered from the orders. Closing queues the production from the box's sales.`
+        : `Latest day: ${plural(input.ordersCloseDays, "working day")} before production, to count the orders. Closing queues the production from the box's sales.`,
     });
 
-    for (const o of orders) {
-      const lead = (o.s.leadTimeDays ?? DEFAULT_LEAD_DAYS) + (o.specialist ? SPECIALIST_EXTRA_WORKING_DAYS : 0);
-      const noSupplier = o.s.supplierId == null;
-      add(`order-supplier-${o.s.supplierId ?? "none"}${o.specialist ? "-specialist" : ""}`, {
-        date: o.date,
-        ...(noSupplier || !o.s.cutoffTime ? {} : { time: o.s.cutoffTime }),
+    if (subs.length > 0) {
+      add("order-new", {
+        date: firstSub.orderBy,
+        ...(firstSub.time ? { time: firstSub.time } : {}),
         kind: "ingredients",
-        label: noSupplier
-          ? `Order ${o.specialist ? "specialist " : ""}ingredients with no supplier set`
-          : `Order ${o.specialist ? "specialist ingredients " : ""}from ${o.s.name}`,
-        detail: [
-          noSupplier
-            ? `No supplier is set on these ingredients, so ${DEFAULT_LEAD_DAYS} working days' lead time is assumed — set their supplier to firm this up.`
-            : `${plural(lead, "working day")} lead time${o.s.orderFrequency === "weekly" && o.s.orderDays ? `; takes orders ${o.s.orderDays.split(",").join(", ")}` : ""}.`,
-          o.specialist ? `Specialist — no menu recipe uses ${o.items.length === 1 ? "it" : "them"}, so +${SPECIALIST_EXTRA_WORKING_DAYS} working days in case the supplier doesn't have ${o.items.length === 1 ? "it" : "them"} in stock.` : "",
-        ].filter(Boolean).join(" "),
-        items: o.items,
-        assumed: o.assumed,
-        ...(o.specialist ? { specialist: true } : {}),
-        ...(o.date < latestClose ? { beforeOrdersClose: true } : {}),
+        label: `Order the new ingredients for ${label}: ${subs.map(x => x.name).join(", ")}`,
+        detail: `No core-menu recipe uses ${subs.length === 1 ? "it" : "them"} and ${subs.length === 1 ? "it isn't" : "they aren't"} on a kanban, so normal ordering won't. Each has its supplier's lead time + ${SPECIALIST_EXTRA_WORKING_DAYS} working days in case the supplier doesn't stock ${subs.length === 1 ? "it" : "them"}. Order on the forecast + buffer if orders are still open.`,
+        subItems: subs,
+        specialist: true,
+        ...(subs.some(x => x.assumed) ? { assumed: true } : {}),
       });
     }
 
@@ -386,35 +438,28 @@ export function buildDeliverySchedule(
 
     if (!isOpen) {
       const closedOn = d.closedOn ?? latestClose;
-      const queueDue = maxDate(closedOn, addDays(production, -QUEUE_AHEAD_DAYS));
       add("zapiet-off", {
         date: closedOn, kind: "orders",
         label: `Turn off ${label} in Zapiet for '${input.boxName}'`,
         detail: "Orders are closed — stop customers picking this date.",
       });
-      add("queue-production", {
-        date: queueDue, kind: "production",
-        label: `Queue the test production for ${shortDay(production)}`,
-        detail: `Add the test batches in Queued production — they land on the ${shortDay(production)} plan automatically when it's created. You can queue up to ${QUEUE_AHEAD_DAYS} days ahead. Drafts aren't offered there: put the recipes on the menu first.`,
-        link: `/plans/queued?date=${production}`,
-      });
       add("decide-mix", {
-        date: queueDue, kind: "production",
+        date: maxDate(closedOn, addDays(production, -QUEUE_AHEAD_DAYS)), kind: "production",
         label: `Decide for ${shortDay(production)}: test batches only, or test + normal production?`,
         detail: "Choose on the delivery card — it ticks this off.",
       });
     }
 
-    add("prep", { date: prep, kind: "prep", label: "Prep & dough day", detail: "Dough and main prep the day before production." });
+    add("prep", { date: prep, kind: "prep", label: "Prep & dough", detail: "Follows the plan automatically once the production is on it." });
     add("production", {
-      date: production, kind: "production", label: "Production day",
+      date: production, kind: "production", label: "Production",
       detail: [
         input.recipes.length ? `Make: ${input.recipes.join(", ")}.` : "",
-        packsPerRecipe != null ? `${packsPerRecipe} packs of each (${expected} boxes + ${input.bufferPct}% buffer).` : "",
+        isOpen ? "Queued from the box's sales when orders close." : "",
       ].filter(Boolean).join(" ") || undefined,
     });
     add("despatch", { date: despatch, kind: "despatch", label: "Despatch" });
-    add("delivery", { date: delivery, kind: "delivery", label: "Delivery day" });
+    add("delivery", { date: delivery, kind: "delivery", label: "Delivery" });
   }
 
   const order: TaskKind[] = ["launch", "orders", "ingredients", "prep", "production", "despatch", "delivery"];
@@ -427,18 +472,19 @@ export function buildDeliverySchedule(
       warnings.push(`Orders would have to close by ${shortDay(latestClose)}, before VIPs' guaranteed ${VIP_GUARANTEE_HOURS} hours are up (${shortDay(windowEnd)}) — pick a later delivery date.`);
     }
     if (isOpen && past(latestClose)) {
-      warnings.push(`Still open after its latest close date (${shortDay(latestClose)}) — close orders now${closeDriver.reason === "specialist" ? ", or the specialist ingredients may not arrive in time" : ""}.`);
+      warnings.push(`Still open after its latest close date (${shortDay(latestClose)}) — close orders now${closeDriver.reason === "specialist" ? ", or the new ingredients may not arrive in time" : ""}.`);
     }
     const done = new Set(input.doneKeys ?? []);
-    const late = tasks.filter(t => t.past && t.kind !== "delivery" && !done.has(t.key));
+    // Only to-dos can be "not ticked" — milestones just happen.
+    const late = tasks.filter(t => t.todo && t.past && !done.has(t.key));
     if (late.length > 0 && !past(delivery)) {
       warnings.push(`${plural(late.length, "deadline")} ${late.length === 1 ? "is" : "are"} already behind us and not ticked — check they were done, or move the delivery date.`);
     }
-    if (input.suppliers.some(s => s.supplierId == null)) {
-      warnings.push(`Some ingredients have no supplier set — ${DEFAULT_LEAD_DAYS} working days' lead time assumed.`);
+    if (input.specialists.some(s => s.supplierId == null)) {
+      warnings.push(`A new ingredient has no supplier set — ${DEFAULT_LEAD_DAYS} working days' lead time assumed.`);
     }
     if (input.recipes.length === 0) {
-      warnings.push("No recipes yet — the ingredient orders, and any specialist-ingredient deadline for closing orders, appear once recipes are added.");
+      warnings.push("No recipes yet — any new ingredients to order, and their deadline for closing orders, appear once recipes are added.");
     }
   }
 
@@ -448,7 +494,7 @@ export function buildDeliverySchedule(
     latestClose, closeDriver, closedOn: d.closedOn, productionMix: d.productionMix,
     expectedBoxes: expected, packsPerRecipe, tasks,
     afterClose: isOpen
-      ? [`Turn off ${label} in Zapiet`, `Queue the test production for ${shortDay(production)}`, "Decide: test only, or test + normal production"]
+      ? [`Production for ${shortDay(production)} is queued from the box's sales, automatically`, `Turn off ${label} in Zapiet`, "Decide: test only, or test + normal production"]
       : [],
     warnings,
   };
@@ -478,9 +524,14 @@ export function buildTestBoxSchedule(input: ScheduleInput): TestBoxSchedule {
   };
 }
 
-/** Every task of the box, launch checklist first. */
+/** Every task of the box (to-dos and milestones), launch checklist first. */
 export function allTasks(s: TestBoxSchedule): ScheduleTask[] {
   return [...s.launchTasks, ...s.deliveries.flatMap(d => d.tasks)];
+}
+
+/** Only the tasks that are to-dos (tickable). */
+export function todoTasks(s: TestBoxSchedule): ScheduleTask[] {
+  return allTasks(s).filter(t => t.todo);
 }
 
 /** The box's calendar bar: launch → its last live delivery (or the end of
