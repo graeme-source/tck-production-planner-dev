@@ -10,6 +10,7 @@ import { TrendingUp, TrendingDown, Mail, Loader2, Check, AlertTriangle, ShieldAl
 import { cn } from "@/lib/utils";
 import { MarketingCalendar } from "@/components/marketing-calendar/marketing-calendar";
 import { useApprovalsNeeded } from "@/components/marketing-calendar/api";
+import { TargetsProgress } from "@/components/revenue-targets/targets-progress";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -18,7 +19,10 @@ interface Pace {
   monthToDate: number;
   orderCount: number;
   projected: number;
+  /** The minimum (target/onPace/requiredDailyRate are against it). */
   target: number;
+  /** This month's stretch (carried forward), or null if none is set. */
+  stretch: number | null;
   onPace: boolean;
   requiredDailyRate: number;
   averageDailyRevenue: number;
@@ -159,34 +163,23 @@ function PaceCard({ pace, loading }: { pace: Pace | null; loading: boolean }) {
             <PaceStat
               label="Projected"
               value={gbp(pace.projected)}
-              sub={`target ${gbp(pace.target)}`}
+              sub={`minimum ${gbp(pace.target)}`}
               tone={pace.onPace ? "good" : "bad"}
             />
             <PaceStat label="Daily average" value={gbp(pace.averageDailyRevenue)} sub="so far" />
             <PaceStat
               label="Needed per day"
               value={gbp(pace.requiredDailyRate)}
-              sub={`${pace.daysLeft} days left`}
+              sub={`for the minimum · ${pace.daysLeft} days left`}
               tone={pace.requiredDailyRate > pace.averageDailyRevenue ? "bad" : "good"}
             />
           </div>
-          {/* Progress toward target, with a tick showing where "on pace today" sits. */}
-          <div className="space-y-1">
-            <div className="relative h-3 rounded-full bg-secondary overflow-hidden">
-              <div
-                className={cn("absolute inset-y-0 left-0 rounded-full", pace.onPace ? "bg-primary" : "bg-red-500")}
-                style={{ width: `${Math.min(100, (pace.monthToDate / pace.target) * 100)}%` }}
-              />
-              <div
-                className="absolute inset-y-0 w-0.5 bg-foreground/50"
-                title="Where month-to-date should be to be on pace"
-                style={{ left: `${Math.min(100, (new Date().getDate() / (new Date().getDate() + pace.daysLeft)) * 100)}%` }}
-              />
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {Math.round((pace.monthToDate / pace.target) * 100)}% of {gbp(pace.target)} · the marker is where today should be
-            </p>
-          </div>
+          {/* Against both targets — the same component and figures as the
+              Month to Date tile on Numbers, where the targets are edited. */}
+          <TargetsProgress monthToDate={pace.monthToDate} projected={pace.projected} />
+          <p className="text-xs text-muted-foreground">
+            The faint tick is where sales should be by today for the minimum. Targets are set on Numbers.
+          </p>
         </>
       )}
     </section>
