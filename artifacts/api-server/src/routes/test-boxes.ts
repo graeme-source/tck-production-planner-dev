@@ -28,7 +28,10 @@ import {
   loadBoxDeliveries, loadBoxRecipes, loadDoneKeys, loadSpecialistIngredients, londonToday, scheduleForBox, scheduleFrom, syncTestBox,
   type Actor, type DeliveryRow, type TestBoxRow, type Tx,
 } from "../lib/test-box-data";
-import { cascadeOrderTicks, setDeliveryClosed, tickTestBoxTask } from "../lib/test-box-todos";
+import { cascadeOrderTicks, tickTestBoxTask } from "../lib/test-box-todos";
+import {
+  closeAndQueue, mirrorFromDate, refreshOrdersMirror, reopenDelivery, unqueueDelivery, type QueueResult,
+} from "../lib/test-box-production-data";
 import { salesAreaPeople } from "../lib/sales-area-people";
 import {
   DELIVERY_STATUSES, PRODUCTION_MIXES, QUEUE_AHEAD_DAYS, SPECIALIST_EXTRA_WORKING_DAYS, VIP_GUARANTEE_HOURS,
@@ -124,10 +127,28 @@ function scheduleJson(s: TestBoxSchedule, deliveries: DeliveryRow[], ticks: Map<
         ...d,
         closedBy: row?.closedByName ?? null,
         closedAt: row?.closedAt?.toISOString() ?? null,
+        safetyBatch: row?.safetyBatch ?? false,
+        queuedAt: row?.queuedAt?.toISOString() ?? null,
+        queuedBy: row?.queuedByName ?? null,
+        queuedSummary: (row?.queuedSummary as Array<{ recipeId: number; name: string; packs: number; batches: number }> | null) ?? null,
         tasks: d.tasks.map(t => withTick(t, ticks)),
       };
     }),
   };
+}
+
+/** What closing / reopening did to the delivery's queued production, for the page's message. */
+interface Notice { queued?: boolean; blockedBy?: string[]; batches?: number; productionDate?: string; warnings: string[] }
+function noticeFrom(result: QueueResult | null, extra: string[] = []): Notice {
+  if (!result) return { warnings: extra };
+  if (!result.ok) return { queued: false, blockedBy: result.preview.blockers.map(b => b.name), warnings: extra };
+  return { queued: result.queued, batches: result.preview.totalBatches, productionDate: result.preview.productionDate, warnings: [...result.preview.warnings, ...extra] };
+}
+
+/** Closing queues from sales: bring the orders mirror up to date first (Shopify READ only, outside the transaction). */
+async function refreshBeforeClose(boxId: number): Promise<string | null> {
+  const [b] = await db.select().from(testBoxesTable).where(eq(testBoxesTable.id, boxId));
+  return b ? refreshOrdersMirror(mirrorFromDate(b)) : null;
 }
 
 async function fullBox(id: number) {
@@ -373,6 +394,8 @@ const PatchDeliveryBody = z.object({
   expectedBoxes: z.number().int().min(0).max(100000).nullish(),
   status: z.enum(DELIVERY_STATUSES).optional(),
   productionMix: z.enum(PRODUCTION_MIXES).nullish(),
+  /** "+1 safety batch per recipe" when production is queued from sales. */
+  safetyBatch: z.boolean().optional(),
 });
 
 router.patch("/:id/deliveries/:deliveryId", validate(PatchDeliveryBody), async (req: Request, res: Response) => {
@@ -381,6 +404,8 @@ router.patch("/:id/deliveries/:deliveryId", validate(PatchDeliveryBody), async (
   if (!id || !deliveryId) { res.status(400).json({ error: "Invalid id" }); return; }
   const b = req.body as z.infer<typeof PatchDeliveryBody>;
   const user = await sessionUser(req);
+  if (b.status === "closed") await refreshBeforeClose(id);
+  let notice: Notice | null = null;
   const r = await db.transaction(async (tx) => {
     const box = await lockBox(tx, id);
     if (!box) return 404;
@@ -389,17 +414,28 @@ router.patch("/:id/deliveries/:deliveryId", validate(PatchDeliveryBody), async (
     if (b.deliveryDate !== undefined) {
       if (b.deliveryDate <= box.launchDate) return 400;
       if (await dateTaken(tx, id, b.deliveryDate, d.id)) return 409;
+      // The production day moves with it: queued rows for the old day come off.
+      if (b.deliveryDate !== d.deliveryDate && (d.status === "closed" || d.status === "queued")) {
+        notice = { warnings: [...await unqueueDelivery(tx, d), "The delivery date moved, so its queued production came off — press “Recount from sales” to queue it for the new production day."] };
+        await tx.update(testBoxDeliveriesTable).set({ status: "closed" }).where(eq(testBoxDeliveriesTable.id, d.id));
+      }
     }
-    // Closing / reopening goes through the same path as the button.
-    if (b.status === "closed" && d.status === "open") await setDeliveryClosed(tx, d, true, user);
-    if (b.status === "open" && d.status === "closed") await setDeliveryClosed(tx, d, false, user);
-    const statusDirect = b.status !== undefined && !(b.status === "closed" && d.status === "open") && !(b.status === "open" && d.status === "closed");
+    // Closing / reopening goes through the same path as the button
+    // (closing queues the production from sales; reopening takes it off).
+    const closing = b.status === "closed" && d.status === "open";
+    const reopening = b.status === "open" && (d.status === "closed" || d.status === "queued");
+    if (closing) notice = noticeFrom((await closeAndQueue(tx, box, d, user, { safetyBatch: b.safetyBatch })).result);
+    if (reopening) notice = { warnings: (await reopenDelivery(tx, d, user)).warnings };
+    // Cancelling takes its queued production off too.
+    if (b.status === "cancelled" && d.status !== "cancelled") notice = { warnings: await unqueueDelivery(tx, d) };
+    const statusDirect = b.status !== undefined && !closing && !reopening;
     await tx.update(testBoxDeliveriesTable).set({
       ...(b.deliveryDate !== undefined ? { deliveryDate: b.deliveryDate } : {}),
       ...(b.expectedBoxes !== undefined ? { expectedBoxes: b.expectedBoxes ?? null } : {}),
       ...(statusDirect ? { status: b.status, ...(b.status === "open" ? { closedAt: null, closedById: null, closedByName: null } : {}) } : {}),
       ...(statusDirect && b.status !== "open" && b.status !== "cancelled" && d.closedAt == null ? { closedAt: new Date(), closedById: user.id, closedByName: user.name } : {}),
       ...(b.productionMix !== undefined ? { productionMix: b.productionMix ?? null } : {}),
+      ...(b.safetyBatch !== undefined && !closing ? { safetyBatch: b.safetyBatch } : {}),
       updatedById: user.id, updatedByName: user.name, updatedAt: new Date(),
     }).where(eq(testBoxDeliveriesTable.id, d.id));
     if (b.status !== undefined) await tickTestBoxTask(tx, id, deliveryTaskKey(d.id, "close-orders"), b.status !== "open", user);
@@ -412,34 +448,49 @@ router.patch("/:id/deliveries/:deliveryId", validate(PatchDeliveryBody), async (
   if (r === 404) { res.status(404).json({ error: "Delivery date not found (it may have been removed)" }); return; }
   if (r === 400) { res.status(400).json({ error: "A delivery date has to be after the launch" }); return; }
   if (r === 409) { res.status(409).json({ error: "This box already has that delivery date" }); return; }
-  res.json(await fullBox(id));
+  res.json({ ...(await fullBox(id)), notice });
 });
 
-const CloseBody = z.object({ closed: z.boolean() });
+const CloseBody = z.object({
+  closed: z.boolean(),
+  /** "+1 safety batch per recipe", as chosen in the close preview. */
+  safetyBatch: z.boolean().optional(),
+});
 
-/** "Close orders for 16 Oct" (or reopen them). Ticks the close step and
- *  unlocks Zapiet-off, queue production and the test/normal decision. */
+/** "Close orders for 16 Oct" (or reopen them). Ticks the close step,
+ *  QUEUES THE PRODUCTION FROM SALES (test-box-production-data.ts) and
+ *  unlocks Zapiet-off and the test/normal decision. Reopening takes the
+ *  queued production off again (rows a plan already took stay, warned). */
 router.post("/:id/deliveries/:deliveryId/close", validate(CloseBody), async (req: Request, res: Response) => {
   const id = idParam(req);
   const deliveryId = idParam(req, "deliveryId");
   if (!id || !deliveryId) { res.status(400).json({ error: "Invalid id" }); return; }
-  const { closed } = req.body as z.infer<typeof CloseBody>;
+  const { closed, safetyBatch } = req.body as z.infer<typeof CloseBody>;
   const user = await sessionUser(req);
+  const refreshError = closed ? await refreshBeforeClose(id) : null;
+  let notice: Notice | null = null;
   const r = await db.transaction(async (tx) => {
     const box = await lockBox(tx, id);
     if (!box) return 404;
     const d = await deliveryOf(tx, id, deliveryId);
     if (!d) return 404;
-    const changed = await setDeliveryClosed(tx, d, closed, user);
-    if (!changed) return 409;
+    if (closed) {
+      const c = await closeAndQueue(tx, box, d, user, { safetyBatch });
+      if (!c.changed) return 409;
+      notice = noticeFrom(c.result, refreshError ? ["Couldn't fetch the newest orders from Shopify — counted from the last synced copy; press “Recount from sales” later."] : []);
+    } else {
+      const o = await reopenDelivery(tx, d, user);
+      if (!o.changed) return 409;
+      notice = { warnings: o.warnings };
+    }
     await tickTestBoxTask(tx, id, deliveryTaskKey(d.id, "close-orders"), closed, user);
     await touchBox(tx, id, user);
     await syncTestBox(tx, id, user);
     return 200;
   });
   if (r === 404) { res.status(404).json({ error: "Delivery date not found (it may have been removed)" }); return; }
-  if (r === 409) { res.status(409).json({ error: closed ? "Orders for this date aren't open" : "Only a date that's closed (and not yet queued) can be reopened" }); return; }
-  res.json(await fullBox(id));
+  if (r === 409) { res.status(409).json({ error: closed ? "Orders for this date aren't open" : "Only a date that's closed or queued (not made, delivered or cancelled) can be reopened" }); return; }
+  res.json({ ...(await fullBox(id)), notice });
 });
 
 router.delete("/:id/deliveries/:deliveryId", async (req: Request, res: Response) => {
@@ -452,6 +503,8 @@ router.delete("/:id/deliveries/:deliveryId", async (req: Request, res: Response)
     if (!box) return false;
     const d = await deliveryOf(tx, id, deliveryId);
     if (!d) return false;
+    // Its queued production comes off with it (rows already on a plan stay).
+    await unqueueDelivery(tx, d);
     await tx.update(testBoxDeliveriesTable).set({
       deletedAt: new Date(), deletedById: user.id, deletedByName: user.name, updatedAt: new Date(),
     }).where(eq(testBoxDeliveriesTable.id, d.id));
@@ -473,14 +526,18 @@ router.put("/:id/tasks/:key", validate(TickBody), async (req: Request, res: Resp
   if (!id || !TASK_KEY.test(key)) { res.status(400).json({ error: "Invalid task" }); return; }
   const { done } = req.body as z.infer<typeof TickBody>;
   const user = await sessionUser(req);
+  const m = /^d(\d+):close-orders$/.exec(key);
+  if (m && done) await refreshBeforeClose(id);
+  let notice: Notice | null = null;
   const r = await db.transaction(async (tx) => {
     const box = await lockBox(tx, id);
     if (!box) return 404;
-    // Ticking "Close orders" closes them (and unticking reopens).
-    const m = /^d(\d+):close-orders$/.exec(key);
+    // Ticking "Close orders" closes them and queues the production from
+    // sales (unticking reopens and takes the queue off).
     if (m) {
       const d = await deliveryOf(tx, id, Number(m[1]));
-      if (d) await setDeliveryClosed(tx, d, done, user);
+      if (d && done) notice = noticeFrom((await closeAndQueue(tx, box, d, user)).result);
+      if (d && !done) notice = { warnings: (await reopenDelivery(tx, d, user)).warnings };
     }
     // "Order the new ingredients" and its ingredient lines tick together.
     const before = new Set(await loadDoneKeys(tx, id));
@@ -490,7 +547,7 @@ router.put("/:id/tasks/:key", validate(TickBody), async (req: Request, res: Resp
     return 200;
   });
   if (r === 404) { res.status(404).json({ error: "Test box not found" }); return; }
-  res.json(await fullBox(id));
+  res.json({ ...(await fullBox(id)), notice });
 });
 
 // ── Delete (soft; calendar bar, planned email, note and open to-dos come off) ─

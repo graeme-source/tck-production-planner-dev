@@ -288,6 +288,11 @@ export function supplierOrderBy(
   return { date, assumed };
 }
 
+/** A delivery's production day: the working day before its despatch day. */
+export function productionDateFor(deliveryDate: string): string {
+  return prevWorkingDay(prevWorkingDay(deliveryDate));
+}
+
 /** End of the VIP guarantee for a launch day. */
 export function vipWindowEnd(launchDate: string): string {
   return addDays(launchDate, Math.ceil(VIP_GUARANTEE_HOURS / 24));
@@ -375,7 +380,7 @@ export function buildDeliverySchedule(
   const warnings: string[] = [];
   const delivery = d.deliveryDate;
   const despatch = prevWorkingDay(delivery);
-  const production = prevWorkingDay(despatch);
+  const production = productionDateFor(delivery);
   const prep = prevWorkingDay(production);
   const inBy = subtractWorkingDays(prep, input.bufferDays);
   const standardClose = subtractWorkingDays(production, input.ordersCloseDays);

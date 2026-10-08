@@ -144,7 +144,8 @@ export async function setDeliveryClosed(tx: Tx, delivery: DeliveryRow, closed: b
  * A to-do linked to a test-box task was completed or reopened from the to-do
  * list (routes/todos.ts). Write the tick — the box's source of truth — and,
  * for "Close orders for …", close or reopen that delivery so its next steps
- * appear. Never throws into the to-do route: a failure is logged and the
+ * appear (closing also queues the production from sales — the same path as
+ * the button on the box, test-box-production-data.ts). Never throws into the to-do route: a failure is logged and the
  * box re-derives the to-do on its next change.
  */
 export async function onTodoDoneChanged(todoId: number, done: boolean, userId: number): Promise<void> {
@@ -154,6 +155,13 @@ export async function onTodoDoneChanged(todoId: number, done: boolean, userId: n
     const [u] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId));
     const user = { id: userId, name: u?.name ?? "Someone" };
     const { loadDoneKeys, scheduleForBox, syncTestBox } = await import("./test-box-data");
+    const { closeAndQueue, mirrorFromDate, refreshOrdersMirror, reopenDelivery } = await import("./test-box-production-data");
+    const closing = CLOSE_ORDERS.test(link.taskKey) && done;
+    if (closing) {
+      // Closing queues the production from sales: fetch the newest orders first (read only).
+      const [b0] = await db.select().from(testBoxesTable).where(eq(testBoxesTable.id, link.testBoxId));
+      if (b0) await refreshOrdersMirror(mirrorFromDate(b0));
+    }
     await db.transaction(async (tx) => {
       const [box] = await tx.select().from(testBoxesTable).where(eq(testBoxesTable.id, link.testBoxId)).for("update");
       if (!box || box.deletedAt) return;
@@ -165,7 +173,11 @@ export async function onTodoDoneChanged(todoId: number, done: boolean, userId: n
       if (m) {
         const [delivery] = await tx.select().from(testBoxDeliveriesTable)
           .where(and(eq(testBoxDeliveriesTable.id, Number(m[1])), eq(testBoxDeliveriesTable.testBoxId, box.id)));
-        if (delivery && !delivery.deletedAt) await setDeliveryClosed(tx, delivery, done, user);
+        // Closing queues the production from sales; reopening takes it off.
+        if (delivery && !delivery.deletedAt) {
+          if (done) await closeAndQueue(tx, box, delivery, user);
+          else await reopenDelivery(tx, delivery, user);
+        }
       }
       await syncTestBox(tx, box.id, user);
     });
