@@ -4,7 +4,7 @@ import {
   getGetProductionPlanQueryKey,
 } from "@workspace/api-client-react";
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
-import { useQueryClient, useQuery } from "@tanstack/react-query";
+import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import {
   Loader2, Plus, Minus, CheckCircle2, Snowflake, AlertCircle, Gift, Flame, ChevronDown, ThermometerSnowflake, ArrowDown, ClipboardList, PackageCheck, X, Trash2,
 } from "lucide-react";
@@ -26,6 +26,8 @@ import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chip
 import { fetchFridgeAvailability, computeFridgeAllocation, type GateOrder } from "@/lib/fridge-gate";
 import { isCollection, isDispatchTagged, isLocalDelivery } from "@/lib/dispatch-tagging";
 import { decidePostOvenReminder } from "@/lib/post-oven-reminder";
+import { summariseTakeBackOut, takeBackOutBody, type TakeBackOutSummary, type TakeBackOutWhere, type UndoReason } from "@/lib/wrapping-undo";
+import { TakeBackOutDialog } from "../shared/take-back-out-dialog";
 
 // Case-order freezer split — new columns not yet in the generated API client
 // (openapi.yaml codegen deliberately deferred; see project_api_spec_drift).
@@ -125,6 +127,14 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   const [storageDest, setStorageDest] = useState<Record<number, "fridge" | "freezer">>({});
   const [showCustom, setShowCustom] = useState<Record<number, boolean>>({});
   const [shopifyConfirm, setShopifyConfirm] = useState<ShopifyWrapConfirmState | null>(null);
+  // The open "Take N back OUT?" confirmation, if any (see askTakeBackOut).
+  const [takeOut, setTakeOut] = useState<{
+    item: StationPlanItem;
+    where: TakeBackOutWhere;
+    packSize: 2 | 8;
+    summary: TakeBackOutSummary;
+  } | null>(null);
+  useModalScrollKeeper(takeOut != null);
   const [wonkyTransferResult, setWonkyTransferResult] = useState<{
     transferred: Array<{ recipeName: string | null; qty: number }>;
     totalQty: number;
@@ -529,23 +539,62 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
     addingRef.current = false;
   };
 
-  const undoStorage = async (item: ProductionPlanItem, qty: number, storageKey: string, packSize: number = 2) => {
+  // Taking packs back OUT is never one tap (Graeme, 2026-10-08 — a stray
+  // "Undo 20" took 20 really-wrapped Philly packs off the record three
+  // seconds after the panel auto-advanced from BBQ). Every remove button
+  // only OPENS the two-step confirmation; the request goes once the wrapper
+  // has picked a reason and held the confirm button. No retry: a remove is
+  // not safe to repeat.
+  const askTakeBackOut = (item: StationPlanItem, qty: number, storageKey: TakeBackOutWhere, packSize: 2 | 8 = 2) => {
     if (qty < 1) return;
-    const loc = STORAGE_LOCATIONS.find(l => l.key === storageKey);
-    if (!loc) return;
-    setStorageLoading(item.id);
-    await runStorageAction(async (signal) => {
-      await guardedFetch(`/api/production-plans/${plan.id}/items/${item.id}/${loc.endpoint}`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ qty, packSize }),
-        signal,
-      });
-      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-      const packLabel = packSize === 8 ? "8-pack bags" : "packs";
-      toast({ title: `−${qty} ${packLabel} from ${loc.label}`, description: `${item.recipeName ?? "Recipe"}` });
+    const isBag = packSize === 8;
+    const eightPkTarget = Math.max(0, (item.eightPackBagCount ?? 0) - freezerBagTarget(item));
+    const summary = summariseTakeBackOut({
+      recipeName: item.recipeName,
+      qty,
+      packSize,
+      where: storageKey,
+      storedBefore: isBag ? (item.fridgeEightPackQty ?? 0) : getStorageQty(item, storageKey),
+      target: isBag ? eightPkTarget : netTwoPacks(item),
+      otherStored: isBag ? 0 : getStorageQty(item, storageKey === "fridge" ? "freezer" : "fridge"),
     });
-    setStorageLoading(null);
+    if (summary.qty < 1) return;
+    setTakeOut({ item, where: storageKey, packSize, summary });
+  };
+
+  const takeOutMutation = useMutation({
+    mutationFn: async (args: { itemId: number; where: TakeBackOutWhere; body: ReturnType<typeof takeBackOutBody> }) => {
+      const loc = STORAGE_LOCATIONS.find(l => l.key === args.where);
+      if (!loc) throw new Error("Unknown storage place");
+      const res = await fetch(`/api/production-plans/${plan.id}/items/${args.itemId}/${loc.endpoint}`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(args.body),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null) as { error?: string } | null;
+        throw new Error(data?.error ? `${data.error} — nothing was changed.` : `Couldn't take them out (${res.status}) — nothing was changed.`);
+      }
+      return res.json();
+    },
+    retry: false,
+  });
+
+  const confirmTakeBackOut = async (reason: UndoReason, otherText: string) => {
+    if (!takeOut) return;
+    const { item, where, packSize, summary } = takeOut;
+    await takeOutMutation.mutateAsync({
+      itemId: item.id,
+      where,
+      body: takeBackOutBody({ qty: summary.qty, packSize, reason, otherText }),
+    });
+    await queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
+    setTakeOut(null);
+    toast({
+      title: `−${summary.qty} ${summary.unit} from ${where === "fridge" ? "Production Fridge" : "Product Freezer"}`,
+      description: `${summary.recipe} — still to wrap now ${summary.stillToWrapAfter}`,
+    });
   };
 
   return (
@@ -555,6 +604,14 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
           where the wrappers stand — with the obvious route to the full
           pack report alongside. */}
       <LeftToWrapBanner />
+
+      {takeOut && (
+        <TakeBackOutDialog
+          summary={takeOut.summary}
+          onCancel={() => setTakeOut(null)}
+          onConfirm={confirmTakeBackOut}
+        />
+      )}
 
       {/* Case-order banner — the wrapper's brief: how many cases to build,
           what goes in each, and the running made-vs-remaining. Only rendered
@@ -1100,12 +1157,13 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                           const undoAmt = Math.min(STACK_SIZE, stored);
                           return (
                             <button
-                              onClick={() => undoStorage(item, undoAmt, dest)}
-                              disabled={isStorageLoading || storageBusy}
+                              onClick={() => askTakeBackOut(item, undoAmt, dest)}
+                              disabled={isStorageLoading || storageBusy || takeOut != null}
+                              title={`Take ${undoAmt} back out of the ${dest} — asks you to confirm`}
                               className="ml-auto inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-base hover:bg-red-50 dark:hover:bg-red-950/20 disabled:opacity-50 transition-colors"
                             >
                               <Minus className="w-3.5 h-3.5" />
-                              Undo {undoAmt}
+                              Undo {undoAmt}…
                             </button>
                           );
                         })()}
@@ -1127,13 +1185,13 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                           )}
                           {eightPkFridge > 0 && (
                             <button
-                              onClick={() => undoStorage(item, 1, "fridge", 8)}
-                              disabled={isStorageLoading || isOnBreak || storageBusy}
+                              onClick={() => askTakeBackOut(item, 1, "fridge", 8)}
+                              disabled={isStorageLoading || isOnBreak || storageBusy || takeOut != null}
                               className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-400 text-sm font-medium hover:bg-indigo-100/60 dark:hover:bg-indigo-900/40 disabled:opacity-50 transition-colors"
-                              title="Undo last 8-pack added to fridge"
+                              title="Take one 8-pack bag back out of the fridge — asks you to confirm"
                             >
                               <Minus className="w-4 h-4" />
-                              Undo one
+                              Undo one…
                             </button>
                           )}
                           {eightPkFridge > 0 && (
