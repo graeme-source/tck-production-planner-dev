@@ -20,6 +20,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, isBefore, isToday, parseISO } from "date-fns";
 import { useAuth } from "@/contexts/auth-context";
 import { toast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { resolveTodoLink } from "@/lib/todo-link";
 import {
@@ -352,6 +353,42 @@ function TodoList({ meId, canManage, viewUserId, onSwitchUser, onOpenTask, onCre
     staleTime: 15_000,
   });
 
+  // Tick straight from the list, several in a row, without opening each one
+  // (Graeme, 2026-10-08). Moves the card to "done" at once; Undo reopens.
+  const qc = useQueryClient();
+  const listKey = isMine ? ["todos", "mine", meId] : ["todos", "user", viewUserId];
+  const quickTick = useMutation({
+    mutationFn: ({ id, done }: { id: number; done: boolean }) => post(`/api/todos/${id}/${done ? "complete" : "reopen"}`),
+    onMutate: async ({ id, done }) => {
+      await qc.cancelQueries({ queryKey: listKey });
+      const prev = qc.getQueryData<{ open: TodoTask[]; done: TodoTask[] }>(listKey);
+      if (prev) {
+        const from = done ? prev.open : prev.done;
+        const t = from.find(x => x.id === id);
+        if (t) {
+          const moved = { ...t, status: done ? "done" as const : "open" as const };
+          qc.setQueryData(listKey, done
+            ? { open: prev.open.filter(x => x.id !== id), done: [moved, ...prev.done] }
+            : { open: [moved, ...prev.open], done: prev.done.filter(x => x.id !== id) });
+        }
+      }
+      return { prev };
+    },
+    onError: (e: Error, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(listKey, ctx.prev);
+      toast({ title: "Couldn't update the task", description: e.message, variant: "destructive" });
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["todos"] }),
+  });
+  const tickTask = (task: TodoTask) => {
+    quickTick.mutate({ id: task.id, done: true });
+    toast({
+      title: "Done ✓",
+      description: task.title,
+      action: <ToastAction altText="Undo" onClick={() => quickTick.mutate({ id: task.id, done: false })}>Undo</ToastAction>,
+    });
+  };
+
   const { data: users } = useQuery({
     queryKey: ["todo-users"],
     queryFn: async (): Promise<AppUserRow[]> => jsonOrThrow(await fetch(`${BASE}/api/users`, { credentials: "include" })),
@@ -409,7 +446,7 @@ function TodoList({ meId, canManage, viewUserId, onSwitchUser, onOpenTask, onCre
       )}
 
       <div className="space-y-3">
-        {data?.open.map(task => <TodoCard key={task.id} task={task} onOpen={() => onOpenTask(task.id)} />)}
+        {data?.open.map(task => <TodoCard key={task.id} task={task} onOpen={() => onOpenTask(task.id)} onTick={() => tickTask(task)} />)}
       </div>
 
       {data && data.done.length > 0 && (
@@ -422,7 +459,7 @@ function TodoList({ meId, canManage, viewUserId, onSwitchUser, onOpenTask, onCre
           </button>
           {showDone && (
             <div className="space-y-3 mt-3 opacity-70">
-              {data.done.map(task => <TodoCard key={task.id} task={task} onOpen={() => onOpenTask(task.id)} />)}
+              {data.done.map(task => <TodoCard key={task.id} task={task} onOpen={() => onOpenTask(task.id)} onTick={() => quickTick.mutate({ id: task.id, done: false })} />)}
             </div>
           )}
         </div>
@@ -431,16 +468,31 @@ function TodoList({ meId, canManage, viewUserId, onSwitchUser, onOpenTask, onCre
   );
 }
 
-function TodoCard({ task, onOpen }: { task: TodoTask; onOpen: () => void }) {
+function TodoCard({ task, onOpen, onTick }: { task: TodoTask; onOpen: () => void; onTick?: () => void }) {
   const meta = PRIORITY_META[task.priority];
   const overdue = isOverdue(task);
+  const done = task.status === "done";
   return (
-    <button
-      onClick={onOpen}
-      className="w-full text-left rounded-2xl border-2 border-border bg-card hover:border-primary/50 active:scale-[0.995] transition-all overflow-hidden flex shadow-sm"
-    >
+    <div className="w-full rounded-2xl border-2 border-border bg-card hover:border-primary/50 transition-all overflow-hidden flex shadow-sm">
       <div className={cn("w-2.5 flex-shrink-0", meta.bar)} />
-      <div className="flex-1 min-w-0 p-4 md:p-5">
+      {onTick && (
+        <button
+          type="button"
+          onClick={onTick}
+          aria-label={done ? `Reopen: ${task.title}` : `Tick off: ${task.title}`}
+          title={done ? "Reopen" : "Tick off"}
+          className="flex-shrink-0 w-16 flex items-center justify-center hover:bg-primary/5 active:bg-primary/10"
+        >
+          {done
+            ? <CheckCircle2 className="w-9 h-9 text-primary" />
+            : <Circle className="w-9 h-9 text-muted-foreground/60" />}
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex-1 min-w-0 text-left p-4 md:p-5 pl-1 active:scale-[0.995] transition-transform"
+      >
         <div className="flex items-start gap-3">
           <p className={cn(
             "flex-1 text-xl md:text-2xl font-bold leading-snug break-words",
@@ -463,8 +515,8 @@ function TodoCard({ task, onOpen }: { task: TodoTask; onOpen: () => void }) {
             <span className="text-sm text-muted-foreground font-medium">from {task.created_by_name}</span>
           )}
         </div>
-      </div>
-    </button>
+      </button>
+    </div>
   );
 }
 
