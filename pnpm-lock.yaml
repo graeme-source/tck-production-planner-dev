@@ -132,6 +132,9 @@ importers:
       '@workspace/production-schedule':
         specifier: workspace:*
         version: link:../../lib/production-schedule
+      '@workspace/revenue-targets':
+        specifier: workspace:*
+        version: link:../../lib/revenue-targets
       '@workspace/slow-meat':
         specifier: workspace:*
         version: link:../../lib/slow-meat
@@ -599,6 +602,9 @@ importers:
       '@workspace/production-schedule':
         specifier: workspace:*
         version: link:../../lib/production-schedule
+      '@workspace/revenue-targets':
+        specifier: workspace:*
+        version: link:../../lib/revenue-targets
       '@workspace/slow-meat':
         specifier: workspace:*
         version: link:../../lib/slow-meat
@@ -732,6 +738,8 @@ importers:
   lib/messages: {}
 
   lib/production-schedule: {}
+
+  lib/revenue-targets: {}
 
   lib/slow-meat: {}
 
