@@ -36,6 +36,7 @@ import {
 import { logFridgeStockChange, type FridgeChangeSource } from "./fridge-stock-log";
 import { productionDateFromJulianBatch } from "./julian-batch";
 import { planBagDecrement } from "./eight-pack-bags";
+import { batchesInRemovalOrder } from "./wrapping-undo";
 
 /** Sentinel batch number used when an operator adds packs to the fridge
  *  but doesn't supply a real batch number. Stored as a real row in
@@ -59,6 +60,10 @@ export interface AdjustFridgeStockInput {
   source?: FridgeChangeSource;
   /** Operator who made the change, for the audit log. */
   userId?: number | null;
+  /** Only used when delta < 0: take from this batch first, then FIFO.
+   *  The wrapping-station undo passes the plan's own julian batch so the
+   *  packs come back out of the batch they were wrapped into. */
+  preferBatchNumber?: number | null;
 }
 
 export interface AdjustFridgeStockResult {
@@ -219,7 +224,7 @@ export async function adjustFridgeStock(
     let remaining = -delta;
     const consumed: AdjustFridgeStockResult["consumed"] = [];
 
-    const batches = await tx
+    const batches = batchesInRemovalOrder(await tx
       .select()
       .from(fridgeStockBatchesTable)
       .where(and(
@@ -227,7 +232,7 @@ export async function adjustFridgeStock(
         eq(fridgeStockBatchesTable.packSize, packSize),
         gt(fridgeStockBatchesTable.quantity, 0),
       ))
-      .orderBy(asc(fridgeStockBatchesTable.useByDate));
+      .orderBy(asc(fridgeStockBatchesTable.useByDate)), input.preferBatchNumber);
 
     for (const batch of batches) {
       if (remaining <= 0) break;

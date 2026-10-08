@@ -6229,61 +6229,8 @@ router.post("/:id/items/:itemId/fridge", async (req, res) => {
   res.json({ itemId, fridgeQty: updated.fridgeQty, fridgeEightPackQty: updated.fridgeEightPackQty });
 });
 
-// DELETE /:id/items/:itemId/fridge — undo last fridge addition (atomic decrement, floor 0)
-router.delete("/:id/items/:itemId/fridge", async (req, res) => {
-  const planId = Number(req.params.id);
-  const itemId = Number(req.params.itemId);
-  const qty = Number(req.body.qty);
-  const packSize = Number(req.body.packSize) || 2;
-  if (!Number.isInteger(qty) || qty < 1) {
-    res.status(400).json({ error: "Body must contain { qty: positive integer }" });
-    return;
-  }
-
-  const [item] = await db.select({
-    id: productionPlanItemsTable.id,
-    recipeId: productionPlanItemsTable.recipeId,
-  })
-    .from(productionPlanItemsTable)
-    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
-
-  if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
-
-  const [updated] = await db
-    .update(productionPlanItemsTable)
-    .set(packSize === 8
-      ? { fridgeEightPackQty: sql`GREATEST(${productionPlanItemsTable.fridgeEightPackQty} - ${qty}, 0)` }
-      : { fridgeQty: sql`GREATEST(${productionPlanItemsTable.fridgeQty} - ${qty}, 0)` })
-    .where(eq(productionPlanItemsTable.id, itemId))
-    .returning({
-      fridgeQty: productionPlanItemsTable.fridgeQty,
-      fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,
-    });
-
-  await syncRecipeFridgeStock(item.recipeId, -qty, packSize, db, {
-    source: "wrapping",
-    note: "Undo wrapped",
-    userId: req.session.userId ?? null,
-  });
-
-  // Decrement batch-level fridge stock tracking
-  const [plan] = await db.select({ batchNumber: productionPlansTable.batchNumber })
-    .from(productionPlansTable).where(eq(productionPlansTable.id, planId));
-  if (plan?.batchNumber) {
-    await db.execute(sql`
-      UPDATE fridge_stock_batches
-      SET quantity = GREATEST(quantity - ${qty}, 0)
-      WHERE recipe_id = ${item.recipeId} AND batch_number = ${plan.batchNumber} AND pack_size = ${packSize}
-    `);
-    // Clean up zero-quantity rows
-    await db.execute(sql`
-      DELETE FROM fridge_stock_batches
-      WHERE recipe_id = ${item.recipeId} AND batch_number = ${plan.batchNumber} AND pack_size = ${packSize} AND quantity = 0
-    `);
-  }
-
-  res.json({ itemId, fridgeQty: updated.fridgeQty, fridgeEightPackQty: updated.fridgeEightPackQty });
-});
+// DELETE /:id/items/:itemId/fridge — moved to routes/wrapping-storage-undo.ts
+// (2026-10-08): taking wrapped packs back out needs { confirm: true, reason }.
 
 // ──────────────────────────────────────────────────────────────────────────────
 // POST/DELETE /:id/items/:itemId/freezer — freezer stock (atomic increment/decrement)
@@ -6303,20 +6250,8 @@ router.post("/:id/items/:itemId/freezer", async (req, res) => {
   res.json({ itemId, freezerQty: updated.freezerQty });
 });
 
-router.delete("/:id/items/:itemId/freezer", async (req, res) => {
-  const planId = Number(req.params.id);
-  const itemId = Number(req.params.itemId);
-  const qty = Number(req.body.qty);
-  if (!Number.isInteger(qty) || qty < 1) { res.status(400).json({ error: "Body must contain { qty: positive integer }" }); return; }
-  const [item] = await db.select({ id: productionPlanItemsTable.id }).from(productionPlanItemsTable)
-    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
-  if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
-  const [updated] = await db.update(productionPlanItemsTable)
-    .set({ freezerQty: sql`GREATEST(${productionPlanItemsTable.freezerQty} - ${qty}, 0)` })
-    .where(eq(productionPlanItemsTable.id, itemId))
-    .returning({ freezerQty: productionPlanItemsTable.freezerQty });
-  res.json({ itemId, freezerQty: updated.freezerQty });
-});
+// DELETE /:id/items/:itemId/freezer — moved to routes/wrapping-storage-undo.ts
+// (2026-10-08): taking packs back out needs { confirm: true, reason }.
 
 // ──────────────────────────────────────────────────────────────────────────────
 // POST/DELETE /:id/items/:itemId/prep-fridge — prep fridge stock (atomic increment/decrement)
