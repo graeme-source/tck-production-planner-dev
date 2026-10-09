@@ -52,6 +52,7 @@
     "@workspace/allergens": "workspace:*",
     "@workspace/api-client-react": "workspace:*",
     "@workspace/business-days": "workspace:*",
+    "@workspace/building-edit": "workspace:*",
     "@workspace/feature-registry": "workspace:*",
     "@workspace/marketing-calendar": "workspace:*",
     "@workspace/messages": "workspace:*",

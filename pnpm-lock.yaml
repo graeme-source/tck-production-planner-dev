@@ -114,6 +114,9 @@ importers:
       '@workspace/api-zod':
         specifier: workspace:*
         version: link:../../lib/api-zod
+      '@workspace/building-edit':
+        specifier: workspace:*
+        version: link:../../lib/building-edit
       '@workspace/business-days':
         specifier: workspace:*
         version: link:../../lib/business-days
@@ -587,6 +590,9 @@ importers:
       '@workspace/api-client-react':
         specifier: workspace:*
         version: link:../../lib/api-client-react
+      '@workspace/building-edit':
+        specifier: workspace:*
+        version: link:../../lib/building-edit
       '@workspace/business-days':
         specifier: workspace:*
         version: link:../../lib/business-days
@@ -703,6 +709,8 @@ importers:
       zod:
         specifier: 'catalog:'
         version: 3.25.76
+
+  lib/building-edit: {}
 
   lib/business-days: {}
 
