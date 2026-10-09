@@ -113,6 +113,15 @@ describe("editBlockReason / lowestAllowed (downstream floors)", () => {
     expect(lowestAllowed(state(), { batches: 3, extraPacks: 0 }, "building_1", "batches")).toBe(0);
   });
 
+  it("a negative extra-pack count left by the old Undo can be kept or raised, not lowered", () => {
+    // Part batch of 3 removed by the old Undo: its −2 stayed on the line.
+    const s = state({ stationExtras: { building_2: -2 } });
+    expect(buildNumbers(s).extraPacks).toBe(-2);
+    expect(editBlockReason(s, { batches: 2, extraPacks: -2 }, "building_1")).toBeNull();
+    expect(editBlockReason(s, { batches: 3, extraPacks: -3 }, "building_1")).not.toBeNull();
+    expect(lowestAllowed(s, { batches: 3, extraPacks: -2 }, "building_1", "extraPacks")).toBe(-2);
+  });
+
   it("uses pack words for recipes counted in packs", () => {
     expect(editBlockReason(state({ ovenBatches: 1 }), { batches: 0, extraPacks: 0 }, "building_1", PACK_WORDS)).toMatch(/^1 pack has already/);
   });

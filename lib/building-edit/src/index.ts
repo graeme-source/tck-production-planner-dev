@@ -189,7 +189,10 @@ export function planBuildEdit(state: BuildEditState, target: EditTarget, line: s
  */
 export function editBlockReason(state: BuildEditState, target: EditTarget, line: string, unit: UnitWords = BATCH_WORDS): string | null {
   if (!Number.isInteger(target.batches) || target.batches < 0) return `${cap(unit.plural)} can't go below 0.`;
-  if (!Number.isInteger(target.extraPacks) || target.extraPacks < 0) return "Extra packs can't go below 0.";
+  // Below 0 is refused — unless it already was (a part batch taken off by
+  // the old Undo left its shortfall behind) and isn't being lowered further.
+  const extrasFloor = Math.min(0, buildNumbers(state).extraPacks);
+  if (!Number.isInteger(target.extraPacks) || target.extraPacks < extrasFloor) return `Extra packs can't go below ${extrasFloor}.`;
   if (target.batches < state.ovenBatches) {
     return `${count(state.ovenBatches, unit)} ${state.ovenBatches === 1 ? "has" : "have"} already gone through the ovens, so this can't go below ${state.ovenBatches}. If the ovens recorded one by mistake, the oven station takes it off first.`;
   }
@@ -203,7 +206,7 @@ export function editBlockReason(state: BuildEditState, target: EditTarget, line:
 /** The lowest value a counter can go to with the other counter held. */
 export function lowestAllowed(state: BuildEditState, target: EditTarget, line: string, field: keyof EditTarget): number {
   let v = target[field];
-  while (v > 0 && editBlockReason(state, { ...target, [field]: v - 1 }, line) === null) v--;
+  while (editBlockReason(state, { ...target, [field]: v - 1 }, line) === null) v--;
   return v;
 }
 

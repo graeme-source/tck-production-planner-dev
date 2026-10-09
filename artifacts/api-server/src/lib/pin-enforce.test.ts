@@ -42,6 +42,7 @@ describe("matchAttributingWrite", () => {
   it.each([
     ["POST", "/production-plans/180/batch-completions"],
     ["POST", "/production-plans/180/batch-completions/bulk"],
+    ["POST", "/production-plans/180/items/9/building-edit"], // Edit numbers can add batches
     ["PUT", "/app-settings/station_assignment_180_building_2"],
     ["PUT", "/app-settings/checklist_done_180_building_1_55_12"],
     ["POST", "/checklists/completions"],
@@ -63,6 +64,7 @@ describe("matchAttributingWrite", () => {
 
   it.each([
     ["GET", "/production-plans/180/batch-completions"], // reads
+    ["GET", "/production-plans/180/items/9/building-edit"], // the Edit dialog's read
     ["DELETE", "/production-plans/180/batch-completions/last"], // undo
     ["DELETE", "/production-plans/180/items/9/wonly"], // undo a wonky
     ["DELETE", "/production-plans/180/items/9/dog-bin"], // undo a dog bin

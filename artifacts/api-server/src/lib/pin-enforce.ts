@@ -37,6 +37,9 @@ export const ATTRIBUTING_WRITES: readonly Rule[] = [
   { method: "POST", pattern: new RegExp(`${PLAN}/building-finished/?$`), what: "building finished" },
   { method: "POST", pattern: new RegExp(`${PLAN}/items/${ID}/mark-chilled/?$`), what: "mark chilled" },
   { method: "POST", pattern: new RegExp(`${PLAN}/items/${ID}/manual-batch/?$`), what: "manual batch" },
+  // Building "Edit numbers" can ADD batches under the signed-in person
+  // (routes/building-edit.ts), so it needs today's PIN like recording one.
+  { method: "POST", pattern: new RegExp(`${PLAN}/items/${ID}/building-edit/?$`), what: "edit production numbers" },
   { method: "PATCH", pattern: new RegExp(`${PLAN}/items/${ID}/wrapping-complete/?$`), what: "wrapping complete" },
   { method: "POST", pattern: new RegExp(`${PLAN}/items/${ID}/fridge/?$`), what: "packs into fridge" },
   // Quality rejects: both + taps now write who-and-when to
