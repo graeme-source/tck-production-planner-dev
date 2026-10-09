@@ -17,7 +17,7 @@ import { CheckCircle2, Hand, Loader2, X } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useCompleteTour, useCompletedTours } from "@/hooks/use-user-tours";
 import { nextTourStep, shouldShowTour, SWIPE_TOUR_KEY, type TourEvent, type TourStep } from "@/lib/swipe-tour";
-import { useAnyPromptShowing } from "@/lib/prompt-presence";
+import { useAnyPromptShowing, useFullScreenOverlayShowing } from "@/lib/prompt-presence";
 
 /** "Show me later" lasts for this page load only. */
 let laterThisLoad = false;
@@ -31,6 +31,9 @@ export function useSwipePanelTour(panelOpen: boolean) {
   const [later, setLater] = useState(laterThisLoad);
   const [step, setStep] = useState<TourStep>("intro");
   const [finished, setFinished] = useState(false);
+  // Any other full-screen pop-up (new to-do, messages…) — wait for it. Not
+  // while the tour is running or the panel is open (those are ours).
+  const overlayShowing = useFullScreenOverlayShowing(!panelOpen && step === "intro");
   // Someone else signing in on this iPad starts at the beginning.
   useEffect(() => { setStep("intro"); setFinished(false); }, [userId]);
 
@@ -38,7 +41,7 @@ export function useSwipePanelTour(panelOpen: boolean) {
     completed: completedQ.data,
     laterThisLoad: later,
     pinLocked,
-    otherPromptShowing: peoplePinPrompt || peoplePinSetupPrompt || promptShowing,
+    otherPromptShowing: peoplePinPrompt || peoplePinSetupPrompt || promptShowing || overlayShowing,
     path: location,
   }));
 
