@@ -68,6 +68,21 @@ export function kgOrNull(qty: number, unit: string | null | undefined): number |
   return g === null ? null : g / 1000;
 }
 
+/**
+ * A quantity in one unit expressed in another — 500 g in kg = 0.5. Same
+ * unit (any spelling case) passes straight through, so count units work
+ * when they match ("3 each" in "each"). Weight ↔ volume goes through grams
+ * (density 1, as above). Anything else — "3 each" in kg — is null: there
+ * is no honest answer, so the caller must say so rather than guess.
+ */
+export function convertQuantity(qty: number, from: string | null | undefined, to: string | null | undefined): number | null {
+  if (normalise(from) === normalise(to)) return qty;
+  const g = gramsOrNull(qty, from);
+  const perTo = GRAMS_PER_UNIT[normalise(to)];
+  if (g === null || perTo === undefined) return null;
+  return g / perTo;
+}
+
 // Recipe quantities are on a COOKED basis; processingRatio is the cooked
 // yield per unit of raw input (e.g. 0.7 = 1 kg raw cooks down to 700 g).
 // Raw demand is therefore cooked ÷ ratio — the convention orders.ts and
