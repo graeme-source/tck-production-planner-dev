@@ -19,6 +19,8 @@ import {
   type TagScope,
 } from "@/lib/dispatch-tagging";
 import { ApcBatchBookingDialog } from "@/components/apc-batch-booking";
+import { BookingIssuesButton } from "@/components/apc-booking-issues/issues-button";
+import { BookingIssuesReport } from "@/components/apc-booking-issues/issues-report";
 import { RescheduleOrderDialog } from "@/components/reschedule-order-dialog";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { format, addDays, parseISO } from "date-fns";
@@ -1938,6 +1940,9 @@ export default function Fulfilment() {
   };
 
   const [showBatchBooking, setShowBatchBooking] = useState(false);
+  // Today's saved booking-issues report (Graeme, 2026-10-09) — reopened
+  // from stored data, never by booking again.
+  const [showBookingIssues, setShowBookingIssues] = useState(false);
   // Packing is open to viewers; booking real consignments, rescheduling
   // customer orders and approving the day (tagging) are not. Both are now
   // grantable abilities (Settings → Team & Access) rather than raw role
@@ -4314,6 +4319,9 @@ export default function Fulfilment() {
               <div className="ml-auto flex items-center gap-2 flex-wrap">
                 {/* canBookCourier: booking is manager-only (other session,
                     2026-08-21) — merged with the unified-bar layout. */}
+                {apcMode === "full" && (
+                  <BookingIssuesButton onOpen={() => setShowBookingIssues(true)} />
+                )}
                 {apcMode === "full" && canBookCourier && (
                   <button
                     onClick={() => setShowBatchBooking(true)}
@@ -4455,6 +4463,13 @@ export default function Fulfilment() {
                 adminBase={configStatus?.shopifyAdminOrderBase}
                 onClose={() => setShowBatchBooking(false)}
                 onBooked={() => { void refetchBooked(); void refetch(); }}
+                onOpenIssues={() => { setShowBatchBooking(false); setShowBookingIssues(true); }}
+              />
+            )}
+            {showBookingIssues && (
+              <BookingIssuesReport
+                onClose={() => setShowBookingIssues(false)}
+                onChanged={() => { void refetchBooked(); void refetch(); void refetchProgress(); }}
               />
             )}
 

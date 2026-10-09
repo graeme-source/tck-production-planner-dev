@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Undo2, MapPinOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { BOOKING_ISSUES_KEY } from "@/components/apc-booking-issues/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -56,7 +57,12 @@ export function useRecordApcOverride() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: OVERRIDES_KEY }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: OVERRIDES_KEY });
+      // A recorded APC answer can change a booking issue's case (e.g.
+      // "permanent — no Saturdays"), so the report re-reads too.
+      void qc.invalidateQueries({ queryKey: BOOKING_ISSUES_KEY });
+    },
   });
 }
 
@@ -65,7 +71,12 @@ export function useClearApcOverride() {
   return useMutation({
     mutationFn: async (id: number) =>
       json<{ ok: true }>(await fetch(`${BASE}/api/apc-postcode-overrides/${id}/clear`, { method: "POST", credentials: "include" })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: OVERRIDES_KEY }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: OVERRIDES_KEY });
+      // A recorded APC answer can change a booking issue's case (e.g.
+      // "permanent — no Saturdays"), so the report re-reads too.
+      void qc.invalidateQueries({ queryKey: BOOKING_ISSUES_KEY });
+    },
   });
 }
 
