@@ -1320,7 +1320,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
             recipeName={editItem?.recipeName ?? (editItem ? `Recipe #${editItem.recipeId}` : "")}
             recipeColor={editItem?.recipeColor}
             stationType={stationType}
-            lineNumber={lineNumber}
+            buildingFinishedAt={buildingFinishedAt}
             onClose={() => setEditNumbersItemId(null)}
             onSaved={(delta) => setSessionBatches(prev => Math.max(0, prev + delta))}
             onEditLeftover={editItem && editHasFilling ? () => { setEditNumbersItemId(null); setEditPromptItemId(editItem.id); } : undefined}
