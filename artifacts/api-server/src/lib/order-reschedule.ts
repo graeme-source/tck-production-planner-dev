@@ -36,6 +36,11 @@ export function toZapietDate(tagDate: string): string {
   return tagDate.replace(/-/g, "/");
 }
 
+/** True when a `YYYY-MM-DD` date is a Saturday. */
+export function isSaturdayDate(tagDate: string): boolean {
+  return dayNameFor(tagDate) === "Saturday";
+}
+
 /** Weekday name for a `YYYY-MM-DD` date, as the day tags are written. */
 export function dayNameFor(tagDate: string): string {
   const [y, m, d] = tagDate.split("-").map(Number);
@@ -53,19 +58,35 @@ export function dayNameFor(tagDate: string): string {
  *
  * Deliberately a plain rule rather than a calendar lookup: it is only ever a
  * DEFAULT, and the operator can pick any date instead.
+ *
+ * `weekdaysOnly` also skips Saturdays — for a postcode APC never deliver to
+ * on a Saturday (Graeme, 2026-10-09), where offering one would just fail
+ * again.
  */
-export function nextAvailableDeliveryDate(failedTagDate: string): string {
+export function nextAvailableDeliveryDate(failedTagDate: string, opts: { weekdaysOnly?: boolean } = {}): string {
   const [y, m, d] = failedTagDate.split("-").map(Number);
   const cursor = new Date(Date.UTC(y, m - 1, d, 12));
   for (let i = 0; i < 14; i++) {
     cursor.setUTCDate(cursor.getUTCDate() + 1);
     const dow = cursor.getUTCDay();
-    if (dow !== 0 && dow !== 1) {           // not Sunday, not Monday
+    if (dow !== 0 && dow !== 1 && !(opts.weekdaysOnly && dow === 6)) { // not Sun/Mon (nor Sat when weekdays only)
       return cursor.toISOString().slice(0, 10);
     }
   }
   /* istanbul ignore next — unreachable: a deliverable day occurs within 14. */
   return failedTagDate;
+}
+
+/** The next `count` deliverable dates after `fromTagDate`, for one-tap
+ *  picking on the Reschedule pop-up — Saturdays left out when weekdaysOnly. */
+export function deliveryDateChoices(fromTagDate: string, count: number, weekdaysOnly = false): string[] {
+  const out: string[] = [];
+  let cursor = fromTagDate;
+  while (out.length < count) {
+    cursor = nextAvailableDeliveryDate(cursor, { weekdaysOnly });
+    out.push(cursor);
+  }
+  return out;
 }
 
 export interface TagChange {
@@ -199,6 +220,19 @@ Kind regards
 ${opts.senderFirstName}`;
 }
 
+/** Plain-text email → simple HTML: one <p> per paragraph, same words,
+ *  nothing added. Shared by every customer email built from text here and
+ *  in apc-issue-emails.ts, so the HTML can never drift from the text. */
+export function plainEmailHtml(text: string): string {
+  const escape = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const paragraphs = text
+    .split(/\n\n+/)
+    .map(p => `<p style="margin:0 0 16px">${escape(p).replace(/\n/g, "<br>")}</p>`)
+    .join("");
+  return `<div style="font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1a1a1a">${paragraphs}</div>`;
+}
+
 /** HTML version of the same email — same words, nothing added. Derived from
  *  the text so the two can never drift apart. */
 export function rescheduleEmailHtml(opts: {
@@ -206,13 +240,7 @@ export function rescheduleEmailHtml(opts: {
   senderFirstName: string;
   newTagDate: string;
 }): string {
-  const escape = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const paragraphs = rescheduleEmailText(opts)
-    .split(/\n\n+/)
-    .map(p => `<p style="margin:0 0 16px">${escape(p).replace(/\n/g, "<br>")}</p>`)
-    .join("");
-  return `<div style="font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;color:#1a1a1a">${paragraphs}</div>`;
+  return plainEmailHtml(rescheduleEmailText(opts));
 }
 
 /** First name only — the email signs off with a first name, and the sign-off

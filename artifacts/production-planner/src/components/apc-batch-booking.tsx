@@ -11,7 +11,11 @@
  *                  default, so a full run is a deliberate act.
  *   2. CONFIRM   — a second explicit step naming the exact count and the
  *                  service-code mix.
- *   3. REPORT    — every order's own outcome, failures first, copyable.
+ *   3. REPORT    — the counts and every order's outcome, copyable. Any
+ *                  failure is dealt with in the near-full-screen "Booking
+ *                  issues today" report (components/apc-booking-issues),
+ *                  which is saved server-side and can be reopened from the
+ *                  packing screen all day without booking again.
  *
  * Nothing is booked without the operator seeing stages 1 and 2.
  */
@@ -19,13 +23,13 @@ import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import {
   Loader2, AlertTriangle, CheckCircle2, XCircle, PackageCheck,
-  Truck, ClipboardCopy, ShieldAlert, CalendarClock, RotateCcw, ExternalLink,
+  Truck, ClipboardCopy, ShieldAlert, ClipboardList,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { mergeRows, countRows, replaceRow } from "@/lib/booking-report";
-import { RescheduleOrderDialog } from "@/components/reschedule-order-dialog";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/hooks/use-toast";
-import { PostcodeServiceCard, type PostcodeServiceFacts, type PostcodeCall } from "@/components/apc-postcode-service";
+import type { PostcodeServiceFacts, PostcodeCall } from "@/components/apc-postcode-service";
+import { BOOKING_ISSUES_KEY } from "@/components/apc-booking-issues/api";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
@@ -97,6 +101,9 @@ interface BookResult {
 
 interface BookResponse {
   tag: string;
+  /** False when the server couldn't save the failures to today's issues
+   *  report — the list below is then the only record. */
+  issuesSaved?: boolean;
   booked: number;
   skipped: number;
   failed: number;
@@ -208,115 +215,22 @@ function Section({ title, count, tone, orders, adminBase, defaultOpen = false, s
   );
 }
 
-export function ApcBatchBookingDialog({ tag, adminBase, onClose, onBooked }: {
+export function ApcBatchBookingDialog({ tag, adminBase, onClose, onBooked, onOpenIssues }: {
   tag: string;
   /** Shopify admin `/admin/orders/` prefix, from the config status. Handed in
    *  rather than built here so the store domain stays server-side. */
   adminBase?: string;
   onClose: () => void;
   onBooked: () => void;
+  /** Close this and open the big "Booking issues today" report. */
+  onOpenIssues: () => void;
 }) {
+  const qc = useQueryClient();
   const [preflight, setPreflight] = useState<Preflight | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [stage, setStage] = useState<"review" | "confirm" | "booking" | "report">("review");
   const [report, setReport] = useState<BookResponse | null>(null);
-  // Which failed row has its reschedule dialog open. One at a time by
-  // design — each customer gets a personally addressed email.
-  const [rescheduling, setRescheduling] = useState<BookResult | null>(null);
-  // ── Retry ───────────────────────────────────────────────────────────────
-  // A failure here is usually something to go and FIX on the order — an
-  // over-long Delivery City, a missing postcode — and then try again. Before
-  // this, fixing it meant closing the report and running the whole booking
-  // flow from the top, which also lost the record of what else had happened
-  // (Graeme, 2026-09-03).
-  //
-  // Every retry re-reads the order from Shopify server-side, so it sees the
-  // correction: nothing from the original batch is reused but the order id.
-  // `retry: true` also turns on the courier-side duplicate check, so a
-  // consignment APC raised but never told us about is reused, not doubled.
-  //
-  // One retry at a time — every button locks while any is in flight, because
-  // two overlapping runs would race on the same report.
-  const [retryingOrderId, setRetryingOrderId] = useState<number | null>(null);
-  const [retryingAll, setRetryingAll] = useState(false);
-  const retryBusy = retryingOrderId !== null || retryingAll;
-
-  /** Fold fresh outcomes into the report and recompute the counters. */
-  function applyResults(replacements: BookResult[]) {
-    setReport(prev => {
-      if (!prev) return prev;
-      const results = mergeRows(prev.results, replacements);
-      return { ...prev, results, ...countRows(results) };
-    });
-  }
-
-  async function runRetry(rowsToRetry: BookResult[], code?: string): Promise<BookResult[]> {
-    const res = await fetch(`${BASE}/api/fulfilment/batch-book`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        tag,
-        orderIds: rowsToRetry.map(r => r.orderId),
-        retry: true,
-        ...(code ? { serviceCodeOverride: code } : {}),
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error ?? "Retry failed");
-    return (data as BookResponse).results;
-  }
-
-  /** Retry one row — on its auto-picked service code, or on `code` when the
-   *  server suggested a different one. */
-  async function retryRow(row: BookResult, code?: string) {
-    setRetryingOrderId(row.orderId);
-    try {
-      const replacement = (await runRetry([row], code)).find(r => r.orderId === row.orderId);
-      if (!replacement) {
-        toast({ title: `No outcome came back for ${row.orderName}`, variant: "destructive" });
-        return;
-      }
-      applyResults([replacement]);
-      const on = code ? ` on ${code}` : "";
-      if (replacement.status === "booked") {
-        toast({ title: `${row.orderName} booked${on}` });
-        onBooked();
-      } else if (replacement.status === "skipped") {
-        toast({ title: `${row.orderName} — ${replacement.reason ?? "skipped"}` });
-        onBooked();
-      } else {
-        toast({ title: `${row.orderName} still failing${on}`, description: replacement.reason, variant: "destructive" });
-      }
-    } catch (e) {
-      toast({ title: "Retry failed", description: e instanceof Error ? e.message : "Request failed", variant: "destructive" });
-    } finally {
-      setRetryingOrderId(null);
-    }
-  }
-
-  /** Retry every failure in one pass — after a round of fixes in Shopify. */
-  async function retryAllFailed(rowsToRetry: BookResult[]) {
-    setRetryingAll(true);
-    try {
-      const replacements = await runRetry(rowsToRetry);
-      applyResults(replacements);
-      const nowBooked = replacements.filter(r => r.status === "booked").length;
-      const stillFailing = replacements.filter(r => r.status === "failed").length;
-      toast({
-        title: stillFailing === 0
-          ? `All ${replacements.length} booked`
-          : `${nowBooked} booked · ${stillFailing} still failing`,
-        ...(stillFailing > 0 ? { variant: "destructive" as const } : {}),
-      });
-      if (nowBooked > 0) onBooked();
-    } catch (e) {
-      toast({ title: "Retry failed", description: e instanceof Error ? e.message : "Request failed", variant: "destructive" });
-    } finally {
-      setRetryingAll(false);
-    }
-  }
   // Nothing ticked to begin with: booking the whole wave has to be chosen,
   // not defaulted into.
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -378,6 +292,7 @@ export function ApcBatchBookingDialog({ tag, adminBase, onClose, onBooked }: {
       setReport(data as BookResponse);
       setStage("report");
       onBooked();
+      void qc.invalidateQueries({ queryKey: BOOKING_ISSUES_KEY });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Booking failed");
       setStage("review");
@@ -394,16 +309,6 @@ export function ApcBatchBookingDialog({ tag, adminBase, onClose, onBooked }: {
       .catch(() => toast({ title: "Could not copy", variant: "destructive" }));
   }
 
-  /** Rows worth a retry: every failure, plus an order skipped only because it
-   *  hadn't been approved yet — tag it on the packing screen, then retry from
-   *  here instead of running the booking flow again (Graeme, 2026-09-03).
-   *  Deliberately NOT an order already holding a consignment, a local
-   *  delivery, or one rescheduled off the day: there is nothing to retry. */
-  const canRetry = (r: BookResult) =>
-    r.status === "failed"
-    || (r.status === "skipped" && (r.reason ?? "").toLowerCase().startsWith("not tagged for dispatch"));
-  const retryableRows = report?.results.filter(canRetry) ?? [];
-
   const quickPick = (n: number) => (
     <button
       key={n}
@@ -416,25 +321,15 @@ export function ApcBatchBookingDialog({ tag, adminBase, onClose, onBooked }: {
   );
 
   return (
-    <Dialog open onOpenChange={(v) => { if (!v && stage !== "booking" && !rescheduling) onClose(); }}>
-      <DialogContent
-        className="max-w-2xl max-h-[88vh] overflow-y-auto"
-        // The reschedule dialog renders over this one. Radix decides
-        // "clicked outside" on POINTERDOWN, which fires before click — so
-        // pressing a button in the child dialog tore this one down, unmounting
-        // the child before its click handler ran. The button looked like it
-        // did nothing because it genuinely never fired (2026-08-21, #133063).
-        onPointerDownOutside={e => { if (rescheduling) e.preventDefault(); }}
-        onInteractOutside={e => { if (rescheduling) e.preventDefault(); }}
-        onEscapeKeyDown={e => { if (rescheduling) e.preventDefault(); }}
-      >
+    <Dialog open onOpenChange={(v) => { if (!v && stage !== "booking") onClose(); }}>
+      <DialogContent className="max-w-2xl max-h-[92dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <PackageCheck className="w-5 h-5 text-primary" /> Book APC consignments — {tag}
           </DialogTitle>
           <DialogDescription>
             {stage === "report"
-              ? "Every order's outcome is listed below. Anything that failed still has no label."
+              ? "Every order's outcome is listed below. Anything that failed still has no label — deal with it in the issues report."
               : "Tick the orders to book. Nothing is booked until you confirm on the next step."}
           </DialogDescription>
         </DialogHeader>
@@ -604,23 +499,26 @@ export function ApcBatchBookingDialog({ tag, adminBase, onClose, onBooked }: {
               </div>
             )}
 
-            {/* Fix a few orders in Shopify, then re-check them all in one
-                press. Only worth showing for more than one failure — with a
-                single failure its own Retry is right there on the row. */}
-            {retryableRows.length > 1 && (
-              <div className="flex items-center gap-3 rounded-xl border border-blue-300 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/20 px-3 py-2.5">
-                <RotateCcw className="w-4 h-4 shrink-0 text-blue-600" />
-                <span className="text-sm text-blue-900 dark:text-blue-200 flex-1">
-                  Corrected these on Shopify? Re-check them all without leaving this report.
+            {/* Failures are worked in the big, saved report — not in this
+                small dialog (Graeme, 2026-10-09). */}
+            {report.failed > 0 && report.issuesSaved !== false && (
+              <button
+                onClick={onOpenIssues}
+                className="w-full min-h-16 rounded-2xl bg-red-600 hover:bg-red-700 text-white px-4 py-3 text-left flex items-center gap-3"
+              >
+                <ClipboardList className="w-7 h-7 shrink-0" />
+                <span className="flex-1">
+                  <span className="block text-lg font-bold">Deal with the {report.failed} order{report.failed !== 1 ? "s" : ""} that didn't book</span>
+                  <span className="block text-sm text-white/90">Opens today's booking issues report — saved, so you can close it and carry on packing.</span>
                 </span>
-                <button
-                  onClick={() => retryAllFailed(retryableRows)}
-                  disabled={retryBusy}
-                  className="shrink-0 px-3 py-2 rounded-xl text-sm font-semibold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1.5"
-                >
-                  {retryingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
-                  Retry all {retryableRows.length}
-                </button>
+              </button>
+            )}
+            {report.issuesSaved === false && (
+              <div className="flex items-start gap-2 text-sm rounded-xl border-2 border-red-400 bg-red-50 dark:bg-red-950/30 px-3 py-2.5">
+                <ShieldAlert className="w-4 h-4 flex-shrink-0 mt-0.5 text-red-600" />
+                <span className="text-red-900 dark:text-red-200">
+                  <strong>These failures couldn't be saved to today's issues report.</strong> Press Copy report before closing — this list is the only record.
+                </span>
               </div>
             )}
 
@@ -657,92 +555,9 @@ export function ApcBatchBookingDialog({ tag, adminBase, onClose, onBooked }: {
                     {r.taggedNoService && (
                       <span className="block text-xs text-muted-foreground">Tagged <code className="font-mono">apc-no-service</code> in Shopify</span>
                     )}
-                    {/* The spreadsheet lookup Graeme used to do by hand
-                        before deciding whether to reschedule — what APC's
-                        own postcode sheet says this address can take. */}
-                    {r.postcodeService ? (
-                      <PostcodeServiceCard
-                        service={r.postcodeService}
-                        advice={r.postcodeAdvice}
-                        call={r.postcodeCall}
-                        callService={r.postcodeAdviceService}
-                        className="mt-1.5"
-                      />
-                    ) : r.postcodeCheck && (
-                      <span className="block text-sm text-blue-800 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/30 rounded px-2 py-1.5 mt-1">
-                        {r.postcodeCheck}
-                      </span>
-                    )}
-                    {/* APC's own wording is left exactly as it came — it is
-                        the authoritative text. This only says what to DO
-                        about it, for the failures that are fixable on the
-                        order (Graeme, 2026-09-03). */}
-                    {r.status === "failed" && r.dataFixable && (
-                      <span className="block text-xs text-muted-foreground mt-0.5">
-                        Correct this on the order in Shopify, then press Retry.
-                      </span>
-                    )}
                   </span>
                   {r.serviceCode && <span className="text-xs font-mono text-muted-foreground shrink-0">{r.serviceCode}</span>}
 
-                  {/* Actions sit on their own full-width line rather than
-                      squeezed onto the end of the row: at iPad width three
-                      chips beside the reason left nothing tappable. */}
-                  {(canRetry(r) || r.status === "failed") && (
-                    <div className="w-full flex items-center justify-end gap-2 pt-1">
-                      {/* The everyday path: the operator has just corrected
-                          the order in Shopify. Re-reads it from Shopify, so
-                          it books on the fix rather than the stale data. */}
-                      {canRetry(r) && (
-                        <button
-                          onClick={() => retryRow(r)}
-                          disabled={retryBusy}
-                          className="text-xs px-2.5 py-1.5 rounded-lg border border-blue-400 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30 inline-flex items-center gap-1 disabled:opacity-50"
-                          title="Re-read this order from Shopify and try the booking again"
-                        >
-                          {retryingOrderId === r.orderId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
-                          Retry
-                        </button>
-                      )}
-                      {/* Restricted routes (e.g. Isle of Wight) often accept
-                          ND while refusing Lightweight. */}
-                      {r.status === "failed" && r.suggestedRetryCode && (
-                        <button
-                          onClick={() => retryRow(r, r.suggestedRetryCode!)}
-                          disabled={retryBusy}
-                          className="text-xs px-2.5 py-1.5 rounded-lg border border-blue-400 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30 inline-flex items-center gap-1 disabled:opacity-50"
-                          title={`This route may not take ${r.usedServiceCode ?? "the chosen service"} — retry the booking on ${r.suggestedRetryCode}`}
-                        >
-                          <PackageCheck className="w-3.5 h-3.5" />
-                          Retry as {r.suggestedRetryCode}
-                        </button>
-                      )}
-                      {/* When the address is fine and the route simply can't
-                          take the day, rescheduling is the resolution. One at
-                          a time — each customer gets their own email. */}
-                      {r.status === "failed" && (
-                        <button
-                          onClick={() => setRescheduling(r)}
-                          disabled={retryBusy}
-                          className="text-xs px-2.5 py-1.5 rounded-lg border border-amber-400 dark:border-amber-700 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 inline-flex items-center gap-1 disabled:opacity-50"
-                          title="Move this order to a later delivery date and email the customer"
-                        >
-                          <CalendarClock className="w-3.5 h-3.5" /> Reschedule
-                        </button>
-                      )}
-                      {r.adminUrl && (
-                        <a
-                          href={r.adminUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs px-2.5 py-1.5 rounded-lg border border-border text-muted-foreground hover:bg-secondary/60 hover:text-foreground inline-flex items-center gap-1"
-                          title={`Open ${r.orderName} in Shopify to fix it`}
-                        >
-                          <ExternalLink className="w-3.5 h-3.5" /> Open in Shopify
-                        </a>
-                      )}
-                    </div>
-                  )}
                 </div>
               ))}
             </div>
@@ -758,35 +573,6 @@ export function ApcBatchBookingDialog({ tag, adminBase, onClose, onBooked }: {
         )}
       </DialogContent>
 
-      {/* Rendered outside the report list so it survives the list re-sorting
-          underneath it. `tag` is the dispatch day being booked, which is the
-          date the order is moving OFF. */}
-      {rescheduling && (
-        <RescheduleOrderDialog
-          orderId={rescheduling.orderId}
-          orderName={rescheduling.orderName}
-          fromDate={tag}
-          adminUrl={rescheduling.adminUrl}
-          onClose={() => setRescheduling(null)}
-          onDone={() => {
-            // The order has left this dispatch day — mark it so in the report
-            // rather than leaving a stale "failed" row the operator might act
-            // on twice. Counts are recomputed from the rows: this used to
-            // change the row and leave the red "1 failed" tile standing over
-            // it, so the two halves of the screen disagreed (Graeme,
-            // 2026-09-03).
-            setReport(prev => {
-              if (!prev) return prev;
-              const results = replaceRow(prev.results, rescheduling.orderId, {
-                status: "skipped" as const,
-                reason: "Rescheduled — moved off this dispatch day",
-              });
-              return { ...prev, results, ...countRows(results) };
-            });
-            onBooked();
-          }}
-        />
-      )}
     </Dialog>
   );
 }

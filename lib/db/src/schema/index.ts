@@ -50,5 +50,6 @@ export * from "./test_boxes";
 export * from "./defects";
 export * from "./contacts";
 export * from "./apc_postcode_overrides";
+export * from "./apc_booking_issues";
 export * from "./staff_emergency_contacts";
 export * from "./user_tours";
