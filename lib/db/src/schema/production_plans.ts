@@ -1,4 +1,4 @@
-import { pgTable, serial, text, numeric, integer, timestamp, date, boolean, unique } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, numeric, integer, timestamp, date, boolean, unique, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { recipesTable } from "./recipes";
@@ -118,6 +118,28 @@ export const qualityRejectEventsTable = pgTable("quality_reject_events", {
 });
 
 export type QualityRejectEvent = typeof qualityRejectEventsTable.$inferSelect;
+
+// One row per Save of the building station's "Edit production numbers"
+// dialog: who changed a recipe's batches / extra packs, from what to what,
+// and which batch rows it removed or added. The numbers themselves stay in
+// batch_completions and building_station_progress. Migration 0157.
+export const buildingCountEditsTable = pgTable("building_count_edits", {
+  id: serial("id").primaryKey(),
+  planId: integer("plan_id").notNull().references(() => productionPlansTable.id, { onDelete: "cascade" }),
+  planItemId: integer("plan_item_id").notNull().references(() => productionPlanItemsTable.id, { onDelete: "cascade" }),
+  recipeId: integer("recipe_id").references(() => recipesTable.id, { onDelete: "set null" }),
+  stationType: text("station_type").notNull(),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  batchesBefore: integer("batches_before").notNull(),
+  batchesAfter: integer("batches_after").notNull(),
+  extraPacksBefore: integer("extra_packs_before").notNull(),
+  extraPacksAfter: integer("extra_packs_after").notNull(),
+  removedCompletions: jsonb("removed_completions").notNull().default([]),
+  addedCompletionIds: jsonb("added_completion_ids").notNull().default([]),
+  extrasDelta: jsonb("extras_delta").notNull().default({}),
+  summary: text("summary").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
 
 // Live presence ping per (planItem, station). The building station upserts
 // while a builder is actively working on a recipe; the recipe-close action
