@@ -957,6 +957,19 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                       )}
                     </div>
 
+                    {/* Wonky / Dog bin right on the recipe, the same buttons and
+                        rules as the oven station (Graeme, 2026-10-09: wrappers
+                        pick up rejects the oven person missed). Adding one
+                        moves a pack out of Net; it's refused once every pack
+                        is already in the fridge/freezer. The full rack and the
+                        freezer transfer stay in the queue sheet. */}
+                    <QualityRejectSteppers
+                      item={item}
+                      rejects={rejects}
+                      disabled={isOnBreak}
+                      wonkyLocked={!!wonkyTransferResult}
+                    />
+
                     {/* Flow arrow — From Chiller → Production Fridge */}
                     <div className="flex justify-center -my-1">
                       <ArrowDown className="w-5 h-5 text-muted-foreground/50" />
