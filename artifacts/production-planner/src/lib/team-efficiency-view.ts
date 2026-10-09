@@ -289,6 +289,20 @@ export function gbp(n: number | null | undefined): string {
   return n.toLocaleString("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 });
 }
 
+/** Value ÷ labour as a percentage (Graeme, 2026-10-09: "5.64 would be
+ *  564%"). £6,335 credited on £1,123 of labour → "564%". */
+export function valueOnLabourPct(credited: number | null | undefined, labour: number | null | undefined): string {
+  if (credited == null || labour == null || !(labour > 0) || !Number.isFinite(credited)) return "—";
+  return `${Math.round((credited / labour) * 100)}%`;
+}
+
+/** Labour as a share of the value credited — the other way up: £1,123 of
+ *  labour on £6,335 credited → "17.7%". */
+export function labourShareOfValuePct(credited: number | null | undefined, labour: number | null | undefined): string {
+  if (credited == null || labour == null || !(credited > 0) || !Number.isFinite(labour)) return "—";
+  return `${((labour / credited) * 100).toFixed(1)}%`;
+}
+
 // ── Settings inputs ───────────────────────────────────────────────────────
 
 /** "22" or "22%" → 0.22; null when not a percentage between 0 and max. */

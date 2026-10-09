@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  valueOnLabourPct, labourShareOfValuePct,
   band, pctLabel, trend, changeLabel, chartPoints, yDomain, lineOrder, totalPacks,
   parsePercentInput, percentInputValue, parseRangeQuery, rangeQuery, editCustomRange, startingCustomRange,
   rangeDays, previousRangeLabel, DEFAULT_CHOICE, reportQuery, todayMessage, asOfLabel, type EffDay,
@@ -131,5 +132,21 @@ describe("Today", () => {
   it("says when it was worked out, in London time", () => {
     expect(asOfLabel("2026-09-25T15:17:59Z")).toBe("Updated 16:17");
     expect(asOfLabel("nonsense")).toBe("");
+  });
+});
+
+describe("value ÷ labour and labour share, as percentages", () => {
+  it("shows the ratio as a percentage: 5.64 is 564%", () => {
+    expect(valueOnLabourPct(6335, 1123)).toBe("564%");
+  });
+  it("shows labour as a share of the value credited", () => {
+    expect(labourShareOfValuePct(6335, 1123)).toBe("17.7%");
+    expect(labourShareOfValuePct(1000, 150)).toBe("15.0%");
+  });
+  it("is a dash when there is no labour or no value yet", () => {
+    expect(valueOnLabourPct(6660, 0)).toBe("—");
+    expect(valueOnLabourPct(null, 100)).toBe("—");
+    expect(labourShareOfValuePct(0, 100)).toBe("—");
+    expect(labourShareOfValuePct(6660, null)).toBe("—");
   });
 });

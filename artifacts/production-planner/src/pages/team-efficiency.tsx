@@ -4,7 +4,7 @@
  * we've been doing over recent times ... backdate it ... 12 months".
  *
  * Managers and admins see percentages, packs and orders. The founder also
- * sees value credited, labour cost, R and the settings — the SERVER decides
+ * sees value credited, labour cost, value ÷ labour, labour % of value and the settings — the SERVER decides
  * that (GET /api/team-efficiency strips £ for everyone else); this page only
  * renders what arrives. Lives in Analytics only for now (Graeme: nothing on
  * the dashboard or meetings until it's right).
@@ -21,7 +21,7 @@ import { TeamEfficiencySettings, type EffSettings } from "@/components/team-effi
 import { TeamEfficiencyToday } from "@/components/team-efficiency-today";
 import {
   RANGES, BAND_LABEL, band, pctLabel, trend, changeLabel, chartPoints, lineOrder,
-  dayLabel, weekLabel, monthLabel, gbp,
+  dayLabel, weekLabel, monthLabel, gbp, valueOnLabourPct, labourShareOfValuePct,
   parseRangeQuery, rangeQuery, reportQuery, editCustomRange, startingCustomRange, previousRangeLabel, TODAY_REFRESH_MS,
   type TodayEstimate,
   type RangeChoice, type DateBounds, type RangeKey, type EffDay, type EffPeriod, type EffHeadline, type Band, type ChartPoint,
@@ -115,7 +115,7 @@ function Headline({ h, founder, days }: { h: EffHeadline; founder: boolean; days
       </p>
       {founder && labour > 0 && (
         <p className="mt-3 text-sm text-muted-foreground">
-          {gbp(credited)} credited on {gbp(labour)} of labour — R {(credited / labour).toFixed(2)}
+          {gbp(credited)} credited on {gbp(labour)} of labour — value ÷ labour {valueOnLabourPct(credited, labour)}, labour {labourShareOfValuePct(credited, labour)} of value
         </p>
       )}
     </section>
@@ -154,7 +154,8 @@ function DailyTable({ days, lines, founder }: { days: EffDay[]; lines: string[];
             <th className={cn(th, "text-right")}>7-day</th>
             {founder && <th className={cn(th, "text-right")}>Credited</th>}
             {founder && <th className={cn(th, "text-right")}>Labour</th>}
-            {founder && <th className={cn(th, "text-right")}>R</th>}
+            {founder && <th className={cn(th, "text-right")} title="Value credited ÷ labour cost">Value ÷ labour</th>}
+            {founder && <th className={cn(th, "text-right")} title="Labour cost as a share of the value credited">Labour % of value</th>}
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
@@ -171,7 +172,8 @@ function DailyTable({ days, lines, founder }: { days: EffDay[]; lines: string[];
               <td className={cn(td, "text-right text-muted-foreground")}>{pctLabel(d.rollingPct)}</td>
               {founder && <td className={cn(td, "text-right")}>{gbp(d.valueCredited)}</td>}
               {founder && <td className={cn(td, "text-right")}>{gbp(d.labourCost)}</td>}
-              {founder && <td className={cn(td, "text-right")}>{d.ratio != null ? d.ratio.toFixed(2) : "—"}</td>}
+              {founder && <td className={cn(td, "text-right")}>{valueOnLabourPct(d.valueCredited, d.labourCost)}</td>}
+              {founder && <td className={cn(td, "text-right")}>{labourShareOfValuePct(d.valueCredited, d.labourCost)}</td>}
             </tr>
           ))}
         </tbody>
@@ -194,7 +196,8 @@ function PeriodTable({ periods, label, founder }: { periods: EffPeriod[]; label:
             <th className={cn(th, "text-right")}>Efficiency</th>
             {founder && <th className={cn(th, "text-right")}>Credited</th>}
             {founder && <th className={cn(th, "text-right")}>Labour</th>}
-            {founder && <th className={cn(th, "text-right")}>R</th>}
+            {founder && <th className={cn(th, "text-right")} title="Value credited ÷ labour cost">Value ÷ labour</th>}
+            {founder && <th className={cn(th, "text-right")} title="Labour cost as a share of the value credited">Labour % of value</th>}
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
@@ -210,7 +213,8 @@ function PeriodTable({ periods, label, founder }: { periods: EffPeriod[]; label:
               <td className={cn(td, "text-right font-bold")}>{pctLabel(p.pct)}</td>
               {founder && <td className={cn(td, "text-right")}>{gbp(p.valueCredited)}</td>}
               {founder && <td className={cn(td, "text-right")}>{gbp(p.labourCost)}</td>}
-              {founder && <td className={cn(td, "text-right")}>{p.ratio != null ? p.ratio.toFixed(2) : "—"}</td>}
+              {founder && <td className={cn(td, "text-right")}>{valueOnLabourPct(p.valueCredited, p.labourCost)}</td>}
+              {founder && <td className={cn(td, "text-right")}>{labourShareOfValuePct(p.valueCredited, p.labourCost)}</td>}
             </tr>
           ))}
         </tbody>
