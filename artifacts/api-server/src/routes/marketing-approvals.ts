@@ -248,7 +248,7 @@ router.post("/unapprove", requireFounderArea(FOUNDER_FEATURES.approveEmails), va
  * routes/marketing-emails.ts. Unlinking leaves the campaign's approval with
  * the campaign; the plan is then judged on its own row again.
  */
-export async function carryApprovalOnLink(tx: Tx, emailId: number, klaviyoCampaignId: string, user: { id: number; name: string }): Promise<boolean> {
+export async function carryApprovalOnLink(tx: Tx, emailId: number, klaviyoCampaignId: string, user: { id: number | null; name: string }): Promise<boolean> {
   const [planRow] = await tx.select().from(marketingEmailApprovalsTable)
     .where(eq(marketingEmailApprovalsTable.targetKey, `plan:${emailId}`)).for("update");
   if (!planRow?.approved) return false;

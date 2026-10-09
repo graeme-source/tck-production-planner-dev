@@ -15,14 +15,16 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { db, marketingEmailsTable, marketingEmailHistoryTable, marketingEventsTable, usersTable } from "@workspace/db";
-import { and, asc, desc, eq, gte, isNull, lte, ne } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lte } from "drizzle-orm";
 import {
   EMAIL_AUDIENCE_KEYS, EMAIL_STATUSES, PHASE_EVENT_TYPE, campaignForDate, daysBetween, describeEmailFieldChanges,
-  describeEmailMove, describeKlaviyoLink, diffEmailFields, type FieldChange,
+  describeEmailMove, diffEmailFields, type FieldChange,
 } from "@workspace/marketing-calendar";
 import { validate, validateQuery } from "../middleware/validate";
 import { requireFounderArea } from "../middleware/founder-area-access";
-import { carryApprovalOnLink } from "./marketing-approvals";
+import { setPlannedEmailKlaviyoLink } from "../lib/marketing-email-klaviyo-link";
+import { autoLinkInfo } from "../lib/klaviyo-auto-link";
+import { forgetAutoLinkRun } from "../lib/klaviyo-auto-link-run";
 
 const router: IRouter = Router();
 router.use(requireFounderArea("founder.sales"));
@@ -102,10 +104,13 @@ async function oneEmailJson(e: EmailRow) {
   return emailJson(e, await campaignOn(e.sendDate));
 }
 
-async function loadHistory(emailId: number) {
-  const rows = await db.select().from(marketingEmailHistoryTable)
+async function loadHistoryRows(emailId: number) {
+  return db.select().from(marketingEmailHistoryTable)
     .where(eq(marketingEmailHistoryTable.emailId, emailId))
     .orderBy(desc(marketingEmailHistoryTable.createdAt), desc(marketingEmailHistoryTable.id));
+}
+
+function historyJson(rows: Awaited<ReturnType<typeof loadHistoryRows>>) {
   return rows.map(h => ({ id: h.id, userId: h.userId, userName: h.userName, action: h.action, summary: h.summary, at: h.createdAt.toISOString() }));
 }
 
@@ -135,7 +140,12 @@ router.get("/:id", async (req: Request, res: Response) => {
   if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
   const [row] = await db.select().from(marketingEmailsTable).where(eq(marketingEmailsTable.id, id));
   if (!row) { res.status(404).json({ error: "Email not found" }); return; }
-  res.json({ email: await oneEmailJson(row), deleted: row.deletedAt != null, deletedBy: row.deletedByName, history: await loadHistory(id) });
+  const history = await loadHistoryRows(id);
+  res.json({
+    email: await oneEmailJson(row), deleted: row.deletedAt != null, deletedBy: row.deletedByName, history: historyJson(history),
+    // Set when the current Klaviyo link was made by the automatic linker.
+    autoLink: autoLinkInfo(row.klaviyoCampaignId, history),
+  });
 });
 
 // ── Create ─────────────────────────────────────────────────────────────────
@@ -289,37 +299,13 @@ router.put("/:id/klaviyo", validate(KlaviyoBody), async (req: Request, res: Resp
   if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
   const b = req.body as z.infer<typeof KlaviyoBody>;
   const user = await sessionUser(req);
-  const result = await db.transaction(async (tx) => {
-    const [before] = await tx.select().from(marketingEmailsTable).where(eq(marketingEmailsTable.id, id)).for("update");
-    if (!before || before.deletedAt) return { status: 404 as const };
-    if (before.klaviyoCampaignId === b.klaviyoCampaignId) return { status: 200 as const, row: before };
-    if (b.klaviyoCampaignId) {
-      const [taken] = await tx.select({ id: marketingEmailsTable.id, subject: marketingEmailsTable.subject }).from(marketingEmailsTable)
-        .where(and(eq(marketingEmailsTable.klaviyoCampaignId, b.klaviyoCampaignId), isNull(marketingEmailsTable.deletedAt), ne(marketingEmailsTable.id, id)));
-      if (taken) return { status: 409 as const, error: `That Klaviyo email is already linked to the planned email “${taken.subject}”.` };
-    }
-    const nextName = b.klaviyoCampaignId ? (b.klaviyoCampaignName || b.klaviyoCampaignId) : null;
-    const [after] = await tx.update(marketingEmailsTable).set({
-      klaviyoCampaignId: b.klaviyoCampaignId, klaviyoCampaignName: nextName,
-      updatedById: user.id, updatedByName: user.name, updatedAt: new Date(),
-    }).where(eq(marketingEmailsTable.id, id)).returning();
-    const change = describeKlaviyoLink(before.klaviyoCampaignName ?? before.klaviyoCampaignId, nextName)
-      ?? { action: "linked" as const, summary: `linked it to the Klaviyo email “${nextName ?? ""}”` };
-    await tx.insert(marketingEmailHistoryTable).values({
-      emailId: id, userId: user.id, userName: user.name, action: change.action, summary: change.summary,
-      changes: { klaviyoCampaignId: { from: before.klaviyoCampaignId, to: b.klaviyoCampaignId } },
-    });
-    // The plan and its Klaviyo campaign share one approval from now on.
-    if (b.klaviyoCampaignId && await carryApprovalOnLink(tx, id, b.klaviyoCampaignId, user)) {
-      await tx.insert(marketingEmailHistoryTable).values({
-        emailId: id, userId: user.id, userName: user.name, action: "linked",
-        summary: "carried its approval over to the Klaviyo email",
-      });
-    }
-    return { status: 200 as const, row: after };
-  });
+  // Same linking as the automatic linker — lib/marketing-email-klaviyo-link.ts.
+  const result = await db.transaction(tx => setPlannedEmailKlaviyoLink(tx, {
+    emailId: id, klaviyoCampaignId: b.klaviyoCampaignId, klaviyoCampaignName: b.klaviyoCampaignName, user,
+  }));
   if (result.status === 404) { res.status(404).json({ error: "Email not found (it may have been deleted)" }); return; }
   if (result.status === 409) { res.status(409).json({ error: result.error }); return; }
+  forgetAutoLinkRun(); // suggestions re-worked on the next look
   res.json({ email: await oneEmailJson(result.row) });
 });
 

@@ -149,3 +149,24 @@ export async function klaviyoEmailsForRange(from: string, to: string, opts: { wi
   const emails = campaignsToCalendar({ campaigns, messages, audienceNames, from, to });
   return opts.withRecentDrafts ? { connected: true, emails, recentDrafts: await recentDrafts(apiKey, 120) } : { connected: true, emails };
 }
+
+/**
+ * Every campaign the automatic linker may pair with a plan (2026-10-09):
+ * all drafts (whatever their placeholder day) plus scheduled / sending /
+ * sent from `since` on — from the same 3-minute caches, so no extra calls
+ * once they're warm. No audience names needed, so none are looked up.
+ * null = Klaviyo isn't connected.
+ */
+export async function klaviyoCampaignsForMatching(since: string): Promise<KlaviyoCalendarEmail[] | null> {
+  const apiKey = await getKlaviyoKey();
+  if (!apiKey) return null;
+  const [page, drafts] = await Promise.all([loadCampaigns(apiKey, since), loadDrafts(apiKey)]);
+  const sends = campaignsToCalendar({
+    campaigns: page.campaigns.filter(c => c.attributes.status !== "Draft"), messages: page.messages,
+    audienceNames: new Map(), from: since, to: "9999-12-31",
+  });
+  const draftEmails = campaignsToCalendar({
+    campaigns: drafts.campaigns, messages: drafts.messages, audienceNames: new Map(), from: "0000-01-01", to: "9999-12-31",
+  });
+  return [...sends, ...draftEmails];
+}

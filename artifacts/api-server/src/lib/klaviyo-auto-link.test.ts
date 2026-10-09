@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  AUTO_LINK_MIN, describeAutoLink, matchKlaviyoToPlans, matchWords, scorePairs, textScore,
+  AUTO_LINK_MIN, autoLinkInfo, describeAutoLink, matchKlaviyoToPlans, matchWords, scorePairs, textScore, unlinkedPairsFrom,
   type CampaignForMatch, type PlanForMatch,
 } from "./klaviyo-auto-link";
 
@@ -155,6 +155,35 @@ describe("matchKlaviyoToPlans", () => {
       ],
     });
     expect(pairs[0].campaignId).toBe("k4");
+  });
+});
+
+describe("history: unlinked pairs and how the current link was made", () => {
+  const at = new Date("2026-10-09T10:00:00Z");
+  it("an unlink, or switching to another campaign, marks the old pair as unlinked on purpose", () => {
+    expect(unlinkedPairsFrom([
+      { emailId: 1, changes: { klaviyoCampaignId: { from: null, to: "k1" } } },
+      { emailId: 1, changes: { klaviyoCampaignId: { from: "k1", to: null } } },
+      { emailId: 2, changes: { klaviyoCampaignId: { from: "k2", to: "k3" } } },
+      { emailId: 3, changes: { subject: { from: "a", to: "b" } } },
+      { emailId: 4, changes: null },
+    ])).toEqual([{ emailId: 1, campaignId: "k1" }, { emailId: 2, campaignId: "k2" }]);
+  });
+  it("feeds the matcher: a pair taken apart in history is never re-linked", () => {
+    const r = matchKlaviyoToPlans({
+      plans: [plan(1, "Properoni launch")],
+      campaigns: [camp("k1", "Properoni launch")],
+      unlinkedPairs: unlinkedPairsFrom([{ emailId: 1, changes: { klaviyoCampaignId: { from: "k1", to: null } } }]),
+    });
+    expect(r.links).toEqual([]);
+  });
+  it("says Linked automatically only when the latest link to the current campaign was automatic", () => {
+    const auto = { changes: { klaviyoCampaignId: { from: null, to: "k1" }, auto: { matched: "name “Properoni launch”" } }, createdAt: at };
+    const manual = { changes: { klaviyoCampaignId: { from: null, to: "k1" } }, createdAt: at };
+    expect(autoLinkInfo("k1", [auto])).toEqual({ matched: "name “Properoni launch”", at: at.toISOString() });
+    expect(autoLinkInfo("k1", [manual, auto])).toBeNull();
+    expect(autoLinkInfo(null, [auto])).toBeNull();
+    expect(autoLinkInfo("k2", [auto])).toBeNull();
   });
 });
 

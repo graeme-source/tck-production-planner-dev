@@ -23,6 +23,7 @@ import { syncTestBox, testBoxCalendarInfo } from "../lib/test-box-data";
 import { validate, validateQuery } from "../middleware/validate";
 import { requireFounderArea } from "../middleware/founder-area-access";
 import { klaviyoEmailsForRange } from "../lib/klaviyo-campaign-calendar";
+import { runKlaviyoAutoLink, type AutoLinkOutcome } from "../lib/klaviyo-auto-link-run";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 import type Anthropic from "@anthropic-ai/sdk";
 
@@ -131,7 +132,17 @@ const KlaviyoQuery = z.object({ from: IsoDate, to: IsoDate, recentDrafts: z.enum
 router.get("/klaviyo-emails", validateQuery(KlaviyoQuery), async (_req: Request, res: Response) => {
   const { from, to, recentDrafts } = res.locals["query"] as z.infer<typeof KlaviyoQuery>;
   try {
-    res.json(await klaviyoEmailsForRange(from, to, { withRecentDrafts: recentDrafts === "1" }));
+    const out = await klaviyoEmailsForRange(from, to, { withRecentDrafts: recentDrafts === "1" });
+    // Auto-link (2026-10-09): plans and the Klaviyo emails built for them
+    // link themselves when the match is clear; the rest come back as
+    // suggestions. A failure here never stops the calendar showing Klaviyo.
+    let auto: AutoLinkOutcome = { autoLinked: [], suggestions: [] };
+    if (out.connected) {
+      try { auto = await runKlaviyoAutoLink(); } catch (err) {
+        console.error("[marketing-calendar] Klaviyo auto-link failed:", err instanceof Error ? err.message : String(err));
+      }
+    }
+    res.json({ ...out, ...auto });
   } catch (err) {
     console.error("[marketing-calendar] Klaviyo emails failed:", err instanceof Error ? err.message : String(err));
     res.json({ connected: true, emails: [], error: "Couldn't reach Klaviyo just now" });

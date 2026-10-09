@@ -257,3 +257,30 @@ export function describeAutoLink(m: Pick<PairMatch, "campaignName" | "planSubjec
   const where = m.field === "name" || m.fieldText === m.campaignName ? "its name" : `its subject line “${m.fieldText}”`;
   return `linked automatically to the Klaviyo email “${m.campaignName}” (matched “${m.planSubject}” to ${where})`;
 }
+
+/** How a planned email's CURRENT link was made, from its history (newest
+ *  first): the latest line pointing at that campaign. Automatic → what
+ *  matched; made by a person (or not found) → null. */
+export function autoLinkInfo(
+  current: string | null,
+  history: Array<{ changes: unknown; createdAt: Date }>,
+): { matched: string; at: string } | null {
+  if (!current) return null;
+  for (const h of history) {
+    const c = h.changes as { klaviyoCampaignId?: { to?: string | null }; auto?: { matched?: string } } | null;
+    if (!c?.klaviyoCampaignId || c.klaviyoCampaignId.to !== current) continue;
+    return c.auto?.matched ? { matched: c.auto.matched, at: h.createdAt.toISOString() } : null;
+  }
+  return null;
+}
+
+/** Pairs someone took apart, from history rows' `changes` — any change that
+ *  moved a plan OFF a campaign (unlink, or switching to another one). */
+export function unlinkedPairsFrom(rows: Array<{ emailId: number; changes: unknown }>): Array<{ emailId: number; campaignId: string }> {
+  const out: Array<{ emailId: number; campaignId: string }> = [];
+  for (const r of rows) {
+    const k = (r.changes as { klaviyoCampaignId?: { from?: string | null; to?: string | null } } | null)?.klaviyoCampaignId;
+    if (k?.from && k.from !== k.to) out.push({ emailId: r.emailId, campaignId: k.from });
+  }
+  return out;
+}
