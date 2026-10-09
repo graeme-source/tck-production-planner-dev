@@ -50,10 +50,11 @@ export function campaignSendAt(a: RawCampaign["attributes"]): string | null {
 }
 
 /** Sent campaigns open on their report; drafts in the editor; scheduled
- *  ones on the campaign list. */
+ *  ones on the campaign list. Drafts are /wizard/1 — /edit is a Klaviyo 404
+ *  (both paths checked against real campaigns by Graeme, 2026-10-09). */
 export function klaviyoUrlFor(id: string, status: string): string {
   if (status === "Sent") return `https://www.klaviyo.com/campaign/${id}/reports/overview`;
-  if (status === "Draft") return `https://www.klaviyo.com/campaign/${id}/edit`;
+  if (status === "Draft") return `https://www.klaviyo.com/campaign/${id}/wizard/1`;
   return "https://www.klaviyo.com/campaigns";
 }
 

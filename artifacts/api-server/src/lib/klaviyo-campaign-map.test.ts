@@ -40,7 +40,7 @@ describe("Klaviyo campaigns on the marketing calendar", () => {
     expect(d.status).toBe("Draft");
     expect(d.date).toBe("2026-09-28");
     expect(d.subject).toBe("Early access");
-    expect(d.klaviyoUrl).toContain("/campaign/dr/edit");
+    expect(d.klaviyoUrl).toBe("https://www.klaviyo.com/campaign/dr/wizard/1");
     // A draft with no planned send time can't be placed — left out.
     expect(res.find(e => e.id === "c")).toBeUndefined();
   });
