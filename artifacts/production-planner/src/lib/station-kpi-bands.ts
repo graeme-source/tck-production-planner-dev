@@ -156,30 +156,47 @@ export function coreTileStatuses(readings: Partial<Record<KpiSource, KpiReading 
   return out;
 }
 
-/** Header classes per band. All keep white text ≥4.5:1 contrast:
- *  platinum emerald-700→teal-700→cyan-800 (≥5.4), green = Fresh Basil
- *  deepened to #587f2f (4.7 — the brand #7cb342 itself is only 2.5 with
- *  white), amber-700 (5.0), rose-700 (6.3), neutral slate-blue #4c5c9e
- *  (6.3; bluer and deeper than Today's Admin slate-500). */
+/** Header classes per band (revised with Graeme, 2026-10-09: "I don't love
+ *  these dark colours"): green is the brand Fresh Basil #7cb342 again, the
+ *  "no KPI yet" colour is a calm light stone grey (not purple, and nothing
+ *  like Today's Admin's slate-blue), yellow and stone carry dark text. */
 export const BAND_HEADER_CLASS: Record<KpiBand, string> = {
-  platinum: "bg-gradient-to-r from-emerald-700 via-teal-700 to-cyan-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.35)]",
-  green: "bg-[#587f2f]",
-  // Yellow, not amber/orange (Graeme, 2026-10-09): amber looked too like the
-  // Mac Cheese / Fried Chicken headers. Yellow needs DARK text — see
-  // BAND_TEXT_CLASS.
+  platinum: "bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.35)]",
+  green: "bg-[#7cb342]",
+  // Yellow, not amber/orange: amber looked too like the Mac Cheese / Fried
+  // Chicken headers.
   amber: "bg-yellow-400",
-  red: "bg-rose-700",
-  neutral: "bg-[#4c5c9e]",
+  red: "bg-rose-600",
+  neutral: "bg-stone-300",
 };
 
-/** Header text colour per band — white everywhere except the yellow band,
- *  where white is unreadable (stone-900 on yellow-400 ≈ 11:1). */
+/** Progress bar per band — the SAME colour as the header, so a tile reads as
+ *  one colour (Graeme: "all the bars are different colours… confusing"). */
+export const BAND_BAR_CLASS: Record<KpiBand, string> = {
+  platinum: "bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500",
+  green: "bg-[#7cb342]",
+  amber: "bg-yellow-400",
+  red: "bg-rose-600",
+  neutral: "bg-stone-400",
+};
+
+/** Icon chip per band, a light tint of the same colour. */
+export const BAND_ICON_CLASS: Record<KpiBand, string> = {
+  platinum: "bg-teal-50 text-teal-600",
+  green: "bg-[#7cb342]/15 text-[#558b2f]",
+  amber: "bg-yellow-100 text-yellow-700",
+  red: "bg-rose-100 text-rose-600",
+  neutral: "bg-stone-100 text-stone-500",
+};
+
+/** Header text colour per band — white, except dark on the light yellow and
+ *  stone headers where white would be unreadable. */
 export const BAND_TEXT_CLASS: Record<KpiBand, string> = {
   platinum: "text-white",
   green: "text-white",
   amber: "text-stone-900",
   red: "text-white",
-  neutral: "text-white",
+  neutral: "text-stone-800",
 };
 
 /** Legend order and wording (dashboard). */

@@ -17,7 +17,7 @@ import { planTargetForStation, pinsPlan } from "@/lib/station-plan-target";
 import { FreshnessBadge } from "@/components/govee-freshness";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
 import { addDayItems, dayKind, EMPTY_DAY_TOTALS, MAC_CHEESE_CATEGORY } from "@/lib/dashboard-day-totals";
-import { coreTileStatuses, CORE_TILE_ORDER, BAND_HEADER_CLASS, BAND_TEXT_CLASS, BAND_LEGEND, type CoreTileKey, type TileKpiStatus } from "@/lib/station-kpi-bands";
+import { coreTileStatuses, CORE_TILE_ORDER, BAND_HEADER_CLASS, BAND_TEXT_CLASS, BAND_BAR_CLASS, BAND_ICON_CLASS, BAND_LEGEND, type CoreTileKey, type TileKpiStatus } from "@/lib/station-kpi-bands";
 
 interface AndonIssueSummary {
   id: number;
@@ -1117,7 +1117,7 @@ function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, onClick
           {status?.band === "platinum" && <Sparkles className="w-4 h-4 text-white shrink-0" aria-hidden="true" />}
         </div>
         <div className="p-4 pt-3 flex flex-col items-center text-center gap-2 flex-1 w-full">
-        <div className={`p-2.5 rounded-2xl ${bg} ${color} transition-transform group-hover:scale-110`}>
+        <div className={cn("p-2.5 rounded-2xl transition-transform group-hover:scale-110", status ? BAND_ICON_CLASS[status.band] : `${bg} ${color}`)}>
           <Icon className="w-5 h-5" />
         </div>
         <h3 className="text-3xl font-display font-bold leading-none tabular-nums whitespace-nowrap">{value}</h3>
@@ -1128,7 +1128,7 @@ function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, onClick
           <div className="w-full mt-auto pt-1">
             <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
               <div
-                className={`h-full rounded-full transition-all ${pct >= 100 ? "bg-emerald-500" : progress.barClass}`}
+                className={cn("h-full rounded-full transition-all", status ? BAND_BAR_CLASS[status.band] : pct >= 100 ? "bg-emerald-500" : progress.barClass)}
                 style={{ width: `${pct}%` }}
               />
             </div>
