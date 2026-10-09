@@ -227,3 +227,55 @@ export function editSummary(before: EditTarget, after: EditTarget, unit: UnitWor
   if (before.extraPacks !== after.extraPacks) parts.push(`Extra packs ${before.extraPacks} → ${after.extraPacks}`);
   return parts.join(", ");
 }
+
+/**
+ * Building lines in order of who worked on this recipe last: the line with
+ * the newest batch row first; a line with batches before one without, and
+ * building_1 before building_2 when neither has any.
+ */
+export function linesByRecentWork(completions: BuildCompletion[]): BuildingLine[] {
+  const newest = (l: BuildingLine) => completions
+    .filter(c => c.stationType === l)
+    .reduce((t, c) => Math.max(t, time(c)), -Infinity);
+  return [...BUILDING_LINES].sort((a, b) =>
+    (newest(b) - newest(a) || 0) || BUILDING_LINES.indexOf(a) - BUILDING_LINES.indexOf(b));
+}
+
+export type ExtraPackTap =
+  | { ok: true; line: BuildingLine; extrasDelta: Partial<Record<string, number>> }
+  | { ok: false; reason: string };
+
+/**
+ * One + / − tap on an "Extra packs" counter. Extras are stored per building
+ * line, so every tap has to land on a line:
+ *
+ *   - a building line's own counter names its line (`requested`): the tap
+ *     changes that line only, and − needs that line to hold a loose pack;
+ *   - the oven station's counter names no line (Graeme, 9 Oct 2026 — every
+ *     oven tap was refused for that). It is the oven person correcting what
+ *     the builders made: + goes on the line that most recently recorded a
+ *     batch of this recipe (building_1 if none); − comes off the most recent
+ *     line that actually holds loose packs, so no line is pushed below 0.
+ *
+ * The change itself is the building Edit's (planBuildEdit: + on the chosen
+ * line, − from lines holding packs, chosen line first) and so are its floors
+ * (editBlockReason: never below 0, never below what's already wrapped).
+ */
+export function planExtraPackTap(state: BuildEditState, delta: 1 | -1, requested?: BuildingLine | null): ExtraPackTap {
+  const held = (l: string) => state.stationExtras[l] ?? 0;
+  let line: BuildingLine;
+  if (requested) {
+    if (delta < 0 && held(requested) <= 0) return { ok: false, reason: "This line has no extra packs to take off." };
+    line = requested;
+  } else {
+    const order = linesByRecentWork(state.completions);
+    const pick = delta > 0 ? order[0] : order.find(l => held(l) > 0);
+    if (!pick) return { ok: false, reason: "There are no extra packs to take off." };
+    line = pick;
+  }
+  const now = buildNumbers(state);
+  const target = { batches: now.batches, extraPacks: now.extraPacks + delta };
+  const reason = editBlockReason(state, target, line);
+  if (reason) return { ok: false, reason };
+  return { ok: true, line, extrasDelta: planBuildEdit(state, target, line).extrasDelta };
+}

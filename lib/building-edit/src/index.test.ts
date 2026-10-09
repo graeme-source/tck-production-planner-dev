@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildNumbers, planBuildEdit, editBlockReason, lowestAllowed, editSummary, removalOrder,
-  PACK_WORDS, type BuildCompletion, type BuildEditState,
+  PACK_WORDS, linesByRecentWork, planExtraPackTap, type BuildCompletion, type BuildEditState,
 } from "./index";
 
 const at = (min: number) => new Date(Date.UTC(2026, 9, 9, 8, min)).toISOString();
@@ -133,5 +133,55 @@ describe("editSummary", () => {
   });
   it("names packs for pack-counted recipes", () => {
     expect(editSummary({ batches: 4, extraPacks: 0 }, { batches: 5, extraPacks: 0 }, PACK_WORDS)).toBe("Packs 4 → 5");
+  });
+});
+
+describe("linesByRecentWork", () => {
+  it("puts the line with the newest batch first", () => {
+    expect(linesByRecentWork([full(1, "building_1", 0), full(2, "building_2", 5)])).toEqual(["building_2", "building_1"]);
+    expect(linesByRecentWork([full(1, "building_1", 9), full(2, "building_2", 5)])).toEqual(["building_1", "building_2"]);
+  });
+  it("building_1 first when nothing is recorded; a line with batches beats one without", () => {
+    expect(linesByRecentWork([])).toEqual(["building_1", "building_2"]);
+    expect(linesByRecentWork([full(1, "building_2", 0)])).toEqual(["building_2", "building_1"]);
+  });
+});
+
+describe("planExtraPackTap (oven + building Extra packs counters)", () => {
+  // Regression, 9 Oct 2026: the oven counter sent no building line and every
+  // tap was refused. A tap without a line now lands on one.
+  it("oven +1 goes on the line that recorded this recipe most recently", () => {
+    // state(): building_1's batch at :10 is the newest.
+    expect(planExtraPackTap(state(), 1)).toEqual({ ok: true, line: "building_1", extrasDelta: { building_1: 1 } });
+    const s = state({ completions: [full(1, "building_1", 0), full(2, "building_2", 30)] });
+    expect(planExtraPackTap(s, 1)).toEqual({ ok: true, line: "building_2", extrasDelta: { building_2: 1 } });
+  });
+  it("oven +1 with no batches yet goes on building_1", () => {
+    expect(planExtraPackTap(state({ completions: [] }), 1)).toMatchObject({ ok: true, line: "building_1" });
+  });
+  it("oven −1 comes off the most recent line that holds loose packs", () => {
+    const s = state({ stationExtras: { building_1: 2, building_2: 1 } });
+    expect(planExtraPackTap(s, -1)).toEqual({ ok: true, line: "building_1", extrasDelta: { building_1: -1 } });
+    // The most recent line (building_1) holds none, so the other line's pack.
+    const s2 = state({ stationExtras: { building_1: 0, building_2: 1 } });
+    expect(planExtraPackTap(s2, -1)).toEqual({ ok: true, line: "building_2", extrasDelta: { building_2: -1 } });
+  });
+  it("oven −1 never pushes a line below 0", () => {
+    expect(planExtraPackTap(state(), -1)).toEqual({ ok: false, reason: "There are no extra packs to take off." });
+    // A part batch's shortfall (−1 on its line) is not a loose pack to take.
+    const s = state({ completions: [full(1, "building_1", 0), part(2, "building_1", 9, 4)], stationExtras: { building_1: -1 } });
+    expect(planExtraPackTap(s, -1).ok).toBe(false);
+  });
+  it("−1 can't take the total below what's already wrapped", () => {
+    const s = state({ stationExtras: { building_2: 1 }, packsStored: 16 });
+    const r = planExtraPackTap(s, -1);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/16 packs are already wrapped/);
+  });
+  it("a building line's own counter only changes that line", () => {
+    const s = state({ stationExtras: { building_1: 0, building_2: 3 } });
+    expect(planExtraPackTap(s, 1, "building_2")).toEqual({ ok: true, line: "building_2", extrasDelta: { building_2: 1 } });
+    expect(planExtraPackTap(s, -1, "building_2")).toEqual({ ok: true, line: "building_2", extrasDelta: { building_2: -1 } });
+    expect(planExtraPackTap(s, -1, "building_1")).toEqual({ ok: false, reason: "This line has no extra packs to take off." });
   });
 });
