@@ -6,6 +6,7 @@ import authRouter from "./auth";
 import storageRouter from "./storage";
 import ingredientsRouter from "./ingredients";
 import subRecipesRouter from "./sub-recipes";
+import subRecipePrepTimeRouter from "./sub-recipe-prep-time";
 import recipesRouter from "./recipes";
 import recipeArchiveRouter from "./recipe-archive";
 import productionPlansRouter from "./production-plans";
@@ -194,6 +195,9 @@ router.use("/suppliers", suppliersRouter);
 router.use("/ingredients", ingredientsRouter);
 router.use("/ingredients", ingredientScrapeRouter);
 router.use("/upf", upfRouter);
+// Standard prep time (autosaved on its own) — before the main router so its
+// /:id/standard-prep-minutes paths are matched here.
+router.use("/sub-recipes", subRecipePrepTimeRouter);
 router.use("/sub-recipes", subRecipesRouter);
 router.use("/recipes", recipeArchiveRouter);
 router.use("/recipes", recipesRouter);

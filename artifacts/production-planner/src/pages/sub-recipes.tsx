@@ -17,6 +17,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { NumberInput } from "@/components/ui/number-input";
+import { SubRecipePrepTimeField } from "@/components/sub-recipe-prep-time-field";
 
 const schema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -1006,6 +1007,9 @@ function EditSubRecipeDialog({
             <>
               {detail && (
                 <YieldComparison detail={detail as SubRecipeDetail} />
+              )}
+              {detail && (
+                <SubRecipePrepTimeField subRecipeId={id} yieldText={`${Number(detail.yield)} ${detail.yieldUnit}`} />
               )}
               <SubRecipeForm
                 key={id}
