@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import { useToast } from "./use-toast";
-import { withRetry, ClientError } from "../lib/with-retry";
+import { withRetry, ClientError, clientErrorMessage } from "../lib/with-retry";
 
 /**
  * Hook that wraps an async action with:
@@ -20,8 +20,10 @@ export function useGuardedAction(options?: {
   silentOn409?: boolean;
   onSuccess?: () => void;
   onError?: (err: unknown) => void;
+  /** Title of the failure toast (default "Action failed"). */
+  errorTitle?: string;
 }) {
-  const { timeoutMs = 10_000, retries = 2, silentOn409 = false, onSuccess, onError } = options ?? {};
+  const { timeoutMs = 10_000, retries = 2, silentOn409 = false, onSuccess, onError, errorTitle = "Action failed" } = options ?? {};
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false); // Ref to prevent stale closure issues
   const { toast } = useToast();
@@ -62,7 +64,7 @@ export function useGuardedAction(options?: {
               : err.message
             : "Something went wrong. Please try again.";
 
-        toast({ title: "Action failed", description: message, variant: "destructive" });
+        toast({ title: errorTitle, description: message, variant: "destructive" });
         onError?.(err);
         return undefined;
       } finally {
@@ -71,7 +73,7 @@ export function useGuardedAction(options?: {
         setBusy(false);
       }
     },
-    [timeoutMs, retries, silentOn409, onSuccess, onError, toast],
+    [timeoutMs, retries, silentOn409, onSuccess, onError, errorTitle, toast],
   );
 
   return [run, busy] as const;
@@ -88,7 +90,9 @@ export async function guardedFetch(
   const res = await fetch(url, { credentials: "include", ...init });
   if (!res.ok) {
     if (res.status >= 400 && res.status < 500) {
-      throw new ClientError(res.status, `${res.status} ${res.statusText}`);
+      // Carry the server's reason ({ error }) into the toast, not just "422".
+      const bodyText = await res.clone().text().catch(() => "");
+      throw new ClientError(res.status, clientErrorMessage(res.status, res.statusText, bodyText));
     }
     throw new Error(`Server error ${res.status}`);
   }

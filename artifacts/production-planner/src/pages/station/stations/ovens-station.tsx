@@ -377,9 +377,19 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
     });
   };
 
-  // Extra packs adjustment
+  // Extra packs adjustment. The body names no building line on purpose: the
+  // server puts + on the line that last recorded this recipe and takes −
+  // off a line that holds loose packs (planExtraPackTap in
+  // @workspace/building-edit). A refusal toasts the server's reason and
+  // re-reads the plan, in case the builders changed the count meanwhile.
+  const refreshPlan = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
+    [queryClient, plan.id],
+  );
   const [runExtraAction, extraBusy] = useGuardedAction({
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
+    onSuccess: refreshPlan,
+    onError: refreshPlan,
+    errorTitle: "Couldn't change extra packs",
   });
 
   const addExtraPack = async (item: ProductionPlanItem) => {

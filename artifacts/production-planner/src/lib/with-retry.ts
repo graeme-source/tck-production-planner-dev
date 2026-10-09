@@ -13,6 +13,24 @@ export class ClientError extends Error {
 }
 
 /**
+ * What a 4xx toast should say: the server's own reason when it sent one as
+ * JSON { error } (e.g. "There are no extra packs to take off."), otherwise
+ * "400 Bad Request". Before this, every guardedFetch failure toasted only the
+ * status line, so a refusal never said why (oven Extra Packs, 9 Oct 2026).
+ */
+export function clientErrorMessage(status: number, statusText: string, bodyText: string | null | undefined): string {
+  const fallback = `${status} ${statusText}`.trim();
+  if (!bodyText) return fallback;
+  try {
+    const body = JSON.parse(bodyText) as unknown;
+    const error = body && typeof body === "object" ? (body as { error?: unknown }).error : undefined;
+    return typeof error === "string" && error.trim() ? error.trim() : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
  * Retry up to `maxRetries` times, but ONLY on network failures or 5xx errors.
  * 4xx responses should be thrown as ClientError — those are never retried.
  *
