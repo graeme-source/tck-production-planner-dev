@@ -584,7 +584,7 @@ function CostCard({ loading, refreshing, error, waiting, isProduct, cost }: {
           </div>
           {cost.ingredientCost == null && <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">This item has no price on file, so its ingredients can't be costed.</p>}
           {cost.remakeMinutes > 0 && cost.hourlyRate != null && (
-            <p className="mt-2 text-sm text-muted-foreground">Time at {gbpText(cost.hourlyRate)} an hour — the team's average production labour cost (holiday, NI and pension in) over the last 4 weeks.</p>
+            <p className="mt-2 text-sm text-muted-foreground">Time is priced at the team's average production labour cost.</p>
           )}
           {cost.remakeMinutes > 0 && cost.hourlyRate == null && <p className="mt-2 text-sm text-muted-foreground">No labour figures yet to price the time.</p>}
         </>
