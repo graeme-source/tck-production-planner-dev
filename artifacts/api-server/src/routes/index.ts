@@ -77,6 +77,7 @@ import endOfDayRouter from "./end-of-day";
 import qualityRejectsRouter from "./quality-rejects";
 import wrappingStorageUndoRouter from "./wrapping-storage-undo";
 import buildingEditRouter from "./building-edit";
+import extraPacksRouter from "./extra-packs";
 import defectsRouter from "./defects";
 import slowMeatRouter, { slowMeatPlanGuard } from "./slow-meat";
 import leanReviewsRouter from "./lean-reviews";
@@ -216,6 +217,9 @@ router.use("/production-plans", wrappingStorageUndoRouter);
 // Building station "Edit production numbers" (batches + extra packs for one
 // recipe, staged and saved in one transaction) — ahead of the frozen router.
 router.use("/production-plans", buildingEditRouter);
+// Extra packs + / − (building lines and the ovens) — moved out of the
+// frozen router 2026-10-09; picks a building line when the ovens tap.
+router.use("/production-plans", extraPacksRouter);
 // Slow-meat tray limit check on plan create/save — also ahead of the frozen
 // router, so no new code goes in production-plans.ts.
 router.use("/production-plans", slowMeatPlanGuard);

@@ -74,10 +74,11 @@ export const BuildingEditBody = Counts.extend({
   expected: Counts,
 });
 
-type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
-/** Everything the rules need about one plan item, read through `ex`. */
-async function loadState(ex: typeof db | Tx, planId: number, itemId: number, lock: boolean) {
+/** Everything the rules need about one plan item, read through `ex`.
+ *  Also used by the Extra packs counters (routes/extra-packs.ts). */
+export async function loadState(ex: typeof db | Tx, planId: number, itemId: number, lock: boolean) {
   const q = ex
     .select({
       id: productionPlanItemsTable.id,

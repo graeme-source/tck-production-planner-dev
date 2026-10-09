@@ -5773,55 +5773,7 @@ router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
   });
 });
 
-// ──────────────────────────────────────────────────────────────────────────────
-// PATCH /:id/items/:itemId/extra-packs-built — add/remove a loose "extra" pack
-// for ONE builder. Body: { delta: 1 | -1, stationType: 'building_1'|'building_2' }
-//
-// Each builder's extras are tracked independently in building_station_progress;
-// the item-level extra_packs_built cache is the SUM across both builders, so the
-// oven/wrapping/dispatch pipeline still sees the combined total. One builder
-// adding packs no longer changes what the other builder sees.
-// ──────────────────────────────────────────────────────────────────────────────
-router.patch("/:id/items/:itemId/extra-packs-built", async (req, res) => {
-  const planId = Number(req.params.id);
-  const itemId = Number(req.params.itemId);
-  const { delta, stationType } = req.body; // delta: +1 or -1
-  if (typeof delta !== "number" || (delta !== 1 && delta !== -1)) {
-    res.status(400).json({ error: "Body must contain { delta: 1 | -1 }" });
-    return;
-  }
-  if (stationType !== "building_1" && stationType !== "building_2") {
-    res.status(400).json({ error: "stationType must be building_1 or building_2" });
-    return;
-  }
-
-  const [item] = await db.select({ id: productionPlanItemsTable.id })
-    .from(productionPlanItemsTable)
-    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
-  if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
-
-  // Upsert this builder's extras, clamped at 0. (+1 on a fresh row → 1; −1 → 0.)
-  const upserted = (await db.execute(sql`
-    INSERT INTO building_station_progress (plan_item_id, station_type, extra_packs, updated_at)
-    VALUES (${itemId}, ${stationType}, GREATEST(${delta}, 0), NOW())
-    ON CONFLICT (plan_item_id, station_type)
-    DO UPDATE SET extra_packs = GREATEST(building_station_progress.extra_packs + ${delta}, 0), updated_at = NOW()
-    RETURNING extra_packs
-  `)).rows[0] as { extra_packs: number } | undefined;
-
-  await recomputeItemFromProgress(itemId);
-
-  const [refreshed] = await db.select({ extraPacksBuilt: productionPlanItemsTable.extraPacksBuilt })
-    .from(productionPlanItemsTable)
-    .where(eq(productionPlanItemsTable.id, itemId));
-
-  res.json({
-    itemId,
-    stationType,
-    stationExtraPacks: upserted?.extra_packs ?? 0,
-    extraPacksBuilt: refreshed?.extraPacksBuilt ?? 0,
-  });
-});
+// PATCH /:id/items/:itemId/extra-packs-built moved to routes/extra-packs.ts (2026-10-09).
 
 // ──────────────────────────────────────────────────────────────────────────────
 // POST /:id/items/:itemId/builder-complete — builders declare the recipe
