@@ -40,12 +40,18 @@ export function useAnyPromptShowing(): boolean {
  * 2026-10-09: the walkthrough sat on top of the "New to-do for you" pop-up.
  * The app's modals are all a fixed, viewport-covering backdrop, so: is the
  * thing at the centre of the screen inside a fixed element that covers
- * nearly the whole viewport? Checked once a second while `enabled`.
+ * nearly the whole viewport — or is a Radix dialog open? Checked once a
+ * second while `enabled`.
  * (elementFromPoint skips pointer-events:none layers, so a closed swipe
  * panel's backdrop never counts.)
  */
 export function fullScreenOverlayShowing(): boolean {
   if (typeof document === "undefined") return false;
+  // Radix/shadcn dialogs: the card is a small fixed box and the dimmed
+  // overlay is a SIBLING, so the centre-of-screen walk below misses them
+  // (seen with the building station's Edit numbers dialog). They mark
+  // themselves open.
+  if (document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]')) return true;
   const vw = window.innerWidth, vh = window.innerHeight;
   let el: Element | null = document.elementFromPoint(vw / 2, vh / 2);
   while (el && el !== document.body) {
