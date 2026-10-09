@@ -1,10 +1,15 @@
 /**
- * Defects — Analytics (Graeme, 2026-10-01; Objective E).
+ * Defects & waste — Analytics (Graeme, 2026-10-01; waste £ added 2026-10-09 —
+ * Objectives C and E).
  *
  * One building-wide figure: defect packs as a share of packs made. Defects
  * are wonkies + dog bins (counted automatically from the station taps) +
- * everything recorded with "Record defect" (mislabels, wrong items, damaged
- * packs, complaints…). Packs made is the same figure Team efficiency uses.
+ * everything reported with "Report defect / waste" (mislabels, wrong items,
+ * damaged packs, complaints…). Packs made is the same figure Team efficiency
+ * uses. Waste (anything binned — an ingredient, a sub-recipe, finished packs)
+ * is shown in £: ingredients, the time to make it again, and the two
+ * together, for today, this week, this month or any range. Costs are
+ * snapshot when each entry is saved (api-server lib/waste-cost.ts).
  * The API does the maths (lib/defects-kpi.ts); this page only shows it.
  */
 import { useState, type ReactNode } from "react";
@@ -13,12 +18,12 @@ import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import { londonDay } from "@/lib/day-rollover";
-import { RecordDefectModal, DEFECT_STATION_LABELS } from "@/components/record-defect-modal";
+import { RecordDefectModal, DEFECT_STATION_LABELS, REPORT_DEFECT_LABEL } from "@/components/record-defect-modal";
 import {
   useDefectList, useDefectSummary, useDefectTypes, useDeleteDefect, useSaveDefectType, type DefectRange,
 } from "@/hooks/use-defects";
 import {
-  barWidth, dayText, defectHeadline, orderRefList, pctText, plural, rangeText, stationText,
+  barWidth, dayText, defectHeadline, gbpText, minutesText, orderRefList, pctText, plural, quantityText, rangeText, recordItemName, stationText,
   type DefectRecord, type DefectSummary, type DefectType,
 } from "@/lib/defects-view";
 
@@ -57,18 +62,18 @@ export default function DefectsPage() {
 
   return (
     <div className="p-4 sm:p-8 space-y-6 max-w-6xl mx-auto">
-      <PageHeader title="Defects" />
+      <PageHeader title="Defects & waste" />
 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <p className="text-lg text-muted-foreground max-w-2xl">
-          Anything not done right that means product can't go out as normal — as a share of the packs we made. Wonkies and dog bins count automatically from the stations; everything else is recorded here.
+          Anything not done right that means product can't go out as normal — as a share of the packs we made — and what everything binned cost us. Wonkies and dog bins count automatically from the stations; everything else is reported here.
         </p>
         <button
           type="button"
           onClick={() => { setEditing(null); setRecordOpen(true); }}
           className="h-16 px-7 rounded-2xl bg-primary text-primary-foreground text-xl font-bold flex items-center gap-3 shadow-lg shadow-primary/20 active:scale-[0.99] transition-all"
         >
-          <AlertOctagon className="w-6 h-6" /> Record defect
+          <AlertOctagon className="w-6 h-6" /> {REPORT_DEFECT_LABEL}
         </button>
       </div>
 
@@ -114,9 +119,13 @@ export default function DefectsPage() {
         </div>
       )}
 
+      {current.data && current.data.byDay.length > 1 && current.data.waste.totalCost > 0 && (
+        <WasteByDay rows={current.data.byDay} today={today} />
+      )}
+
       <section className="space-y-3">
         <div className="flex items-baseline justify-between gap-3 flex-wrap">
-          <h2 className="text-2xl font-bold">Recorded defects</h2>
+          <h2 className="text-2xl font-bold">Recorded defects & waste</h2>
           {current.data && (
             <span className="text-base text-muted-foreground">{PERIOD_LABEL[selected]} · {rangeText(current.data.from, current.data.to, today)}</span>
           )}
@@ -172,7 +181,14 @@ function KpiCard({ label, active, onSelect, summary, loading, error, today, chil
           <p className="mt-1 text-lg font-semibold">
             {summary.pct == null ? "No packs made" : <>{pctText(summary.pct)} <span className="font-normal text-muted-foreground">of {plural(summary.packsMade, "pack")}</span></>}
           </p>
-          <p className="mt-1 text-sm text-muted-foreground" title={defectHeadline(summary)}>
+          <div className="mt-3 rounded-2xl bg-rose-50 dark:bg-rose-950/30 px-3 py-2">
+            <p className="text-sm font-semibold text-rose-900 dark:text-rose-100">Waste</p>
+            <p className="text-2xl font-extrabold tabular-nums text-rose-900 dark:text-rose-100">{gbpText(summary.waste?.totalCost ?? 0)}</p>
+            <p className="text-sm text-rose-900/80 dark:text-rose-100/80 tabular-nums">
+              {gbpText(summary.waste?.ingredientCost ?? 0)} ingredients · {gbpText(summary.waste?.timeCost ?? 0)} time
+            </p>
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground" title={defectHeadline(summary)}>
             {rangeText(summary.from, summary.to, today)}
           </p>
         </>
@@ -210,22 +226,68 @@ function Breakdown({ title, rows, empty }: {
   );
 }
 
+/** £ of waste day by day across the chosen range — only days with some. */
+function WasteByDay({ rows, today }: { rows: DefectSummary["byDay"]; today: string }) {
+  const withWaste = rows.filter(r => r.wasteCost > 0);
+  const max = Math.max(0, ...withWaste.map(r => r.wasteCost));
+  return (
+    <section className="rounded-3xl border border-border bg-card p-5 space-y-3">
+      <h2 className="text-xl font-bold">Waste by day</h2>
+      <ul className="space-y-3">
+        {[...withWaste].reverse().map(r => (
+          <li key={r.date}>
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-base font-semibold">{dayText(r.date, today)}</span>
+              <span className="text-base font-bold tabular-nums">{gbpText(r.wasteCost)}</span>
+            </div>
+            <div className="mt-1 h-3 rounded-full bg-secondary overflow-hidden">
+              <div className="h-full rounded-full bg-rose-500" style={{ width: `${barWidth(r.wasteCost, max)}%` }} />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function DefectCard({ d, today, onEdit }: { d: DefectRecord; today: string; onEdit: () => void }) {
   const del = useDeleteDefect();
   const [confirming, setConfirming] = useState(false);
   const refs = orderRefList(d.orderRefs);
+  const itemName = recordItemName(d);
+  const amount = quantityText(d);
   return (
     <article className="rounded-3xl border border-border bg-card p-5 space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm font-semibold text-muted-foreground">{dayText(d.occurredOn, today)}</p>
-          <h3 className="text-xl font-bold leading-tight">{d.typeName}</h3>
-          {d.recipeName && <p className="text-lg">{d.recipeName}</p>}
+          <h3 className="text-xl font-bold leading-tight">{itemName ?? d.typeName}</h3>
+          {itemName && <p className="text-lg">{d.typeName}</p>}
         </div>
-        <span className="flex-shrink-0 inline-flex items-center gap-1.5 rounded-2xl bg-rose-100 text-rose-900 dark:bg-rose-900/40 dark:text-rose-100 px-3 py-2 text-lg font-bold tabular-nums">
-          <Package className="w-5 h-5" /> {d.packs}
-        </span>
+        {amount ? (
+          <span className="flex-shrink-0 rounded-2xl bg-secondary px-3 py-2 text-lg font-bold tabular-nums">{amount}</span>
+        ) : (
+          <span className="flex-shrink-0 inline-flex items-center gap-1.5 rounded-2xl bg-rose-100 text-rose-900 dark:bg-rose-900/40 dark:text-rose-100 px-3 py-2 text-lg font-bold tabular-nums">
+            <Package className="w-5 h-5" /> {d.packs}
+          </span>
+        )}
       </div>
+      {d.totalCost != null && (
+        <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="rounded-xl bg-secondary/60 p-2">
+            <p className="text-xs font-semibold text-muted-foreground">{d.itemKind === "product" ? "Ingredients & packaging" : "Ingredients"}</p>
+            <p className="text-lg font-extrabold tabular-nums">{gbpText(d.ingredientCost)}</p>
+          </div>
+          <div className="rounded-xl bg-secondary/60 p-2">
+            <p className="text-xs font-semibold text-muted-foreground">Time{d.remakeMinutes ? ` (${minutesText(d.remakeMinutes)})` : ""}</p>
+            <p className="text-lg font-extrabold tabular-nums">{gbpText(d.timeCost)}</p>
+          </div>
+          <div className="rounded-xl bg-rose-100 dark:bg-rose-900/40 p-2">
+            <p className="text-xs font-semibold text-rose-900 dark:text-rose-100">Total</p>
+            <p className="text-lg font-extrabold tabular-nums text-rose-900 dark:text-rose-100">{gbpText(d.totalCost)}</p>
+          </div>
+        </div>
+      )}
       <div className="flex flex-wrap gap-2 text-sm">
         {d.station && <span className="rounded-full bg-secondary px-3 py-1 font-semibold">{stationText(d.station, DEFECT_STATION_LABELS)}</span>}
         {refs.map(r => <span key={r} className="rounded-full bg-secondary px-3 py-1 font-mono">{r}</span>)}

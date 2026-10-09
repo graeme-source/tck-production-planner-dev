@@ -15,10 +15,41 @@ export interface DefectSummary {
   recorded: number;
   byType: Array<{ key: string; label: string; packs: number }>;
   byStation: Array<{ station: string | null; packs: number }>;
-  byDay: Array<{ date: string; defects: number; packsMade: number; pct: number | null }>;
+  byDay: Array<{ date: string; defects: number; packsMade: number; pct: number | null; wasteCost: number }>;
+  /** £ of waste in the range (entries with a cost). */
+  waste: { entries: number; ingredientCost: number; timeCost: number; totalCost: number };
 }
 
 export interface DefectType { id: number; name: string; active: boolean; sortOrder: number }
+
+export type WasteItemKind = "ingredient" | "sub_recipe" | "product";
+export type PackKind = "pack" | "eight_pack_bag";
+
+/** One thing that can be wasted (GET /api/defects/items). */
+export interface WasteItem {
+  key: string;
+  kind: WasteItemKind;
+  id: number;
+  name: string;
+  detail: string | null;
+  units: string[];
+  packKinds: Array<{ kind: PackKind; label: string }>;
+  standardPrepMinutes: number | null;
+}
+
+/** The live cost (POST /api/defects/waste-cost). */
+export interface WasteCost {
+  itemName: string;
+  packs: number;
+  suggestedMinutes: number | null;
+  remakeMinutes: number;
+  ingredientCost: number | null;
+  timeCost: number | null;
+  totalCost: number | null;
+  hourlyRate: number | null;
+  hourlyRateFrom: string | null;
+  hourlyRateTo: string | null;
+}
 
 export interface DefectRecord {
   id: number;
@@ -37,9 +68,64 @@ export interface DefectRecord {
   createdAt: string;
   updatedAt: string;
   canEdit: boolean;
+  // Waste (2026-10-09). All null on records from before then.
+  itemKind: WasteItemKind | null;
+  ingredientId: number | null;
+  subRecipeId: number | null;
+  packKind: PackKind | null;
+  itemName: string | null;
+  quantity: number | null;
+  quantityUnit: string | null;
+  remakeMinutes: number | null;
+  ingredientCost: number | null;
+  timeCost: number | null;
+  totalCost: number | null;
 }
 
 const nf = new Intl.NumberFormat("en-GB");
+const money = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" });
+
+/** "£13.62", or "—" when it couldn't be priced. */
+export function gbpText(n: number | null | undefined): string {
+  return n == null || !Number.isFinite(n) ? "—" : money.format(n);
+}
+
+/** "45 min", "1 h 30 min", "2 h". */
+export function minutesText(min: number): string {
+  const m = Math.max(0, Math.round(min));
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  return r === 0 ? `${h} h` : `${h} h ${r} min`;
+}
+
+/** "2.3 kg", "3 × 2-pack", "1 × 8-pack bag", "12 each". */
+export function quantityText(
+  r: Pick<DefectRecord, "quantity" | "quantityUnit" | "packKind">,
+  packLabel?: string | null,
+): string | null {
+  if (r.quantity == null || !r.quantityUnit) return null;
+  const q = nf.format(r.quantity);
+  if (r.quantityUnit === "pack") return `${q} × ${packLabel ?? "pack"}`;
+  if (r.quantityUnit === "bag") return `${q} × 8-pack bag`;
+  return `${q} ${r.quantityUnit}`;
+}
+
+/** An amount as typed — "2.3", "2,3", " 500 " — or null when it isn't a
+ *  positive number. Whole numbers only when `whole` (packs, bags). */
+export function parseAmount(text: string, whole = false): number | null {
+  const t = text.trim().replace(",", ".");
+  if (!/^\d*\.?\d+$|^\d+\.$/.test(t)) return null;
+  const n = Number(t);
+  if (!(n > 0) || n > 100000) return null;
+  if (whole && !Number.isInteger(n)) return null;
+  return n;
+}
+
+/** The item a record is about: the waste item, or (older records) its recipe. */
+export function recordItemName(r: Pick<DefectRecord, "itemName" | "recipeName">): string | null {
+  return r.itemName ?? r.recipeName ?? null;
+}
 
 export function plural(n: number, one: string, many = `${one}s`): string {
   return `${nf.format(n)} ${n === 1 ? one : many}`;

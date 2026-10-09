@@ -61,6 +61,7 @@ export function useRecipeArchiveActions() {
     queryClient.invalidateQueries({ queryKey: [`/api/recipes/${id}`] });
     queryClient.invalidateQueries({ queryKey: ["recipe-archive-check", id] });
     queryClient.invalidateQueries({ queryKey: ["defects", "recipe-options"] });
+    queryClient.invalidateQueries({ queryKey: ["defects", "items"] });
     queryClient.invalidateQueries({ queryKey: ["test-boxes", "recipe-options"] });
     queryClient.invalidateQueries({ queryKey: ["survey-recipe-options"] });
     queryClient.invalidateQueries({ queryKey: ["case-recipe-limits"] });
