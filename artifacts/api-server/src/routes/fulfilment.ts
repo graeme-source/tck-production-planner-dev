@@ -1,14 +1,16 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { db, skuLocationsTable, variantLocationsTable, skuBarcodesTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable, apcConsignmentsTable, pagePermissionsTable } from "@workspace/db";
+import { db, skuLocationsTable, variantLocationsTable, skuBarcodesTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable, apcConsignmentsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import * as z from "zod";
 import { postcodeServiceFor, postcodeServiceView, postcodeRefusalAdvice } from "../services/apc-postinfo";
 import { rescheduleDateWarnings } from "../services/apc-postcode-overrides";
 import { loadPostcodeContext } from "../lib/apc-postcode-context";
+import { recordBookingRun, rescheduleRulesForOrder, appendIssueAction, type RescheduleRules } from "../lib/apc-booking-issues-db";
 import { removeTagFromOrder, shopifyAdminOrderUrl, shopifyAdminOrderBase, getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
-import { nextAvailableDeliveryDate, rescheduleTags, withDeliveryDate, rescheduleEmailText, rescheduleEmailHtml, friendlyDate, firstNameOf, toZapietDate } from "../lib/order-reschedule";
+import { nextAvailableDeliveryDate, deliveryDateChoices, isSaturdayDate, rescheduleTags, withDeliveryDate, friendlyDate, firstNameOf, toZapietDate } from "../lib/order-reschedule";
+import { rescheduleEmailFor, CUSTOMER_EMAIL_BCC } from "../lib/apc-issue-emails";
 import { validate } from "../middleware/validate";
-import { userHasFeature, requireFeature } from "../lib/feature-access";
+import { requireFeature } from "../lib/feature-access";
 import { sendEmail } from "../lib/email";
 import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService, lookupOrderByReference, lookupOrdersByReference, lookupOrderByWaybill, parseApcBarcode, waybillCore, apcTrackingUrl, type ApcOrderLookup } from "../services/apc";
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
@@ -17,6 +19,7 @@ import { APC_NO_SERVICE_TAG, isNoServiceFailure, isDataFixableFailure } from "..
 import { settledOrders } from "../lib/order-age";
 import { isDispatchTagged, isCollectionOrder, isPartOfDespatchWave } from "../lib/dispatch-tag";
 import { sql } from "drizzle-orm";
+import { resolveRole, requireFulfilmentAccess } from "../lib/fulfilment-access";
 
 const router = Router();
 
@@ -28,24 +31,12 @@ async function resolveUserName(req: Request): Promise<string> {
   return user?.name ?? `user ${req.session.userId}`;
 }
 
-async function resolveRole(req: Request): Promise<"admin" | "manager" | "viewer" | null> {
-  if (req.session.userRole) return req.session.userRole as "admin" | "manager" | "viewer";
-  if (!req.session.userId) return null;
-  const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
-  if (user) {
-    req.session.userRole = user.role as "admin" | "manager" | "viewer";
-    return req.session.userRole;
-  }
-  return null;
-}
-
 async function requireAdmin(req: Request, res: Response, next: NextFunction) {
   const role = await resolveRole(req);
   if (role === "admin") { next(); return; }
   res.status(403).json({ error: "Admin access required" });
 }
 
-const ROLE_RANK: Record<string, number> = { viewer: 0, manager: 1, admin: 2 };
 
 /**
  * Manager or admin, regardless of the /fulfilment page permission.
@@ -67,30 +58,6 @@ const ROLE_RANK: Record<string, number> = { viewer: 0, manager: 1, admin: 2 };
 // person without promoting them (Graeme, 2026-09-09) — the whole point of the
 // feature-grants screen. requireFeature = role clears manager OR the grant.
 const requireManagerForCourierActions = requireFeature("ability.book_apc_labels");
-
-// Operational fulfilment endpoints (list orders, verify labels, complete)
-// honour the "/fulfilment" page permission set in Settings → Page Access
-// Control, so opening Order Packing Live to viewers there also opens the
-// API the page needs — one knob, not two. No stored row falls back to
-// "manager", matching the default the page-permissions route serves.
-// Admin-only endpoints (config, barcode sync, probes) stay requireAdmin.
-async function requireFulfilmentAccess(req: Request, res: Response, next: NextFunction) {
-  const role = await resolveRole(req);
-  if (role) {
-    const [row] = await db
-      .select({ minRole: pagePermissionsTable.minRole })
-      .from(pagePermissionsTable)
-      .where(eq(pagePermissionsTable.pageKey, "/fulfilment"));
-    const minRole = row?.minRole ?? "manager";
-    if ((ROLE_RANK[role] ?? 0) >= (ROLE_RANK[minRole] ?? 1)) { next(); return; }
-  }
-  // Role too low — a per-user feature grant (optionally SOP-training gated)
-  // can still open this page: the APC-label-printing pilot.
-  if (req.session.userId && (await userHasFeature(req.session.userId, "apc_label_printing"))) {
-    next(); return;
-  }
-  res.status(403).json({ error: "Your role doesn't have access to Order Packing Live — an admin can change this under Settings → Team & Access → Page Access" });
-}
 
 async function getAppSetting(key: string): Promise<string | null> {
   const [row] = await db.select().from(appSettingsTable).where(eq(appSettingsTable.key, key));
@@ -1427,8 +1394,6 @@ router.get("/shipments/:waybill/label.pdf", requireFulfilmentAccess, async (req:
 // Two steps, always: preview computes and shows, apply writes. Nothing is
 // written or emailed by the preview.
 
-/** Copied on every reschedule email, so a send that fails is noticed. */
-const RESCHEDULE_BCC = "graeme@thecalzonekitchen.co.uk";
 
 const RescheduleBody = z.object({
   /** Target delivery date, YYYY-MM-DD. Defaults to the next available. */
@@ -1442,7 +1407,7 @@ const RescheduleBody = z.object({
 });
 
 /** Everything both the preview and the apply need to agree on. */
-async function buildReschedulePlan(orderId: number, fromDate: string, toDate: string, senderFullName: string) {
+async function buildReschedulePlan(orderId: number, fromDate: string, toDate: string, senderFullName: string, emailVariant: RescheduleRules["emailVariant"] = "temporary_saturday") {
   const order = await getOrderForReschedule(orderId);
   if (!order) return null;
 
@@ -1455,11 +1420,14 @@ async function buildReschedulePlan(orderId: number, fromDate: string, toDate: st
     order,
     tagChange,
     attrChange,
+    // The wording follows today's booking-issue card: a postcode APC never
+    // serve on Saturdays gets the "please don't pick Saturday" email; every
+    // other reschedule keeps the original temporary-restriction email
+    // (lib/apc-issue-emails.ts).
     email: {
       to: order.email,
-      subject: `Your Calzone Kitchen order ${order.name} — new delivery date`,
-      body: rescheduleEmailText({ customerFirstName, senderFirstName, newTagDate: toDate }),
-      html: rescheduleEmailHtml({ customerFirstName, senderFirstName, newTagDate: toDate }),
+      variant: emailVariant,
+      ...rescheduleEmailFor(emailVariant, { customerFirstName, senderFirstName, newTagDate: toDate, orderName: order.name }),
     },
   };
 }
@@ -1476,16 +1444,22 @@ router.get("/orders/:orderId/reschedule-preview", requireManagerForCourierAction
   const requested = typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
     ? req.query.date
     : null;
-  const toDate = requested ?? nextAvailableDeliveryDate(fromDate);
-
   try {
-    const plan = await buildReschedulePlan(orderId, fromDate, toDate, await resolveUserName(req));
+    // Today's booking-issue card for this order decides what's allowed:
+    // no rescheduling a postcode APC can't reach at all, weekdays only
+    // where APC never deliver on a Saturday (Graeme, 2026-10-09).
+    const rules = await rescheduleRulesForOrder(orderId);
+    if (rules.blocked) { res.status(409).json({ error: rules.blocked, blocked: true }); return; }
+    const defaultDate = nextAvailableDeliveryDate(fromDate, { weekdaysOnly: rules.weekdaysOnly });
+    const toDate = requested ?? defaultDate;
+    const plan = await buildReschedulePlan(orderId, fromDate, toDate, await resolveUserName(req), rules.emailVariant);
     if (!plan) { res.status(404).json({ error: `Order ${orderId} not found on Shopify.` }); return; }
 
     const warnings: string[] = [];
     if (!plan.email.to) warnings.push("This order has no email address — the tags can still move, but no customer email will be sent.");
     if (!plan.tagChange.removed.includes(fromDate)) warnings.push(`The order is not tagged ${fromDate} — its delivery date may already have been changed.`);
     if (!plan.attrChange.changed) warnings.push("Zapiet's Delivery-Date already matches the new date.");
+    if (rules.weekdaysOnly && isSaturdayDate(toDate)) warnings.push(`${toDate} is a Saturday — APC never deliver to this postcode on Saturdays. Pick a weekday.`);
 
     // What APC's POSTINFO sheet says this postcode can actually take — the
     // check Graeme did by hand on the desktop spreadsheet before every
@@ -1507,7 +1481,12 @@ router.get("/orders/:orderId/reschedule-preview", requireManagerForCourierAction
       fromDate,
       toDate,
       toDateFriendly: friendlyDate(toDate),
-      defaultDate: nextAvailableDeliveryDate(fromDate),
+      defaultDate,
+      weekdaysOnly: rules.weekdaysOnly,
+      scenario: rules.scenario,
+      // The next few dates the order can move to, for one-tap picking —
+      // no Saturdays when the postcode never gets them.
+      dateChoices: deliveryDateChoices(fromDate, 6, rules.weekdaysOnly).map(d => ({ date: d, label: friendlyDate(d) })),
       tags: plan.tagChange,
       deliveryAttribute: {
         before: plan.attrChange.previous,
@@ -1538,7 +1517,13 @@ router.post("/orders/:orderId/reschedule", requireManagerForCourierActions, vali
     const senderName = await resolveUserName(req);
     // Re-read from Shopify rather than trusting anything the browser sent —
     // the preview may be minutes old and someone else may have touched it.
-    const plan = await buildReschedulePlan(orderId, fromDate, toDate, senderName);
+    const rules = await rescheduleRulesForOrder(orderId);
+    if (rules.blocked) { res.status(409).json({ error: rules.blocked, blocked: true }); return; }
+    if (rules.weekdaysOnly && isSaturdayDate(toDate)) {
+      res.status(400).json({ error: `APC never deliver to this postcode on a Saturday — pick a weekday, not ${toDate}.` });
+      return;
+    }
+    const plan = await buildReschedulePlan(orderId, fromDate, toDate, senderName, rules.emailVariant);
     if (!plan) { res.status(404).json({ error: `Order ${orderId} not found on Shopify.` }); return; }
 
     // The write goes first. If the email later fails the order is still
@@ -1556,7 +1541,7 @@ router.post("/orders/:orderId/reschedule", requireManagerForCourierActions, vali
         // A copy landing in a real inbox is the only proof it went.
         await sendEmail({
           to: plan.email.to,
-          bcc: [RESCHEDULE_BCC],
+          bcc: [CUSTOMER_EMAIL_BCC],
           subject: plan.email.subject,
           text: plan.email.body,
           html: plan.email.html,
@@ -1565,6 +1550,19 @@ router.post("/orders/:orderId/reschedule", requireManagerForCourierActions, vali
       } catch (mailErr) {
         emailError = mailErr instanceof Error ? mailErr.message : String(mailErr);
         console.error(`[Fulfilment] reschedule email failed for ${plan.order.name}:`, emailError);
+      }
+    }
+
+    // Tick it off on today's booking-issues card, if the order has one. The
+    // order has already moved; a hiccup here is logged, not reported as a
+    // failed reschedule.
+    if (rules.issueId) {
+      try {
+        const at = new Date().toISOString();
+        await appendIssueAction(rules.issueId, { kind: "rescheduled", at, byUserId: req.session.userId ?? null, byName: senderName, detail: toDate });
+        if (emailed) await appendIssueAction(rules.issueId, { kind: "email_sent", at, byUserId: req.session.userId ?? null, byName: senderName, detail: `${plan.email.to} (${plan.email.variant === "permanent_saturday" ? "no Saturdays" : "temporary restriction"})` });
+      } catch (logErr) {
+        console.warn(`[Fulfilment] could not record the reschedule of ${plan.order.name} on the issues report:`, logErr instanceof Error ? logErr.message : logErr);
       }
     }
 
@@ -1978,6 +1976,7 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
        *  the manual spreadsheet check, done automatically on failure so the
        *  reschedule decision can be made from the report. */
       postcodeCheck?: string;
+      postcodeService?: ReturnType<typeof postcodeServiceView>;
     }> = [];
     // Recorded APC postcode answers + who to call — fetched on the first
     // failure only, then shared by the rest of the batch.
@@ -2195,8 +2194,34 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
       results.push({ orderId: id, orderName: `(order ${id})`, adminUrl: shopifyAdminOrderUrl(id), status: "failed", reason: "Order not found on this dispatch day" });
     }
 
+    // Keep today's failures (and any later success) so the issues report
+    // can be reopened from the packing screen without booking again
+    // (Graeme, 2026-10-09). Never allowed to lose the outcome below: a
+    // failure here is logged and flagged on the response.
+    let issuesSaved = true;
+    try {
+      const fridayCodes = new Set([smallFriday, largeFriday]);
+      await recordBookingRun({
+        tag,
+        results,
+        orderFacts: new Map(orders.map(o => [o.id, {
+          customerName: o.shipping_address?.name || [o.customer?.first_name, o.customer?.last_name].filter(Boolean).join(" ") || null,
+          customerFirstName: o.customer?.first_name || o.shipping_address?.name?.split(/\s+/)[0] || null,
+          customerEmail: o.email || o.contact_email || o.customer?.email || null,
+          postcode: o.shipping_address?.zip ?? null,
+        }])),
+        isSaturdayCode: code => !!code && fridayCodes.has(code),
+        isNoService: isNoServiceFailure,
+        bookedBy,
+      });
+    } catch (saveErr) {
+      issuesSaved = false;
+      console.error("[Fulfilment] could not save the booking issues report:", saveErr instanceof Error ? saveErr.message : saveErr);
+    }
+
     res.json({
       tag,
+      issuesSaved,
       booked: results.filter(r => r.status === "booked").length,
       skipped: results.filter(r => r.status === "skipped").length,
       failed: results.filter(r => r.status === "failed").length,
