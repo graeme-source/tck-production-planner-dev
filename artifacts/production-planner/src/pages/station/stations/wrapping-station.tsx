@@ -15,6 +15,7 @@ import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import { BreakTracker } from "../shared/break-tracker";
 import { PaceKpiStrip, type PaceBands } from "../shared/pace-kpi-strip";
+import { WRAPPING_STANDARD_PACKS_PER_HOUR } from "@/lib/station-kpi-bands";
 import { useModalScrollKeeper } from "@/hooks/use-modal-scroll";
 import { createPortal } from "react-dom";
 import { getStationCount, getAvailableFromPrev, compareItemsForDisplay, mainKitchenStationItems, STATION_VIEW_ROW_SLOT_ID, type StationPlanItem } from "../shared/constants";
@@ -92,7 +93,9 @@ function postOvenGramsPerPack(poi: PostOvenItem, item: ProductionPlanItem): numb
 // = a 24-stack every 8 minutes; stretch 240 = every 6 minutes (Graeme's own
 // fast-day bursts, deliberately above the bar). Idle gaps over 20 minutes
 // are excluded server-side, so this judges pace only while wrapping.
-const WRAPPING_PACE_BANDS: PaceBands = { green: 180, amber: 120, stretch: 240 };
+// The standard itself lives in lib/station-kpi-bands.ts so the dashboard's
+// Wrapping header colour judges against the same number.
+const WRAPPING_PACE_BANDS: PaceBands = { green: WRAPPING_STANDARD_PACKS_PER_HOUR, amber: 120, stretch: 240 };
 
 interface WrappingSpeed {
   packs: number;
