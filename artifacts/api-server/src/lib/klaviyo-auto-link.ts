@@ -24,7 +24,8 @@
  *  - Linking needs a score of AUTO_LINK_MIN or more AND to be the clear best
  *    both ways — the plan's best campaign and the campaign's best plan, each
  *    ahead of the runner-up by MARGIN. Anything else that scores
- *    SUGGEST_MIN or more is offered as a one-tap suggestion instead.
+ *    SUGGEST_MIN or more (and within SUGGEST_WITHIN of the plan's best) is
+ *    offered as a one-tap suggestion instead — at most three per plan.
  *  - Never touches a plan that is linked or deleted, a campaign already
  *    linked to a plan, or a pair someone deliberately unlinked.
  */
@@ -32,6 +33,8 @@
 export const AUTO_LINK_MIN = 0.6;
 export const SUGGEST_MIN = 0.4;
 export const MARGIN = 0.15;
+/** Suggestions are the plan's best match and any within this of it. */
+export const SUGGEST_WITHIN = 0.25;
 export const MAX_DAYS_APART_SENT = 21;
 
 export interface PlanForMatch {
@@ -247,7 +250,10 @@ export function matchKlaviyoToPlans(input: MatchInput): MatchResult {
   const suggestions: PairMatch[] = [];
   for (const [emailId, list] of byPlan) {
     if (linkedPlans.has(emailId)) continue;
-    suggestions.push(...list.filter(p => p.score >= SUGGEST_MIN && !linkedCampaigns.has(p.campaignId)).slice(0, 3));
+    const open = list.filter(p => !linkedCampaigns.has(p.campaignId));
+    const top = open[0]?.score ?? 0;
+    // Close contenders only: a weak third behind two strong ones is noise.
+    suggestions.push(...open.filter(p => p.score >= SUGGEST_MIN && p.score >= top - SUGGEST_WITHIN).slice(0, 3));
   }
   return { links, suggestions };
 }

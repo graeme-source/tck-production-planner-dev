@@ -82,6 +82,19 @@ describe("matchKlaviyoToPlans", () => {
     expect(r.suggestions.map(s => s.campaignId).sort()).toEqual(["k1", "k2"]);
   });
 
+  it("suggests only close contenders, not a weak match behind two strong ones", () => {
+    const r = matchKlaviyoToPlans({
+      plans: [plan(42, "Properoni Test Box — VIP launch", "2026-10-02")],
+      campaigns: [
+        camp("k1", "Properoni Test Box (VIP)", null, "2026-10-02", "Sent"),
+        camp("k2", "Properoni Test Box 2 (VIP)", null, "2026-10-05", "Sent"),
+        camp("old", "Create TCK June Test Box Launch (VIP) REMINDER", "Last chance to order June test box", "2023-06-11", "Draft"),
+      ],
+    });
+    expect(r.links).toEqual([]);
+    expect(r.suggestions.map(s => s.campaignId)).toEqual(["k1", "k2"]);
+  });
+
   it("two similar plans for one draft: no automatic link either", () => {
     const r = matchKlaviyoToPlans({
       plans: [plan(1, "Black Friday early access"), plan(2, "Black Friday early access reminder")],
