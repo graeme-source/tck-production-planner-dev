@@ -44,6 +44,7 @@ import { effectiveOvenSetting, ovenChangeReminder, ovenSettingKey, formatOvenTim
 import { useOvenStandards, useRecipeOvenInputs } from "@/hooks/use-oven-settings";
 import { OvenChangeBanner } from "../shared/oven-change-banner";
 import { isBuildingComplete, buildProgressPercent, stillToBuild, type BuildProgressItem } from "../shared/building-complete";
+import { BuildingEditDialog } from "./building-edit-dialog";
 
 import {
   DndContext,
@@ -595,6 +596,9 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   // Separate state for the edit-after-completion dialog so it doesn't fight
   // with the natural "batch just finished" prompt.
   const [editPromptItemId, setEditPromptItemId] = useState<number | null>(null);
+  // "Edit production numbers" — the one place to correct a recipe's batches
+  // and extra packs (Graeme, 2026-10-09). Replaces the old Undo.
+  const [editNumbersItemId, setEditNumbersItemId] = useState<number | null>(null);
   const [prevCurrentItemId, setPrevCurrentItemId] = useState<number | null>(null);
   // Tracks the plan-item id whose final batch THIS builder just completed.
   // Used to show the extra-packs prompt only to the builder who actually
@@ -894,13 +898,6 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     );
   };
 
-  const [runUndo, undoPending] = useGuardedAction({
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
-      setSessionBatches(prev => Math.max(0, prev - 1));
-    },
-  });
-
   const [runPartialComplete, partialCompletePending] = useGuardedAction({
     onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) }),
   });
@@ -982,18 +979,6 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
       toast({ title: `${count} pack${count === 1 ? "" : "s"} returned to the build queue` });
     });
   };
-  const handleUndo = () => {
-    if (!currentItem || myCount === 0 || isOnBreak) return;
-    runUndo((signal) =>
-      guardedFetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
-        method: "DELETE",
-        signal,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planItemId: currentItem.id, stationType }),
-      })
-    );
-  };
-
   const handleBreakChange = useCallback((breakMins: number | null) => {
     if (breakMins === null) {
       setTotalBreakMinutes(prev => prev + activeBreakMinutes);
@@ -1316,14 +1301,32 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
               assemblyData={assemblyMap[editPromptItem.id]}
               stationType={stationType}
               stationExtraPacks={getMyProgress(editPromptItem).extraPacks}
-              myCount={getStationCount(editPromptItem, stationType)}
-              combinedCount={getCombinedBuildCount(editPromptItem)}
               onDone={() => setEditPromptItemId(null)}
               mode="edit"
             />
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Edit production numbers — Batches and Extra packs, staged with
+          − / +, applied with one Save (shared rules: @workspace/building-edit). */}
+      {(() => {
+        const editItem = editNumbersItemId != null ? items.find(it => it.id === editNumbersItemId) : null;
+        const editHasFilling = editItem ? (assemblyMap[editItem.id]?.fillingWeightPerBatch ?? 0) > 0 : false;
+        return (
+          <BuildingEditDialog
+            planId={plan.id}
+            itemId={editItem ? editItem.id : null}
+            recipeName={editItem?.recipeName ?? (editItem ? `Recipe #${editItem.recipeId}` : "")}
+            recipeColor={editItem?.recipeColor}
+            stationType={stationType}
+            lineNumber={lineNumber}
+            onClose={() => setEditNumbersItemId(null)}
+            onSaved={(delta) => setSessionBatches(prev => Math.max(0, prev + delta))}
+            onEditLeftover={editItem && editHasFilling ? () => { setEditNumbersItemId(null); setEditPromptItemId(editItem.id); } : undefined}
+          />
+        );
+      })()}
 
       {/* Oven settings — confirm before recording the first batch whenever
           the oven needs setting differently from the last recipe (profile
@@ -1466,7 +1469,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
             // by mistake, and it was hidden in exactly that case: the old gate was
             // targetReached && rowHasFilling. Now every recipe that has had any
             // work recorded can be corrected (Graeme, 2026-09-17).
-            const showEditBtn = combinedCount > 0 || targetReached;
+            const showEditBtn = combinedCount > 0 || (item.extraPacksBuilt ?? 0) !== 0;
             const panelIdx = items.findIndex(it => it.id === item.id);
             return (
               <div className="bg-card border-2 border-primary rounded-xl overflow-hidden">
@@ -1490,16 +1493,6 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                     )}>
                       <CheckCircle2 className="w-3.5 h-3.5" /> {targetReached ? "Complete" : "Finished short"}
                     </span>
-                  )}
-                  {showEditBtn && (
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); setEditPromptItemId(item.id); }}
-                      title="Correct batches / packs"
-                      className="text-muted-foreground hover:text-foreground flex-shrink-0"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
                   )}
                 </div>
 
@@ -1788,14 +1781,17 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                           );
                         })()}
 
-                        {/* Undo */}
-                        {combinedCount > 0 && !isOnBreak && (
+                        {/* Edit numbers — replaces the old Undo, which took off
+                            "the last one" without saying what (Graeme, 2026-10-09). */}
+                        {showEditBtn && (
                           <button
-                            onClick={handleUndo}
-                            disabled={pendingTap || undoPending}
-                            className="w-full py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                            type="button"
+                            onClick={() => setEditNumbersItemId(item.id)}
+                            disabled={pendingTap}
+                            className="w-full flex items-center justify-center gap-2 py-3 text-base font-bold border-2 border-primary/50 text-primary rounded-xl hover:bg-primary/10 transition-colors disabled:opacity-40"
                           >
-                            {undoPending ? "Undoing…" : "Undo"}
+                            <Pencil className="w-5 h-5" />
+                            Edit numbers
                           </button>
                         )}
 
@@ -1839,59 +1835,23 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                     </>
                     )}
                     {!isCurrent && (
-                      /* Non-current recipe: show batch count + pack adjustment (editable) */
+                      /* Non-current recipe: batch count + Edit numbers */
                       <div className="space-y-3">
-                        <div className="border border-border rounded-xl px-3 py-2">
-                          <div className="flex items-center gap-3">
-                            <p className="text-sm text-muted-foreground font-semibold">
-                              {isMacCheese(item as any) ? "Packs" : "Batches"}
-                            </p>
-                            <div className="flex items-center gap-3 ml-auto">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  runUndo((signal) =>
-                                    guardedFetch(`/api/production-plans/${plan.id}/batch-completions/last`, {
-                                      method: "DELETE", signal,
-                                      headers: { "Content-Type": "application/json" },
-                                      body: JSON.stringify({ planItemId: item.id, stationType }),
-                                    })
-                                  );
-                                }}
-                                disabled={getStationCount(item, stationType) === 0 || undoPending || isOnBreak}
-                                className="w-10 h-10 flex items-center justify-center rounded-full border border-border bg-background hover:bg-secondary/60 disabled:opacity-30 transition-colors"
-                              >
-                                <Minus className="w-4 h-4" />
-                              </button>
-                              <span className="text-xl font-bold tabular-nums min-w-[3rem] text-center">
-                                {formatBatches(combinedCount)} / {formatBatches(item.batchesTarget ?? 0)}{" "}<span className="text-xs font-normal text-muted-foreground">({batchesToPacks(item.batchesTarget ?? 0, Math.max(1, Math.floor((item.portionsPerBatch ?? 10) / 2)))} packs)</span>
-                              </span>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  // Adding beyond target is a deliberate over-build — make
-                                  // it an obvious, confirmed action (for everyone, not just
-                                  // admins). Under target it's just a normal +1.
-                                  if (combinedCount >= (item.batchesTarget ?? 0)) {
-                                    const unit = isMacCheese(item as any) ? "pack" : "batch";
-                                    if (!window.confirm(
-                                      `Build an extra ${unit} of ${item.recipeName ?? "this recipe"} on top of the target of ${item.batchesTarget ?? 0}?`
-                                    )) return;
-                                  }
-                                  createBatch.mutate({
-                                    id: plan.id,
-                                    data: { planItemId: item.id, stationType, completedAt: new Date().toISOString() },
-                                  });
-                                }}
-                                disabled={createBatch.isPending || isOnBreak}
-                                className="w-10 h-10 flex items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-30 transition-colors"
-                              >
-                                <Plus className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </div>
+                        <div className="border border-border rounded-xl px-3 py-2 flex items-center gap-3">
+                          <p className="text-sm text-muted-foreground font-semibold">
+                            {isMacCheese(item as any) ? "Packs" : "Batches"}
+                          </p>
+                          <span className="ml-auto text-xl font-bold tabular-nums">
+                            {formatBatches(combinedCount)} / {formatBatches(item.batchesTarget ?? 0)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setEditNumbersItemId(item.id); }}
+                            className="flex items-center gap-1.5 px-3 py-2 text-sm font-bold border-2 border-primary/50 text-primary rounded-lg hover:bg-primary/10"
+                          >
+                            <Pencil className="w-4 h-4" /> Edit
+                          </button>
                         </div>
-                        <PackAdjustment planId={plan.id} item={item} isOnBreak={isOnBreak} stationType={stationType} stationExtraPacks={getMyProgress(item).extraPacks} />
                         {/* Free navigation — switch to this recipe to build it with
                             the full controls (checklist, BATCH DONE, packs). */}
                         {!isOnBreak && (
@@ -1991,14 +1951,14 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                       <CheckCircle2 className={cn("w-4 h-4 flex-shrink-0", targetReached ? "text-emerald-500" : "text-amber-500")} />
                     )}
                   </button>
-                  {(combinedCount > 0 || targetReached) && (
+                  {(combinedCount > 0 || (item.extraPacksBuilt ?? 0) !== 0) && (
                     <button
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); setQueueOpen(false); setEditPromptItemId(item.id); }}
-                      title="Correct batches / packs"
-                      className="pr-3 pl-1 py-3 text-muted-foreground hover:text-foreground flex-shrink-0"
+                      onClick={(e) => { e.stopPropagation(); setQueueOpen(false); setEditNumbersItemId(item.id); }}
+                      aria-label={`Edit production numbers for ${item.recipeName ?? "this recipe"}`}
+                      className="mr-2 flex items-center gap-1 px-2.5 py-1.5 text-sm font-bold border-2 border-primary/50 text-primary rounded-lg hover:bg-primary/10 flex-shrink-0"
                     >
-                      <Pencil className="w-4 h-4" />
+                      <Pencil className="w-3.5 h-3.5" /> Edit
                     </button>
                   )}
                 </div>
@@ -2084,7 +2044,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   );
 }
 
-function RecipeCompleteDialogBody({ planId, item, isOnBreak, hasFilling, assemblyData, stationType, stationExtraPacks, myCount = 0, combinedCount = 0, onDone, mode = "complete" }: {
+function RecipeCompleteDialogBody({ planId, item, isOnBreak, hasFilling, assemblyData, stationType, stationExtraPacks, onDone, mode = "complete" }: {
   planId: number;
   item: ProductionPlanItem;
   isOnBreak: boolean;
@@ -2092,8 +2052,6 @@ function RecipeCompleteDialogBody({ planId, item, isOnBreak, hasFilling, assembl
   assemblyData?: AssemblyData;
   stationType: "building_1" | "building_2";
   stationExtraPacks: number;
-  myCount?: number;
-  combinedCount?: number;
   onDone: () => void;
   mode?: "complete" | "edit";
 }) {
@@ -2140,24 +2098,16 @@ function RecipeCompleteDialogBody({ planId, item, isOnBreak, hasFilling, assembl
         <AlertCircle className="w-7 h-7 text-amber-500 flex-shrink-0 mt-0.5" />
         <div>
           <h3 className="font-bold text-xl text-foreground">
-            {mode === "edit" ? `Edit — ${item.recipeName ?? "Recipe"}` : `${item.recipeName ?? "Recipe"} complete`}
+            {mode === "edit" ? `Leftover filling — ${item.recipeName ?? "Recipe"}` : `${item.recipeName ?? "Recipe"} complete`}
           </h3>
           <p className="text-sm text-muted-foreground mt-1">
-            {mode === "edit" ? "Correct the batches or packs recorded, or the leftover filling." : "Any extra packs to record before moving on?"}
+            {mode === "edit" ? "Correct the leftover filling weighed back. Batches and packs are changed with Edit numbers." : "Any extra packs to record before moving on?"}
           </p>
         </div>
       </div>
-      {mode === "edit" && (
-        <BatchCorrection
-          planId={planId}
-          item={item}
-          isOnBreak={isOnBreak}
-          stationType={stationType}
-          myCount={myCount}
-          combinedCount={combinedCount}
-        />
+      {mode === "complete" && (
+        <PackAdjustment planId={planId} item={item} isOnBreak={isOnBreak} stationType={stationType} stationExtraPacks={stationExtraPacks} />
       )}
-      <PackAdjustment planId={planId} item={item} isOnBreak={isOnBreak} stationType={stationType} stationExtraPacks={stationExtraPacks} />
 
       {hasFilling && (
         <div className="border border-border rounded-xl px-4 py-3 space-y-3">
@@ -2384,87 +2334,6 @@ function RecipeFinishedControls({
       <CheckCircle2 className="w-4 h-4" />
       Recipe Finished — send built count to ovens
     </button>
-  );
-}
-
-/**
- * Correct the BATCH count already recorded on this line.
- *
- * Recording a batch is a tap, so an accidental double-tap — or a batch
- * counted that never got built — leaves the wrong number, and until now the
- * only way back was the Undo button on the pinned recipe, which is gone the
- * moment you move to another recipe. This is the way back for ANY recipe, at
- * any time (Graeme, 2026-09-17: "we need to be able to edit the total amount
- * that we submit ... available for all recipes").
- *
- * Deliberately built on the existing bulk endpoints rather than a new one:
- * routes/production-plans.ts is closed to new code (charter rule 1).
- *
- * It adjusts THIS LINE's count. A recipe built across both lines shows the
- * combined total underneath so the number being changed is never ambiguous.
- */
-function BatchCorrection({ planId, item, isOnBreak, stationType, myCount, combinedCount }: {
-  planId: number;
-  item: ProductionPlanItem;
-  isOnBreak: boolean;
-  stationType: "building_1" | "building_2";
-  myCount: number;
-  combinedCount: number;
-}) {
-  const queryClient = useQueryClient();
-  const [runAction, busy] = useGuardedAction({
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(planId) }),
-  });
-
-  const adjust = (delta: 1 | -1) => {
-    if (isOnBreak) return;
-    if (delta === -1 && myCount <= 0) return;
-    runAction((signal) =>
-      guardedFetch(`/api/production-plans/${planId}/batch-completions/bulk`, {
-        method: delta === 1 ? "POST" : "DELETE",
-        signal,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planItemId: item.id, stationType, count: 1 }),
-      })
-    );
-  };
-
-  const otherLine = combinedCount - myCount;
-  return (
-    <div className="border border-border rounded-xl px-4 py-3 space-y-2">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold text-muted-foreground">Batches on this line</p>
-          {otherLine > 0 && (
-            <p className="text-xs text-muted-foreground/80">
-              The other line recorded {otherLine} — {combinedCount} in total
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => adjust(-1)}
-            disabled={busy || isOnBreak || myCount <= 0}
-            aria-label="One fewer batch on this line"
-            className="h-9 w-9 rounded-lg text-lg font-bold border border-border bg-background hover:bg-secondary/60 disabled:opacity-40 transition-all active:scale-95"
-          >
-            −
-          </button>
-          <span className="text-lg font-bold tabular-nums min-w-[2.5rem] text-center">{myCount}</span>
-          <button
-            onClick={() => adjust(1)}
-            disabled={busy || isOnBreak}
-            aria-label="One more batch on this line"
-            className="h-9 w-9 rounded-lg text-lg font-bold border border-border bg-background hover:bg-secondary/60 disabled:opacity-40 transition-all active:scale-95"
-          >
-            +
-          </button>
-        </div>
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Ovens and wrapping follow this number, so make it match what physically exists.
-      </p>
-    </div>
   );
 }
 
