@@ -11,6 +11,9 @@
  *
  * Plan meets reality: link the Klaviyo send it became (picked from Klaviyo's
  * emails a week either side), and the calendar shows them as one item.
+ * Most link themselves (2026-10-09, server lib/klaviyo-auto-link.ts): this
+ * says "Linked automatically" and what matched, with Unlink beside it; a
+ * likely-but-unsure match is offered as "Looks like Klaviyo's … — link?".
  *
  * Planning together: re-read every 15 s and on focus; someone else's changes
  * flow into every field you are not in the middle of editing, with a banner.
@@ -21,7 +24,7 @@ import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { format, parseISO, formatDistanceToNowStrict } from "date-fns";
 import {
-  X, Trash2, History, Users, Loader2, AlertTriangle, Mail, Link2, Unlink, CheckCircle2, Megaphone, ExternalLink,
+  X, Trash2, History, Users, Loader2, AlertTriangle, Mail, Link2, Unlink, CheckCircle2, Megaphone, ExternalLink, Wand2,
 } from "lucide-react";
 import { EMAIL_AUDIENCES, addDays, campaignForDate, effectiveStage, emailFilingEvents, formatRange, stageLabel } from "@workspace/marketing-calendar";
 import { useAuth } from "@/contexts/auth-context";
@@ -245,6 +248,13 @@ export function PlannedEmailModal({ emailId, newOn, onClose, onOpenCampaign }: {
   }, [klaviyo.data]);
   const linkedId = email?.klaviyoCampaignId ?? null;
   const linkedSend = linkedId ? pickable.find(k => k.id === linkedId) ?? null : null;
+  // Auto-link (2026-10-09): how the current link was made, and — while
+  // unlinked — the server's "looks like this one" suggestions.
+  const autoLink = linkedId ? data?.autoLink ?? null : null;
+  const suggestions = useMemo(
+    () => (id != null && !linkedId ? (klaviyo.data?.suggestions ?? []).filter(s => s.emailId === id) : []),
+    [klaviyo.data, id, linkedId],
+  );
 
   // STAGE: from Klaviyo once linked, otherwise set by hand.
   const stage = effectiveStage({ status: draft.status, klaviyoCampaignId: linkedId }, linkedSend);
@@ -431,9 +441,34 @@ export function PlannedEmailModal({ emailId, newOn, onClose, onOpenCampaign }: {
                   className="px-3 py-2 rounded-xl border-2 border-border text-sm font-semibold flex items-center gap-1.5 hover:bg-secondary/50 disabled:opacity-50">
                   <Unlink className="w-4 h-4" /> Unlink
                 </button>
+                {autoLink && (
+                  <div className="basis-full rounded-xl border-2 border-violet-500/40 bg-violet-500/5 px-3 py-2.5 flex items-start gap-2.5">
+                    <Wand2 className="w-5 h-5 text-violet-600 flex-shrink-0 mt-0.5" />
+                    <p className="text-sm">
+                      <b>Linked automatically</b> {formatDistanceToNowStrict(parseISO(autoLink.at))} ago — this subject line matched Klaviyo's {autoLink.matched}.
+                      {" "}Not the right one? <b>Unlink</b> and it won't be linked to that one again.
+                    </p>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="space-y-2">
+                {suggestions.map(s => (
+                  <div key={s.campaignId} className="rounded-xl border-2 border-violet-500/50 bg-violet-500/5 p-3 flex items-center gap-3 flex-wrap">
+                    <Wand2 className="w-5 h-5 text-violet-600 flex-shrink-0" />
+                    <span className="flex-1 min-w-0">
+                      <span className="block font-semibold">Looks like Klaviyo's “{s.campaignName}” — link?</span>
+                      <span className="block text-sm text-muted-foreground">
+                        {s.campaignStatus === "Draft" ? "Draft" : s.campaignStatus} · matched its {s.matched}
+                      </span>
+                    </span>
+                    <button type="button" disabled={deleted || link.isPending}
+                      onClick={() => link.mutate({ id, klaviyo: { id: s.campaignId, name: s.campaignName } })}
+                      className="px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-50">
+                      <Link2 className="w-4 h-4" /> Link
+                    </button>
+                  </div>
+                ))}
                 <p className="text-sm text-muted-foreground">Klaviyo emails a week either side of this day, and recent drafts — tap the one this plan became.</p>
                 {klaviyo.isLoading && <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Checking Klaviyo…</p>}
                 {klaviyo.data && !klaviyo.data.connected && <p className="text-sm text-muted-foreground">Klaviyo isn't connected.</p>}
