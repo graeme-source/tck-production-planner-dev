@@ -33,6 +33,11 @@ interface ReschedulePreview {
   deliveryAttribute: { before: string | null; after: string; preserved: string[] };
   email: { to: string | null; subject: string; body: string };
   warnings: string[];
+  /** True when APC never deliver to this postcode on a Saturday (today's
+   *  booking-issue card says so) — Saturdays can't be chosen. */
+  weekdaysOnly?: boolean;
+  /** The next few dates the order can move to, for one-tap picking. */
+  dateChoices?: Array<{ date: string; label: string }>;
   /** What APC's POSTINFO postcode sheet says this postcode can take —
    *  the manual spreadsheet check, now done by the server. */
   postcodeCheck?: {
@@ -41,7 +46,11 @@ interface ReschedulePreview {
   } | null;
 }
 
-export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, onClose, onDone }: {
+function isSaturday(d: string): boolean {
+  return new Date(`${d}T12:00:00Z`).getUTCDay() === 6;
+}
+
+export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, onClose, onDone, weekdaysOnly: weekdaysOnlyProp = false, defaultSendEmail = true }: {
   orderId: number;
   orderName: string;
   /** The dispatch date the order is currently on — what we're moving it off. */
@@ -49,10 +58,16 @@ export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, 
   adminUrl?: string;
   onClose: () => void;
   onDone?: () => void;
+  /** No Saturdays may be chosen — the postcode never gets them. The server
+   *  enforces the same from today's booking-issue card. */
+  weekdaysOnly?: boolean;
+  /** Whether "Send it" starts ticked. The standard email talks about a
+   *  Saturday restriction, so it starts unticked for other problems. */
+  defaultSendEmail?: boolean;
 }) {
   // null = "use the server's next-available default"; a string = operator pick.
   const [chosenDate, setChosenDate] = useState<string | null>(null);
-  const [sendCustomerEmail, setSendCustomerEmail] = useState(true);
+  const [sendCustomerEmail, setSendCustomerEmail] = useState(defaultSendEmail);
   const [done, setDone] = useState<{ toDate: string; emailed: boolean } | null>(null);
 
   const params = new URLSearchParams({ from: fromDate });
@@ -70,6 +85,9 @@ export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, 
     staleTime: 0,
     retry: false,
   });
+
+  const weekdaysOnly = weekdaysOnlyProp || !!preview?.weekdaysOnly;
+  const saturdayBlocked = !!preview && weekdaysOnly && isSaturday(preview.toDate);
 
   const apply = useMutation({
     mutationFn: async () => {
@@ -114,14 +132,13 @@ export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, 
     // doing nothing at all: a perfectly rendered dialog nobody could press
     // (#133128, same afternoon). It also made the email preview unscrollable.
     <div className="fixed inset-0 z-[120] bg-black/60 flex items-center justify-center p-4 pointer-events-auto">
-      <div className="bg-card rounded-2xl border border-border shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+      <div className="bg-card rounded-2xl border border-border shadow-2xl w-full max-w-2xl max-h-[92dvh] flex flex-col">
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
           <CalendarClock className="w-5 h-5 text-amber-600" />
           <div className="flex-1 min-w-0">
-            <h2 className="font-semibold">Move {orderName} to a later delivery date</h2>
-            <p className="text-xs text-muted-foreground">
-              Currently {fromDate}
-              {preview?.customerName ? ` · ${preview.customerName}` : ""}
+            <h2 className="text-xl font-bold leading-tight">Move {orderName}{preview?.customerName ? ` — ${preview.customerName}` : ""}</h2>
+            <p className="text-sm text-muted-foreground">
+              to a later delivery date · currently {fromDate}
             </p>
           </div>
           {adminUrl && (
@@ -130,7 +147,7 @@ export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, 
               Shopify <ExternalLink className="w-3 h-3" />
             </a>
           )}
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} aria-label="Close" className="h-11 w-11 shrink-0 rounded-xl border-2 border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary/60"><X className="w-5 h-5" /></button>
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
@@ -188,8 +205,26 @@ export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, 
               {/* New date. Defaults to the next deliverable day; the operator
                   can override for a customer who has asked for something else. */}
               <div>
-                <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">New delivery date</label>
-                <div className="flex items-center gap-3 mt-1.5">
+                <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  New delivery date{weekdaysOnly ? " — weekdays only, APC never deliver here on Saturdays" : ""}
+                </label>
+                {preview.dateChoices && preview.dateChoices.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-1.5">
+                    {preview.dateChoices.map(c => (
+                      <button
+                        key={c.date}
+                        onClick={() => setChosenDate(c.date)}
+                        className={cn(
+                          "min-h-11 px-3 py-1.5 rounded-xl border-2 text-sm font-semibold",
+                          preview.toDate === c.date ? "border-amber-500 bg-amber-50 dark:bg-amber-950/40" : "border-border hover:bg-secondary/60",
+                        )}
+                      >
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-center gap-3 mt-2 flex-wrap">
                   <input
                     type="date"
                     value={preview.toDate}
@@ -198,6 +233,9 @@ export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, 
                     className="px-3 py-2 rounded-lg border border-border bg-background text-sm"
                   />
                   <span className="text-sm font-medium">{preview.toDateFriendly}</span>
+                  {saturdayBlocked && (
+                    <span className="text-sm font-semibold text-red-700 dark:text-red-300">That's a Saturday — pick a weekday.</span>
+                  )}
                   {chosenDate && chosenDate !== preview.defaultDate && (
                     <button onClick={() => setChosenDate(null)} className="text-xs text-primary hover:underline">
                       reset to next available ({preview.defaultDate})
@@ -279,7 +317,7 @@ export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, 
           {!done && (
             <button
               onClick={() => apply.mutate()}
-              disabled={!preview || apply.isPending}
+              disabled={!preview || apply.isPending || saturdayBlocked}
               className={cn(
                 "px-5 py-2 rounded-xl text-sm font-semibold text-white transition-colors disabled:opacity-40",
                 "bg-amber-600 hover:bg-amber-700",
