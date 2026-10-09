@@ -10,7 +10,9 @@
  *          the two counters with @workspace/building-edit.
  *
  *   POST /production-plans/:id/items/:itemId/building-edit
- *        body { stationType, batches, extraPacks, expected: { batches, extraPacks } }
+ *        body { stationType, batches, extraPacks, expected: { batches, extraPacks },
+ *               batchesLine?, extraPacksLine? }  — which line each change is
+ *               taken off / added to (the builder picks it; default stationType)
  *        → applies the staged edit in ONE transaction and returns the new
  *          numbers. `expected` is what the builder saw when they opened the
  *          dialog: if the other line has recorded something since (or a
@@ -18,14 +20,16 @@
  *          won't match and nothing changes (409) — the screen reloads them.
  *
  * What changes (rules + floors in @workspace/building-edit, tested):
- *   −batch  deletes a batch_completions row — this line's newest full batch
- *           first — so the TCK run rate and dashboard KPI drop with it;
- *   +batch  inserts a full batch row now, under the signed-in person, marked
+ *   −batch  deletes a batch_completions row — the chosen line's newest full
+ *           batch first — so the TCK run rate and dashboard KPI drop with it;
+ *   +batch  inserts a full batch row on the chosen line now, under the
+ *           signed-in person, marked
  *           with correction_by_user_id + correction_note "Edit numbers";
  *   ±packs  moves building_station_progress.extra_packs, then the item's
  *           extra_packs_built cache is recomputed (lib/building-progress).
- * Refused (422, with the reason in words) below the batches already through
- * the ovens or a pack total below what's already wrapped into storage.
+ * Refused (422, with the reason in words) when the chosen line hasn't that
+ * many to give, below the batches already through the ovens, or a pack total
+ * below what's already wrapped into storage.
  * Every save writes one building_count_edits row (who, before → after, the
  * rows removed/added). It adds batches under a person's name, so it sits in
  * the server PIN lock (lib/pin-enforce.ts).
@@ -72,6 +76,8 @@ const Counts = z.object({
 export const BuildingEditBody = Counts.extend({
   stationType: z.enum(BUILDING_LINES),
   expected: Counts,
+  batchesLine: z.enum(BUILDING_LINES).optional(),
+  extraPacksLine: z.enum(BUILDING_LINES).optional(),
 });
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -178,6 +184,7 @@ router.post("/:id/items/:itemId/building-edit", validate(BuildingEditBody), asyn
   const body = req.body as z.infer<typeof BuildingEditBody>;
   const userId = req.session.userId ?? null;
   const line = body.stationType;
+  const lines = { batches: body.batchesLine ?? line, extraPacks: body.extraPacksLine ?? line };
 
   try {
     const result = await db.transaction(async (tx) => {
@@ -193,14 +200,15 @@ router.post("/:id/items/:itemId/building-edit", validate(BuildingEditBody), asyn
         throw new EditRefused(409, "The numbers changed while you were editing (the other line may have recorded something). Check them and save again.");
       }
       const target = { batches: body.batches, extraPacks: countsPacks ? before.extraPacks : body.extraPacks };
-      const reason = editBlockReason(state, target, line, unit);
+      const reason = editBlockReason(state, target, lines, unit);
       if (reason) throw new EditRefused(422, reason);
 
-      const plan = planBuildEdit(state, target, line);
+      const plan = planBuildEdit(state, target, lines);
       const summary = editSummary(
         { batches: before.batches, extraPacks: before.extraPacks },
         { batches: plan.after.batches, extraPacks: plan.after.extraPacks },
         unit,
+        lines,
       );
       if (!summary) return { state, recipeName: loaded.item.recipeName, countsPacks, summary };
 
@@ -213,7 +221,7 @@ router.post("/:id/items/:itemId/building-edit", validate(BuildingEditBody), asyn
         const inserted = await tx.insert(batchCompletionsTable).values(
           Array.from({ length: plan.addBatches }, () => ({
             planItemId: itemId,
-            stationType: line,
+            stationType: lines.batches,
             userId,
             completedAt: now,
             correctionByUserId: userId,
@@ -260,7 +268,7 @@ router.post("/:id/items/:itemId/building-edit", validate(BuildingEditBody), asyn
       return { state: after!.state, recipeName: loaded.item.recipeName, countsPacks, summary };
     });
 
-    console.info("[building-edit]", JSON.stringify({ planId, itemId, line, userId, summary: result.summary || "no change" }));
+    console.info("[building-edit]", JSON.stringify({ planId, itemId, line, lines, userId, summary: result.summary || "no change" }));
     res.json({ ...response(itemId, result.recipeName, result.state, result.countsPacks), summary: result.summary });
   } catch (err) {
     if (err instanceof EditRefused) { res.status(err.status).json({ error: err.message }); return; }
