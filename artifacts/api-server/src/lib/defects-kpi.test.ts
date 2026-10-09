@@ -26,6 +26,43 @@ describe("defectPct", () => {
   });
 });
 
+describe("waste (2026-10-09)", () => {
+  const base = {
+    from: "2026-10-08", to: "2026-10-09",
+    days: [{ date: "2026-10-08", packsMade: 1000, wonky: 3, dogBin: 1 }],
+    types,
+    rejectStations: [],
+  };
+
+  // Regression: records made before waste existed have no item and no cost;
+  // they must keep counting by their packs exactly as before.
+  it("old records without an item still count their packs and add no £", () => {
+    const s = summariseDefects({ ...base, recorded: [{ occurredOn: "2026-10-08", typeId: 1, packs: 8, station: "wrapping" }] });
+    expect(s.defects).toBe(3 + 1 + 8);
+    expect(s.recorded).toBe(8);
+    expect(s.waste).toEqual({ entries: 0, ingredientCost: 0, timeCost: 0, totalCost: 0 });
+  });
+
+  it("weight waste adds £ but no packs; pack waste adds both", () => {
+    const s = summariseDefects({
+      ...base,
+      recorded: [
+        // 2.3 kg of a sub-recipe: 0 packs, £13.62 ingredients + 45 min
+        { occurredOn: "2026-10-09", typeId: 2, packs: 0, station: null, ingredientCost: 13.62, timeCost: 12.77 },
+        // 4 finished packs binned
+        { occurredOn: "2026-10-08", typeId: 2, packs: 4, station: null, ingredientCost: 14, timeCost: 0 },
+      ],
+    });
+    expect(s.recorded).toBe(4);
+    expect(s.defects).toBe(3 + 1 + 4);
+    expect(s.waste).toEqual({ entries: 2, ingredientCost: 27.62, timeCost: 12.77, totalCost: 40.39 });
+    expect(s.byDay.find(d => d.date === "2026-10-09")?.wasteCost).toBe(26.39);
+    expect(s.byDay.find(d => d.date === "2026-10-08")?.wasteCost).toBe(14);
+    // A weight-only entry doesn't create a pack row in the type breakdown.
+    expect(s.byType.find(t => t.key === "type:2")?.packs).toBe(4);
+  });
+});
+
 describe("summariseDefects", () => {
   it("adds wonkies, dog bins and recorded defects in packs — the 30 Sep mislabel counts 8", () => {
     const s = summariseDefects({
@@ -62,8 +99,8 @@ describe("summariseDefects", () => {
     expect(s.packsMade).toBe(100);
     expect(s.byType.find(t => t.key === "type:3")?.packs).toBe(2);
     expect(s.byDay).toEqual([
-      { date: "2026-09-28", defects: 1, packsMade: 100, pct: 1 },
-      { date: "2026-09-29", defects: 2, packsMade: 0, pct: null },
+      { date: "2026-09-28", defects: 1, packsMade: 100, pct: 1, wasteCost: 0 },
+      { date: "2026-09-29", defects: 2, packsMade: 0, pct: null, wasteCost: 0 },
     ]);
   });
 

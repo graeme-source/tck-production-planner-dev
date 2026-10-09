@@ -48,7 +48,7 @@ const json = <T>(x: unknown): T => (typeof x === "string" ? JSON.parse(x) : x) a
 async function storedDays(since: string): Promise<StoredDay[]> {
   const r = await db.execute<Record<string, unknown>>(sql`
     SELECT date::text AS date, status, flags, packs_by_line, eight_pack_bags, orders_despatched, packs_despatched,
-           efficiency_pct, ratio, value_credited, value_made_net, value_despatched_net, labour_cost, paid_hours
+           efficiency_pct, ratio, value_credited, waste_value, value_made_net, value_despatched_net, labour_cost, paid_hours
     FROM team_efficiency_days WHERE date >= ${since} ORDER BY date
   `);
   return r.rows.map(x => ({
@@ -62,6 +62,7 @@ async function storedDays(since: string): Promise<StoredDay[]> {
     efficiencyPct: numOrNull(x.efficiency_pct),
     ratio: numOrNull(x.ratio),
     valueCredited: num(x.value_credited),
+    wasteValue: num(x.waste_value),
     valueMadeNet: num(x.value_made_net),
     valueDespatchedNet: num(x.value_despatched_net),
     labourCost: num(x.labour_cost),

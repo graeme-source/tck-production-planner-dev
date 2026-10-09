@@ -24,6 +24,7 @@ import { liveLabour, estimateToday, type LiveShift, type TodayEstimate } from ".
 import {
   loadSettings, planDatesAround, nonDispatchDays, planItems, despatchInputs, mirrorShiftTypes,
 } from "./team-efficiency-job";
+import { loadWasteByDay } from "./waste-by-day";
 
 const CACHE_MS = 3 * 60_000;
 const MULT_CACHE_MS = 60 * 60_000;
@@ -100,7 +101,7 @@ async function compute(): Promise<TodayResult> {
   try { await ensureOrdersFresh(addDaysIso(today, -28)); } catch (err) {
     console.warn("[team-efficiency] orders mirror refresh failed, using it as-is:", err instanceof Error ? err.message : err);
   }
-  const [items, despatch] = await Promise.all([planItems(today, today), despatchInputs(today, today, 28)]);
+  const [items, despatch, waste] = await Promise.all([planItems(today, today), despatchInputs(today, today, 28), loadWasteByDay(today, today)]);
   const dsp = despatch.get(today);
   const c: DayComponents = {
     date: today,
@@ -113,6 +114,7 @@ async function compute(): Promise<TodayResult> {
     headcount: labour.headcount,
     pendingShifts: 0,
     ignoredUnapproved: 0,
+    wasteValue: waste.get(today) ?? 0,
   };
   return {
     estimate: estimateToday(c, settings, {
@@ -122,6 +124,11 @@ async function compute(): Promise<TodayResult> {
       hasPlan,
     }),
   };
+}
+
+/** Drop the cached estimate — a waste entry for today changes it at once. */
+export function forgetTodayEstimate(): void {
+  cached = null;
 }
 
 /** Today's estimate, cached for 3 minutes; one computation at a time. */

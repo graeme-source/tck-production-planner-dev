@@ -165,6 +165,13 @@ export async function computeCosts(recipeIds: number[]) {
   return rawCostByRecipeId;
 }
 
+/** Ingredient cost of ONE pack from the batch's raw-material cost — the
+ *  recipe page's figure, shared with waste costing (services/waste-costing.ts). */
+export function packIngredientCostOf(rawMaterialCostPerBatch: number, servings: number, packSize: number): number {
+  const costPerPortion = servings > 0 ? rawMaterialCostPerBatch / servings : 0;
+  return costPerPortion * packSize;
+}
+
 function enrichWithCosts(
   recipe: ReturnType<typeof mapRecipe>,
   rawMaterialCostPerBatch: number
@@ -176,7 +183,7 @@ function enrichWithCosts(
   const labourCost = recipe.labourCost;
 
   const costPerPortion = servings > 0 ? rawMaterialCostPerBatch / servings : 0;
-  const packIngredientCost = costPerPortion * packSize;
+  const packIngredientCost = packIngredientCostOf(rawMaterialCostPerBatch, servings, packSize);
   const totalPackCost = packIngredientCost + packagingCost + labourCost;
   const grossMargin = rrp > 0 ? ((rrp - totalPackCost) / rrp) * 100 : null;
 

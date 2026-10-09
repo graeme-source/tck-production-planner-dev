@@ -5,11 +5,22 @@
  *   POST   /types            admin: add a type
  *   PATCH  /types/:id        admin: rename / switch on or off / reorder
  *   GET    /options          recipes for the record form's picker
+ *   GET    /items            everything that can be wasted (ingredients,
+ *                            sub-recipes, products and their packs) for the
+ *                            "Report defect / waste" search box
+ *   POST   /waste-cost       the live cost of an entry, before it's saved
+ *                            (reads only — the same costing the save uses)
  *   GET    /summary          the KPI for ?period=today|week|month or ?from=&to=
  *   GET    /                 recorded defects for the same ranges, newest first
- *   POST   /                 anyone signed in: record a defect
+ *   POST   /                 anyone signed in: record a defect / waste
  *   PATCH  /:id              managers, admins, or whoever recorded it
  *   DELETE /:id              same people; soft delete (deleted_at)
+ *
+ * Waste (2026-10-09, migration 0152): an entry may name an item and an
+ * amount. Its cost is worked out on the server (services/waste-costing.ts,
+ * pure maths in lib/waste-cost.ts) and SNAPSHOT on the row; its lost value
+ * comes off that day's Team efficiency, which is restated as soon as the
+ * entry is added, changed or deleted.
  *
  * The KPI maths is pure and tested in lib/defects-kpi.ts; the loading is
  * shared with the meetings in services/defects-summary.ts.
@@ -24,6 +35,9 @@ import { londonDateString } from "../lib/london-time";
 import { canEditDefect, standardPeriods } from "../lib/defects-kpi";
 import { loadDefectSummary } from "../services/defects-summary";
 import { daysBetween } from "../lib/team-efficiency-labour";
+import { costWaste, loadWasteCatalogue, WasteInputError, type WasteCosting, type WasteItemInput } from "../services/waste-costing";
+import { restateDays } from "../services/team-efficiency-job";
+import { forgetTodayEstimate } from "../services/team-efficiency-today";
 
 const router: IRouter = Router();
 
@@ -123,6 +137,97 @@ router.get("/options", async (_req: Request, res: Response) => {
   res.json({ recipes });
 });
 
+// ── Waste: what can be wasted, and what it costs ──────────────────────────
+
+router.get("/items", async (_req: Request, res: Response) => {
+  try {
+    res.json({ items: await loadWasteCatalogue() });
+  } catch (err) {
+    console.error("[defects] item list failed:", err);
+    res.status(500).json({ error: "Couldn't load the list of items" });
+  }
+});
+
+const ItemKind = z.enum(["ingredient", "sub_recipe", "product"]);
+const PackKindSchema = z.enum(["pack", "eight_pack_bag"]);
+const WasteFields = {
+  itemKind: ItemKind,
+  itemId: z.number().int().positive(),
+  packKind: PackKindSchema.nullable().optional(),
+  quantity: z.number().positive("Enter how much").max(100000),
+  quantityUnit: z.string().trim().min(1).max(20),
+  remakeMinutes: z.number().int().min(0).max(1440).nullable().optional(),
+};
+const WasteCostBody = z.object(WasteFields);
+
+function wasteInput(b: z.infer<typeof WasteCostBody>): WasteItemInput {
+  return {
+    itemKind: b.itemKind, itemId: b.itemId, packKind: b.packKind ?? null,
+    quantity: b.quantity, quantityUnit: b.quantityUnit, remakeMinutes: b.remakeMinutes ?? null,
+  };
+}
+
+/** The costing as the form shows it. The hourly rate goes out rounded:
+ *  it's the team's blended average, never anyone's own pay. */
+function costingView(c: WasteCosting) {
+  return {
+    itemName: c.itemName,
+    packs: c.packs,
+    suggestedMinutes: c.suggestedMinutes,
+    remakeMinutes: c.snapshot.remakeMinutes,
+    ingredientCost: c.snapshot.ingredientCost,
+    timeCost: c.snapshot.timeCost,
+    totalCost: c.snapshot.totalCost,
+    hourlyRate: c.hourly ? Math.round(c.hourly.rate * 100) / 100 : null,
+    hourlyRateFrom: c.hourly?.from ?? null,
+    hourlyRateTo: c.hourly?.to ?? null,
+  };
+}
+
+router.post("/waste-cost", validate(WasteCostBody), async (req: Request, res: Response) => {
+  try {
+    const costing = await costWaste(wasteInput(req.body as z.infer<typeof WasteCostBody>));
+    res.json(costingView(costing));
+  } catch (err) {
+    if (err instanceof WasteInputError) { res.status(400).json({ error: err.message }); return; }
+    console.error("[defects] waste cost failed:", err);
+    res.status(500).json({ error: "Couldn't work out the cost" });
+  }
+});
+
+/** The waste columns for a costed entry. */
+function wasteColumns(c: WasteCosting): Partial<typeof defectsTable.$inferInsert> {
+  const money = (n: number | null) => (n == null ? null : n.toFixed(2));
+  return {
+    itemKind: c.itemKind,
+    ingredientId: c.ingredientId,
+    subRecipeId: c.subRecipeId,
+    recipeId: c.recipeId,
+    packKind: c.packKind,
+    itemName: c.itemName,
+    quantity: String(c.quantity),
+    quantityUnit: c.quantityUnit,
+    packs: c.packs,
+    remakeMinutes: c.snapshot.remakeMinutes,
+    hourlyRate: c.snapshot.hourlyRate == null ? null : c.snapshot.hourlyRate.toFixed(4),
+    ingredientCost: money(c.snapshot.ingredientCost),
+    timeCost: money(c.snapshot.timeCost),
+    lostValue: money(c.snapshot.lostValue),
+  };
+}
+
+/** Bring Team efficiency up to date for the days an entry touched. A
+ *  failure is logged, never fails the save — the nightly job re-reads it. */
+async function restateEfficiency(days: Array<string | null | undefined>): Promise<void> {
+  const list = days.filter((d): d is string => Boolean(d));
+  if (list.includes(londonDateString())) forgetTodayEstimate();
+  try {
+    await restateDays(list);
+  } catch (err) {
+    console.error("[defects] efficiency restate failed (the nightly job will catch up):", err);
+  }
+}
+
 // ── KPI ────────────────────────────────────────────────────────────────────
 
 router.get("/summary", async (req: Request, res: Response) => {
@@ -159,6 +264,16 @@ router.get("/", async (req: Request, res: Response) => {
     updatedByName: defectsTable.updatedByName,
     createdAt: defectsTable.createdAt,
     updatedAt: defectsTable.updatedAt,
+    itemKind: defectsTable.itemKind,
+    ingredientId: defectsTable.ingredientId,
+    subRecipeId: defectsTable.subRecipeId,
+    packKind: defectsTable.packKind,
+    itemName: defectsTable.itemName,
+    quantity: defectsTable.quantity,
+    quantityUnit: defectsTable.quantityUnit,
+    remakeMinutes: defectsTable.remakeMinutes,
+    ingredientCost: defectsTable.ingredientCost,
+    timeCost: defectsTable.timeCost,
   })
     .from(defectsTable)
     .innerJoin(defectTypesTable, eq(defectTypesTable.id, defectsTable.defectTypeId))
@@ -166,7 +281,21 @@ router.get("/", async (req: Request, res: Response) => {
     .where(and(isNull(defectsTable.deletedAt), gte(defectsTable.occurredOn, range.from), lte(defectsTable.occurredOn, range.to)))
     .orderBy(desc(defectsTable.occurredOn), desc(defectsTable.createdAt))
     .limit(500);
-  res.json({ defects: rows.map(r => ({ ...r, canEdit: canEditDefect(user, r) })) });
+  const num = (x: string | null) => (x == null ? null : Number(x));
+  res.json({
+    defects: rows.map(r => {
+      const ingredientCost = num(r.ingredientCost);
+      const timeCost = num(r.timeCost);
+      return {
+        ...r,
+        quantity: num(r.quantity),
+        ingredientCost,
+        timeCost,
+        totalCost: ingredientCost == null && timeCost == null ? null : Math.round(((ingredientCost ?? 0) + (timeCost ?? 0)) * 100) / 100,
+        canEdit: canEditDefect(user, r),
+      };
+    }),
+  });
 });
 
 const Optional = (max: number) => z.string().trim().max(max).nullable().optional();
@@ -174,13 +303,36 @@ const DefectFields = {
   occurredOn: Day,
   defectTypeId: z.number().int().positive(),
   recipeId: z.number().int().positive().nullable().optional(),
-  packs: z.number().int().min(1, "At least 1 pack").max(100000),
+  // Required for an entry without an item (as before); worked out from the
+  // item and amount otherwise.
+  packs: z.number().int().min(1, "At least 1 pack").max(100000).optional(),
   station: Optional(60),
   orderRefs: Optional(300),
   note: Optional(2000),
+  // Waste: send all of these together, or none (an entry with no item).
+  itemKind: WasteFields.itemKind.optional(),
+  itemId: WasteFields.itemId.optional(),
+  packKind: WasteFields.packKind,
+  quantity: WasteFields.quantity.optional(),
+  quantityUnit: WasteFields.quantityUnit.optional(),
+  remakeMinutes: WasteFields.remakeMinutes,
 };
 const CreateDefectBody = z.object(DefectFields);
 const UpdateDefectBody = z.object(DefectFields).partial();
+
+type DefectBody = z.infer<typeof UpdateDefectBody>;
+
+/** The item part of a body: null when it names no item, the input when it
+ *  names one completely, a message when it's half there. */
+function itemFromBody(b: DefectBody): WasteItemInput | null | string {
+  const parts = [b.itemKind, b.itemId, b.quantity, b.quantityUnit];
+  if (parts.every(p => p === undefined)) return null;
+  if (parts.some(p => p === undefined)) return "Choose the item and how much";
+  return wasteInput({
+    itemKind: b.itemKind!, itemId: b.itemId!, packKind: b.packKind ?? null,
+    quantity: b.quantity!, quantityUnit: b.quantityUnit!, remakeMinutes: b.remakeMinutes ?? null,
+  });
+}
 
 const blankToNull = (s: string | null | undefined) => (s == null || s.trim() === "" ? null : s.trim());
 
@@ -201,19 +353,33 @@ router.post("/", validate(CreateDefectBody), async (req: Request, res: Response)
   const body = req.body as z.infer<typeof CreateDefectBody>;
   const problem = await checkTypeAndDay(body, { mustBeActive: true });
   if (problem) { res.status(400).json({ error: problem }); return; }
+  const item = itemFromBody(body);
+  if (typeof item === "string") { res.status(400).json({ error: item }); return; }
+  if (item === null && body.packs === undefined) { res.status(400).json({ error: "Say how many packs, or choose what was wasted" }); return; }
   const user = await me(req);
   try {
+    let waste: Partial<typeof defectsTable.$inferInsert> = {};
+    if (item) {
+      try {
+        waste = wasteColumns(await costWaste(item));
+      } catch (err) {
+        if (err instanceof WasteInputError) { res.status(400).json({ error: err.message }); return; }
+        throw err;
+      }
+    }
     const [row] = await db.insert(defectsTable).values({
       occurredOn: body.occurredOn,
       defectTypeId: body.defectTypeId,
       recipeId: body.recipeId ?? null,
-      packs: body.packs,
+      packs: body.packs ?? 0,
       station: blankToNull(body.station),
       orderRefs: blankToNull(body.orderRefs),
       note: blankToNull(body.note),
       recordedById: user.id,
       recordedByName: user.name,
+      ...waste,
     }).returning();
+    if (item) await restateEfficiency([row.occurredOn]);
     res.status(201).json({ defect: row });
   } catch (err) {
     console.error("[defects] record failed:", err);
@@ -224,7 +390,13 @@ router.post("/", validate(CreateDefectBody), async (req: Request, res: Response)
 async function loadEditable(req: Request, res: Response) {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid defect" }); return null; }
-  const [row] = await db.select({ id: defectsTable.id, recordedById: defectsTable.recordedById, defectTypeId: defectsTable.defectTypeId })
+  const [row] = await db.select({
+    id: defectsTable.id, recordedById: defectsTable.recordedById, defectTypeId: defectsTable.defectTypeId,
+    occurredOn: defectsTable.occurredOn, lostValue: defectsTable.lostValue, itemKind: defectsTable.itemKind,
+    ingredientId: defectsTable.ingredientId, subRecipeId: defectsTable.subRecipeId, recipeId: defectsTable.recipeId,
+    packKind: defectsTable.packKind, quantity: defectsTable.quantity, quantityUnit: defectsTable.quantityUnit,
+    remakeMinutes: defectsTable.remakeMinutes,
+  })
     .from(defectsTable).where(and(eq(defectsTable.id, id), isNull(defectsTable.deletedAt)));
   if (!row) { res.status(404).json({ error: "Defect not found" }); return null; }
   const user = await me(req);
@@ -258,7 +430,36 @@ router.patch("/:id", validate(UpdateDefectBody), async (req: Request, res: Respo
   if (body.station !== undefined) patch.station = blankToNull(body.station);
   if (body.orderRefs !== undefined) patch.orderRefs = blankToNull(body.orderRefs);
   if (body.note !== undefined) patch.note = blankToNull(body.note);
+
+  // The item: a new or changed item/amount is costed afresh (today's
+  // prices). Only the remake time changing on an entry that has an item
+  // re-costs it too. An entry left alone keeps its snapshot — and an old
+  // entry with no item stays costless unless someone gives it one.
+  let item = itemFromBody(body);
+  if (typeof item === "string") { res.status(400).json({ error: item }); return; }
+  const r = found.row;
+  if (item === null && body.remakeMinutes !== undefined && r.itemKind && r.quantity && r.quantityUnit) {
+    const itemId = r.itemKind === "ingredient" ? r.ingredientId : r.itemKind === "sub_recipe" ? r.subRecipeId : r.recipeId;
+    if (itemId != null) {
+      item = {
+        itemKind: r.itemKind as WasteItemInput["itemKind"], itemId, packKind: (r.packKind as WasteItemInput["packKind"]) ?? null,
+        quantity: Number(r.quantity), quantityUnit: r.quantityUnit, remakeMinutes: body.remakeMinutes ?? null,
+      };
+    }
+  }
+  if (item) {
+    try {
+      Object.assign(patch, wasteColumns(await costWaste(item)));
+    } catch (err) {
+      if (err instanceof WasteInputError) { res.status(400).json({ error: err.message }); return; }
+      console.error("[defects] waste cost failed:", err);
+      res.status(500).json({ error: "Couldn't work out the cost" });
+      return;
+    }
+  }
   const [row] = await db.update(defectsTable).set(patch).where(eq(defectsTable.id, found.row.id)).returning();
+  // The day it was on and the day it's on now (they differ when the date moved).
+  if (r.lostValue != null || row.lostValue != null) await restateEfficiency([r.occurredOn, row.occurredOn]);
   res.json({ defect: row });
 });
 
@@ -268,6 +469,7 @@ router.delete("/:id", async (req: Request, res: Response) => {
   await db.update(defectsTable)
     .set({ deletedAt: new Date(), deletedById: found.user.id, deletedByName: found.user.name })
     .where(eq(defectsTable.id, found.row.id));
+  if (found.row.lostValue != null) await restateEfficiency([found.row.occurredOn]);
   res.json({ ok: true });
 });
 

@@ -25,6 +25,9 @@ export const subRecipesTable = pgTable("sub_recipes", {
   // sauce); `yield` then tracks total × yieldPercent / 100 instead.
   yieldPercent: numeric("yield_percent", { precision: 6, scale: 2 }),
   labelDeclaration: text("label_declaration"),
+  // Minutes to make ONE batch (the yield). Only pre-fills "How long to make
+  // it again?" when it's wasted (migration 0153). NULL = not known.
+  standardPrepMinutes: integer("standard_prep_minutes"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
