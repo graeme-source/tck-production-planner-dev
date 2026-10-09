@@ -7,6 +7,7 @@ import storageRouter from "./storage";
 import ingredientsRouter from "./ingredients";
 import subRecipesRouter from "./sub-recipes";
 import subRecipePrepTimeRouter from "./sub-recipe-prep-time";
+import userToursRouter from "./user-tours";
 import recipesRouter from "./recipes";
 import recipeArchiveRouter from "./recipe-archive";
 import productionPlansRouter from "./production-plans";
@@ -366,6 +367,8 @@ router.use("/end-of-day", endOfDayRouter);
 // Defects: anyone signed in may record one; edits, deletes and the type list
 // are guarded inside the router (routes/defects.ts).
 router.use("/defects", defectsRouter);
+// One-off walkthroughs, per signed-in person (routes/user-tours.ts).
+router.use("/user-tours", userToursRouter);
 // Per-user, so NOT behind the manager guard — every team member completes
 // their own weekly lesson review (route file guards each endpoint).
 router.use("/lean-reviews", leanReviewsRouter);
