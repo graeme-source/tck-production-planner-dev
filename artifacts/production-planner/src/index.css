@@ -248,3 +248,32 @@ html.dev-env.dark {
     print-color-adjust: exact;
   }
 }
+
+/* Swipe-out quick-actions panel (components/swipe-panel.tsx) and its
+   one-off walkthrough (components/swipe-panel-tour.tsx), 2026-10-09. */
+@keyframes swipe-tab-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.65); transform: translateX(0); }
+  50% { box-shadow: 0 0 0 14px rgba(249, 115, 22, 0); transform: translateX(-6px); }
+}
+.swipe-tab-pulse { animation: swipe-tab-pulse 1.4s ease-in-out infinite; }
+
+/* The demo: a finger grabs the tab and drags it left; the panel follows. */
+@keyframes swipe-demo-finger {
+  0%, 12% { transform: translate(0, 0); opacity: 0; }
+  20% { transform: translate(0, 0); opacity: 1; }
+  60% { transform: translate(-118px, 0); opacity: 1; }
+  75%, 100% { transform: translate(-118px, 0); opacity: 0; }
+}
+@keyframes swipe-demo-panel {
+  0%, 20% { transform: translateX(100%); }
+  60%, 90% { transform: translateX(0); }
+  100% { transform: translateX(100%); }
+}
+.swipe-demo-finger { animation: swipe-demo-finger 2.6s ease-in-out infinite; }
+.swipe-demo-panel { animation: swipe-demo-panel 2.6s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .swipe-tab-pulse, .swipe-demo-finger, .swipe-demo-panel { animation: none; }
+  .swipe-demo-panel { transform: translateX(30%); }
+  .swipe-demo-finger { opacity: 1; transform: translate(-40px, 0); }
+}

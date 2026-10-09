@@ -34,8 +34,21 @@ export interface DefectDayInput {
 export interface RecordedDefectInput {
   occurredOn: string;
   typeId: number;
+  /** 0 for waste that isn't packs (a kilo of sauce). */
   packs: number;
   station: string | null;
+  /** Waste cost snapshot (migration 0152); null/absent on old records. */
+  ingredientCost?: number | null;
+  timeCost?: number | null;
+}
+
+/** £ of waste over a range: ingredients, remake time, and the two together. */
+export interface WasteTotals {
+  /** Entries with a cost. */
+  entries: number;
+  ingredientCost: number;
+  timeCost: number;
+  totalCost: number;
 }
 
 export interface DefectTypeInput {
@@ -70,6 +83,8 @@ export interface DefectDayRow {
   defects: number;
   packsMade: number;
   pct: number | null;
+  /** £ of waste that day (ingredients + time). */
+  wasteCost: number;
 }
 
 export interface DefectSummary {
@@ -85,6 +100,7 @@ export interface DefectSummary {
   byType: DefectBreakdownRow[];
   byStation: DefectStationRow[];
   byDay: DefectDayRow[];
+  waste: WasteTotals;
 }
 
 /** Percentage to one decimal; null when there's no denominator (a zero
@@ -162,7 +178,15 @@ export function summariseDefects(input: {
   const { from, to } = input;
   const inRange = (d: string) => d >= from && d <= to;
   const days = input.days.filter(d => inRange(d.date));
-  const recorded = input.recorded.filter(r => inRange(r.occurredOn) && r.packs > 0);
+  const allRecorded = input.recorded.filter(r => inRange(r.occurredOn));
+  // Packs count only records of packs; waste by weight is £, not packs.
+  const recorded = allRecorded.filter(r => r.packs > 0);
+  const waste = sumWaste(allRecorded);
+  const wasteByDate = new Map<string, number>();
+  for (const r of allRecorded) {
+    const t = (r.ingredientCost ?? 0) + (r.timeCost ?? 0);
+    if (t > 0) wasteByDate.set(r.occurredOn, pennies((wasteByDate.get(r.occurredOn) ?? 0) + t));
+  }
 
   const wonky = days.reduce((n, d) => n + Math.max(0, d.wonky), 0);
   const dogBin = days.reduce((n, d) => n + Math.max(0, d.dogBin), 0);
@@ -201,13 +225,30 @@ export function summariseDefects(input: {
     const d = dayMap.get(date);
     const made = Math.max(0, d?.packsMade ?? 0);
     const n = Math.max(0, d?.wonky ?? 0) + Math.max(0, d?.dogBin ?? 0) + (recordedByDay.get(date) ?? 0);
-    return { date, defects: n, packsMade: made, pct: defectPct(n, made) };
+    return { date, defects: n, packsMade: made, pct: defectPct(n, made), wasteCost: wasteByDate.get(date) ?? 0 };
   });
 
   return {
     from, to, defects, packsMade, pct: defectPct(defects, packsMade),
-    wonky, dogBin, recorded: recordedPacks, byType, byStation, byDay,
+    wonky, dogBin, recorded: recordedPacks, byType, byStation, byDay, waste,
   };
+}
+
+const pennies = (n: number) => Math.round(n * 100) / 100;
+
+/** £ of the recorded waste: ingredients, remake time, total. Old records
+ *  (no cost) add nothing. */
+export function sumWaste(rows: Array<Pick<RecordedDefectInput, "ingredientCost" | "timeCost">>): WasteTotals {
+  let entries = 0;
+  let ingredientCost = 0;
+  let timeCost = 0;
+  for (const r of rows) {
+    if (r.ingredientCost == null && r.timeCost == null) continue;
+    entries++;
+    ingredientCost += r.ingredientCost ?? 0;
+    timeCost += r.timeCost ?? 0;
+  }
+  return { entries, ingredientCost: pennies(ingredientCost), timeCost: pennies(timeCost), totalCost: pennies(ingredientCost + timeCost) };
 }
 
 /** Who may change or delete a recorded defect: managers, admins, and the

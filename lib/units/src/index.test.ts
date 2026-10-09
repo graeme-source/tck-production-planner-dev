@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cookedToRaw, toGrams, gramsOrNull, kgOrNull, isWeighable } from "./index";
+import { cookedToRaw, toGrams, gramsOrNull, kgOrNull, isWeighable, convertQuantity } from "./index";
 
 // Regression guard for the ordering-buffer bug: dpt-ingredient-requirements
 // computed cooked = raw × ratio while orders.ts computed raw = cooked ÷ ratio,
@@ -76,5 +76,22 @@ describe("isWeighable", () => {
   it("is true for weights and volumes, false for counts", () => {
     for (const u of ["g", "kg", "ml", "l", "Litres", "mg"]) expect(isWeighable(u)).toBe(true);
     for (const u of ["each", "pieces", "box", "roll", "pcs"]) expect(isWeighable(u)).toBe(false);
+  });
+});
+
+describe("convertQuantity", () => {
+  it("converts between weights", () => {
+    expect(convertQuantity(500, "g", "kg")).toBeCloseTo(0.5);
+    expect(convertQuantity(2.3, "kg", "g")).toBeCloseTo(2300);
+  });
+  it("converts volume to weight at density 1", () => {
+    expect(convertQuantity(1.5, "l", "kg")).toBeCloseTo(1.5);
+  });
+  it("passes matching count units straight through", () => {
+    expect(convertQuantity(3, "each", "Each")).toBe(3);
+  });
+  it("refuses count ↔ weight", () => {
+    expect(convertQuantity(3, "each", "kg")).toBeNull();
+    expect(convertQuantity(3, "kg", "box")).toBeNull();
   });
 });

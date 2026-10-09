@@ -40,6 +40,7 @@ export async function loadDefectSummary(from: string, to: string): Promise<Defec
     `),
     db.select({
       occurredOn: defectsTable.occurredOn, typeId: defectsTable.defectTypeId, packs: defectsTable.packs, station: defectsTable.station,
+      ingredientCost: defectsTable.ingredientCost, timeCost: defectsTable.timeCost,
     }).from(defectsTable).where(and(isNull(defectsTable.deletedAt), gte(defectsTable.occurredOn, from), lte(defectsTable.occurredOn, to))),
     db.select({
       id: defectTypesTable.id, name: defectTypesTable.name, active: defectTypesTable.active, sortOrder: defectTypesTable.sortOrder,
@@ -68,5 +69,9 @@ export async function loadDefectSummary(from: string, to: string): Promise<Defec
     kind: r.kind, station: r.station_type, packs: Number(r.packs) || 0,
   }));
 
-  return summariseDefects({ from, to, days, recorded, types, rejectStations });
+  const money = (x: string | null) => (x == null ? null : Number(x));
+  return summariseDefects({
+    from, to, days, types, rejectStations,
+    recorded: recorded.map(r => ({ ...r, ingredientCost: money(r.ingredientCost), timeCost: money(r.timeCost) })),
+  });
 }

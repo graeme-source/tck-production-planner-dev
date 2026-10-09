@@ -31,6 +31,8 @@ export interface EffDay {
   // founder only
   ratio?: number | null;
   valueCredited?: number;
+  /** Waste recorded that day, already taken off valueCredited. */
+  wasteValue?: number;
   labourCost?: number;
 }
 
@@ -159,6 +161,8 @@ export interface TodayEstimate {
   asOf: string;
   // founder only
   valueCredited?: number;
+  /** Waste recorded today, already taken off valueCredited. */
+  wasteValue?: number;
   labourCost?: number;
   ratio?: number | null;
   paidHours?: number;
@@ -287,6 +291,12 @@ export function monthLabel(month: string): string {
 export function gbp(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
   return n.toLocaleString("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 });
+}
+
+/** To the penny — for small sums like a day's waste ("£13.62"). */
+export function gbpPence(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return n.toLocaleString("en-GB", { style: "currency", currency: "GBP", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 /** Value ÷ labour as a percentage (Graeme, 2026-10-09: "5.64 would be

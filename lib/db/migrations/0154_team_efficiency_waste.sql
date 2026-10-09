@@ -1,0 +1,13 @@
+-- Waste counts against the day's efficiency (Graeme, 2026-10-09). Objective
+-- E (and I: the founder sees why a day's score moved).
+--
+-- waste_value = the sum of defects.lost_value for entries that happened on
+-- that day (London day, occurred_on). It is taken off the day's credited
+-- value before the ratio — see deriveDay in api-server
+-- lib/team-efficiency-day.ts. value_credited is stored AFTER the deduction;
+-- value_credited + waste_value is what the day was credited before waste.
+--
+-- Re-read from the defects table whenever the day is computed or restated,
+-- and the day is restated straight away when a waste entry is added,
+-- changed or deleted. CONFIDENTIAL like the other £ columns: founder only.
+ALTER TABLE team_efficiency_days ADD COLUMN IF NOT EXISTS waste_value NUMERIC(12, 2) NOT NULL DEFAULT 0;

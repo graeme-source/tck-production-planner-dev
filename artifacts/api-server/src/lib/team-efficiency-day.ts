@@ -83,7 +83,7 @@ export interface LineMade {
 }
 
 /** Packs in an 8-pack bag expressed in the recipe's own pack size. */
-function bagPacks(packSize: number): number {
+export function bagPacks(packSize: number): number {
   return packSize > 0 ? 8 / packSize : 0;
 }
 
@@ -152,6 +152,10 @@ export interface DayComponents {
   pendingShifts: number;
   /** Old shifts that were never approved, left out of the day. */
   ignoredUnapproved: number;
+  /** £ of waste recorded as happening this day (defects.lost_value) — taken
+   *  off the credited value. Re-read from the defects table every time the
+   *  day is derived, never stored as a raw component. */
+  wasteValue?: number;
 }
 
 /** A line counted below this share of its plan, by more than
@@ -202,7 +206,10 @@ export interface DerivedDay {
   packsDespatched: number;
   valueMadeNet: number;
   valueDespatchedNet: number;
+  /** Credited value AFTER waste — what the ratio uses. */
   valueCredited: number;
+  /** Waste taken off (valueCredited + wasteValue = credited before waste). */
+  wasteValue: number;
   labourCost: number;
   ratio: number | null;
   efficiencyPct: number | null;
@@ -211,6 +218,16 @@ export interface DerivedDay {
 function discount(s: TeSettings, cat: string): number {
   const r = s.discountRates[cat];
   return Number.isFinite(r) ? r : 0;
+}
+
+/**
+ * Net value of a line's packs: RRP less the line's discount for packs,
+ * the 8-pack factor for bags. THE valuation of a pack — the day's made and
+ * despatched value, and a wasted pack's lost value (lib/waste-cost.ts),
+ * all come through here.
+ */
+export function lineNetValue(s: TeSettings, cat: string | null, gross: number, bagGross: number): number {
+  return gross * (1 - (cat ? discount(s, cat) : 0)) + bagGross * s.eightPackFactor;
 }
 
 export function deriveDay(c: DayComponents, s: TeSettings): DerivedDay {
@@ -260,16 +277,20 @@ export function deriveDay(c: DayComponents, s: TeSettings): DerivedDay {
   const packsByLine = packsByLineOf(c.made);
   let eightPackBags = 0;
   for (const [cat, m] of Object.entries(c.made)) {
-    valueMadeNet += m.gross * (1 - discount(s, cat)) + m.bagGross * s.eightPackFactor;
+    valueMadeNet += lineNetValue(s, cat, m.gross, m.bagGross);
     eightPackBags += m.bags;
   }
   let valueDespatchedNet = 0;
   let packsDespatched = 0;
   for (const [cat, d] of Object.entries(c.despatched)) {
-    valueDespatchedNet += d.gross * (1 - discount(s, cat)) + d.bagGross * s.eightPackFactor;
+    valueDespatchedNet += lineNetValue(s, cat, d.gross, d.bagGross);
     packsDespatched += d.packs + d.bagPacks;
   }
-  const valueCredited = creditedValue(valueMadeNet, valueDespatchedNet, s.despatchShare);
+  // Waste recorded for the day comes off what the day is credited with —
+  // never below zero. Remake TIME is not in wasteValue: those wages are
+  // already in labourCost and produce nothing new (no double count).
+  const wasteValue = Math.max(0, c.wasteValue ?? 0);
+  const valueCredited = Math.max(0, creditedValue(valueMadeNet, valueDespatchedNet, s.despatchShare) - wasteValue);
 
   let status: DayStatus = "ok";
   let ratio: number | null = labourCost > 0 ? valueCredited / labourCost : null;
@@ -298,6 +319,7 @@ export function deriveDay(c: DayComponents, s: TeSettings): DerivedDay {
     valueMadeNet,
     valueDespatchedNet,
     valueCredited,
+    wasteValue,
     labourCost,
     ratio,
     efficiencyPct,

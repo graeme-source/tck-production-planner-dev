@@ -168,6 +168,8 @@ export interface TodayEstimate {
   asOf: string;
   // ── founder-only ──
   valueCredited: number;
+  /** Waste recorded today, already taken off valueCredited. */
+  wasteValue: number;
   labourCost: number;
   ratio: number | null;
   paidHours: number;
@@ -208,13 +210,14 @@ export function estimateToday(
     shiftsNotStarted: extra.shiftsNotStarted,
     asOf: extra.asOf,
     valueCredited: d.valueCredited,
+    wasteValue: d.wasteValue,
     labourCost: d.labourCost,
     ratio: status === "estimate" ? ratio : null,
     paidHours: c.paidHours,
   };
 }
 
-export type ViewerToday = Omit<TodayEstimate, "valueCredited" | "labourCost" | "ratio" | "paidHours">;
+export type ViewerToday = Omit<TodayEstimate, "valueCredited" | "wasteValue" | "labourCost" | "ratio" | "paidHours">;
 
 /** The estimate for managers/admins: allow-list, no pounds, R or hours. */
 export function viewerToday(e: TodayEstimate): ViewerToday {

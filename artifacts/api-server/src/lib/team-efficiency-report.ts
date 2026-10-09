@@ -32,7 +32,10 @@ export interface StoredDay {
   efficiencyPct: number | null;
   // ── founder-only ──
   ratio: number | null;
+  /** After waste — see wasteValue. */
   valueCredited: number;
+  /** Waste recorded for the day, already taken off valueCredited. */
+  wasteValue?: number;
   valueMadeNet: number;
   valueDespatchedNet: number;
   labourCost: number;
@@ -228,7 +231,7 @@ export function buildReport(
 /** Keys that carry pounds or R. Listed for the regression test; the viewer
  *  report is built from an allow-list, not by deleting these. */
 export const FOUNDER_ONLY_KEYS = [
-  "ratio", "valueCredited", "valueMadeNet", "valueDespatchedNet", "labourCost", "paidHours",
+  "ratio", "valueCredited", "wasteValue", "valueMadeNet", "valueDespatchedNet", "labourCost", "paidHours",
 ] as const;
 
 export type ViewerDay = Pick<ReportDay,

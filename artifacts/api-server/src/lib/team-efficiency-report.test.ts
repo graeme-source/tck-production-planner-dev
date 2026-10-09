@@ -12,7 +12,7 @@ function day(date: string, credited: number, labour: number, p: Partial<StoredDa
     ordersDespatched: 100, packsDespatched: 300,
     efficiencyPct: labour > 0 ? (credited / labour / STANDARD) * 100 : null,
     ratio: labour > 0 ? credited / labour : null,
-    valueCredited: credited, valueMadeNet: credited, valueDespatchedNet: credited, labourCost: labour, paidHours: 60,
+    valueCredited: credited, wasteValue: 13.62, valueMadeNet: credited, valueDespatchedNet: credited, labourCost: labour, paidHours: 60,
     ...p,
   };
 }

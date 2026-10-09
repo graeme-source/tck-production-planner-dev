@@ -29,6 +29,7 @@ import {
 import { despatchByDay, type OrderInput, type RecipeInput } from "../lib/team-efficiency-despatch";
 import { parseSettings } from "../lib/team-efficiency-settings";
 import { onCostMultiplier } from "../lib/team-efficiency";
+import { loadWasteByDay } from "./waste-by-day";
 
 const CHUNK_DAYS = 28;          // Planday payroll windows stay ≤ 28 days
 const RECENT_DAYS = 10;         // re-computed every night
@@ -241,7 +242,7 @@ export async function computeRange(from: string, to: string): Promise<number> {
     staleAfterDays: STALE_AFTER_DAYS,
   });
 
-  const [items, despatch] = await Promise.all([planItems(from, to), despatchInputs(from, to)]);
+  const [items, despatch, waste] = await Promise.all([planItems(from, to), despatchInputs(from, to), loadWasteByDay(from, to)]);
 
   let written = 0;
   for (const date of targetDays) {
@@ -258,6 +259,7 @@ export async function computeRange(from: string, to: string): Promise<number> {
       headcount: l?.headcount ?? 0,
       pendingShifts: l?.pendingShifts ?? 0,
       ignoredUnapproved: l?.ignoredUnapproved ?? 0,
+      wasteValue: waste.get(date) ?? 0,
     };
     await writeDay(c, settings);
     written++;
@@ -271,12 +273,12 @@ async function writeDay(c: DayComponents, s: TeSettings): Promise<void> {
     INSERT INTO team_efficiency_days (
       date, made, despatched, orders_despatched, labour_cost_total, line_labour, paid_hours, headcount,
       pending_shifts, ignored_unapproved, packs_by_line, eight_pack_bags, packs_despatched,
-      value_made_net, value_despatched_net, value_credited, labour_cost, ratio, efficiency_pct, status, flags, computed_at
+      value_made_net, value_despatched_net, value_credited, waste_value, labour_cost, ratio, efficiency_pct, status, flags, computed_at
     ) VALUES (
       ${c.date}, ${JSON.stringify(c.made)}::jsonb, ${JSON.stringify(c.despatched)}::jsonb, ${c.ordersDespatched},
       ${c.labourCostTotal}, ${JSON.stringify(c.lineLabour)}::jsonb, ${c.paidHours}, ${c.headcount},
       ${c.pendingShifts}, ${c.ignoredUnapproved}, ${JSON.stringify(d.packsByLine)}::jsonb, ${d.eightPackBags}, ${d.packsDespatched},
-      ${d.valueMadeNet}, ${d.valueDespatchedNet}, ${d.valueCredited}, ${d.labourCost}, ${d.ratio}, ${d.efficiencyPct},
+      ${d.valueMadeNet}, ${d.valueDespatchedNet}, ${d.valueCredited}, ${d.wasteValue}, ${d.labourCost}, ${d.ratio}, ${d.efficiencyPct},
       ${d.status}, ${JSON.stringify(d.flags)}::jsonb, NOW()
     )
     ON CONFLICT (date) DO UPDATE SET
@@ -287,6 +289,7 @@ async function writeDay(c: DayComponents, s: TeSettings): Promise<void> {
       packs_by_line = EXCLUDED.packs_by_line, eight_pack_bags = EXCLUDED.eight_pack_bags,
       packs_despatched = EXCLUDED.packs_despatched, value_made_net = EXCLUDED.value_made_net,
       value_despatched_net = EXCLUDED.value_despatched_net, value_credited = EXCLUDED.value_credited,
+      waste_value = EXCLUDED.waste_value,
       labour_cost = EXCLUDED.labour_cost, ratio = EXCLUDED.ratio, efficiency_pct = EXCLUDED.efficiency_pct,
       status = EXCLUDED.status, flags = EXCLUDED.flags, computed_at = NOW()
   `);
@@ -294,12 +297,38 @@ async function writeDay(c: DayComponents, s: TeSettings): Promise<void> {
 
 /** Re-derive every stored day under the current settings — no Planday. */
 export async function restateAll(): Promise<number> {
+  return restate(null);
+}
+
+/**
+ * Re-derive just these stored days — no Planday. Called when a waste entry
+ * is added, changed or deleted, so the day it happened (and the day it
+ * moved from) shows the deduction straight away. A day not computed yet
+ * (today, or a day with no plan) has nothing stored: the nightly job and
+ * today's live estimate read the waste themselves.
+ */
+export async function restateDays(dates: string[]): Promise<number> {
+  const unique = [...new Set(dates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)))];
+  if (unique.length === 0 || !(await tableReady())) return 0;
+  return restate(unique);
+}
+
+async function restate(dates: string[] | null): Promise<number> {
   const settings = await loadSettings();
-  const r = await db.execute<Record<string, unknown>>(sql`
-    SELECT date::text AS date, made, despatched, orders_despatched, labour_cost_total, line_labour,
-           paid_hours, headcount, pending_shifts, ignored_unapproved
-    FROM team_efficiency_days
-  `);
+  const r = await db.execute<Record<string, unknown>>(dates
+    ? sql`
+      SELECT date::text AS date, made, despatched, orders_despatched, labour_cost_total, line_labour,
+             paid_hours, headcount, pending_shifts, ignored_unapproved
+      FROM team_efficiency_days WHERE date::text IN (${sql.join(dates.map(d => sql`${d}`), sql`, `)})
+    `
+    : sql`
+      SELECT date::text AS date, made, despatched, orders_despatched, labour_cost_total, line_labour,
+             paid_hours, headcount, pending_shifts, ignored_unapproved
+      FROM team_efficiency_days
+    `);
+  if (r.rows.length === 0) return 0;
+  const days = r.rows.map(x => String(x.date)).sort();
+  const waste = await loadWasteByDay(days[0], days[days.length - 1]);
   const j = <T>(x: unknown): T => (typeof x === "string" ? JSON.parse(x) : x) as T;
   for (const x of r.rows) {
     await writeDay({
@@ -313,6 +342,7 @@ export async function restateAll(): Promise<number> {
       headcount: num(x.headcount),
       pendingShifts: num(x.pending_shifts),
       ignoredUnapproved: num(x.ignored_unapproved),
+      wasteValue: waste.get(String(x.date)) ?? 0,
     }, settings);
   }
   return r.rows.length;
