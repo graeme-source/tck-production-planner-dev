@@ -4,7 +4,10 @@
  * figure out how to amend it. ... What we want is a button that just says
  * 'Edit'."
  *
- * Two counters — Batches and Extra packs — each with − / +. Taps only STAGE
+ * Two counters — Batches and Extra packs — each with − / +. Once a counter
+ * changes, it asks which line the change comes off / goes on ("Line 1" /
+ * "Line 2", each with that line's own count; Graeme: "You can ask which
+ * line"), defaulting to the line doing the edit. Taps only STAGE
  * a change; nothing is written until Save, which shows exactly what will
  * change ("Batches 6 → 5, Extra packs 0 → 2"). Cancel, the X, Escape or a
  * tap outside throw the staged changes away.
@@ -13,13 +16,19 @@
  * wording) are @workspace/building-edit, the same code the server re-checks
  * with inside its transaction (routes/building-edit.ts).
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { format, parseISO } from "date-fns";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Minus, Plus, X, Pencil, AlertTriangle } from "lucide-react";
 import {
   BATCH_WORDS,
+  BUILDING_LINES,
   PACK_WORDS,
   editBlockReason,
+  lineCanGive,
+  lineLabel,
+  lineNumbers,
+  type EditLines,
   editSummary,
   planBuildEdit,
   type BuildEditState,
@@ -50,7 +59,7 @@ class SaveError extends Error {
 }
 
 export function BuildingEditDialog({
-  planId, itemId, recipeName, recipeColor, stationType, lineNumber, onClose, onSaved, onEditLeftover,
+  planId, itemId, recipeName, recipeColor, stationType, buildingFinishedAt, onClose, onSaved, onEditLeftover,
 }: {
   planId: number;
   /** null = closed. */
@@ -58,7 +67,9 @@ export function BuildingEditDialog({
   recipeName: string;
   recipeColor?: string | null;
   stationType: "building_1" | "building_2";
-  lineNumber: number;
+  /** Set once "Mark building finished" was pressed — the run-rate window
+   *  ends there, so a correction changes the count only. */
+  buildingFinishedAt?: string | null;
   onClose: () => void;
   /** Called after a successful save with the change in batch count. */
   onSaved?: (batchDelta: number) => void;
@@ -84,12 +95,15 @@ export function BuildingEditDialog({
   // (on open, and after a 409 reload).
   const [staged, setStaged] = useState<EditTarget | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  // Which line each counter's change comes off / goes on. Default: the line
+  // doing the edit.
+  const [lines, setLines] = useState<EditLines>({ batches: stationType, extraPacks: stationType });
   useEffect(() => {
     if (data) setStaged({ batches: data.numbers.batches, extraPacks: data.numbers.extraPacks });
   }, [data]);
   useEffect(() => {
-    if (!open) { setStaged(null); setProblem(null); }
-  }, [open]);
+    if (!open) { setStaged(null); setProblem(null); setLines({ batches: stationType, extraPacks: stationType }); }
+  }, [open, stationType]);
 
   const state: BuildEditState | null = useMemo(() => data ? {
     completions: data.completions,
@@ -101,11 +115,55 @@ export function BuildingEditDialog({
 
   const unit = data?.countsPacks ? PACK_WORDS : BATCH_WORDS;
   const before = data ? { batches: data.numbers.batches, extraPacks: data.numbers.extraPacks } : null;
-  const plan = state && staged ? planBuildEdit(state, staged, stationType) : null;
-  const summary = before && staged ? editSummary(before, staged, unit) : "";
-  const blockNow = state && staged ? editBlockReason(state, staged, stationType, unit) : null;
-  const whyNotLower = (field: keyof EditTarget): string | null =>
-    state && staged ? editBlockReason(state, { ...staged, [field]: staged[field] - 1 }, stationType, unit) : null;
+  // How many are being taken off each counter (≤ 0 = adding or unchanged).
+  const off = (field: keyof EditTarget) => before && staged ? before[field] - staged[field] : 0;
+
+  // If the chosen line can't give what's being taken off but the other line
+  // can, switch to it — a line with nothing to remove is never the choice.
+  useEffect(() => {
+    if (!state || !staged || !before) return;
+    for (const field of ["batches", "extraPacks"] as const) {
+      const n = before[field] - staged[field];
+      if (n <= 0 || lineCanGive(state, lines[field], field, n)) continue;
+      const other = BUILDING_LINES.find(l => lineCanGive(state, l, field, n));
+      if (other && other !== lines[field]) setLines(prev => ({ ...prev, [field]: other }));
+    }
+  }, [state, staged, before?.batches, before?.extraPacks, lines]);
+
+  const plan = state && staged ? planBuildEdit(state, staged, lines) : null;
+  const summary = before && staged ? editSummary(before, staged, unit, lines) : "";
+  const blockNow = state && staged ? editBlockReason(state, staged, lines, unit) : null;
+  // − is off only when NO line could give one more (then say why, for the
+  // chosen line); otherwise the line choice moves to a line that can.
+  const whyNotLower = (field: keyof EditTarget): string | null => {
+    if (!state || !staged) return null;
+    const next = { ...staged, [field]: staged[field] - 1 };
+    const anyLineOk = BUILDING_LINES.some(l => editBlockReason(state, next, { ...lines, [field]: l }, unit) === null);
+    return anyLineOk ? null : editBlockReason(state, next, lines, unit);
+  };
+  const lineChoice = (field: keyof EditTarget): ReactNode => {
+    if (!state || !staged || !before || staged[field] === before[field]) return null;
+    const n = off(field);
+    return (
+      <LineChoice
+        question={n > 0 ? "Take it off which line?" : "Add it to which line?"}
+        chosen={lines[field]}
+        options={BUILDING_LINES.map(l => {
+          const own = lineNumbers(state, l);
+          const have = field === "batches" ? own.batches : Math.max(0, own.extraPacks);
+          return {
+            line: l,
+            label: lineLabel(l),
+            detail: `${have} ${field === "batches" ? (have === 1 ? unit.singular : unit.plural) : (have === 1 ? "pack" : "packs")} now`,
+            disabled: n > 0 && !lineCanGive(state, l, field, n),
+            you: l === stationType,
+          };
+        })}
+        onChoose={(l) => { setProblem(null); setLines(prev => ({ ...prev, [field]: l })); }}
+        disabled={save.isPending}
+      />
+    );
+  };
 
   const save = useMutation({
     mutationFn: async () => {
@@ -114,7 +172,14 @@ export function BuildingEditDialog({
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stationType, batches: staged.batches, extraPacks: staged.extraPacks, expected: before }),
+        body: JSON.stringify({
+          stationType,
+          batches: staged.batches,
+          extraPacks: staged.extraPacks,
+          expected: before,
+          batchesLine: lines.batches,
+          extraPacksLine: lines.extraPacks,
+        }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new SaveError(res.status, (body as { error?: string }).error ?? `Save failed (${res.status})`);
@@ -151,12 +216,16 @@ export function BuildingEditDialog({
     setStaged(s => s ? { ...s, [field]: s[field] + d } : s);
   };
 
-  const lineName = `Line ${lineNumber}`;
-
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o && !save.isPending) onClose(); }}>
       <DialogContent
         className="w-[calc(100vw-1.5rem)] sm:max-w-2xl max-h-[92dvh] p-0 gap-0 flex flex-col overflow-hidden rounded-2xl [&>button:last-child]:hidden"
+        // Tapping the PIN pad (it opens on top when today's PIN is due) is
+        // not a "tap outside" — keep the staged numbers so Save works after.
+        onInteractOutside={(e) => {
+          const t = e.target as Element | null;
+          if (t?.closest?.("[data-pin-lock-overlay]")) e.preventDefault();
+        }}
       >
         {/* Header — big X, always visible */}
         <div className="flex items-start gap-3 px-5 pt-4 pb-3 border-b border-border flex-shrink-0">
@@ -205,7 +274,9 @@ export function BuildingEditDialog({
                   note={data!.numbers.partBatches > 0
                     ? `Includes ${data!.numbers.partBatches} part batch${data!.numbers.partBatches === 1 ? "" : "es"} (${data!.numbers.partBatchPacks} pack${data!.numbers.partBatchPacks === 1 ? "" : "s"})`
                     : null}
-                />
+                >
+                  {lineChoice("batches")}
+                </Counter>
                 {!data!.countsPacks && (
                   <Counter
                     label="Extra packs"
@@ -216,7 +287,9 @@ export function BuildingEditDialog({
                     minusBlockedBy={whyNotLower("extraPacks")}
                     disabled={save.isPending}
                     note="Loose packs not in a batch"
-                  />
+                  >
+                    {lineChoice("extraPacks")}
+                  </Counter>
                 )}
               </div>
 
@@ -232,9 +305,14 @@ export function BuildingEditDialog({
                 </div>
               )}
 
+              {buildingFinishedAt && (
+                <p className="rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 px-4 py-2.5 text-sm font-semibold text-emerald-800 dark:text-emerald-200">
+                  Building is marked finished at {format(parseISO(buildingFinishedAt), "HH:mm")} — this correction changes the count only, not the time.
+                </p>
+              )}
+
               <p className="text-sm text-muted-foreground leading-snug">
-                Taking a {unit.singular} off removes the most recent one recorded on {lineName}
-                {" "}(or the other line if {lineName} has none), so the run rate updates.
+                Taking a {unit.singular} off removes the most recent one recorded on the line you pick, so the run rate updates.
                 {" "}An added {unit.singular} is recorded now, as an edit by you.
                 {data!.ovenBatches > 0 && ` ${data!.ovenBatches} ${data!.ovenBatches === 1 ? unit.singular : unit.plural} already through the ovens.`}
               </p>
@@ -288,8 +366,49 @@ export function BuildingEditDialog({
   );
 }
 
+/** "Which line?" — two big buttons, each with that line's own count. */
+function LineChoice({ question, chosen, options, onChoose, disabled }: {
+  question: string;
+  chosen: string;
+  options: Array<{ line: string; label: string; detail: string; disabled: boolean; you: boolean }>;
+  onChoose: (line: string) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="pt-1 space-y-1.5" role="radiogroup" aria-label={question}>
+      <p className="text-sm font-bold">{question}</p>
+      <div className="grid grid-cols-2 gap-2">
+        {options.map(o => {
+          const on = o.line === chosen;
+          return (
+            <button
+              key={o.line}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              onClick={() => onChoose(o.line)}
+              disabled={disabled || o.disabled}
+              className={cn(
+                "min-h-[56px] rounded-xl border-2 px-3 py-2 text-left transition-colors disabled:opacity-35",
+                on ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background hover:bg-secondary/60",
+              )}
+            >
+              <span className="block text-base font-extrabold leading-tight">
+                {o.label}{o.you && <span className="font-semibold opacity-80"> · you</span>}
+              </span>
+              <span className={cn("block text-xs font-semibold tabular-nums", on ? "opacity-90" : "text-muted-foreground")}>
+                {o.disabled ? "nothing to take off" : o.detail}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function Counter({
-  label, value, was, onMinus, onPlus, minusBlockedBy, disabled, note,
+  label, value, was, onMinus, onPlus, minusBlockedBy, disabled, note, children,
 }: {
   label: string;
   value: number;
@@ -300,6 +419,8 @@ function Counter({
   minusBlockedBy: string | null;
   disabled: boolean;
   note?: string | null;
+  /** The line choice, shown once this counter has changed. */
+  children?: ReactNode;
 }) {
   const changed = value !== was;
   return (
@@ -336,6 +457,7 @@ function Counter({
       {minusBlockedBy && value > 0 && (
         <p className="text-sm font-medium text-amber-800 dark:text-amber-300 leading-snug">{minusBlockedBy}</p>
       )}
+      {children}
     </div>
   );
 }

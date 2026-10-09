@@ -28,8 +28,10 @@ export function PinLockOverlay() {
     // pointer-events-auto is load-bearing: a Radix dialog auto-opening behind
     // this (the DPT suggestion caught it, 2026-09-04) sets pointer-events:none
     // on <body>, and without the override the PIN pad sits on top visually
-    // but takes no taps.
-    <div className="pointer-events-auto fixed inset-0 z-[9999] flex items-center justify-center bg-background/95 backdrop-blur-sm">
+    // but takes no taps. data-pin-lock-overlay lets an open dialog tell a
+    // tap on this pad apart from a "tap outside to close" (the building Edit
+    // dialog keeps its staged numbers while the PIN is entered).
+    <div data-pin-lock-overlay className="pointer-events-auto fixed inset-0 z-[9999] flex items-center justify-center bg-background/95 backdrop-blur-sm">
       <div className="w-full max-w-sm px-4">
         <div className="flex flex-col items-center gap-2 mb-8">
           <img

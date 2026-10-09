@@ -108,25 +108,50 @@ export function buildNumbers(state: BuildEditState): BuildNumbers {
 }
 
 /**
- * Which rows come off when the batch count goes down: full batches before
- * part batches (a part batch is nearly always the recipe's deliberate last
- * one; the mistake is an extra full batch), the editing line before the
- * other line (whoever is editing most likely made the mis-tap), newest first.
+ * Which line each counter's change applies to — the builder picks it in the
+ * dialog (Graeme, 2026-10-09: "You can ask which line"). A plain string
+ * means the same line for both.
  */
-export function removalOrder(completions: BuildCompletion[], line: string): BuildCompletion[] {
-  const rank = (c: BuildCompletion) => (c.partialPacks == null ? 0 : 2) + (c.stationType === line ? 0 : 1);
-  return [...completions].sort((a, b) => rank(a) - rank(b) || newestFirst(a, b));
+export interface EditLines { batches: string; extraPacks: string }
+
+function linesOf(lines: EditLines | string): EditLines {
+  return typeof lines === "string" ? { batches: lines, extraPacks: lines } : lines;
+}
+
+/** "building_2" → "Line 2". */
+export function lineLabel(line: string): string {
+  const n = line.match(/(\d+)$/)?.[1];
+  return n ? `Line ${n}` : line;
+}
+
+/** One line's own share of a recipe: its batch rows and its loose packs. */
+export function lineNumbers(state: BuildEditState, line: string): { batches: number; extraPacks: number } {
+  const ppb = ppbOf(state);
+  const rows = state.completions.filter(c => c.stationType === line);
+  const shortfall = rows.reduce((s, c) => s + shortfallOf(c, ppb), 0);
+  return { batches: rows.length, extraPacks: (state.stationExtras[line] ?? 0) + shortfall };
 }
 
 /**
- * Turn the staged numbers into exactly what to change. Removing a part
- * batch gives its line back the shortfall that was taken off its extras, so
- * the batch disappears with its own packs and the loose-pack count is
- * untouched. Extra packs come off lines holding loose packs first (this
- * line first) so the other builder's "PARTIAL BATCH DONE" isn't left
- * pointing at packs that no longer exist.
+ * Which of a line's rows come off when its batch count goes down: full
+ * batches before part batches (a part batch is nearly always the recipe's
+ * deliberate last one; the mistake is an extra full batch), newest first.
  */
-export function planBuildEdit(state: BuildEditState, target: EditTarget, line: string): EditPlan {
+export function removalOrder(completions: BuildCompletion[], line: string): BuildCompletion[] {
+  return completions
+    .filter(c => c.stationType === line)
+    .sort((a, b) => ((a.partialPacks == null ? 0 : 1) - (b.partialPacks == null ? 0 : 1)) || newestFirst(a, b));
+}
+
+/**
+ * Turn the staged numbers into exactly what to change, on the chosen line(s).
+ * Removing a part batch gives its line back the shortfall that was taken off
+ * its extras, so the batch disappears with its own packs and that line's
+ * loose-pack count is untouched. A line can only give up what it has —
+ * editBlockReason says so in words; this never takes from the other line.
+ */
+export function planBuildEdit(state: BuildEditState, target: EditTarget, lines: EditLines | string): EditPlan {
+  const { batches: batchLine, extraPacks: packLine } = linesOf(lines);
   const ppb = ppbOf(state);
   const before = buildNumbers(state);
   const extrasDelta: Record<string, number> = {};
@@ -139,8 +164,7 @@ export function planBuildEdit(state: BuildEditState, target: EditTarget, line: s
   const removeCompletionIds: number[] = [];
   let addBatches = 0;
   if (batchChange < 0) {
-    const order = removalOrder(state.completions, line).slice(0, -batchChange);
-    for (const c of order) {
+    for (const c of removalOrder(state.completions, batchLine).slice(0, -batchChange)) {
       removeCompletionIds.push(c.id);
       bump(c.stationType, shortfallOf(c, ppb));
     }
@@ -149,20 +173,7 @@ export function planBuildEdit(state: BuildEditState, target: EditTarget, line: s
   }
 
   const extraChange = Math.trunc(target.extraPacks) - before.extraPacks;
-  if (extraChange > 0) {
-    bump(line, extraChange);
-  } else if (extraChange < 0) {
-    let toTake = -extraChange;
-    const lines = [line, ...BUILDING_LINES.filter(l => l !== line)];
-    for (const l of lines) {
-      if (toTake <= 0) break;
-      const held = Math.max(0, (state.stationExtras[l] ?? 0) + (extrasDelta[l] ?? 0));
-      const take = Math.min(held, toTake);
-      bump(l, -take);
-      toTake -= take;
-    }
-    if (toTake > 0) bump(line, -toTake);
-  }
+  bump(packLine, extraChange);
   for (const k of Object.keys(extrasDelta)) if (extrasDelta[k] === 0) delete extrasDelta[k];
 
   const afterState: BuildEditState = {
@@ -170,7 +181,7 @@ export function planBuildEdit(state: BuildEditState, target: EditTarget, line: s
     completions: [
       ...state.completions.filter(c => !removeCompletionIds.includes(c.id)),
       ...Array.from({ length: addBatches }, (_, i) => ({
-        id: -1 - i, stationType: line, completedAt: new Date(8.64e15), partialPacks: null,
+        id: -1 - i, stationType: batchLine, completedAt: new Date(8.64e15), partialPacks: null,
       })),
     ],
     stationExtras: Object.fromEntries(
@@ -182,31 +193,57 @@ export function planBuildEdit(state: BuildEditState, target: EditTarget, line: s
 }
 
 /**
- * Why a staged edit can't be saved, in words for the builder — or null when
- * it's fine. These are the downstream floors: nothing below what the ovens
- * have already cooked, and the pack total never below what is already
- * wrapped into the fridge/freezer.
+ * Can `line` give up `n` batches / extra packs? Used for the line buttons
+ * (a line with nothing to remove is disabled) and by editBlockReason.
  */
-export function editBlockReason(state: BuildEditState, target: EditTarget, line: string, unit: UnitWords = BATCH_WORDS): string | null {
+export function lineCanGive(state: BuildEditState, line: string, field: keyof EditTarget, n: number): boolean {
+  const own = lineNumbers(state, line);
+  return n <= 0 || (field === "batches" ? own.batches : Math.max(0, own.extraPacks)) >= n;
+}
+
+/**
+ * Why a staged edit can't be saved, in words for the builder — or null when
+ * it's fine. The chosen line must have what's being taken off it; then the
+ * downstream floors: nothing below what the ovens have already cooked, and
+ * the pack total never below what is already wrapped into the fridge/freezer.
+ */
+export function editBlockReason(state: BuildEditState, target: EditTarget, lines: EditLines | string, unit: UnitWords = BATCH_WORDS): string | null {
+  const chosen = linesOf(lines);
+  const before = buildNumbers(state);
   if (!Number.isInteger(target.batches) || target.batches < 0) return `${cap(unit.plural)} can't go below 0.`;
   // Below 0 is refused — unless it already was (a part batch taken off by
   // the old Undo left its shortfall behind) and isn't being lowered further.
-  const extrasFloor = Math.min(0, buildNumbers(state).extraPacks);
+  const extrasFloor = Math.min(0, before.extraPacks);
   if (!Number.isInteger(target.extraPacks) || target.extraPacks < extrasFloor) return `Extra packs can't go below ${extrasFloor}.`;
   if (target.batches < state.ovenBatches) {
     return `${count(state.ovenBatches, unit)} ${state.ovenBatches === 1 ? "has" : "have"} already gone through the ovens, so this can't go below ${state.ovenBatches}. If the ovens recorded one by mistake, the oven station takes it off first.`;
   }
-  const { after } = planBuildEdit(state, target, line);
+  const batchesOff = before.batches - target.batches;
+  if (!lineCanGive(state, chosen.batches, "batches", batchesOff)) {
+    const has = lineNumbers(state, chosen.batches).batches;
+    return `${lineLabel(chosen.batches)} has only ${count(has, unit)} of this recipe recorded.`;
+  }
+  const packsOff = before.extraPacks - target.extraPacks;
+  if (packsOff > 0 && !lineCanGive(state, chosen.extraPacks, "extraPacks", packsOff)) {
+    const has = Math.max(0, lineNumbers(state, chosen.extraPacks).extraPacks);
+    return `${lineLabel(chosen.extraPacks)} has only ${count(has, { singular: "extra pack", plural: "extra packs" })} on this recipe.`;
+  }
+  const { after } = planBuildEdit(state, target, chosen);
   if (after.totalPacks < state.packsStored) {
     return `${count(state.packsStored, PACK_WORDS)} ${state.packsStored === 1 ? "is" : "are"} already wrapped and in the fridge or freezer, so the total can't drop below ${state.packsStored}. Wrapping takes packs back out first.`;
   }
   return null;
 }
 
-/** The lowest value a counter can go to with the other counter held. */
-export function lowestAllowed(state: BuildEditState, target: EditTarget, line: string, field: keyof EditTarget): number {
+/**
+ * The lowest value a counter can go to with the other counter held, if
+ * the builder picks whichever line has the most to give.
+ */
+export function lowestAllowed(state: BuildEditState, target: EditTarget, field: keyof EditTarget, otherLine: string = BUILDING_LINES[0]): number {
   let v = target[field];
-  while (editBlockReason(state, { ...target, [field]: v - 1 }, line) === null) v--;
+  const ok = (val: number) => BUILDING_LINES.some(l =>
+    editBlockReason(state, { ...target, [field]: val }, field === "batches" ? { batches: l, extraPacks: otherLine } : { batches: otherLine, extraPacks: l }) === null);
+  while (ok(v - 1)) v--;
   return v;
 }
 
@@ -219,12 +256,16 @@ function count(n: number, w: UnitWords): string { return `${n} ${n === 1 ? w.sin
 
 /**
  * Plain summary for the Save button and the audit log, e.g.
- * "Batches 6 → 5, Extra packs 0 → 2". Empty string when nothing changed.
+ * "Batches 9 → 8 (taken off Line 2), Extra packs 0 → 2 (added to Line 1)".
+ * Empty string when nothing changed. Lines are named only when given.
  */
-export function editSummary(before: EditTarget, after: EditTarget, unit: UnitWords = BATCH_WORDS): string {
+export function editSummary(before: EditTarget, after: EditTarget, unit: UnitWords = BATCH_WORDS, lines?: EditLines | string): string {
+  const chosen = lines ? linesOf(lines) : null;
+  const where = (b: number, a: number, line: string | undefined) =>
+    line ? ` (${a < b ? "taken off" : "added to"} ${lineLabel(line)})` : "";
   const parts: string[] = [];
-  if (before.batches !== after.batches) parts.push(`${cap(unit.plural)} ${before.batches} → ${after.batches}`);
-  if (before.extraPacks !== after.extraPacks) parts.push(`Extra packs ${before.extraPacks} → ${after.extraPacks}`);
+  if (before.batches !== after.batches) parts.push(`${cap(unit.plural)} ${before.batches} → ${after.batches}${where(before.batches, after.batches, chosen?.batches)}`);
+  if (before.extraPacks !== after.extraPacks) parts.push(`Extra packs ${before.extraPacks} → ${after.extraPacks}${where(before.extraPacks, after.extraPacks, chosen?.extraPacks)}`);
   return parts.join(", ");
 }
 
