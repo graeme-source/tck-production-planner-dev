@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Fragment, type ReactNode } from "react";
 import { useListProductionPlans, useListDispatchOrders, useGetProductionPlan } from "@workspace/api-client-react";
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
@@ -17,6 +17,7 @@ import { planTargetForStation, pinsPlan } from "@/lib/station-plan-target";
 import { FreshnessBadge } from "@/components/govee-freshness";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
 import { addDayItems, dayKind, EMPTY_DAY_TOTALS, MAC_CHEESE_CATEGORY } from "@/lib/dashboard-day-totals";
+import { coreTileStatuses, CORE_TILE_ORDER, BAND_HEADER_CLASS, BAND_LEGEND, type CoreTileKey, type TileKpiStatus } from "@/lib/station-kpi-bands";
 
 interface AndonIssueSummary {
   id: number;
@@ -456,7 +457,7 @@ export default function Dashboard() {
     queryFn: async () => {
       const res = await fetch(`${BASE}/api/production-plans/${todayPlanIds[0]}/kpi?stationType=building_1`, { credentials: "include" });
       if (!res.ok) return null;
-      return res.json() as Promise<{ batchesPerHour?: number }>;
+      return res.json() as Promise<{ batchesPerHour?: number; activeMinutes?: number }>;
     },
     enabled: todayPlanIds.length > 0,
     refetchInterval: 30000,
@@ -471,7 +472,7 @@ export default function Dashboard() {
       const res = await fetch(`${BASE}/api/reports/packing-speed?from=${todayStr}&to=${todayStr}`, { credentials: "include" });
       if (!res.ok) return null;
       const data = await res.json();
-      return (data.dailyRows?.[0] ?? null) as { ordersPerHour: number | null; count: number } | null;
+      return (data.dailyRows?.[0] ?? null) as { ordersPerHour: number | null; count: number; activeMinutes?: number | null } | null;
     },
     refetchInterval: 60000,
   });
@@ -485,11 +486,22 @@ export default function Dashboard() {
     queryFn: async () => {
       const res = await fetch(`${BASE}/api/reports/wrapping-speed`, { credentials: "include" });
       if (!res.ok) return null;
-      return res.json() as Promise<{ packsPerHour: number | null }>;
+      return res.json() as Promise<{ packsPerHour: number | null; activeMinutes: number | null }>;
     },
     refetchInterval: 60000,
   });
   const wrappingPph = wrappingSpeed?.packsPerHour ?? 0;
+
+  // Live header colour per Core Production tile — rides on the three pace
+  // queries above (30s / 60s refresh), no extra polling. One rule in
+  // lib/station-kpi-bands.ts; no plan today = no run rate = neutral.
+  const coreStatus = coreTileStatuses({
+    run_rate: todayPlanIds.length > 0 && buildKpi
+      ? { rate: buildKpi.batchesPerHour ?? null, activeMinutes: buildKpi.activeMinutes ?? null }
+      : null,
+    wrapping: wrappingSpeed ? { rate: wrappingSpeed.packsPerHour, activeMinutes: wrappingSpeed.activeMinutes } : null,
+    packing: packingSpeed ? { rate: packingSpeed.ordersPerHour, activeMinutes: packingSpeed.activeMinutes ?? null } : null,
+  });
 
   // The "Packing" card is pinned to the REAL current week, not the
   // weekly panel's selection — getDefaultWeekOffset rolls the panel to next
@@ -577,6 +589,182 @@ export default function Dashboard() {
   });
 
 
+  // Core Production tiles, keyed so their ORDER lives in one tested place
+  // (lib/station-kpi-bands.ts CORE_TILE_ORDER) and each header carries its
+  // live KPI colour (Graeme, 2026-10-09).
+  const coreTiles: Record<CoreTileKey, ReactNode> = {
+    dough_prep: (
+      <StatCard
+        kpi={coreStatus.dough_prep}
+        title="Dough Prep"
+        value="→"
+        subtitle={doughTarget?.planDate
+          ? `dough for ${format(new Date(doughTarget.planDate + "T00:00:00"), "EEE d MMM")}`
+          : "no upcoming plan"}
+        icon={Layers}
+        color="text-amber-600"
+        bg="bg-amber-500/10"
+        href={stationHref("dough_prep")}
+      />
+    ),
+    dough_sheeting: (
+      <StatCard
+        kpi={coreStatus.dough_sheeting}
+        title="Sheeting"
+        value="→"
+        // Sheeting happens ON the production day — only dough prep and main
+        // prep work a day ahead. This card used to borrow the dough card's
+        // next-active lookup and opened TOMORROW's sheet, with direct=1
+        // stopping the station from correcting itself (Graeme, 2026-09-17).
+        // Today's plan, no direct flag: exactly what the production-plan
+        // page's own Enter Station button has always done.
+        subtitle={todayPlanId
+          ? `today · ${format(new Date(todayPlans[0].planDate), "EEE d MMM")}`
+          : "no plan today"}
+        icon={Layers}
+        color="text-amber-500"
+        bg="bg-amber-500/10"
+        href={stationHref("dough_sheeting")}
+      />
+    ),
+    prep: (
+      <StatCard
+        kpi={coreStatus.prep}
+        title="Prepping For"
+        value={prepPlanId == null ? "—" : (prepBatches?.calzoneBatches ?? "…").toString()}
+        subtitle={prepTarget?.planDate
+          ? `batches · ${format(new Date(prepTarget.planDate + "T00:00:00"), "EEE d MMM")}`
+          : "no upcoming plan"}
+        icon={Salad}
+        color="text-green-500"
+        bg="bg-green-500/10"
+        // direct=1 anchors the prep station to THIS plan — the card has
+        // already resolved "whose prep is due today" by date. Without it
+        // the station re-runs the next-active auto-route from the landed
+        // plan's own plan_date and hops one prep day further ahead
+        // (tomorrow's prep), which is only wanted when arriving from a
+        // production plan's page, not from this date-based card.
+        href={stationHref("prep")}
+        progress={prepProgress && prepProgress.totalTins > 0 ? {
+          done: prepProgress.completedTins,
+          total: prepProgress.totalTins,
+          label: "tins prepped",
+          barClass: "bg-green-500",
+        } : undefined}
+      />
+    ),
+    mixing: (
+      <StatCard
+        kpi={coreStatus.mixing}
+        title="Mixing"
+        value={batchesLoading ? "…" : formatProgressValue(totalBatches?.calzoneMixed ?? 0, totalBatches?.calzoneBatches ?? 0)}
+        icon={Waves}
+        color="text-blue-500"
+        bg="bg-blue-500/10"
+        href={stationHref("mixing")}
+        progress={!batchesLoading && (totalBatches?.calzoneBatches ?? 0) > 0 ? {
+          done: totalBatches!.calzoneMixed,
+          total: totalBatches!.calzoneBatches,
+          label: "mixed",
+          barClass: "bg-blue-500",
+          hideDetail: true,
+        } : undefined}
+      />
+    ),
+    building: (
+      <StatCard
+        kpi={coreStatus.building}
+        title="Building"
+        value={batchesLoading ? "…" : formatProgressValue(totalBatches?.calzoneBuilt ?? 0, totalBatches?.calzoneBatches ?? 0)}
+        subtitle={batchesLoading ? undefined : [
+          teamBph > 0 ? `Run rate ${teamBph.toFixed(1)}/hr` : null,
+          (totalBatches?.macPacks ?? 0) > 0 ? `+ ${totalBatches!.macPacks} mac packs` : null,
+        ].filter(Boolean).join(" · ") || "Tap, then pick your table"}
+        icon={ChefHat}
+        color="text-primary"
+        bg="bg-primary/10"
+        // One card for both tables: it asks which one you're at, so the
+        // two building-station buttons collapse into one.
+        onClick={todayPlanId ? () => setBuildChooserOpen(true) : undefined}
+        href={todayPlanId ? undefined : "/plans"}
+        progress={!batchesLoading && (totalBatches?.calzoneBatches ?? 0) > 0 ? {
+          done: totalBatches!.calzoneBuilt,
+          total: totalBatches!.calzoneBatches,
+          label: "built",
+          barClass: "bg-primary",
+          hideDetail: true,
+        } : undefined}
+      />
+    ),
+    ovens: (
+      <StatCard
+        kpi={coreStatus.ovens}
+        title="Ovens"
+        value={batchesLoading ? "…" : formatProgressValue(totalBatches?.ovensDone ?? 0, (totalBatches?.calzoneBatches ?? 0) + (totalBatches?.macPacks ?? 0))}
+        icon={Flame}
+        color="text-red-500"
+        bg="bg-red-500/10"
+        href={stationHref("ovens")}
+        progress={!batchesLoading && ((totalBatches?.calzoneBatches ?? 0) + (totalBatches?.macPacks ?? 0)) > 0 ? {
+          done: totalBatches!.ovensDone,
+          total: (totalBatches!.calzoneBatches) + (totalBatches!.macPacks),
+          label: "cooked",
+          barClass: "bg-red-500",
+          hideDetail: true,
+        } : undefined}
+      />
+    ),
+    wrapping: (
+      <StatCard
+        kpi={coreStatus.wrapping}
+        title="Wrapping"
+        value={batchesLoading ? "…" : formatProgressValue(totalBatches?.packsWrapped ?? 0, totalBatches?.packsTotal ?? 0)}
+        subtitle={[
+          wrappingPph > 0 ? `${wrappingPph.toFixed(0)} packs/hr` : null,
+          stockControlData != null ? `Factory #${(stockControlData.productionFridgeTotal ?? 0).toLocaleString()}` : null,
+        ].filter(Boolean).join(" · ") || "Tap for the wrapping station"}
+        icon={Thermometer}
+        color="text-cyan-500"
+        bg="bg-cyan-500/10"
+        // Straight into today's WRAPPING STATION (Graeme, 2026-09-12) — a
+        // shortcut, not a detour through the production plan. The pack
+        // report has its own card in the row above.
+        href={todayPlanId ? stationHref("wrapping") : "/pack-report"}
+        progress={!batchesLoading && (totalBatches?.packsTotal ?? 0) > 0 ? {
+          done: totalBatches!.packsWrapped,
+          total: totalBatches!.packsTotal,
+          label: "packs wrapped",
+          barClass: "bg-cyan-500",
+          hideDetail: true,
+        } : undefined}
+      />
+    ),
+    packing: (
+      <StatCard
+        kpi={coreStatus.packing}
+        title="Packing"
+        value={currentWeekLoading ? "…" : (todayShopifyOrderCount ?? todayDispatches.length).toString()}
+        subtitle={packingOph > 0 ? `${packingOph.toFixed(1)} orders/hr packed` : undefined}
+        icon={Truck}
+        color="text-blue-500"
+        bg="bg-blue-500/10"
+        // Straight into today's PACKING STATION — that's where the person
+        // tapping this card is headed (Graeme, 2026-08-19; it used to jump
+        // to the despatch page instead). Falls back to the despatch wave
+        // when no plan is open today.
+        href={todayPlanId
+          ? stationHref("packing")
+          : `/fulfilment?tag=${format(addDays(new Date(), 1), "yyyy-MM-dd")}`}
+        progress={todayIndex >= 0 && (currentWeekOrders![todayIndex].orderCount ?? 0) > 0 ? {
+          done: currentWeekOrders![todayIndex].fulfilledCount,
+          total: currentWeekOrders![todayIndex].orderCount,
+          label: "fulfilled",
+          barClass: "bg-blue-500",
+        } : undefined}
+      />
+    ),
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -661,160 +849,19 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* The core calzone line in production-flow order, all in brand green
-          — log in, tap where you work, no production-plan detour (Graeme,
-          2026-09-16). Exit Station brings everyone back here. Mac cheese
-          and fried chicken run as their own lines below in their own
-          colour, so this block reads as ONE line at a glance. */}
+      {/* The core calzone line — log in, tap where you work, no
+          production-plan detour (Graeme, 2026-09-16). Exit Station brings
+          everyone back here. Each header is coloured LIVE by its KPI
+          (Graeme, 2026-10-09): top row the stations with their own KPI (or
+          none yet), bottom row the production line — Mixing, Sheeting,
+          Building, Ovens — all taking the building run rate's colour. */}
       <div>
-        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Core Production</p>
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 mb-2">
+          <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Core Production</p>
+          <KpiBandLegend />
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard
-          title="Dough Prep"
-          value="→"
-          subtitle={doughTarget?.planDate
-            ? `dough for ${format(new Date(doughTarget.planDate + "T00:00:00"), "EEE d MMM")}`
-            : "no upcoming plan"}
-          icon={Layers}
-          color="text-amber-600"
-          bg="bg-amber-500/10"
-          href={stationHref("dough_prep")}
-        />
-        <StatCard
-          title="Sheeting"
-          value="→"
-          // Sheeting happens ON the production day — only dough prep and main
-          // prep work a day ahead. This card used to borrow the dough card's
-          // next-active lookup and opened TOMORROW's sheet, with direct=1
-          // stopping the station from correcting itself (Graeme, 2026-09-17).
-          // Today's plan, no direct flag: exactly what the production-plan
-          // page's own Enter Station button has always done.
-          subtitle={todayPlanId
-            ? `today · ${format(new Date(todayPlans[0].planDate), "EEE d MMM")}`
-            : "no plan today"}
-          icon={Layers}
-          color="text-amber-500"
-          bg="bg-amber-500/10"
-          href={stationHref("dough_sheeting")}
-        />
-        <StatCard
-          title="Prepping For"
-          value={prepPlanId == null ? "—" : (prepBatches?.calzoneBatches ?? "…").toString()}
-          subtitle={prepTarget?.planDate
-            ? `batches · ${format(new Date(prepTarget.planDate + "T00:00:00"), "EEE d MMM")}`
-            : "no upcoming plan"}
-          icon={Salad}
-          color="text-green-500"
-          bg="bg-green-500/10"
-          // direct=1 anchors the prep station to THIS plan — the card has
-          // already resolved "whose prep is due today" by date. Without it
-          // the station re-runs the next-active auto-route from the landed
-          // plan's own plan_date and hops one prep day further ahead
-          // (tomorrow's prep), which is only wanted when arriving from a
-          // production plan's page, not from this date-based card.
-          href={stationHref("prep")}
-          progress={prepProgress && prepProgress.totalTins > 0 ? {
-            done: prepProgress.completedTins,
-            total: prepProgress.totalTins,
-            label: "tins prepped",
-            barClass: "bg-green-500",
-          } : undefined}
-        />
-        <StatCard
-          title="Mixing"
-          value={batchesLoading ? "…" : formatProgressValue(totalBatches?.calzoneMixed ?? 0, totalBatches?.calzoneBatches ?? 0)}
-          icon={Waves}
-          color="text-blue-500"
-          bg="bg-blue-500/10"
-          href={stationHref("mixing")}
-          progress={!batchesLoading && (totalBatches?.calzoneBatches ?? 0) > 0 ? {
-            done: totalBatches!.calzoneMixed,
-            total: totalBatches!.calzoneBatches,
-            label: "mixed",
-            barClass: "bg-blue-500",
-            hideDetail: true,
-          } : undefined}
-        />
-        <StatCard
-          title="Building"
-          value={batchesLoading ? "…" : formatProgressValue(totalBatches?.calzoneBuilt ?? 0, totalBatches?.calzoneBatches ?? 0)}
-          subtitle={batchesLoading ? undefined : [
-            teamBph > 0 ? `Run rate ${teamBph.toFixed(1)}/hr` : null,
-            (totalBatches?.macPacks ?? 0) > 0 ? `+ ${totalBatches!.macPacks} mac packs` : null,
-          ].filter(Boolean).join(" · ") || "Tap, then pick your table"}
-          icon={ChefHat}
-          color="text-primary"
-          bg="bg-primary/10"
-          // One card for both tables: it asks which one you're at, so the
-          // two building-station buttons collapse into one.
-          onClick={todayPlanId ? () => setBuildChooserOpen(true) : undefined}
-          href={todayPlanId ? undefined : "/plans"}
-          progress={!batchesLoading && (totalBatches?.calzoneBatches ?? 0) > 0 ? {
-            done: totalBatches!.calzoneBuilt,
-            total: totalBatches!.calzoneBatches,
-            label: "built",
-            barClass: "bg-primary",
-            hideDetail: true,
-          } : undefined}
-        />
-        <StatCard
-          title="Ovens"
-          value={batchesLoading ? "…" : formatProgressValue(totalBatches?.ovensDone ?? 0, (totalBatches?.calzoneBatches ?? 0) + (totalBatches?.macPacks ?? 0))}
-          icon={Flame}
-          color="text-red-500"
-          bg="bg-red-500/10"
-          href={stationHref("ovens")}
-          progress={!batchesLoading && ((totalBatches?.calzoneBatches ?? 0) + (totalBatches?.macPacks ?? 0)) > 0 ? {
-            done: totalBatches!.ovensDone,
-            total: (totalBatches!.calzoneBatches) + (totalBatches!.macPacks),
-            label: "cooked",
-            barClass: "bg-red-500",
-            hideDetail: true,
-          } : undefined}
-        />
-        <StatCard
-          title="Wrapping"
-          value={batchesLoading ? "…" : formatProgressValue(totalBatches?.packsWrapped ?? 0, totalBatches?.packsTotal ?? 0)}
-          subtitle={[
-            wrappingPph > 0 ? `${wrappingPph.toFixed(0)} packs/hr` : null,
-            stockControlData != null ? `Factory #${(stockControlData.productionFridgeTotal ?? 0).toLocaleString()}` : null,
-          ].filter(Boolean).join(" · ") || "Tap for the wrapping station"}
-          icon={Thermometer}
-          color="text-cyan-500"
-          bg="bg-cyan-500/10"
-          // Straight into today's WRAPPING STATION (Graeme, 2026-09-12) — a
-          // shortcut, not a detour through the production plan. The pack
-          // report has its own card in the row above.
-          href={todayPlanId ? stationHref("wrapping") : "/pack-report"}
-          progress={!batchesLoading && (totalBatches?.packsTotal ?? 0) > 0 ? {
-            done: totalBatches!.packsWrapped,
-            total: totalBatches!.packsTotal,
-            label: "packs wrapped",
-            barClass: "bg-cyan-500",
-            hideDetail: true,
-          } : undefined}
-        />
-        <StatCard
-          title="Packing"
-          value={currentWeekLoading ? "…" : (todayShopifyOrderCount ?? todayDispatches.length).toString()}
-          subtitle={packingOph > 0 ? `${packingOph.toFixed(1)} orders/hr packed` : undefined}
-          icon={Truck}
-          color="text-blue-500"
-          bg="bg-blue-500/10"
-          // Straight into today's PACKING STATION — that's where the person
-          // tapping this card is headed (Graeme, 2026-08-19; it used to jump
-          // to the despatch page instead). Falls back to the despatch wave
-          // when no plan is open today.
-          href={todayPlanId
-            ? stationHref("packing")
-            : `/fulfilment?tag=${format(addDays(new Date(), 1), "yyyy-MM-dd")}`}
-          progress={todayIndex >= 0 && (currentWeekOrders![todayIndex].orderCount ?? 0) > 0 ? {
-            done: currentWeekOrders![todayIndex].fulfilledCount,
-            total: currentWeekOrders![todayIndex].orderCount,
-            label: "fulfilled",
-            barClass: "bg-blue-500",
-          } : undefined}
-        />
+          {CORE_TILE_ORDER.map(key => <Fragment key={key}>{coreTiles[key]}</Fragment>)}
         </div>
       </div>
 
@@ -1038,7 +1085,8 @@ function formatProgressValue(done: number, total: number): string {
 }
 
 
-function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, onClick, progress, headerClass }: any & { progress?: StatProgress }) {
+function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, onClick, progress, headerClass, kpi }: any & { progress?: StatProgress; kpi?: TileKpiStatus }) {
+  const status = kpi as TileKpiStatus | undefined;
   const pct = progress && progress.total > 0
     ? Math.min(100, Math.round((progress.done / progress.total) * 100))
     : 0;
@@ -1050,10 +1098,23 @@ function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, onClick
             other groups pass their own headerClass — so the wall of
             identical green panels stopped being a wall (Graeme,
             2026-09-16). */}
-        <div className={cn("px-2 py-2", headerClass ?? "bg-primary")}>
+        {/* Core Production tiles pass `kpi`: the header colour is then the
+            station's LIVE standing against its KPI (Graeme, 2026-10-09) —
+            platinum / green / amber / red, slate-blue for "no KPI yet" —
+            with the words in the tooltip and for screen readers. */}
+        <div
+          className={cn(
+            "px-2 py-2 flex items-center justify-center gap-1.5 min-w-0",
+            status ? BAND_HEADER_CLASS[status.band] : (headerClass ?? "bg-primary"),
+          )}
+          title={status?.label}
+        >
+          {status?.band === "platinum" && <Sparkles className="w-4 h-4 text-white shrink-0" aria-hidden="true" />}
           <p className="font-display font-bold text-white text-base lg:text-lg leading-tight text-center truncate">
             {title}
+            {status && <span className="sr-only">: {status.label}</span>}
           </p>
+          {status?.band === "platinum" && <Sparkles className="w-4 h-4 text-white shrink-0" aria-hidden="true" />}
         </div>
         <div className="p-4 pt-3 flex flex-col items-center text-center gap-2 flex-1 w-full">
         <div className={`p-2.5 rounded-2xl ${bg} ${color} transition-transform group-hover:scale-110`}>
@@ -1086,4 +1147,22 @@ function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, onClick
   return onClick
     ? <button type="button" onClick={onClick} className="h-full w-full text-left">{card}</button>
     : <Link href={href} className="h-full">{card}</Link>;
+}
+
+/** Key for the Core Production header colours — small, beside the section
+ *  title, so the colours explain themselves. */
+function KpiBandLegend() {
+  return (
+    <ul className="flex flex-wrap items-center gap-x-3 gap-y-1" aria-label="Header colour key">
+      {BAND_LEGEND.map(item => (
+        <li key={item.band} className="flex items-center gap-1.5 text-[11px] text-muted-foreground leading-none">
+          <span className={cn("inline-flex items-center justify-center w-4 h-3 rounded-sm", BAND_HEADER_CLASS[item.band])} aria-hidden="true">
+            {item.band === "platinum" && <Sparkles className="w-2.5 h-2.5 text-white" />}
+          </span>
+          <span><span className="font-semibold text-foreground">{item.label}</span> {item.hint}</span>
+        </li>
+      ))}
+      <li className="text-[11px] text-muted-foreground leading-none">Bottom row follows the building run rate</li>
+    </ul>
+  );
 }
