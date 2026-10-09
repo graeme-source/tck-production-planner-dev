@@ -7,7 +7,7 @@
  * ONE banding rule for every station, relative to that station's standard:
  *   platinum  ≥ 110%  — way ahead ("you're doing amazing")
  *   green     ≥ 100%  — on standard
- *   amber     ≥  90%  — just under
+ *   amber     ≥  90%  — just under (shown YELLOW)
  *   red       <  90%  — going too slow
  *   neutral           — no KPI agreed yet, or not enough data to judge
  * For the 20 batches/hr run rate that is ≥22 / ≥20 / 18–<20 / <18.
@@ -35,9 +35,10 @@ export const MIN_ACTIVE_MINUTES = 30;
  *  station's pace strip so the two can never disagree. */
 export const WRAPPING_STANDARD_PACKS_PER_HOUR = 180;
 
-/** Packing orders/hr has NO agreed standard yet (packing-station.tsx says
- *  the same) — so Packing stays neutral until Graeme sets one. */
-export const PACKING_STANDARD_ORDERS_PER_HOUR: number | null = null;
+/** Packing standard: 50 orders/hr for the whole packing team (fulfilled
+ *  orders ÷ active packing time) — Graeme, 2026-10-09: "50 is the minimum
+ *  target, comparable to 20 on the builders' tables". */
+export const PACKING_STANDARD_ORDERS_PER_HOUR: number | null = 50;
 
 export const RUN_RATE_STANDARD = BUILDING_TARGET_BATCHES_PER_HOUR;
 
@@ -163,16 +164,29 @@ export function coreTileStatuses(readings: Partial<Record<KpiSource, KpiReading 
 export const BAND_HEADER_CLASS: Record<KpiBand, string> = {
   platinum: "bg-gradient-to-r from-emerald-700 via-teal-700 to-cyan-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.35)]",
   green: "bg-[#587f2f]",
-  amber: "bg-amber-700",
+  // Yellow, not amber/orange (Graeme, 2026-10-09): amber looked too like the
+  // Mac Cheese / Fried Chicken headers. Yellow needs DARK text — see
+  // BAND_TEXT_CLASS.
+  amber: "bg-yellow-400",
   red: "bg-rose-700",
   neutral: "bg-[#4c5c9e]",
+};
+
+/** Header text colour per band — white everywhere except the yellow band,
+ *  where white is unreadable (stone-900 on yellow-400 ≈ 11:1). */
+export const BAND_TEXT_CLASS: Record<KpiBand, string> = {
+  platinum: "text-white",
+  green: "text-white",
+  amber: "text-stone-900",
+  red: "text-white",
+  neutral: "text-white",
 };
 
 /** Legend order and wording (dashboard). */
 export const BAND_LEGEND: { band: KpiBand; label: string; hint: string }[] = [
   { band: "platinum", label: "Platinum", hint: "10%+ ahead" },
   { band: "green", label: "Green", hint: "on standard" },
-  { band: "amber", label: "Amber", hint: "up to 10% under" },
+  { band: "amber", label: "Yellow", hint: "up to 10% under" },
   { band: "red", label: "Red", hint: "over 10% under" },
   { band: "neutral", label: "No KPI yet", hint: "or too early to tell" },
 ];

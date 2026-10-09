@@ -15,7 +15,7 @@ import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import { BreakTracker } from "../shared/break-tracker";
 import { PaceKpiStrip, type PaceBands } from "../shared/pace-kpi-strip";
-import { WRAPPING_STANDARD_PACKS_PER_HOUR } from "@/lib/station-kpi-bands";
+import { BAND_RATIOS, WRAPPING_STANDARD_PACKS_PER_HOUR } from "@/lib/station-kpi-bands";
 import { useModalScrollKeeper } from "@/hooks/use-modal-scroll";
 import { createPortal } from "react-dom";
 import { getStationCount, getAvailableFromPrev, compareItemsForDisplay, mainKitchenStationItems, STATION_VIEW_ROW_SLOT_ID, type StationPlanItem } from "../shared/constants";
@@ -95,7 +95,11 @@ function postOvenGramsPerPack(poi: PostOvenItem, item: ProductionPlanItem): numb
 // are excluded server-side, so this judges pace only while wrapping.
 // The standard itself lives in lib/station-kpi-bands.ts so the dashboard's
 // Wrapping header colour judges against the same number.
-const WRAPPING_PACE_BANDS: PaceBands = { green: WRAPPING_STANDARD_PACKS_PER_HOUR, amber: 120, stretch: 240 };
+// Amber from 90% of standard (162), the same line the dashboard tile uses —
+// was 120. Graeme asked me to decide (2026-10-09): live median was ~163/hr
+// (Aug), so an average day now reads "just under" rather than "fine", and
+// under 162 is genuinely slow. One rule on the station and the dashboard.
+const WRAPPING_PACE_BANDS: PaceBands = { green: WRAPPING_STANDARD_PACKS_PER_HOUR, amber: Math.round(WRAPPING_STANDARD_PACKS_PER_HOUR * BAND_RATIOS.amber), stretch: 240 };
 
 interface WrappingSpeed {
   packs: number;

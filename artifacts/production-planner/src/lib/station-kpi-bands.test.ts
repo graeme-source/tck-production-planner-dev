@@ -68,10 +68,11 @@ describe("coreTileStatuses", () => {
     expect(s.building.band).toBe("red");
     expect(s.wrapping.band).toBe("platinum");
   });
-  it("packing has no agreed standard yet, so stays neutral", () => {
-    const s = coreTileStatuses({ packing: live(40) });
-    expect(s.packing.band).toBe("neutral");
-    expect(s.packing.label).toMatch(/no standard/);
+  it("packing is judged against 50 orders/hr", () => {
+    expect(coreTileStatuses({ packing: live(50) }).packing.band).toBe("green");
+    expect(coreTileStatuses({ packing: live(45) }).packing.band).toBe("amber");
+    expect(coreTileStatuses({ packing: live(44.9) }).packing.band).toBe("red");
+    expect(coreTileStatuses({ packing: live(55) }).packing.band).toBe("platinum");
   });
   it("dough prep and prepping for have no KPI", () => {
     const s = coreTileStatuses({ run_rate: live(25), wrapping: live(200) });

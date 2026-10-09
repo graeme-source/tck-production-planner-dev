@@ -17,7 +17,7 @@ import { planTargetForStation, pinsPlan } from "@/lib/station-plan-target";
 import { FreshnessBadge } from "@/components/govee-freshness";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
 import { addDayItems, dayKind, EMPTY_DAY_TOTALS, MAC_CHEESE_CATEGORY } from "@/lib/dashboard-day-totals";
-import { coreTileStatuses, CORE_TILE_ORDER, BAND_HEADER_CLASS, BAND_LEGEND, type CoreTileKey, type TileKpiStatus } from "@/lib/station-kpi-bands";
+import { coreTileStatuses, CORE_TILE_ORDER, BAND_HEADER_CLASS, BAND_TEXT_CLASS, BAND_LEGEND, type CoreTileKey, type TileKpiStatus } from "@/lib/station-kpi-bands";
 
 interface AndonIssueSummary {
   id: number;
@@ -1110,7 +1110,7 @@ function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, onClick
           title={status?.label}
         >
           {status?.band === "platinum" && <Sparkles className="w-4 h-4 text-white shrink-0" aria-hidden="true" />}
-          <p className="font-display font-bold text-white text-base lg:text-lg leading-tight text-center truncate">
+          <p className={cn("font-display font-bold text-base lg:text-lg leading-tight text-center truncate", status ? BAND_TEXT_CLASS[status.band] : "text-white")}>
             {title}
             {status && <span className="sr-only">: {status.label}</span>}
           </p>
