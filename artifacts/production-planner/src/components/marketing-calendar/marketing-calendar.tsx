@@ -20,7 +20,7 @@ import { Link } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import { format, parseISO, formatDistanceToNowStrict } from "date-fns";
 import {
-  BadgeCheck, CalendarDays, ChevronLeft, ChevronRight, GanttChartSquare, List, Loader2, Lock, Mail, MailPlus, Megaphone, Package, Plus, Sparkles, Square, StickyNote, X, AlertTriangle,
+  BadgeCheck, CalendarDays, ChevronLeft, ChevronRight, GanttChartSquare, List, Loader2, Lock, Mail, MailPlus, Megaphone, Package, PencilLine, Plus, Sparkles, Square, StickyNote, X, AlertTriangle,
 } from "lucide-react";
 import {
   addDays, addMonths, filingEvents, formatRange, isNoteEvent, monthGridWeeks, monthStart, overlaps, stageLabel, timelineRange, type DragMode, type TimelineZoom,
@@ -34,7 +34,7 @@ import {
 } from "./api";
 import { EmailModal } from "./email-modal";
 import { NoteModal } from "./note-modal";
-import { EVENT_TYPES, KLAVIYO_TONE, NOTE_TONE, THIN_TYPES, TODO_TONE, firstName, statusLabel, typeStyle } from "./constants";
+import { EVENT_TYPES, KLAVIYO_DRAFT_TONE, KLAVIYO_TONE, NOTE_TONE, THIN_TYPES, TODO_TONE, firstName, statusLabel, typeStyle } from "./constants";
 import { MonthGrid } from "./month-grid";
 import { Timeline, timelineMonths } from "./timeline";
 import { EventModal } from "./event-modal";
@@ -142,7 +142,7 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
   const todos = layers.todos ? todosQ.data?.todos ?? [] : [];
   // Klaviyo sends (sent + scheduled one-off campaigns) — read-only.
   // Drafts come too; they appear in the List view and wherever they're
-  // linked to a plan, but never clutter the month grid or timeline.
+  // linked to a plan; unlinked ones also sit on the month grid (below).
   const klaviyo = useKlaviyoEmails(range.from, range.to, true, { recentDrafts: true });
   const emails = useMemo(() => klaviyo.data?.emails ?? [], [klaviyo.data]);
   // For approvals only: recent drafts whatever their placeholder day, so a
@@ -152,7 +152,14 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
     const seen = new Set(emails.map(e => e.id));
     return [...emails, ...(klaviyo.data?.recentDrafts ?? []).filter(d => !seen.has(d.id))];
   }, [emails, klaviyo.data]);
+  // Month grid (2026-10-09): drafts too, as dashed "Klaviyo draft" chips —
+  // "if we build drafts in Klaviyo I'd expect them in the calendar". Ones
+  // linked to a plan show once, as the plan. The timeline stays sends-only.
   const calendarEmails = useMemo(() => emails.filter(m => m.status !== "Draft"), [emails]);
+  const gridEmails = useMemo(() => {
+    const linkedAnywhere = new Set(klaviyo.data?.linkedCampaignIds ?? []);
+    return emails.filter(m => m.status !== "Draft" || !linkedAnywhere.has(m.id));
+  }, [emails, klaviyo.data]);
   const setDates = useSetEventDates();
   // Our planned emails in the same range.
   const plannedQ = usePlannedEmails(range.from, range.to);
@@ -184,7 +191,7 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
   });
   const monthPlanned = planned.filter(p => p.sendDate >= anchor && p.sendDate < monthEnd);
   const linkedIds = new Set(planned.map(p => p.klaviyoCampaignId).filter(Boolean));
-  const monthEmails = calendarEmails.filter(m => m.date >= anchor && m.date < monthEnd && !linkedIds.has(m.id));
+  const monthEmails = gridEmails.filter(m => m.date >= anchor && m.date < monthEnd && !linkedIds.has(m.id));
 
   const changeView = (v: View) => { setView(v); saveView(v); };
 
@@ -302,7 +309,7 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
             month={anchor}
             today={today}
             events={[...events, ...notes]}
-            emails={calendarEmails}
+            emails={gridEmails}
             planned={planned}
             todos={todos}
             onOpenTodo={t => setOpenTodo(t.id)}
@@ -364,7 +371,8 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
         ))}
         <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rotate-45 bg-rose-600" />Test-box deadline</span>
         <span className="inline-flex items-center gap-1.5"><span className="inline-flex items-center justify-center w-5 h-4 rounded bg-indigo-600"><MailPlus className="w-3 h-3 text-white" /></span>Planned email (drag to move)</span>
-        <span className="inline-flex items-center gap-1.5"><span className={cn("inline-flex items-center justify-center w-5 h-4 rounded", KLAVIYO_TONE.solid)}><Mail className="w-3 h-3" /></span>Klaviyo email, read-only (faded = sent; drafts are in the List view)</span>
+        <span className="inline-flex items-center gap-1.5"><span className={cn("inline-flex items-center justify-center w-5 h-4 rounded", KLAVIYO_TONE.solid)}><Mail className="w-3 h-3" /></span>Klaviyo email, read-only (faded = sent)</span>
+        <span className="inline-flex items-center gap-1.5"><span className={cn("inline-flex items-center justify-center w-5 h-4 rounded", KLAVIYO_DRAFT_TONE.chip)}><PencilLine className="w-3 h-3" /></span>Klaviyo draft, not linked to a plan yet</span>
         <span className="inline-flex items-center gap-1.5"><span className={cn("inline-flex items-center justify-center w-5 h-4 rounded", NOTE_TONE.chip)}><StickyNote className={cn("w-3 h-3", NOTE_TONE.icon)} /></span>Note</span>
         <span className="inline-flex items-center gap-1.5"><span className={cn("inline-flex items-center justify-center w-5 h-4 rounded", TODO_TONE.chip)}><Square className="w-3 h-3" /></span>To-do (struck through = done)</span>
         <span className="inline-flex items-center gap-1.5"><BadgeCheck className="w-4 h-4 text-emerald-600" />Approved</span>
@@ -401,11 +409,16 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {monthEmails.map(m => (
                 <button key={m.id} type="button" onClick={() => setOpenEmail(m)}
-                  className={cn("text-left rounded-2xl border-2 p-4 flex gap-3 hover:bg-secondary/30", m.status === "Sent" ? KLAVIYO_TONE.borderFaint : KLAVIYO_TONE.border)}>
-                  <Mail className={cn("w-5 h-5 flex-shrink-0 mt-0.5", KLAVIYO_TONE.icon, m.status === "Sent" && "opacity-60")} />
+                  className={cn("text-left rounded-2xl border-2 p-4 flex gap-3 hover:bg-secondary/30",
+                    m.status === "Draft" ? KLAVIYO_DRAFT_TONE.card : m.status === "Sent" ? KLAVIYO_TONE.borderFaint : KLAVIYO_TONE.border)}>
+                  {m.status === "Draft"
+                    ? <PencilLine className={cn("w-5 h-5 flex-shrink-0 mt-0.5", KLAVIYO_DRAFT_TONE.icon)} />
+                    : <Mail className={cn("w-5 h-5 flex-shrink-0 mt-0.5", KLAVIYO_TONE.icon, m.status === "Sent" && "opacity-60")} />}
                   <span className="min-w-0">
                     <span className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      {format(parseISO(m.sendAt), "EEE d MMM, HH:mm")} · {m.status}
+                      {m.status === "Draft"
+                        ? `Klaviyo draft · set for ${format(parseISO(m.sendAt), "EEE d MMM")} · not linked to a planned email`
+                        : `${format(parseISO(m.sendAt), "EEE d MMM, HH:mm")} · ${m.status}`}
                     </span>
                     <span className="block font-semibold truncate">{m.name}</span>
                     <span className="block text-sm text-muted-foreground truncate">{m.subject ?? "No subject line"}</span>

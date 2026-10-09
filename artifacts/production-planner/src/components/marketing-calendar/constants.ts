@@ -21,6 +21,14 @@ export const KLAVIYO_TONE = {
   icon: "text-teal-600",
 };
 
+/** A Klaviyo DRAFT not yet linked to a planned email (2026-10-09): dashed
+ *  violet, same as its card in the List view — clearly not a real send. */
+export const KLAVIYO_DRAFT_TONE = {
+  chip: "border-2 border-dashed border-violet-500/70 bg-violet-500/10 text-violet-800 dark:text-violet-200",
+  card: "border-dashed border-violet-500/60 bg-violet-500/5 hover:bg-violet-500/10",
+  icon: "text-violet-600",
+};
+
 /** Notes (2026-10-01): an idea or note on a day — a quiet yellow sticky
  *  note, nothing like the solid email chips. */
 export const NOTE_TONE = {

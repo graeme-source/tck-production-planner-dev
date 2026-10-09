@@ -14,8 +14,8 @@
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { db, marketingEventsTable, marketingEventHistoryTable, testBoxesTable, testBoxDeliveriesTable, usersTable } from "@workspace/db";
-import { and, asc, desc, eq, gte, isNull, lte, ne, sql } from "drizzle-orm";
+import { db, marketingEmailsTable, marketingEventsTable, marketingEventHistoryTable, testBoxesTable, testBoxDeliveriesTable, usersTable } from "@workspace/db";
+import { and, asc, desc, eq, gte, isNotNull, isNull, lte, ne, sql } from "drizzle-orm";
 import {
   NOTE_EVENT_TYPE, addDays, describeDateChange, describeFieldChanges, diffFields, daysBetween, noteDatesValid, type FieldChange,
 } from "@workspace/marketing-calendar";
@@ -142,7 +142,13 @@ router.get("/klaviyo-emails", validateQuery(KlaviyoQuery), async (_req: Request,
         console.error("[marketing-calendar] Klaviyo auto-link failed:", err instanceof Error ? err.message : String(err));
       }
     }
-    res.json({ ...out, ...auto });
+    // Every Klaviyo campaign linked to a live plan, whatever the plan's day,
+    // so a linked draft never also shows as a loose "Klaviyo draft".
+    const linked = out.connected
+      ? await db.selectDistinct({ id: marketingEmailsTable.klaviyoCampaignId }).from(marketingEmailsTable)
+        .where(and(isNull(marketingEmailsTable.deletedAt), isNotNull(marketingEmailsTable.klaviyoCampaignId)))
+      : [];
+    res.json({ ...out, ...auto, linkedCampaignIds: linked.map(r => r.id).filter((x): x is string => !!x) });
   } catch (err) {
     console.error("[marketing-calendar] Klaviyo emails failed:", err instanceof Error ? err.message : String(err));
     res.json({ connected: true, emails: [], error: "Couldn't reach Klaviyo just now" });

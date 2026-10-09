@@ -8,7 +8,7 @@
  * its Klaviyo send is ONE card whose stage comes from Klaviyo.
  *
  * Stages + approvals (2026-09-30): each card shows its stage and approval
- * badge; Klaviyo drafts not linked to a plan show only here (dashed violet).
+ * badge; Klaviyo drafts not linked to a plan show dashed violet (here and on the month grid).
  * The "Needs approval" filter keeps just what the reminder counts.
  *
  * Notes and to-dos (2026-10-01) sit on their day inside the same sections,
@@ -38,7 +38,7 @@ export function ListView({ today, events, planned, klaviyo, notes = [], todos = 
   onOpenNote?: (id: number) => void;
   onOpenTodo?: (t: CalTodo) => void;
   planned: PlannedEmail[];
-  /** Klaviyo campaigns, drafts included (unlinked drafts show only here). */
+  /** Klaviyo campaigns, drafts included (unlinked drafts dashed violet). */
   klaviyo: KlaviyoEmail[];
   showPast: boolean;
   /** "needs": only what needs approval (the reminder's Review lands here). */

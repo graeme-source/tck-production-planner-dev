@@ -175,8 +175,9 @@ export function useCalendarTodos(meId: number | null, from: string, to: string, 
 export interface KlaviyoEmail {
   id: string;
   name: string;
-  /** Drafts come too (2026-09-30): shown only where they help — linking,
-   *  approvals and the List view, never cluttering the month grid. */
+  /** Drafts come too (2026-09-30). Unlinked drafts show on the month grid
+   *  as dashed "Klaviyo draft" chips (2026-10-09); linked ones show as
+   *  their planned email. */
   status: "Draft" | "Scheduled" | "Sending" | "Sent";
   date: string;
   sendAt: string;
@@ -188,14 +189,48 @@ export interface KlaviyoEmail {
   klaviyoUrl: string;
 }
 
-/** Sent and scheduled one-off email campaigns in the range. Refreshes each
- *  minute — the server caches Klaviyo for 3, so this stays cheap. */
+/** A likely-but-not-certain match between a planned email and a Klaviyo
+ *  campaign (server: lib/klaviyo-auto-link.ts) — offered as one tap. */
+export interface KlaviyoLinkSuggestion {
+  emailId: number;
+  campaignId: string;
+  campaignName: string;
+  campaignStatus: KlaviyoEmail["status"];
+  /** e.g. name “Black Friday – early access” */
+  matched: string;
+  score: number;
+}
+
+export interface KlaviyoEmailsResponse {
+  connected: boolean;
+  emails: KlaviyoEmail[];
+  recentDrafts?: KlaviyoEmail[];
+  error?: string;
+  /** Plans the server just linked automatically (2026-10-09). */
+  autoLinked?: Array<{ emailId: number; campaignId: string; campaignName: string; matched: string }>;
+  suggestions?: KlaviyoLinkSuggestion[];
+  /** Campaigns linked to any live plan, whatever its day. */
+  linkedCampaignIds?: string[];
+}
+
+/** Sent, scheduled and draft one-off email campaigns in the range. Refreshes
+ *  each minute — the server caches Klaviyo for 3, so this stays cheap. Each
+ *  load also runs the server's auto-link; when it links something the
+ *  planned emails and approvals are re-read straight away. */
 export function useKlaviyoEmails(from: string, to: string, enabled = true, opts: { recentDrafts?: boolean } = {}) {
   const drafts = opts.recentDrafts ? "&recentDrafts=1" : "";
+  const qc = useQueryClient();
   return useQuery({
     enabled,
     queryKey: [...CAL_KEY, "klaviyo", from, to, drafts],
-    queryFn: () => calApi<{ connected: boolean; emails: KlaviyoEmail[]; recentDrafts?: KlaviyoEmail[]; error?: string }>(`/marketing-calendar/klaviyo-emails?from=${from}&to=${to}${drafts}`),
+    queryFn: async () => {
+      const r = await calApi<KlaviyoEmailsResponse>(`/marketing-calendar/klaviyo-emails?from=${from}&to=${to}${drafts}`);
+      if (r.autoLinked?.length) {
+        void qc.invalidateQueries({ queryKey: [...CAL_KEY, "emails"] });
+        void qc.invalidateQueries({ queryKey: [...CAL_KEY, "approvals"] });
+      }
+      return r;
+    },
     refetchInterval: 60_000,
     refetchOnWindowFocus: true,
     placeholderData: prev => prev,
@@ -253,7 +288,11 @@ export function usePlannedEmails(from: string, to: string) {
 export function usePlannedEmail(id: number | null) {
   return useQuery({
     queryKey: [...EMAILS_KEY, "one", id],
-    queryFn: () => calApi<{ email: PlannedEmail; deleted: boolean; deletedBy: string | null; history: EmailHistoryEntry[] }>(`/marketing-calendar/emails/${id}`),
+    queryFn: () => calApi<{
+      email: PlannedEmail; deleted: boolean; deletedBy: string | null; history: EmailHistoryEntry[];
+      /** Set when the current Klaviyo link was made automatically (what matched). */
+      autoLink?: { matched: string; at: string } | null;
+    }>(`/marketing-calendar/emails/${id}`),
     enabled: id != null,
     refetchInterval: 15_000,
     refetchOnWindowFocus: true,

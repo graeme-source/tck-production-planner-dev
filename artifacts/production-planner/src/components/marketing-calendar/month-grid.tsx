@@ -7,8 +7,10 @@
  * one-day chips: our planned emails are SOLID indigo, Klaviyo sends SOLID
  * teal (faded once sent) and read-only. Drag a planned email to another
  * day and it re-files into that day's phase. A plan linked to its Klaviyo send
- * shows once, as the planned chip with a tick. Unlinked Klaviyo drafts stay
- * off the grid (List view). Approval: a green tick badge or an amber dot.
+ * shows once, as the planned chip with a tick (the server links most of them
+ * automatically — lib/klaviyo-auto-link.ts). Unlinked Klaviyo drafts show as
+ * dashed violet "Klaviyo draft" chips on their placeholder day (2026-10-09).
+ * Approval: a green tick badge or an amber dot.
  *
  * Notes (2026-10-01) are quiet yellow sticky-note chips on their day — drag
  * one to another day, tap to open. To-dos are slate checkbox chips (done =
@@ -19,11 +21,11 @@ import { useMemo, useState } from "react";
 import { initials, isNoteEvent, layoutWeek, monthGridWeeks } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
 import type { CalEvent, CalTodo, KlaviyoEmail, Milestone, PlannedEmail } from "./api";
-import { CheckCircle2, CheckSquare, ListTodo, Mail, MailPlus, Square, StickyNote } from "lucide-react";
+import { CheckCircle2, CheckSquare, ListTodo, Mail, MailPlus, PencilLine, Square, StickyNote } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { format, parseISO } from "date-fns";
 import { groupTodosByDay, todoGroupLabel } from "@/lib/calendar-todo-groups";
-import { typeStyle, firstName, THIN_TYPES, KLAVIYO_TONE, NOTE_TONE, TODO_TONE } from "./constants";
+import { typeStyle, firstName, THIN_TYPES, KLAVIYO_TONE, KLAVIYO_DRAFT_TONE, NOTE_TONE, TODO_TONE } from "./constants";
 import { dateFromElementsAt, useSpanDrag } from "./use-span-drag";
 import { ApprovalDot, approvalTitle, type ApprovalIndex } from "./approvals";
 import type { DragMode } from "@workspace/marketing-calendar";
@@ -194,6 +196,29 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], tod
                   if ("email" in seg.event) {
                     const m = seg.event.email;
                     const ap = approvals?.forKlaviyo(m.id) ?? null;
+                    // An unlinked Klaviyo draft (2026-10-09): dashed violet,
+                    // on its placeholder day, opening the Klaviyo email card.
+                    if (m.status === "Draft") {
+                      return (
+                        <button
+                          key={`email-${m.id}`}
+                          type="button"
+                          onClick={() => onOpenEmail?.(m)}
+                          title={`Klaviyo draft (not scheduled): ${m.name}${m.subject ? ` — “${m.subject}”` : ""} · not linked to a planned email${approvalTitle(ap, ap ? approvals?.row(ap.key) ?? null : null)}`}
+                          className={cn("absolute pointer-events-auto flex items-center gap-1 rounded-lg px-1.5 text-xs font-semibold overflow-hidden", KLAVIYO_DRAFT_TONE.chip)}
+                          style={{
+                            left: `calc(${(seg.startCol / 7) * 100}% + 3px)`,
+                            width: `calc(${(1 / 7) * 100}% - 6px)`,
+                            top: laneTop(seg.lane),
+                            height: laneH(seg.lane),
+                          }}
+                        >
+                          <PencilLine className="w-3.5 h-3.5 flex-shrink-0" />
+                          <span className="truncate flex-1 text-left"><span className="font-bold">Klaviyo draft:</span> {m.name}</span>
+                          <ApprovalDot item={ap} onLight />
+                        </button>
+                      );
+                    }
                     return (
                       <button
                         key={`email-${m.id}`}
