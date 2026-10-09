@@ -77,6 +77,29 @@ describe("TCK run rate — breaks", () => {
     expect(r.breakMinutesDeducted).toBe(22 + 42);
   });
 
+  it("a batch recorded after the finish press counts but adds no time (9 Oct regression)", () => {
+    // 9 Oct: building marked finished 12:39, then a correction batch logged
+    // at 13:06 — the run rate fell from ~21 to 18.7 because the window grew.
+    const times = [...run("07:40", "09:06"), ...run("09:35", "12:36")];
+    const finishedAt = at("12:39");
+    const before = computeBatchesPerHour(times, CONFIG, { finishedAt });
+    const after = computeBatchesPerHour([...times, at("13:06")], CONFIG, { finishedAt });
+    expect(after.batches).toBe(before.batches + 1);
+    expect(after.windowEndAt?.toISOString()).toBe(finishedAt.toISOString());
+    expect(after.activeMinutes).toBe(before.activeMinutes);
+    expect(after.lunchBreakDeducted).toBe(before.lunchBreakDeducted);
+    expect(after.batchesPerHour!).toBeGreaterThan(before.batchesPerHour!);
+  });
+
+  it("taking a batch off after the finish press changes the count, not the time", () => {
+    const times = [...run("07:40", "09:06"), ...run("09:35", "12:36")];
+    const finishedAt = at("12:39");
+    const full = computeBatchesPerHour(times, CONFIG, { finishedAt });
+    const minusLast = computeBatchesPerHour(times.slice(0, -1), CONFIG, { finishedAt });
+    expect(minusLast.activeMinutes).toBe(full.activeMinutes);
+    expect(minusLast.batches).toBe(full.batches - 1);
+  });
+
   it("the restart allowance comes from the setting", () => {
     const times = [...run("07:40", "09:06"), ...run("09:35", "12:24"), ...run("13:08", "13:38")];
     expect(computeBatchesPerHour(times, { ...CONFIG, allowanceMinutes: 0 }).breakMinutesDeducted).toBe(15 + 35);

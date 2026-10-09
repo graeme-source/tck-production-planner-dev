@@ -10,7 +10,9 @@
  *   - Calzone building completions only. Mac cheese is ignored entirely.
  *     Callers filter before passing timestamps in.
  *   - Window = first completion → end, where end is the "Mark building
- *     finished" press, else the last completion (or now, live).
+ *     finished" press, else the last completion (or now, live). Batches
+ *     recorded after the finish press (corrections) count, but never move
+ *     the end (2026-10-09).
  *   - Standard deductions, never whatever anyone tapped:
  *       MORNING SNACK — happens every day around 09:15 (production always
  *       spans it): deducted when the window starts before 09:15 and runs
@@ -94,7 +96,8 @@ const EMPTY: BphResult = {
 /**
  * completedAts must all fall on the same London day (callers group by day
  * first). finishedAt is the "Mark building finished" press — when present
- * it is the end of the window (never before the last completion). liveNow
+ * it is the end of the window, and completions recorded after it count but
+ * are treated as happening at the finish (corrections never add time). liveNow
  * extends the window to now for the in-day view, except while paused.
  */
 export function computeBatchesPerHour(
@@ -104,12 +107,23 @@ export function computeBatchesPerHour(
 ): BphResult {
   if (completedAts.length === 0) return EMPTY;
 
-  const times = completedAts.map(d => d.getTime()).sort((a, b) => a - b);
+  const rawTimes = completedAts.map(d => d.getTime()).sort((a, b) => a - b);
+  // Once "Mark building finished" is pressed, THAT is the end of production
+  // (Graeme, 2026-10-09). A batch recorded afterwards is a correction to the
+  // day — it counts, but its timestamp never stretches the window: on 9 Oct
+  // a 13:06 Philly batch after the 12:39 finish turned 21/hr into 18.7.
+  // So later times are clamped to the finish press. (A finish press before
+  // the first batch is bad data — ignored.)
+  const finMs = opts.finishedAt ? opts.finishedAt.getTime() : null;
+  const finishValid = finMs != null && finMs >= rawTimes[0];
+  const times = finishValid ? rawTimes.map(t => Math.min(t, finMs)) : rawTimes;
   const startMs = times[0];
   const lastCompletionMs = times[times.length - 1];
 
   let endMs = lastCompletionMs;
-  if (opts.finishedAt) {
+  if (finishValid) {
+    endMs = finMs;
+  } else if (opts.finishedAt) {
     endMs = Math.max(lastCompletionMs, opts.finishedAt.getTime());
   } else if (opts.liveNow) {
     const nowMs = opts.liveNow.getTime();
