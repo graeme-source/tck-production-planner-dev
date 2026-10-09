@@ -45,6 +45,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { useLocation, useSearch } from "wouter";
+import { applyMacCheeseMinimum } from "@/lib/mac-cheese-minimum";
 import { cn } from "@/lib/utils";
 import { activeRecipes, archivedRecipeIds, draftRecipeIds } from "@/lib/recipe-archive";
 import type { PlanStartStock } from "@workspace/stock-prediction";
@@ -4976,7 +4977,8 @@ function AddMacCheeseDialog({ planId, planDate, open, onOpenChange, onSuccess }:
   const getToMake = (r: MacCheeseCalcRecipe) => {
     const extra = extraOverrides[r.recipeId] ?? r.extraToMake;
     const totalNeeded = r.salesNextDay + r.salesNextDayPlus1 + r.salesNextDayPlus2 + extra;
-    return Math.max(0, totalNeeded - r.leftOverStock);
+    // Never a tiny run: 1–14 packs becomes 15 (lib/mac-cheese-minimum.ts).
+    return applyMacCheeseMinimum(Math.max(0, totalNeeded - r.leftOverStock));
   };
 
   const handleSubmit = async () => {

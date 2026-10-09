@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { getGetProductionPlanQueryKey, getListProductionPlansQueryKey } from "@workspace/api-client-react";
+import { applyMacCheeseMinimum } from "@/lib/mac-cheese-minimum";
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -221,7 +222,8 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
   // view shows the same number, so users see consistent figures from edit
   // form to plan.
   const getToMake = (r: MacCheeseCalcRecipe) => {
-    const raw = getRawNeed(r);
+    // Never a tiny run: 1–14 packs becomes 15 (lib/mac-cheese-minimum.ts).
+    const raw = applyMacCheeseMinimum(getRawNeed(r));
     if (raw === 0) return 0;
     if ((r.packsPerBatch ?? 0) <= 0) return raw;
     const batches = Math.ceil(raw / r.packsPerBatch);
