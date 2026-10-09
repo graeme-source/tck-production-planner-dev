@@ -269,6 +269,20 @@ export function issueActions(i: ActionInput): IssueActions {
     if (reschedule.enabled) reschedule = off(`Already moved to ${state.rescheduledTo}.`);
   }
 
+  // Finished by hand, or told-and-refunded: nothing may book, move or
+  // email this order again until someone reopens the card.
+  const closedWhy = i.dealtWith
+    ? "Marked dealt with — reopen the card to act on it."
+    : scenario === "cant_deliver" && state.emailedAt && state.refundDone
+      ? "The customer has been told and refunded — don't book or move this order."
+      : null;
+  if (closedWhy) {
+    if (retry.show) retry = off(closedWhy);
+    if (retryAs.show) retryAs = off(closedWhy);
+    if (reschedule.show && reschedule.enabled) reschedule = off(closedWhy);
+    if (emailCantDeliver.show && emailCantDeliver.enabled) emailCantDeliver = off(closedWhy);
+  }
+
   const escalate: Availability = state.escalatedAt
     ? off(`Escalated at ${time(state.escalatedAt)}${state.escalatedBy ? ` by ${state.escalatedBy}` : ""}.`)
     : on;

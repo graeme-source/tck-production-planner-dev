@@ -167,6 +167,21 @@ describe("issueActions", () => {
     expect(a.reschedule.reason).toBe(RESCHEDULE_BLOCKED_CANT_DELIVER);
   });
 
+  it("told and refunded: nothing can book, move or email it again", () => {
+    const a = issueActions(base({ scenario: "cant_deliver", state: issueState([act("email_sent"), act("refund_done")]) }));
+    expect(a.retry.enabled).toBe(false);
+    expect(a.retry.reason).toContain("told and refunded");
+    expect(a.reschedule.enabled).toBe(false);
+  });
+
+  it("marked dealt with: actions are off until reopened, and Reopen stays", () => {
+    const a = issueActions(base({ scenario: "saturday_temporary", dealtWith: true, suggestedRetryCode: "ND16" }));
+    expect(a.retry.enabled).toBe(false);
+    expect(a.retryAs.enabled).toBe(false);
+    expect(a.reschedule.enabled).toBe(false);
+    expect(a.dealtWith.enabled).toBe(true);
+  });
+
   it("escalating twice is blocked", () => {
     const a = issueActions(base({ state: issueState([act("escalated")]) }));
     expect(a.escalate.enabled).toBe(false);
