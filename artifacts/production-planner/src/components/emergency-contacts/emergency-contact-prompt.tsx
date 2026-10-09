@@ -20,6 +20,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { INITIAL_SIGN_IN, nextSignIn, shouldShowEmergencyPrompt, type SignInTracker } from "@/lib/emergency-contacts";
 import { useMyEmergencyContact, useSaveMyEmergencyContact, toInput } from "./emergency-contacts-api";
 import { EmergencyContactForm } from "./emergency-contact-form";
+import { useReportPromptShowing } from "@/lib/prompt-presence";
 
 export function EmergencyContactPrompt() {
   const { state, pinLocked, peoplePinPrompt, peoplePinSetupPrompt } = useAuth();
@@ -47,6 +48,8 @@ export function EmergencyContactPrompt() {
   });
   // Someone else signing in gets their own card.
   useEffect(() => { setJustSaved(false); }, [userId]);
+  // The swipe-panel walkthrough waits until this card is answered.
+  useReportPromptShowing("emergency-contact", show);
 
   if (!show) return null;
   const notNow = () => setDeferredInEpoch(tracker.epoch);

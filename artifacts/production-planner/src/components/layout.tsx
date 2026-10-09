@@ -1,10 +1,12 @@
-import React, { ReactNode, useState, useEffect, useRef } from "react";
+import React, { ReactNode, useCallback, useState, useEffect, useRef } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { RecordImprovementModal } from "@/components/record-improvement-modal";
 import { RecordIssueModal } from "@/components/record-issue-modal";
 import { PullKanbanModal } from "@/components/pull-kanban-modal";
-import { RecordDefectModal } from "@/components/record-defect-modal";
+import { RecordDefectModal, REPORT_DEFECT_LABEL } from "@/components/record-defect-modal";
+import { SwipePanel } from "@/components/swipe-panel";
+import { SwipePanelTourCard, useSwipePanelTour } from "@/components/swipe-panel-tour";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { useIsRtwManager } from "@/hooks/use-rtw-manager";
@@ -125,9 +127,10 @@ const ANALYTICS_PATHS = ["/reports", "/analytics/efficiency", "/analytics/defect
 export const analyticsSubItems: NavItem[] = [
   { name: "Analytics", href: "/reports", icon: BarChart2 },
   { name: "Team efficiency", href: "/analytics/efficiency", icon: Gauge },
-  // Defects KPI (Graeme, 2026-10-01). Anyone may RECORD a defect from the
-  // quick-actions dock; the page sits with the other analytics.
-  { name: "Defects", href: "/analytics/defects", icon: AlertOctagon },
+  // Defects KPI (Graeme, 2026-10-01; waste £ 2026-10-09). Anyone may report a
+  // defect or waste from the quick-actions panel; the page sits with the
+  // other analytics.
+  { name: "Defects & waste", href: "/analytics/defects", icon: AlertOctagon },
   // Finance moved under Analytics (Graeme, 2026-10-07). Admins and
   // bookkeepers only — filtered where the group is drawn.
   { name: "Finance", href: "/finance", icon: Banknote },
@@ -945,7 +948,9 @@ export function Layout({ children }: { children: ReactNode }) {
 }
 
 /**
- * The quick-actions dock: the edge tab (My to-dos · Quick Idea · Ask Caz),
+ * The quick-actions dock: the swipe-out panel from the orange tab (My to-dos,
+ * Improvement, Report issue, Report defect / waste, Pull kanban, Ask Caz)
+ * with its one-off walkthrough,
  * Caz herself, the to-do sheet and the unacknowledged-task interstitial.
  *
  * Self-contained so it can be mounted BOTH inside Layout and on full-screen
@@ -970,7 +975,7 @@ export function QuickActionsDock() {
   return (
     <>
       <FoundersAssistant open={assistantOpen} onClose={() => setAssistantOpen(false)} isFounder={isFounder} />
-      <FloatingActionsTab
+      <QuickActionsPanel
         assistantOpen={assistantOpen}
         onOpenAssistant={() => setAssistantOpen(true)}
         onOpenTodos={() => setTodosOpen(true)}
@@ -995,13 +1000,13 @@ export function QuickActionsDock() {
   );
 }
 
-// Quick Idea + Ask Caz, folded into one edge tab so they stay off the
-// content (they used to float over table footers and totals). ALWAYS starts
-// collapsed: it used to be remembered per device, which meant any tablet
-// where someone once expanded it greeted every later user with the menu
-// already open (Graeme, 2026-08-22). Expansion now lasts only until the
-// next full page load.
-function FloatingActionsTab({ assistantOpen, onOpenAssistant, onOpenTodos, onOpenImprovement, onOpenIssue, onOpenKanban, onOpenDefect }: {
+// The quick actions, in a panel that swipes out from the orange tab on the
+// right (Graeme, 2026-10-09 — it was a small stack of pills). Grab the tab
+// and drag it left; swipe it right, tap the X, tap the dimmed strip or press
+// Escape to put it away. A tap on the tab still opens it. ALWAYS starts
+// shut: a shared iPad must never greet the next person with it open
+// (Graeme, 2026-08-22). The swipe rules: lib/swipe-snap.ts.
+function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpenImprovement, onOpenIssue, onOpenKanban, onOpenDefect }: {
   assistantOpen: boolean;
   onOpenAssistant: () => void;
   onOpenTodos: () => void;
@@ -1010,121 +1015,68 @@ function FloatingActionsTab({ assistantOpen, onOpenAssistant, onOpenTodos, onOpe
   onOpenKanban: () => void;
   onOpenDefect: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const toggle = () => setExpanded(prev => !prev);
+  const [open, setOpen] = useState(false);
   const openTodoCount = useMyOpenTodoCount();
+  const tour = useSwipePanelTour(open);
+  const onOpenChange = useCallback((next: boolean) => setOpen(next), []);
+  // Choosing an action puts the panel away, then opens the action.
+  const run = (action: () => void) => () => { setOpen(false); action(); };
+
+  const actions: Array<{ key: string; label: string; hint: string; icon: typeof ListTodo; tone: string; onClick: () => void; badge?: number; hidden?: boolean }> = [
+    { key: "todos", label: "My to-dos", hint: "What's on your list", icon: ListTodo, tone: "bg-primary text-primary-foreground shadow-primary/30", onClick: run(onOpenTodos), badge: openTodoCount },
+    // Record Improvement replaced Quick Idea (Graeme, 2026-08-28); Record
+    // Issue sits beside it — a safety issue is often both.
+    { key: "improvement", label: "Improvement", hint: "Before & after photo", icon: Lightbulb, tone: "bg-blue-500 text-white shadow-blue-500/30", onClick: run(onOpenImprovement) },
+    { key: "issue", label: "Report issue", hint: "Something's wrong or unsafe", icon: AlertTriangle, tone: "bg-rose-500 text-white shadow-rose-500/30", onClick: run(onOpenIssue) },
+    // Defects & waste (2026-10-01, waste 2026-10-09): product that can't go
+    // out, or anything binned — from anywhere, never a station button.
+    { key: "defect", label: REPORT_DEFECT_LABEL, hint: "Mislabel, binned, left out…", icon: AlertOctagon, tone: "bg-amber-600 text-white shadow-amber-600/30", onClick: run(onOpenDefect) },
+    { key: "kanban", label: "Pull kanban", hint: "Scan or pick an item", icon: ScanLine, tone: "bg-violet-500 text-white shadow-violet-500/30", onClick: run(onOpenKanban) },
+    { key: "assistant", label: `Ask ${ASSISTANT_NAME}`, hint: "Ask a question", icon: Bot, tone: "bg-orange-500 text-white shadow-orange-500/30", onClick: run(onOpenAssistant), hidden: assistantOpen },
+  ];
 
   return (
-    <div className="fixed right-0 top-[38%] z-40 flex items-start">
-      {expanded ? (
-        <div className="flex flex-col items-end gap-2 pr-3">
-          <button
-            type="button"
-            onClick={toggle}
-            aria-label="Tuck the quick actions away"
-            title="Tuck away"
-            className="w-8 h-8 rounded-full border border-border bg-card/95 shadow flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-          {/* All three actions share one width so the stack reads as a menu,
-              not three stray buttons. */}
-          <button
-            type="button"
-            onClick={onOpenTodos}
-            className="w-44 flex items-center justify-center gap-2 px-4 h-12 rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 hover:opacity-90 active:scale-95 transition-all"
-            aria-label="My to-dos"
-            title="My to-dos"
-          >
-            <ListTodo className="w-5 h-5" />
-            <span className="text-sm font-semibold">My to-dos</span>
+    <>
+      <SwipePanel
+        open={open}
+        onOpenChange={onOpenChange}
+        title="Quick actions"
+        tabLabel={`Quick actions — drag left (or tap) to open: My to-dos, Improvement, Report issue, ${REPORT_DEFECT_LABEL}, Pull kanban, Ask ${ASSISTANT_NAME}`}
+        highlightTab={tour.active && tour.step === "try"}
+        tab={
+          <>
+            <ChevronLeft className="w-5 h-5" />
+            <span className="w-1 h-8 rounded-full bg-white/70" />
             {openTodoCount > 0 && (
-              <span className="min-w-[22px] h-[22px] px-1.5 rounded-full bg-white/25 text-xs font-bold flex items-center justify-center tabular-nums">
+              <span className="absolute -top-2 -left-2 min-w-[20px] h-[20px] px-1 rounded-full bg-primary text-primary-foreground text-[11px] font-bold flex items-center justify-center tabular-nums shadow">
                 {openTodoCount}
               </span>
             )}
-          </button>
-          {/* Record Improvement replaced Quick Idea (Graeme, 2026-08-28):
-              the dock is where people actually reach for this, and the
-              improvement flow needs a photo taken at the point of work.
-              Record Issue sits beside it so a problem and an improvement are
-              equally easy to raise — a safety issue is often both. */}
-          <button
-            type="button"
-            onClick={onOpenImprovement}
-            className="w-44 flex items-center justify-center gap-2 px-4 h-12 rounded-full bg-blue-500 text-white shadow-lg shadow-blue-500/30 hover:bg-blue-600 active:scale-95 transition-all"
-            aria-label="Record an improvement"
-            title="Record an improvement"
-          >
-            <Lightbulb className="w-5 h-5" />
-            <span className="text-sm font-semibold">Improvement</span>
-          </button>
-          <button
-            type="button"
-            onClick={onOpenIssue}
-            className="w-44 flex items-center justify-center gap-2 px-4 h-12 rounded-full bg-rose-500 text-white shadow-lg shadow-rose-500/30 hover:bg-rose-600 active:scale-95 transition-all"
-            aria-label="Report an issue"
-            title="Report an issue"
-          >
-            <AlertTriangle className="w-5 h-5" />
-            <span className="text-sm font-semibold">Report issue</span>
-          </button>
-          {/* Report defect (Graeme, 2026-10-01): product that can't go out
-              as normal — a mislabel, a wrong item, a complaint. Here so it
-              can be recorded from anywhere, never as a station button. */}
-          <button
-            type="button"
-            onClick={onOpenDefect}
-            className="w-44 flex items-center justify-center gap-2 px-4 h-12 rounded-full bg-amber-600 text-white shadow-lg shadow-amber-600/30 hover:bg-amber-700 active:scale-95 transition-all"
-            aria-label="Report a defect"
-            title="Report a defect"
-          >
-            <AlertOctagon className="w-5 h-5" />
-            <span className="text-sm font-semibold">Report defect</span>
-          </button>
-          <button
-            type="button"
-            onClick={onOpenKanban}
-            className="w-44 flex items-center justify-center gap-2 px-4 h-12 rounded-full bg-violet-500 text-white shadow-lg shadow-violet-500/30 hover:bg-violet-600 active:scale-95 transition-all"
-            aria-label="Pull a kanban"
-            title="Pull a kanban"
-          >
-            <ScanLine className="w-5 h-5" />
-            <span className="text-sm font-semibold">Pull kanban</span>
-          </button>
-          {!assistantOpen && (
+          </>
+        }
+      >
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {actions.filter(a => !a.hidden).map(a => (
             <button
+              key={a.key}
               type="button"
-              onClick={onOpenAssistant}
-              className="w-44 flex items-center justify-center gap-2 px-4 h-12 rounded-full bg-orange-500 text-white shadow-lg shadow-orange-500/30 hover:bg-orange-600 active:scale-95 transition-all"
-              aria-label={`Ask ${ASSISTANT_NAME}`}
-              title={`Ask ${ASSISTANT_NAME}`}
+              onClick={a.onClick}
+              className={cn("relative min-h-[96px] rounded-3xl px-5 py-4 flex items-center gap-4 text-left shadow-lg active:scale-[0.99] transition-transform", a.tone)}
             >
-              <Bot className="w-5 h-5" />
-              <span className="text-sm font-semibold">Ask {ASSISTANT_NAME}</span>
+              <a.icon className="w-9 h-9 shrink-0" />
+              <span className="min-w-0">
+                <span className="block text-xl font-bold leading-tight">{a.label}</span>
+                <span className="block text-sm opacity-90">{a.hint}</span>
+              </span>
+              {a.badge != null && a.badge > 0 && (
+                <span className="ml-auto min-w-[32px] h-8 px-2 rounded-full bg-white/25 text-base font-bold flex items-center justify-center tabular-nums">{a.badge}</span>
+              )}
             </button>
-          )}
+          ))}
         </div>
-      ) : (
-        <button
-          type="button"
-          onClick={toggle}
-          aria-label={`Show quick actions — My to-dos, Quick Idea and Ask ${ASSISTANT_NAME}`}
-          title={`My to-dos · Quick Idea · Ask ${ASSISTANT_NAME}`}
-          className="h-16 w-8 rounded-l-xl border border-r-0 border-border bg-card/80 backdrop-blur-sm shadow-lg flex flex-col items-center justify-center gap-1 hover:w-9 transition-all relative"
-        >
-          <ChevronLeft className="w-4 h-4 text-muted-foreground" />
-          <span className="w-2.5 h-2.5 rounded-full bg-primary" />
-          <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
-          <span className="w-2.5 h-2.5 rounded-full bg-orange-500" />
-          {openTodoCount > 0 && (
-            <span className="absolute -top-1.5 -left-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center tabular-nums shadow">
-              {openTodoCount}
-            </span>
-          )}
-        </button>
-      )}
-    </div>
+      </SwipePanel>
+      <SwipePanelTourCard tour={tour} />
+    </>
   );
 }
 
