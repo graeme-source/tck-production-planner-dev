@@ -1,7 +1,7 @@
 import { pgTable, serial, text, integer, bigint, boolean, date, jsonb, timestamp, unique, index } from "drizzle-orm/pg-core";
 
 // Today's failed APC bookings, kept so the issues report can be reopened
-// without booking again (migration 0152). Rules in
+// without booking again (migration 0156). Rules in
 // api-server/src/lib/apc-booking-issues.ts. Rows are never deleted — the
 // screen filters to the current London day.
 export const apcBookingIssuesTable = pgTable("apc_booking_issues", {
