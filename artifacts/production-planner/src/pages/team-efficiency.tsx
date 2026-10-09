@@ -21,7 +21,7 @@ import { TeamEfficiencySettings, type EffSettings } from "@/components/team-effi
 import { TeamEfficiencyToday } from "@/components/team-efficiency-today";
 import {
   RANGES, BAND_LABEL, band, pctLabel, trend, changeLabel, chartPoints, lineOrder,
-  dayLabel, weekLabel, monthLabel, gbp, valueOnLabourPct, labourShareOfValuePct,
+  dayLabel, weekLabel, monthLabel, gbp, gbpPence, valueOnLabourPct, labourShareOfValuePct,
   parseRangeQuery, rangeQuery, reportQuery, editCustomRange, startingCustomRange, previousRangeLabel, TODAY_REFRESH_MS,
   type TodayEstimate,
   type RangeChoice, type DateBounds, type RangeKey, type EffDay, type EffPeriod, type EffHeadline, type Band, type ChartPoint,
@@ -170,7 +170,16 @@ function DailyTable({ days, lines, founder }: { days: EffDay[]; lines: string[];
               <td className={cn(td, "text-right")}>{d.ordersDespatched}</td>
               <td className={cn(td, "text-right font-bold")}>{d.status === "ok" ? pctLabel(d.efficiencyPct) : "—"}</td>
               <td className={cn(td, "text-right text-muted-foreground")}>{pctLabel(d.rollingPct)}</td>
-              {founder && <td className={cn(td, "text-right")}>{gbp(d.valueCredited)}</td>}
+              {founder && (
+                <td className={cn(td, "text-right")}>
+                  {gbp(d.valueCredited)}
+                  {(d.wasteValue ?? 0) > 0 && (
+                    <div className="text-sm font-semibold text-rose-700 dark:text-rose-300 whitespace-nowrap" title="Waste recorded that day (Defects & waste) — already taken off the credited value">
+                      Waste −{gbpPence(d.wasteValue)}
+                    </div>
+                  )}
+                </td>
+              )}
               {founder && <td className={cn(td, "text-right")}>{gbp(d.labourCost)}</td>}
               {founder && <td className={cn(td, "text-right")}>{valueOnLabourPct(d.valueCredited, d.labourCost)}</td>}
               {founder && <td className={cn(td, "text-right")}>{labourShareOfValuePct(d.valueCredited, d.labourCost)}</td>}

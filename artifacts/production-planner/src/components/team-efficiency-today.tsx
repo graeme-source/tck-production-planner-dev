@@ -8,7 +8,7 @@
 import { Activity, AlertTriangle, Clock, Info, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
-  BAND_LABEL, band, pctLabel, lineOrder, todayMessage, asOfLabel, gbp, type TodayEstimate, type EffHeadline,
+  BAND_LABEL, band, pctLabel, lineOrder, todayMessage, asOfLabel, gbp, gbpPence, type TodayEstimate, type EffHeadline,
 } from "@/lib/team-efficiency-view";
 
 export function TeamEfficiencyToday({ today, founder, lastSeven, error, loading }: {
@@ -104,6 +104,7 @@ export function TeamEfficiencyToday({ today, founder, lastSeven, error, loading 
             <p className="text-sm text-muted-foreground">
               {gbp(today.valueCredited)} credited so far on {gbp(today.labourCost)} of labour
               ({(today.paidHours ?? 0).toFixed(1)} paid hours){today.ratio != null && ` — R ${today.ratio.toFixed(2)}`}
+              {(today.wasteValue ?? 0) > 0 && <> · after waste −{gbpPence(today.wasteValue)}</>}
             </p>
           )}
         </>
