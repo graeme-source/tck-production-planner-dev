@@ -18,7 +18,7 @@
  * only loads, writes and logs.
  */
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { db, skuBarcodesTable, barcodeEventsTable, packingScanRejectionsTable, type SkuBarcode } from "@workspace/db";
+import { db, appSettingsTable, skuBarcodesTable, barcodeEventsTable, packingScanRejectionsTable, type SkuBarcode } from "@workspace/db";
 import {
   countOutcomes, decidePull, deriveLinkedVariants, describeClash, groupBarcode, gtinKey, identitiesFor, isDifferentInShopify,
   kindLabel, checkGtin, planAssignment, planScanBarcodes, resolveOwnership,
@@ -88,7 +88,7 @@ function ownershipFrom(
   mappings: MappingFull[],
   rows: Array<SkuBarcode>,
   links: LinkedVariant[],
-  override?: { barcode: Map<string, string | null>; status: Map<string, string | null> },
+  override?: { barcode: Map<string, string | null>; status: Map<string, string | null>; shopify: Map<string, string | null> },
 ): { identities: Map<string, Identity>; currentOf: Map<string, boolean>; ownership: Ownership } {
   const linkOf = new Map(links.map(l => [l.variantId, l]));
   const recipeActive = new Map(mappings.map(m => [m.recipeId, m.recipeActive]));
@@ -105,9 +105,13 @@ function ownershipFrom(
     const status = override?.status.has(id) ? override.status.get(id) : row?.shopifyProductStatus;
     const current = isCurrent(link, recipeActive, status);
     currentOf.set(id, current);
+    const ours = override?.barcode.has(id) ? override.barcode.get(id)! : row?.barcode ?? null;
+    const shopify = override?.shopify.has(id) ? override.shopify.get(id)! : row?.shopifyBarcode ?? null;
     holdings.push({
       variantId: id, name: names.get(id) ?? `Shopify variant ${id}`,
-      barcode: override?.barcode.has(id) ? override.barcode.get(id)! : row?.barcode ?? null,
+      // A retired variant never owns a code (resolveOwnership), but the code
+      // it still carries in Shopify is listed as a reused one.
+      barcode: current ? ours : ours ?? shopify,
       identity: identities.get(id)!, current,
       setInApp: row?.barcodeSource === "app" || row?.barcodeSource === "label",
       linkKind: link?.kind,
@@ -244,6 +248,7 @@ export async function loadOverview() {
   const lastChecked = s.rows.reduce<Date | null>((a, r) => (r.shopifyCheckedAt && (!a || r.shopifyCheckedAt > a) ? r.shopifyCheckedAt : a), null);
   return {
     lastCheckedAt: lastChecked,
+    firstPullAt: await firstPullAt(),
     groups: groupsOf(s),
     clashes: s.ownership.clashes.map(c => ({ ...c, message: describeClash(c) })),
     reused: s.ownership.reused,
@@ -487,6 +492,14 @@ export interface PullReport {
   ambiguousBags: Array<{ variantId: string; name: string }>;
 }
 
+/** app_settings key: when the one-time pull last ran for real. */
+export const FIRST_PULL_KEY = "barcodes_first_pull_at";
+
+export async function firstPullAt(): Promise<string | null> {
+  const [row] = await db.select({ value: appSettingsTable.value }).from(appSettingsTable).where(eq(appSettingsTable.key, FIRST_PULL_KEY));
+  return row?.value ?? null;
+}
+
 let running: Promise<PullReport> | null = null;
 
 /** One run at a time; a second caller waits for the first, then runs. */
@@ -534,7 +547,7 @@ async function runReconcile({ mode, dryRun, actor }: { mode: "pull" | "check"; d
   const ids = new Set<string>([...live.keys(), ...links.map(l => l.variantId)]);
   const items: PullItem[] = [];
   const linkedDecisions: PullDecision[] = [];
-  const proposed = { barcode: new Map<string, string | null>(), status: new Map<string, string | null>() };
+  const proposed = { barcode: new Map<string, string | null>(), status: new Map<string, string | null>(), shopify: new Map<string, string | null>() };
   let followed = 0;
   let retiredCleared = 0;
 
@@ -548,7 +561,7 @@ async function runReconcile({ mode, dryRun, actor }: { mode: "pull" | "check"; d
       ours: row?.barcode ?? null, shopify: l ? { barcode: l.barcode } : null,
     });
     const name = l ? variantName({ productTitle: l.productTitle, variantTitle: l.variantTitle }, id) : variantName(row, `Shopify variant ${id}`);
-    if (l) proposed.status.set(id, l.status);
+    if (l) { proposed.status.set(id, l.status); proposed.shopify.set(id, l.barcode); }
     if (link) {
       linkedDecisions.push(decision);
       items.push({
@@ -607,6 +620,13 @@ async function runReconcile({ mode, dryRun, actor }: { mode: "pull" | "check"; d
         newBarcode: decision.setOurs, result: "ok", actor, message: decision.outcome === "retired" ? "old (retired) product — no longer claims a barcode" : null,
       });
     }
+  }
+
+  if (mode === "pull" && !dryRun) {
+    // The hourly check waits for this: the first write to our table after
+    // deploy is Graeme's own pull, not a timer.
+    await db.insert(appSettingsTable).values({ key: FIRST_PULL_KEY, value: startedAt.toISOString() })
+      .onConflictDoUpdate({ target: appSettingsTable.key, set: { value: startedAt.toISOString(), updatedAt: new Date() } });
   }
 
   // Clashes and reused codes as they stand after this run (simulated for a dry run).

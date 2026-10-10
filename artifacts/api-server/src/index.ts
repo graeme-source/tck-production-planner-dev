@@ -3470,6 +3470,11 @@ async function startup() {
     // META_AD_ACCOUNT_ID are set, so this is safe to register before the
     // credentials exist. Re-reads the trailing 48 hours each run, because
     // Meta's spend figures settle late.
+    // Hourly barcode check — READ-ONLY towards Shopify; idle until the
+    // one-time barcode pull has been run. See lib/barcode-check-scheduler.ts.
+    const { startBarcodeCheckScheduler } = await import("./lib/barcode-check-scheduler");
+    startBarcodeCheckScheduler();
+
     const { startMetaAdsScheduler } = await import("./lib/meta-ads");
     startMetaAdsScheduler();
 
