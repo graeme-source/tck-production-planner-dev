@@ -3,7 +3,7 @@
  * of truth for scanning; nothing here writes to Shopify.
  */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { BarcodeMap, Clash, KnownCodes, LinkKind, PullCounts, Reuse } from "@workspace/barcodes";
+import type { AlsoAccepts, BarcodeMap, Clash, CopyLink, KnownCodes, LinkKind, PullCounts, Reuse } from "@workspace/barcodes";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 export const BARCODES_API = `${BASE}/api/barcodes`;
@@ -87,6 +87,20 @@ export interface Overview {
   clashes: ClashView[];
   reused: Reuse[];
   ambiguousBags: Array<{ variantId: string; name: string }>;
+  clubSpecial: ClubSpecialView[];
+  f2fSuggestions: CopyLink[];
+}
+
+export interface ClubSpecialView {
+  variantId: string;
+  name: string;
+  current: boolean;
+  scansAs: string | null;
+  barcode: string | null;
+  shopifyBarcode: string | null;
+  changing: boolean;
+  alsoAccepts: AlsoAccepts[];
+  unexpected: boolean;
 }
 
 export function useBarcodeOverview() {
@@ -133,7 +147,7 @@ export function useScanRejections() {
   return useQuery({ queryKey: ["barcodes", "scan-rejections"], queryFn: () => barcodesApi<ScanRejection[]>("/scan-rejections?limit=50") });
 }
 
-export interface ScanMap { version: string | null; barcodes: BarcodeMap; identities: Record<string, string>; known: KnownCodes }
+export interface ScanMap { version: string | null; barcodes: BarcodeMap; identities: Record<string, string>; known: KnownCodes; alsoAccepts?: Record<string, AlsoAccepts[]> }
 
 export const SCAN_MAP_KEY = ["barcodes", "scan-map"] as const;
 

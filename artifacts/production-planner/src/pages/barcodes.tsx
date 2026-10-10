@@ -9,13 +9,14 @@
 import { useState } from "react";
 import { Link } from "wouter";
 import { useMutation } from "@tanstack/react-query";
-import { AlertTriangle, Barcode, ChevronRight, CloudDownload, Eye, Info, Loader2, RefreshCw, ScanLine } from "lucide-react";
+import { AlertTriangle, Barcode, ChevronRight, CloudDownload, Copy, Eye, Info, Loader2, RefreshCw, ScanLine, Star } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
 import {
-  barcodesApi, useBarcodeOverview, useInvalidateBarcodes, useScanRejections, type ClashView, type PullReport,
+  barcodesApi, useBarcodeOverview, useInvalidateBarcodes, useScanRejections, type ClashView, type ClubSpecialView, type PullReport,
 } from "@/components/barcodes/api";
+import type { CopyLink } from "@workspace/barcodes";
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) : "never");
 const recipeIdOf = (identityKey: string) => { const m = /^r(\d+):/.exec(identityKey); return m ? Number(m[1]) : null; };
@@ -109,6 +110,68 @@ function ClashCard({ clash, isAdmin }: { clash: ClashView; isAdmin: boolean }) {
   );
 }
 
+/** F2F copies are the same pack with the same printed barcode (Graeme,
+ *  2026-10-10). One reviewed step marks each "same product as" its
+ *  recipe's pack — barcodes only; stock and sales counts are untouched. */
+function F2fCard({ links, isAdmin }: { links: CopyLink[]; isAdmin: boolean }) {
+  const invalidate = useInvalidateBarcodes();
+  const [done, setDone] = useState<CopyLink[] | null>(null);
+  const apply = useMutation({
+    mutationFn: () => barcodesApi<{ applied: CopyLink[] }>("/f2f-links", { method: "POST", body: JSON.stringify({ variantIds: links.map(l => l.variantId) }) }),
+    onSuccess: async r => { setDone(r.applied); await invalidate(); },
+  });
+  if (!links.length && !done) return null;
+  return (
+    <Card title={`F2F copies to link (${links.length})`} icon={<Copy className="w-5 h-5 text-primary" />}>
+      <p className="text-sm text-muted-foreground">
+        Each F2F listing below carries its recipe's printed barcode. Linking marks it the same product, so both scan and neither shows as a clash.
+        This only affects barcodes — stock, sales counts and the stock gate don't change. Check the list, then link.
+      </p>
+      <ul className="space-y-1 text-sm">
+        {links.map(l => (
+          <li key={l.variantId}><b>{l.name}</b> → <Link href={`/recipes?edit=${l.recipeId}`} className="font-semibold text-primary">{l.sameAsName}</Link> <span className="font-mono text-muted-foreground">{l.barcode}</span></li>
+        ))}
+      </ul>
+      {isAdmin && links.length > 0 && (
+        <button
+          type="button"
+          disabled={apply.isPending}
+          onClick={() => { if (window.confirm(`Link these ${links.length} F2F listing${links.length !== 1 ? "s" : ""} to their recipe's pack?`)) apply.mutate(); }}
+          className="h-12 px-4 rounded-xl bg-primary text-primary-foreground font-bold disabled:opacity-50"
+        >
+          {apply.isPending ? "Linking…" : `Link all ${links.length}`}
+        </button>
+      )}
+      {apply.error && <p className="text-sm text-destructive font-semibold">Not linked: {(apply.error as Error).message}</p>}
+      {done && <p className="text-sm text-emerald-700 dark:text-emerald-400 font-semibold">Linked {done.length}.</p>}
+    </Card>
+  );
+}
+
+function ClubSpecialCard({ rows }: { rows: ClubSpecialView[] }) {
+  if (!rows.length) return null;
+  return (
+    <Card title="Calzone Club Special" icon={<Star className="w-5 h-5 text-amber-500" />}>
+      <p className="text-sm text-muted-foreground">
+        It always scans as the recipe ticked "Calzone Club Special" on its recipe page, with that recipe's barcode — never its own, so it never clashes.
+        When you switch its barcode in Shopify ahead of the next special, the packing screen also accepts the incoming special until the recipe is switched here.
+      </p>
+      <ul className="space-y-2 text-sm">
+        {rows.map(r => (
+          <li key={r.variantId} className="rounded-xl bg-muted/40 px-3 py-2 space-y-1">
+            <p className="font-medium">{r.name}{!r.current && <span className="ml-1 text-xs text-muted-foreground">(not active in Shopify)</span>}</p>
+            <p>Scans as: <b>{r.scansAs ?? "no special set — tick one on its recipe page"}</b> <span className="font-mono">{r.barcode ?? "—"}</span></p>
+            {r.changing && (
+              <p className="text-sky-700 dark:text-sky-400 flex items-center gap-1"><Info className="w-4 h-4" /> Special changing — expected. Shopify already has {r.alsoAccepts.map(a => a.name).join(", ")} (<span className="font-mono">{r.shopifyBarcode}</span>); both are accepted until the special is switched here.</p>
+            )}
+            {r.unexpected && <p className="text-amber-700 dark:text-amber-400">Shopify has <span className="font-mono">{r.shopifyBarcode}</span>, which isn't a recipe's 2-pack barcode — not used for scanning.</p>}
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 export default function BarcodesPage() {
   const { state } = useAuth();
   const role = state.status === "authenticated" ? state.user.role : null;
@@ -127,6 +190,8 @@ export default function BarcodesPage() {
 
       {o && (
         <>
+          <F2fCard links={o.f2fSuggestions} isAdmin={isAdmin} />
+          <ClubSpecialCard rows={o.clubSpecial} />
           <Card title={`Products sharing a barcode (${o.clashes.length})`} icon={<AlertTriangle className="w-5 h-5 text-amber-500" />} tone={o.clashes.length ? "warn" : undefined}>
             <p className="text-sm text-muted-foreground">Two products you still sell with the same code. The scanner lets only one of them use it, so the other is checked by eye until it has its own barcode. If they really are the same pack (an F2F or CFF copy), say so and both scan.</p>
             {o.clashes.length === 0 ? <p className="text-sm">None.</p> : <ul className="space-y-3">{o.clashes.map(c => <ClashCard key={c.barcode} clash={c} isAdmin={isAdmin} />)}</ul>}
