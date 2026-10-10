@@ -54,3 +54,4 @@ export * from "./apc_booking_issues";
 export * from "./staff_emergency_contacts";
 export * from "./user_tours";
 export * from "./product_labels";
+export * from "./test_requests";
