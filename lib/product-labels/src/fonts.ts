@@ -30,6 +30,44 @@ const faceKey = (f: Face) => `${f.width}/${f.weight}`;
  *  kerning on. */
 const SHAPE_OPTIONS = { kerning: true, features: { liga: false, rlig: false } };
 
+// ── Drawn arrow ────────────────────────────────────────────────────────────
+// Barlow's Latin subset has no arrows (➜ → ▶ are all missing — checked), so
+// "➜" and "→" are drawn: a shaft and a solid head on the font's maths axis,
+// heavier for bolder weights, narrower for narrower widths. Font units,
+// 1000 per em, y up — the same space as Barlow's own glyphs.
+export const ARROW_CHARS = new Set(["➜", "→"]);
+const ARROW_SPLIT = /([➜→])/;
+const WIDTH_FACTOR: Record<WidthVariant, number> = { normal: 1, "semi-condensed": 0.9, condensed: 0.8 };
+const arrowCache = new Map<string, Glyph>();
+
+function arrowGlyph(f: Face): Glyph {
+  const key = faceKey(f);
+  const hit = arrowCache.get(key);
+  if (hit) return hit;
+  const wf = WIDTH_FACTOR[f.width];
+  const half = f.weight >= 700 ? 70 : f.weight >= 500 ? 60 : 52; // half the shaft thickness
+  const axis = 265; // just above half the x-height — where a hyphen sits
+  const head = 215; // half the head's height
+  const left = 50 * wf, neck = 430 * wf, tip = 720 * wf;
+  const pts: Array<[number, number]> = [
+    [left, axis - half], [neck, axis - half], [neck, axis - head], [tip, axis],
+    [neck, axis + head], [neck, axis + half], [left, axis + half],
+  ];
+  const glyph = {
+    index: -1,
+    advanceWidth: 770 * wf,
+    getBoundingBox: () => ({ x1: left, y1: axis - head, x2: tip, y2: axis + head }),
+    getPath: (x = 0, y = 0, fontSize = 72) => {
+      const s = fontSize / 1000;
+      const commands: PathCommand[] = pts.map(([px, py], i) => ({ type: i === 0 ? "M" : "L", x: x + px * s, y: y - py * s }) as PathCommand);
+      commands.push({ type: "Z" });
+      return { commands };
+    },
+  } as Glyph;
+  arrowCache.set(key, glyph);
+  return glyph;
+}
+
 export interface ShapedGlyph {
   glyph: Glyph;
   /** Pen position (dots) relative to the run start. */
@@ -85,7 +123,15 @@ export class LabelFontSet implements TextMeasurer {
   /** Glyphs and their pen positions — measuring and drawing both use this. */
   shapeText(text: string, f: Face, sizeDots: number, letterSpacingEm: number): { glyphs: ShapedGlyph[]; advance: number } {
     const lf = this.face(f);
-    const glyphs = lf.font.stringToGlyphs(text, SHAPE_OPTIONS);
+    // Arrows aren't in Barlow's Latin set: they're drawn (arrowGlyph) and
+    // slot into the run like any other glyph, so measuring and drawing
+    // still agree.
+    const glyphs: Glyph[] = [];
+    for (const piece of text.split(ARROW_SPLIT)) {
+      if (!piece) continue;
+      if (ARROW_CHARS.has(piece)) glyphs.push(arrowGlyph(f));
+      else glyphs.push(...lf.font.stringToGlyphs(piece, SHAPE_OPTIONS));
+    }
     const k = sizeDots * lf.scale;
     const pos = (lf.font as unknown as { position: { getKerningValue(t: unknown, a: number, b: number): number } }).position;
     const out: ShapedGlyph[] = [];
@@ -94,7 +140,7 @@ export class LabelFontSet implements TextMeasurer {
       const g = glyphs[i];
       out.push({ glyph: g, x });
       x += (g.advanceWidth ?? 0) * k;
-      if (i < glyphs.length - 1) {
+      if (i < glyphs.length - 1 && g.index >= 0 && glyphs[i + 1].index >= 0) {
         const kv = lf.kerning ? pos.getKerningValue(lf.kerning, g.index, glyphs[i + 1].index) : lf.font.getKerningValue(g, glyphs[i + 1]);
         x += kv * k;
       }
@@ -147,6 +193,7 @@ export class LabelFontSet implements TextMeasurer {
     const font = this.face(f).font;
     const missing = new Set<string>();
     for (const ch of text) {
+      if (ARROW_CHARS.has(ch)) continue; // drawn, see arrowGlyph
       if (ch === " " || ch === " ") continue;
       if (font.charToGlyphIndex(ch) === 0) missing.add(ch);
     }

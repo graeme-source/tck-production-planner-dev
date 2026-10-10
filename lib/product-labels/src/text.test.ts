@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { fillTemplate, mayContainParagraph, parseBold, plainText, wordDiff } from "./text";
 import { DEFAULT_TEMPLATE } from "./template";
+import { cookingPlaceholderValues } from "./cooking";
 
 describe("parseBold", () => {
   it("splits **allergens** into bold runs", () => {
@@ -40,8 +41,31 @@ describe("wordDiff", () => {
   });
 });
 
-describe("fillTemplate — cooking step wording", () => {
-  const step2 = DEFAULT_TEMPLATE.text.step2;
+describe("fillTemplate — the default step 2: one line per appliance, turn in the middle, halves", () => {
+  const values = cookingPlaceholderValues(DEFAULT_TEMPLATE.cooking);
+  it("both appliances, times halved (oven 18–22 → 9–11 + 9–11; air fryer 16–19 → 8–9 + 8–10)", () => {
+    expect(fillTemplate(DEFAULT_TEMPLATE.text.step2, values).text).toBe(
+      "**OVEN** 210°C (190°C fan): 9–11 min ➜ **TURN OVER** ➜ 9–11 min\n**AIR FRYER** 180°C: 8–9 min ➜ **TURN OVER** ➜ 8–10 min",
+    );
+  });
+  it("a blank appliance drops its whole line", () => {
+    const noAir = cookingPlaceholderValues({ ...DEFAULT_TEMPLATE.cooking, airFryerTempC: null });
+    expect(fillTemplate(DEFAULT_TEMPLATE.text.step2, noAir).text.trim()).toBe(
+      "**OVEN** 210°C (190°C fan): 9–11 min ➜ **TURN OVER** ➜ 9–11 min",
+    );
+    const noOven = cookingPlaceholderValues({ ...DEFAULT_TEMPLATE.cooking, ovenMinMinutes: null });
+    expect(fillTemplate(DEFAULT_TEMPLATE.text.step2, noOven).text.trim()).toBe(
+      "**AIR FRYER** 180°C: 8–9 min ➜ **TURN OVER** ➜ 8–10 min",
+    );
+  });
+  it("placeholder names may contain digits ({ovenHalf2Min})", () => {
+    expect(fillTemplate("{ovenHalf2Min}", { ovenHalf2Min: 9 }).text).toBe("9");
+  });
+});
+
+describe("fillTemplate — sentence-style wording with {or}", () => {
+  // The previous default step 2, still a valid way to write it.
+  const step2 = "Cook[ in the oven at {ovenTemp}°C[ ({fanTemp}°C fan)] for {ovenMin}–{ovenMax} minutes]{or}[ in the air fryer at {airTemp}°C for {airMin}–{airMax} minutes].";
   const all = { ovenTemp: 210, fanTemp: 190, ovenMin: 18, ovenMax: 22, airTemp: 180, airMin: 12, airMax: 15 };
   it("oven and air fryer", () => {
     expect(fillTemplate(step2, all).text).toBe(

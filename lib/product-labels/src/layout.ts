@@ -387,8 +387,19 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
   const stepsTop = titleBox.y + titleBox.h + d(page.bandGapMm);
   const stepsH = d(page.stepsBandMm);
   const stepGap = d(page.columnGapMm);
-  const stepW = (innerW - 2 * stepGap) / 3;
-  const stepBoxes: Rect[] = [0, 1, 2].map(i => ({ x: innerX + i * (stepW + stepGap), y: stepsTop, w: stepW, h: stepsH }));
+  // Step boxes share the row by their weights (step 2 holds both cooking lines).
+  const weights = page.stepWeights;
+  const weightSum = weights[0] + weights[1] + weights[2];
+  const stepSpace = innerW - 2 * stepGap;
+  const stepBoxes: Rect[] = [];
+  {
+    let x = innerX;
+    for (const w of weights) {
+      const width = (stepSpace * w) / weightSum;
+      stepBoxes.push({ x, y: stepsTop, w: width, h: stepsH });
+      x += width + stepGap;
+    }
+  }
   const circleD = d(page.stepCircleMm);
   const stepInset = circleD + d(1);
 

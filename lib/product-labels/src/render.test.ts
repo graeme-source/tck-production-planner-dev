@@ -226,6 +226,41 @@ describe("barcode as printed", () => {
   });
 });
 
+describe("the drawn arrow (Barlow's Latin set has none)", () => {
+  const f = { width: "normal" as const, weight: 400 as const };
+  it("isn't reported missing, and has a width and ink like a real glyph", () => {
+    expect(fonts.missingGlyphs("9–11 min ➜ TURN OVER → 9–11", f)).toEqual([]);
+    const adv = fonts.advance("➜", f, 100, 0);
+    expect(adv).toBeGreaterThan(50);
+    const ink = fonts.ink("➜", f, 100, 0);
+    expect(ink.left).toBeGreaterThanOrEqual(0);
+    expect(ink.right).toBeLessThanOrEqual(adv);
+    expect(ink.top).toBeGreaterThan(0);
+  });
+  it("is drawn — and measured and drawn at the same place", () => {
+    const bm = new Bitmap(200, 120);
+    const shaped = fonts.shapeText("a➜b", f, 100, 0);
+    for (const g of shaped.glyphs) fillContours(bm, flattenPathLocal(fonts.glyphPath(g.glyph, 10 + g.x, 100, 100)));
+    // ink exists between where "a" ends and "b" starts
+    const arrow = shaped.glyphs[1];
+    let black = 0;
+    for (let y = 0; y < 120; y++) for (let x = Math.ceil(10 + arrow.x); x < 10 + shaped.glyphs[2].x; x++) black += bm.get(x, y);
+    expect(black).toBeGreaterThan(200);
+  });
+});
+
+describe("step 2 on the default label", () => {
+  it("prints as exactly two lines, one per appliance, in the wider middle box", () => {
+    const proof = proofLabel(snapshot(), { printDate: "2026-10-10", productionDate: "2026-10-10" }, fonts);
+    const steps = proof.layout.fields.find(f => f.key === "steps")!;
+    const box2 = steps.boxes[1];
+    expect(box2.w).toBeGreaterThan(steps.boxes[0].w * 2);
+    const runs2 = steps.runs.filter(r => !r.white && r.x >= box2.x && r.x < box2.x + box2.w);
+    expect(new Set(runs2.map(r => Math.round(r.y))).size).toBe(2);
+    expect(steps.sizePt).toBeGreaterThanOrEqual(steps.legalMinPt);
+  });
+});
+
 describe("title", () => {
   it("is centred across the top", () => {
     const proof = proofLabel(snapshot(), { printDate: "2026-10-10", productionDate: "2026-10-10" }, fonts);

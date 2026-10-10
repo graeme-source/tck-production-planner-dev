@@ -7,6 +7,7 @@
 import type { LabelDates } from "./dates";
 import { formatLabelDate } from "./dates";
 import { checkEan13 } from "./ean13";
+import { cookingPlaceholderValues } from "./cooking";
 import type { LabelSnapshot } from "./snapshot";
 import type { FieldKey } from "./template";
 import { fillTemplate, mayContainParagraph, mergeRuns, parseBold, type Paragraph } from "./text";
@@ -25,6 +26,21 @@ export interface LabelContent {
   problems: string[];
 }
 
+/** Filled step wording → one paragraph per non-empty line, **bold** parsed.
+ *  Wording written AS lines (step 2: one per appliance) keeps each line
+ *  whole — its spaces become non-breaking — so "9–11 min" can never be
+ *  split from "TURN OVER": the layout goes narrower or smaller instead, and
+ *  a line that still can't fit is DOESN'T FIT. Single-line wording wraps
+ *  normally. */
+export function stepLines(text: string): Paragraph[] {
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const whole = text.trim().includes("\n");
+  return lines.map(l => {
+    const p = parseBold(l);
+    return whole ? p.map(r => ({ ...r, text: r.text.replace(/ /g, " ") })) : p;
+  });
+}
+
 const heading = (text: string): Paragraph => (text.trim() ? [{ text: text.trim(), bold: true }] : []);
 const nonEmpty = (ps: Paragraph[]) => ps.filter(p => p.length > 0);
 
@@ -35,8 +51,8 @@ export function buildLabelContent(s: LabelSnapshot, dates: LabelDates): LabelCon
   const values: Record<string, string | number | null> = {
     name: s.labelName,
     packSize: s.packSize,
-    ovenTemp: c.ovenTempC, fanTemp: c.fanTempC, ovenMin: c.ovenMinMinutes, ovenMax: c.ovenMaxMinutes,
-    airTemp: c.airFryerTempC, airMin: c.airFryerMinMinutes, airMax: c.airFryerMaxMinutes,
+    // Temperatures, totals and the halves either side of TURN OVER.
+    ...cookingPlaceholderValues(c),
   };
 
   const fill = (src: string, where: string) => {
@@ -51,7 +67,9 @@ export function buildLabelContent(s: LabelSnapshot, dates: LabelDates): LabelCon
     if (r.blank.length > 0 && r.filled.length === 0) {
       problems.push(`Step ${i + 1} has no cooking values — set the oven or air-fryer numbers.`);
     }
-    return r.text.trim() ? [parseBold(r.text.trim())] : [];
+    // A line break in the wording starts a new line on the label (step 2:
+    // one line per appliance); lines left empty by a blank appliance drop.
+    return stepLines(r.text);
   });
   if (c.ovenMinMinutes != null && c.ovenMaxMinutes != null && c.ovenMinMinutes > c.ovenMaxMinutes) {
     problems.push(`Oven minutes run backwards (${c.ovenMinMinutes}–${c.ovenMaxMinutes}).`);

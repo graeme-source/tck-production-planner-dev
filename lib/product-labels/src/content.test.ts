@@ -21,7 +21,17 @@ describe("label content", () => {
   it("builds Graeme's label text", () => {
     const c = content();
     expect(plainText(c.title[0])).toBe("Chicken & Chorizo - 2 PACK");
-    expect(plainText(c.steps[1][0])).toBe("Cook in the oven at 210°C (190°C fan) for 18–22 minutes, or in the air fryer at 180°C for 16–19 minutes.");
+    expect(plainText(c.steps[0][0])).toBe("Remove the film but leave the calzones in the wooden tray.");
+    // Step 2: two lines, kept whole (non-breaking spaces), times halved.
+    const nb = (s: string) => s.replace(/ /g, " ");
+    expect(c.steps[1].map(p => nb(plainText(p)))).toEqual([
+      "OVEN 210°C (190°C fan): 9–11 min ➜ TURN OVER ➜ 9–11 min",
+      "AIR FRYER 180°C: 8–9 min ➜ TURN OVER ➜ 8–10 min",
+    ]);
+    // OVEN / AIR FRYER / TURN OVER are bold.
+    const bold = c.steps[1].flatMap(p => p.filter(r => r.bold).map(r => nb(r.text)));
+    expect(bold).toEqual(["OVEN", "TURN OVER", "AIR FRYER", "TURN OVER"]);
+    expect(plainText(c.steps[2][0])).toBe("Check they're piping hot throughout before serving.");
     expect(c.dates.map(plainText)).toEqual(["IF CHILLED USE BY: 23/10/26", "IF FROZEN USE BY: 10/04/27", "BATCH NUMBER: 26283"]);
     expect(c.allergenInfo.map(plainText)).toEqual([
       "Allergens are shown in Bold.",
@@ -31,8 +41,14 @@ describe("label content", () => {
     expect(c.problems).toEqual([]);
   });
 
-  it("no air fryer → oven-only sentence", () => {
-    expect(plainText(content({ airFryerOn: false }).steps[1][0])).toBe("Cook in the oven at 210°C (190°C fan) for 18–22 minutes.");
+  it("no air fryer → only the oven line", () => {
+    const s = content({ airFryerOn: false }).steps[1];
+    expect(s).toHaveLength(1);
+    expect(plainText(s[0]).replace(/ /g, " ")).toBe("OVEN 210°C (190°C fan): 9–11 min ➜ TURN OVER ➜ 9–11 min");
+  });
+
+  it("single-line wording still wraps normally (ordinary spaces)", () => {
+    expect(plainText(content().steps[0][0])).not.toContain(" ");
   });
 
   it("warning off leaves it out", () => {

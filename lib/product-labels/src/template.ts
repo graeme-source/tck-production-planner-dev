@@ -73,6 +73,9 @@ export interface PageSettings {
   /** Space between stacked fields inside a column. */
   fieldGapMm: number;
   stepCircleMm: number;
+  /** Relative widths of the three step boxes (e.g. 1:2:1 gives step 2 half
+   *  the row). */
+  stepWeights: [number, number, number];
   /** Height of the barcode BARS (digits sit underneath). At least 80% of
    *  the EAN-13 nominal 22.85 mm — EAN13_MIN_BAR_HEIGHT_MM. */
   barcodeHeightMm: number;
@@ -144,6 +147,14 @@ export const TEMPLATE_PLACEHOLDERS: Record<string, string> = {
   "{airTemp}": "Air fryer °C",
   "{airMin}": "Air fryer minutes, from",
   "{airMax}": "Air fryer minutes, to",
+  "{ovenHalfMin}": "Oven, first half — from",
+  "{ovenHalfMax}": "Oven, first half — to",
+  "{ovenHalf2Min}": "Oven, after turning — from",
+  "{ovenHalf2Max}": "Oven, after turning — to",
+  "{airHalfMin}": "Air fryer, first half — from",
+  "{airHalfMax}": "Air fryer, first half — to",
+  "{airHalf2Min}": "Air fryer, after turning — from",
+  "{airHalf2Max}": "Air fryer, after turning — to",
 };
 
 const field = (f: Partial<FieldStyle>): FieldStyle => ({
@@ -159,6 +170,9 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     columnSplitPct: 44, columnGapMm: 4,
     titleBandMm: 9, stepsBandMm: 13, bandGapMm: 2, fieldGapMm: 2,
     stepCircleMm: 5.5,
+    // Step 2 carries both cooking lines (each kept whole), so it gets the
+    // middle ~56% of the row; steps 1 and 3 are short and take 3–4 lines.
+    stepWeights: [1, 2.5, 1],
     // Graeme 2026-10-10: 21 mm looked too tall, 11 mm too short — "wider
     // but shorter, somewhere in the middle". 151% = whole 4-dot modules at
     // 203 dpi (bars 47.5 mm wide, ~56.5 mm with quiet zones, like his current
@@ -178,8 +192,11 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
   text: {
     title: "{name} - {packSize} PACK",
     step1: "Remove the film but leave the calzones in the wooden tray.",
-    step2: "Cook[ in the oven at {ovenTemp}°C[ ({fanTemp}°C fan)] for {ovenMin}–{ovenMax} minutes]{or}[ in the air fryer at {airTemp}°C for {airMin}–{airMax} minutes].",
-    step3: "Turn the calzones over halfway through, and make sure they're piping hot throughout.",
+    // One line per appliance, the turn in the middle and the time halved
+    // (Graeme, 2026-10-11: customers set the full time, never turned them
+    // and burnt the tops). A line with a blank number drops out.
+    step2: "[**OVEN** {ovenTemp}°C[ ({fanTemp}°C fan)]: {ovenHalfMin}–{ovenHalfMax} min ➜ **TURN OVER** ➜ {ovenHalf2Min}–{ovenHalf2Max} min]\n[**AIR FRYER** {airTemp}°C: {airHalfMin}–{airHalfMax} min ➜ **TURN OVER** ➜ {airHalf2Min}–{airHalf2Max} min]",
+    step3: "Check they're piping hot throughout before serving.",
     storageHeading: "STORAGE INSTRUCTIONS:",
     storage: "If chilled, keep me below 5°C. If frozen, keep below -18°C. If you decide to freeze me, please do so immediately, fully defrost in a fridge before cooking and eat within 24 hours of defrosting.",
     chilledLabel: "IF CHILLED USE BY:",
@@ -277,6 +294,9 @@ export function normaliseTemplate(raw: unknown): LabelTemplate {
       bandGapMm: num(p.bandGapMm, D.page.bandGapMm, 0, 20),
       fieldGapMm: num(p.fieldGapMm, D.page.fieldGapMm, 0, 20),
       stepCircleMm: num(p.stepCircleMm, D.page.stepCircleMm, 2, 20),
+      stepWeights: Array.isArray(p.stepWeights) && p.stepWeights.length === 3
+        ? (p.stepWeights.map((w, i) => num(w, D.page.stepWeights[i], 0.5, 5)) as [number, number, number])
+        : [...D.page.stepWeights] as [number, number, number],
       barcodeHeightMm: num(p.barcodeHeightMm, D.page.barcodeHeightMm, EAN13_MIN_BAR_HEIGHT_MM, 60),
       barcodeSizePct: num(p.barcodeSizePct, D.page.barcodeSizePct, 80, 200),
       smallPack: bool(p.smallPack, D.page.smallPack),

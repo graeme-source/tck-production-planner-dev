@@ -123,7 +123,7 @@ function parseTemplate(src: string): Node[] {
       } else if (ch === "{") {
         const end = src.indexOf("}", i);
         const name = end > i ? src.slice(i + 1, end) : "";
-        if (end > i && /^[a-zA-Z]+$/.test(name)) {
+        if (end > i && /^[a-zA-Z][a-zA-Z0-9]*$/.test(name)) {
           flush();
           out.push(name === "or" ? { kind: "or" } : { kind: "ph", name });
           i = end + 1;
