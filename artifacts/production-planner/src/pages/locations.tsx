@@ -12,6 +12,7 @@
  * Legacy free-text locations (pre-map rows with no door/shelf) surface in
  * a "needs re-filing" tray so they can be dragged into a real bin.
  */
+import { Link } from "wouter";
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
@@ -85,9 +86,8 @@ interface BarcodeRow {
 
 interface BarcodeSyncResult {
   synced: number;
-  skippedNoBarcode: number;
-  skippedNoSku: number;
-  totalProducts: number;
+  differentInShopify?: number;
+  clashes?: number;
 }
 
 const ZONE_META: Record<ZoneValue, { label: string; icon: typeof Refrigerator; chip: string; cell: string }> = {
@@ -747,8 +747,9 @@ function BarcodesCard() {
             <Barcode className="w-4 h-4 text-primary" /> Shopify Barcodes
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {barcodes?.length ?? 0} product variant{(barcodes?.length ?? 0) !== 1 ? "s" : ""} have a barcode synced from Shopify.
-            Re-run after editing variant barcodes in Shopify admin.
+            {barcodes?.length ?? 0} product listings known. Barcodes are set on each recipe's page and scan straight away;
+            Shopify is checked every hour. This button checks now (it reads Shopify, never changes it).{" "}
+            <Link href="/barcodes" className="font-semibold text-primary">All barcodes</Link>
           </p>
         </div>
         <button
@@ -757,15 +758,14 @@ function BarcodesCard() {
           className="px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5 flex-shrink-0"
         >
           {sync.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-          Sync from Shopify
+          Check Shopify now
         </button>
       </div>
       {syncResult && (
         <div className="text-xs text-muted-foreground bg-secondary/30 rounded-lg p-2 border border-border">
-          Synced <b className="text-foreground">{syncResult.synced}</b> barcode{syncResult.synced !== 1 ? "s" : ""} from {syncResult.totalProducts} products.
-          {syncResult.skippedNoBarcode > 0 && (
-            <> {syncResult.skippedNoBarcode} variant{syncResult.skippedNoBarcode !== 1 ? "s" : ""} had no barcode set in Shopify.</>
-          )}
+          Checked. <b className="text-foreground">{syncResult.synced}</b> barcode{syncResult.synced !== 1 ? "s" : ""} updated from Shopify.
+          {(syncResult.differentInShopify ?? 0) > 0 && <> {syncResult.differentInShopify} recipe listing{syncResult.differentInShopify !== 1 ? "s" : ""} differ in Shopify — see <Link href="/barcodes" className="font-semibold text-primary">Barcodes</Link>.</>}
+          {(syncResult.clashes ?? 0) > 0 && <> {syncResult.clashes} code{syncResult.clashes !== 1 ? "s are" : " is"} shared by two products.</>}
         </div>
       )}
       {syncError && (

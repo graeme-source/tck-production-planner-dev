@@ -1,6 +1,6 @@
 import { Link } from "wouter";
 import { PageHeader } from "@/components/page-header";
-import { Tag, Wrench, Printer } from "lucide-react";
+import { Tag, Wrench, Printer, Barcode } from "lucide-react";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Tools landing page
@@ -36,6 +36,15 @@ const TOOLS: Tool[] = [
     Icon: Printer,
     iconBg: "bg-emerald-50 dark:bg-emerald-950/30",
     iconColor: "text-emerald-600 dark:text-emerald-400",
+  },
+  {
+    href: "/barcodes",
+    label: "Barcodes",
+    description:
+      "Every recipe's barcodes, the one-time pull from Shopify, products sharing a code, and refused packing scans.",
+    Icon: Barcode,
+    iconBg: "bg-lime-50 dark:bg-lime-950/30",
+    iconColor: "text-lime-700 dark:text-lime-400",
   },
 ];
 
