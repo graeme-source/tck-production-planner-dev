@@ -6,7 +6,7 @@
 
 export type TriageLane = "defect" | "data_fix" | "understanding" | "improvement" | "needs_info" | "not_app";
 export type TriageStatus = "proposed" | "approved" | "rejected" | "in_progress" | "fixed" | "wont_fix" | "answered" | "dismissed";
-export type FixQueueTab = "proposed" | "in_progress" | "snoozed" | "approved" | "fixed" | "rejected";
+export type FixQueueTab = "proposed" | "in_progress" | "snoozed" | "approved" | "fixed" | "rejected" | "no_action";
 
 export interface Triage {
   id: number;
@@ -28,6 +28,9 @@ export interface Triage {
   noActionNeeded: boolean;
   /** "Not now" — off To review until then (null = not snoozed). */
   snoozedUntil: string | null;
+  /** "Dismiss — no action": out of the queue silently (null = not). */
+  noActionAt?: string | null;
+  noActionBy?: string | null;
   /** The day the fix/feature went live. */
   completedOn: string | null;
   /** The improvement credited to the reporter when this closed. */
@@ -128,7 +131,7 @@ export function tabCount(data: Pick<FixQueueResponse, "counts" | "tabCounts"> | 
   if (tab === "rejected") return (counts.rejected ?? 0) + (counts.wont_fix ?? 0);
   if (tab === "fixed") return (counts.fixed ?? 0) + (counts.answered ?? 0) + (counts.dismissed ?? 0);
   if (tab === "proposed") return Math.max(0, (counts.proposed ?? 0) - (counts.awaitingReply ?? 0));
-  if (tab === "snoozed") return 0;
+  if (tab === "snoozed" || tab === "no_action") return 0;
   return counts[tab] ?? 0;
 }
 
