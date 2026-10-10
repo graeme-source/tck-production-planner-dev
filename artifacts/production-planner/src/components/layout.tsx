@@ -8,7 +8,10 @@ import { RecordDefectModal, REPORT_DEFECT_LABEL } from "@/components/record-defe
 import { SwipePanel } from "@/components/swipe-panel";
 import { SwipePanelTourCard, useSwipePanelTour } from "@/components/swipe-panel-tour";
 import { useAnyPromptShowing } from "@/lib/prompt-presence";
+import { BusinessSwipe } from "@/components/business-swipe";
 import { MobileHeaderMenu, usePhoneHeader } from "@/components/mobile-header-menu";
+import { usePointerKind } from "@/hooks/use-touch-primary";
+import { showBusinessInNav } from "@/lib/edge-swipe";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { useIsRtwManager } from "@/hooks/use-rtw-manager";
@@ -692,6 +695,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const { canAccess } = usePagePermissions();
   const { can } = useFeatureAccess();
   const founderArea = useFounderArea();
+  const pointerKind = usePointerKind();
   const [mobileOpen, setMobileOpen] = useState(false);
   // Collapsible sidebar on tablet/desktop too — the hamburger in the top bar
   // is always visible, so getting it back is one obvious tap. Choice sticks
@@ -782,8 +786,15 @@ export function Layout({ children }: { children: ReactNode }) {
   //
   // Fix queue sits on its own line straight below, founder account only
   // (it was a Business tab until 2026-09-29).
+  //
+  // On a touch screen (iPad, phone) the FOUNDER's entry comes out of the
+  // menu: he swipes in from the left instead (components/business-swipe.tsx;
+  // Graeme, 2026-10-10). With a mouse it stays. Anyone else granted a tab
+  // keeps it everywhere.
   if (founderArea.home) {
-    const founderItems: NavItem[] = [{ name: "The Business", href: founderArea.home, icon: Briefcase }];
+    const founderItems: NavItem[] = showBusinessInNav({ isFounder: founderArea.isFounder, coarsePointer: pointerKind.coarsePointer, canHover: pointerKind.canHover })
+      ? [{ name: "The Business", href: founderArea.home, icon: Briefcase }]
+      : [];
     if (founderArea.isFounder) founderItems.push({ name: "Fix queue", href: "/fix-queue", icon: Wrench });
     navForUser = [...founderItems, ...navForUser];
   }
@@ -994,6 +1005,9 @@ export function QuickActionsDock() {
       <RecordDefectModal open={defectOpen} onClose={() => setDefectOpen(false)} />
       <TodoSheet open={todosOpen} onClose={() => setTodosOpen(false)} />
       <TodoInterstitial />
+      {/* The founder's swipe-from-the-left into The Business (touch screens
+          only; renders and listens to nothing for anyone else). */}
+      <BusinessSwipe />
       {/* Station messages — must-confirm ones included — lock/banner ONLY on
           the station they were sent to (StationMessagesBanner in
           StationLayout), never app-wide: the app-wide pop-up let a sender
