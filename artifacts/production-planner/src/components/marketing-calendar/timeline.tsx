@@ -86,7 +86,7 @@ export function Timeline({ anchor, zoom, today, events, emails = [], notes = [],
   const todayLeft = today >= range.from && today <= range.to ? daysBetween(range.from, today) * dw + dw / 2 : null;
 
   return (
-    <div ref={scrollRef} className={cn("overflow-x-auto rounded-xl border border-border select-none", dragging && "cursor-grabbing")}>
+    <div ref={scrollRef} data-no-swipe="" className={cn("overflow-x-auto rounded-xl border border-border select-none", dragging && "cursor-grabbing")}>
       <div style={{ width }} className="relative">
         {/* Header */}
         <div className="sticky top-0 z-10 bg-card border-b border-border">

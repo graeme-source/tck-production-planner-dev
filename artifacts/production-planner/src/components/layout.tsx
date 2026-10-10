@@ -7,6 +7,11 @@ import { PullKanbanModal } from "@/components/pull-kanban-modal";
 import { RecordDefectModal, REPORT_DEFECT_LABEL } from "@/components/record-defect-modal";
 import { SwipePanel } from "@/components/swipe-panel";
 import { SwipePanelTourCard, useSwipePanelTour } from "@/components/swipe-panel-tour";
+import { useAnyPromptShowing } from "@/lib/prompt-presence";
+import { BusinessSwipe } from "@/components/business-swipe";
+import { MobileHeaderMenu, usePhoneHeader } from "@/components/mobile-header-menu";
+import { usePointerKind } from "@/hooks/use-touch-primary";
+import { showBusinessInNav } from "@/lib/edge-swipe";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { useIsRtwManager } from "@/hooks/use-rtw-manager";
@@ -68,7 +73,7 @@ import { FixedNoticeInterstitial } from "@/components/fixed-notice-interstitial"
 import { TestRequestCard } from "@/components/test-request-card";
 import { ClipboardCheck } from "lucide-react";
 import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
-import { AlertOctagon, Banknote, BookOpen, BookUser, Bot, GraduationCap, ChevronLeft, ChevronRight, HeartPulse, ListTodo, ScanLine } from "lucide-react";
+import { AlertOctagon, Banknote, BookOpen, BookUser, Bot, GraduationCap, ChevronRight, HeartPulse, ListTodo, ScanLine } from "lucide-react";
 import { StationPinnedContacts, StationContactsButton, StationContactsDialog } from "@/components/contacts/station-contacts";
 import { PAGE_STATION_KEYS } from "@/components/contacts/contacts-api";
 
@@ -693,6 +698,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const { canAccess } = usePagePermissions();
   const { can } = useFeatureAccess();
   const founderArea = useFounderArea();
+  const pointerKind = usePointerKind();
   const [mobileOpen, setMobileOpen] = useState(false);
   // Collapsible sidebar on tablet/desktop too — the hamburger in the top bar
   // is always visible, so getting it back is one obvious tap. Choice sticks
@@ -783,8 +789,15 @@ export function Layout({ children }: { children: ReactNode }) {
   //
   // Fix queue sits on its own line straight below, founder account only
   // (it was a Business tab until 2026-09-29).
+  //
+  // On a touch screen (iPad, phone) the FOUNDER's entry comes out of the
+  // menu: he swipes in from the left instead (components/business-swipe.tsx;
+  // Graeme, 2026-10-10). With a mouse it stays. Anyone else granted a tab
+  // keeps it everywhere.
   if (founderArea.home) {
-    const founderItems: NavItem[] = [{ name: "The Business", href: founderArea.home, icon: Briefcase }];
+    const founderItems: NavItem[] = showBusinessInNav({ isFounder: founderArea.isFounder, coarsePointer: pointerKind.coarsePointer, canHover: pointerKind.canHover })
+      ? [{ name: "The Business", href: founderArea.home, icon: Briefcase }]
+      : [];
     if (founderArea.isFounder) founderItems.push({ name: "Fix queue", href: "/fix-queue", icon: Wrench });
     navForUser = [...founderItems, ...navForUser];
   }
@@ -995,6 +1008,9 @@ export function QuickActionsDock() {
       <RecordDefectModal open={defectOpen} onClose={() => setDefectOpen(false)} />
       <TodoSheet open={todosOpen} onClose={() => setTodosOpen(false)} />
       <TodoInterstitial />
+      {/* The founder's swipe-from-the-left into The Business (touch screens
+          only; renders and listens to nothing for anyone else). */}
+      <BusinessSwipe />
       {/* Station messages — must-confirm ones included — lock/banner ONLY on
           the station they were sent to (StationMessagesBanner in
           StationLayout), never app-wide: the app-wide pop-up let a sender
@@ -1006,10 +1022,12 @@ export function QuickActionsDock() {
   );
 }
 
-// The quick actions, in a panel that swipes out from the orange tab on the
-// right (Graeme, 2026-10-09 — it was a small stack of pills). Grab the tab
-// and drag it left; swipe it right, tap the X, tap the dimmed strip or press
-// Escape to put it away. A tap on the tab still opens it. ALWAYS starts
+// The quick actions, in a panel that swipes out from the right (Graeme,
+// 2026-10-09 — it was a small stack of pills; 2026-10-10 — swipe left from
+// anywhere on the right half, a slim dotted handle instead of the big
+// orange tab, and a LONG swipe right, buttons and all, to put it away).
+// The X, the dimmed strip and Escape also close it; a tap on the handle
+// opens it. ALWAYS starts
 // shut: a shared iPad must never greet the next person with it open
 // (Graeme, 2026-08-22). The swipe rules: lib/swipe-snap.ts.
 function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpenImprovement, onOpenIssue, onOpenKanban, onOpenDefect }: {
@@ -1025,6 +1043,11 @@ function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpen
   const openTodoCount = useMyOpenTodoCount();
   const tour = useSwipePanelTour(open);
   const onOpenChange = useCallback((next: boolean) => setOpen(next), []);
+  // Swiping it open from the right is off while the PIN lock or a
+  // must-answer prompt is up (other pop-ups are caught at the swipe itself).
+  const { pinLocked, peoplePinPrompt, peoplePinSetupPrompt } = useAuth();
+  const promptShowing = useAnyPromptShowing();
+  const swipeAllowed = !pinLocked && !peoplePinPrompt && !peoplePinSetupPrompt && !promptShowing;
   // Choosing an action puts the panel away, then opens the action.
   const run = (action: () => void) => () => { setOpen(false); action(); };
 
@@ -1047,19 +1070,10 @@ function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpen
         open={open}
         onOpenChange={onOpenChange}
         title="Quick actions"
-        tabLabel={`Quick actions — drag left (or tap) to open: My to-dos, Improvement, Report issue, ${REPORT_DEFECT_LABEL}, Pull kanban, Ask ${ASSISTANT_NAME}`}
+        tabLabel={`Quick actions — swipe left from the right of the screen (or tap here) to open: My to-dos, Improvement, Report issue, ${REPORT_DEFECT_LABEL}, Pull kanban, Ask ${ASSISTANT_NAME}`}
         highlightTab={tour.active && tour.step === "try"}
-        tab={
-          <>
-            <ChevronLeft className="w-5 h-5" />
-            <span className="w-1 h-8 rounded-full bg-white/70" />
-            {openTodoCount > 0 && (
-              <span className="absolute -top-2 -left-2 min-w-[20px] h-[20px] px-1 rounded-full bg-primary text-primary-foreground text-[11px] font-bold flex items-center justify-center tabular-nums shadow">
-                {openTodoCount}
-              </span>
-            )}
-          </>
-        }
+        badge={openTodoCount}
+        edgeSwipeEnabled={swipeAllowed}
       >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {actions.filter(a => !a.hidden).map(a => (
@@ -1095,6 +1109,7 @@ function TopBar({ onMenu, fallbackTitle, onOpenSops, showMessages }: { onMenu: (
   const [location] = useLocation();
   const pageStations = PAGE_STATION_KEYS[location];
   const [contactsOpen, setContactsOpen] = useState(false);
+  const phone = usePhoneHeader();
 
   return (
     <header className="min-h-[56px] border-b border-border bg-background/80 backdrop-blur-md flex items-center px-4 md:px-5 xl:px-8 gap-3 z-10 min-w-0">
@@ -1122,35 +1137,57 @@ function TopBar({ onMenu, fallbackTitle, onOpenSops, showMessages }: { onMenu: (
           keyed by route. fallbackTitle (the nav name) labels it, not the
           header title: pages like packing retitle per order, and an SOP
           created here should be named for the PAGE, not order #133647. */}
-      {pageStations && (
+      {pageStations && contactsOpen && (
+        <StationContactsDialog stationKeys={pageStations} stationLabel={fallbackTitle} onClose={() => setContactsOpen(false)} />
+      )}
+      {phone ? (
         <>
-          <StationPinnedContacts stationKeys={pageStations} />
-          <StationContactsButton onClick={() => setContactsOpen(true)} />
-          {contactsOpen && (
-            <StationContactsDialog stationKeys={pageStations} stationLabel={fallbackTitle} onClose={() => setContactsOpen(false)} />
+          {/* Phone: the page's own action stays on the bar; everything else
+              (SOPs, + SOP, name pill, Messages, the bell, station contacts)
+              folds into one menu at the top right (Graeme, 2026-10-10). */}
+          {header?.action && (
+            <div className="flex-shrink-0">
+              {header.action}
+            </div>
+          )}
+          <MobileHeaderMenu
+            pageLabel={fallbackTitle}
+            onOpenSops={onOpenSops}
+            showMessages={showMessages}
+            stationKeys={pageStations ? [...pageStations] : null}
+            onOpenContacts={() => setContactsOpen(true)}
+          />
+        </>
+      ) : (
+        <>
+          {pageStations && (
+            <>
+              <StationPinnedContacts stationKeys={pageStations} />
+              <StationContactsButton onClick={() => setContactsOpen(true)} />
+            </>
+          )}
+          <PageSopButton pageLabel={fallbackTitle} />
+          <CurrentUserBadge />
+          <button
+            onClick={onOpenSops}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors flex-shrink-0"
+            title="Standards & SOPs"
+          >
+            <BookOpen className="w-4 h-4" />
+            <span className="hidden sm:inline">SOPs</span>
+          </button>
+          {/* Team messages — the same button, in the same place, on every page
+              (station screens put it in the same spot of their own bar). On a
+              page that IS a station's screen (Order Packing Live) it shows that
+              station's messages too. Not for external accountants. */}
+          {showMessages && <MessagesButton at={pageStations ?? []} />}
+          <NotificationBell />
+          {header?.action && (
+            <div className="flex-shrink-0">
+              {header.action}
+            </div>
           )}
         </>
-      )}
-      <PageSopButton pageLabel={fallbackTitle} />
-      <CurrentUserBadge />
-      <button
-        onClick={onOpenSops}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors flex-shrink-0"
-        title="Standards & SOPs"
-      >
-        <BookOpen className="w-4 h-4" />
-        <span className="hidden sm:inline">SOPs</span>
-      </button>
-      {/* Team messages — the same button, in the same place, on every page
-          (station screens put it in the same spot of their own bar). On a
-          page that IS a station's screen (Order Packing Live) it shows that
-          station's messages too. Not for external accountants. */}
-      {showMessages && <MessagesButton at={pageStations ?? []} />}
-      <NotificationBell />
-      {header?.action && (
-        <div className="flex-shrink-0">
-          {header.action}
-        </div>
       )}
     </header>
   );

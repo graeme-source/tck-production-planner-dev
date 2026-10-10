@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Bell, CheckCheck, MessageSquare, ShieldCheck, CircleCheck, PartyPopper, ListTodo, FileSignature } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
@@ -46,22 +46,30 @@ function NotificationItem({ n, onNavigate }: { n: AppNotification; onNavigate: (
   );
 }
 
-export function NotificationBell() {
-  const [open, setOpen] = useState(false);
+/**
+ * The notification centre's contents — the heading, "Mark all read" and the
+ * list — shared by the bell's pop-over (iPad / desktop) and the phone's
+ * top-bar menu (mobile-header-menu.tsx), so both behave identically.
+ * `active`: fetch the list when it becomes visible.
+ */
+export function NotificationList({ active, onNavigated, large = false }: {
+  active: boolean;
+  /** Called after a notification is tapped (close whatever holds the list). */
+  onNavigated?: () => void;
+  /** Bigger heading for the phone menu. */
+  large?: boolean;
+}) {
   const [, navigate] = useLocation();
   const { unreadCount, notifications, fetchNotifications, markRead, markAllRead } = useNotifications();
 
-  function handleOpen(isOpen: boolean) {
-    setOpen(isOpen);
-    if (isOpen) fetchNotifications();
-  }
+  useEffect(() => { if (active) fetchNotifications(); }, [active, fetchNotifications]);
 
   // Every notification lands somewhere useful (Graeme, 2026-09-07): the
   // exact improvement, the issue, the to-do list, the contract — a bell
   // entry that goes nowhere isn't a tool.
   function handleNavigate(n: AppNotification) {
     if (!n.read) markRead.mutate(n.id);
-    setOpen(false);
+    onNavigated?.();
     if (n.type === "test_request") {
       navigate("/test-requests?tab=problems");
     } else if (n.andonIssueId) {
@@ -76,7 +84,44 @@ export function NotificationBell() {
   }
 
   return (
-    <Popover open={open} onOpenChange={handleOpen}>
+    <>
+      <div className={cn("flex items-center justify-between border-b border-border", large ? "px-1 py-3" : "px-4 py-3")}>
+        <h3 className={cn("font-semibold", large ? "text-lg" : "text-sm")}>
+          Notifications{large && unreadCount > 0 ? ` (${unreadCount} new)` : ""}
+        </h3>
+        {unreadCount > 0 && (
+          <button
+            onClick={() => markAllRead.mutate()}
+            className={cn("flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors", large ? "text-sm h-11 px-3 rounded-xl border border-border" : "text-xs")}
+          >
+            <CheckCheck className="w-3.5 h-3.5" />
+            Mark all read
+          </button>
+        )}
+      </div>
+      <div className={large ? undefined : "max-h-80 overflow-y-auto"}>
+        {notifications.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+            No notifications yet
+          </div>
+        ) : (
+          <div className={cn("p-1", large ? "space-y-1" : "space-y-0.5")}>
+            {notifications.map(n => (
+              <NotificationItem key={n.id} n={n} onNavigate={handleNavigate} />
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+export function NotificationBell() {
+  const [open, setOpen] = useState(false);
+  const { unreadCount } = useNotifications();
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           className="relative p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors flex-shrink-0"
@@ -91,31 +136,7 @@ export function NotificationBell() {
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 p-0">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-          <h3 className="font-semibold text-sm">Notifications</h3>
-          {unreadCount > 0 && (
-            <button
-              onClick={() => markAllRead.mutate()}
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <CheckCheck className="w-3.5 h-3.5" />
-              Mark all read
-            </button>
-          )}
-        </div>
-        <div className="max-h-80 overflow-y-auto">
-          {notifications.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-              No notifications yet
-            </div>
-          ) : (
-            <div className="p-1 space-y-0.5">
-              {notifications.map(n => (
-                <NotificationItem key={n.id} n={n} onNavigate={handleNavigate} />
-              ))}
-            </div>
-          )}
-        </div>
+        <NotificationList active={open} onNavigated={() => setOpen(false)} />
       </PopoverContent>
     </Popover>
   );

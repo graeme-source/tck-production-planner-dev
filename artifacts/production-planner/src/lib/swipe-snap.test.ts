@@ -11,19 +11,32 @@ describe("dragProgress", () => {
 });
 
 describe("snapAfterDrag", () => {
-  it("opens once dragged a third of the way out, springs back short of it", () => {
-    expect(snapAfterDrag({ wasOpen: false, progress: 0.34, velocityPxPerMs: 0 })).toBe("open");
+  it("opens once pulled 35% out, springs back short of it", () => {
+    expect(snapAfterDrag({ wasOpen: false, progress: 0.36, velocityPxPerMs: 0 })).toBe("open");
     expect(snapAfterDrag({ wasOpen: false, progress: 0.3, velocityPxPerMs: 0 })).toBe("closed");
   });
-  it("closes once pushed a third of the way back, stays open short of it", () => {
-    expect(snapAfterDrag({ wasOpen: true, progress: 0.6, velocityPxPerMs: 0 })).toBe("closed");
-    expect(snapAfterDrag({ wasOpen: true, progress: 0.7, velocityPxPerMs: 0 })).toBe("open");
-  });
-  it("a fast flick wins either way", () => {
-    expect(snapAfterDrag({ wasOpen: false, progress: 0.05, velocityPxPerMs: -0.8 })).toBe("open");
-    expect(snapAfterDrag({ wasOpen: true, progress: 0.95, velocityPxPerMs: 0.8 })).toBe("closed");
+  it("a fast leftward flick opens it, but only once it's 20% out", () => {
+    expect(snapAfterDrag({ wasOpen: false, progress: 0.22, velocityPxPerMs: -0.8 })).toBe("open");
+    expect(snapAfterDrag({ wasOpen: false, progress: 0.05, velocityPxPerMs: -0.8 })).toBe("closed");
     // A slow drift doesn't count as a flick.
-    expect(snapAfterDrag({ wasOpen: false, progress: 0.1, velocityPxPerMs: -0.2 })).toBe("closed");
+    expect(snapAfterDrag({ wasOpen: false, progress: 0.25, velocityPxPerMs: -0.2 })).toBe("closed");
+  });
+  // Regression (Graeme, 2026-10-10): a short drag across a button closed it
+  // — or couldn't close it at all. Closing now needs a LONG swipe.
+  it("closing needs a long swipe: pushed half way back closes, a third doesn't", () => {
+    expect(snapAfterDrag({ wasOpen: true, progress: 0.5, velocityPxPerMs: 0 })).toBe("closed");
+    expect(snapAfterDrag({ wasOpen: true, progress: 0.2, velocityPxPerMs: 0 })).toBe("closed");
+    expect(snapAfterDrag({ wasOpen: true, progress: 0.6, velocityPxPerMs: 0 })).toBe("open");
+    expect(snapAfterDrag({ wasOpen: true, progress: 0.66, velocityPxPerMs: 0.2 })).toBe("open");
+  });
+  it("an accidental quick flick doesn't close it — the flick must also travel 30%", () => {
+    expect(snapAfterDrag({ wasOpen: true, progress: 0.95, velocityPxPerMs: 0.9 })).toBe("open");
+    expect(snapAfterDrag({ wasOpen: true, progress: 0.75, velocityPxPerMs: 0.9 })).toBe("open");
+    expect(snapAfterDrag({ wasOpen: true, progress: 0.69, velocityPxPerMs: 0.9 })).toBe("closed");
+  });
+  it("a flick back the other way cancels", () => {
+    expect(snapAfterDrag({ wasOpen: true, progress: 0.4, velocityPxPerMs: -0.8 })).toBe("open");
+    expect(snapAfterDrag({ wasOpen: false, progress: 0.6, velocityPxPerMs: 0.8 })).toBe("closed");
   });
 });
 

@@ -27,11 +27,15 @@ import { type SopPlace } from "@/components/sop-detach";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-export function PageSopButton({ pageLabel }: {
+export function PageSopButton({ pageLabel, variant = "bar" }: {
   /** Human name of the page ("Order Packing Live") — labels the modals and
    *  pre-fills the title of an SOP created here. */
   pageLabel: string;
+  /** "sheet": big labelled buttons for the phone's top-bar menu
+   *  (components/mobile-header-menu.tsx); "bar": the compact top-bar pair. */
+  variant?: "bar" | "sheet";
 }) {
+  const sheet = variant === "sheet";
   const [pathname] = useLocation();
   const pageKey = pageSopKey(pathname);
   const queryKey = ["sop-links-page", pageKey];
@@ -92,29 +96,35 @@ export function PageSopButton({ pageLabel }: {
   );
 
   return (
-    <span className="flex items-center gap-1.5 flex-shrink-0">
+    <span className={sheet ? "contents" : "flex items-center gap-1.5 flex-shrink-0"}>
       {links.length > 0 && (
         <button
           onClick={handleShowMeHow}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm transition-colors"
+          className={sheet
+            ? "flex items-center gap-3 h-14 px-4 rounded-2xl text-base font-bold bg-primary text-primary-foreground shadow-sm"
+            : "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm transition-colors"}
           title={links.length === 1 ? links[0].title : `${links.length} SOPs for this page`}
         >
-          <BookOpen className="w-4 h-4" />
-          <span className="hidden sm:inline whitespace-nowrap">Show me how</span>
+          <BookOpen className={sheet ? "w-5 h-5" : "w-4 h-4"} />
+          <span className={sheet ? "whitespace-nowrap" : "hidden sm:inline whitespace-nowrap"}>Show me how</span>
           {links.length > 1 && <span className="tabular-nums">{links.length}</span>}
         </button>
       )}
       <button
         onClick={() => setManageOpen(true)}
-        className={cn(
-          "flex items-center gap-1 py-1.5 rounded-lg text-sm font-medium border border-dashed border-border text-muted-foreground hover:border-primary hover:text-primary transition-colors",
-          links.length > 0 ? "px-1.5" : "px-2.5",
-        )}
+        className={sheet
+          ? "flex items-center gap-3 h-14 px-4 rounded-2xl text-base font-semibold border-2 border-dashed border-border text-foreground"
+          : cn(
+            "flex items-center gap-1 py-1.5 rounded-lg text-sm font-medium border border-dashed border-border text-muted-foreground hover:border-primary hover:text-primary transition-colors",
+            links.length > 0 ? "px-1.5" : "px-2.5",
+          )}
         title="Attach an SOP to this page"
         aria-label="Attach an SOP to this page"
       >
-        <Plus className="w-4 h-4" />
-        {links.length === 0 && <span className="hidden lg:inline">SOP</span>}
+        <Plus className={sheet ? "w-5 h-5" : "w-4 h-4"} />
+        {sheet
+          ? <span>Add an SOP to this page</span>
+          : links.length === 0 && <span className="hidden lg:inline">SOP</span>}
       </button>
 
       {chooserOpen && modalShell("Show me how", () => setChooserOpen(false), (

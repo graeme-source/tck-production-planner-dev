@@ -109,7 +109,7 @@ export function MonthGrid({ month, today, events, emails = [], planned = [], tod
   }, [events]);
 
   return (
-    <div className={cn("select-none", (dragging || planDrag.dragging) && "cursor-grabbing")}>
+    <div data-no-swipe="" className={cn("select-none", (dragging || planDrag.dragging) && "cursor-grabbing")}>
       <div className="grid grid-cols-7 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
         {DAY_NAMES.map(d => <div key={d} className="px-1.5 pb-1.5">{d}</div>)}
       </div>

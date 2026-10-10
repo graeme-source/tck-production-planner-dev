@@ -15,7 +15,12 @@ import { cn } from "@/lib/utils";
 import { useMessagesUnread, OPEN_MESSAGES_EVENT } from "./messages-api";
 import { MessagesPanel } from "./messages-panel";
 
-export function MessagesButton({ at = [], className }: { at?: string[]; className?: string }) {
+export function MessagesButton({ at = [], className, labelAlways = false }: {
+  at?: string[];
+  className?: string;
+  /** Show the word "Messages" at every width (the phone's top-bar menu). */
+  labelAlways?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [initialKey, setInitialKey] = useState<string | null>(null);
   const unread = useMessagesUnread(at, open);
@@ -56,7 +61,7 @@ export function MessagesButton({ at = [], className }: { at?: string[]; classNam
         data-testid="messages-button"
       >
         <MessageCircle className="w-4 h-4" />
-        <span className="hidden sm:inline">Messages</span>
+        <span className={labelAlways ? undefined : "hidden sm:inline"}>Messages</span>
         {(count > 0 || waiting) && (
           <span className={cn(
             "absolute -top-2 -right-2 min-w-[20px] h-5 px-1 rounded-full text-[11px] font-bold flex items-center justify-center text-white",

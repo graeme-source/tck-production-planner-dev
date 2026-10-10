@@ -7,8 +7,11 @@ describe("nextTourStep", () => {
     expect(nextTourStep("try", "panel_opened")).toBe("swipe_away");
     expect(nextTourStep("swipe_away", "panel_closed")).toBe("done");
   });
+  it("skips to 'swipe it away' if they swipe it open straight from the intro", () => {
+    expect(nextTourStep("intro", "panel_opened")).toBe("swipe_away");
+  });
   it("ignores events out of turn", () => {
-    expect(nextTourStep("intro", "panel_opened")).toBe("intro");
+    expect(nextTourStep("intro", "panel_closed")).toBe("intro");
     expect(nextTourStep("try", "panel_closed")).toBe("try");
     expect(nextTourStep("done", "panel_opened")).toBe("done");
   });
@@ -19,6 +22,11 @@ describe("shouldShowTour", () => {
   it("shows once, to someone who hasn't done it", () => {
     expect(shouldShowTour(base)).toBe(true);
     expect(shouldShowTour({ ...base, completed: [SWIPE_TOUR_KEY] })).toBe(false);
+  });
+  it("shows the new swipe-from-anywhere walkthrough to people who only did the old one", () => {
+    expect(SWIPE_TOUR_KEY).not.toBe("swipe_panel");
+    expect(SWIPE_TOUR_KEY).toMatch(/^[a-z0-9_]{1,40}$/);
+    expect(shouldShowTour({ ...base, completed: ["swipe_panel"] })).toBe(true);
   });
   it("waits while loading, after 'Show me later', and behind the PIN pad or another prompt", () => {
     expect(shouldShowTour({ ...base, completed: undefined })).toBe(false);

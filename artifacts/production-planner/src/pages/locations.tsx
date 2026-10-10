@@ -400,6 +400,9 @@ export default function Locations() {
         <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+          {/* data-no-swipe: a sideways drag on the fridge map moves products,
+              it must never pull out the quick-actions panel (lib/edge-swipe). */}
+          <div data-no-swipe="">
           {/* The maps, in walk order. */}
           {zoneOrder.map(zone => {
             if (zone === "ambient") {
@@ -464,6 +467,7 @@ export default function Locations() {
           <DragOverlay>
             {dragVariantId && <ChipBody sku={null} name={nameByVariantId.get(dragVariantId) ?? ""} dragging />}
           </DragOverlay>
+          </div>
         </DndContext>
       )}
 

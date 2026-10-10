@@ -1,11 +1,12 @@
 /**
- * "The orange tab on the right now swipes out" — a short guided pop-up the
- * first time each person loads the app after the swipe panel shipped
- * (Graeme, 2026-10-09; Objective H). Steps and when it shows: pure, in
+ * "Swipe left from anywhere on the right of the screen" — a short guided
+ * pop-up the first time each person loads the app after the swipe panel
+ * shipped (Graeme, 2026-10-09; new gesture and new key 2026-10-10;
+ * Objective H). Steps and when it shows: pure, in
  * lib/swipe-tour.ts.
  *
  * A small floating card, never a full-screen blocker: the person has to be
- * able to reach the tab to try it. Closable at every step (X); "Show me
+ * able to reach the right of the screen to try it. Closable at every step (X); "Show me
  * later" and the X put it away until the next page load; reaching the end
  * saves it against the PERSON (/api/user-tours), so it never comes back on
  * any device. Mounted inside QuickActionsDock, so it is never on the
@@ -92,8 +93,8 @@ export function SwipePanelTourCard({ tour }: { tour: ReturnType<typeof useSwipeP
       {step === "intro" && (
         <>
           <SwipeDemo />
-          <h2 id="swipe-tour-title" className="mt-4 text-2xl font-display font-bold pr-10">The orange tab on the right now swipes out</h2>
-          <p className="mt-1 text-base text-muted-foreground">Grab it and drag it left to open your quick actions — to-dos, improvements, issues, defects & waste and more. Swipe it back to put it away.</p>
+          <h2 id="swipe-tour-title" className="mt-4 text-2xl font-display font-bold pr-10">Your quick actions are a swipe away</h2>
+          <p className="mt-1 text-base text-muted-foreground">Swipe left from anywhere on the right of the screen to open quick actions — to-dos, improvements, issues, defects & waste and more. Swipe it back to close. The little dots on the right edge remind you it's there.</p>
           <div className="mt-4 grid grid-cols-2 gap-2">
             <button type="button" onClick={tour.putOff} className="h-14 rounded-2xl border-2 border-border text-lg font-bold hover:bg-secondary/50">Show me later</button>
             <button type="button" onClick={tour.start} className="h-14 rounded-2xl bg-orange-500 text-white text-lg font-bold hover:bg-orange-600">Try it now</button>
@@ -106,7 +107,7 @@ export function SwipePanelTourCard({ tour }: { tour: ReturnType<typeof useSwipeP
           <Hand className="w-9 h-9 text-orange-500 shrink-0 -scale-x-100" />
           <div>
             <h2 id="swipe-tour-title" className="text-xl font-bold">Try it now</h2>
-            <p className="text-base text-muted-foreground">Put your finger on the flashing orange tab on the right and drag it to the left.</p>
+            <p className="text-base text-muted-foreground">Put your finger anywhere on the right half of the screen and sweep it to the left.</p>
           </div>
         </div>
       )}
@@ -116,7 +117,7 @@ export function SwipePanelTourCard({ tour }: { tour: ReturnType<typeof useSwipeP
           <Hand className="w-9 h-9 text-orange-500 shrink-0" />
           <div>
             <h2 id="swipe-tour-title" className="text-xl font-bold">Now swipe it away</h2>
-            <p className="text-base text-muted-foreground">Drag the panel back to the right to put it away.</p>
+            <p className="text-base text-muted-foreground">Swipe it back to the right — a long swipe, and it's fine to start on a button.</p>
           </div>
         </div>
       )}
@@ -127,7 +128,7 @@ export function SwipePanelTourCard({ tour }: { tour: ReturnType<typeof useSwipeP
             <CheckCircle2 className="w-9 h-9 text-emerald-600 shrink-0" />
             <div>
               <h2 id="swipe-tour-title" className="text-xl font-bold">Done — you've got it</h2>
-              <p className="text-base text-muted-foreground">Drag the orange tab out whenever you need it. You won't see this again.</p>
+              <p className="text-base text-muted-foreground">Swipe left from the right of the screen whenever you need it. You won't see this again.</p>
             </div>
           </div>
           {complete.isError && (
@@ -147,7 +148,7 @@ export function SwipePanelTourCard({ tour }: { tour: ReturnType<typeof useSwipeP
   );
 }
 
-/** A little looping picture: a finger drags the orange tab left and the panel follows. */
+/** A little looping picture: a finger sweeps right-to-left across the right half and the panel follows. */
 function SwipeDemo() {
   return (
     <div className="relative mx-auto h-28 w-52 overflow-hidden rounded-2xl border-2 border-border bg-secondary/40" aria-hidden="true">
@@ -157,9 +158,16 @@ function SwipeDemo() {
         <div className="h-2 w-3/4 rounded bg-muted-foreground/20" />
         <div className="h-2 w-1/2 rounded bg-muted-foreground/20" />
       </div>
-      {/* the panel, with the tab on its left edge */}
+      {/* the right half, where the swipe can start */}
+      <div className="absolute top-0 bottom-0 right-0 w-1/2 bg-orange-400/10 border-l border-dashed border-orange-400/60" />
+      {/* the slim dotted handle on the edge */}
+      <div className="absolute right-0 top-1/2 -translate-y-1/2 h-8 w-1.5 rounded-l-full bg-card border border-r-0 border-border flex flex-col items-center justify-center gap-0.5">
+        <span className="w-1 h-1 rounded-full bg-primary" />
+        <span className="w-1 h-1 rounded-full bg-blue-500" />
+        <span className="w-1 h-1 rounded-full bg-orange-500" />
+      </div>
+      {/* the panel */}
       <div className="swipe-demo-panel absolute top-0 bottom-0 right-0 w-[118px] bg-card border-l border-border">
-        <div className="absolute -left-4 top-1/2 -translate-y-1/2 h-12 w-4 rounded-l-lg bg-orange-500" />
         <div className="m-2 space-y-1.5">
           <div className="h-4 rounded-md bg-primary/30" />
           <div className="h-4 rounded-md bg-blue-400/40" />
@@ -167,7 +175,7 @@ function SwipeDemo() {
         </div>
       </div>
       {/* the finger */}
-      <div className="swipe-demo-finger absolute top-1/2 right-[2px] -mt-3 h-6 w-6 rounded-full bg-foreground/70 ring-4 ring-foreground/20" />
+      <div className="swipe-demo-finger absolute top-[30%] right-[14px] -mt-3 h-6 w-6 rounded-full bg-foreground/70 ring-4 ring-foreground/20" />
     </div>
   );
 }
