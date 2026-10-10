@@ -65,13 +65,13 @@ function GroupCard({ group, canEdit }: { group: GroupView; canEdit: boolean }) {
     try {
       await send(p, { confirmMove: true, confirmTake: p.confirm === "take" });
       setPending(null);
+      if (!p.useShopifyVariant) auto.discard("saved");
       await invalidate();
-      if (!p.useShopifyVariant) await auto.flush();
     } catch (e) {
       const err = e as ApiError;
       // Moving from an old product can reveal a current one too — ask again.
       if (err.status === 409 && err.body?.confirm === "take") setPending({ ...p, confirm: "take", reason: err.message, holders: err.body.holders ?? [] });
-      else { setPending(null); setUseError(err.message); }
+      else { setPending(null); auto.discard(); setUseError(err.message); }
     } finally {
       setMoving(false);
     }
@@ -138,7 +138,7 @@ function GroupCard({ group, canEdit }: { group: GroupView; canEdit: boolean }) {
           </li>
         ))}
       </ul>
-      <MoveConfirmDialog pending={pending} busy={moving} onConfirm={p => void confirmMove(p)} onCancel={() => { setPending(null); setText(group.barcode ?? ""); }} />
+      <MoveConfirmDialog pending={pending} busy={moving} onConfirm={p => void confirmMove(p)} onCancel={() => { setPending(null); auto.discard(); setText(group.barcode ?? ""); }} />
     </div>
   );
 }

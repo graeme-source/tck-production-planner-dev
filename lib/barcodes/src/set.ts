@@ -66,7 +66,7 @@ export function planAssignment(
     const names = identityNames(currentInOurs);
     return {
       ok: false, confirm: "take", holders: names,
-      reason: `${g.digits} is the barcode of ${names.join(" and ")}, a current product. If you move it to ${target.name}, ${names.join(" and ")} will have NO barcode and can't be scanned until it gets one.`,
+      reason: `${g.digits} is the barcode of ${names.join(" and ")}, ${names.length > 1 ? "products you still sell" : "a product you still sell"}. If you move it to ${target.name}, ${names.join(" and ")} will have NO barcode and can't be scanned until it gets one.`,
     };
   }
   const old = [...inOurs.filter(h => !h.current), ...inShopifyOnly];
