@@ -156,8 +156,11 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     columnSplitPct: 44, columnGapMm: 4,
     titleBandMm: 9, stepsBandMm: 13, bandGapMm: 2, fieldGapMm: 2,
     stepCircleMm: 5.5,
-    // His current EAN-13: ~47 mm wide with quiet zones × ~21 mm bars ≈ 126%.
-    barcodeHeightMm: 21, barcodeSizePct: 126,
+    // Graeme 2026-10-10: 21 mm looked too tall, 11 mm too short — "wider
+    // but shorter, somewhere in the middle". 151% = whole 4-dot modules at
+    // 203 dpi (bars 47.5 mm wide, ~56.5 mm with quiet zones, like his current
+    // ~47 mm barcode) with bars at 18.5 mm, just above the 80% minimum.
+    barcodeHeightMm: 18.5, barcodeSizePct: 151,
     smallPack: false,
   },
   fields: {

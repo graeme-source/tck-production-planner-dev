@@ -175,12 +175,11 @@ describe("barcode as printed", () => {
   const b = proof.layout.barcode;
   const bm = proof.bitmap;
 
-  it("defaults to ~126% → whole 3-dot modules, ~21 mm bars", () => {
+  it("defaults to 151% → whole 4-dot modules, ~18.5 mm bars (wider, shorter)", () => {
     expect(b.module.ok).toBe(true);
     if (!b.module.ok) return;
-    expect(b.module.moduleDots).toBe(3);
-    expect(dotsToMm(b.barsBottom - b.barsTop, 203)).toBeCloseTo(21, 0);
-    expect(dotsToMm(b.module.widthDots, 203)).toBeCloseTo(42.4, 1);
+    expect(b.module.moduleDots).toBe(4);
+    expect(dotsToMm(b.barsBottom - b.barsTop, 203)).toBeCloseTo(18.5, 0);
   });
 
   it("bars are exact whole-dot modules, quiet zones clear, no digits over the bars", () => {
