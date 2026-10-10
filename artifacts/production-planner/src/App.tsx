@@ -31,6 +31,7 @@ import ProductLabelsPage from "@/pages/product-labels";
 import BarcodesPage from "@/pages/barcodes";
 import ProductLabelSettingsPage from "@/pages/product-label-settings";
 import ProductLabelRecipePage from "@/pages/product-label-recipe";
+import QuidWordsPage from "@/pages/quid-words";
 import ProductionPlans from "@/pages/production-plans";
 import QueuedProductionPage from "@/pages/queued-production";
 import StationPage from "@/pages/station";
@@ -211,6 +212,7 @@ function Router() {
               {/* Product labels (Stage 1 — proofs, live versions; no printing yet) */}
               <Route path="/labels" component={ProductLabelsPage} />
               <Route path="/labels/settings" component={ProductLabelSettingsPage} />
+              <Route path="/labels/quid" component={QuidWordsPage} />
               <Route path="/labels/:id" component={ProductLabelRecipePage} />
               {/* Barcodes: set in the app, the scanner's source of truth */}
               <Route path="/barcodes" component={BarcodesPage} />

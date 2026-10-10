@@ -9,7 +9,7 @@
  */
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
-import { AlertTriangle, CheckCircle2, ChevronRight, Loader2, Settings2, Tag } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronRight, Loader2, Percent, Settings2, Tag } from "lucide-react";
 import type { LabelStatus } from "@workspace/product-labels";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/contexts/auth-context";
@@ -46,9 +46,14 @@ export default function ProductLabelsPage() {
         title="Labels"
         description="Each recipe's pack label. The live version is what gets printed — recipe changes never alter it until someone checks the new one and updates it."
         action={canEdit ? (
-          <Link href="/labels/settings" className="inline-flex items-center gap-2 h-11 px-4 rounded-xl border-2 border-border bg-card font-semibold hover:bg-secondary">
-            <Settings2 className="w-5 h-5" /> Label design & type
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link href="/labels/quid" className="inline-flex items-center gap-2 h-11 px-4 rounded-xl border-2 border-border bg-card font-semibold hover:bg-secondary">
+              <Percent className="w-5 h-5" /> QUID words
+            </Link>
+            <Link href="/labels/settings" className="inline-flex items-center gap-2 h-11 px-4 rounded-xl border-2 border-border bg-card font-semibold hover:bg-secondary">
+              <Settings2 className="w-5 h-5" /> Label design & type
+            </Link>
+          </div>
         ) : undefined}
       />
 

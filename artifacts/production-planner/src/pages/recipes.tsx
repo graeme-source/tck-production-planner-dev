@@ -22,6 +22,8 @@ import { RecipeLabelLink } from "@/components/product-labels/recipe-label-link";
 import { RecipeBarcodes } from "@/components/barcodes/recipe-barcodes";
 import { activeRecipes, archivedRecipes, archivedLabel, draftRecipes, draftMenuTickNotice, isDraftRecipe, recipeStageCounts } from "@/lib/recipe-archive";
 import { ArchiveRecipeDialog, ArchivedRecipesPanel, DraftRecipesPanel, MoveToDraftDialog, RecipeArchiveFooter, RecipeDraftBadge } from "@/components/recipe-archive";
+import { RecipeQuidPanel } from "@/components/recipe-quid/recipe-quid-panel";
+import { recipeQuidKey, withoutQuid } from "@/components/recipe-quid/api";
 
 // Archive fields GET /api/recipes and /api/recipes/:id return (migration
 // 0141) that the generated OpenAPI types don't describe yet.
@@ -1393,7 +1395,7 @@ function EditRecipeDialog({
                   // on the menu (the form said so above Save). Migration 0142.
                   const publishDraft = isDraftRecipe(detail as ArchiveFields | undefined) && (rest.isCoreMenu === true || rest.isCurrentSpecial === true);
                   const payload = {
-                    ...rest,
+                    ...withoutQuid(rest),
                     ...(publishDraft ? { publishDraft: true } : {}),
                     targetBuildSeconds: targetBuildMinutes != null ? Math.round(targetBuildMinutes * 60) : null,
                     ovenTempC: rest.ovenTempC ?? null,
@@ -1405,9 +1407,12 @@ function EditRecipeDialog({
                     credentials: "include",
                     body: JSON.stringify({ isFridgeProduct: isFridgeProduct === true }),
                   }).catch(() => {});
-                  updateRecipe.mutate({ id, data: payload }, { onSuccess: () => { fridgeWrite.finally(() => { queryClient.invalidateQueries({ queryKey: [`/api/recipes/${id}`] }); queryClient.invalidateQueries({ queryKey: ["/api/recipes"] }); }); onOpenChange(false); } });
+                  updateRecipe.mutate({ id, data: payload }, { onSuccess: () => { fridgeWrite.finally(() => { queryClient.invalidateQueries({ queryKey: [`/api/recipes/${id}`] }); queryClient.invalidateQueries({ queryKey: ["/api/recipes"] }); queryClient.invalidateQueries({ queryKey: recipeQuidKey(id) }); }); onOpenChange(false); } });
                 }}
               />
+
+              {/* Percentages on the label — automatic QUID, its own autosave */}
+              <RecipeQuidPanel recipeId={id} />
 
               {/* Shopify Inventory Link */}
               <div className="mt-4 border-t border-border pt-4">
@@ -2686,7 +2691,7 @@ export default function Recipes() {
               // Special is ticked (the form shows that too).
               const isDraft = startAsDraft === true && rest.isCoreMenu !== true && rest.isCurrentSpecial !== true;
               const payload = {
-                ...rest,
+                ...withoutQuid(rest),
                 isDraft,
                 targetBuildSeconds: targetBuildMinutes != null ? Math.round(targetBuildMinutes * 60) : null,
                 ovenTempC: rest.ovenTempC ?? null,
