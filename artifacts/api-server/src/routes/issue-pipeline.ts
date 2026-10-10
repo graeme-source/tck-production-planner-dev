@@ -262,7 +262,7 @@ router.post("/review/:id/dismiss", requireFounder, async (req, res) => {
 
 // ── POST /review/:id/no-action | /restore — "Dismiss — no action" ───────────
 // Graeme, 2026-10-10: out of the queue SILENTLY — no reply, no notification,
-// no email, the andon issue left exactly as it is — and the pipeline never
+// no email; the report is closed quietly on the issue log — and the pipeline never
 // picks it up again (isSetAside in lib/issue-pipeline-rules.ts). The row and
 // its history stay; it shows under "Dismissed" and can be restored.
 router.post("/review/:id/no-action", requireFounder, validate(z.object({}).passthrough()), async (req, res) => {
@@ -272,10 +272,25 @@ router.post("/review/:id/no-action", requireFounder, validate(z.object({}).passt
   if (!current) { res.status(404).json({ error: "Recommendation not found" }); return; }
   if (!canSetAside(current)) { res.status(409).json({ error: "Already dismissed" }); return; }
   const name = await sessionUserName(req.session.userId!);
-  const [row] = await db.update(issueTriageTable).set({
-    noActionAt: new Date(), noActionBy: name, noActionByUserId: req.session.userId!, awaitingRetriage: false, updatedAt: new Date(),
-  }).where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
-  await recordEvent(db, row, "no_action", name, "Dismissed — no action (nobody was messaged)");
+  const userId = req.session.userId!;
+  // Graeme, 2026-10-10: also close the report on the issue log — QUIETLY
+  // (a direct update, never messageReporter: no reply, no notice). The same
+  // timestamp goes on both rows so Restore can tell it reopened only what
+  // this dismissal closed.
+  const now = new Date();
+  const row = await db.transaction(async (tx) => {
+    const [issue] = await tx.select().from(andonIssuesTable).where(eq(andonIssuesTable.id, current.andonIssueId));
+    if (issue && !issue.resolvedAt) {
+      await tx.update(andonIssuesTable)
+        .set({ resolvedBy: userId, resolvedByName: name, resolvedAt: now })
+        .where(eq(andonIssuesTable.id, issue.id));
+    }
+    const [r] = await tx.update(issueTriageTable).set({
+      noActionAt: now, noActionBy: name, noActionByUserId: userId, awaitingRetriage: false, updatedAt: now,
+    }).where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
+    await recordEvent(tx, r, "no_action", name, "Dismissed — no action (nobody was messaged; report closed quietly)");
+    return r;
+  });
   res.json({ triage: row });
 });
 
@@ -286,10 +301,20 @@ router.post("/review/:id/restore", requireFounder, validate(z.object({}).passthr
   if (!current) { res.status(404).json({ error: "Recommendation not found" }); return; }
   if (!canRestoreSetAside(current)) { res.status(409).json({ error: "This one isn't dismissed" }); return; }
   const name = await sessionUserName(req.session.userId!);
-  const [row] = await db.update(issueTriageTable).set({
-    noActionAt: null, noActionBy: null, noActionByUserId: null, updatedAt: new Date(),
-  }).where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
-  await recordEvent(db, row, "restored", name, "Restored to the Fix queue");
+  const row = await db.transaction(async (tx) => {
+    // Reopen the report only if this dismissal is what closed it.
+    const [issue] = await tx.select().from(andonIssuesTable).where(eq(andonIssuesTable.id, current.andonIssueId));
+    if (issue?.resolvedAt && current.noActionAt && issue.resolvedAt.getTime() === current.noActionAt.getTime()) {
+      await tx.update(andonIssuesTable)
+        .set({ resolvedBy: null, resolvedByName: null, resolvedAt: null })
+        .where(eq(andonIssuesTable.id, issue.id));
+    }
+    const [r] = await tx.update(issueTriageTable).set({
+      noActionAt: null, noActionBy: null, noActionByUserId: null, updatedAt: new Date(),
+    }).where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
+    await recordEvent(tx, r, "restored", name, "Restored to the Fix queue");
+    return r;
+  });
   res.json({ triage: row });
 });
 
