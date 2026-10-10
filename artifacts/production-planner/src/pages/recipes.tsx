@@ -18,6 +18,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import { RecipeLabelLink } from "@/components/product-labels/recipe-label-link";
 import { activeRecipes, archivedRecipes, archivedLabel, draftRecipes, draftMenuTickNotice, isDraftRecipe, recipeStageCounts } from "@/lib/recipe-archive";
 import { ArchiveRecipeDialog, ArchivedRecipesPanel, DraftRecipesPanel, MoveToDraftDialog, RecipeArchiveFooter, RecipeDraftBadge } from "@/components/recipe-archive";
 
@@ -1558,6 +1559,7 @@ function EditRecipeDialog({
                   )}
                 </div>
                 <RecipeIngredientDeckPanel id={id} active={open && !isLoading && !isFetching} refreshKey={detail?.ingredients?.length} />
+                <RecipeLabelLink recipeId={id} active={open && !isLoading && !isFetching} />
               </div>
               <RecipeNutritionSection id={id} active={open && !isLoading && !isFetching} refreshKey={JSON.stringify([detail?.ingredients?.map(i => [i.ingredientId, i.quantity]), detail?.subRecipes?.map(r => [r.subRecipeId, r.quantity]), detail?.servings, detail?.packSize])} />
               {canEditShopify && detail && (
@@ -1850,6 +1852,7 @@ function RecipeCostBreakdownDialog({ id, open, onOpenChange }: { id: number; ope
                 <h4 className="text-sm font-semibold">Ingredient Deck</h4>
               </div>
               <RecipeIngredientDeckPanel id={id} active={open && !isLoading} />
+              <RecipeLabelLink recipeId={id} active={open && !isLoading} />
             </div>
             <RecipeNutritionSection id={id} active={open && !isLoading} />
           </div>
