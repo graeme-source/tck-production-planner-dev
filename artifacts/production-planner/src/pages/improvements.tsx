@@ -16,12 +16,12 @@
 // the people who just want to log what they did.
 
 import { useEffect, useRef, useState } from "react";
-import { useSearch } from "wouter";
+import { Link, useSearch } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Loader2, Camera, CheckCircle2, Clock, ThumbsUp, RotateCcw,
   Trophy, ChevronLeft, X, AlertCircle, Settings2, Clapperboard, Trash2, ArrowBigUp, HandHelping, BookOpen,
-  Lightbulb, EyeOff,
+  Lightbulb, EyeOff, ClipboardCheck,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/contexts/auth-context";
@@ -905,6 +905,17 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
             : "Up for grabs — nobody has picked this up"}
         </p>
       </div>
+
+      {/* Forced testing (2026-10-10): ask whoever logged it (always) to try
+          the change for real. Managers and admins — the page enforces it. */}
+      {isManager && (
+        <Link
+          href={`/test-requests?new=1&improvement=${item.id}`}
+          className="w-full h-14 rounded-2xl border-2 border-sky-500 text-sky-700 dark:text-sky-300 text-lg font-bold flex items-center justify-center gap-2 hover:bg-sky-50 dark:hover:bg-sky-900/30 transition-colors"
+        >
+          <ClipboardCheck className="w-5 h-5" /> Request a test
+        </Link>
+      )}
 
       {/* Hand it back, or take it on. Managers only, matching the endpoint. */}
       {isManager && item.stage !== "approved" && (

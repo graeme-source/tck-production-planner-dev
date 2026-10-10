@@ -3,12 +3,13 @@
  * E and F). Every change someone has been asked to test for real, who was
  * asked, and what they said. Managers and admins; the API enforces it too.
  *
- * Opens with ?new=1 (and &issue=ID, &title=…, &link=/path) straight into
- * "Request a test" — the Fix queue links here that way.
+ * Opens with ?new=1 (and &issue=ID or &improvement=ID, &title=…, &link=/path)
+ * straight into "Request a test" — the Fix queue and an improvement's page
+ * link here that way. Tests are only ever asked for case by case.
  */
 import { useEffect, useState } from "react";
 import { Link, useLocation, useSearch } from "wouter";
-import { AlertTriangle, CheckCircle2, ClipboardCheck, Clock, ExternalLink, Image as ImageIcon, Loader2, Lock, RotateCcw, Rocket } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Lightbulb, ListTodo, ClipboardCheck, Clock, ExternalLink, Image as ImageIcon, Loader2, Lock, RotateCcw, Rocket } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
@@ -55,7 +56,13 @@ export default function TestRequestsPage() {
   useEffect(() => {
     if (params.get("new") !== "1") return;
     const issue = Number(params.get("issue"));
-    setPrefill({ issueId: Number.isInteger(issue) && issue > 0 ? issue : null, title: params.get("title") ?? "", linkPath: params.get("link") ?? "" });
+    const improvement = Number(params.get("improvement"));
+    setPrefill({
+      issueId: Number.isInteger(issue) && issue > 0 ? issue : null,
+      improvementId: Number.isInteger(improvement) && improvement > 0 ? improvement : null,
+      title: params.get("title") ?? "",
+      linkPath: params.get("link") ?? "",
+    });
     setNewOpen(true);
     navigate("/test-requests", { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -81,7 +88,7 @@ export default function TestRequestsPage() {
 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <p className="text-lg text-muted-foreground max-w-2xl">
-          Changes that have to be tried for real — on the station, at the right time — before we call them done. Whoever's asked gets a card until they answer. If it came from an issue report, the person who reported it is always asked.
+          Changes that have to be tried for real — on the station, at the right time — before we call them done. Whoever's asked gets a card once (or when they arrive at the place), and can put it on their to-do list for later. If it came from an issue report or an improvement idea, the person who reported or logged it is always asked.
         </p>
         <button
           type="button"
@@ -151,6 +158,11 @@ function RequestCard({ r }: { r: TestRequestView }) {
             <ExternalLink className="w-4 h-4" /> {r.linkPath}
           </Link>
         )}
+        {r.improvement && (
+          <Link href={`/improvements?open=${r.improvement.id}`} className="flex items-center gap-1.5 font-semibold text-blue-700 dark:text-blue-400 underline underline-offset-4 min-w-0">
+            <Lightbulb className="w-4 h-4 shrink-0" /> <span className="truncate max-w-[20rem]">Improvement: “{r.improvement.title}”</span>
+          </Link>
+        )}
         {r.issue && (
           <Link href={`/reports?tab=issues&issueId=${r.issue.id}`} className="flex items-center gap-1.5 font-semibold text-rose-700 dark:text-rose-400 underline underline-offset-4 min-w-0">
             <AlertTriangle className="w-4 h-4 shrink-0" /> <span className="truncate max-w-[20rem]">Issue #{r.issue.id}{r.issue.description ? `: “${r.issue.description}”` : ""}</span>
@@ -197,7 +209,11 @@ function TesterRow({ requestId, t }: { requestId: number; t: TesterView }) {
     ? <span className={cn("font-bold", ANSWER_TONE[t.answer])}>{t.answerLabel}</span>
     : t.startedAt
       ? <span className="font-semibold text-sky-700 dark:text-sky-400">Trying it now</span>
-      : <span className="text-muted-foreground">Not answered yet</span>;
+      : t.onTodoList
+        ? <span className="font-semibold text-muted-foreground inline-flex items-center gap-1"><ListTodo className="w-4 h-4" /> On their to-do list</span>
+        : t.promptedAt
+          ? <span className="text-muted-foreground">Seen — not answered yet</span>
+          : <span className="text-muted-foreground">Not seen yet</span>;
   return (
     <div className="rounded-2xl bg-secondary/50 px-4 py-3 flex flex-wrap items-start gap-x-4 gap-y-1">
       <div className="min-w-0 flex-1">
@@ -206,7 +222,6 @@ function TesterRow({ requestId, t }: { requestId: number; t: TesterView }) {
           {t.isReporter && <span className="text-sm text-muted-foreground"> · reported it</span>}
           {" — "}{state}
           {t.answeredAt && <span className="text-sm text-muted-foreground"> · {feedTimestamp(t.answeredAt)}</span>}
-          {!t.answer && t.snoozeCount > 0 && <span className="text-sm text-muted-foreground"> · put off {t.snoozeCount}×</span>}
         </p>
         {t.note && <p className="text-base mt-1 whitespace-pre-wrap">“{t.note}”</p>}
       </div>
