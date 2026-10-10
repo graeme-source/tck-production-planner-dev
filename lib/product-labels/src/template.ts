@@ -124,6 +124,9 @@ export interface LabelTemplate {
   fields: Record<FieldKey, FieldStyle>;
   text: TemplateText;
   cooking: CookingValues;
+  /** Chilled use-by when neither the recipe's label nor its shelf life sets
+   *  one (Graeme, 2026-10-10: calzone standard 13 days). */
+  chilledDefault: ShelfPeriod | null;
   /** Frozen use-by when the recipe doesn't set its own. Null = no frozen line. */
   frozenDefault: ShelfPeriod | null;
   batchBasis: BatchBasis;
@@ -193,6 +196,7 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     ovenTempC: 210, fanTempC: 190, ovenMinMinutes: 18, ovenMaxMinutes: 22,
     airFryerTempC: 180, airFryerMinMinutes: 16, airFryerMaxMinutes: 19,
   },
+  chilledDefault: { amount: 13, unit: "days" },
   frozenDefault: { amount: 6, unit: "months" },
   batchBasis: "production-day",
   mayContainBoldList: true,
@@ -280,6 +284,7 @@ export function normaliseTemplate(raw: unknown): LabelTemplate {
     fields,
     text,
     cooking,
+    chilledDefault: "chilledDefault" in r ? normalisePeriod(r.chilledDefault) : D.chilledDefault,
     frozenDefault: "frozenDefault" in r ? normalisePeriod(r.frozenDefault) : D.frozenDefault,
     batchBasis: r.batchBasis === "print-day" ? "print-day" : r.batchBasis === "production-day" ? "production-day" : D.batchBasis,
     mayContainBoldList: bool(r.mayContainBoldList, D.mayContainBoldList),

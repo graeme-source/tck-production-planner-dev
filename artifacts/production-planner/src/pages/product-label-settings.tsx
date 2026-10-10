@@ -228,6 +228,17 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
           {/* Dates */}
           <Card icon={<CalendarClock className="w-5 h-5" />} title="Use-by and batch number">
             <div className="flex flex-wrap items-end gap-3">
+              <Num label="Standard chilled use-by" value={draft.chilledDefault?.amount ?? null} step={1} min={1} max={999} allowBlank
+                onChange={v => update(t => ({ ...t, chilledDefault: v ? { amount: v, unit: t.chilledDefault?.unit ?? "days" } : null }))} />
+              <select
+                value={draft.chilledDefault?.unit ?? "days"}
+                onChange={e => update(t => ({ ...t, chilledDefault: t.chilledDefault ? { ...t.chilledDefault, unit: e.target.value as PeriodUnit } : null }))}
+                className={inputCls}
+              >
+                {PERIOD_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+              </select>
+            </div>
+            <div className="flex flex-wrap items-end gap-3">
               <Num label="Standard frozen use-by" value={draft.frozenDefault?.amount ?? null} step={1} min={1} max={999} allowBlank
                 onChange={v => update(t => ({ ...t, frozenDefault: v ? { amount: v, unit: t.frozenDefault?.unit ?? "months" } : null }))} />
               <select
@@ -238,7 +249,7 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
                 {PERIOD_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
               </select>
             </div>
-            <p className="text-sm text-muted-foreground">Chilled use-by comes from each recipe's shelf life unless the recipe sets its own.</p>
+            <p className="text-sm text-muted-foreground">Chilled use-by: a recipe's own label setting first, then its shelf life, then this standard. Frozen: the recipe's own setting, else this standard.</p>
             <div className="space-y-2">
               <p className="text-sm font-semibold">Batch number (YYDDD) is taken from…</p>
               <div className="flex flex-wrap gap-2">

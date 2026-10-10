@@ -82,12 +82,13 @@ describe("snapshot change detection", () => {
     expect(s.cooking.ovenTempC).toBe(210);
   });
 
-  it("chilled use-by defaults to the recipe shelf life; frozen to the template", () => {
+  it("chilled use-by: recipe shelf life, else the 13-day standard; frozen to the template", () => {
     const s = make();
     expect(s.chilled).toEqual({ amount: 13, unit: "days" });
     expect(s.frozen).toEqual({ amount: 6, unit: "months" });
     expect(make({ settings: { frozenOn: false } }).frozen).toBeNull();
-    expect(make({ shelf: null }).chilled).toBeNull();
+    // No shelf life on the recipe → the template's standard 13 days.
+    expect(make({ shelf: null }).chilled).toEqual({ amount: 13, unit: "days" });
   });
 });
 

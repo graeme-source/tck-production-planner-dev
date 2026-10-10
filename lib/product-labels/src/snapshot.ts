@@ -84,7 +84,11 @@ export function buildSnapshot(input: {
   template: LabelTemplate;
 }): LabelSnapshot {
   const { recipe, deck, settings: s, template } = input;
-  const chilled = s.chilled ?? (recipe.shelfLifeDays && recipe.shelfLifeDays > 0 ? { amount: recipe.shelfLifeDays, unit: "days" as const } : null);
+  // Chilled use-by: the label's own setting → the recipe's shelf life (some
+  // calzones are deliberately 10 days) → the standard (13 days).
+  const chilled = s.chilled
+    ?? (recipe.shelfLifeDays && recipe.shelfLifeDays > 0 ? { amount: recipe.shelfLifeDays, unit: "days" as const } : null)
+    ?? template.chilledDefault;
   return {
     recipeName: recipe.name,
     labelName: s.labelName?.trim() || recipe.name,
@@ -112,12 +116,12 @@ export function canonicalJson(value: unknown): string {
 }
 
 /** The part of a snapshot that decides the printed label. The template's
- *  cooking defaults and frozen default only matter through the resolved
+ *  cooking defaults and chilled/frozen defaults only matter through the resolved
  *  cooking / frozen values already in the snapshot, so changing a default
  *  that this recipe overrides doesn't flag its label. recipeName is kept for
  *  the record but isn't compared — labelName is what prints. */
 export function comparableSnapshot(s: LabelSnapshot): unknown {
-  const { cooking: _c, frozenDefault: _f, ...template } = s.template;
+  const { cooking: _c, frozenDefault: _f, chilledDefault: _cd, ...template } = s.template;
   const { recipeName: _r, ...rest } = s;
   return { ...rest, template };
 }
@@ -216,7 +220,7 @@ export function diffTemplates(a: LabelTemplate, b: LabelTemplate): SnapshotChang
   }
   if (a.batchBasis !== b.batchBasis) out.push({ key: "template.batchBasis", label: "Batch number taken from", before: a.batchBasis, after: b.batchBasis });
   if (a.mayContainBoldList !== b.mayContainBoldList) out.push({ key: "template.mayContainBoldList", label: "May-contain list in bold", before: a.mayContainBoldList ? "Yes" : "No", after: b.mayContainBoldList ? "Yes" : "No" });
-  // template.cooking / frozenDefault only matter through the resolved values
+  // template.cooking / chilledDefault / frozenDefault only matter through the resolved values
   // above, which already list them when they change what prints.
   return out;
 }

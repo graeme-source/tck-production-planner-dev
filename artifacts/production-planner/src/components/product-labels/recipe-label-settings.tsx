@@ -185,7 +185,7 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
           icon={<Thermometer className="w-5 h-5 text-primary" />}
           title="Chilled use-by"
           value={s.chilled}
-          fallback={data.recipe.shelfLifeDays ? `${data.recipe.shelfLifeDays} days (the recipe's shelf life)` : "none — the recipe has no shelf life set"}
+          fallback={data.recipe.shelfLifeDays ? `${data.recipe.shelfLifeDays} days (the recipe's shelf life)` : t.chilledDefault ? `${t.chilledDefault.amount} ${t.chilledDefault.unit} (the standard)` : "none"}
           canEdit={canEdit}
           onSave={p => save({ chilled: p })}
           onBlur={() => void auto.flush()}

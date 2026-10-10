@@ -207,7 +207,7 @@ router.get("/recipes/:id", async (req, res) => {
       settings: current.settings,
       settingsUpdatedAt: current.settingsRow?.updatedAt ?? null,
       settingsUpdatedByName: current.settingsRow?.updatedByName ?? null,
-      template: { id: current.template.id, name: current.template.name, version: current.template.version, cooking: current.template.template.cooking, frozenDefault: current.template.template.frozenDefault },
+      template: { id: current.template.id, name: current.template.name, version: current.template.version, cooking: current.template.template.cooking, chilledDefault: current.template.template.chilledDefault, frozenDefault: current.template.template.frozenDefault },
       status,
       statusLabel: STATUS_LABEL[status],
       matchesLive,

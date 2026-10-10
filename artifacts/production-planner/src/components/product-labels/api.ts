@@ -88,7 +88,7 @@ export interface RecipeLabel {
   settings: RecipeLabelSettings;
   settingsUpdatedAt: string | null;
   settingsUpdatedByName: string | null;
-  template: { id: number; name: string; version: number; cooking: CookingValues; frozenDefault: ShelfPeriod | null };
+  template: { id: number; name: string; version: number; cooking: CookingValues; chilledDefault: ShelfPeriod | null; frozenDefault: ShelfPeriod | null };
   status: LabelStatus;
   statusLabel: string;
   matchesLive: boolean;
