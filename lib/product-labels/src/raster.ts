@@ -109,7 +109,9 @@ export function flattenPath(cmds: PathCmd[]): Point[][] {
 }
 
 /** Fill closed contours with the non-zero winding rule, sampling pixel centres. */
-export function fillContours(bm: Bitmap, contours: Point[][], value = 1): void {
+/** value 1 = black, 0 = white, "xor" = flip every dot it covers (a stamp
+ *  that stays readable over both text and white space). */
+export function fillContours(bm: Bitmap, contours: Point[][], value: 0 | 1 | "xor" = 1): void {
   type Edge = { x0: number; y0: number; x1: number; y1: number; dir: number };
   const edges: Edge[] = [];
   let minY = Infinity, maxY = -Infinity;
@@ -142,7 +144,9 @@ export function fillContours(bm: Bitmap, contours: Point[][], value = 1): void {
       if (winding === 0) continue;
       const x0 = Math.max(0, Math.ceil(xs[i].x - 0.5));
       const x1 = Math.min(bm.width, Math.ceil(xs[i + 1].x - 0.5));
-      if (x1 > x0) bm.data.fill(value, row * bm.width + x0, row * bm.width + x1);
+      if (x1 <= x0) continue;
+      if (value === "xor") for (let p = row * bm.width + x0; p < row * bm.width + x1; p++) bm.data[p] ^= 1;
+      else bm.data.fill(value, row * bm.width + x0, row * bm.width + x1);
     }
   }
 }

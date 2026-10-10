@@ -65,6 +65,36 @@ export function renderLabel(layout: LabelLayout, fonts: LabelFontSet, showOverfl
   return bm;
 }
 
+/**
+ * Stamp a test label: the text (default "TEST — NOT FOR SALE") in big bold
+ * capitals along the label's diagonal, XOR-drawn so it reads over text and
+ * blank space alike. Used for a test print of a proof that isn't live — it
+ * must never pass for a real label. Draws into the given bitmap (a copy is
+ * the caller's choice).
+ */
+export function stampTest(bm: Bitmap, fonts: LabelFontSet, text = "TEST — NOT FOR SALE"): void {
+  const face = { width: "normal" as const, weight: 700 as const };
+  const angle = -Math.atan2(bm.height, bm.width); // bottom-left → top-right
+  const diag = Math.hypot(bm.width, bm.height);
+  const unit = fonts.advance(text, face, 1, 0.02);
+  const size = (diag * 0.82) / unit;
+  const shaped = fonts.shapeText(text, face, size, 0.02);
+  const ink = fonts.ink(text, face, size, 0.02);
+  // Lay the text out horizontally centred on the origin, then rotate it about
+  // the label's centre.
+  const ox = -shaped.advance / 2;
+  const oy = (ink.top - ink.bottom) / 2;
+  const cx = bm.width / 2, cy = bm.height / 2;
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const rot = (x: number, y: number): [number, number] => [cx + x * cos - y * sin, cy + x * sin + y * cos];
+  const contours: Array<Array<[number, number]>> = [];
+  for (const g of shaped.glyphs) {
+    const cmds = fonts.glyphPath(g.glyph, ox + g.x, oy, size) as unknown as PathCmd[];
+    for (const c of flattenPath(cmds)) contours.push(c.map(([x, y]) => rot(x, y)));
+  }
+  fillContours(bm, contours, "xor");
+}
+
 export interface LabelProof {
   content: LabelContent;
   dates: LabelDates;

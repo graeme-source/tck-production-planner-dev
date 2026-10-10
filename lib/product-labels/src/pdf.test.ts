@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { labelPageSizeMm, labelsPdf } from "./pdf";
 import { Bitmap, fillRect } from "./raster";
-import { initialPrintCount, printRefusal } from "./status";
+import { initialPrintCount, printRefusal, TEST_STAMP_TEXT, testPrintSource } from "./status";
 import { buildPrintRecord } from "./print-record";
 import { labelDates } from "./dates";
 
@@ -55,6 +55,14 @@ describe("back-labels PDF", () => {
   });
 });
 
+describe("what a test print prints", () => {
+  it("the live label when there is one, otherwise the current proof stamped", () => {
+    expect(testPrintSource({ hasLive: true })).toBe("live");
+    expect(testPrintSource({ hasLive: false })).toBe("current-stamped");
+    expect(TEST_STAMP_TEXT).toBe("TEST — NOT FOR SALE");
+  });
+});
+
 describe("what may be printed", () => {
   it("only a live label that still matches the recipe and fits", () => {
     expect(printRefusal({ hasLive: false, matchesLive: false, fits: true })).toBe("no-live");
@@ -76,8 +84,21 @@ describe("print record", () => {
       recipeId: 2, recipeName: "Chicken and Chorizo", labelVersionId: 7, versionNo: 3, snapshotHash: "abc", count: 118,
       printDate: "2026-10-12", productionDate: "2026-10-09", batchCode: "26282",
       chilledUseBy: "2026-10-25", frozenUseBy: "2027-04-12",
-      planId: 191, planItemId: 5569, format: "pdf", printedById: 1, printedByName: "Graeme",
+      planId: 191, planItemId: 5569, format: "pdf", kind: "production", printedById: 1, printedByName: "Graeme",
     });
+  });
+  it("defaults to a production print; a test print is recorded as kind 'test'", () => {
+    const dates = labelDates({ printDate: "2026-10-12", productionDate: "2026-10-12", chilled: null, frozen: null, batchBasis: "production-day" });
+    const base = { recipe: { id: 2, name: "C" }, count: 1, dates, plan: { planId: null, planItemId: null }, format: "pdf" as const, user: { id: 1, name: "G" } };
+    expect(buildPrintRecord({ ...base, live: { id: 7, versionNo: 3, snapshotHash: "h" } }).kind).toBe("production");
+    expect(buildPrintRecord({ ...base, live: { id: 7, versionNo: 3, snapshotHash: "h" }, kind: "test" }).kind).toBe("test");
+    // a test print of a never-published proof has no live version
+    const t = buildPrintRecord({ ...base, live: { id: null, versionNo: null, snapshotHash: "current" }, kind: "test" });
+    expect(t).toMatchObject({ kind: "test", labelVersionId: null, versionNo: null, snapshotHash: "current" });
+  });
+  it("never records production labels from anything but a live version", () => {
+    const dates = labelDates({ printDate: "2026-10-12", productionDate: "2026-10-12", chilled: null, frozen: null, batchBasis: "production-day" });
+    expect(() => buildPrintRecord({ recipe: { id: 2, name: "C" }, live: { id: null, versionNo: null, snapshotHash: "x" }, count: 1, dates, plan: { planId: null, planItemId: null }, format: "pdf", user: { id: 1, name: "G" } })).toThrow();
   });
   it("refuses a zero count", () => {
     const dates = labelDates({ printDate: "2026-10-12", productionDate: "2026-10-12", chilled: null, frozen: null, batchBasis: "production-day" });

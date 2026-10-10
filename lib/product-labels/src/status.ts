@@ -46,6 +46,16 @@ export function printRefusal(input: { hasLive: boolean; matchesLive: boolean; fi
   return null;
 }
 
+/** What a TEST print (label review page) prints: the live version when
+ *  there is one — exactly what the wrapping station would print — otherwise
+ *  the current proof, stamped "TEST — NOT FOR SALE" so it can never pass
+ *  for a real label. */
+export type TestPrintSource = "live" | "current-stamped";
+export function testPrintSource(input: { hasLive: boolean }): TestPrintSource {
+  return input.hasLive ? "live" : "current-stamped";
+}
+export const TEST_STAMP_TEXT = "TEST — NOT FOR SALE";
+
 /** Back-label count to start from: the item's net 2-packs, as a whole
  *  number, never negative; capped at MAX_PRINT_COUNT. */
 export const MAX_PRINT_COUNT = 500;

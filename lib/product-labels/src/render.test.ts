@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { inflateSync } from "node:zlib";
 import { loadBundledFonts } from "./node-fonts";
-import { encodePng, proofLabel, renderLabel } from "./render";
+import { encodePng, proofLabel, renderLabel, stampTest } from "./render";
 import { Bitmap, fillContours, fillRect } from "./raster";
 import { buildSnapshot, DEFAULT_RECIPE_LABEL_SETTINGS } from "./snapshot";
 import { DEFAULT_TEMPLATE, normaliseTemplate, type LabelTemplate } from "./template";
@@ -341,6 +341,28 @@ describe("section headings", () => {
     const storageBox = p.layout.fields.find(f => f.key === "storage")!.boxes[0];
     expect(storageBox.y).toBeGreaterThanOrEqual(h.boxes[0].y + h.boxes[0].h);
     expect(ingBox.y).toBeGreaterThanOrEqual(h.boxes[1].y + h.boxes[1].h);
+  });
+});
+
+describe("TEST — NOT FOR SALE stamp", () => {
+  it("marks the label right across, without wiping it out", () => {
+    const proof = proofLabel(snapshot(), { printDate: "2026-10-10", productionDate: "2026-10-10" }, fonts);
+    const stamped = new Bitmap(proof.bitmap.width, proof.bitmap.height);
+    stamped.data.set(proof.bitmap.data);
+    stampTest(stamped, fonts);
+    let changed = 0;
+    for (let i = 0; i < stamped.data.length; i++) if (stamped.data[i] !== proof.bitmap.data[i]) changed++;
+    const share = changed / stamped.data.length;
+    expect(share).toBeGreaterThan(0.03); // big and obvious (~4% of all dots)
+    expect(share).toBeLessThan(0.4); // the label underneath is still readable
+    // it runs corner to corner: dots changed near both the left and right ends
+    const cols = (from: number, to: number) => {
+      let n = 0;
+      for (let y = 0; y < stamped.height; y++) for (let x = from; x < to; x++) if (stamped.get(x, y) !== proof.bitmap.get(x, y)) n++;
+      return n;
+    };
+    expect(cols(0, 200)).toBeGreaterThan(500);
+    expect(cols(stamped.width - 200, stamped.width)).toBeGreaterThan(500);
   });
 });
 
