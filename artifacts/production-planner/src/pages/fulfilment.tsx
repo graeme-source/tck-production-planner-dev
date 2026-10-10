@@ -37,6 +37,8 @@ import { comparePickWalk, FALLBACK_ZONE_ORDER } from "@/lib/pick-order";
 import { fetchFridgeAvailability, computeFridgeAllocation } from "@/lib/fridge-gate";
 import { ShopifyOrderNumber } from "@/components/shopify-order-link";
 import { StationMessagesBanner } from "@/components/station-messages";
+import { barcodeFor, decideScan, scanMessage, shouldRefreshOnMiss, type ScanDecision, type ScanLine } from "@workspace/barcodes";
+import { BARCODES_API, useScanMap, type ScanMap as ScanMapData } from "@/components/barcodes/api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -64,6 +66,8 @@ interface LineItem {
   sku: string;
   location: SkuLocation | null;
   barcode: string | null;
+  /** Product identity (one code = one product; lib/barcodes identity.ts). */
+  identityKey?: string | null;
   imageUrl: string | null;
   recipeColor: string | null;
 }
@@ -1361,6 +1365,13 @@ export default function Fulfilment() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [pendingPickOrder, setPendingPickOrder] = useState<ShopifyOrder | null>(null);
   const barcodeRef = useRef<HTMLInputElement>(null);
+  // Live barcode map from the app's barcode table (10 s refresh, and at
+  // once when a scan misses) — a barcode saved on a recipe scans straight
+  // away, no manual sync (Graeme, 2026-10-10).
+  const { data: scanMap, refetch: refetchScanMap } = useScanMap();
+  const scanMapRefreshedAt = useRef<number | null>(null);
+  const activeOrderIdRef = useRef<number | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
   const itemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const preQueueRef = useRef<Map<number, Promise<ShipmentResult>>>(new Map());
   const prePrintRef = useRef<Map<number, PrintStatus>>(new Map());
@@ -2077,6 +2088,7 @@ export default function Fulfilment() {
     setActiveOrder(order);
     setPickedCounts(new Map());
     if (barcodeRef.current) barcodeRef.current.value = ""; // clear the scan field for the new order
+    setScanError(null);
     setShipment(null);
     setShipmentError(null);
     resetPrint();
@@ -2203,6 +2215,7 @@ export default function Fulfilment() {
   // copy of it. Falls back to fridge → freezer → ambient until the config
   // loads.
   const zonePickOrder: string[] = pickConfig?.zoneOrder ?? [...FALLBACK_ZONE_ORDER];
+  activeOrderIdRef.current = activeOrder?.id ?? null;
   const sortedLineItems = activeOrder
     ? [...activeOrder.line_items].sort((a, b) => comparePickWalk(a, b, zonePickOrder))
     : [];
@@ -2222,6 +2235,10 @@ export default function Fulfilment() {
     totalQty: number;
     location: LineItem["location"];
     barcode: string | null;
+    /** What the orders feed carried — used only until the live map loads. */
+    orderBarcode: string | null;
+    variantId: string | null;
+    identityKey: string | null;
     imageUrl: string | null;
     recipeColor: string | null;
   }
@@ -2241,7 +2258,10 @@ export default function Fulfilment() {
           sku: li.sku,
           totalQty: li.quantity,
           location: li.location,
-          barcode: li.barcode,
+          barcode: barcodeFor(li.variant_id, li.barcode, scanMap?.barcodes),
+          orderBarcode: li.barcode,
+          variantId: li.variant_id != null ? String(li.variant_id) : null,
+          identityKey: (li.variant_id != null ? scanMap?.identities[String(li.variant_id)] : null) ?? li.identityKey ?? null,
           imageUrl: li.imageUrl,
           recipeColor: li.recipeColor,
         };
@@ -2290,6 +2310,46 @@ export default function Fulfilment() {
     }
   }
 
+  function applyScanTick(key: string) {
+    playScanSuccess();
+    setScanError(null);
+    setPickedCounts(prev => {
+      const next = new Map(prev);
+      const item = groupedItems.find(g => g._groupKey === key);
+      const total = item?.totalQty ?? 1;
+      next.set(key, Math.min((prev.get(key) ?? 0) + 1, total));
+      // After update, scroll to the next row that still needs picks.
+      setTimeout(() => {
+        const nextRow = groupedItems.find(g => (next.get(g._groupKey) ?? 0) < g.totalQty);
+        if (nextRow) {
+          itemRefs.current.get(nextRow._groupKey)?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }, 100);
+      return next;
+    });
+    setFlashItem(key);
+    setTimeout(() => setFlashItem(null), 800);
+  }
+
+  /** Never ticks: buzz, red flash, say why, and log it so mis-scans can be
+   *  seen on the Barcodes page. */
+  function rejectScan(code: string, decision: ScanDecision) {
+    playScanWrong();
+    setFlashWrong(true);
+    setTimeout(() => setFlashWrong(false), 600);
+    const message = scanMessage(decision);
+    setScanError(message);
+    if (decision.kind === "tick") return;
+    fetch(`${BARCODES_API}/scan-rejections`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ orderId: activeOrder?.id ?? null, orderName: activeOrder?.name ?? null, code: code.slice(0, 200), kind: decision.kind, message }),
+    }).then(res => {
+      if (!res.ok) console.error("[packing] couldn't log a refused scan:", res.status);
+    }).catch(err => console.error("[packing] couldn't log a refused scan:", err));
+  }
+
   function handleBarcodeSubmit(e: React.FormEvent) {
     e.preventDefault();
     // The scan field is UNCONTROLLED — read straight from the DOM. A hardware
@@ -2312,41 +2372,37 @@ export default function Fulfilment() {
       return;
     }
 
-    // Only rows that still need picks — once a row is fully picked, scanning
-    // its barcode again should be a no-match (flash red), not a silent ignore.
-    const remaining = groupedItems.filter(g => (pickedCounts.get(g._groupKey) ?? 0) < g.totalQty);
-    // Barcode is the primary match — scanners send a numeric GTIN/EAN that
-    // never appears in SKU or title. Fall back to SKU and title so picking
-    // still works when barcodes aren't synced or a packer types manually.
-    const match =
-      remaining.find(g => g.barcode && g.barcode.toLowerCase() === input) ??
-      remaining.find(g =>
-        g.sku?.toLowerCase() === input ||
-        g.title?.toLowerCase().includes(input)
-      );
-
-    if (match) {
-      playScanSuccess();
-
-      setPickedCounts(prev => {
-        const next = new Map(prev);
-        const newCount = Math.min((prev.get(match._groupKey) ?? 0) + 1, match.totalQty);
-        next.set(match._groupKey, newCount);
-        // After update, scroll to the next row that still needs picks.
-        setTimeout(() => {
-          const nextRow = groupedItems.find(g => (next.get(g._groupKey) ?? 0) < g.totalQty);
-          if (nextRow) {
-            itemRefs.current.get(nextRow._groupKey)?.scrollIntoView({ behavior: "smooth", block: "center" });
-          }
-        }, 100);
-        return next;
+    // Safety rules (lib/barcodes scan.ts, tested): digits must match a
+    // barcode EXACTLY — no SKU/title fallback; another product's code is
+    // "Wrong item — this is …"; a code on two products is refused; typed text
+    // needs an exact SKU or title. A miss refreshes the live barcode map once
+    // and tries again, so a barcode saved seconds ago still scans.
+    const code = raw.trim();
+    const linesFor = (map: ScanMapData | undefined): ScanLine[] => groupedItems.map(g => ({
+      key: g._groupKey,
+      barcode: map ? barcodeFor(g.variantId, g.orderBarcode, map.barcodes) : g.barcode,
+      identityKey: (g.variantId && map?.identities[g.variantId]) || g.identityKey,
+      name: [g.title, g.variant_title].filter(Boolean).join(" — "),
+      sku: g.sku || null,
+      title: g.title,
+      remaining: g.totalQty - (pickedCounts.get(g._groupKey) ?? 0),
+    }));
+    const first = decideScan(code, linesFor(scanMap), scanMap?.known ?? {});
+    if (first.kind === "tick") {
+      applyScanTick(first.key);
+    } else if (shouldRefreshOnMiss(code, scanMapRefreshedAt.current, Date.now())) {
+      scanMapRefreshedAt.current = Date.now();
+      const orderAtScan = activeOrder?.id ?? null;
+      void refetchScanMap().then(r => {
+        // The packer may have moved on to the next order in the meantime —
+        // never tick a line of an order the code wasn't scanned for.
+        if (activeOrderIdRef.current !== orderAtScan) { playScanWrong(); return; }
+        const again = decideScan(code, linesFor(r.data ?? scanMap), (r.data ?? scanMap)?.known ?? {});
+        if (again.kind === "tick") applyScanTick(again.key);
+        else rejectScan(code, again);
       });
-      setFlashItem(match._groupKey);
-      setTimeout(() => setFlashItem(null), 800);
     } else {
-      playScanWrong();
-      setFlashWrong(true);
-      setTimeout(() => setFlashWrong(false), 600);
+      rejectScan(code, first);
     }
     // Clear via the DOM — the field is uncontrolled — ready for the next scan.
     if (barcodeRef.current) barcodeRef.current.value = "";
@@ -3593,7 +3649,7 @@ export default function Fulfilment() {
               ref={barcodeRef}
               data-scan-input="true"
               defaultValue=""
-              placeholder={labelGateOpen ? "Scan the APC label…" : "Scan barcode or type SKU…"}
+              placeholder={labelGateOpen ? "Scan the APC label…" : "Scan barcode, or type the exact SKU…"}
               className={`w-full pl-12 pr-4 py-4 text-lg bg-background border rounded-xl focus:outline-none focus:ring-2 font-mono ${
                 labelGateOpen ? "border-primary/50 focus:ring-primary/40" : "border-border focus:ring-primary/30"
               }`}
@@ -3601,6 +3657,11 @@ export default function Fulfilment() {
               autoFocus
             />
           </div>
+          {scanError && !labelGateOpen && (
+            <p role="alert" className="mt-2 px-4 py-3 rounded-xl bg-destructive/10 border-2 border-destructive text-destructive text-lg font-bold flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 flex-shrink-0" /> {scanError}
+            </p>
+          )}
         </form>
 
         {/* Item list stays hidden until the label is verified, so there's no
@@ -3638,12 +3699,15 @@ export default function Fulfilment() {
                   if (el) itemRefs.current.set(item._groupKey, el);
                   else itemRefs.current.delete(item._groupKey);
                 }}
-                onClick={manualTickEnabled ? () => toggleItem(item._groupKey, item.totalQty) : undefined}
-                disabled={!manualTickEnabled}
-                title={manualTickEnabled ? undefined : "Manual tap-to-pick is disabled — scan the barcode to mark this item picked."}
+                // A line with no barcode on record can't be scanned, so it is
+                // always tap-to-confirm (checked by eye), even when manual
+                // tapping is otherwise switched off.
+                onClick={manualTickEnabled || !item.barcode ? () => toggleItem(item._groupKey, item.totalQty) : undefined}
+                disabled={!manualTickEnabled && !!item.barcode}
+                title={manualTickEnabled || !item.barcode ? undefined : "Manual tap-to-pick is disabled — scan the barcode to mark this item picked."}
                 className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 text-left transition-all ${rowClasses}
                   ${isFlashing ? "ring-4 ring-green-500 ring-offset-1" : ""}
-                  ${manualTickEnabled ? "cursor-pointer" : "cursor-default"}
+                  ${manualTickEnabled || !item.barcode ? "cursor-pointer" : "cursor-default"}
                 `}
               >
                 <div className={`w-10 h-10 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors
@@ -3687,6 +3751,11 @@ export default function Fulfilment() {
                   </p>
                   {item.sku && (
                     <p className="text-sm font-mono text-muted-foreground mt-1">{item.sku}</p>
+                  )}
+                  {!item.barcode && !isComplete && (
+                    <p className="mt-1 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200 text-sm font-bold">
+                      <AlertCircle className="w-4 h-4" /> No barcode — check by eye and tap to confirm
+                    </p>
                   )}
                 </div>
                 {item.location ? (
