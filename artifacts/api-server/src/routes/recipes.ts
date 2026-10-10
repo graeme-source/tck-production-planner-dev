@@ -1445,7 +1445,7 @@ router.get("/:id/spec-sheet.pdf", requireAdmin, async (req, res) => {
       WHERE m.recipe_id = ${recipeId} AND COALESCE(sb.barcode, '') <> ''
       LIMIT 1
     `);
-    let [barcodeRow] = mappedBarcodeRes.rows as Array<{ barcode: string }>;
+    let [barcodeRow] = mappedBarcodeRes.rows as Array<{ barcode: string | null }>;
     if (!barcodeRow) {
       [barcodeRow] = await db
         .select({ barcode: skuBarcodesTable.barcode })
