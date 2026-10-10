@@ -37,8 +37,11 @@ export function RecipeQuidPanel({ recipeId }: { recipeId: number }) {
           <p className="text-sm text-muted-foreground">
             Anything the recipe's name names shows its percentage automatically, worked out from the weights. Your ticks always win.
           </p>
+          {/* Its own line, so "Saved" never shifts the rows being tapped. */}
+          <div className="min-h-[1.5rem] mt-0.5">
+            <SaveState pending={setQuid.isPending} error={setQuid.error as Error | null} saved={setQuid.isSuccess} />
+          </div>
         </div>
-        <SaveState pending={setQuid.isPending} error={setQuid.error as Error | null} saved={setQuid.isSuccess} />
         <Link href="/labels/quid" className="inline-flex items-center gap-1.5 h-10 px-3 rounded-xl border-2 border-border text-sm font-semibold hover:bg-secondary">
           <Settings2 className="w-4 h-4" /> QUID words
         </Link>
@@ -137,6 +140,10 @@ function SourceBadge({ item, recipeName }: { item: QuidViewItem; recipeName: str
         Auto — “{item.match?.term ?? "named"}” in ‘{recipeName.trim()}’
       </span>
     );
+  }
+  if (item.match?.level === "auto" && !item.quid) {
+    // Named, but the recipe hasn't been saved since (or the backfill hasn't run).
+    return <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 text-right">Named in ‘{recipeName.trim()}’ — ticks when the recipe is saved</span>;
   }
   if (item.match?.level === "suggest") {
     return <span className="text-xs text-amber-700 dark:text-amber-400 whitespace-nowrap">Question above</span>;
