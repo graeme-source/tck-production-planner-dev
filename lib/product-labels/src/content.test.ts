@@ -31,7 +31,10 @@ describe("label content", () => {
     // OVEN / AIR FRYER / TURN OVER are bold.
     const bold = c.steps[1].flatMap(p => p.filter(r => r.bold).map(r => nb(r.text)));
     expect(bold).toEqual(["OVEN", "TURN OVER", "AIR FRYER", "TURN OVER"]);
-    expect(plainText(c.steps[2][0])).toBe("Check they're piping hot throughout before serving.");
+    // Only two steps now (Graeme, 2026-10-11) — the piping-hot step is gone.
+    expect(c.steps).toHaveLength(2);
+    // Step 1's key words are bold.
+    expect(c.steps[0][0].filter(r => r.bold).map(r => r.text)).toEqual(["leave the calzones in the wooden tray"]);
     expect(c.dates.map(plainText)).toEqual(["IF CHILLED USE BY: 23/10/26", "IF FROZEN USE BY: 10/04/27", "BATCH NUMBER: 26283"]);
     expect(c.allergenInfo.map(plainText)).toEqual([
       "Allergens are shown in Bold.",
@@ -45,6 +48,24 @@ describe("label content", () => {
     const s = content({ airFryerOn: false }).steps[1];
     expect(s).toHaveLength(1);
     expect(plainText(s[0]).replace(/ /g, " ")).toBe("OVEN 210°C (190°C fan): 9–11 min ➜ TURN OVER ➜ 9–11 min");
+  });
+
+  it("blank steps aren't drawn and the numbering closes up; a third step can come back", () => {
+    const mk = (steps: string[]) => {
+      const t = normaliseTemplate({ ...DEFAULT_TEMPLATE, text: { ...DEFAULT_TEMPLATE.text, steps } });
+      const s = buildSnapshot({
+        recipe: { name: "X", packSize: 2, shelfLifeDays: 13 }, deck: { deckText: "Salt", mayContainStatement: null },
+        settings: { ...DEFAULT_RECIPE_LABEL_SETTINGS, barcode: "5065018206009" }, templateId: 1, template: t,
+      });
+      return buildLabelContent(s, labelDates({ printDate: "2026-10-10", productionDate: "2026-10-10", chilled: s.chilled, frozen: s.frozen, batchBasis: "production-day" }));
+    };
+    expect(mk(["One.", "", "Three."]).steps.map(p => plainText(p[0]))).toEqual(["One.", "Three."]);
+    expect(mk(["A.", "B.", "C."]).steps).toHaveLength(3);
+  });
+
+  it("reads a template saved with step1/step2/step3 (before the steps list)", () => {
+    const t = normaliseTemplate({ text: { step1: "A.", step2: "B.", step3: "" } });
+    expect(t.text.steps).toEqual(["A.", "B."]);
   });
 
   it("single-line wording still wraps normally (ordinary spaces)", () => {

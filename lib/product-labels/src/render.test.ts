@@ -249,12 +249,49 @@ describe("the drawn arrow (Barlow's Latin set has none)", () => {
   });
 });
 
-describe("step 2 on the default label", () => {
-  it("prints as exactly two lines, one per appliance, in the wider middle box", () => {
+describe("steps: any number, widths worked out automatically", () => {
+  const when = { printDate: "2026-10-10", productionDate: "2026-10-10" };
+  const withSteps = (steps: string[]) => {
+    const t = normaliseTemplate({ ...DEFAULT_TEMPLATE, text: { ...DEFAULT_TEMPLATE.text, steps } });
+    return proofLabel({ ...snapshot(), template: t }, when, fonts);
+  };
+  it("default: two numbered steps, the cooking step wider, the first gets the rest", () => {
+    const p = proofLabel(snapshot(), when, fonts);
+    const steps = p.layout.fields.find(f => f.key === "steps")!;
+    expect(steps.boxes).toHaveLength(2);
+    expect(p.layout.circles).toHaveLength(2);
+    expect(steps.runs.filter(r => r.white).map(r => r.text)).toEqual(["1", "2"]);
+    expect(steps.boxes[1].w).toBeGreaterThan(steps.boxes[0].w);
+    // The row is used edge to edge (inside the margins).
+    const last = steps.boxes[steps.boxes.length - 1];
+    expect(last.x + last.w).toBeCloseTo(p.layout.widthDots - mmToDots(DEFAULT_TEMPLATE.page.marginMm, 203), 0);
+    expect(steps.sizePt).toBeGreaterThan(10); // bigger than when there were three
+  });
+  it("a third step added back still lays out, numbered 1–3; a blank one closes up", () => {
+    const three = withSteps([...DEFAULT_TEMPLATE.text.steps, "Enjoy."]);
+    expect(three.layout.circles).toHaveLength(3);
+    expect(three.layout.fits).toBe(true);
+    const gap = withSteps([DEFAULT_TEMPLATE.text.steps[0], "", DEFAULT_TEMPLATE.text.steps[1]]);
+    const runs = gap.layout.fields.find(f => f.key === "steps")!.runs.filter(r => r.white).map(r => r.text);
+    expect(runs).toEqual(["1", "2"]);
+  });
+  it("a label published under the old step1/step2/step3 template still renders (as it was, 3 steps)", () => {
+    const { steps: _s, ...rest } = DEFAULT_TEMPLATE.text;
+    const legacyTemplate = { ...DEFAULT_TEMPLATE, text: { ...rest, step1: "A.", step2: DEFAULT_TEMPLATE.text.steps[1], step3: "Check they're piping hot throughout before serving." } };
+    const p = proofLabel({ ...snapshot(), template: legacyTemplate as unknown as LabelTemplate }, when, fonts);
+    expect(p.layout.circles).toHaveLength(3);
+  });
+  it("no steps at all draws no circles", () => {
+    expect(withSteps([]).layout.circles).toHaveLength(0);
+  });
+});
+
+describe("the cooking step on the default label", () => {
+  it("prints as exactly two lines, one per appliance, in its wider box", () => {
     const proof = proofLabel(snapshot(), { printDate: "2026-10-10", productionDate: "2026-10-10" }, fonts);
     const steps = proof.layout.fields.find(f => f.key === "steps")!;
     const box2 = steps.boxes[1];
-    expect(box2.w).toBeGreaterThan(steps.boxes[0].w * 2);
+    expect(box2.w).toBeGreaterThan(steps.boxes[0].w);
     const runs2 = steps.runs.filter(r => !r.white && r.x >= box2.x && r.x < box2.x + box2.w);
     expect(new Set(runs2.map(r => Math.round(r.y))).size).toBe(2);
     expect(steps.sizePt).toBeGreaterThanOrEqual(steps.legalMinPt);

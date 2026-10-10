@@ -387,21 +387,30 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
   const stepsTop = titleBox.y + titleBox.h + d(page.bandGapMm);
   const stepsH = d(page.stepsBandMm);
   const stepGap = d(page.columnGapMm);
-  // Step boxes share the row by their weights (step 2 holds both cooking lines).
-  const weights = page.stepWeights;
-  const weightSum = weights[0] + weights[1] + weights[2];
-  const stepSpace = innerW - 2 * stepGap;
-  const stepBoxes: Rect[] = [];
-  {
-    let x = innerX;
-    for (const w of weights) {
-      const width = (stepSpace * w) / weightSum;
-      stepBoxes.push({ x, y: stepsTop, w: width, h: stepsH });
-      x += width + stepGap;
-    }
-  }
   const circleD = d(page.stepCircleMm);
   const stepInset = circleD + d(1);
+  // Any number of steps (2 by default), widths worked out automatically: a
+  // step written as whole lines (step 2's cooking lines, which never wrap)
+  // gets exactly the width its longest line needs at the size being tried;
+  // the other steps share what's left equally. If every step is whole
+  // lines, they're scaled to fill the row.
+  const nSteps = content.steps.length;
+  const stepSpace = innerW - Math.max(0, nSteps - 1) * stepGap;
+  const wholeStep = content.steps.map(ps => ps.some(p => p.some(r => r.text.includes(" "))));
+  const stepBoxesFor = (width: WidthVariant, sizeDots: number): Rect[] => {
+    const style = t.fields.steps;
+    const need = content.steps.map((ps, i) =>
+      wholeStep[i] ? stepInset + Math.max(0, ...ps.map(p => wrap([p], style, width, sizeDots, Infinity, m).lineRight[0] ?? 0)) + 1 : 0);
+    const fixed = need.reduce((s, w) => s + w, 0);
+    const flexCount = wholeStep.filter(w => !w).length;
+    const widths = flexCount > 0
+      ? need.map((w, i) => (wholeStep[i] ? w : Math.max(0, (stepSpace - fixed) / flexCount)))
+      : need.map(w => (fixed > 0 ? (w * stepSpace) / fixed : stepSpace / Math.max(1, nSteps)));
+    const boxes: Rect[] = [];
+    let x = innerX;
+    for (const w of widths) { boxes.push({ x, y: stepsTop, w, h: stepsH }); x += w + stepGap; }
+    return boxes;
+  };
 
   // Columns
   const colTop = stepsTop + stepsH + d(page.bandGapMm);
@@ -460,11 +469,33 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
     fields.push(fieldLayout(g.trials[0], [titleBox], -1, g.fits, t, m));
     if (!g.fits) problems.push(overflowProblem(g.trials[0], titleBox.h, mm1));
   }
-  // Steps — three boxes, one size for all three.
-  {
-    const g = fitGroup([spec("steps", stepBoxes, content.steps, stepInset)], stepsH, false, 0, t, m);
-    fields.push(fieldLayout(g.trials[0], stepBoxes, -1, g.fits, t, m));
-    if (!g.fits) problems.push(overflowProblem(g.trials[0], stepsH, mm1));
+  // Steps — one size for all of them; the boxes are re-worked for every size
+  // tried (bigger first, narrower widths before smaller), so the whole-line
+  // step always gets exactly the room it needs.
+  let stepBoxes: Rect[] = [];
+  if (nSteps > 0) {
+    const style = t.fields.steps;
+    const cands = widthCandidates(style);
+    let chosen: Trial | null = null;
+    let fits = false;
+    outer: for (let level = 0; level < 400; level++) {
+      for (let w = 0; w < WIDTH_ORDER.length; w++) {
+        const width = cands[Math.min(w, cands.length - 1)];
+        const effMin = Math.max(style.minPt, legalMinFor(style, width, m, page.smallPack));
+        const sizeDots = ptToDots(sizeAt(style, level, effMin), dpi);
+        const boxes = stepBoxesFor(width, sizeDots);
+        const tr = trial(spec("steps", boxes, content.steps, stepInset), level, w, t, m);
+        chosen = tr;
+        stepBoxes = boxes;
+        const narrowOk = boxes.every(b => b.w > stepInset);
+        if (narrowOk && !tr.wraps.some(x => x.tooWide) && tr.height <= stepsH + 1e-6) { fits = true; break outer; }
+        if (atFloor(tr.spec, level, w, t, m)) break outer;
+      }
+    }
+    if (chosen) {
+      fields.push(fieldLayout(chosen, stepBoxes, -1, fits, t, m));
+      if (!fits) problems.push(overflowProblem(chosen, stepsH, mm1));
+    }
   }
   const circles = stepBoxes.map(b => ({ cx: b.x + circleD / 2, cy: b.y + circleD / 2, r: circleD / 2 }));
   // Step numbers, white in the black circles.

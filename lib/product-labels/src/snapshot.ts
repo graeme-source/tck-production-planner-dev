@@ -15,7 +15,7 @@
 import type { ShelfPeriod } from "./dates";
 import { describePeriod } from "./dates";
 import type { CookingValues, LabelTemplate } from "./template";
-import { COOKING_KEYS, FIELD_KEYS, FIELD_LABEL, type FieldKey } from "./template";
+import { COOKING_KEYS, FIELD_KEYS, FIELD_LABEL, normaliseTemplate, type FieldKey } from "./template";
 
 /** Per-recipe label settings (product_label_settings). Null cooking / period
  *  values mean "use the template's default". */
@@ -153,8 +153,9 @@ export function areasForChange(key: string): Array<FieldKey | "barcode" | "all">
   if (key === "chilled" || key === "frozen" || key === "template.batchBasis") return ["dates"];
   if (key === "barcode") return ["barcode"];
   if (key.startsWith("template.fields.")) return [key.slice("template.fields.".length) as FieldKey];
+  if (key.startsWith("template.text.steps")) return ["steps"];
   const text: Record<string, FieldKey> = {
-    title: "title", step1: "steps", step2: "steps", step3: "steps", storageHeading: "headings", storage: "storage",
+    title: "title", storageHeading: "headings", storage: "storage",
     chilledLabel: "dates", frozenLabel: "dates", batchLabel: "dates", ingredientsHeading: "headings",
     allergenNote: "allergenInfo", warning: "allergenInfo", address: "address",
   };
@@ -205,10 +206,30 @@ export function diffSnapshots(live: LabelSnapshot, current: LabelSnapshot): Snap
 
 /** Template differences by section — the wording field by field, the
  *  typography and page settings as one line each. */
-export function diffTemplates(a: LabelTemplate, b: LabelTemplate): SnapshotChange[] {
+export function diffTemplates(rawA: LabelTemplate, rawB: LabelTemplate): SnapshotChange[] {
+  // Snapshots published before a template change (e.g. step1/2/3 before the
+  // steps list) are read through the same normaliser, so they compare like
+  // for like.
+  const a = normaliseTemplate(rawA);
+  const b = normaliseTemplate(rawB);
   const out: SnapshotChange[] = [];
+  const stepCount = Math.max(a.text.steps.length, b.text.steps.length);
+  for (let i = 0; i < stepCount; i++) {
+    const before = a.text.steps[i] ?? "";
+    const after = b.text.steps[i] ?? "";
+    if (before !== after) {
+      out.push({
+        key: `template.text.steps.${i}`,
+        label: `Template wording — step ${i + 1}${after.trim() === "" ? " (removed)" : before.trim() === "" ? " (added)" : ""}`,
+        before: before || "(none)", after: after || "(none)",
+      });
+    }
+  }
   for (const k of Object.keys(a.text) as (keyof LabelTemplate["text"])[]) {
-    if (a.text[k] !== b.text[k]) out.push({ key: `template.text.${k}`, label: `Template wording — ${TEXT_LABEL[k] ?? k}`, before: a.text[k], after: b.text[k] });
+    if (k === "steps") continue;
+    const before = a.text[k] as string;
+    const after = b.text[k] as string;
+    if (before !== after) out.push({ key: `template.text.${k}`, label: `Template wording — ${TEXT_LABEL[k] ?? k}`, before, after });
   }
   if (canonicalJson(a.page) !== canonicalJson(b.page)) {
     out.push({ key: "template.page", label: "Template — label size & layout", before: pageSummary(a), after: pageSummary(b) });
@@ -226,7 +247,7 @@ export function diffTemplates(a: LabelTemplate, b: LabelTemplate): SnapshotChang
 }
 
 const TEXT_LABEL: Record<string, string> = {
-  title: "title", step1: "step 1", step2: "step 2", step3: "step 3",
+  title: "title",
   storageHeading: "storage heading", storage: "storage instructions",
   chilledLabel: "chilled use-by label", frozenLabel: "frozen use-by label", batchLabel: "batch label",
   ingredientsHeading: "ingredients heading", allergenNote: "allergen note", warning: "warning", address: "address",

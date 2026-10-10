@@ -15,6 +15,7 @@ import { layoutLabel, type LabelLayout, type PlacedRun } from "./layout";
 import { pngDataUrl } from "./png";
 import { Bitmap, fillCircle, fillContours, fillRect, flattenPath, type PathCmd } from "./raster";
 import type { LabelSnapshot } from "./snapshot";
+import { normaliseTemplate } from "./template";
 
 export { LabelFontSet, FONT_FILES } from "./fonts";
 export { Bitmap } from "./raster";
@@ -76,7 +77,11 @@ export interface LabelProof {
 }
 
 /** Content + layout only (no bitmap) — the fit check for the Labels list. */
-export function checkLabel(snapshot: LabelSnapshot, when: { printDate: string; productionDate: string }, fonts: LabelFontSet): Omit<LabelProof, "bitmap" | "png" | "overflowPng"> {
+export function checkLabel(rawSnapshot: LabelSnapshot, when: { printDate: string; productionDate: string }, fonts: LabelFontSet): Omit<LabelProof, "bitmap" | "png" | "overflowPng"> {
+  // A snapshot published by an older version stores the template as it was
+  // then (e.g. step1/step2/step3); read it through the normaliser so it
+  // still renders.
+  const snapshot = { ...rawSnapshot, template: normaliseTemplate(rawSnapshot.template) };
   const dates = labelDates({
     printDate: when.printDate,
     productionDate: when.productionDate,

@@ -66,7 +66,8 @@ export function buildLabelContent(s: LabelSnapshot, dates: LabelDates): LabelCon
   };
 
   const title = fill(t.title, "The title");
-  const steps = [t.step1, t.step2, t.step3].map((src, i) => {
+  // Blank steps aren't drawn and the numbering closes up (1..n on the label).
+  const steps = t.steps.filter(src => src.trim() !== "").map((src, i) => {
     const r = fill(src, `Step ${i + 1}`);
     if (r.blank.length > 0 && r.filled.length === 0) {
       problems.push(`Step ${i + 1} has no cooking values — set the oven or air-fryer numbers.`);
@@ -74,7 +75,7 @@ export function buildLabelContent(s: LabelSnapshot, dates: LabelDates): LabelCon
     // A line break in the wording starts a new line on the label (step 2:
     // one line per appliance); lines left empty by a blank appliance drop.
     return stepLines(r.text);
-  });
+  }).filter(lines => lines.length > 0);
   if (c.ovenMinMinutes != null && c.ovenMaxMinutes != null && c.ovenMinMinutes > c.ovenMaxMinutes) {
     problems.push(`Oven minutes run backwards (${c.ovenMinMinutes}–${c.ovenMaxMinutes}).`);
   }

@@ -77,9 +77,6 @@ export interface PageSettings {
   /** Space between stacked fields inside a column. */
   fieldGapMm: number;
   stepCircleMm: number;
-  /** Relative widths of the three step boxes (e.g. 1:2:1 gives step 2 half
-   *  the row). */
-  stepWeights: [number, number, number];
   /** Height of the barcode BARS (digits sit underneath). At least 80% of
    *  the EAN-13 nominal 22.85 mm — EAN13_MIN_BAR_HEIGHT_MM. */
   barcodeHeightMm: number;
@@ -96,9 +93,9 @@ export interface PageSettings {
 export interface TemplateText {
   /** e.g. "{name} - {packSize} PACK" */
   title: string;
-  step1: string;
-  step2: string;
-  step3: string;
+  /** The numbered cooking steps, in order (1..n). A blank step isn't drawn
+   *  and the numbering closes up. Up to MAX_STEPS. */
+  steps: string[];
   storageHeading: string;
   storage: string;
   chilledLabel: string;
@@ -174,9 +171,9 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     columnSplitPct: 44, columnGapMm: 4,
     titleBandMm: 9, stepsBandMm: 13, bandGapMm: 2, fieldGapMm: 2,
     stepCircleMm: 5.5,
-    // Step 2 carries both cooking lines (each kept whole), so it gets the
-    // middle ~56% of the row; steps 1 and 3 are short and take 3–4 lines.
-    stepWeights: [1, 2.5, 1],
+    // Step widths are worked out automatically (layout.ts): a step written as
+    // whole lines (step 2's cooking lines) gets just the width its longest
+    // line needs, the rest share what's left.
     // Graeme 2026-10-10: 21 mm looked too tall, 11 mm too short — "wider
     // but shorter, somewhere in the middle". 151% = whole 4-dot modules at
     // 203 dpi (bars 47.5 mm wide, ~56.5 mm with quiet zones, like his current
@@ -186,7 +183,9 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
   },
   fields: {
     title: field({ weight: 700, bold: true, caps: true, minPt: 12, maxPt: 22, lineHeight: 1.0, align: "center" }),
-    steps: field({ maxPt: 10, lineHeight: 1.1 }),
+    // Two steps share the row now, so they can be bigger: up to 12 pt (11.25
+    // pt condensed with the real Chicken & Chorizo, without squeezing the deck).
+    steps: field({ maxPt: 12, lineHeight: 1.1 }),
     storage: field({ maxPt: 10 }),
     dates: field({ weight: 700, bold: true, maxPt: 11 }),
     ingredients: field({ maxPt: 10 }),
@@ -197,12 +196,14 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
   },
   text: {
     title: "{name} - {packSize} PACK",
-    step1: "Remove the film but leave the calzones in the wooden tray.",
-    // One line per appliance, the turn in the middle and the time halved
-    // (Graeme, 2026-10-11: customers set the full time, never turned them
-    // and burnt the tops). A line with a blank number drops out.
-    step2: "[**OVEN** {ovenTemp}°C[ ({fanTemp}°C fan)]: {ovenHalfMin}–{ovenHalfMax} min ➜ **TURN OVER** ➜ {ovenHalf2Min}–{ovenHalf2Max} min]\n[**AIR FRYER** {airTemp}°C: {airHalfMin}–{airHalfMax} min ➜ **TURN OVER** ➜ {airHalf2Min}–{airHalf2Max} min]",
-    step3: "Check they're piping hot throughout before serving.",
+    // Two steps (Graeme, 2026-10-11): the old step 3 ("Check they're piping
+    // hot…") is gone. Step 1 is the one "some people get wrong", so its key
+    // words are bold. Step 2: one line per appliance, the turn in the middle
+    // and the time halved; a line with a blank number drops out.
+    steps: [
+      "Remove the film but **leave the calzones in the wooden tray**.",
+      "[**OVEN** {ovenTemp}°C[ ({fanTemp}°C fan)]: {ovenHalfMin}–{ovenHalfMax} min ➜ **TURN OVER** ➜ {ovenHalf2Min}–{ovenHalf2Max} min]\n[**AIR FRYER** {airTemp}°C: {airHalfMin}–{airHalfMax} min ➜ **TURN OVER** ➜ {airHalf2Min}–{airHalf2Max} min]",
+    ],
     storageHeading: "STORAGE INSTRUCTIONS:",
     storage: "If chilled, keep me below 5°C. If frozen, keep below -18°C. If you decide to freeze me, please do so immediately, fully defrost in a fridge before cooking and eat within 24 hours of defrosting.",
     chilledLabel: "IF CHILLED USE BY:",
@@ -274,6 +275,21 @@ function normaliseField(v: unknown, d: FieldStyle): FieldStyle {
   };
 }
 
+export const MAX_STEPS = 4;
+
+/** The steps list. Templates saved before it existed have step1/step2/step3
+ *  — read in order, blank ones left out (a blank step isn't drawn). */
+function normaliseSteps(t: Record<string, unknown>): string[] {
+  if (Array.isArray(t.steps)) {
+    return t.steps.filter((s): s is string => typeof s === "string").slice(0, MAX_STEPS);
+  }
+  const legacy = ["step1", "step2", "step3"].filter(k => k in t);
+  if (legacy.length) {
+    return legacy.map(k => str(t[k], "")).filter(s => s.trim() !== "");
+  }
+  return [...DEFAULT_TEMPLATE.text.steps];
+}
+
 export function normaliseTemplate(raw: unknown): LabelTemplate {
   const r = obj(raw);
   const p = obj(r.page);
@@ -284,7 +300,11 @@ export function normaliseTemplate(raw: unknown): LabelTemplate {
   const fields = {} as Record<FieldKey, FieldStyle>;
   for (const k of FIELD_KEYS) fields[k] = normaliseField(f[k], D.fields[k]);
   const text = {} as TemplateText;
-  for (const k of Object.keys(D.text) as (keyof TemplateText)[]) text[k] = str(t[k], D.text[k]);
+  for (const k of Object.keys(D.text) as (keyof TemplateText)[]) {
+    if (k === "steps") continue;
+    (text as unknown as Record<string, string>)[k] = str(t[k], D.text[k] as string);
+  }
+  text.steps = normaliseSteps(t);
   const cooking = {} as CookingValues;
   for (const k of COOKING_KEYS) cooking[k] = k in c ? nullableInt(c[k], 0, 400) : D.cooking[k];
   return {
@@ -300,9 +320,6 @@ export function normaliseTemplate(raw: unknown): LabelTemplate {
       bandGapMm: num(p.bandGapMm, D.page.bandGapMm, 0, 20),
       fieldGapMm: num(p.fieldGapMm, D.page.fieldGapMm, 0, 20),
       stepCircleMm: num(p.stepCircleMm, D.page.stepCircleMm, 2, 20),
-      stepWeights: Array.isArray(p.stepWeights) && p.stepWeights.length === 3
-        ? (p.stepWeights.map((w, i) => num(w, D.page.stepWeights[i], 0.5, 5)) as [number, number, number])
-        : [...D.page.stepWeights] as [number, number, number],
       barcodeHeightMm: num(p.barcodeHeightMm, D.page.barcodeHeightMm, EAN13_MIN_BAR_HEIGHT_MM, 60),
       barcodeSizePct: num(p.barcodeSizePct, D.page.barcodeSizePct, 80, 200),
       smallPack: bool(p.smallPack, D.page.smallPack),

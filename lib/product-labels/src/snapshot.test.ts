@@ -96,7 +96,7 @@ describe("areasForChange", () => {
   it("points each change at the part of the label it shows up in", () => {
     expect(areasForChange("deckText")).toEqual(["ingredients"]);
     expect(areasForChange("cooking.airFryerTempC")).toEqual(["steps"]);
-    expect(areasForChange("template.text.step2")).toEqual(["steps"]);
+    expect(areasForChange("template.text.steps.1")).toEqual(["steps"]);
     expect(areasForChange("template.fields.address")).toEqual(["address"]);
     expect(areasForChange("template.text.ingredientsHeading")).toEqual(["headings"]);
     expect(areasForChange("template.fields.headings")).toEqual(["headings"]);
