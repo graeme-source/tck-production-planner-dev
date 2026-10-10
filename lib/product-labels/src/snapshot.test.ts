@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  buildSnapshot, canonicalJson, DEFAULT_RECIPE_LABEL_SETTINGS, diffSnapshots, formatPackSize, snapshotKey, snapshotsMatch,
+  areasForChange, buildSnapshot, canonicalJson, DEFAULT_RECIPE_LABEL_SETTINGS, diffSnapshots, formatPackSize, snapshotKey, snapshotsMatch,
   type RecipeLabelSettings,
 } from "./snapshot";
 import { DEFAULT_TEMPLATE, normaliseTemplate, type LabelTemplate } from "./template";
@@ -88,6 +88,17 @@ describe("snapshot change detection", () => {
     expect(s.frozen).toEqual({ amount: 6, unit: "months" });
     expect(make({ settings: { frozenOn: false } }).frozen).toBeNull();
     expect(make({ shelf: null }).chilled).toBeNull();
+  });
+});
+
+describe("areasForChange", () => {
+  it("points each change at the part of the label it shows up in", () => {
+    expect(areasForChange("deckText")).toEqual(["ingredients"]);
+    expect(areasForChange("cooking.airFryerTempC")).toEqual(["steps"]);
+    expect(areasForChange("template.text.step2")).toEqual(["steps"]);
+    expect(areasForChange("template.fields.address")).toEqual(["address"]);
+    expect(areasForChange("barcode")).toEqual(["barcode"]);
+    expect(areasForChange("template.page")).toEqual(["all"]);
   });
 });
 

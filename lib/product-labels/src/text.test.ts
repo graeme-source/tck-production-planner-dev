@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fillTemplate, mayContainParagraph, parseBold, plainText } from "./text";
+import { fillTemplate, mayContainParagraph, parseBold, plainText, wordDiff } from "./text";
 import { DEFAULT_TEMPLATE } from "./template";
 
 describe("parseBold", () => {
@@ -25,6 +25,18 @@ describe("mayContainParagraph", () => {
   });
   it("prints an unusual statement as written", () => {
     expect(plainText(mayContainParagraph("Made in a kitchen that handles nuts", true))).toBe("Made in a kitchen that handles nuts.");
+  });
+});
+
+describe("wordDiff", () => {
+  it("shows a re-ordered deck as removed + added words", () => {
+    const d = wordDiff("Chicken (40%), Wheat Flour", "Wheat Flour, Chicken (35%)");
+    expect(d.filter(p => p.kind !== "removed").map(p => p.text).join("")).toBe("Wheat Flour, Chicken (35%)");
+    expect(d.filter(p => p.kind !== "added").map(p => p.text).join("")).toBe("Chicken (40%), Wheat Flour");
+    expect(d.some(p => p.kind === "added")).toBe(true);
+  });
+  it("identical texts are all 'same'", () => {
+    expect(wordDiff("a b c", "a b c")).toEqual([{ text: "a b c", kind: "same" }]);
   });
 });
 

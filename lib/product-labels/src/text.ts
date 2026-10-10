@@ -55,6 +55,44 @@ export function mayContainParagraph(statement: string, boldList: boolean): Parag
   return mergeRuns([...parseBold(m[1]), { text: m[2], bold: true }, { text: m[3], bold: false }]);
 }
 
+// ── Word diff (what changed in the deck, for the publish check) ───────────
+
+export interface DiffPart {
+  text: string;
+  kind: "same" | "added" | "removed";
+}
+
+/** Word-level difference between two texts (longest common subsequence).
+ *  Whitespace is kept with each word so joining the parts rebuilds the text. */
+export function wordDiff(before: string, after: string): DiffPart[] {
+  const a = before.match(/\S+\s*/g) ?? [];
+  const b = after.match(/\S+\s*/g) ?? [];
+  const key = (w: string) => w.trim();
+  // DP table of LCS lengths (decks are a few hundred words — fine).
+  const n = a.length, m = b.length;
+  const dp: Uint16Array[] = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = key(a[i]) === key(b[j]) ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const out: DiffPart[] = [];
+  const push = (text: string, kind: DiffPart["kind"]) => {
+    const last = out[out.length - 1];
+    if (last && last.kind === kind) last.text += text;
+    else out.push({ text, kind });
+  };
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (key(a[i]) === key(b[j])) { push(b[j], "same"); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { push(a[i], "removed"); i++; }
+    else { push(b[j], "added"); j++; }
+  }
+  while (i < n) push(a[i++], "removed");
+  while (j < m) push(b[j++], "added");
+  return out;
+}
+
 // ── Template wording ───────────────────────────────────────────────────────
 //   {name}           a placeholder
 //   [ ... ]          optional: dropped when ANY placeholder directly inside

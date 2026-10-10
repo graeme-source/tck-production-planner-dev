@@ -15,7 +15,7 @@
 import type { ShelfPeriod } from "./dates";
 import { describePeriod } from "./dates";
 import type { CookingValues, LabelTemplate } from "./template";
-import { COOKING_KEYS, FIELD_KEYS, FIELD_LABEL } from "./template";
+import { COOKING_KEYS, FIELD_KEYS, FIELD_LABEL, type FieldKey } from "./template";
 
 /** Per-recipe label settings (product_label_settings). Null cooking / period
  *  values mean "use the template's default". */
@@ -137,6 +137,28 @@ export interface SnapshotChange {
   label: string;
   before: string;
   after: string;
+}
+
+/** Which parts of the label a change shows up in — the proof highlights
+ *  them. "barcode" is the barcode block; "all" = the whole label. */
+export function areasForChange(key: string): Array<FieldKey | "barcode" | "all"> {
+  if (key === "labelName" || key === "packSize") return ["title"];
+  if (key === "deckText") return ["ingredients"];
+  if (key === "mayContain" || key === "warningOn" || key === "template.mayContainBoldList") return ["allergenInfo"];
+  if (key.startsWith("cooking.")) return ["steps"];
+  if (key === "chilled" || key === "frozen" || key === "template.batchBasis") return ["dates"];
+  if (key === "barcode") return ["barcode"];
+  if (key.startsWith("template.fields.")) return [key.slice("template.fields.".length) as FieldKey];
+  const text: Record<string, FieldKey> = {
+    title: "title", step1: "steps", step2: "steps", step3: "steps", storageHeading: "storage", storage: "storage",
+    chilledLabel: "dates", frozenLabel: "dates", batchLabel: "dates", ingredientsHeading: "ingredients",
+    allergenNote: "allergenInfo", warning: "allergenInfo", address: "address",
+  };
+  if (key.startsWith("template.text.")) {
+    const f = text[key.slice("template.text.".length)];
+    return f ? [f] : ["all"];
+  }
+  return ["all"];
 }
 
 const COOKING_LABEL: Record<keyof CookingValues, string> = {
