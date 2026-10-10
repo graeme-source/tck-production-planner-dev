@@ -29,6 +29,10 @@ import { isCollection, isDispatchTagged, isLocalDelivery } from "@/lib/dispatch-
 import { decidePostOvenReminder } from "@/lib/post-oven-reminder";
 import { summariseTakeBackOut, takeBackOutBody, type TakeBackOutSummary, type TakeBackOutWhere, type UndoReason } from "@/lib/wrapping-undo";
 import { TakeBackOutDialog } from "../shared/take-back-out-dialog";
+import { BackLabelsDialog } from "@/components/product-labels/back-labels-dialog";
+import { useFounderArea } from "@/hooks/use-founder-area";
+
+const useCanPrintBackLabels = () => useFounderArea().canPrintBackLabels;
 
 // Case-order freezer split — new columns not yet in the generated API client
 // (openapi.yaml codegen deliberately deferred; see project_api_spec_drift).
@@ -161,6 +165,9 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   // 2026-09-16): the pinned panel shows the selected flavour and the queue
   // lives in a bottom sheet.
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
+  // Back labels (Stage 2 first cut): founder feature while Graeme tests it.
+  const canPrintBackLabels = useCanPrintBackLabels();
+  const [backLabelsFor, setBackLabelsFor] = useState<{ recipeId: number; recipeName: string; planItemId: number; net: number } | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
   // The toggle-row slot exists only after the parent's first commit, so
   // look it up in an effect rather than during render.
@@ -612,6 +619,16 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
           pack report alongside. */}
       <LeftToWrapBanner />
 
+      {backLabelsFor && (
+        <BackLabelsDialog
+          recipeId={backLabelsFor.recipeId}
+          recipeName={backLabelsFor.recipeName}
+          planItemId={backLabelsFor.planItemId}
+          netPacks={backLabelsFor.net}
+          onClose={() => setBackLabelsFor(null)}
+        />
+      )}
+
       {takeOut && (
         <TakeBackOutDialog
           summary={takeOut.summary}
@@ -850,6 +867,17 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                     <span className="flex items-center gap-1 text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
                       <CheckCircle2 className="w-3.5 h-3.5" /> All wrapped
                     </span>
+                  )}
+                  {/* Deliberately quiet: a small link at the card's edge, only
+                      for whoever holds "Print back labels" (Graeme for now). */}
+                  {canPrintBackLabels && (
+                    <button
+                      type="button"
+                      onClick={() => setBackLabelsFor({ recipeId: item.recipeId, recipeName: item.recipeName ?? `Recipe #${item.recipeId}`, planItemId: item.id, net })}
+                      className="ml-auto text-xs font-semibold text-muted-foreground hover:text-foreground underline underline-offset-2"
+                    >
+                      Back labels
+                    </button>
                   )}
                 </div>
                   <div className="px-4 py-3 space-y-3">

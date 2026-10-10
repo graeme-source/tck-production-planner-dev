@@ -30,6 +30,9 @@ export function useFounderArea() {
     /** May approve marketing emails (founder, or a marketing.approve_emails
      *  grant). The server checks again on every approve. */
     canApproveEmails: decideFounderFeatureAccess({ email, grantedKeys, featureKey: FOUNDER_FEATURES.approveEmails }),
+    /** May make pack back labels at the wrapping station (founder, or a
+     *  labels.print_back grant). The server checks again. */
+    canPrintBackLabels: decideFounderFeatureAccess({ email, grantedKeys, featureKey: FOUNDER_FEATURES.printBackLabels }),
     tabs,
     /** Where "The Business" lands for this person; null = no way in. */
     home: tabs[0]?.href ?? null,
