@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  barcodeFor, checkGtin, checkNewBarcode, countOutcomes, decidePull, decidePush, deriveLinkedVariants, gtinCheckDigit,
-  gtinKey, isDifferentInShopify, kindLabel, matchScan, missingScopes, shouldRefreshOnMiss, type BarcodeHolder, type MappingRow,
+  barcodeFor, checkGtin, countOutcomes, decidePull, decideScan, deriveLinkedVariants, describeClash, gtinCheckDigit, gtinKey,
+  groupBarcode, identitiesFor, isDifferentInShopify, kindLabel, planAssignment, planScanBarcodes, rankOf, resolveOwnership,
+  scanMessage, shouldRefreshOnMiss, type BarcodeHolder, type Holding, type KnownCodes, type MappingRow, type ScanLine,
 } from "./index";
 
 describe("GTIN validation", () => {
@@ -85,32 +86,39 @@ describe("linked variants", () => {
   });
 });
 
-describe("setting a barcode — duplicate check", () => {
+describe("setting a barcode — reuse and move", () => {
+  const h = (variantId: string, identityKey: string, identityName: string, current: boolean, ours: string | null, shopify: string | null = ours): BarcodeHolder =>
+    ({ variantId, name: `${identityName} listing ${variantId}`, identityKey, identityName, current, ours, shopify });
   const holders: BarcodeHolder[] = [
-    { variantId: "11", barcode: "5065018206054", name: "Margherita · 2 Pack", recipeName: "Margherita" },
-    { variantId: "12", barcode: "5065018206054", name: "Margherita (old) · 2 Pack", recipeName: "Margherita" },
-    { variantId: "21", barcode: "5065018206207", name: "Garlic Cheese · 2 Pack", recipeName: "Garlic Cheese" },
-    { variantId: "77", barcode: "036000291452", name: "Burger Sauce · Bottle", recipeName: null },
+    h("11", "r1:pack", "Margherita · 2-pack", true, "5065018206054"),
+    h("12", "r1:pack", "Margherita · 2-pack", true, "5065018206054"),
+    h("21", "r2:pack", "Garlic Cheese · 2-pack", true, "5065018206207"),
+    h("77", "v77", "Old test box", false, null, "5065018206344"),
+    h("78", "v78", "Burger Sauce", true, null, "036000291452"),
   ];
-  it("allows the same number across the listings of one group", () => {
-    expect(checkNewBarcode("5065018206054", ["11", "12"], holders)).toMatchObject({ ok: true, digits: "5065018206054" });
+  const margherita = { identityKey: "r1:pack", name: "Margherita · 2-pack" };
+
+  it("listings of the same product share a number without asking", () => {
+    expect(planAssignment("5065018206054", margherita, holders)).toMatchObject({ ok: true, digits: "5065018206054", release: [] });
   });
-  it("refuses a number on another product, naming it", () => {
-    const r = checkNewBarcode("5065018206207", ["11", "12"], holders);
-    expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.reason).toContain("Garlic Cheese · 2 Pack");
-      expect(r.clash?.variantId).toBe("21");
-    }
+  it("a number on an old product asks 'Move it?' naming both", () => {
+    const r = planAssignment("5065018206344", margherita, holders);
+    expect(r).toMatchObject({ ok: false, confirm: "move" });
+    if (!r.ok) expect(r.reason).toBe("This barcode belongs to Old test box. Move it to Margherita · 2-pack?");
+    expect(planAssignment("5065018206344", margherita, holders, { move: true })).toMatchObject({ ok: true, movedFrom: ["Old test box"] });
   });
-  it("catches a UPC-A typed as its 13-digit EAN form", () => {
-    const r = checkNewBarcode("0036000291452", ["11"], holders);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toContain("not linked to a recipe");
+  it("a number a CURRENT product scans with needs the explicit second confirmation, then releases it", () => {
+    const r = planAssignment("5065018206207", margherita, holders, { move: true });
+    expect(r).toMatchObject({ ok: false, confirm: "take", holders: ["Garlic Cheese · 2-pack"] });
+    if (!r.ok) expect(r.reason).toContain("will have NO barcode and can't be scanned");
+    expect(planAssignment("5065018206207", margherita, holders, { take: true })).toMatchObject({ ok: true, release: ["21"] });
   });
-  it("refuses invalid numbers and blanks before looking for duplicates", () => {
-    expect(checkNewBarcode("5065018206055", ["11"], holders)).toMatchObject({ ok: false });
-    const blank = checkNewBarcode("  ", ["11"], holders);
+  it("a number only Shopify has on another listing asks to move (UPC typed as EAN-13 too)", () => {
+    expect(planAssignment("0036000291452", margherita, holders)).toMatchObject({ ok: false, confirm: "move", holders: ["Burger Sauce"] });
+  });
+  it("refuses invalid numbers and blanks", () => {
+    expect(planAssignment("5065018206055", margherita, holders)).toMatchObject({ ok: false });
+    const blank = planAssignment("  ", margherita, holders);
     expect(blank.ok).toBe(false);
     if (!blank.ok) expect(blank.reason).toContain("not removed");
   });
@@ -120,12 +128,85 @@ describe("setting a barcode — duplicate check", () => {
   });
 });
 
+describe("product identity — one code, one product", () => {
+  const links = [
+    { variantId: "11", recipeId: 1, recipeName: "The Don", kind: "pack" as const },
+    { variantId: "13", recipeId: 1, recipeName: "The Don", kind: "wonky" as const },
+    { variantId: "18", recipeId: 1, recipeName: "The Don", kind: "bag" as const },
+    { variantId: "21", recipeId: 2, recipeName: "Garlic Korma", kind: "pack" as const },
+  ];
+  const names = new Map([["50", "CFF The Don · 2 Pack"], ["51", "F2F The Don"], ["60", "Honey Mustard Fried Chicken"]]);
+  const ids = identitiesFor(["11", "13", "18", "21", "50", "51", "60"], links, new Map([["50", "11"], ["51", "50"]]), names, new Map([[1, 2], [2, 2]]));
+
+  it("a recipe's pack and wonky are one identity; its bag is another", () => {
+    expect(ids.get("11")!.key).toBe("r1:pack");
+    expect(ids.get("13")!.key).toBe("r1:pack");
+    expect(ids.get("18")!.key).toBe("r1:bag");
+    expect(ids.get("11")!.name).toBe("The Don · 2-pack");
+  });
+  it("'same product as' follows the chain to a recipe", () => {
+    expect(ids.get("50")!.key).toBe("r1:pack");
+    expect(ids.get("51")!.key).toBe("r1:pack");
+  });
+  it("anything else is its own product", () => {
+    expect(ids.get("60")).toEqual({ key: "v60", name: "Honey Mustard Fried Chicken" });
+  });
+  it("a 'same product as' loop ends without hanging", () => {
+    const loop = identitiesFor(["a", "b"], [], new Map([["a", "b"], ["b", "a"]]), new Map());
+    expect(loop.size).toBe(2);
+  });
+
+  const hold = (variantId: string, barcode: string | null, extra: Partial<Holding> = {}): Holding =>
+    ({ variantId, name: names.get(variantId) ?? variantId, barcode, identity: ids.get(variantId)!, current: true, setInApp: false, linkKind: links.find(l => l.variantId === variantId)?.kind, ...extra });
+
+  it("copies of the same product share a code with no clash", () => {
+    const o = resolveOwnership([hold("11", "5065018206344"), hold("50", "5065018206344"), hold("13", "5065018206344")]);
+    expect(o.clashes).toEqual([]);
+    expect(o.barcodeOf.get("50")).toBe("5065018206344");
+  });
+  it("current vs current: the recipe's pack keeps it, the other product loses it and it is listed", () => {
+    const o = resolveOwnership([hold("11", "5065018206344"), hold("60", "5065018206344")]);
+    expect(o.barcodeOf.get("11")).toBe("5065018206344");
+    expect(o.barcodeOf.get("60")).toBeNull();
+    expect(o.clashes).toHaveLength(1);
+    expect(o.clashes[0].keeper?.identity.key).toBe("r1:pack");
+    expect(describeClash(o.clashes[0])).toContain("Honey Mustard Fried Chicken");
+  });
+  it("a pack beats a bag; a code set in the app beats both", () => {
+    expect(resolveOwnership([hold("18", "5065018206320"), hold("21", "5065018206320")]).barcodeOf.get("21")).toBe("5065018206320");
+    const o = resolveOwnership([hold("18", "5065018206320", { setInApp: true }), hold("21", "5065018206320")]);
+    expect(o.barcodeOf.get("18")).toBe("5065018206320");
+    expect(o.barcodeOf.get("21")).toBeNull();
+  });
+  it("two different products tied for best: NOBODY can scan with it", () => {
+    const o = resolveOwnership([hold("11", "5065018206399"), hold("21", "5065018206399")]);
+    expect(o.barcodeOf.get("11")).toBeNull();
+    expect(o.barcodeOf.get("21")).toBeNull();
+    expect(o.clashes[0].keeper).toBeNull();
+  });
+  it("a retired product never claims a code; a reused code is listed as information, not a clash", () => {
+    const o = resolveOwnership([hold("11", "5065018206344"), hold("60", "5065018206344", { current: false })]);
+    expect(o.barcodeOf.get("11")).toBe("5065018206344");
+    expect(o.barcodeOf.get("60")).toBeNull();
+    expect(o.clashes).toEqual([]);
+    expect(o.reused).toHaveLength(1);
+    expect(o.reused[0].current?.identity.key).toBe("r1:pack");
+    expect(o.reused[0].retired).toEqual([{ variantId: "60", name: "Honey Mustard Fried Chicken" }]);
+    expect(resolveOwnership([hold("60", "5065018206344", { current: false })]).barcodeOf.get("60")).toBeNull();
+  });
+  it("rankOf", () => {
+    expect(rankOf({ setInApp: true, linkKind: "bag" })).toBe(0);
+    expect(rankOf({ setInApp: false, linkKind: "wonky" })).toBe(1);
+    expect(rankOf({ setInApp: false })).toBe(3);
+  });
+});
+
 describe("pull / hourly check classification", () => {
-  const linked = (ours: string | null, theirs: string | null | undefined, pushPending = false) =>
-    decidePull({ linked: true, ours, pushPending, shopify: theirs === undefined ? null : { barcode: theirs } });
+  const linked = (ours: string | null, theirs: string | null | undefined) =>
+    decidePull({ linked: true, ours, shopify: theirs === undefined ? null : { barcode: theirs } });
 
   it("filled: we had none, Shopify had one", () => {
-    expect(linked(null, "5065018206054")).toEqual({ outcome: "filled", setOurs: "5065018206054", clearPending: false, invalid: false });
+    expect(linked(null, "5065018206054")).toEqual({ outcome: "filled", setOurs: "5065018206054", invalid: false });
   });
   it("unchanged: same both sides (spaces ignored)", () => {
     const d = linked("5065018206054", " 5065018206054");
@@ -136,6 +217,12 @@ describe("pull / hourly check classification", () => {
     const d = linked("5065018206054", "5065018206207");
     expect(d.outcome).toBe("conflict");
     expect(d.setOurs).toBeUndefined();
+  });
+  it("the hourly check never fills — it reports Shopify-only instead", () => {
+    const d = decidePull({ mode: "check", linked: true, ours: null, shopify: { barcode: "5065018206054" } });
+    expect(d.outcome).toBe("shopify-only");
+    expect(d).not.toHaveProperty("setOurs");
+    expect(decidePull({ mode: "check", linked: true, ours: "5065018206054", shopify: { barcode: "5065018206207" } }).outcome).toBe("conflict");
   });
   it("missing: Shopify has no barcode", () => {
     expect(linked("5065018206054", null).outcome).toBe("missing");
@@ -149,85 +236,90 @@ describe("pull / hourly check classification", () => {
     expect(d).toMatchObject({ outcome: "filled", setOurs: "31035957422417", invalid: true });
     expect(linked("97748478844497", "97748478844497")).toMatchObject({ outcome: "unchanged", invalid: true });
   });
-  it("a waiting push is never mistaken for a conflict, and clears once Shopify matches", () => {
-    expect(linked("5065018206054", "5065018206207", true).outcome).toBe("pending");
-    expect(linked("5065018206054", null, true).outcome).toBe("pending");
-    expect(linked("5065018206054", "5065018206054", true)).toMatchObject({ outcome: "unchanged", clearPending: true });
+  it("a barcode set in the app is never overwritten by a check, even once unlinked", () => {
+    expect(decidePull({ mode: "check", linked: false, setInApp: true, ours: "5065018206054", shopify: { barcode: "5065018206207" } }).outcome).toBe("conflict");
   });
   it("unlinked variants follow Shopify (it is their only source)", () => {
-    expect(decidePull({ linked: false, ours: "1", pushPending: false, shopify: { barcode: "5065018206054" } }))
+    expect(decidePull({ linked: false, ours: "1", shopify: { barcode: "5065018206054" } }))
       .toMatchObject({ outcome: "followed", setOurs: "5065018206054" });
-    expect(decidePull({ linked: false, ours: "5065018206054", pushPending: false, shopify: { barcode: "5065018206054" } }).outcome)
+    expect(decidePull({ linked: false, ours: "5065018206054", shopify: { barcode: "5065018206054" } }).outcome)
       .toBe("followed-unchanged");
   });
-  it("an unlinked variant with an unsent change keeps ours", () => {
-    expect(decidePull({ linked: false, ours: "5065018206054", pushPending: true, shopify: { barcode: "5065018206207" } }).outcome).toBe("pending");
+  it("retired products stop claiming a barcode", () => {
+    expect(decidePull({ linked: false, current: false, ours: "5065018206344", shopify: { barcode: "5065018206344" } })).toEqual({ outcome: "retired", setOurs: null, invalid: false });
+    expect(decidePull({ linked: true, current: false, ours: null, shopify: { barcode: "5065018206344" } })).toEqual({ outcome: "retired", invalid: false });
   });
   it("counts outcomes and invalids", () => {
     const c = countOutcomes([linked(null, "5065018206054"), linked("5065018206054", "5065018206207"), linked(null, "31035957422417"), linked(null, null)]);
     expect(c).toMatchObject({ filled: 2, conflict: 1, missing: 1, invalid: 1 });
   });
-  it("'Different in Shopify' only when both are set, differ and nothing is waiting", () => {
-    const base = { ours: "5065018206054", shopifyBarcode: "5065018206207", shopifyCheckedAt: new Date(), pushPending: false };
+  it("'Different in Shopify' when Shopify has a number that isn't ours", () => {
+    const base = { ours: "5065018206054", shopifyBarcode: "5065018206207", shopifyCheckedAt: new Date() };
     expect(isDifferentInShopify(base)).toBe(true);
-    expect(isDifferentInShopify({ ...base, pushPending: true })).toBe(false);
+    expect(isDifferentInShopify({ ...base, notInShopify: true })).toBe(false);
     expect(isDifferentInShopify({ ...base, shopifyBarcode: "5065018206054" })).toBe(false);
     expect(isDifferentInShopify({ ...base, shopifyCheckedAt: null })).toBe(false);
+    expect(isDifferentInShopify({ ...base, ours: null })).toBe(true);
+    expect(isDifferentInShopify({ ...base, shopifyBarcode: null })).toBe(false);
+  });
+  it("a group shares one barcode; different numbers are 'mixed'", () => {
+    expect(groupBarcode(["5065018206054", " 5065018206054", null])).toEqual({ barcode: "5065018206054", mixed: false });
+    expect(groupBarcode(["5065018206054", "5065018206207"])).toEqual({ barcode: null, mixed: true });
+    expect(groupBarcode([null, ""])).toEqual({ barcode: null, mixed: false });
   });
 });
 
-describe("push result handling", () => {
-  const wanted = { variantId: "11", barcode: "5065018206054" };
-  it("sent when Shopify saves the number", () => {
-    expect(decidePush({ kind: "answered", userErrors: [], saved: [{ variantId: "11", barcode: "5065018206054" }] }, wanted)).toEqual({ state: "sent" });
-  });
-  it("blocked writes leave it pending with the reason", () => {
-    const r = decidePush({ kind: "blocked" }, wanted);
-    expect(r).toMatchObject({ state: "pending", result: "blocked" });
-    if (r.state === "pending") expect(r.reason).toContain("BLOCK_SHOPIFY_WRITES");
-  });
-  it("a missing permission names the scope", () => {
-    const r = decidePush({ kind: "missing-scope", scopes: ["write_products"] }, wanted);
-    expect(r).toMatchObject({ state: "pending", result: "blocked" });
-    if (r.state === "pending") expect(r.reason).toContain("write_products");
-  });
-  it("Shopify's userErrors and transport failures are pending + failed", () => {
-    expect(decidePush({ kind: "answered", userErrors: ["Barcode is invalid"], saved: [] }, wanted)).toMatchObject({ state: "pending", result: "failed" });
-    expect(decidePush({ kind: "error", message: "Shopify GraphQL error 502" }, wanted)).toMatchObject({ state: "pending", result: "failed" });
-  });
-  it("an answer that doesn't show the new number isn't trusted", () => {
-    expect(decidePush({ kind: "answered", userErrors: [], saved: [{ variantId: "11", barcode: "999" }] }, wanted)).toMatchObject({ state: "pending" });
-  });
-  it("missingScopes", () => {
-    expect(missingScopes(["read_products"])).toEqual(["write_products"]);
-    expect(missingScopes(["read_products", "write_products"])).toEqual([]);
-  });
-});
-
-describe("packing scan — live barcode map", () => {
+describe("packing scan — safety", () => {
+  const line = (key: string, barcode: string | null, identityKey: string | null, name: string, remaining = 1, sku: string | null = null): ScanLine =>
+    ({ key, barcode, identityKey, name, sku, title: name, remaining });
   const lines = [
-    { variantId: "11", barcode: "5065018206054", sku: "6", title: "Margherita" },
-    { variantId: "21", barcode: null, sku: "4a", title: "Garlic Cheese" },
+    line("v11", "5065018206054", "r1:pack", "Margherita", 2, "6"),
+    line("v21", null, "r2:pack", "Garlic Cheese", 1, "4a"),
+    line("v31", "5065018206061", "r3:pack", "Godfather", 0),
   ];
-  it("a barcode saved in the app beats the one the orders arrived with", () => {
+  const known: KnownCodes = { [gtinKey("5065018206344")]: { identityKey: "r9:pack", name: "The Don · 2-pack" } };
+
+  it("once the live map has loaded it is the only authority", () => {
     expect(barcodeFor("21", null, { "21": "5065018206207" })).toBe("5065018206207");
     expect(barcodeFor(11, "5065018206054", { "11": "5065018206061" })).toBe("5065018206061");
-    expect(barcodeFor("11", "5065018206054", {})).toBe("5065018206054");
-    expect(barcodeFor(null, "x", { "11": "y" })).toBe("x");
+    expect(barcodeFor("11", "5065018206054", {})).toBeNull();
+    expect(barcodeFor(null, "x", { "11": "y" })).toBeNull();
     expect(barcodeFor("11", "5065018206054", null)).toBe("5065018206054");
   });
-  it("matches on barcode after the live map is applied", () => {
-    const live = { "21": "5065018206207" };
-    const withLive = lines.map(l => ({ ...l, barcode: barcodeFor(l.variantId, l.barcode, live) }));
-    expect(matchScan("5065018206207", withLive)?.variantId).toBe("21");
-    expect(matchScan("5065018206207", lines)).toBeNull();
+  it("an exact barcode ticks its line (UPC read as EAN-13 included)", () => {
+    expect(decideScan("5065018206054", lines, known)).toEqual({ kind: "tick", key: "v11" });
+    expect(decideScan("036000291452", [line("s", "0036000291452", "v5", "Sauce")], {})).toEqual({ kind: "tick", key: "s" });
   });
-  it("matches a UPC read as EAN-13, then SKU, then title", () => {
-    const upc = [{ barcode: "036000291452", sku: null, title: "Sauce" }];
-    expect(matchScan("0036000291452", upc)).toBe(upc[0]);
-    expect(matchScan("4A", lines)?.variantId).toBe("21");
-    expect(matchScan("marg", lines)?.variantId).toBe("11");
-    expect(matchScan("   ", lines)).toBeNull();
+  it("a code belonging to another product is 'Wrong item' — never a tick", () => {
+    const d = decideScan("5065018206344", lines, known);
+    expect(d).toEqual({ kind: "wrong-item", product: "The Don · 2-pack" });
+    expect(scanMessage(d)).toBe("Wrong item — this is The Don · 2-pack.");
+  });
+  it("a fully picked line says so", () => {
+    expect(decideScan("5065018206061", lines, known)).toMatchObject({ kind: "already-picked", key: "v31" });
+  });
+  it("digits never fall back to SKU or title", () => {
+    expect(decideScan("6", lines, known)).toEqual({ kind: "unknown-barcode" });
+    expect(decideScan("5065018206", lines, known)).toEqual({ kind: "unknown-barcode" });
+  });
+  it("a code on two different products' lines is refused", () => {
+    const d = decideScan("5065018206054", [...lines, line("v41", "5065018206054", "r4:pack", "Pepperoni")], known);
+    expect(d).toEqual({ kind: "ambiguous", products: ["Margherita", "Pepperoni"] });
+  });
+  it("typed text needs an EXACT SKU or title — no partial title match", () => {
+    expect(decideScan("4A", lines, known)).toEqual({ kind: "tick", key: "v21" });
+    expect(decideScan("garlic cheese", lines, known)).toEqual({ kind: "tick", key: "v21" });
+    expect(decideScan("marg", lines, known)).toEqual({ kind: "no-match" });
+    expect(decideScan("   ", lines, known)).toEqual({ kind: "no-match" });
+  });
+  it("a typed SKU shared by two products is refused (SKUs are shelf labels)", () => {
+    const shelf = [line("a", null, "r1:pack", "Garlic Cheese", 1, "4a"), line("b", null, "r5:pack", "Big Nanny's", 1, "4a")];
+    expect(decideScan("4a", shelf, {})).toMatchObject({ kind: "ambiguous" });
+  });
+  it("scan queue: our table first; Shopify only for variants we hold no row for", () => {
+    const plan = planScanBarcodes(["11", "21", "31"], new Map<string, string | null>([["11", "5065018206054"], ["21", null]]));
+    expect(plan.barcodes).toEqual({ "11": "5065018206054" });
+    expect(plan.askShopify).toEqual(["31"]);
   });
   it("refreshes the live map on a missed barcode, but not on every keystroke-like miss", () => {
     expect(shouldRefreshOnMiss("5065018206207", null, 1000)).toBe(true);
