@@ -93,6 +93,10 @@ export const recipeIngredientsTable = pgTable("recipe_ingredients", {
   marinadeAddAtCooking: boolean("marinade_add_at_cooking").notNull().default(false),
   includeInFillingMix: boolean("include_in_filling_mix").notNull().default(false),
   quid: boolean("quid").notNull().default(false),
+  // Who decided `quid` (migration 0165): 'auto' = the recipe's name names
+  // it (api-server lib/quid-matcher.ts), 'manual' = a person (always wins),
+  // null = nobody yet.
+  quidSource: text("quid_source"),
   isTopping: boolean("is_topping").notNull().default(false),
   // Show filling items (e.g. meat) in the prep-bases station checklist,
   // so the prep team can prepare them ahead of the main prep flow.
@@ -114,6 +118,7 @@ export const recipeSubRecipesTable = pgTable("recipe_sub_recipes", {
   marinadeAddAtCooking: boolean("marinade_add_at_cooking").notNull().default(false),
   includeInFillingMix: boolean("include_in_filling_mix").notNull().default(false),
   quid: boolean("quid").notNull().default(false),
+  quidSource: text("quid_source"), // as recipe_ingredients.quid_source
   isTopping: boolean("is_topping").notNull().default(false),
   showInPrep: boolean("show_in_prep").notNull().default(false),
   assemblyOrder: integer("assembly_order"),
