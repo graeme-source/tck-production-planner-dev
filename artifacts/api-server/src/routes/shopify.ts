@@ -5,6 +5,7 @@ import { eq, sql } from "drizzle-orm";
 import { requireFounderArea } from "../middleware/founder-area-access";
 import { londonDateString, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
 import { FRIED_CHICKEN_CATEGORY } from "./fried-chicken";
+import { CLUB_SPECIAL_TITLE_LC } from "@workspace/barcodes";
 import {
   averageOrderValue, CUSTOMER_TYPE_TAGS, getNetRevenue, getRefundTotal, isCountableOrder, isPaidOrder, orderHasTag,
 } from "../lib/order-revenue";
@@ -67,7 +68,7 @@ router.get("/order-summary", async (req, res) => {
     ]);
 
     const specialRecipe = specialRows[0] ?? null;
-    const SPECIAL_KEY = "calzone club special";
+    const SPECIAL_KEY = CLUB_SPECIAL_TITLE_LC;
 
     // Entries absorbed from the "Calzone Club Special" listing carry the
     // special's quantity along so the UI can badge it.

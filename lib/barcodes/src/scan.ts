@@ -40,6 +40,9 @@ export interface ScanLine {
   title: string | null;
   /** Units still to pick on this line. */
   remaining: number;
+  /** Other codes this line accepts, each with the product it belongs to —
+   *  only the Calzone Club Special during a changeover (copies.ts). */
+  alsoAccepts?: Array<{ code: string; identityKey: string; name: string }>;
 }
 
 /** gtinKey(code) → the product that code belongs to (every product we know). */
@@ -64,8 +67,19 @@ export function decideScan(input: string, lines: ScanLine[], known: KnownCodes):
 
   if (isDigits(compact)) {
     const k = gtinKey(compact);
-    const matches = lines.filter(l => l.barcode && gtinKey(l.barcode) === k);
-    const products = distinctProducts(matches);
+    // Each matching line, with the product the CODE belongs to: the line's
+    // own for its barcode, the named one for an "also accepts" code. Two
+    // different products → refuse.
+    const hits: Array<{ line: ScanLine; productKey: string; name: string }> = [];
+    for (const l of lines) {
+      if (l.barcode && gtinKey(l.barcode) === k) hits.push({ line: l, productKey: idOf(l), name: l.name });
+      else {
+        const alt = l.alsoAccepts?.find(a => gtinKey(a.code) === k);
+        if (alt) hits.push({ line: l, productKey: alt.identityKey, name: alt.name });
+      }
+    }
+    const matches = hits.map(h => h.line);
+    const products = [...new Map(hits.map(h => [h.productKey, h.name])).values()];
     if (products.length > 1) return { kind: "ambiguous", products };
     const open = matches.find(l => l.remaining > 0);
     if (open) return { kind: "tick", key: open.key };

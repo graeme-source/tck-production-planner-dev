@@ -9,5 +9,6 @@ export * from "./gtin";
 export * from "./links";
 export * from "./set";
 export * from "./identity";
+export * from "./copies";
 export * from "./reconcile";
 export * from "./scan";

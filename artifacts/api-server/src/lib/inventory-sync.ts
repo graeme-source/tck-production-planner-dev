@@ -22,6 +22,7 @@ import type { ShopifyLineItem } from "../services/shopify";
 import { adjustFridgeStock } from "./fridge-stock";
 import { EIGHT_PACK_SIZE, isBagLine, resolveBagLines, type BagLineContext } from "./eight-pack-bags";
 import { loadEightPackVariantToRecipe, loadProductTitleToRecipe } from "./eight-pack-recipe-map";
+import { CLUB_SPECIAL_TITLE_LC } from "@workspace/barcodes";
 
 /**
  * Runtime feature flag: limit the factory-number loop to core-menu
@@ -203,7 +204,7 @@ export interface DecrementResult {
  *  Special rotates). When we see this title, the line item belongs to
  *  whichever recipe is currently flagged isCurrentSpecial. Lowercase
  *  match — mirrors the dispatches/order-summary endpoint. */
-const SPECIAL_PRODUCT_TITLE_LC = "calzone club special";
+const SPECIAL_PRODUCT_TITLE_LC = CLUB_SPECIAL_TITLE_LC; // one copy: @workspace/barcodes
 
 export async function decrementFridgeForShopifyOrder(
   orderId: number,
