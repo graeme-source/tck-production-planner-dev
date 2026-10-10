@@ -8,8 +8,8 @@
  * The assembly rules (compound threshold, ordering, QUID) are
  * lib/ingredient-deck.ts with their tests.
  */
-import { db, recipeIngredientsTable, recipeSubRecipesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, appSettingsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, recipeIngredientsTable, recipeSubRecipesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, appSettingsTable, recipeQuidComponentsTable } from "@workspace/db";
+import { and, eq } from "drizzle-orm";
 import { ALLERGEN_DISPLAY, allergenMismatch } from "@workspace/allergens";
 import { toGrams } from "@workspace/units";
 import { buildDeck } from "./ingredient-deck";
@@ -52,8 +52,14 @@ export function declarationNeedsWrapper(declaration: string): boolean {
 
 export type RecipeIngredientDeck = Awaited<ReturnType<typeof buildRecipeIngredientDeck>>;
 
+/** QUID ticks to use instead of the stored ones — the QUID backfill's dry
+ *  run shows the deck as it WOULD be. Keys are quidTargetKey() strings
+ *  ("i:12", "s:43", "c:48:91"); anything not in the set is not QUID. */
+export interface DeckOptions { quidOverride?: Set<string> }
+
 /** The deck for a recipe that exists (the caller checks). */
-export async function buildRecipeIngredientDeck(recipeId: number) {
+export async function buildRecipeIngredientDeck(recipeId: number, opts: DeckOptions = {}) {
+  const override = opts.quidOverride;
 
   const directIngs = await db
     .select({
@@ -197,7 +203,7 @@ export async function buildRecipeIngredientDeck(recipeId: number) {
       const existing = byIngredient.get(i.ingredientId);
       if (existing) {
         existing.quantityG += grams;
-        existing.isQuid = existing.isQuid || (i.quid ?? false);
+        existing.isQuid = existing.isQuid || (override ? override.has(`i:${i.ingredientId}`) : (i.quid ?? false));
       } else {
         byIngredient.set(i.ingredientId, {
           ingredientId: i.ingredientId,
@@ -205,7 +211,7 @@ export async function buildRecipeIngredientDeck(recipeId: number) {
           quantityG: grams,
           labelDeclaration: i.labelDeclaration,
           allergens: (i.allergens as string[] | null) ?? [],
-          isQuid: i.quid ?? false,
+          isQuid: override ? override.has(`i:${i.ingredientId}`) : (i.quid ?? false),
         });
       }
     }
@@ -218,10 +224,20 @@ export async function buildRecipeIngredientDeck(recipeId: number) {
     labelDeclaration: string | null;
     totalQuantityG: number;
     isQuid: boolean;
-    ingredients: FlatSubIng[];
+    ingredients: Array<FlatSubIng & { isQuid?: boolean }>;
   }
 
   const subRecipeGroups: SubRecipeGroup[] = [];
+
+  // QUID on ingredients INSIDE a sub-recipe line (migration 0165): the
+  // chicken in a pie filling shows its share of the whole product.
+  const componentQuid = override
+    ? new Set([...override].filter(k => k.startsWith("c:")))
+    : new Set((await db
+        .select({ subRecipeId: recipeQuidComponentsTable.subRecipeId, ingredientId: recipeQuidComponentsTable.ingredientId })
+        .from(recipeQuidComponentsTable)
+        .where(and(eq(recipeQuidComponentsTable.recipeId, recipeId), eq(recipeQuidComponentsTable.quid, true))))
+        .map(r => `c:${r.subRecipeId}:${r.ingredientId}`));
 
   for (const sr of subRecipeLinks) {
     const [subRecipe] = await db.select().from(subRecipesTable).where(eq(subRecipesTable.id, sr.subRecipeId));
@@ -244,6 +260,7 @@ export async function buildRecipeIngredientDeck(recipeId: number) {
       quantityG: srTotalIngWeightG > 0
         ? (si.quantityG / srTotalIngWeightG) * srUsedG
         : 0,
+      isQuid: componentQuid.has(`c:${sr.subRecipeId}:${si.ingredientId}`),
     }));
 
     subRecipeGroups.push({
@@ -251,7 +268,7 @@ export async function buildRecipeIngredientDeck(recipeId: number) {
       name: subRecipe.name,
       labelDeclaration: subRecipe.labelDeclaration ?? null,
       totalQuantityG: srUsedG,
-      isQuid: sr.quid ?? false,
+      isQuid: override ? override.has(`s:${sr.subRecipeId}`) : (sr.quid ?? false),
       ingredients: scaledIngs,
     });
   }

@@ -18,7 +18,12 @@
  *  - A declaration's trailing full stop is dropped ("Flavouring.," was
  *    appearing mid-list); the deck ends with one full stop of its own.
  *  - QUID percentages are worked out from the COMBINED weight, and apply if
- *    any of the combined lines is flagged.
+ *    any of the combined lines is flagged. A QUID percentage is always the
+ *    share of the WHOLE product, including for an ingredient inside a
+ *    compound: "Macaroni Cheese (Macaroni (31.2%) (Durum WHEAT…), …)".
+ *  - A sub-recipe that is QUID stays a compound whatever its share — its
+ *    name has to be on the label for the percentage to mean anything
+ *    ("Garlic Butter (3.2%) (Butter, …)"). (Automatic QUID, 2026-10-10.)
  *  - Order is descending by weight.
  */
 import { boldAllergens, ALLERGEN_DISPLAY } from "@workspace/allergens";
@@ -56,6 +61,9 @@ export interface DeckEntry {
     declaration: string;
     percentage: number;
     allergens: string[];
+    /** QUID inside the compound: the declaration carries its share of the
+     *  whole product. */
+    isQuid?: boolean;
   }>;
 }
 
@@ -70,6 +78,11 @@ export const COMPOUND_THRESHOLD_PCT = 25;
  *  (Graeme, 2026-10-10.) */
 export function withQuid(declaration: string, pct: number | string): string {
   const s = declaration.trim();
+  // A declaration that only carries its own meat content — "Chicken (100%)"
+  // — gets the QUID instead of it: "Chicken (17.6%)", never
+  // "Chicken (17.6%) (100%)". (Automatic QUID, 2026-10-10.)
+  const pctOnly = /^([^(),]+?)\s*\(\s*\d+(?:\.\d+)?\s*%\s*\)$/.exec(s);
+  if (pctOnly) return `${pctOnly[1]} (${pct}%)`;
   const open = s.indexOf("(");
   if (open > 0 && s.endsWith(")") && !s.slice(0, open).includes(",")) {
     return `${s.slice(0, open).trimEnd()} (${pct}%) ${s.slice(open)}`;
@@ -125,8 +138,8 @@ export function buildDeck(direct: DeckItem[], groups: DeckGroup[]): { entries: D
   const loose: DeckItem[] = [...direct];
   const compounds: Array<{ group: DeckGroup; grams: number }> = [];
   for (const g of groups) {
-    if (pctOf(g.totalQuantityG, totalWeightG) >= COMPOUND_THRESHOLD_PCT) compounds.push({ group: g, grams: g.totalQuantityG });
-    else for (const si of g.ingredients) loose.push({ ...si, isQuid: false });
+    if (g.isQuid || pctOf(g.totalQuantityG, totalWeightG) >= COMPOUND_THRESHOLD_PCT) compounds.push({ group: g, grams: g.totalQuantityG });
+    else for (const si of g.ingredients) loose.push({ ...si, isQuid: !!si.isQuid });
   }
 
   const ranked: Array<{ grams: number; entry: DeckEntry }> = [];
@@ -155,9 +168,10 @@ export function buildDeck(direct: DeckItem[], groups: DeckGroup[]): { entries: D
     const subIngredients = inner.map(si => ({
       ingredientId: si.ingredientId,
       name: si.name,
-      declaration: boldAllergens(si.printed),
+      declaration: si.isQuid ? withQuid(boldAllergens(si.printed), pctOf(si.grams, totalWeightG)) : boldAllergens(si.printed),
       percentage: pctOf(si.grams, innerTotal),
       allergens: display(si.allergens),
+      isQuid: si.isQuid,
     }));
     const boldedName = boldAllergens(cleanDeclaration(group.labelDeclaration, group.name));
     const list = subIngredients.map(s => s.declaration).join(", ");
