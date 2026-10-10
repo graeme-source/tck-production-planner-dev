@@ -15,7 +15,7 @@ import { useState } from "react";
 import { Link, Redirect } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, AlarmClock, Award, Check, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, HelpCircle, Loader2,
+  AlertTriangle, AlarmClock, Award, Check, CheckCircle2, ClipboardCheck, ChevronDown, ChevronRight, ExternalLink, HelpCircle, Loader2,
   MessageCircleQuestion, MessageSquareText, OctagonAlert, Scale, Send, Video, Wrench, X, XCircle,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
@@ -521,6 +521,11 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, saving }: {
             <MessageSquareText className="w-5 h-5" /> Message {firstName}
           </button>
         )}
+        {/* Forced testing: ask the reporter (always) to try it for real. */}
+        <Link href={`/test-requests?new=1&issue=${t.andonIssueId}`}
+          className="h-12 px-4 rounded-xl border-2 border-sky-500 text-sky-700 dark:text-sky-300 font-bold flex items-center gap-2 hover:bg-sky-50 dark:hover:bg-sky-900/30">
+          <ClipboardCheck className="w-5 h-5" /> Request a test
+        </Link>
         <Link href={`/reports?tab=issues&issueId=${t.andonIssueId}`}
           className="ml-auto text-sm font-medium text-muted-foreground hover:text-foreground flex items-center gap-1.5 px-2 py-2">
           Open in the issue log <ExternalLink className="w-4 h-4" />

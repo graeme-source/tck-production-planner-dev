@@ -64,6 +64,7 @@ import FounderSales from "@/pages/founder-sales";
 import TestBoxesPage from "@/pages/test-boxes";
 import FounderContracts from "@/pages/founder-contracts";
 import FounderFixQueue from "@/pages/founder-fix-queue";
+import TestRequestsPage from "@/pages/test-requests";
 import DocumentViewer from "@/pages/document-viewer";
 import StockControl from "@/pages/stock-control";
 import ProductHub from "@/pages/product-hub";
@@ -257,6 +258,8 @@ function Router() {
               <Route path="/analytics/efficiency" component={TeamEfficiencyPage} />
               {/* Defects KPI + recorded defects (Graeme, 2026-10-01). Listed under Analytics; anyone signed in may record, so the page itself is open. */}
               <Route path="/analytics/defects" component={DefectsPage} />
+              {/* Forced testing (Graeme, 2026-10-10). Managers/admins; server-enforced. */}
+              <Route path="/test-requests" component={TestRequestsPage} />
               {/* Training is for everyone: station matrices are self-service;
                   the stored matrices inside are manager-only (lib/training-sections). */}
               <Route path="/training">{() => <ProtectedRoute component={TrainingMatrix} pageKey="/training" />}</Route>
