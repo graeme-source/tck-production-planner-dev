@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { LabelContent } from "./content";
-import { layoutLabel, type Face, type TextMeasurer } from "./layout";
+import { enforceLegalMinimums, layoutLabel, type Face, type TextMeasurer } from "./layout";
 import { DEFAULT_TEMPLATE, normaliseTemplate, type LabelTemplate } from "./template";
 import { parseBold } from "./text";
 
@@ -117,6 +117,16 @@ describe("layout fitting", () => {
     const squeezed = layoutLabel(template(), c, fake);
     const ing = field(squeezed, "ingredients");
     expect(ing.width !== "normal" || ing.sizePt < alone).toBe(true);
+  });
+
+  it("saving a template raises a minimum set below the legal line", () => {
+    const t = template(x => { x.fields.address.minPt = 5; x.fields.address.maxPt = 5; x.fields.title.minPt = 9; });
+    const { template: fixed, raised } = enforceLegalMinimums(t, fake);
+    expect(raised).toContain("address");
+    expect(raised).not.toContain("title");
+    expect(fixed.fields.address.minPt).toBe(7);
+    expect(fixed.fields.address.maxPt).toBe(7);
+    expect(fixed.fields.title.minPt).toBe(9);
   });
 
   it("the steps all use one size", () => {

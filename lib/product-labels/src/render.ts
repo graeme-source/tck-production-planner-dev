@@ -28,8 +28,20 @@ function drawRun(bm: Bitmap, fonts: LabelFontSet, run: PlacedRun): void {
   }
 }
 
-export function renderLabel(layout: LabelLayout, fonts: LabelFontSet): Bitmap {
-  const bm = new Bitmap(layout.widthDots, layout.heightDots);
+/** How tall the drawing really is — more than the label when text overflows. */
+export function inkHeight(layout: LabelLayout, fonts: LabelFontSet): number {
+  let bottom = layout.heightDots;
+  for (const f of layout.fields) for (const r of f.runs) {
+    bottom = Math.max(bottom, Math.ceil(r.y + fonts.metrics(r.face).descender * r.sizeDots) + 2);
+  }
+  return bottom;
+}
+
+/** The label at printer resolution. `showOverflow` makes the canvas tall
+ *  enough to show text that runs off the bottom (the DOESN'T FIT proof) —
+ *  never used for printing. */
+export function renderLabel(layout: LabelLayout, fonts: LabelFontSet, showOverflow = false): Bitmap {
+  const bm = new Bitmap(layout.widthDots, showOverflow ? inkHeight(layout, fonts) : layout.heightDots);
   for (const c of layout.circles) fillCircle(bm, c.cx, c.cy, c.r, 1);
   for (const f of layout.fields) {
     for (const run of f.runs) if (!run.white) drawRun(bm, fonts, run);
@@ -55,13 +67,16 @@ export interface LabelProof {
   content: LabelContent;
   dates: LabelDates;
   layout: LabelLayout;
+  /** Exactly what prints. */
   bitmap: Bitmap;
   png: string;
+  /** When it doesn't fit: the same drawing on a taller canvas, so the words
+   *  that run off the label can be seen (the label edge is at layout.heightDots). */
+  overflowPng: string | null;
 }
 
-/** Snapshot + print/production dates → everything the proof page and (later)
- *  the printer need. */
-export function proofLabel(snapshot: LabelSnapshot, when: { printDate: string; productionDate: string }, fonts: LabelFontSet): LabelProof {
+/** Content + layout only (no bitmap) — the fit check for the Labels list. */
+export function checkLabel(snapshot: LabelSnapshot, when: { printDate: string; productionDate: string }, fonts: LabelFontSet): Omit<LabelProof, "bitmap" | "png" | "overflowPng"> {
   const dates = labelDates({
     printDate: when.printDate,
     productionDate: when.productionDate,
@@ -71,6 +86,14 @@ export function proofLabel(snapshot: LabelSnapshot, when: { printDate: string; p
   });
   const content = buildLabelContent(snapshot, dates);
   const layout = layoutLabel(snapshot.template, content, fonts);
-  const bitmap = renderLabel(layout, fonts);
-  return { content, dates, layout, bitmap, png: pngDataUrl(bitmap) };
+  return { content, dates, layout };
+}
+
+/** Snapshot + print/production dates → everything the proof page and (later)
+ *  the printer need. */
+export function proofLabel(snapshot: LabelSnapshot, when: { printDate: string; productionDate: string }, fonts: LabelFontSet): LabelProof {
+  const checked = checkLabel(snapshot, when, fonts);
+  const bitmap = renderLabel(checked.layout, fonts);
+  const overflow = inkHeight(checked.layout, fonts) > checked.layout.heightDots ? renderLabel(checked.layout, fonts, true) : null;
+  return { ...checked, bitmap, png: pngDataUrl(bitmap), overflowPng: overflow ? pngDataUrl(overflow) : null };
 }

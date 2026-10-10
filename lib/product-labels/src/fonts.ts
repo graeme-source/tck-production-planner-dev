@@ -11,7 +11,8 @@
  * to DRAW (render.ts): same glyphs, same advances, same kerning, same letter
  * spacing — so what the proof shows is what the printer gets.
  */
-import opentype from "opentype.js";
+/// <reference path="./opentype.d.ts" />
+import opentype, { type Font, type Glyph, type PathCommand } from "opentype.js";
 import type { Face, FaceMetrics, TextMeasurer } from "./layout";
 import type { BodyWeight, WidthVariant } from "./template";
 
@@ -30,13 +31,13 @@ const faceKey = (f: Face) => `${f.width}/${f.weight}`;
 const SHAPE_OPTIONS = { kerning: true, features: { liga: false, rlig: false } };
 
 export interface ShapedGlyph {
-  glyph: opentype.Glyph;
+  glyph: Glyph;
   /** Pen position (dots) relative to the run start. */
   x: number;
 }
 
 interface LoadedFace {
-  font: opentype.Font;
+  font: Font;
   scale: number; // per unitsPerEm
   kerning: unknown;
   metrics: FaceMetrics;
@@ -84,9 +85,7 @@ export class LabelFontSet implements TextMeasurer {
   /** Glyphs and their pen positions — measuring and drawing both use this. */
   shapeText(text: string, f: Face, sizeDots: number, letterSpacingEm: number): { glyphs: ShapedGlyph[]; advance: number } {
     const lf = this.face(f);
-    // (@types/opentype.js omits stringToGlyphs' options argument.)
-    const toGlyphs = lf.font.stringToGlyphs as unknown as (this: opentype.Font, s: string, o: unknown) => opentype.Glyph[];
-    const glyphs = toGlyphs.call(lf.font, text, SHAPE_OPTIONS);
+    const glyphs = lf.font.stringToGlyphs(text, SHAPE_OPTIONS);
     const k = sizeDots * lf.scale;
     const pos = (lf.font as unknown as { position: { getKerningValue(t: unknown, a: number, b: number): number } }).position;
     const out: ShapedGlyph[] = [];
@@ -130,7 +129,7 @@ export class LabelFontSet implements TextMeasurer {
   }
 
   /** Glyph outline in dots at a baseline position (y grows downwards). */
-  glyphPath(g: opentype.Glyph, x: number, y: number, sizeDots: number): opentype.PathCommand[] {
+  glyphPath(g: Glyph, x: number, y: number, sizeDots: number): PathCommand[] {
     return g.getPath(x, y, sizeDots).commands;
   }
 }

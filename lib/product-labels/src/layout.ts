@@ -211,6 +211,30 @@ function legalMinFor(style: FieldStyle, width: WidthVariant, m: TextMeasurer, sm
   return legalMinPt(xh, smallPack);
 }
 
+/** The legal minimum for each field at each width it may use. */
+export function legalMinimums(t: LabelTemplate, m: TextMeasurer): Record<FieldKey, Record<WidthVariant, number>> {
+  const out = {} as Record<FieldKey, Record<WidthVariant, number>>;
+  for (const k of Object.keys(t.fields) as FieldKey[]) {
+    out[k] = {} as Record<WidthVariant, number>;
+    for (const w of WIDTH_ORDER) out[k][w] = legalMinFor(t.fields[k], w, m, t.page.smallPack);
+  }
+  return out;
+}
+
+/** Raise any field minimum set below the legal minimum (for any width the
+ *  field may use) — the settings can never hold an unlawful minimum. */
+export function enforceLegalMinimums(t: LabelTemplate, m: TextMeasurer): { template: LabelTemplate; raised: FieldKey[] } {
+  const copy: LabelTemplate = JSON.parse(JSON.stringify(t));
+  const raised: FieldKey[] = [];
+  for (const k of Object.keys(copy.fields) as FieldKey[]) {
+    const f = copy.fields[k];
+    const legal = Math.max(...widthCandidates(f).map(w => legalMinFor(f, w, m, copy.page.smallPack)));
+    if (f.minPt < legal) { f.minPt = legal; raised.push(k); }
+    if (f.maxPt < f.minPt) f.maxPt = f.minPt;
+  }
+  return { template: copy, raised };
+}
+
 function sizeAt(style: FieldStyle, level: number, effMin: number): number {
   return Math.max(effMin, Math.max(style.maxPt, effMin) - level * PT_STEP);
 }

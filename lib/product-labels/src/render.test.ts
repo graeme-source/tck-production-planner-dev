@@ -130,7 +130,10 @@ describe("the default template with a real deck", () => {
     const placed = ing.runs.map(r => r.text).join("");
     const expected = ("THE INGREDIENTS: " + long.replace(/\*\*/g, "")).replace(/\s+/g, "");
     expect(placed).toBe(expected);
-    // Renders anyway, so the proof can show the overflow.
-    expect(renderLabel(layout, fonts).width).toBe(799);
+    // Renders anyway: the print-size bitmap, and a taller one showing the overflow.
+    expect(renderLabel(layout, fonts).height).toBe(559);
+    expect(renderLabel(layout, fonts, true).height).toBeGreaterThan(559);
+    const proof = proofLabel(s, { printDate: "2026-10-10", productionDate: "2026-10-10" }, fonts);
+    expect(proof.overflowPng).not.toBeNull();
   });
 });
