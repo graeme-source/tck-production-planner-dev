@@ -1,0 +1,19 @@
+{
+  "name": "@workspace/product-labels",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./render": "./src/render.ts",
+    "./node": "./src/node-fonts.ts"
+  },
+  "dependencies": {
+    "@workspace/units": "workspace:*",
+    "opentype.js": "1.3.4"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/opentype.js": "^1.3.10"
+  }
+}
