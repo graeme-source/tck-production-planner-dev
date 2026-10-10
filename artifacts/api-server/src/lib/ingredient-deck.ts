@@ -63,6 +63,20 @@ export interface DeckEntry {
 export const COMPOUND_THRESHOLD_PCT = 25;
 
 /** The declaration as it should print: trimmed, no trailing full stops or commas. */
+/** Put the QUID percentage straight after the ingredient's NAME:
+ *  "Diced Chorizo (4.4%) (Pork, …)", never after its component list
+ *  ("Diced Chorizo (Pork, …) (4.4%)" reads as the last component's share).
+ *  A plain declaration gets it on the end: "Chicken Breast (17.6%)".
+ *  (Graeme, 2026-10-10.) */
+export function withQuid(declaration: string, pct: number | string): string {
+  const s = declaration.trim();
+  const open = s.indexOf("(");
+  if (open > 0 && s.endsWith(")") && !s.slice(0, open).includes(",")) {
+    return `${s.slice(0, open).trimEnd()} (${pct}%) ${s.slice(open)}`;
+  }
+  return `${s} (${pct}%)`;
+}
+
 export function cleanDeclaration(declaration: string | null | undefined, fallbackName: string): string {
   const s = (declaration ?? "").trim().replace(/[\s.,;]+$/, "").trim();
   return s || fallbackName.trim();
@@ -125,7 +139,7 @@ export function buildDeck(direct: DeckItem[], groups: DeckGroup[]): { entries: D
       entry: {
         type: "ingredient",
         name: p.name,
-        declaration: p.isQuid ? `${bolded} (${pct}%)` : bolded,
+        declaration: p.isQuid ? withQuid(bolded, pct) : bolded,
         percentage: pct,
         allergens: display(p.allergens),
         isQuid: p.isQuid,

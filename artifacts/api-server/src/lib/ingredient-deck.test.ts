@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildDeck, cleanDeclaration, type DeckGroup, type DeckItem } from "./ingredient-deck";
+import { withQuid } from "./ingredient-deck";
 
 const item = (ingredientId: number, name: string, quantityG: number, labelDeclaration: string | null = null, allergens: string[] = []): DeckItem =>
   ({ ingredientId, name, quantityG, labelDeclaration, allergens });
@@ -71,5 +72,17 @@ describe("ingredient deck rules (regression: repeated Black Pepper / Salt on The
   it("cleans declarations", () => {
     expect(cleanDeclaration("Flavouring. ", "x")).toBe("Flavouring");
     expect(cleanDeclaration("", "Turmeric")).toBe("Turmeric");
+  });
+});
+
+describe("QUID placement", () => {
+  it("goes after the name of a compound ingredient, not after its list", () => {
+    expect(withQuid("Diced Chorizo (Pork, salt, paprika)", 4.4)).toBe("Diced Chorizo (4.4%) (Pork, salt, paprika)");
+  });
+  it("goes on the end of a plain ingredient", () => {
+    expect(withQuid("Chicken Breast", 17.6)).toBe("Chicken Breast (17.6%)");
+  });
+  it("a list that isn't wrapped under a name keeps it on the end", () => {
+    expect(withQuid("Water, Salt", 2)).toBe("Water, Salt (2%)");
   });
 });
