@@ -195,8 +195,9 @@ middleware is the only door. Bodies are zod-validated (400 with
 
 `/api/issue-pipeline/machine/test-requests` (same token) asks the reporter —
 always — and anyone else named to try a fix for real and answer "works /
-confusing / doesn't work"; results land on the issue's thread. How and when
-to use it: `docs/FORCED_TESTING.md`.
+confusing / doesn't work"; results land on the issue's thread. **Only when
+Graeme asked for that specific test** — never by default on a deploy. See
+`docs/FORCED_TESTING.md`.
 
 ### Guardrails the session must follow
 

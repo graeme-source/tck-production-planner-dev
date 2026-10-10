@@ -1,34 +1,37 @@
 /**
  * "Can you test this?" — forced testing (Graeme, 2026-10-10; Objectives E
- * and F). When a manager, Graeme, or the deploy session asks someone to try
- * a change for real, that person gets this card whenever they are signed in
- * (their own device, or switched in by PIN on a station iPad) and the
- * request's "when" is met. When it shows: lib/test-requests.ts.
+ * and F). When Graeme or a manager asks someone to try a change for real,
+ * that person gets this card when they're signed in (their own device, or
+ * switched in by PIN on a station iPad). WHEN it shows — once, or on
+ * arriving at the place — is in lib/test-requests.ts (cardWanted).
  *
  * Like the swipe-panel walkthrough it's a floating card, never a full-screen
  * blocker — they have to be able to use the page to test it. It waits for
  * the PIN pad, the must-answer prompts and any full-screen pop-up, and sits
  * UNDER the to-do takeover and the "your report was fixed" notice.
  *
- *   ask      title, what to try, when, "Take me there" / "Tell us how it went"
+ *   ask      title, what to try, when — "Take me there" / "I'll try it now",
+ *            "Put it on my to-do list — I'll do it later", "I've tried it"
  *   testing  after "Take me there": a small bar that follows them while
  *            they try it — "How did it go?"
  *   answer   three big answers + optional note (dictation) + optional photo,
  *            or "I can't test this" with a reason
  *
- * "Not now" (and the X) puts it away for two hours (server-side, per
- * person). It keeps coming back until they answer or a manager closes it.
+ * NO NAGGING (round 2): no timers. "Put it on my to-do list" — and the X —
+ * puts it on their own to-do list and it never pops up again; the to-do's
+ * link (?testRequest=ID) brings it back when they choose, and answering
+ * ticks the to-do off.
  */
 import { useEffect, useRef, useState } from "react";
-import { useLocation } from "wouter";
-import { Camera, CheckCircle2, ChevronLeft, ClipboardCheck, Clock, Loader2, MapPin, Navigation, X } from "lucide-react";
+import { useLocation, useSearch } from "wouter";
+import { Camera, CheckCircle2, ChevronLeft, ClipboardCheck, ListTodo, Loader2, MapPin, Navigation, X } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
 import { DictateButton } from "@/components/dictate-button";
 import { useMyTestRequests, useTesterActions } from "@/hooks/use-test-requests";
 import { useAnyPromptShowing, useFullScreenOverlayShowing, useReportPromptShowing } from "@/lib/prompt-presence";
 import {
-  ANSWER_OPTIONS, answerReady, onLinkedPage, pickTestToShow, shouldShowTestCard, whenSummary,
+  ANSWER_OPTIONS, answerReady, needsAutoTodo, onLinkedPage, openedTestId, pickTestToShow, shouldShowTestCard, whenSummary,
   type MyTestRequest, type TestAnswer,
 } from "@/lib/test-requests";
 
@@ -36,12 +39,23 @@ const PROMPT_KEY = "test-request";
 
 type Mode = "ask" | "testing" | "answer";
 
+/** Cards already shown on this page load — the "once" stays up while read. */
+const shownThisLoad = new Set<number>();
+/** No-place tests already sent to the to-do list on this load. */
+const autoTodoSent = new Set<number>();
+
 export function TestRequestCard() {
   const { state, pinLocked, peoplePinPrompt, peoplePinSetupPrompt } = useAuth();
   const userId = state.status === "authenticated" ? state.user.id : null;
   const [location, navigate] = useLocation();
+  const search = useSearch();
   const listQ = useMyTestRequests(userId, !pinLocked);
   const actions = useTesterActions(userId);
+
+  // Opened from its to-do (?testRequest=ID): show it until they deal with it
+  // or close it. Closing only puts it away for now — it's on their list.
+  const [openedId, setOpenedId] = useState<number | null>(() => openedTestId(search));
+  useEffect(() => { const id = openedTestId(search); if (id) setOpenedId(id); }, [search]);
 
   // Re-check the time conditions every minute ("after 2pm").
   const [now, setNow] = useState(() => new Date());
@@ -49,8 +63,9 @@ export function TestRequestCard() {
     const t = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(t);
   }, []);
+  const [, rerender] = useState(0);
 
-  const request = pickTestToShow(listQ.data, now, location);
+  const request = pickTestToShow(listQ.data, { now, path: location, openedId, shownThisLoad });
   const otherPrompt = useAnyPromptShowing(PROMPT_KEY);
   const overlay = useFullScreenOverlayShowing(request != null);
   const show = shouldShowTestCard({
@@ -62,6 +77,26 @@ export function TestRequestCard() {
   // The thanks note counts too, so the walkthrough doesn't land on top of it.
   const [thanks, setThanks] = useState<string | null>(null);
   useReportPromptShowing(PROMPT_KEY, show || (!!thanks && !pinLocked));
+
+  // First time on screen: remember it (a no-place test shows only once).
+  useEffect(() => {
+    if (!show || !request || shownThisLoad.has(request.id)) return;
+    shownThisLoad.add(request.id);
+    rerender(n => n + 1);
+    if (!request.promptedAt) actions.prompted.mutate(request.id);
+  }, [show, request?.id]);
+
+  // A no-place test shown before and left without an answer goes on their
+  // to-do list rather than popping up again.
+  useEffect(() => {
+    if (pinLocked || !listQ.data) return;
+    for (const r of listQ.data) {
+      if (needsAutoTodo(r, shownThisLoad) && !autoTodoSent.has(r.id)) {
+        autoTodoSent.add(r.id);
+        actions.later.mutate(r.id);
+      }
+    }
+  }, [listQ.data, pinLocked]);
 
   // Kept here (not in the card) so a pop-up opening over the card and
   // closing again never loses what they'd typed.
@@ -79,7 +114,7 @@ export function TestRequestCard() {
       setAnswer(null); setNote(""); setPhoto(null); setError(null);
     }
   }, [request?.id]);
-  useEffect(() => { setModeById({}); setThanks(null); }, [userId]);
+  useEffect(() => { setModeById({}); setThanks(null); setOpenedId(openedTestId(window.location.search)); }, [userId]);
   useEffect(() => {
     if (!thanks) return;
     const t = window.setTimeout(() => setThanks(null), 4000);
@@ -91,11 +126,17 @@ export function TestRequestCard() {
 
   const mode: Mode = modeById[request.id] ?? (request.startedAt ? "testing" : "ask");
   const setMode = (m: Mode) => setModeById(prev => ({ ...prev, [request.id]: m }));
-  const busy = actions.start.isPending || actions.snooze.isPending || actions.answer.isPending;
+  const busy = actions.start.isPending || actions.later.isPending || actions.answer.isPending;
+  const onList = request.todoTaskId != null;
 
-  const notNow = () => {
+  /** "Put it on my to-do list" — and the X. Never pops up again. */
+  const later = () => {
     setError(null);
-    actions.snooze.mutate(request.id, { onError: e => setError((e as Error).message) });
+    if (onList) { setOpenedId(null); return; }
+    actions.later.mutate(request.id, {
+      onSuccess: () => { setOpenedId(null); setThanks("It's on your to-do list — open it from there when you're ready."); },
+      onError: e => setError((e as Error).message),
+    });
   };
   const takeMeThere = () => {
     setError(null);
@@ -108,10 +149,14 @@ export function TestRequestCard() {
     if (!answer || !answerReady(answer, note)) return;
     setError(null);
     actions.answer.mutate({ id: request.id, answer, note, photo }, {
-      onSuccess: () => setThanks(answer === "works_easy" ? "Thanks — that's marked as working." : answer === "cant_test" ? "Thanks — we'll sort out who else can test it." : "Thanks — that's gone straight to whoever asked."),
+      onSuccess: () => {
+        setOpenedId(null);
+        setThanks(answer === "works_easy" ? "Thanks — that's marked as working." : answer === "cant_test" ? "Thanks — we'll sort out who else can test it." : "Thanks — that's gone straight to whoever asked.");
+      },
       onError: e => setError((e as Error).message),
     });
   };
+  const laterLabel = onList ? "Close — it's on your to-do list" : "Close — put it on my to-do list";
 
   if (mode === "testing") {
     return (
@@ -129,8 +174,8 @@ export function TestRequestCard() {
         <button type="button" onClick={() => setMode("answer")} className="h-12 px-4 rounded-2xl bg-sky-600 text-white text-base font-bold shrink-0">
           How did it go?
         </button>
-        <button type="button" onClick={notNow} disabled={busy} aria-label="Not now — ask me later" className="w-11 h-11 rounded-full flex items-center justify-center text-muted-foreground hover:bg-secondary shrink-0">
-          {actions.snooze.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <X className="w-5 h-5" />}
+        <button type="button" onClick={later} disabled={busy} aria-label={laterLabel} title={laterLabel} className="w-11 h-11 rounded-full flex items-center justify-center text-muted-foreground hover:bg-secondary shrink-0">
+          {actions.later.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <X className="w-5 h-5" />}
         </button>
       </div>
     );
@@ -153,9 +198,10 @@ export function TestRequestCard() {
         </div>
         <button
           type="button"
-          onClick={mode === "answer" ? () => setMode(request.startedAt ? "testing" : "ask") : notNow}
+          onClick={mode === "answer" ? () => setMode(request.startedAt ? "testing" : "ask") : later}
           disabled={busy}
-          aria-label={mode === "answer" ? "Back" : "Not now — ask me later"}
+          aria-label={mode === "answer" ? "Back" : laterLabel}
+          title={mode === "answer" ? "Back" : laterLabel}
           className="w-11 h-11 rounded-full flex items-center justify-center text-muted-foreground hover:bg-secondary hover:text-foreground shrink-0"
         >
           {mode === "answer" ? <ChevronLeft className="w-5 h-5" /> : <X className="w-5 h-5" />}
@@ -178,23 +224,17 @@ export function TestRequestCard() {
       <div className="p-5 pt-3 space-y-2">
         {mode === "ask" ? (
           <>
-            {request.linkPath && !onLinkedPage(request.linkPath, location) ? (
-              <button type="button" onClick={takeMeThere} disabled={busy} className="w-full h-14 rounded-2xl bg-sky-600 text-white text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-60">
-                {actions.start.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Navigation className="w-5 h-5" />} Take me there
-              </button>
-            ) : (
-              <button type="button" onClick={takeMeThere} disabled={busy} className="w-full h-14 rounded-2xl bg-sky-600 text-white text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-60">
-                {actions.start.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Navigation className="w-5 h-5" />} I'll try it now
-              </button>
-            )}
-            <div className="grid grid-cols-2 gap-2">
-              <button type="button" onClick={notNow} disabled={busy} className="h-14 rounded-2xl border-2 border-border text-base font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 disabled:opacity-60">
-                {actions.snooze.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Clock className="w-5 h-5" />} Not now
-              </button>
-              <button type="button" onClick={() => setMode("answer")} disabled={busy} className="h-14 rounded-2xl border-2 border-sky-500 text-sky-700 dark:text-sky-300 text-base font-bold hover:bg-sky-50 dark:hover:bg-sky-900/30 disabled:opacity-60">
-                I've tried it
-              </button>
-            </div>
+            <button type="button" onClick={takeMeThere} disabled={busy} className="w-full h-14 rounded-2xl bg-sky-600 text-white text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-60">
+              {actions.start.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Navigation className="w-5 h-5" />}
+              {request.linkPath && !onLinkedPage(request.linkPath, location) ? "Take me there" : "I'll try it now"}
+            </button>
+            <button type="button" onClick={later} disabled={busy} className="w-full min-h-14 py-2 rounded-2xl border-2 border-border text-base font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 disabled:opacity-60">
+              {actions.later.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <ListTodo className="w-5 h-5 shrink-0" />}
+              {onList ? "Not now — it's on your to-do list" : "Put it on my to-do list — I'll do it later"}
+            </button>
+            <button type="button" onClick={() => setMode("answer")} disabled={busy} className="w-full h-12 rounded-2xl text-sky-700 dark:text-sky-300 text-base font-bold hover:bg-sky-50 dark:hover:bg-sky-900/30 disabled:opacity-60">
+              I've already tried it — answer now
+            </button>
           </>
         ) : (
           <button
@@ -223,6 +263,12 @@ function AskBody({ request }: { request: MyTestRequest }) {
         <div className="rounded-2xl bg-secondary/60 p-3">
           <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">You reported</p>
           <p className="text-base line-clamp-3">“{request.issueDescription}”</p>
+        </div>
+      )}
+      {request.isReporter && request.improvementTitle && (
+        <div className="rounded-2xl bg-secondary/60 p-3">
+          <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Your improvement idea</p>
+          <p className="text-base line-clamp-3">“{request.improvementTitle}”</p>
         </div>
       )}
       <p className="text-sm text-muted-foreground">

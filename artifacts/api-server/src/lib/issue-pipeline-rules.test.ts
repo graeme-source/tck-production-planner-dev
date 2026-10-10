@@ -21,6 +21,9 @@ import {
   validateTestPath,
   noticeQuote,
   noticeAckVerdict,
+  isSetAside,
+  canSetAside,
+  canRestoreSetAside,
 } from "./issue-pipeline-rules";
 
 describe("parseBearer", () => {
@@ -342,5 +345,29 @@ describe("machineIssueWanted", () => {
   it("never hands over safety or factory reports, even with a reply waiting", () => {
     expect(machineIssueWanted("app", { area: null, station: "prep", category: "safety" }, { awaitingRetriage: true }, false)).toBe(false);
     expect(machineIssueWanted("app", { area: "factory", station: null, category: "other" }, { awaitingRetriage: true }, false)).toBe(false);
+  });
+});
+
+describe("Dismiss — no action", () => {
+  const app = { area: "system", station: "App / iPad", category: "other" };
+  const at = "2026-10-10T10:00:00Z";
+  it("the hourly reviewer never picks a dismissed issue up again — not even after a reply or with includeTriaged", () => {
+    expect(machineIssueWanted("app", app, { awaitingRetriage: false, noActionAt: at }, true)).toBe(false);
+    expect(machineIssueWanted("all", app, { awaitingRetriage: true, noActionAt: at }, true)).toBe(false);
+    expect(machineIssueWanted("app", app, { awaitingRetriage: true, noActionAt: null }, false)).toBe(true);
+  });
+  it("it leaves every tab for Dismissed, whatever its status", () => {
+    const now = new Date("2026-10-10T12:00:00Z");
+    expect(queueTabFor({ status: "proposed", awaitingRetriage: false, snoozedUntil: null, noActionAt: at }, now)).toBe("no_action");
+    expect(queueTabFor({ status: "approved", awaitingRetriage: false, snoozedUntil: null, noActionAt: at }, now)).toBe("no_action");
+    expect(queueTabFor({ status: "proposed", awaitingRetriage: false, snoozedUntil: null, noActionAt: null }, now)).toBe("proposed");
+  });
+  it("is dismissed once and restored once", () => {
+    expect(isSetAside({ noActionAt: at })).toBe(true);
+    expect(isSetAside(null)).toBe(false);
+    expect(canSetAside({ noActionAt: null })).toBe(true);
+    expect(canSetAside({ noActionAt: at })).toBe(false);
+    expect(canRestoreSetAside({ noActionAt: at })).toBe(true);
+    expect(canRestoreSetAside({ noActionAt: null })).toBe(false);
   });
 });

@@ -39,7 +39,8 @@ export function useMyTestRequests(userId: number | null, enabled: boolean) {
   });
 }
 
-/** Start / put off / answer — each updates the tester's list straight away. */
+/** Start / shown / on my to-do list / answer — each updates the tester's
+ *  list straight away. */
 export function useTesterActions(userId: number | null) {
   const qc = useQueryClient();
   const patch = (id: number, change: Partial<MyTestRequest> | null) =>
@@ -48,11 +49,18 @@ export function useTesterActions(userId: number | null) {
 
   const start = useMutation({
     mutationFn: (id: number) => post<{ ok: true }>(`${API}/${id}/start`),
-    onSuccess: (_d, id) => patch(id, { startedAt: new Date().toISOString(), snoozedUntil: null }),
+    onSuccess: (_d, id) => patch(id, { startedAt: new Date().toISOString() }),
   });
-  const snooze = useMutation({
-    mutationFn: (id: number) => post<{ snoozedUntil: string }>(`${API}/${id}/snooze`),
-    onSuccess: (d, id) => patch(id, { snoozedUntil: d.snoozedUntil }),
+  const prompted = useMutation({
+    mutationFn: (id: number) => post<{ ok: true }>(`${API}/${id}/prompted`),
+    onSuccess: (_d, id) => patch(id, { promptedAt: new Date().toISOString() }),
+  });
+  const later = useMutation({
+    mutationFn: (id: number) => post<{ todoTaskId: number }>(`${API}/${id}/later`),
+    onSuccess: (d, id) => {
+      patch(id, { todoTaskId: d.todoTaskId });
+      qc.invalidateQueries({ queryKey: ["todos"] });
+    },
   });
   const answer = useMutation({
     mutationFn: async (v: { id: number; answer: TestAnswer; note: string; photo: File | null }) => {
@@ -64,9 +72,9 @@ export function useTesterActions(userId: number | null) {
       }
       await post(`${API}/${v.id}/answer`, { answer: v.answer, note: v.note.trim() || null });
     },
-    onSuccess: (_d, v) => { patch(v.id, null); refresh(); },
+    onSuccess: (_d, v) => { patch(v.id, null); refresh(); qc.invalidateQueries({ queryKey: ["todos"] }); },
   });
-  return { start, snooze, answer };
+  return { start, prompted, later, answer };
 }
 
 // ── The managers' page ─────────────────────────────────────────────────────
@@ -75,7 +83,8 @@ export type TesterView = {
   name: string;
   isReporter: boolean;
   startedAt: string | null;
-  snoozeCount: number;
+  promptedAt: string | null;
+  onTodoList: boolean;
   answer: TestAnswer | null;
   answerLabel: string | null;
   note: string | null;
@@ -104,6 +113,8 @@ export type TestRequestView = {
   updatedAt: string;
   status: TestStatus;
   issue: { id: number; description: string | null; station: string; reportedByName: string | null } | null;
+  improvementId: number | null;
+  improvement: { id: number; title: string; submittedByName: string | null } | null;
   testers: TesterView[];
 };
 
@@ -131,6 +142,7 @@ export type NewTestRequest = {
   dailyUntil: string | null;
   whenText: string | null;
   andonIssueId: number | null;
+  improvementId: number | null;
   testerIds: number[];
 };
 
@@ -158,6 +170,17 @@ export function useIssueReporter(issueId: number | null) {
     queryKey: ["test-requests", "issue", issueId],
     queryFn: () => call<IssueReporter>(`${API}/issue/${issueId}`),
     enabled: issueId != null && issueId > 0,
+    retry: false,
+  });
+}
+
+export type ImprovementSubmitter = { id: number; title: string; station: string; submittedBy: number | null; submittedByName: string | null };
+
+export function useImprovementSubmitter(improvementId: number | null) {
+  return useQuery({
+    queryKey: ["test-requests", "improvement", improvementId],
+    queryFn: () => call<ImprovementSubmitter>(`${API}/improvement/${improvementId}`),
+    enabled: improvementId != null && improvementId > 0,
     retry: false,
   });
 }

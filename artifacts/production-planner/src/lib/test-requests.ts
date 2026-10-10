@@ -11,13 +11,20 @@
  *   only on page the current page matches the pattern ("*" = any one part,
  *                so /plans/STAR/station/building is "next time you build")
  * Once the tester has STARTED it ("Take me there"), it follows them to any
- * page — they're in the middle of testing — but the time conditions don't
- * matter any more either: they already met them.
+ * page as a small "Testing" bar — they're in the middle of testing.
  *
- * The card shows the first due request that isn't put off ("Not now"),
- * started ones first — and never over the PIN pad, another must-answer
- * prompt or any full-screen pop-up, and never on the kiosk / meeting /
- * scan / print pages.
+ * NO NAGGING (Graeme, round 2 — no timers, no "Not now" cycle):
+ *   - a test tied to a place (only on page) pops up when they ARRIVE there,
+ *     each arrival, until they deal with it;
+ *   - a test with no place pops up ONCE (the next time they're signed in
+ *     after it's due). If they leave without choosing, it goes on their
+ *     to-do list by itself rather than coming back;
+ *   - "Put it on my to-do list" (and the X) puts it on their own to-do list
+ *     and it NEVER pops up again — the to-do's link brings the card back
+ *     when THEY choose (?testRequest=ID), and answering ticks the to-do.
+ *
+ * The card never shows over the PIN pad, another must-answer prompt or any
+ * full-screen pop-up, nor on the kiosk / meeting / scan / print pages.
  */
 import { promptHiddenOnPath } from "./emergency-contacts";
 
@@ -37,9 +44,12 @@ export type MyTestRequest = {
   createdByName: string;
   andonIssueId: number | null;
   issueDescription: string | null;
+  improvementId: number | null;
+  improvementTitle: string | null;
   isReporter: boolean;
   startedAt: string | null;
-  snoozedUntil: string | null;
+  promptedAt: string | null;
+  todoTaskId: number | null;
   createdAt: string;
 };
 
@@ -100,23 +110,59 @@ export function inDailyWindow(from: string | null, until: string | null, now: Da
   return t >= f! || t < u!; // overnight
 }
 
+/** Are the time conditions met (date, time of day)? */
+export function timeDue(r: Pick<MyTestRequest, "notBefore" | "dailyFrom" | "dailyUntil">, now: Date): boolean {
+  if (r.notBefore && now.getTime() < new Date(r.notBefore).getTime()) return false;
+  return inDailyWindow(r.dailyFrom, r.dailyUntil, now);
+}
+
 export function isDue(r: Pick<MyTestRequest, "notBefore" | "dailyFrom" | "dailyUntil" | "onlyOnPath" | "startedAt">, now: Date, path: string): boolean {
   if (r.startedAt) return true;
-  if (r.notBefore && now.getTime() < new Date(r.notBefore).getTime()) return false;
-  if (!inDailyWindow(r.dailyFrom, r.dailyUntil, now)) return false;
+  if (!timeDue(r, now)) return false;
   if (r.onlyOnPath && !pathMatches(r.onlyOnPath, path)) return false;
   return true;
 }
 
-export function isSnoozed(r: Pick<MyTestRequest, "snoozedUntil">, now: Date): boolean {
-  return !!r.snoozedUntil && new Date(r.snoozedUntil).getTime() > now.getTime();
+export type CardContext = {
+  now: Date;
+  path: string;
+  /** Opened from its to-do (?testRequest=ID) — the tester asked for it. */
+  openedId: number | null;
+  /** Shown already on this page load (so the "once" doesn't vanish mid-read). */
+  shownThisLoad: ReadonlySet<number>;
+};
+
+/** Should this request's card be on screen right now? */
+export function cardWanted(r: MyTestRequest, c: CardContext): boolean {
+  if (c.openedId === r.id) return true;
+  if (r.todoTaskId != null) return false;          // on their list: never pops up again
+  if (r.startedAt) return true;                    // the small Testing bar
+  if (!isDue(r, c.now, c.path)) return false;
+  if (r.onlyOnPath) return true;                   // they've arrived at the place
+  return !r.promptedAt || c.shownThisLoad.has(r.id); // once only
 }
 
-/** The one request to ask about now, or null. */
-export function pickTestToShow<T extends MyTestRequest>(list: readonly T[] | undefined, now: Date, path: string): T | null {
+/** The one request to show now, or null: the one they opened, then one
+ *  they're part-way through, then the oldest. */
+export function pickTestToShow<T extends MyTestRequest>(list: readonly T[] | undefined, c: CardContext): T | null {
   if (!list) return null;
-  const live = list.filter(r => !isSnoozed(r, now) && isDue(r, now, path));
-  return live.find(r => r.startedAt) ?? live[0] ?? null;
+  const live = list.filter(r => cardWanted(r, c));
+  return live.find(r => r.id === c.openedId) ?? live.find(r => r.startedAt) ?? live[0] ?? null;
+}
+
+/**
+ * A no-place test that was shown on an earlier page load and never dealt
+ * with: it goes on their to-do list by itself instead of popping up again.
+ */
+export function needsAutoTodo(r: MyTestRequest, shownThisLoad: ReadonlySet<number>): boolean {
+  return !r.onlyOnPath && !!r.promptedAt && r.todoTaskId == null && !r.startedAt && !shownThisLoad.has(r.id);
+}
+
+/** The ?testRequest=ID a to-do link carries, or null. */
+export function openedTestId(search: string): number | null {
+  const v = new URLSearchParams(search).get("testRequest");
+  const n = v != null && /^\d+$/.test(v) ? Number(v) : NaN;
+  return Number.isInteger(n) && n > 0 ? n : null;
 }
 
 export function shouldShowTestCard(f: {
@@ -150,9 +196,10 @@ export function whenSummary(r: Pick<MyTestRequest, "whenText" | "notBefore" | "d
 }
 
 /** Who will be asked, for the form: the issue's reporter first, always. */
-export function testerPreview(reporter: { id: number; name: string } | null, chosen: ReadonlyArray<{ id: number; name: string }>): Array<{ id: number; name: string; isReporter: boolean }> {
+export function testerPreview(origin: ReadonlyArray<{ id: number; name: string } | null> | { id: number; name: string } | null, chosen: ReadonlyArray<{ id: number; name: string }>): Array<{ id: number; name: string; isReporter: boolean }> {
   const out: Array<{ id: number; name: string; isReporter: boolean }> = [];
-  if (reporter) out.push({ ...reporter, isReporter: true });
+  const origins = Array.isArray(origin) ? origin : [origin];
+  for (const o of origins) if (o && !out.some(x => x.id === o.id)) out.push({ ...o, isReporter: true });
   for (const c of chosen) if (!out.some(o => o.id === c.id)) out.push({ ...c, isReporter: false });
   return out;
 }

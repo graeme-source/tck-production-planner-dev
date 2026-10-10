@@ -4,10 +4,16 @@
  * routes/test-requests-machine.ts (the deploy session). Tested in
  * test-request-rules.test.ts.
  *
- * WHO tests: if the request came from an issue report, the person who
- * reported it is ALWAYS asked ("always the person who reported it in the
- * first instance"); anyone else chosen is asked as well. Without an issue
- * (or if the reporter's account is gone), someone must be chosen.
+ * WHO tests: if the request came from an issue report or an improvement
+ * idea, the person who reported / submitted it is ALWAYS asked ("always the
+ * person who reported it in the first instance"); anyone else chosen is
+ * asked as well. Otherwise (or if their account is gone) someone must be
+ * chosen.
+ *
+ * NO NAGGING (round 2): there is no snooze timer. The card shows once — or,
+ * for a test tied to a place, each time the tester arrives there — and
+ * "I'll do it later" puts it on their to-do list, after which it never pops
+ * up again (production-planner lib/test-requests.ts decides when).
  *
  * STATUS, worked out from the testers' rows, never stored:
  *   closed       a manager closed it (whatever the answers)
@@ -25,6 +31,17 @@ export type TestAnswer = (typeof TEST_ANSWERS)[number];
 export const TEST_STATUSES = ["waiting", "in_progress", "passed", "problems", "skipped", "closed"] as const;
 export type TestStatus = (typeof TEST_STATUSES)[number];
 
+/** The to-do a tester's "I'll do it later" puts on their own list. Opening
+ *  its link brings the card back with "Take me there". */
+export function testTodoTitle(title: string): string {
+  const t = `Test: ${title}`;
+  return t.length > 300 ? `${t.slice(0, 299)}…` : t;
+}
+
+export function testTodoUrl(requestId: number): string {
+  return `/?testRequest=${requestId}`;
+}
+
 export const ANSWER_LABELS: Record<TestAnswer, string> = {
   works_easy: "Works and easy to understand",
   works_confusing: "Works but confusing",
@@ -32,19 +49,22 @@ export const ANSWER_LABELS: Record<TestAnswer, string> = {
   cant_test: "Couldn't test it",
 };
 
-/** How long "Not now" puts the card away (it also comes back on another
- *  person's sign-in, because it is per person). */
-export const SNOOZE_MINUTES = 120;
-
 export type TesterPick = { userId: number; isReporter: boolean };
 
+/**
+ * Who must test it. `originIds` are the people the request came from — the
+ * originating issue's reporter and/or the improvement idea's submitter (the
+ * lead name, not every multi-credited person) — and they are ALWAYS asked
+ * (isReporter). Anyone else chosen is asked as well.
+ */
 export function testersFor(opts: {
-  /** The originating issue's reporter, if there is an issue and they still have an account. */
-  reporterId: number | null;
+  originIds: ReadonlyArray<number | null | undefined>;
   chosenIds: readonly number[];
 }): { ok: true; testers: TesterPick[] } | { ok: false; error: string } {
   const out: TesterPick[] = [];
-  if (opts.reporterId != null) out.push({ userId: opts.reporterId, isReporter: true });
+  for (const id of opts.originIds) {
+    if (id != null && !out.some(t => t.userId === id)) out.push({ userId: id, isReporter: true });
+  }
   for (const id of opts.chosenIds) {
     if (!Number.isInteger(id) || id <= 0) continue;
     if (out.some(t => t.userId === id)) continue;
@@ -92,10 +112,6 @@ export function answerNeedsFollowUp(answer: TestAnswer): boolean {
   return answer !== "works_easy";
 }
 
-export function snoozeUntil(now: Date): Date {
-  return new Date(now.getTime() + SNOOZE_MINUTES * 60_000);
-}
-
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 export function isHhMm(s: string | null | undefined): boolean {
   return !!s && HHMM.test(s);
@@ -120,4 +136,14 @@ export function issueCommentFor(testerName: string, title: string, answer: TestA
 /** The bell message for whoever asked, when an answer needs following up. */
 export function followUpMessage(testerName: string, title: string, answer: TestAnswer): string {
   return `${testerName} tested "${title}": ${ANSWER_LABELS[answer]}`;
+}
+
+/**
+ * What happens to a tester's linked to-do: answering ticks it off; closing
+ * the request removes it while it's still open (a done one stays as
+ * history). Nothing to do without a to-do, or once it's already done.
+ */
+export function todoPlan(event: "answered" | "closed", todo: { status: string } | null): "tick" | "delete" | "none" {
+  if (!todo || todo.status !== "open") return "none";
+  return event === "answered" ? "tick" : "delete";
 }

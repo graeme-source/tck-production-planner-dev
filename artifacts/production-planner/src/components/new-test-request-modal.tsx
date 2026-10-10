@@ -1,7 +1,8 @@
 /**
  * "Request a test" (Graeme, 2026-10-10; Objectives E and F) — managers and
  * admins ask one or more people to try a change for real. If it came from an
- * issue report, the person who reported it is always asked.
+ * issue report or an improvement idea, the person who reported / logged it
+ * is always asked. Only ever made by a person, case by case (round 2).
  *
  * A create form, not an edit form: nothing exists until "Ask them", which
  * shows its own saving / error state (charter rule 5). Closable at every
@@ -12,7 +13,7 @@ import { createPortal } from "react-dom";
 import { ClipboardCheck, Loader2, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DictateButton } from "@/components/dictate-button";
-import { useCreateTestRequest, useIssueReporter, useTeamMembers } from "@/hooks/use-test-requests";
+import { useCreateTestRequest, useImprovementSubmitter, useIssueReporter, useTeamMembers } from "@/hooks/use-test-requests";
 import { testerPreview } from "@/lib/test-requests";
 
 type WhenKind = "any" | "page" | "date" | "times";
@@ -24,7 +25,7 @@ const WHEN_CHOICES: Array<{ kind: WhenKind; label: string; hint: string }> = [
   { kind: "times", label: "Time of day", hint: "e.g. after 2pm" },
 ];
 
-export type NewTestPrefill = { issueId?: number | null; title?: string; linkPath?: string };
+export type NewTestPrefill = { issueId?: number | null; improvementId?: number | null; title?: string; linkPath?: string };
 
 export function NewTestRequestModal({ open, onClose, prefill }: { open: boolean; onClose: () => void; prefill?: NewTestPrefill }) {
   const create = useCreateTestRequest();
@@ -40,6 +41,7 @@ export function NewTestRequestModal({ open, onClose, prefill }: { open: boolean;
   const [dailyUntil, setDailyUntil] = useState("");
   const [whenText, setWhenText] = useState("");
   const [issueText, setIssueText] = useState("");
+  const [improvementId, setImprovementId] = useState<number | null>(null);
   const [chosen, setChosen] = useState<number[]>([]);
   const [search, setSearch] = useState("");
 
@@ -47,7 +49,7 @@ export function NewTestRequestModal({ open, onClose, prefill }: { open: boolean;
     if (!open) return;
     setTitle(prefill?.title ?? ""); setSteps(""); setLinkPath(prefill?.linkPath ?? "");
     setWhen(new Set(["any"])); setOnlyOnPath(""); setNotBefore(""); setDailyFrom(""); setDailyUntil(""); setWhenText("");
-    setIssueText(prefill?.issueId ? String(prefill.issueId) : ""); setChosen([]); setSearch("");
+    setIssueText(prefill?.issueId ? String(prefill.issueId) : ""); setImprovementId(prefill?.improvementId ?? null); setChosen([]); setSearch("");
     create.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -55,13 +57,15 @@ export function NewTestRequestModal({ open, onClose, prefill }: { open: boolean;
   const issueId = /^\d+$/.test(issueText.trim()) ? Number(issueText.trim()) : null;
   const issueQ = useIssueReporter(issueId);
   const reporter = issueQ.data?.reportedBy ? { id: issueQ.data.reportedBy, name: issueQ.data.reportedByName ?? "The reporter" } : null;
+  const improvementQ = useImprovementSubmitter(improvementId);
+  const submitter = improvementQ.data?.submittedBy ? { id: improvementQ.data.submittedBy, name: improvementQ.data.submittedByName ?? "Whoever logged it" } : null;
   const members = team.data ?? [];
   const chosenPeople = chosen.map(id => members.find(m => m.id === id)).filter((m): m is NonNullable<typeof m> => !!m);
-  const testers = testerPreview(reporter, chosenPeople);
+  const testers = testerPreview([reporter, submitter], chosenPeople);
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return members.filter(m => !chosen.includes(m.id) && m.id !== reporter?.id && (!q || m.name.toLowerCase().includes(q))).slice(0, q ? 30 : 12);
-  }, [members, chosen, search, reporter?.id]);
+    return members.filter(m => !chosen.includes(m.id) && m.id !== reporter?.id && m.id !== submitter?.id && (!q || m.name.toLowerCase().includes(q))).slice(0, q ? 30 : 12);
+  }, [members, chosen, search, reporter?.id, submitter?.id]);
 
   if (!open) return null;
 
@@ -74,7 +78,7 @@ export function NewTestRequestModal({ open, onClose, prefill }: { open: boolean;
   });
 
   const issueProblem = issueText.trim() && (issueId == null ? "Type the issue number, e.g. 412" : issueQ.isError ? (issueQ.error as Error).message : null);
-  const ready = title.trim().length >= 3 && steps.trim().length >= 5 && testers.length > 0 && !issueProblem && !issueQ.isFetching;
+  const ready = title.trim().length >= 3 && steps.trim().length >= 5 && testers.length > 0 && !issueProblem && !issueQ.isFetching && !improvementQ.isFetching;
 
   const submit = () => {
     if (!ready) return;
@@ -88,6 +92,7 @@ export function NewTestRequestModal({ open, onClose, prefill }: { open: boolean;
       dailyUntil: when.has("times") ? dailyUntil || null : null,
       whenText: whenText.trim() || null,
       andonIssueId: issueId,
+      improvementId,
       testerIds: chosen,
     }, { onSuccess: onClose });
   };
@@ -158,12 +163,31 @@ export function NewTestRequestModal({ open, onClose, prefill }: { open: boolean;
             )}
           </Field>
 
+          {improvementId != null && (
+            <Field label="From an improvement idea">
+              <div className="rounded-2xl bg-secondary/60 p-3 flex items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  {improvementQ.data ? (
+                    <>
+                      <p className="text-sm text-muted-foreground">Improvement #{improvementQ.data.id}{improvementQ.data.submittedByName ? ` · logged by ${improvementQ.data.submittedByName} — always asked` : ""}</p>
+                      <p className="text-base line-clamp-2">“{improvementQ.data.title}”</p>
+                      {!improvementQ.data.submittedBy && <p className="text-base font-semibold text-amber-700 mt-1">Whoever logged it no longer has an account — choose who should test it.</p>}
+                    </>
+                  ) : improvementQ.isError ? (
+                    <p className="text-base font-semibold text-destructive">{(improvementQ.error as Error).message}</p>
+                  ) : <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />}
+                </div>
+                <button type="button" onClick={() => setImprovementId(null)} aria-label="Unlink the improvement" className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-secondary"><X className="w-4 h-4" /></button>
+              </div>
+            </Field>
+          )}
+
           <Field label="6 · Who should test it?">
             {testers.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-3">
                 {testers.map(t => (
                   <span key={t.id} className="h-11 pl-4 pr-1 rounded-full bg-sky-600 text-white text-base font-semibold flex items-center gap-1">
-                    {t.name}{t.isReporter && <span className="text-xs font-normal opacity-90 pr-3"> · reported it — always asked</span>}
+                    {t.name}{t.isReporter && <span className="text-xs font-normal opacity-90 pr-3"> · {t.id === reporter?.id ? "reported it" : "logged the idea"} — always asked</span>}
                     {!t.isReporter && (
                       <button type="button" onClick={() => setChosen(c => c.filter(id => id !== t.id))} aria-label={`Remove ${t.name}`} className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-white/20"><X className="w-4 h-4" /></button>
                     )}

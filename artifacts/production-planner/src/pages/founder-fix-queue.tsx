@@ -16,11 +16,12 @@ import { Link, Redirect } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, AlarmClock, Award, Check, CheckCircle2, ClipboardCheck, ChevronDown, ChevronRight, ExternalLink, HelpCircle, Loader2,
-  MessageCircleQuestion, MessageSquareText, OctagonAlert, Scale, Send, Video, Wrench, X, XCircle,
+  MessageCircleQuestion, MessageSquareText, OctagonAlert, RotateCcw, Scale, Send, Video, Wrench, X, XCircle,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { MarkdownBlock } from "@/components/lesson-media";
+import { ImprovementSuggestions, NoActionButton, useNoAction } from "@/components/fix-queue-extras";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { feedTimestamp } from "@/lib/feed-time";
@@ -39,6 +40,8 @@ const TABS: Array<{ key: FixQueueTab; label: string }> = [
   { key: "approved", label: "Approved" },
   { key: "fixed", label: "Done" },
   { key: "rejected", label: "Rejected" },
+  // "Dismiss — no action" (2026-10-10): kept, restorable, never messaged.
+  { key: "no_action", label: "Dismissed" },
 ];
 
 const SNOOZE_OPTIONS: Array<{ days: number; label: string }> = [
@@ -49,6 +52,7 @@ const SNOOZE_OPTIONS: Array<{ days: number; label: string }> = [
 const TAB_HINTS: Partial<Record<FixQueueTab, string>> = {
   in_progress: "Waiting on Claude's answer to your reply, or being fixed. They come back to To review by themselves once Claude answers.",
   snoozed: "Out of sight until the date shown, then back in To review by themselves.",
+  no_action: "Dismissed with no action — nobody was messaged and Claude won't pick them up again. Restore one to put it back.",
 };
 
 const LANE_STYLES: Record<TriageLane, string> = {
@@ -208,8 +212,10 @@ function Chip({ children, className }: { children: React.ReactNode; className?: 
   return <span className={cn("inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold", className)}>{children}</span>;
 }
 
-function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, saving }: {
+function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, saving }: {
   item: FixQueueItem;
+  /** "Dismiss — no action" (restore = put it back). */
+  onNoAction: (restore: boolean) => void;
   onDecide: (action: DecisionAction, note?: string) => void;
   onMessage: (message: string, close: boolean) => void;
   onDismiss: () => void;
@@ -250,6 +256,7 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, saving }: {
           <Chip className="bg-sky-100 text-sky-800 dark:bg-sky-950/50 dark:text-sky-200"><MessageCircleQuestion className="w-3.5 h-3.5" /> Waiting for Claude to reply</Chip>
         )}
         {status !== "proposed" && <Chip className="bg-secondary text-foreground">{STATUS_LABELS[status]}</Chip>}
+        {t.noActionAt && <Chip className="bg-foreground text-background">Dismissed — no action{t.noActionBy ? ` · ${t.noActionBy}` : ""} · {feedTimestamp(t.noActionAt)}</Chip>}
         <span className="ml-auto text-xs text-muted-foreground">Issue #{t.andonIssueId} · triaged {feedTimestamp(t.triagedAt)}</span>
       </div>
 
@@ -521,6 +528,14 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, saving }: {
             <MessageSquareText className="w-5 h-5" /> Message {firstName}
           </button>
         )}
+        {t.noActionAt ? (
+          <button onClick={() => onNoAction(true)} disabled={saving}
+            className="h-12 px-4 rounded-xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/60 disabled:opacity-50">
+            <RotateCcw className="w-5 h-5" /> Restore
+          </button>
+        ) : (
+          <NoActionButton saving={saving} onConfirm={() => onNoAction(false)} />
+        )}
         {/* Forced testing: ask the reporter (always) to try it for real. */}
         <Link href={`/test-requests?new=1&issue=${t.andonIssueId}`}
           className="h-12 px-4 rounded-xl border-2 border-sky-500 text-sky-700 dark:text-sky-300 font-bold flex items-center gap-2 hover:bg-sky-50 dark:hover:bg-sky-900/30">
@@ -703,6 +718,8 @@ export default function FounderFixQueue() {
     },
   });
 
+  const noAction = useNoAction();
+
   if (state.status === "authenticated" && !isFounder) return <Redirect to="/" />;
   if (state.status !== "authenticated") return null;
 
@@ -727,7 +744,7 @@ export default function FounderFixQueue() {
       </p>
 
       {/* Status tabs with counts */}
-      <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
+      <div className="grid grid-cols-3 md:grid-cols-7 gap-2">
         {TABS.map(t => {
           const n = tabCount(data, t.key);
           const active = t.key === tab;
@@ -751,6 +768,11 @@ export default function FounderFixQueue() {
             ? <><CheckCircle2 className="w-4 h-4 text-emerald-600" /> All decisions saved</>
             : TAB_HINTS[tab] ?? null}
       </div>
+
+      {/* Ideas from the improvements board that look like app changes —
+          suggestions only, Graeme adds or dismisses each one. */}
+      {tab === "proposed" && <ImprovementSuggestions status="suggested" />}
+      {tab === "no_action" && <ImprovementSuggestions status="dismissed" />}
 
       {isLoading && <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}
       {error != null && (
@@ -783,6 +805,7 @@ export default function FounderFixQueue() {
             onMessage={(message, close) => sendMessage.mutate({ id: item.triage.id, message, close })}
             onDismiss={() => dismiss.mutate({ id: item.triage.id })}
             onSnooze={days => snooze.mutate({ id: item.triage.id, days })}
+            onNoAction={restore => noAction.mutate({ id: item.triage.id, restore })}
           />
         ))}
       </div>

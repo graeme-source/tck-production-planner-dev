@@ -1,8 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   answerReady,
+  cardWanted,
   inDailyWindow,
   isDue,
+  needsAutoTodo,
+  openedTestId,
   onLinkedPage,
   pathMatches,
   pickTestToShow,
@@ -15,7 +18,8 @@ import {
 const req = (over: Partial<MyTestRequest> = {}): MyTestRequest => ({
   id: 1, title: "Edit numbers", steps: "Tap Edit numbers", linkPath: null, onlyOnPath: null, notBefore: null,
   dailyFrom: null, dailyUntil: null, whenText: null, createdByName: "Graeme", andonIssueId: null, issueDescription: null,
-  isReporter: false, startedAt: null, snoozedUntil: null, createdAt: "2026-10-10T08:00:00Z", ...over,
+  improvementId: null, improvementTitle: null,
+  isReporter: false, startedAt: null, promptedAt: null, todoTaskId: null, createdAt: "2026-10-10T08:00:00Z", ...over,
 });
 
 // 2026-10-10 is BST (UTC+1): 13:30Z = 14:30 London.
@@ -68,24 +72,72 @@ describe("isDue", () => {
   });
 });
 
+const ctx = (over: Partial<{ now: Date; path: string; openedId: number | null; shownThisLoad: Set<number> }> = {}) => ({
+  now: at("2026-10-10T13:30:00Z"), path: "/", openedId: null, shownThisLoad: new Set<number>(), ...over,
+});
+
+describe("cardWanted — no nagging", () => {
+  it("a test with no place pops up once: before it's been shown", () => {
+    expect(cardWanted(req(), ctx())).toBe(true);
+  });
+  it("…and stays up for the rest of that page load, but never comes back after", () => {
+    const shown = req({ promptedAt: "2026-10-10T13:00:00Z" });
+    expect(cardWanted(shown, ctx({ shownThisLoad: new Set([1]) }))).toBe(true);
+    expect(cardWanted(shown, ctx())).toBe(false);
+  });
+  it("a test tied to a place pops up each time they arrive there — not anywhere else, not on a timer", () => {
+    const r = req({ onlyOnPath: "/plans/*/station/fried-chicken", promptedAt: "2026-10-07T09:00:00Z" });
+    expect(cardWanted(r, ctx({ path: "/" }))).toBe(false);
+    expect(cardWanted(r, ctx({ path: "/plans/88/station/fried-chicken" }))).toBe(true);
+  });
+  it("once it's on their to-do list it never pops up again — anywhere", () => {
+    const r = req({ todoTaskId: 5, onlyOnPath: "/plans/*/station/building" });
+    expect(cardWanted(r, ctx({ path: "/plans/9/station/building" }))).toBe(false);
+    expect(cardWanted(req({ todoTaskId: 5 }), ctx())).toBe(false);
+  });
+  it("…unless they open it from that to-do", () => {
+    expect(cardWanted(req({ todoTaskId: 5 }), ctx({ openedId: 1 }))).toBe(true);
+  });
+  it("waits for its date and time", () => {
+    expect(cardWanted(req({ notBefore: "2026-10-11T05:00:00Z" }), ctx())).toBe(false);
+    expect(cardWanted(req({ dailyFrom: "16:00" }), ctx())).toBe(false);
+  });
+  it("follows them as the Testing bar once they've started", () => {
+    expect(cardWanted(req({ startedAt: "2026-10-10T13:00:00Z", promptedAt: "2026-10-10T13:00:00Z", onlyOnPath: "/plans/*/station/building" }), ctx({ path: "/hub" }))).toBe(true);
+  });
+});
+
 describe("pickTestToShow", () => {
-  const now = at("2026-10-10T13:30:00Z");
-  it("skips put-off ones until their time is up", () => {
-    const snoozed = req({ id: 1, snoozedUntil: "2026-10-10T15:00:00Z" });
-    expect(pickTestToShow([snoozed], now, "/")).toBeNull();
-    expect(pickTestToShow([snoozed], at("2026-10-10T15:01:00Z"), "/")?.id).toBe(1);
+  it("shows the one they opened first, then a started one, then the oldest", () => {
+    const a = req({ id: 1 }), b = req({ id: 2, startedAt: "2026-10-10T13:00:00Z" }), c = req({ id: 3, todoTaskId: 9 });
+    expect(pickTestToShow([a, b, c], ctx({ openedId: 3 }))?.id).toBe(3);
+    expect(pickTestToShow([a, b, c], ctx())?.id).toBe(2);
+    expect(pickTestToShow([a], ctx())?.id).toBe(1);
+    expect(pickTestToShow([], ctx())).toBeNull();
+    expect(pickTestToShow(undefined, ctx())).toBeNull();
   });
-  it("shows a started one before a new one", () => {
-    const fresh = req({ id: 1 });
-    const started = req({ id: 2, startedAt: "2026-10-10T13:00:00Z" });
-    expect(pickTestToShow([fresh, started], now, "/")?.id).toBe(2);
+});
+
+describe("needsAutoTodo", () => {
+  it("a no-place test shown before and never dealt with goes on the to-do list instead of returning", () => {
+    expect(needsAutoTodo(req({ promptedAt: "2026-10-09T09:00:00Z" }), new Set())).toBe(true);
   });
-  it("skips ones not due here", () => {
-    const building = req({ id: 1, onlyOnPath: "/plans/*/station/building" });
-    const anywhere = req({ id: 2 });
-    expect(pickTestToShow([building, anywhere], now, "/")?.id).toBe(2);
-    expect(pickTestToShow([], now, "/")).toBeNull();
-    expect(pickTestToShow(undefined, now, "/")).toBeNull();
+  it("not while it's still on screen, not for place tests, not once on the list or started", () => {
+    const r = req({ promptedAt: "2026-10-09T09:00:00Z" });
+    expect(needsAutoTodo(r, new Set([1]))).toBe(false);
+    expect(needsAutoTodo(req({ promptedAt: "x", onlyOnPath: "/fulfilment" }), new Set())).toBe(false);
+    expect(needsAutoTodo(req({ promptedAt: "x", todoTaskId: 4 }), new Set())).toBe(false);
+    expect(needsAutoTodo(req({ promptedAt: "x", startedAt: "x" }), new Set())).toBe(false);
+    expect(needsAutoTodo(req(), new Set())).toBe(false);
+  });
+});
+
+describe("openedTestId", () => {
+  it("reads the to-do link", () => {
+    expect(openedTestId("?testRequest=42")).toBe(42);
+    expect(openedTestId("testRequest=7&x=1")).toBe(7);
+    expect(openedTestId("?testRequest=abc")).toBeNull();
+    expect(openedTestId("")).toBeNull();
   });
 });
 
@@ -118,7 +170,11 @@ describe("words", () => {
     expect(whenSummary(req({ dailyFrom: "07:00", dailyUntil: "11:00", onlyOnPath: "/plans/*/station/building" }))).toBe("between 07:00 and 11:00, on /plans/…/station/building");
     expect(whenSummary(req())).toBe("Any time");
   });
-  it("lists the reporter first, always, without repeats", () => {
+  it("lists the issue reporter and idea submitter first, always, without repeats", () => {
+    expect(testerPreview([{ id: 7, name: "Ana" }, { id: 8, name: "Cy" }, null], [{ id: 8, name: "Cy" }])).toEqual([
+      { id: 7, name: "Ana", isReporter: true },
+      { id: 8, name: "Cy", isReporter: true },
+    ]);
     expect(testerPreview({ id: 7, name: "Ana" }, [{ id: 3, name: "Ben" }, { id: 7, name: "Ana" }])).toEqual([
       { id: 7, name: "Ana", isReporter: true },
       { id: 3, name: "Ben", isReporter: false },

@@ -1,6 +1,6 @@
 import { pgTable, serial, text, integer, timestamp, boolean, unique, customType } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
-import { andonIssuesTable } from "./improvements_and_andon";
+import { andonIssuesTable, improvementSubmissionsTable } from "./improvements_and_andon";
 
 // Same inline-bytea custom type as curiosity / morning_meetings.
 const bytea = customType<{ data: Buffer; notNull: false; default: false }>({
@@ -25,6 +25,8 @@ export const testRequestsTable = pgTable("test_requests", {
   dailyUntil: text("daily_until"),
   whenText: text("when_text"),
   andonIssueId: integer("andon_issue_id").references(() => andonIssuesTable.id, { onDelete: "set null" }),
+  /** The improvement idea it came from (migration 0160). */
+  improvementId: integer("improvement_id").references(() => improvementSubmissionsTable.id, { onDelete: "set null" }),
   /** 'person' (made on the Test requests page) | 'deploy' (machine API). */
   source: text("source").notNull().default("person"),
   fixRef: text("fix_ref"),
@@ -51,7 +53,29 @@ export const testRequestTestersTable = pgTable("test_request_testers", {
   photoMime: text("photo_mime"),
   photo: bytea("photo"),
   answeredAt: timestamp("answered_at", { withTimezone: true }),
+  /** When the card was first shown (migration 0160). */
+  promptedAt: timestamp("prompted_at", { withTimezone: true }),
+  /** The to-do it was put on — "I'll do it later" (migration 0160). */
+  todoTaskId: integer("todo_task_id"),
 }, t => [unique("test_request_testers_request_id_user_id_key").on(t.requestId, t.userId)]);
 
 export type TestRequest = typeof testRequestsTable.$inferSelect;
 export type TestRequestTester = typeof testRequestTestersTable.$inferSelect;
+
+// Improvement ideas checked for "this is really a request to change the app"
+// (migration 0160). Rules: api-server lib/improvement-app-request.ts.
+export const improvementFixSuggestionsTable = pgTable("improvement_fix_suggestions", {
+  id: serial("id").primaryKey(),
+  improvementId: integer("improvement_id").notNull().unique().references(() => improvementSubmissionsTable.id, { onDelete: "cascade" }),
+  flagged: boolean("flagged").notNull(),
+  reasons: text("reasons").array().notNull().default([]),
+  /** suggested | added | dismissed */
+  status: text("status").notNull().default("suggested"),
+  andonIssueId: integer("andon_issue_id").references(() => andonIssuesTable.id, { onDelete: "set null" }),
+  decidedBy: text("decided_by"),
+  decidedByUserId: integer("decided_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  scannedAt: timestamp("scanned_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type ImprovementFixSuggestion = typeof improvementFixSuggestionsTable.$inferSelect;
