@@ -17,7 +17,7 @@ import { planTargetForStation, pinsPlan } from "@/lib/station-plan-target";
 import { FreshnessBadge } from "@/components/govee-freshness";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
 import { addDayItems, dayKind, EMPTY_DAY_TOTALS, MAC_CHEESE_CATEGORY } from "@/lib/dashboard-day-totals";
-import { coreTileStatuses, CORE_TILE_ORDER, BAND_HEADER_CLASS, BAND_TEXT_CLASS, BAND_BAR_CLASS, BAND_ICON_CLASS, BAND_LEGEND, type CoreTileKey, type TileKpiStatus } from "@/lib/station-kpi-bands";
+import { coreTileStatuses, CORE_TILE_ORDER, BAND_HEADER_CLASS, BAND_TEXT_CLASS, BAND_BAR_CLASS, BAND_ICON_CLASS, type CoreTileKey, type TileKpiStatus } from "@/lib/station-kpi-bands";
 
 interface AndonIssueSummary {
   id: number;
@@ -856,10 +856,9 @@ export default function Dashboard() {
           none yet), bottom row the production line — Mixing, Sheeting,
           Building, Ovens — all taking the building run rate's colour. */}
       <div>
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 mb-2">
-          <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Core Production</p>
-          <KpiBandLegend />
-        </div>
+        {/* No colour key (Graeme, 2026-10-10: "It should be intuitive"); the
+            header tooltip still gives the figure, e.g. "On standard — 20.4/hr". */}
+        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Core Production</p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {CORE_TILE_ORDER.map(key => <Fragment key={key}>{coreTiles[key]}</Fragment>)}
         </div>
@@ -1149,20 +1148,3 @@ function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, onClick
     : <Link href={href} className="h-full">{card}</Link>;
 }
 
-/** Key for the Core Production header colours — small, beside the section
- *  title, so the colours explain themselves. */
-function KpiBandLegend() {
-  return (
-    <ul className="flex flex-wrap items-center gap-x-3 gap-y-1" aria-label="Header colour key">
-      {BAND_LEGEND.map(item => (
-        <li key={item.band} className="flex items-center gap-1.5 text-[11px] text-muted-foreground leading-none">
-          <span className={cn("inline-flex items-center justify-center w-4 h-3 rounded-sm", BAND_HEADER_CLASS[item.band])} aria-hidden="true">
-            {item.band === "platinum" && <Sparkles className="w-2.5 h-2.5 text-white" />}
-          </span>
-          <span><span className="font-semibold text-foreground">{item.label}</span> {item.hint}</span>
-        </li>
-      ))}
-      <li className="text-[11px] text-muted-foreground leading-none">Bottom row follows the building run rate</li>
-    </ul>
-  );
-}
