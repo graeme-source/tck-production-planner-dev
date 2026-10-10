@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { labelsPdf } from "./pdf";
+import { labelPageSizeMm, labelsPdf } from "./pdf";
 import { Bitmap, fillRect } from "./raster";
 import { initialPrintCount, printRefusal } from "./status";
 import { buildPrintRecord } from "./print-record";
@@ -10,22 +10,34 @@ const latin1 = (b: Uint8Array) => Array.from(b, c => String.fromCharCode(c)).joi
 describe("back-labels PDF", () => {
   const bm = new Bitmap(1119, 751); // 140 × 94 mm at 203 dpi
   fillRect(bm, 10, 10, 100, 50);
-  const pdf = labelsPdf({ bitmap: bm, widthMm: 140, heightMm: 94, copies: 3, title: "Chicken and Chorizo" });
+  const pdf = labelsPdf({ bitmap: bm, dpi: 203, copies: 3, title: "Chicken and Chorizo — back labels" });
   const s = latin1(pdf);
 
   it("has one page per label", () => {
     expect(s.match(/\/Type \/Page /g)).toHaveLength(3);
     expect(s).toContain("/Count 3");
   });
-  it("each page is exactly the label: 140 × 94 mm = 396.85 × 266.46 pt", () => {
+  it("each page is the label to the nearest printer dot: 1119 × 751 dots at 203 dpi = 140.01 × 93.97 mm", () => {
     const boxes = s.match(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/g)!;
     expect(boxes).toHaveLength(3);
-    expect(boxes[0]).toBe("/MediaBox [0 0 396.85 266.46]");
+    expect(boxes[0]).toBe("/MediaBox [0 0 396.8866 266.3645]");
+    const size = labelPageSizeMm(bm, 203);
+    expect(Math.abs(size.widthMm - 140)).toBeLessThan(0.05);
+    expect(Math.abs(size.heightMm - 94)).toBeLessThan(0.05);
+    // one image pixel = one printer dot: page points × dpi / 72 = bitmap size, exactly
+    // and never a hair MORE than the bitmap (that made a reader draw 1120 dots and resample)
+    for (const [pt, dots] of [[396.8866, 1119], [266.3645, 751]] as const) {
+      expect((pt * 203) / 72).toBeLessThanOrEqual(dots);
+      expect((pt * 203) / 72).toBeGreaterThan(dots - 0.01);
+    }
+  });
+  it("keeps the title plain ASCII", () => {
+    expect(s).toContain("/Title (Chicken and Chorizo - back labels)");
   });
   it("embeds the 1-bit bitmap once, at its own size, filling the page", () => {
     expect(s.match(/\/Subtype \/Image/g)).toHaveLength(1);
     expect(s).toContain("/Width 1119 /Height 751 /ColorSpace /DeviceGray /BitsPerComponent 1 /Decode [1 0]");
-    expect(s).toContain("q 396.85 0 0 266.46 0 0 cm /Im0 Do Q");
+    expect(s).toContain("q 396.8866 0 0 266.3645 0 0 cm /Im0 Do Q");
     // packed rows: ceil(1119/8) × 751 bytes
     expect(s).toContain(`/Length ${Math.ceil(1119 / 8) * 751}`);
   });
@@ -39,7 +51,7 @@ describe("back-labels PDF", () => {
     expect(s.trimEnd().endsWith("%%EOF")).toBe(true);
   });
   it("refuses zero labels", () => {
-    expect(() => labelsPdf({ bitmap: bm, widthMm: 140, heightMm: 94, copies: 0 })).toThrow();
+    expect(() => labelsPdf({ bitmap: bm, dpi: 203, copies: 0 })).toThrow();
   });
 });
 

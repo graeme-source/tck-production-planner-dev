@@ -113,7 +113,7 @@ router.post("/:recipeId", validate(PrintBody), async (req: Request, res: Respons
       return;
     }
     const page = normaliseTemplate(r.snapshot.template).page;
-    const pdf = labelsPdf({ bitmap: r.proof.bitmap, widthMm: page.widthMm, heightMm: page.heightMm, copies: body.count, title: `${r.recipe.name} — back labels` });
+    const pdf = labelsPdf({ bitmap: r.proof.bitmap, dpi: page.dpi, copies: body.count, title: `${r.recipe.name} - back labels` });
 
     const userId = req.session.userId ?? null;
     const [u] = userId ? await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId)) : [];

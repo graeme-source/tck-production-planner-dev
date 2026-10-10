@@ -1,7 +1,8 @@
 /**
  * Print-ready PDF of back labels (pure, tested) — Stage 2, first cut.
  *
- * One label per page; the page is EXACTLY the label (e.g. 140 × 94 mm) and
+ * One label per page; the page is the label (140 × 94 mm, to the nearest
+ * printer dot — see labelPageSizeMm) and
  * carries the renderer's own 1-bit bitmap, stretched edge to edge — the
  * bitmap is already at the label's size at the template's dpi, so nothing
  * is resampled into something different from the proof. Every label in one
@@ -17,25 +18,37 @@ import type { Bitmap } from "./raster";
 
 const enc = new TextEncoder();
 
-/** Points with 2 decimals, as PDF number text. */
+/** Points as PDF number text: 4 decimals, rounded DOWN, so a page sized to
+ *  whole printer dots never comes out a hair wider than the bitmap (2-decimal
+ *  rounding made 1119 dots render as 1120 and resample the whole label). */
 function n(v: number): string {
-  return (Math.round(v * 100) / 100).toString();
+  return (Math.floor(v * 10000) / 10000).toString();
 }
 
 export interface LabelsPdfInput {
   bitmap: Bitmap;
-  widthMm: number;
-  heightMm: number;
+  /** The printer resolution the bitmap was drawn at (template dpi). */
+  dpi: number;
   copies: number;
-  /** Shown in the PDF's Title (e.g. "Chicken and Chorizo — back labels"). */
+  /** Shown in the PDF's Title (plain ASCII; anything else becomes "-"). */
   title?: string;
+}
+
+/** The page size: the bitmap's WHOLE dots at its dpi, so one image pixel is
+ *  exactly one printer dot. A 140 × 94 mm label at 203 dpi is 1119 × 751
+ *  dots = 140.01 × 93.97 mm — within 0.03 mm of the label. Sizing the page to
+ *  the nominal 94 mm instead (751.18 dots) makes every reader and driver
+ *  stretch the image by a fraction of a dot and resample every row. */
+export function labelPageSizeMm(bitmap: Bitmap, dpi: number): { widthMm: number; heightMm: number } {
+  return { widthMm: (bitmap.width / dpi) * 25.4, heightMm: (bitmap.height / dpi) * 25.4 };
 }
 
 export function labelsPdf(input: LabelsPdfInput): Uint8Array {
   const { bitmap, copies } = input;
   if (!Number.isInteger(copies) || copies < 1) throw new Error("At least one label");
-  const wPt = mmToPt(input.widthMm);
-  const hPt = mmToPt(input.heightMm);
+  const size = labelPageSizeMm(bitmap, input.dpi);
+  const wPt = mmToPt(size.widthMm);
+  const hPt = mmToPt(size.heightMm);
   const { bytes } = bitmap.packedRows();
 
   // Objects: 1 catalog, 2 pages, 3 image, 4 content stream, 5 info, then one page object per copy.
@@ -65,7 +78,7 @@ export function labelsPdf(input: LabelsPdfInput): Uint8Array {
   });
   const content = `q ${n(wPt)} 0 0 ${n(hPt)} 0 0 cm /Im0 Do Q`;
   obj(4, () => text(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`));
-  const title = (input.title ?? "Back labels").replace(/[()\\]/g, "");
+  const title = (input.title ?? "Back labels").replace(/[()\\]/g, "").replace(/[^\x20-\x7E]/g, "-");
   obj(5, () => text(`<< /Title (${title}) /Producer (TCK Production Planner) >>`));
   for (const id of pageIds) {
     obj(id, () => text(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${n(wPt)} ${n(hPt)}] /Resources << /XObject << /Im0 3 0 R >> >> /Contents 4 0 R >>`));
