@@ -6,7 +6,8 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { Barcode, Flame, Snowflake, Thermometer, AlertTriangle } from "lucide-react";
-import { checkEan13, PERIOD_UNITS, type PeriodUnit, type ShelfPeriod } from "@workspace/product-labels";
+import { checkEan13, COOKING_KEYS, PERIOD_UNITS, type CookingValues, type PeriodUnit, type ShelfPeriod } from "@workspace/product-labels";
+import { StepPreview } from "./step-preview";
 import { useAutosave } from "@/hooks/use-autosave";
 import { SaveChip } from "@/components/save-chip";
 import { cn } from "@/lib/utils";
@@ -54,6 +55,14 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
     setNums(n);
     setLoaded(true);
   }, [loaded, s]);
+
+  // What prints: this recipe's own number, else the standard; an appliance
+  // switched off is blank (its line drops) — same rule as the server.
+  const resolvedCooking = Object.fromEntries(COOKING_KEYS.map(k => {
+    const on = k.startsWith("airFryer") ? flags.airFryerOn : flags.ovenOn;
+    const own = parseWhole(nums[k] ?? "", 400);
+    return [k, !on ? null : own ?? t.cooking[k]];
+  })) as unknown as CookingValues;
 
   const bc = barcode.trim() === "" ? null : checkEan13(barcode);
   const changeBarcode = (v: string) => {
@@ -171,6 +180,7 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
           {numField("airFryerMinMinutes", "From", "min", 240, !flags.airFryerOn)}
           {numField("airFryerMaxMinutes", "To", "min", 240, !flags.airFryerOn)}
         </div>
+        <StepPreview wording={data.current.snapshot.template.text.step2} cooking={resolvedCooking} />
       </div>
 
       {/* Warning */}

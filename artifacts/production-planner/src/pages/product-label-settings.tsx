@@ -25,6 +25,7 @@ import { activeRecipes } from "@/lib/recipe-archive";
 import { cn } from "@/lib/utils";
 import { api, useInvalidateLabels, useLabelTemplate, type Proof, type TemplatePayload } from "@/components/product-labels/api";
 import { ProofImage } from "@/components/product-labels/proof-image";
+import { StepPreview } from "@/components/product-labels/step-preview";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const inputCls = "h-11 rounded-xl border-2 border-border bg-card px-3 text-base font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-60";
@@ -167,6 +168,15 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
               <Num label="Gap between blocks" unit="mm" value={draft.page.fieldGapMm} step={0.5} min={0} max={20} onChange={v => v != null && setPage("fieldGapMm", v)} />
               <Num label="Step number circle" unit="mm" value={draft.page.stepCircleMm} step={0.2} min={2} max={20} onChange={v => v != null && setPage("stepCircleMm", v)} />
             </div>
+            <div className="space-y-2">
+              <p className="text-sm font-semibold">Width of the three steps (relative — step 2 holds both cooking lines)</p>
+              <div className="grid grid-cols-3 gap-4">
+                {([0, 1, 2] as const).map(i => (
+                  <Num key={i} label={`Step ${i + 1}`} value={draft.page.stepWeights[i]} step={0.1} min={0.5} max={5}
+                    onChange={v => v != null && setPage("stepWeights", draft.page.stepWeights.map((w, j) => (j === i ? v : w)) as [number, number, number])} />
+                ))}
+              </div>
+            </div>
             <p className="text-sm text-muted-foreground">Nothing is ever printed inside the margin — keep it at least 4 mm on rounded labels, or the edges can get cut off.</p>
           </Card>
 
@@ -197,6 +207,7 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
             <div className="rounded-xl bg-secondary/40 p-3 text-sm space-y-1">
               <p><b>**word**</b> prints <b>word</b> in bold. Fill-ins: {Object.entries(TEMPLATE_PLACEHOLDERS).map(([k, v]) => <span key={k} className="inline-block mr-2"><code className="font-mono">{k}</code> {v.toLowerCase()};</span>)}</p>
               <p>In the cooking steps, a part in <code>[square brackets]</code> disappears when a number inside it is blank, and <code>{"{or}"}</code> joins two parts with “, or” only when both are there.</p>
+              <p>A new line in a step starts a new line on the label, and each such line is kept whole (it shrinks rather than splitting). <code>➜</code> prints as an arrow.</p>
             </div>
             <div className="space-y-3">
               {TEXT_FIELDS.map(t => (
@@ -217,12 +228,13 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
 
           {/* Cooking */}
           <Card icon={<Flame className="w-5 h-5" />} title="Standard cooking values">
-            <p className="text-sm text-muted-foreground">Used by every recipe that doesn't set its own. Leave one blank to drop that part from the sentence.</p>
+            <p className="text-sm text-muted-foreground">Used by every recipe that doesn't set its own. Type the FULL cooking time — the label splits it either side of TURN OVER. Leave an appliance blank to drop its line.</p>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               {COOKING_FIELDS.map(c => (
                 <Num key={c.key} label={c.label} unit={c.unit} value={draft.cooking[c.key]} step={1} min={0} max={400} allowBlank onChange={v => setCooking(c.key, v)} />
               ))}
             </div>
+            <StepPreview wording={draft.text.step2} cooking={draft.cooking} />
           </Card>
 
           {/* Dates */}
