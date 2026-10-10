@@ -129,6 +129,7 @@ import issuePipelineMachineRouter from "./issue-pipeline-machine";
 import issuePipelineRouter from "./issue-pipeline";
 import peopleAccessRouter from "./people-access";
 import personDocumentsRouter from "./person-documents";
+import productLabelsRouter from "./product-labels";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -367,6 +368,9 @@ router.use("/person-documents", personDocumentsRouter);
 // Who has People access — the founder's per-person switch in Settings →
 // Team & Access. Admin read, founder-only write, guarded inside the router.
 router.use("/people-access", peopleAccessRouter);
+// Product labels Stage 1 — template, per-recipe settings, live versions.
+// Reads for anyone signed in; writes manager/admin (guarded inside).
+router.use("/product-labels", productLabelsRouter);
 router.use("/fried-chicken", friedChickenRouter);
 router.use("/risk-assessments", riskAssessmentsRouter);
 router.use("/compliance-actions", complianceActionsRouter);
