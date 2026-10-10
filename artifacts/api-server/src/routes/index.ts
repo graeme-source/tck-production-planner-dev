@@ -8,6 +8,7 @@ import ingredientsRouter from "./ingredients";
 import subRecipesRouter from "./sub-recipes";
 import subRecipePrepTimeRouter from "./sub-recipe-prep-time";
 import userToursRouter from "./user-tours";
+import testRequestsRouter from "./test-requests";
 import recipesRouter from "./recipes";
 import recipeArchiveRouter from "./recipe-archive";
 import productionPlansRouter from "./production-plans";
@@ -194,6 +195,7 @@ async function requireAdminOrManager(req: Request, res: Response, next: NextFunc
 // Protected routes
 router.use("/users", usersRouter);
 router.use("/todos", todosRouter);
+router.use("/test-requests", testRequestsRouter);
 router.use("/onboarding", onboardingRouter);
 router.use("/category-defaults", categoryDefaultsRouter);
 router.use("/suppliers", suppliersRouter);

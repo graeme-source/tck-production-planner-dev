@@ -46,6 +46,8 @@ import {
   type ResolveOutcome,
 } from "../lib/issue-pipeline-data";
 
+import testRequestsMachineRouter from "./test-requests-machine";
+
 const router: IRouter = Router();
 
 // ── Token gate ──────────────────────────────────────────────────────────────
@@ -63,6 +65,9 @@ function requireMachineToken(req: Request, res: Response, next: NextFunction) {
   next();
 }
 router.use(requireMachineToken);
+
+// Forced testing: the deploy session attaches test requests (docs/FORCED_TESTING.md).
+router.use("/test-requests", testRequestsMachineRouter);
 
 const machineAttachmentUrl = (id: number) => `/api/issue-pipeline/machine/attachments/${id}`;
 
