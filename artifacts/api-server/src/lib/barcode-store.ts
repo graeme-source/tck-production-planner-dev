@@ -18,10 +18,11 @@
  * only loads, writes and logs.
  */
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { db, appSettingsTable, skuBarcodesTable, barcodeEventsTable, packingScanRejectionsTable, type SkuBarcode } from "@workspace/db";
+import { db, appSettingsTable, recipesTable, skuBarcodesTable, barcodeEventsTable, packingScanRejectionsTable, type SkuBarcode } from "@workspace/db";
 import {
   countOutcomes, decidePull, deriveLinkedVariants, describeClash, groupBarcode, gtinKey, identitiesFor, isDifferentInShopify,
-  kindLabel, checkGtin, planAssignment, planScanBarcodes, resolveOwnership,
+  kindLabel, checkGtin, planAssignment, planScanBarcodes, resolveOwnership, clubSpecialScan, isClubSpecialTitle, suggestF2fLinks,
+  type AlsoAccepts, type ClubSpecialScan, type CopyLink,
   type BarcodeHolder, type BarcodeMap, type Clash, type Holding, type Identity, type KnownCodes, type LinkKind, type LinkedVariant,
   type MappingRow, type Ownership, type PullCounts, type PullDecision, type Reuse,
 } from "@workspace/barcodes";
@@ -61,6 +62,16 @@ export const variantName = (r: Pick<SkuBarcode, "productTitle" | "variantTitle">
 
 type Exec = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 
+export interface CurrentSpecial { recipeId: number; recipeName: string }
+
+/** The recipe flagged is_current_special — what the Calzone Club Special
+ *  delivers (and so scans as). */
+export async function loadCurrentSpecial(exec: Exec = db): Promise<CurrentSpecial | null> {
+  const [row] = await exec.select({ id: recipesTable.id, name: recipesTable.name }).from(recipesTable)
+    .where(eq(recipesTable.isCurrentSpecial, true)).limit(1);
+  return row ? { recipeId: row.id, recipeName: row.name } : null;
+}
+
 export interface OwnershipState {
   mappings: MappingFull[];
   rows: SkuBarcode[];
@@ -71,6 +82,9 @@ export interface OwnershipState {
   identities: Map<string, Identity>;
   currentOf: Map<string, boolean>;
   ownership: Ownership;
+  special: CurrentSpecial | null;
+  /** Calzone Club Special listings: what each scans with (copies.ts). */
+  clubSpecial: Map<string, ClubSpecialScan>;
 }
 
 /** Is a variant CURRENT? Linked to an active recipe, or its Shopify product
@@ -88,14 +102,18 @@ function ownershipFrom(
   mappings: MappingFull[],
   rows: Array<SkuBarcode>,
   links: LinkedVariant[],
+  special: CurrentSpecial | null,
   override?: { barcode: Map<string, string | null>; status: Map<string, string | null>; shopify: Map<string, string | null> },
-): { identities: Map<string, Identity>; currentOf: Map<string, boolean>; ownership: Ownership } {
+): { identities: Map<string, Identity>; currentOf: Map<string, boolean>; ownership: Ownership; clubSpecial: Map<string, ClubSpecialScan> } {
   const linkOf = new Map(links.map(l => [l.variantId, l]));
   const recipeActive = new Map(mappings.map(m => [m.recipeId, m.recipeActive]));
   const names = new Map(rows.map(r => [r.variantId, variantName(r, `Shopify variant ${r.variantId}`)]));
   const sameAs = new Map(rows.filter(r => r.sameProductAs).map(r => [r.variantId, r.sameProductAs!]));
   const ids = new Set([...rows.map(r => r.variantId), ...links.map(l => l.variantId), ...(override?.barcode.keys() ?? [])]);
-  const identities = identitiesFor(ids, links, sameAs, names, new Map(mappings.map(m => [m.recipeId, m.packSize])));
+  // The Calzone Club Special's listings ARE the current special's pack.
+  const clubIds = new Set(rows.filter(r => isClubSpecialTitle(r.productTitle)).map(r => r.variantId));
+  const identities = identitiesFor(ids, links, sameAs, names, new Map(mappings.map(m => [m.recipeId, m.packSize])),
+    special ? { variantIds: clubIds, recipeId: special.recipeId, recipeName: special.recipeName } : null);
   const byVariant = new Map(rows.map(r => [r.variantId, r]));
   const currentOf = new Map<string, boolean>();
   const holdings: Holding[] = [];
@@ -107,6 +125,9 @@ function ownershipFrom(
     currentOf.set(id, current);
     const ours = override?.barcode.has(id) ? override.barcode.get(id)! : row?.barcode ?? null;
     const shopify = override?.shopify.has(id) ? override.shopify.get(id)! : row?.shopifyBarcode ?? null;
+    // The Club Special never claims a code of its own (it follows the
+    // special, below), so it can never clash.
+    if (clubIds.has(id)) continue;
     holdings.push({
       variantId: id, name: names.get(id) ?? `Shopify variant ${id}`,
       // A retired variant never owns a code (resolveOwnership), but the code
@@ -117,14 +138,34 @@ function ownershipFrom(
       linkKind: link?.kind,
     });
   }
-  return { identities, currentOf, ownership: resolveOwnership(holdings) };
+  const ownership = resolveOwnership(holdings);
+
+  // Club Special: scans with the current special's pack code; during a
+  // changeover it also accepts the incoming special's code (copies.ts).
+  const clubSpecial = new Map<string, ClubSpecialScan>();
+  if (clubIds.size) {
+    const specialKey = special ? `r${special.recipeId}:pack` : null;
+    const specialCode = special
+      ? groupBarcode(links.filter(l => l.recipeId === special.recipeId && l.kind === "pack").map(l => ownership.barcodeOf.get(l.variantId))).barcode
+      : null;
+    const known: KnownCodes = {};
+    for (const [vid, code] of ownership.barcodeOf) if (code) known[gtinKey(code)] = { identityKey: identities.get(vid)!.key, name: identities.get(vid)!.name };
+    for (const id of clubIds) {
+      const shopify = override?.shopify.has(id) ? override.shopify.get(id)! : byVariant.get(id)?.shopifyBarcode ?? null;
+      const scan = clubSpecialScan(specialCode, specialKey, shopify, known);
+      clubSpecial.set(id, scan);
+      ownership.barcodeOf.set(id, currentOf.get(id) ? scan.barcode : null);
+      if (!currentOf.get(id)) scan.alsoAccepts = [];
+    }
+  }
+  return { identities, currentOf, ownership, clubSpecial };
 }
 
 export async function loadOwnership(exec: Exec = db): Promise<OwnershipState> {
-  const [mappings, rows] = await Promise.all([loadMappings(), exec.select().from(skuBarcodesTable)]);
+  const [mappings, rows, special] = await Promise.all([loadMappings(), exec.select().from(skuBarcodesTable), loadCurrentSpecial(exec)]);
   const { links, ambiguousBags } = deriveLinkedVariants(mappings, rows.map(r => ({ variantId: r.variantId, productId: r.shopifyProductId, variantTitle: r.variantTitle })));
-  const o = ownershipFrom(mappings, rows, links);
-  return { mappings, rows, byVariant: new Map(rows.map(r => [r.variantId, r])), links, linkOf: new Map(links.map(l => [l.variantId, l])), ambiguousBags, ...o };
+  const o = ownershipFrom(mappings, rows, links, special);
+  return { mappings, rows, byVariant: new Map(rows.map(r => [r.variantId, r])), links, linkOf: new Map(links.map(l => [l.variantId, l])), ambiguousBags, special, ...o };
 }
 
 // ── Views ───────────────────────────────────────────────────────────────────
@@ -196,7 +237,8 @@ function variantView(variantId: string, s: OwnershipState): VariantView {
     shopifyBarcode: row?.shopifyBarcode ?? null,
     shopifyCheckedAt,
     notInShopify,
-    differentInShopify: isDifferentInShopify({ ours: claimed, shopifyBarcode: row?.shopifyBarcode ?? null, shopifyCheckedAt, notInShopify }),
+    // The Club Special follows the current special — never "different".
+    differentInShopify: !s.clubSpecial.has(variantId) && isDifferentInShopify({ ours: claimed, shopifyBarcode: row?.shopifyBarcode ?? null, shopifyCheckedAt, notInShopify }),
     sameProductAs: row?.sameProductAs ?? null,
   };
 }
@@ -253,7 +295,68 @@ export async function loadOverview() {
     clashes: s.ownership.clashes.map(c => ({ ...c, message: describeClash(c) })),
     reused: s.ownership.reused,
     ambiguousBags: s.ambiguousBags.map(id => ({ variantId: id, name: variantName(s.byVariant.get(id), id) })),
+    clubSpecial: clubSpecialViews(s),
+    f2fSuggestions: f2fSuggestions(s),
   };
+}
+
+export interface ClubSpecialView {
+  variantId: string;
+  name: string;
+  current: boolean;
+  /** "The Benji · 2-pack", or null when no special is set. */
+  scansAs: string | null;
+  barcode: string | null;
+  shopifyBarcode: string | null;
+  /** Shopify already has the incoming special's code — expected. */
+  changing: boolean;
+  alsoAccepts: AlsoAccepts[];
+  /** Shopify's code is neither special's pack — worth a look, not a clash. */
+  unexpected: boolean;
+}
+
+function clubSpecialViews(s: OwnershipState): ClubSpecialView[] {
+  return [...s.clubSpecial].map(([id, scan]) => {
+    const row = s.byVariant.get(id);
+    return {
+      variantId: id, name: variantName(row, id), current: s.currentOf.get(id) ?? true,
+      scansAs: s.special ? s.identities.get(id)?.name ?? null : null,
+      barcode: s.ownership.barcodeOf.get(id) ?? null, shopifyBarcode: row?.shopifyBarcode ?? null,
+      changing: scan.changing, alsoAccepts: scan.alsoAccepts, unexpected: scan.unexpected,
+    };
+  });
+}
+
+/** F2F copies to mark "same product as" their recipe's pack (copies.ts) —
+ *  a reviewed list; nothing changes until a person applies it. */
+export function f2fSuggestions(s: OwnershipState): CopyLink[] {
+  const packs = s.links.filter(l => l.kind === "pack").map(l => ({
+    variantId: l.variantId, recipeId: l.recipeId, name: variantName(s.byVariant.get(l.variantId), l.variantId),
+    productName: s.identities.get(l.variantId)?.name ?? l.recipeName, barcode: s.ownership.barcodeOf.get(l.variantId) ?? null,
+  }));
+  const candidates = s.rows.map(r => ({
+    variantId: r.variantId, name: variantName(r, r.variantId), productTitle: r.productTitle, current: s.currentOf.get(r.variantId) ?? true,
+    linked: s.linkOf.has(r.variantId), sameProductAs: r.sameProductAs, barcode: r.barcode ?? r.shopifyBarcode,
+  }));
+  return suggestF2fLinks(candidates, packs);
+}
+
+/** Apply the F2F list: mark each chosen copy "same product as" its
+ *  recipe's pack — only those still suggested now (re-checked here). */
+export async function applyF2fLinks(variantIds: string[], actor: Actor): Promise<CopyLink[]> {
+  const wanted = new Set(variantIds);
+  const applied: CopyLink[] = [];
+  await db.transaction(async tx => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(20261011)`);
+    const s = await loadOwnership(tx);
+    for (const link of f2fSuggestions(s)) {
+      if (!wanted.has(link.variantId)) continue;
+      await tx.update(skuBarcodesTable).set({ sameProductAs: link.sameAs, updatedAt: new Date() }).where(eq(skuBarcodesTable.variantId, link.variantId));
+      await logEvent({ variantId: link.variantId, recipeId: link.recipeId, productName: link.name, action: "same-product", oldBarcode: link.barcode, newBarcode: link.barcode, result: "ok", message: `F2F copy — marked the same product as ${link.sameAsName}`, actor }, tx);
+      applied.push(link);
+    }
+  });
+  return applied;
 }
 
 // ── Packing scanner ─────────────────────────────────────────────────────────
@@ -266,6 +369,8 @@ export interface ScanMap {
   identities: Record<string, string>;
   /** gtinKey(code) → the product it belongs to, for "Wrong item — this is …". */
   known: KnownCodes;
+  /** variant id → other codes it accepts (the Club Special during a changeover). */
+  alsoAccepts: Record<string, AlsoAccepts[]>;
 }
 
 export function scanMapFrom(s: OwnershipState): ScanMap {
@@ -281,7 +386,9 @@ export function scanMapFrom(s: OwnershipState): ScanMap {
     const identity = s.identities.get(id)!;
     known[gtinKey(code)] = { identityKey: identity.key, name: identity.name };
   }
-  return { version: latest ? new Date(latest).toISOString() : null, barcodes, identities, known };
+  const alsoAccepts: Record<string, AlsoAccepts[]> = {};
+  for (const [id, scan] of s.clubSpecial) if (scan.alsoAccepts.length) alsoAccepts[id] = scan.alsoAccepts;
+  return { version: latest ? new Date(latest).toISOString() : null, barcodes, identities, known, alsoAccepts };
 }
 
 export async function scanMap(): Promise<ScanMap> {
@@ -353,7 +460,8 @@ export class BarcodeRefused extends Error {
 }
 
 function holdersFrom(s: OwnershipState, exclude: Set<string>): BarcodeHolder[] {
-  return s.rows.filter(r => !exclude.has(r.variantId)).map(r => {
+  // The Club Special holds no code of its own (it follows the special).
+  return s.rows.filter(r => !exclude.has(r.variantId) && !s.clubSpecial.has(r.variantId)).map(r => {
     const current = s.currentOf.get(r.variantId) ?? true;
     const identity = s.identities.get(r.variantId)!;
     return {
@@ -631,7 +739,7 @@ async function runReconcile({ mode, dryRun, actor }: { mode: "pull" | "check"; d
 
   // Clashes and reused codes as they stand after this run (simulated for a dry run).
   const after = dryRun
-    ? ownershipFrom(mappings, rows, links, proposed).ownership
+    ? ownershipFrom(mappings, rows, links, await loadCurrentSpecial(), proposed).ownership
     : (await loadOwnership()).ownership;
 
   items.sort((a, b) => a.recipeName.localeCompare(b.recipeName, "en-GB") || a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name));
