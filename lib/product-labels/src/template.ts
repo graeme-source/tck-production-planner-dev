@@ -11,6 +11,7 @@
  */
 import type { BatchBasis, PeriodUnit, ShelfPeriod } from "./dates";
 import { PERIOD_UNITS } from "./dates";
+import { EAN13_MIN_BAR_HEIGHT_MM } from "./ean13";
 
 export type WidthVariant = "normal" | "semi-condensed" | "condensed";
 /** Widest first — the layout tries them in this order before going smaller. */
@@ -53,6 +54,8 @@ export interface FieldStyle {
   /** Whole field bold / capitals. */
   bold: boolean;
   caps: boolean;
+  /** Line alignment inside the block (the title is centred). */
+  align: "left" | "center";
 }
 
 export interface PageSettings {
@@ -70,7 +73,13 @@ export interface PageSettings {
   /** Space between stacked fields inside a column. */
   fieldGapMm: number;
   stepCircleMm: number;
+  /** Height of the barcode BARS (digits sit underneath). At least 80% of
+   *  the EAN-13 nominal 22.85 mm — EAN13_MIN_BAR_HEIGHT_MM. */
   barcodeHeightMm: number;
+  /** Barcode width as a % of EAN-13 nominal size (0.33 mm bars), 80–200.
+   *  The bars are then snapped to whole printer dots, so the printed size is
+   *  the nearest whole-dot size (shown on the proof). */
+  barcodeSizePct: number;
   /** UK FIC Art. 13(3): the pack's largest surface is under 80 cm², so the
    *  minimum x-height is 0.9 mm instead of 1.2 mm. About the PACK, not the
    *  label. */
@@ -136,24 +145,29 @@ export const TEMPLATE_PLACEHOLDERS: Record<string, string> = {
 
 const field = (f: Partial<FieldStyle>): FieldStyle => ({
   width: "normal", allowNarrower: true, weight: 400, minPt: 6.75, maxPt: 9,
-  letterSpacingEm: 0, lineHeight: 1.12, bold: false, caps: false, ...f,
+  letterSpacingEm: 0, lineHeight: 1.12, bold: false, caps: false, align: "left", ...f,
 });
 
 export const DEFAULT_TEMPLATE: LabelTemplate = {
   page: {
-    widthMm: 100, heightMm: 70, dpi: 203, marginMm: 2.5,
-    columnSplitPct: 47, columnGapMm: 2.5,
-    titleBandMm: 6.5, stepsBandMm: 12, bandGapMm: 1.5, fieldGapMm: 1.5,
-    stepCircleMm: 4.2, barcodeHeightMm: 11, smallPack: false,
+    // Graeme's label stock: 140 × 94 mm on a 203 dpi printer, with ~4.5 mm
+    // clear all round (rounded corners; ink closer to the edge gets cut off).
+    widthMm: 140, heightMm: 94, dpi: 203, marginMm: 4.5,
+    columnSplitPct: 44, columnGapMm: 4,
+    titleBandMm: 9, stepsBandMm: 13, bandGapMm: 2, fieldGapMm: 2,
+    stepCircleMm: 5.5,
+    // His current EAN-13: ~47 mm wide with quiet zones × ~21 mm bars ≈ 126%.
+    barcodeHeightMm: 21, barcodeSizePct: 126,
+    smallPack: false,
   },
   fields: {
-    title: field({ weight: 700, bold: true, caps: true, minPt: 9, maxPt: 16, lineHeight: 1.0 }),
-    steps: field({ maxPt: 8.5, lineHeight: 1.08 }),
-    storage: field({ maxPt: 8.5 }),
-    dates: field({ weight: 700, bold: true, maxPt: 9 }),
-    ingredients: field({ maxPt: 9 }),
-    allergenInfo: field({ maxPt: 9 }),
-    address: field({ maxPt: 8 }),
+    title: field({ weight: 700, bold: true, caps: true, minPt: 12, maxPt: 22, lineHeight: 1.0, align: "center" }),
+    steps: field({ maxPt: 10, lineHeight: 1.1 }),
+    storage: field({ maxPt: 10 }),
+    dates: field({ weight: 700, bold: true, maxPt: 11 }),
+    ingredients: field({ maxPt: 10 }),
+    allergenInfo: field({ maxPt: 10 }),
+    address: field({ maxPt: 9 }),
   },
   text: {
     title: "{name} - {packSize} PACK",
@@ -226,6 +240,7 @@ function normaliseField(v: unknown, d: FieldStyle): FieldStyle {
     lineHeight: num(o.lineHeight, d.lineHeight, 0.8, 2),
     bold: bool(o.bold, d.bold),
     caps: bool(o.caps, d.caps),
+    align: o.align === "center" ? "center" : o.align === "left" ? "left" : d.align,
   };
 }
 
@@ -255,7 +270,8 @@ export function normaliseTemplate(raw: unknown): LabelTemplate {
       bandGapMm: num(p.bandGapMm, D.page.bandGapMm, 0, 20),
       fieldGapMm: num(p.fieldGapMm, D.page.fieldGapMm, 0, 20),
       stepCircleMm: num(p.stepCircleMm, D.page.stepCircleMm, 2, 20),
-      barcodeHeightMm: num(p.barcodeHeightMm, D.page.barcodeHeightMm, 5, 40),
+      barcodeHeightMm: num(p.barcodeHeightMm, D.page.barcodeHeightMm, EAN13_MIN_BAR_HEIGHT_MM, 60),
+      barcodeSizePct: num(p.barcodeSizePct, D.page.barcodeSizePct, 80, 200),
       smallPack: bool(p.smallPack, D.page.smallPack),
     },
     fields,

@@ -7,11 +7,13 @@ import { parseBold } from "./text";
 // A predictable "font": every character is 0.5 em wide (bold 0.55), Semi
 // Condensed 85% of that, Condensed 70%. x-height 0.5 em → legal minimum 7 pt.
 const WIDTH_FACTOR = { normal: 1, "semi-condensed": 0.85, condensed: 0.7 } as const;
+const advance = (text: string, f: Face, size: number, ls: number) =>
+  [...text].length * ((f.weight === 700 ? 0.55 : 0.5) * WIDTH_FACTOR[f.width] + ls) * size;
 const fake: TextMeasurer = {
-  advance: (text: string, f: Face, size: number, ls: number) =>
-    [...text].length * ((f.weight === 700 ? 0.55 : 0.5) * WIDTH_FACTOR[f.width] + ls) * size,
+  advance,
   metrics: () => ({ ascender: 0.8, descender: 0.2, xHeight: 0.5, capHeight: 0.7 }),
   missingGlyphs: () => [],
+  ink: (text, f, size, ls) => (text.trim() ? { left: 0, right: advance(text, f, size, ls), top: 0.75 * size, bottom: 0.2 * size } : { left: 0, right: 0, top: 0, bottom: 0 }),
 };
 
 function content(deck: string): LabelContent {
@@ -62,7 +64,13 @@ describe("layout fitting", () => {
   });
 
   it("shrinks once the narrowest width at that size doesn't fit", () => {
-    const l = layoutLabel(template(), content(words(110)), fake);
+    // The first deck length that needs a smaller size went condensed first.
+    let n = 50;
+    let l = layoutLabel(template(), content(words(n)), fake);
+    while (field(l, "ingredients").sizePt === DEFAULT_TEMPLATE.fields.ingredients.maxPt && n < 1000) {
+      n += 10;
+      l = layoutLabel(template(), content(words(n)), fake);
+    }
     const f = field(l, "ingredients");
     expect(l.fits).toBe(true);
     expect(f.width).toBe("condensed");

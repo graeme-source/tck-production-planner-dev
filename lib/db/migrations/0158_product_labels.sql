@@ -8,7 +8,11 @@
 --                           values (settings = JSON, see lib/product-labels
 --                           template.ts). version goes up on every save.
 --                           The app fills an empty row with the defaults the
---                           first time it reads it.
+--                           first time it reads it — DEFAULT_TEMPLATE in
+--                           lib/product-labels/src/template.ts, the one place
+--                           they live: 140 × 94 mm at 203 dpi, 4.5 mm clear
+--                           margin, EAN-13 at ~126% with ~21 mm bars
+--                           (Graeme's label stock, 2026-10-10).
 -- product_label_settings    per recipe: barcode number, label name, cooking
 --                           overrides (oven + air fryer; NULL = template
 --                           default), bones warning, chilled / frozen use-by

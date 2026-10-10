@@ -54,7 +54,7 @@ describe("snapshot change detection", () => {
   it("template wording and typography changes flag the label", () => {
     const t = tpl();
     t.text.address = "Somewhere else";
-    t.fields.ingredients.maxPt = 10;
+    t.fields.ingredients.maxPt = 12;
     const keys = diffSnapshots(make(), make({ template: t })).map(c => c.key);
     expect(keys).toEqual(["template.text.address", "template.fields.ingredients"]);
   });

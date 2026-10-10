@@ -13,7 +13,7 @@
  */
 /// <reference path="./opentype.d.ts" />
 import opentype, { type Font, type Glyph, type PathCommand } from "opentype.js";
-import type { Face, FaceMetrics, TextMeasurer } from "./layout";
+import type { Face, FaceMetrics, InkBox, TextMeasurer } from "./layout";
 import type { BodyWeight, WidthVariant } from "./template";
 
 export const FONT_FILES: Array<{ width: WidthVariant; weight: BodyWeight; file: string }> = [];
@@ -112,6 +112,31 @@ export class LabelFontSet implements TextMeasurer {
       this.cache.set(key, v);
     }
     return v;
+  }
+
+  private inkCache = new Map<string, InkBox>();
+
+  /** Ink extents from the glyph outlines' bounding boxes at their shaped
+   *  positions — exactly where the rasteriser will put black dots. */
+  ink(text: string, f: Face, sizeDots: number, letterSpacingEm: number): InkBox {
+    const key = `${faceKey(f)}|${sizeDots}|${letterSpacingEm}|${text}`;
+    const hit = this.inkCache.get(key);
+    if (hit) return hit;
+    const lf = this.face(f);
+    const k = sizeDots * lf.scale;
+    let left = Infinity, right = -Infinity, top = 0, bottom = 0;
+    for (const g of this.shapeText(text, f, sizeDots, letterSpacingEm).glyphs) {
+      const b = g.glyph.getBoundingBox();
+      if (b.x1 === 0 && b.x2 === 0 && b.y1 === 0 && b.y2 === 0) continue; // no outline (space)
+      left = Math.min(left, g.x + b.x1 * k);
+      right = Math.max(right, g.x + b.x2 * k);
+      top = Math.max(top, b.y2 * k);
+      bottom = Math.max(bottom, -b.y1 * k);
+    }
+    const box: InkBox = Number.isFinite(left) ? { left, right, top, bottom } : { left: 0, right: 0, top: 0, bottom: 0 };
+    if (this.inkCache.size > 50_000) this.inkCache.clear();
+    this.inkCache.set(key, box);
+    return box;
   }
 
   metrics(f: Face): FaceMetrics {

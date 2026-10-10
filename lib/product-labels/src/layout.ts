@@ -48,7 +48,15 @@ export interface TextMeasurer {
   metrics(face: Face): FaceMetrics;
   /** Characters the font can't draw. */
   missingGlyphs(text: string, face: Face): string[];
+  /** Where the glyphs' INK actually goes, in dots, relative to the pen start
+   *  and baseline: left/right edges (left may be negative), and how far it
+   *  reaches above (top) and below (bottom) the baseline. The layout keeps
+   *  ink — not just advance widths — inside each box, so nothing printed can
+   *  stray into the margin. */
+  ink(text: string, face: Face, sizeDots: number, letterSpacingEm: number): InkBox;
 }
+
+export interface InkBox { left: number; right: number; top: number; bottom: number }
 
 export interface Rect { x: number; y: number; w: number; h: number }
 
@@ -141,43 +149,70 @@ function toWords(runs: Run[]): Word[] {
 
 interface WrapResult {
   lines: Array<Array<{ seg: Seg; x: number }>>;
+  /** Right edge of each line's ink (for centring). */
+  lineRight: number[];
   /** A single word wider than the box. */
   tooWide: { word: string; widthDots: number } | null;
+  /** Tallest ink above / deepest below the baseline, over every line. */
+  top: number;
+  bottom: number;
 }
 
 function faceFor(style: FieldStyle, width: WidthVariant, bold: boolean): Face {
   return { width, weight: bold ? 700 : style.weight };
 }
 
+/** Greedy word wrap. A line fits when its INK (not just its advance) stays
+ *  between 0 and boxW; a first glyph whose ink starts left of the pen is
+ *  nudged right so it never pokes out of the box. */
 function wrap(paras: Paragraph[], style: FieldStyle, width: WidthVariant, sizeDots: number, boxW: number, m: TextMeasurer): WrapResult {
   const lines: WrapResult["lines"] = [];
+  const lineRight: number[] = [];
   let tooWide: WrapResult["tooWide"] = null;
+  let top = 0;
+  let bottom = 0;
   const ls = style.letterSpacingEm;
   const segW = (s: Seg) => m.advance(s.text, faceFor(style, width, s.bold), sizeDots, ls);
+  const segInk = (s: Seg) => m.ink(s.text, faceFor(style, width, s.bold), sizeDots, ls);
   const space = m.advance(" ", faceFor(style, width, false), sizeDots, ls);
   for (const p of paras) {
     const words = toWords(styleRuns(p, style));
     let line: Array<{ seg: Seg; x: number }> = [];
     let x = 0;
+    let right = 0;
     for (const w of words) {
-      const ww = w.reduce((s, seg) => s + segW(seg), 0);
-      if (ww > boxW + 1e-6 && !tooWide) tooWide = { word: w.map(s => s.text).join(""), widthDots: ww };
-      const start = line.length === 0 ? 0 : x + space;
-      if (line.length > 0 && start + ww > boxW + 1e-6) {
-        lines.push(line);
-        line = [];
-        x = 0;
+      // The word's advance and ink, relative to its own start.
+      let wx = 0;
+      let l = Infinity;
+      let r = -Infinity;
+      for (const seg of w) {
+        const k = segInk(seg);
+        if (k.right > k.left) { l = Math.min(l, wx + k.left); r = Math.max(r, wx + k.right); }
+        top = Math.max(top, k.top);
+        bottom = Math.max(bottom, k.bottom);
+        wx += segW(seg);
       }
-      let cx = line.length === 0 ? 0 : x + space;
+      if (!Number.isFinite(l)) { l = 0; r = wx; }
+      const lead = Math.max(0, -l);
+      if (lead + r > boxW + 1e-6 && !tooWide) tooWide = { word: w.map(s => s.text).join(""), widthDots: lead + r };
+      let start = line.length === 0 ? lead : x + space;
+      if (line.length > 0 && start + r > boxW + 1e-6) {
+        lines.push(line);
+        lineRight.push(right);
+        line = [];
+        start = lead;
+      }
+      let cx = start;
       for (const seg of w) {
         line.push({ seg, x: cx });
         cx += segW(seg);
       }
       x = cx;
+      right = start + r;
     }
-    if (line.length) lines.push(line);
+    if (line.length) { lines.push(line); lineRight.push(right); }
   }
-  return { lines, tooWide };
+  return { lines, lineRight, tooWide, top, bottom };
 }
 
 // ── Fitting ────────────────────────────────────────────────────────────────
@@ -196,8 +231,13 @@ interface Trial {
   sizePt: number;
   width: WidthVariant;
   wraps: WrapResult[];
-  height: number; // tallest box's text height
+  /** Tallest box's INK height: first line's ink top → last line's ink bottom. */
+  height: number;
   pitch: number;
+  /** Ink above the first baseline / below the last (shared by all boxes, so
+   *  the three steps line up). */
+  top: number;
+  bottom: number;
 }
 
 function widthCandidates(style: FieldStyle): WidthVariant[] {
@@ -247,8 +287,10 @@ function trial(spec: FieldSpec, level: number, widthIdx: number, t: LabelTemplat
   const sizeDots = ptToDots(sizePt, t.page.dpi);
   const pitch = spec.style.lineHeight * sizeDots;
   const wraps = spec.boxes.map((b, i) => wrap(spec.paras[i] ?? [], spec.style, width, sizeDots, b.w - spec.inset, m));
-  const height = Math.max(0, ...wraps.map(w => w.lines.length * pitch));
-  return { spec, sizePt, width, wraps, height, pitch };
+  const top = Math.max(0, ...wraps.map(w => w.top));
+  const bottom = Math.max(0, ...wraps.map(w => w.bottom));
+  const height = Math.max(0, ...wraps.map(w => (w.lines.length ? top + (w.lines.length - 1) * pitch + bottom : 0)));
+  return { spec, sizePt, width, wraps, height, pitch, top, bottom };
 }
 
 function atFloor(spec: FieldSpec, level: number, widthIdx: number, t: LabelTemplate, m: TextMeasurer): boolean {
@@ -283,18 +325,19 @@ function fitGroup(specs: FieldSpec[], availH: number, stack: boolean, gap: numbe
   return { trials: last, fits: false };
 }
 
-function place(tr: Trial, top: number, m: TextMeasurer): PlacedRun[] {
+function place(tr: Trial, top: number): PlacedRun[] {
   const runs: PlacedRun[] = [];
   const { spec } = tr;
   const sizeDots = tr.pitch / spec.style.lineHeight;
   spec.boxes.forEach((box, bi) => {
     const wr = tr.wraps[bi];
-    const met = m.metrics(faceFor(spec.style, tr.width, false));
-    const baseline0 = (top < 0 ? box.y : top) + (tr.pitch - (met.ascender + met.descender) * sizeDots) / 2 + met.ascender * sizeDots;
+    const baseline0 = (top < 0 ? box.y : top) + tr.top;
+    const textW = box.w - spec.inset;
     wr.lines.forEach((line, li) => {
+      const shift = spec.style.align === "center" ? Math.max(0, (textW - wr.lineRight[li]) / 2) : 0;
       for (const { seg, x } of line) {
         runs.push({
-          x: box.x + spec.inset + x,
+          x: box.x + spec.inset + shift + x,
           y: baseline0 + li * tr.pitch,
           text: seg.text,
           face: faceFor(spec.style, tr.width, seg.bold),
@@ -321,7 +364,7 @@ function fieldLayout(tr: Trial, boxes: Rect[], top: number, fits: boolean, t: La
     lines: tr.wraps.reduce((s, w) => s + w.lines.length, 0),
     usedHeight: tr.height,
     fits,
-    runs: place(tr, top, m),
+    runs: place(tr, top),
   };
 }
 
@@ -358,16 +401,25 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
 
   // Barcode block at the bottom of the left column. Space is reserved even
   // when there's no barcode yet, so adding one never re-flows the label.
-  const module = barcodeModuleDots(left.w, dpi);
+  const module = barcodeModuleDots(left.w, dpi, page.barcodeSizePct);
+  const md = module.ok ? module.moduleDots : Math.ceil(d(0.264));
+  // Human-readable digits: about 2.4 mm tall at nominal size, scaled with the
+  // bars; each must fit under its own 7 modules; never under the legal minimum.
   const digitFace: Face = { width: "normal", weight: 500 };
   const digitMet = m.metrics(digitFace);
-  const digitPt = Math.max(legalMinPt(digitMet.xHeight, page.smallPack), 8);
-  const digitSize = ptToDots(digitPt, dpi);
-  const capH = digitMet.capHeight * digitSize;
-  const barsH = d(page.barcodeHeightMm);
-  const barcodeBlockH = barsH + capH + d(0.4);
-  const barcodeTop = left.y + left.h - barcodeBlockH;
-  const barcode = layoutBarcode(content.barcode, { x: left.x, y: barcodeTop, w: left.w, h: barcodeBlockH }, module, barsH, capH, digitFace, digitSize, m);
+  const unitInk = m.ink("0123456789", digitFace, 1, 0);
+  const unitDigitW = Math.max(...[..."0123456789"].map(c => m.advance(c, digitFace, 1, 0)));
+  const byHeight = d(2.4 * ((module.ok ? module.magnificationPct : 100) / 100)) / Math.max(unitInk.top, 0.01);
+  const byWidth = (6.5 * md) / Math.max(unitDigitW, 0.01);
+  const digitSize = Math.max(ptToDots(legalMinPt(digitMet.xHeight, page.smallPack), dpi), Math.min(byHeight, byWidth));
+  const digitTop = unitInk.top * digitSize;
+  const digitBottom = unitInk.bottom * digitSize;
+  const barsH = Math.round(d(page.barcodeHeightMm));
+  const digitGap = Math.max(2, md);
+  const barcodeBlockH = barsH + digitGap + digitTop + digitBottom;
+  // Whole dots, rounded UP the column, so the block can't creep into the margin.
+  const barcodeTop = Math.floor(left.y + left.h - barcodeBlockH);
+  const barcode = layoutBarcode(content.barcode, { x: left.x, y: barcodeTop, w: left.w, h: barcodeBlockH }, module, barsH, digitGap, digitTop, digitFace, digitSize, m);
   if (!module.ok) problems.push({ field: "barcode", message: module.reason, overflowMm: Math.round((module.neededMm - dotsToMm(left.w, dpi)) * 10) / 10 });
   const leftText: Rect = { x: left.x, y: left.y, w: left.w, h: Math.max(0, barcodeTop - d(page.fieldGapMm) - left.y) };
 
@@ -412,12 +464,15 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
   });
 
   // Columns — stacked fields shrinking together.
-  const stackColumn = (keys: FieldKey[], box: Rect) => {
+  // `bottomKey` sits at the foot of the column when everything fits (the
+  // address, bottom right, as on Graeme's label).
+  const stackColumn = (keys: FieldKey[], box: Rect, bottomKey?: FieldKey) => {
     const specs = keys.map(k => spec(k, [box], [content[k] as Paragraph[]]));
     const g = fitGroup(specs, box.h, true, fieldGap, t, m);
     let y = box.y;
     let overflowField: FieldKey | null = null;
     for (const tr of g.trials) {
+      if (g.fits && tr.spec.key === bottomKey) y = Math.max(y, box.y + box.h - tr.height);
       const fieldBox: Rect = { x: box.x, y, w: box.w, h: tr.height };
       if (!overflowField && y + tr.height > box.y + box.h + 1e-6) overflowField = tr.spec.key;
       fields.push(fieldLayout(tr, [fieldBox], y, g.fits, t, m));
@@ -439,7 +494,7 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
     }
   };
   stackColumn(["storage", "dates"], leftText);
-  stackColumn(["ingredients", "allergenInfo", "address"], right);
+  stackColumn(["ingredients", "allergenInfo", "address"], right, "address");
 
   // Step numbers ride along with the steps field's runs.
   const steps = fields.find(f => f.key === "steps");
@@ -468,18 +523,22 @@ function overflowProblem(tr: Trial, availH: number, mm1: (d: number) => number):
   return { field: tr.spec.key, message: `${label} is ${over} mm too tall for its box, even at the smallest allowed size in the narrowest width`, overflowMm: over };
 }
 
+/** EAN-13 geometry: bars start after an 11-module quiet zone (7 modules
+ *  clear on the right — the box is at least 113 modules wide). Digits sit
+ *  BELOW the bars with a gap; only the guard bars extend down (5 modules,
+ *  the standard extension) between the digit groups. */
 function layoutBarcode(
-  digits: string | null, box: Rect, module: ModuleChoice, barsH: number, capH: number,
+  digits: string | null, box: Rect, module: ModuleChoice, barsH: number, digitGap: number, digitTop: number,
   digitFace: Face, digitSize: number, m: TextMeasurer,
 ): BarcodeLayout {
   const md = module.ok ? module.moduleDots : 0;
-  const x = Math.round(box.x + 11 * md);
-  const barsTop = Math.round(box.y);
-  const barsBottom = Math.round(box.y + barsH);
-  const guardBottom = Math.round(barsBottom + capH * 0.6);
+  const x = Math.ceil(box.x + 11 * md);
+  const barsTop = Math.ceil(box.y);
+  const barsBottom = barsTop + barsH;
+  const guardBottom = barsBottom + 5 * md;
   const digitRuns: PlacedRun[] = [];
   if (digits && module.ok) {
-    const baseline = barsBottom + capH + Math.max(1, md);
+    const baseline = barsBottom + digitGap + digitTop;
     const put = (text: string, centreX: number) => {
       const w = m.advance(text, digitFace, digitSize, 0);
       digitRuns.push({ x: centreX - w / 2, y: baseline, text, face: digitFace, sizeDots: digitSize, letterSpacingEm: 0 });

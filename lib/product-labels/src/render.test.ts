@@ -4,7 +4,9 @@ import { loadBundledFonts } from "./node-fonts";
 import { encodePng, proofLabel, renderLabel } from "./render";
 import { Bitmap, fillContours, fillRect } from "./raster";
 import { buildSnapshot, DEFAULT_RECIPE_LABEL_SETTINGS } from "./snapshot";
-import { DEFAULT_TEMPLATE, normaliseTemplate } from "./template";
+import { DEFAULT_TEMPLATE, normaliseTemplate, type LabelTemplate } from "./template";
+import { dotsToMm, mmToDots } from "@workspace/units";
+import { encodeEan13, isGuardModule } from "./ean13";
 import { legalMinPt } from "./legal";
 import { layoutLabel } from "./layout";
 import { buildLabelContent } from "./content";
@@ -107,13 +109,13 @@ describe("raster + PNG", () => {
 });
 
 describe("the default template with a real deck", () => {
-  it("lays out, fits and renders at 203 dpi", () => {
+  it("lays out, fits and renders at 203 dpi on Graeme's 140 × 94 mm stock", () => {
     const proof = proofLabel(snapshot(), { printDate: "2026-10-10", productionDate: "2026-10-10" }, fonts);
     expect(proof.layout.problems).toEqual([]);
     expect(proof.layout.fits).toBe(true);
     expect(proof.content.problems).toEqual([]);
-    expect(proof.bitmap.width).toBe(799); // 100 mm at 203 dpi
-    expect(proof.bitmap.height).toBe(559);
+    expect(proof.bitmap.width).toBe(1119); // 140 mm at 203 dpi
+    expect(proof.bitmap.height).toBe(751); // 94 mm
     expect(proof.bitmap.blackCount()).toBeGreaterThan(5000);
     expect(proof.png.startsWith("data:image/png;base64,")).toBe(true);
     for (const f of proof.layout.fields) expect(f.sizePt).toBeGreaterThanOrEqual(f.legalMinPt);
@@ -131,9 +133,112 @@ describe("the default template with a real deck", () => {
     const expected = ("THE INGREDIENTS: " + long.replace(/\*\*/g, "")).replace(/\s+/g, "");
     expect(placed).toBe(expected);
     // Renders anyway: the print-size bitmap, and a taller one showing the overflow.
-    expect(renderLabel(layout, fonts).height).toBe(559);
-    expect(renderLabel(layout, fonts, true).height).toBeGreaterThan(559);
+    expect(renderLabel(layout, fonts).height).toBe(751);
+    expect(renderLabel(layout, fonts, true).height).toBeGreaterThan(751);
     const proof = proofLabel(s, { printDate: "2026-10-10", productionDate: "2026-10-10" }, fonts);
     expect(proof.overflowPng).not.toBeNull();
+  });
+});
+
+describe("nothing prints inside the margin", () => {
+  // Graeme: ink near the edge gets cut off on his rounded labels. Every black
+  // dot of a label that fits must sit inside the margin — short and long
+  // decks, 203 and 300 dpi, a wider margin.
+  const cases: Array<[string, (t: LabelTemplate) => void, string]> = [
+    ["default 4.5 mm, real deck", () => {}, DECK],
+    ["default, a long deck squeezed to fit", () => {}, `${DECK} ${DECK}`],
+    ["300 dpi", t => { t.page.dpi = 300; }, DECK],
+    ["6 mm margin", t => { t.page.marginMm = 6; }, DECK],
+  ];
+  for (const [name, tweak, deck] of cases) {
+    it(name, () => {
+      const t = normaliseTemplate(DEFAULT_TEMPLATE);
+      tweak(t);
+      const s = { ...snapshot(deck), template: t };
+      const proof = proofLabel(s, { printDate: "2026-10-10", productionDate: "2026-10-10" }, fonts);
+      expect(proof.layout.fits).toBe(true);
+      const m = mmToDots(t.page.marginMm, t.page.dpi);
+      const bm = proof.bitmap;
+      let stray = 0;
+      for (let y = 0; y < bm.height; y++) for (let x = 0; x < bm.width; x++) {
+        if (!bm.get(x, y)) continue;
+        const cx = x + 0.5, cy = y + 0.5;
+        if (cx < m || cx > bm.width - m || cy < m || cy > bm.height - m) stray++;
+      }
+      expect(stray).toBe(0);
+    });
+  }
+});
+
+describe("barcode as printed", () => {
+  const proof = proofLabel(snapshot(), { printDate: "2026-10-10", productionDate: "2026-10-10" }, fonts);
+  const b = proof.layout.barcode;
+  const bm = proof.bitmap;
+
+  it("defaults to ~126% → whole 3-dot modules, ~21 mm bars", () => {
+    expect(b.module.ok).toBe(true);
+    if (!b.module.ok) return;
+    expect(b.module.moduleDots).toBe(3);
+    expect(dotsToMm(b.barsBottom - b.barsTop, 203)).toBeCloseTo(21, 0);
+    expect(dotsToMm(b.module.widthDots, 203)).toBeCloseTo(42.4, 1);
+  });
+
+  it("bars are exact whole-dot modules, quiet zones clear, no digits over the bars", () => {
+    if (!b.module.ok) throw new Error("no barcode");
+    const md = b.module.moduleDots;
+    const bars = encodeEan13("5065018206009");
+    for (let y = b.barsTop; y < b.barsBottom; y++) {
+      // 11 modules clear before, the 95 modules, 7 clear after.
+      for (let x = b.x - 11 * md; x < b.x + (95 + 7) * md; x++) {
+        const mod = Math.floor((x - b.x) / md);
+        const want = x >= b.x && mod < 95 && bars[mod] ? 1 : 0;
+        if (bm.get(x, y) !== want) throw new Error(`dot ${x},${y} is ${bm.get(x, y)}, expected ${want}`);
+      }
+    }
+  });
+
+  it("only the guard bars extend below; the digits sit underneath", () => {
+    if (!b.module.ok) throw new Error("no barcode");
+    const md = b.module.moduleDots;
+    const bars = encodeEan13("5065018206009");
+    // Below the bars, the guard columns are exactly the guard pattern (the
+    // digits sit between the guards, never touching them)…
+    for (let y = b.barsBottom; y < b.guardBottom; y++) {
+      for (let x = b.x; x < b.x + 95 * md; x++) {
+        const mod = Math.floor((x - b.x) / md);
+        if (isGuardModule(mod) && bm.get(x, y) !== (bars[mod] ? 1 : 0)) throw new Error(`guard column wrong at ${x},${y} (module ${mod})`);
+      }
+    }
+    // …and nothing at all is drawn between the end of the bars and the top
+    // of the digits except the guard extensions.
+    const firstDigitTop = Math.min(...b.digitRuns.map(r => r.y - fonts.ink(r.text, r.face, r.sizeDots, 0).top));
+    for (let y = b.barsBottom; y < Math.floor(firstDigitTop) - 1; y++) {
+      for (let x = b.x - 11 * md; x < b.x + 102 * md; x++) {
+        const mod = Math.floor((x - b.x) / md);
+        const guardInk = x >= b.x && mod < 95 && isGuardModule(mod) && bars[mod] && y < b.guardBottom;
+        if (bm.get(x, y) && !guardInk) throw new Error(`stray ink at ${x},${y}`);
+      }
+    }
+    expect(b.digitRuns).toHaveLength(13);
+    for (const r of b.digitRuns) {
+      const ink = fonts.ink(r.text, r.face, r.sizeDots, 0);
+      expect(r.y - ink.top).toBeGreaterThan(b.barsBottom);
+    }
+  });
+});
+
+describe("title", () => {
+  it("is centred across the top", () => {
+    const proof = proofLabel(snapshot(), { printDate: "2026-10-10", productionDate: "2026-10-10" }, fonts);
+    const title = proof.layout.fields.find(f => f.key === "title")!;
+    const box = title.boxes[0];
+    let minX = Infinity, maxX = -Infinity;
+    for (let y = Math.floor(box.y); y < box.y + box.h; y++) for (let x = 0; x < proof.bitmap.width; x++) {
+      if (proof.bitmap.get(x, y)) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); }
+    }
+    const leftGap = minX - box.x;
+    const rightGap = box.x + box.w - (maxX + 1);
+    expect(Math.abs(leftGap - rightGap)).toBeLessThanOrEqual(4); // within a couple of dots
+    expect(leftGap).toBeGreaterThan(50);
   });
 });

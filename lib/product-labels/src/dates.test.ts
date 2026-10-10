@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { addDays, addMonths, addPeriod, dayOfYear, formatLabelDate, julianBatchCode, labelDates } from "./dates";
+import { DEFAULT_TEMPLATE } from "./template";
 
 describe("Julian batch code (YYDDD)", () => {
   it("26147 is day 147 of 2026", () => {
@@ -47,6 +48,25 @@ describe("use-by calendar maths", () => {
   });
   it("prints dd/mm/yy", () => {
     expect(formatLabelDate("2026-02-05")).toBe("05/02/26");
+  });
+});
+
+describe("Graeme's rules (2026-10-10): use-by counts from the PRINT date, batch is the production day", () => {
+  const on = (amount: number) => labelDates({
+    printDate: "2026-10-10", productionDate: "2026-10-10",
+    chilled: { amount, unit: "days" }, frozen: null, batchBasis: DEFAULT_TEMPLATE.batchBasis,
+  });
+  it("1 day = tomorrow", () => {
+    expect(on(1).chilledUseBy).toBe("2026-10-11");
+  });
+  it("2 days = the day after tomorrow", () => {
+    expect(on(2).chilledUseBy).toBe("2026-10-12");
+  });
+  it("the default batch number is the production day", () => {
+    expect(DEFAULT_TEMPLATE.batchBasis).toBe("production-day");
+    const d = labelDates({ printDate: "2026-10-11", productionDate: "2026-10-10", chilled: { amount: 1, unit: "days" }, frozen: null, batchBasis: DEFAULT_TEMPLATE.batchBasis });
+    expect(d.batchCode).toBe("26283"); // 10 Oct, not the 11th
+    expect(d.chilledUseBy).toBe("2026-10-12"); // still counted from printing
   });
 });
 
