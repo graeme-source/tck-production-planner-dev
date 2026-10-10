@@ -14,7 +14,7 @@ import { Link } from "wouter";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Info, Loader2, Type, Ruler, Flame, CalendarClock, PenLine, ShieldCheck } from "lucide-react";
 import {
-  BODY_WEIGHTS, EAN13_MIN_BAR_HEIGHT_MM, FIELD_KEYS, FIELD_LABEL, PERIOD_UNITS, TEMPLATE_PLACEHOLDERS, WIDTH_LABEL, WIDTH_ORDER,
+  BODY_WEIGHTS, EAN13_MIN_BAR_HEIGHT_MM, FIELD_KEYS, MAX_STEPS, FIELD_LABEL, PERIOD_UNITS, TEMPLATE_PLACEHOLDERS, WIDTH_LABEL, WIDTH_ORDER,
   type CookingValues, type FieldKey, type FieldStyle, type LabelTemplate, type PeriodUnit, type TemplateText, type WidthVariant,
 } from "@workspace/product-labels";
 import { PageHeader } from "@/components/page-header";
@@ -31,11 +31,9 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const inputCls = "h-11 rounded-xl border-2 border-border bg-card px-3 text-base font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-60";
 const WEIGHT_LABEL: Record<number, string> = { 400: "Regular", 500: "Medium", 700: "Bold" };
 
-const TEXT_FIELDS: Array<{ key: keyof TemplateText; label: string; rows?: number }> = [
+type SingleTextKey = Exclude<keyof TemplateText, "steps">;
+const TEXT_FIELDS: Array<{ key: SingleTextKey; label: string; rows?: number }> = [
   { key: "title", label: "Title" },
-  { key: "step1", label: "Step 1", rows: 2 },
-  { key: "step2", label: "Step 2", rows: 3 },
-  { key: "step3", label: "Step 3", rows: 2 },
   { key: "storageHeading", label: "Storage heading" },
   { key: "storage", label: "Storage instructions", rows: 3 },
   { key: "chilledLabel", label: "Chilled use-by label" },
@@ -103,7 +101,8 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
   };
   const setPage = <K extends keyof LabelTemplate["page"]>(k: K, v: LabelTemplate["page"][K]) => update(t => ({ ...t, page: { ...t.page, [k]: v } }));
   const setField = (f: FieldKey, patch: Partial<FieldStyle>) => update(t => ({ ...t, fields: { ...t.fields, [f]: { ...t.fields[f], ...patch } } }));
-  const setText = (k: keyof TemplateText, v: string) => update(t => ({ ...t, text: { ...t.text, [k]: v } }));
+  const setText = (k: SingleTextKey, v: string) => update(t => ({ ...t, text: { ...t.text, [k]: v } }));
+  const setSteps = (steps: string[]) => update(t => ({ ...t, text: { ...t.text, steps } }));
   const setCooking = (k: keyof CookingValues, v: number | null) => update(t => ({ ...t, cooking: { ...t.cooking, [k]: v } }));
 
   // Legal minimum for a field = the largest across the widths it may use.
@@ -168,15 +167,7 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
               <Num label="Gap between blocks" unit="mm" value={draft.page.fieldGapMm} step={0.5} min={0} max={20} onChange={v => v != null && setPage("fieldGapMm", v)} />
               <Num label="Step number circle" unit="mm" value={draft.page.stepCircleMm} step={0.2} min={2} max={20} onChange={v => v != null && setPage("stepCircleMm", v)} />
             </div>
-            <div className="space-y-2">
-              <p className="text-sm font-semibold">Width of the three steps (relative — step 2 holds both cooking lines)</p>
-              <div className="grid grid-cols-3 gap-4">
-                {([0, 1, 2] as const).map(i => (
-                  <Num key={i} label={`Step ${i + 1}`} value={draft.page.stepWeights[i]} step={0.1} min={0.5} max={5}
-                    onChange={v => v != null && setPage("stepWeights", draft.page.stepWeights.map((w, j) => (j === i ? v : w)) as [number, number, number])} />
-                ))}
-              </div>
-            </div>
+            <p className="text-sm text-muted-foreground">The steps share their row automatically: a step written as whole lines (the cooking times) gets exactly the width it needs, the others share the rest.</p>
             <p className="text-sm text-muted-foreground">Nothing is ever printed inside the margin — keep it at least 4 mm on rounded labels, or the edges can get cut off.</p>
           </Card>
 
@@ -209,6 +200,34 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
               <p>In the cooking steps, a part in <code>[square brackets]</code> disappears when a number inside it is blank, and <code>{"{or}"}</code> joins two parts with “, or” only when both are there.</p>
               <p>A new line in a step starts a new line on the label, and each such line is kept whole (it shrinks rather than splitting). <code>➜</code> prints as an arrow.</p>
             </div>
+            {/* Numbered steps — a list: blank ones aren't printed, numbering closes up. */}
+            <div className="space-y-3 rounded-xl border-2 border-border p-3">
+              <p className="text-sm font-bold">Numbered steps</p>
+              {draft.text.steps.map((s, i) => (
+                <div key={i} className="flex gap-2 items-start">
+                  <span className="mt-2 w-8 h-8 shrink-0 rounded-full bg-foreground text-background font-bold flex items-center justify-center">{i + 1}</span>
+                  <textarea
+                    value={s}
+                    rows={s.includes("\n") ? 3 : 2}
+                    onChange={e => setSteps(draft.text.steps.map((x, j) => (j === i ? e.target.value : x)))}
+                    onBlur={() => void auto.flush()}
+                    aria-label={`Step ${i + 1}`}
+                    className="flex-1 rounded-xl border-2 border-border bg-card px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  />
+                  <button type="button" onClick={() => setSteps(draft.text.steps.filter((_, j) => j !== i))}
+                    className="mt-1 h-11 px-3 rounded-xl border-2 border-border text-sm font-semibold hover:bg-secondary" aria-label={`Remove step ${i + 1}`}>
+                    Remove
+                  </button>
+                </div>
+              ))}
+              {draft.text.steps.length < MAX_STEPS && (
+                <button type="button" onClick={() => setSteps([...draft.text.steps, ""])}
+                  className="h-11 px-4 rounded-xl border-2 border-dashed border-border text-sm font-semibold hover:bg-secondary">
+                  + Add a step
+                </button>
+              )}
+              <p className="text-xs text-muted-foreground">An empty step isn't printed and the numbers close up.</p>
+            </div>
             <div className="space-y-3">
               {TEXT_FIELDS.map(t => (
                 <label key={t.key} className="flex flex-col gap-1">
@@ -234,7 +253,7 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
                 <Num key={c.key} label={c.label} unit={c.unit} value={draft.cooking[c.key]} step={1} min={0} max={400} allowBlank onChange={v => setCooking(c.key, v)} />
               ))}
             </div>
-            <StepPreview wording={draft.text.step2} cooking={draft.cooking} />
+            <StepPreview steps={draft.text.steps} cooking={draft.cooking} />
           </Card>
 
           {/* Dates */}

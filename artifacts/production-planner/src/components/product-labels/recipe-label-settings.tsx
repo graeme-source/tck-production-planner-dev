@@ -164,7 +164,7 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
           {numField("airFryerMinMinutes", "From", "min", 240, !flags.airFryerOn)}
           {numField("airFryerMaxMinutes", "To", "min", 240, !flags.airFryerOn)}
         </div>
-        <StepPreview wording={data.current.snapshot.template.text.step2} cooking={resolvedCooking} />
+        <StepPreview steps={data.current.snapshot.template.text.steps} cooking={resolvedCooking} />
       </div>
 
       {/* Warning */}

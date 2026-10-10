@@ -6,12 +6,23 @@
 import { cookingPlaceholderValues, fillTemplate, stepLines, type CookingValues } from "@workspace/product-labels";
 import { cn } from "@/lib/utils";
 
-export function StepPreview({ wording, cooking, className }: { wording: string; cooking: CookingValues; className?: string }) {
-  const filled = fillTemplate(wording, cookingPlaceholderValues(cooking));
+/** The step that uses the cooking times (the first with an oven or air-fryer
+ *  fill-in), or null if none does. Blank steps aren't counted, matching the
+ *  label's numbering. */
+function cookingStep(steps: string[]): { index: number; wording: string } | null {
+  const printed = steps.filter(s => s.trim() !== "");
+  const i = printed.findIndex(s => /\{(oven|air|fan)/.test(s));
+  return i < 0 ? null : { index: i, wording: printed[i] };
+}
+
+export function StepPreview({ steps, cooking, className }: { steps: string[]; cooking: CookingValues; className?: string }) {
+  const step = cookingStep(steps);
+  if (!step) return null;
+  const filled = fillTemplate(step.wording, cookingPlaceholderValues(cooking));
   const lines = stepLines(filled.text);
   return (
     <div className={cn("rounded-xl border-2 border-primary/40 bg-primary/5 p-3 space-y-1", className)}>
-      <p className="text-xs font-bold uppercase tracking-wide text-primary">Step 2 will print</p>
+      <p className="text-xs font-bold uppercase tracking-wide text-primary">Step {step.index + 1} will print</p>
       {lines.length === 0 ? (
         <p className="text-sm text-destructive font-semibold">Nothing — fill in the oven or air-fryer times.</p>
       ) : lines.map((runs, i) => (
