@@ -17,7 +17,8 @@
 --    SUGGESTED to the Fix queue (a pure, tested word check — no paid API);
 --    nothing goes in without Graeme's "Add to fix queue".
 --      improvement_fix_suggestions  one row per idea checked: flagged + why,
---      status suggested | added | dismissed, who decided and when, and the
+--      status suggested | added | dismissed (not_flagged = checked, not an
+--      app request), who decided and when, and the
 --      andon issue made when it was added (the reviewer picks that up).
 
 ALTER TABLE test_request_testers ADD COLUMN IF NOT EXISTS prompted_at TIMESTAMPTZ;

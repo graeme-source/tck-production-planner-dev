@@ -21,6 +21,8 @@ import {
   NOTICE_ACK_ACTIONS,
   TRIAGE_STATUSES,
   canDismiss,
+  canSetAside,
+  canRestoreSetAside,
   buildThread,
   canMessageReporter,
   canSnooze,
@@ -42,6 +44,7 @@ import {
   recordEvent,
   triageByIssueId,
 } from "../lib/issue-pipeline-data";
+import { decideSuggestion, listSuggestions, scanNewIdeas } from "../lib/improvement-suggestions-data";
 
 const router: IRouter = Router();
 
@@ -256,6 +259,73 @@ router.post("/review/:id/dismiss", requireFounder, async (req, res) => {
     res.status(500).json({ error: "Failed to dismiss" });
   }
 });
+
+// ── POST /review/:id/no-action | /restore — "Dismiss — no action" ───────────
+// Graeme, 2026-10-10: out of the queue SILENTLY — no reply, no notification,
+// no email, the andon issue left exactly as it is — and the pipeline never
+// picks it up again (isSetAside in lib/issue-pipeline-rules.ts). The row and
+// its history stay; it shows under "Dismissed" and can be restored.
+router.post("/review/:id/no-action", requireFounder, validate(z.object({}).passthrough()), async (req, res) => {
+  const id = parseId(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
+  const [current] = await db.select().from(issueTriageTable).where(eq(issueTriageTable.id, id));
+  if (!current) { res.status(404).json({ error: "Recommendation not found" }); return; }
+  if (!canSetAside(current)) { res.status(409).json({ error: "Already dismissed" }); return; }
+  const name = await sessionUserName(req.session.userId!);
+  const [row] = await db.update(issueTriageTable).set({
+    noActionAt: new Date(), noActionBy: name, noActionByUserId: req.session.userId!, awaitingRetriage: false, updatedAt: new Date(),
+  }).where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
+  await recordEvent(db, row, "no_action", name, "Dismissed — no action (nobody was messaged)");
+  res.json({ triage: row });
+});
+
+router.post("/review/:id/restore", requireFounder, validate(z.object({}).passthrough()), async (req, res) => {
+  const id = parseId(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
+  const [current] = await db.select().from(issueTriageTable).where(eq(issueTriageTable.id, id));
+  if (!current) { res.status(404).json({ error: "Recommendation not found" }); return; }
+  if (!canRestoreSetAside(current)) { res.status(409).json({ error: "This one isn't dismissed" }); return; }
+  const name = await sessionUserName(req.session.userId!);
+  const [row] = await db.update(issueTriageTable).set({
+    noActionAt: null, noActionBy: null, noActionByUserId: null, updatedAt: new Date(),
+  }).where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
+  await recordEvent(db, row, "restored", name, "Restored to the Fix queue");
+  res.json({ triage: row });
+});
+
+// ── Suggested from improvements (Graeme, 2026-10-10) ────────────────────────
+// Ideas on the improvements board that read like "could the app do X?" are
+// SUGGESTED here; nothing joins the Fix queue without "Add to fix queue".
+// The check is a pure word test (lib/improvement-app-request.ts) — no paid
+// API; an added idea becomes an app issue the hourly session triages.
+const suggestionsQuery = z.object({ status: z.enum(["suggested", "dismissed"]).optional() });
+router.get("/review/suggestions", requireFounder, async (req, res) => {
+  const parsed = suggestionsQuery.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: "Validation failed", details: parsed.error.flatten() }); return; }
+  const status = parsed.data.status ?? "suggested";
+  try {
+    if (status === "suggested") await scanNewIdeas();
+    res.json({ status, items: await listSuggestions(status) });
+  } catch (err) {
+    console.error("[issue-pipeline] suggestions failed:", err instanceof Error ? err.message : String(err));
+    res.status(500).json({ error: "Failed to load suggestions" });
+  }
+});
+
+for (const action of ["add", "dismiss", "restore"] as const) {
+  router.post(`/review/suggestions/:id/${action}`, requireFounder, validate(z.object({}).passthrough()), async (req, res) => {
+    const id = parseId(req.params.id);
+    if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
+    try {
+      const out = await decideSuggestion(id, action, { userId: req.session.userId! });
+      if (!out.ok) { res.status(out.status).json({ error: out.error }); return; }
+      res.json(out);
+    } catch (err) {
+      console.error(`[issue-pipeline] suggestion ${action} failed:`, err instanceof Error ? err.message : String(err));
+      res.status(500).json({ error: "Failed to save" });
+    }
+  });
+}
 
 // ── POST /review/:id/message — "Message the reporter" ───────────────────────
 // Graeme's words go to the person who reported it (issue comment, bell, and
