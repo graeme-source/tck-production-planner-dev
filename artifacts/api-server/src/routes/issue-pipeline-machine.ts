@@ -33,6 +33,8 @@ import {
   pipelineMayHandle,
   resolveIssueVerdict,
   retriageVerdict,
+  isSetAside,
+  SET_ASIDE_ERROR,
   validateTestPath,
   type TriageStatus,
 } from "../lib/issue-pipeline-rules";
@@ -210,6 +212,8 @@ router.post("/triage", validate(triageBody), async (req, res) => {
     const result = await db.transaction(async (tx) => {
       const [current] = await tx.select().from(issueTriageTable)
         .where(eq(issueTriageTable.andonIssueId, b.andonIssueId)).for("update");
+      // Dismissed with no action: refused even with force.
+      if (isSetAside(current)) return { setAside: true as const, triage: current! };
       const verdict = retriageVerdict((current?.status as TriageStatus | undefined) ?? null, b.force ?? false);
 
       if (verdict.kind === "conflict") return { conflict: verdict.status, triage: current! };
@@ -235,6 +239,10 @@ router.post("/triage", validate(triageBody), async (req, res) => {
       return { triage: row, created: verdict.kind === "create", replacedStatus: verdict.kind === "forced_reset" ? verdict.previousStatus : null };
     });
 
+    if ("setAside" in result) {
+      res.status(409).json({ error: SET_ASIDE_ERROR, currentStatus: result.triage.status, triage: result.triage });
+      return;
+    }
     if ("conflict" in result) {
       res.status(409).json({
         error: `Issue ${b.andonIssueId} already has a '${result.conflict}' recommendation — Graeme's decision stands. Send force: true to put a new recommendation in front of him (the old decision is kept in history).`,
@@ -261,7 +269,7 @@ router.get("/approved", async (req, res) => {
   const status = q.status ?? "approved";
   try {
     const rows = await db.select().from(issueTriageTable)
-      .where(eq(issueTriageTable.status, status))
+      .where(and(eq(issueTriageTable.status, status), isNull(issueTriageTable.noActionAt)))
       .orderBy(asc(issueTriageTable.decidedAt), asc(issueTriageTable.id));
     const issues = await buildIssueViews(await loadAndonRows(rows.map(r => r.andonIssueId)), machineAttachmentUrl);
     const byId = new Map(issues.map(i => [i.id, i]));
@@ -292,6 +300,7 @@ router.post("/triage/:id/status", validate(statusBody), async (req, res) => {
     const out = await db.transaction(async (tx) => {
       const [current] = await tx.select().from(issueTriageTable).where(eq(issueTriageTable.id, id)).for("update");
       if (!current) return { status: 404 as const, error: "Triage not found" };
+      if (isSetAside(current)) return { status: 409 as const, error: SET_ASIDE_ERROR, triage: current };
       const verdict = machineMoveVerdict(current.status as TriageStatus, b.status, {
         fixRef: b.fixRef ?? current.fixRef, note: b.note, issueResolved: !!current.issueResolvedAt,
       });
@@ -333,6 +342,7 @@ router.post("/triage/:id/resolve-issue", validate(resolveBody), async (req, res)
     const out = await db.transaction(async (tx) => {
       const [current] = await tx.select().from(issueTriageTable).where(eq(issueTriageTable.id, id)).for("update");
       if (!current) return { status: 404 as const, error: "Triage not found" };
+      if (isSetAside(current)) return { status: 409 as const, error: SET_ASIDE_ERROR, triage: current };
       const verdict = resolveIssueVerdict(current.status as TriageStatus, current.issueResolvedAt);
       if (!verdict.ok) return { status: 409 as const, error: verdict.error, triage: current };
 
@@ -403,7 +413,7 @@ router.post("/credit-improvements", async (_req, res) => {
   try {
     const rows = await db.select().from(issueTriageTable)
       .where(sql`${issueTriageTable.lane} = 'improvement' AND ${issueTriageTable.improvementId} IS NULL
-        AND ${issueTriageTable.status} IN ('fixed', 'answered', 'dismissed')`);
+        AND ${issueTriageTable.status} IN ('fixed', 'answered', 'dismissed') AND ${issueTriageTable.noActionAt} IS NULL`);
     const credited: Array<{ andonIssueId: number; improvementId: number }> = [];
     for (const r of rows) {
       const improvementId = await db.transaction(tx => creditImprovementIfDue(tx, r, r.decidedBy ?? "Graeme"));

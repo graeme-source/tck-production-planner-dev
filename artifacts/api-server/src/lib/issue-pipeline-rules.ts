@@ -92,12 +92,34 @@ export function matchesAreaFilter(filter: AreaFilter, area: string | null | unde
 export function machineIssueWanted(
   filter: AreaFilter,
   issue: { area: string | null | undefined; station: string | null | undefined; category: string },
-  triage: { awaitingRetriage: boolean } | null | undefined,
+  triage: { awaitingRetriage: boolean; noActionAt?: Date | string | null } | null | undefined,
   includeTriaged: boolean,
 ): boolean {
+  // Graeme dismissed it with no action: the reviewer never sees it again.
+  if (isSetAside(triage)) return false;
   if (triage?.awaitingRetriage) return pipelineMayHandle(issue).ok;
   if (!matchesAreaFilter(filter, issue.area, issue.station)) return false;
   return includeTriaged || !triage;
+}
+
+// ── "Dismiss — no action" (Graeme, 2026-10-10) ──────────────────────────────
+// A quiet dismissal from the Fix queue: no message, notification, reply or
+// email to anyone, and the pipeline never touches the issue again — not the
+// hourly inbox, not a re-triage (even forced), not a status move or resolve.
+// The record stays (who/when) under "Dismissed", and it can be restored.
+
+export function isSetAside(t: { noActionAt?: Date | string | null } | null | undefined): boolean {
+  return !!t?.noActionAt;
+}
+
+export const SET_ASIDE_ERROR = "Graeme dismissed this with no action — the pipeline must leave it alone (only he can restore it, from the Fix queue's Dismissed list)";
+
+export function canSetAside(t: { noActionAt?: Date | string | null }): boolean {
+  return !isSetAside(t);
+}
+
+export function canRestoreSetAside(t: { noActionAt?: Date | string | null }): boolean {
+  return isSetAside(t);
 }
 
 // ── Re-triage vs decision ───────────────────────────────────────────────────
@@ -186,13 +208,14 @@ export function canDismiss(from: TriageStatus): boolean {
 // To review is a LIVE list of what needs Graeme right now: a card he has
 // replied to is waiting on Claude (In progress) and one he snoozed is out of
 // sight (Snoozed) until its time is up — both come back by themselves.
-export const QUEUE_TABS = ["proposed", "in_progress", "snoozed", "approved", "fixed", "rejected"] as const;
+export const QUEUE_TABS = ["proposed", "in_progress", "snoozed", "approved", "fixed", "rejected", "no_action"] as const;
 export type QueueTab = (typeof QUEUE_TABS)[number];
 
 export function queueTabFor(
-  t: { status: TriageStatus; awaitingRetriage: boolean; snoozedUntil: Date | string | null },
+  t: { status: TriageStatus; awaitingRetriage: boolean; snoozedUntil: Date | string | null; noActionAt?: Date | string | null },
   now: Date,
 ): QueueTab {
+  if (isSetAside(t)) return "no_action";
   switch (t.status) {
     case "proposed":
       if (t.awaitingRetriage) return "in_progress";
@@ -259,6 +282,8 @@ const DECISION_WORDS: Record<string, string> = {
   rejected: "Rejected",
   dismissed: "Dismissed — already done",
   snoozed: "Snoozed",
+  no_action: "Dismissed — no action",
+  restored: "Restored",
 };
 
 export function buildThread(events: EventLike[]): ThreadEntry[] {
