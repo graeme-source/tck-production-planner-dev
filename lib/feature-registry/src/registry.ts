@@ -75,6 +75,9 @@ export const FEATURE_REGISTRY: FeatureDef[] = [
   // Nobody holds it yet — Graeme's own account approves; he can hand it out
   // here later without code changes. SEEING approval status needs only
   // founder.sales.
+  // Back-label printing from the wrapping station (Graeme, 2026-10-12):
+  // founder only while he tests it; grant it here when the team takes over.
+  { key: "labels.print_back", name: "Print back labels", description: "Wrapping station: make the pack back labels (a print-ready PDF of the live label) for the recipe on the bench.", area: "The Business", kind: "ability", minRole: "admin", founderOnly: true },
   { key: "marketing.approve_emails", name: "Approve marketing emails", description: "Sales & Marketing: approve (or undo approval of) planned emails and Klaviyo campaigns before they go out, and get the \"need your approval\" reminder.", area: "The Business", kind: "ability", minRole: "admin", founderOnly: true },
 ];
 

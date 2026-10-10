@@ -39,6 +39,9 @@ export const FOUNDER_FEATURES = {
   /** Approve marketing emails (Graeme, 2026-09-30) — not a tab: an ability
    *  inside Sales & Marketing. Founder, or someone he grants it to. */
   approveEmails: "marketing.approve_emails",
+  /** Print pack back labels from the wrapping station (Graeme, 2026-10-12)
+   *  — his own while he tests it; grantable later without code changes. */
+  printBackLabels: "labels.print_back",
 } as const;
 
 export type FounderFeatureKey = (typeof FOUNDER_FEATURES)[keyof typeof FOUNDER_FEATURES];
