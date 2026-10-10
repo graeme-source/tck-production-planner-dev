@@ -8,6 +8,7 @@ import { RecordDefectModal, REPORT_DEFECT_LABEL } from "@/components/record-defe
 import { SwipePanel } from "@/components/swipe-panel";
 import { SwipePanelTourCard, useSwipePanelTour } from "@/components/swipe-panel-tour";
 import { useAnyPromptShowing } from "@/lib/prompt-presence";
+import { MobileHeaderMenu, usePhoneHeader } from "@/components/mobile-header-menu";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { useIsRtwManager } from "@/hooks/use-rtw-manager";
@@ -1090,6 +1091,7 @@ function TopBar({ onMenu, fallbackTitle, onOpenSops, showMessages }: { onMenu: (
   const [location] = useLocation();
   const pageStations = PAGE_STATION_KEYS[location];
   const [contactsOpen, setContactsOpen] = useState(false);
+  const phone = usePhoneHeader();
 
   return (
     <header className="min-h-[56px] border-b border-border bg-background/80 backdrop-blur-md flex items-center px-4 md:px-5 xl:px-8 gap-3 z-10 min-w-0">
@@ -1117,35 +1119,57 @@ function TopBar({ onMenu, fallbackTitle, onOpenSops, showMessages }: { onMenu: (
           keyed by route. fallbackTitle (the nav name) labels it, not the
           header title: pages like packing retitle per order, and an SOP
           created here should be named for the PAGE, not order #133647. */}
-      {pageStations && (
+      {pageStations && contactsOpen && (
+        <StationContactsDialog stationKeys={pageStations} stationLabel={fallbackTitle} onClose={() => setContactsOpen(false)} />
+      )}
+      {phone ? (
         <>
-          <StationPinnedContacts stationKeys={pageStations} />
-          <StationContactsButton onClick={() => setContactsOpen(true)} />
-          {contactsOpen && (
-            <StationContactsDialog stationKeys={pageStations} stationLabel={fallbackTitle} onClose={() => setContactsOpen(false)} />
+          {/* Phone: the page's own action stays on the bar; everything else
+              (SOPs, + SOP, name pill, Messages, the bell, station contacts)
+              folds into one menu at the top right (Graeme, 2026-10-10). */}
+          {header?.action && (
+            <div className="flex-shrink-0">
+              {header.action}
+            </div>
+          )}
+          <MobileHeaderMenu
+            pageLabel={fallbackTitle}
+            onOpenSops={onOpenSops}
+            showMessages={showMessages}
+            stationKeys={pageStations ? [...pageStations] : null}
+            onOpenContacts={() => setContactsOpen(true)}
+          />
+        </>
+      ) : (
+        <>
+          {pageStations && (
+            <>
+              <StationPinnedContacts stationKeys={pageStations} />
+              <StationContactsButton onClick={() => setContactsOpen(true)} />
+            </>
+          )}
+          <PageSopButton pageLabel={fallbackTitle} />
+          <CurrentUserBadge />
+          <button
+            onClick={onOpenSops}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors flex-shrink-0"
+            title="Standards & SOPs"
+          >
+            <BookOpen className="w-4 h-4" />
+            <span className="hidden sm:inline">SOPs</span>
+          </button>
+          {/* Team messages — the same button, in the same place, on every page
+              (station screens put it in the same spot of their own bar). On a
+              page that IS a station's screen (Order Packing Live) it shows that
+              station's messages too. Not for external accountants. */}
+          {showMessages && <MessagesButton at={pageStations ?? []} />}
+          <NotificationBell />
+          {header?.action && (
+            <div className="flex-shrink-0">
+              {header.action}
+            </div>
           )}
         </>
-      )}
-      <PageSopButton pageLabel={fallbackTitle} />
-      <CurrentUserBadge />
-      <button
-        onClick={onOpenSops}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors flex-shrink-0"
-        title="Standards & SOPs"
-      >
-        <BookOpen className="w-4 h-4" />
-        <span className="hidden sm:inline">SOPs</span>
-      </button>
-      {/* Team messages — the same button, in the same place, on every page
-          (station screens put it in the same spot of their own bar). On a
-          page that IS a station's screen (Order Packing Live) it shows that
-          station's messages too. Not for external accountants. */}
-      {showMessages && <MessagesButton at={pageStations ?? []} />}
-      <NotificationBell />
-      {header?.action && (
-        <div className="flex-shrink-0">
-          {header.action}
-        </div>
       )}
     </header>
   );
