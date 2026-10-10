@@ -59,7 +59,9 @@ export function TestRequestCard() {
     otherPromptShowing: otherPrompt || overlay || peoplePinPrompt || peoplePinSetupPrompt,
     path: location,
   });
-  useReportPromptShowing(PROMPT_KEY, show);
+  // The thanks note counts too, so the walkthrough doesn't land on top of it.
+  const [thanks, setThanks] = useState<string | null>(null);
+  useReportPromptShowing(PROMPT_KEY, show || (!!thanks && !pinLocked));
 
   // Kept here (not in the card) so a pop-up opening over the card and
   // closing again never loses what they'd typed.
@@ -68,7 +70,6 @@ export function TestRequestCard() {
   const [note, setNote] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [thanks, setThanks] = useState<string | null>(null);
   // A different person or a different request starts clean.
   const lastId = useRef<number | null>(null);
   useEffect(() => {
@@ -123,7 +124,7 @@ export function TestRequestCard() {
         <ClipboardCheck className="w-8 h-8 text-sky-600 shrink-0" />
         <button type="button" onClick={() => setMode("ask")} className="min-w-0 flex-1 text-left" aria-label="Show what to try">
           <span className="block text-xs font-bold uppercase tracking-wide text-sky-700 dark:text-sky-400">Testing</span>
-          <span className="block text-base font-bold leading-tight truncate">{request.title}</span>
+          <span className="block text-base font-bold leading-tight line-clamp-2">{request.title}</span>
         </button>
         <button type="button" onClick={() => setMode("answer")} className="h-12 px-4 rounded-2xl bg-sky-600 text-white text-base font-bold shrink-0">
           How did it go?

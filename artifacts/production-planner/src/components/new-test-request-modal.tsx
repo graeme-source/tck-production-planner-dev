@@ -193,7 +193,7 @@ export function NewTestRequestModal({ open, onClose, prefill }: { open: boolean;
             <button type="button" onClick={submit} disabled={!ready || create.isPending}
               className="flex-1 h-14 rounded-2xl bg-sky-600 text-white text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50">
               {create.isPending && <Loader2 className="w-5 h-5 animate-spin" />}
-              {testers.length === 0 ? "Choose who should test it" : `Ask ${testers.length === 1 ? testers[0]!.name : `${testers.length} people`}`}
+              {testers.length === 0 ? "Choose a tester" : `Ask ${testers.length === 1 ? testers[0]!.name : `${testers.length} people`}`}
             </button>
           </div>
         </div>
