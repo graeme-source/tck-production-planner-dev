@@ -44,15 +44,24 @@ describe("EAN-13 encoding", () => {
 });
 
 describe("barcode module width snaps to whole printer dots", () => {
-  it("203 dpi: 2 dots (0.25 mm) is under GS1's 80% minimum, so it uses 3 dots", () => {
-    const c = barcodeModuleDots(400, 203);
+  it("Graeme's 126% at 203 dpi → 3 dots (0.375 mm, 113%), 42.4 mm with quiet zones", () => {
+    const c = barcodeModuleDots(600, 203, 126);
     expect(c.ok).toBe(true);
     if (c.ok) {
       expect(c.moduleDots).toBe(3);
       expect(c.widthDots).toBe(339);
+      expect(c.magnificationPct).toBe(114);
     }
   });
-  it("300 dpi uses 4 dots (0.34 mm, ~103%) when there's room", () => {
+  it("203 dpi: 2 dots (0.25 mm) is under GS1's 80% minimum, so even 80% uses 3 dots", () => {
+    const c = barcodeModuleDots(600, 203, 80);
+    expect(c.ok && c.moduleDots).toBe(3);
+  });
+  it("150% at 203 dpi → 4 dots; a box too narrow for that drops to 3, never under 80%", () => {
+    expect(barcodeModuleDots(600, 203, 150)).toMatchObject({ ok: true, moduleDots: 4 });
+    expect(barcodeModuleDots(400, 203, 150)).toMatchObject({ ok: true, moduleDots: 3 });
+  });
+  it("300 dpi nominal uses 4 dots (0.34 mm, ~103%)", () => {
     const c = barcodeModuleDots(500, 300);
     expect(c.ok && c.moduleDots).toBe(4);
   });
@@ -62,7 +71,7 @@ describe("barcode module width snaps to whole printer dots", () => {
     if (!c.ok) expect(c.neededMm).toBeCloseTo(42.4, 1);
   });
   it("never goes above 200%", () => {
-    const c = barcodeModuleDots(5000, 203);
+    const c = barcodeModuleDots(5000, 203, 400);
     expect(c.ok && c.moduleDots).toBe(5);
   });
 });

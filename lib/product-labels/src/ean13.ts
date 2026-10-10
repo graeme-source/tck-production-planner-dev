@@ -63,20 +63,27 @@ export const EAN13_QUIET_LEFT = 11;
 export const EAN13_QUIET_RIGHT = 7;
 export const EAN13_TOTAL_MODULES = EAN13_QUIET_LEFT + 95 + EAN13_QUIET_RIGHT;
 
-/** GS1 X-dimension limits for EAN-13: 80%–200% of 0.330 mm. */
+/** GS1 EAN-13 nominal (100%) X-dimension and bar height; limits 80%–200%. */
+export const EAN13_NOMINAL_MODULE_MM = 0.33;
+export const EAN13_NOMINAL_BAR_HEIGHT_MM = 22.85;
 export const EAN13_MIN_MODULE_MM = 0.264;
 export const EAN13_MAX_MODULE_MM = 0.66;
+/** 80% of nominal bar height — the shortest bars the settings allow. */
+export const EAN13_MIN_BAR_HEIGHT_MM = 18.3;
 
 export type ModuleChoice =
   | { ok: true; moduleDots: number; moduleMm: number; magnificationPct: number; widthDots: number }
   | { ok: false; reason: string; neededMm: number };
 
-/** The widest whole-dot module that fits the box, within GS1 limits. */
-export function barcodeModuleDots(boxWidthDots: number, dpi: number): ModuleChoice {
+/** Module width in WHOLE printer dots: the nearest to the requested size
+ *  (% of nominal), never under 80% or over 200%, and narrowed (not below
+ *  80%) if the box can't take the requested size with its quiet zones. */
+export function barcodeModuleDots(boxWidthDots: number, dpi: number, targetPct = 100): ModuleChoice {
   const minDots = Math.ceil(mmToDots(EAN13_MIN_MODULE_MM, dpi) - 1e-9);
   const maxDots = Math.max(minDots, Math.floor(mmToDots(EAN13_MAX_MODULE_MM, dpi) + 1e-9));
+  const target = Math.round(mmToDots((EAN13_NOMINAL_MODULE_MM * targetPct) / 100, dpi));
   const fit = Math.floor(boxWidthDots / EAN13_TOTAL_MODULES);
-  const moduleDots = Math.min(maxDots, fit);
+  const moduleDots = Math.min(maxDots, Math.max(minDots, target), fit);
   if (moduleDots < minDots) {
     return {
       ok: false,
@@ -85,5 +92,5 @@ export function barcodeModuleDots(boxWidthDots: number, dpi: number): ModuleChoi
     };
   }
   const moduleMm = dotsToMm(moduleDots, dpi);
-  return { ok: true, moduleDots, moduleMm, magnificationPct: Math.round((moduleMm / 0.33) * 100), widthDots: moduleDots * EAN13_TOTAL_MODULES };
+  return { ok: true, moduleDots, moduleMm, magnificationPct: Math.round((moduleMm / EAN13_NOMINAL_MODULE_MM) * 100), widthDots: moduleDots * EAN13_TOTAL_MODULES };
 }
