@@ -18,6 +18,8 @@ export type ResolvedTodoLink = {
 export function resolveTodoLink(url: string): ResolvedTodoLink {
   const trimmed = url.trim();
   if (trimmed.startsWith("/")) {
+    // A test request's to-do (forced testing) opens the test card.
+    if (/[?&]testRequest=\d+/.test(trimmed)) return { href: trimmed, label: "the test", external: false };
     const label = trimmed.replace(/^\/+/, "").split(/[?#]/)[0] || "this app";
     return { href: trimmed, label, external: false };
   }

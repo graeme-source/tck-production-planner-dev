@@ -7,35 +7,59 @@ import {
   isHhMm,
   issueCommentFor,
   requestStatus,
-  snoozeUntil,
   stillAsking,
   testersFor,
+  testTodoTitle,
+  testTodoUrl,
+  todoPlan,
   validatePathPattern,
 } from "./test-request-rules";
 
 describe("testersFor — who must test it", () => {
   it("always includes the person who reported the issue, first", () => {
-    const r = testersFor({ reporterId: 7, chosenIds: [] });
+    const r = testersFor({ originIds: [7], chosenIds: [] });
     expect(r).toEqual({ ok: true, testers: [{ userId: 7, isReporter: true }] });
   });
 
-  it("adds anyone else chosen, without repeating the reporter", () => {
-    const r = testersFor({ reporterId: 7, chosenIds: [3, 7, 3, 9] });
+  it("an improvement idea's submitter is asked by default too", () => {
+    const r = testersFor({ originIds: [null, 12], chosenIds: [] });
+    expect(r.ok && r.testers).toEqual([{ userId: 12, isReporter: true }]);
+  });
+
+  it("issue reporter and idea submitter both asked once each, then the chosen", () => {
+    const r = testersFor({ originIds: [7, 7, 12], chosenIds: [3, 7, 12, 3, 9] });
     expect(r.ok && r.testers).toEqual([
       { userId: 7, isReporter: true },
+      { userId: 12, isReporter: true },
       { userId: 3, isReporter: false },
       { userId: 9, isReporter: false },
     ]);
   });
 
-  it("without an issue, uses the people chosen", () => {
-    const r = testersFor({ reporterId: null, chosenIds: [4] });
+  it("without an origin, uses the people chosen", () => {
+    const r = testersFor({ originIds: [], chosenIds: [4] });
     expect(r.ok && r.testers).toEqual([{ userId: 4, isReporter: false }]);
   });
 
   it("refuses when nobody would be asked", () => {
-    expect(testersFor({ reporterId: null, chosenIds: [] })).toEqual({ ok: false, error: "Choose who should test it" });
-    expect(testersFor({ reporterId: null, chosenIds: [0, -1] }).ok).toBe(false);
+    expect(testersFor({ originIds: [null], chosenIds: [] })).toEqual({ ok: false, error: "Choose who should test it" });
+    expect(testersFor({ originIds: [], chosenIds: [0, -1] }).ok).toBe(false);
+  });
+});
+
+describe("the tester's to-do", () => {
+  it("is ticked when they answer and removed when the request is closed", () => {
+    expect(todoPlan("answered", { status: "open" })).toBe("tick");
+    expect(todoPlan("closed", { status: "open" })).toBe("delete");
+  });
+  it("is left alone once done, or when there isn't one", () => {
+    expect(todoPlan("answered", { status: "done" })).toBe("none");
+    expect(todoPlan("closed", { status: "done" })).toBe("none");
+    expect(todoPlan("closed", null)).toBe("none");
+  });
+  it("links back to the test card", () => {
+    expect(testTodoUrl(42)).toBe("/?testRequest=42");
+    expect(testTodoTitle("Edit numbers")).toBe("Test: Edit numbers");
   });
 });
 
@@ -104,9 +128,6 @@ describe("answering", () => {
 });
 
 describe("conditions", () => {
-  it("snoozes for two hours", () => {
-    expect(snoozeUntil(new Date("2026-10-10T09:00:00Z")).toISOString()).toBe("2026-10-10T11:00:00.000Z");
-  });
   it("checks HH:MM times", () => {
     expect(isHhMm("14:00")).toBe(true);
     expect(isHhMm("07:30")).toBe(true);

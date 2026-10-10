@@ -37,4 +37,8 @@ describe("resolveTodoLink", () => {
   it("trims surrounding whitespace before deciding", () => {
     expect(resolveTodoLink("  /lean-review  ").external).toBe(false);
   });
+
+  it("a test request's to-do opens the test, and says so", () => {
+    expect(resolveTodoLink("/?testRequest=12")).toEqual({ href: "/?testRequest=12", label: "the test", external: false });
+  });
 });

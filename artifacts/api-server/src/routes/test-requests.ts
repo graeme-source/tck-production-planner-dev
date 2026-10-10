@@ -5,12 +5,14 @@
  * Anyone signed in:
  *   GET  /mine               the tests still waiting on me (the card)
  *   POST /:id/start          "Take me there" / "I'm trying it" — in progress
- *   POST /:id/snooze         "Not now" — away for two hours
+ *   POST /:id/prompted       the card has been shown (no-place tests show once)
+ *   POST /:id/later          "Put it on my to-do list" — never pops up again
  *   POST /:id/answer         { answer, note? } — my result
  *   POST /:id/photo          multipart "file" — an optional photo with it
  * Managers and admins (and the tester for their own photo):
  *   GET  /?tab=open|problems|answered|closed|all
  *   GET  /issue/:issueId     the issue's reporter, for the form
+ *   GET  /improvement/:id    the improvement's submitter, for the form
  *   POST /                   create
  *   POST /:id/close {note?}  /  POST /:id/reopen
  *   GET  /:id/testers/:userId/photo
@@ -21,7 +23,7 @@
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { db, andonIssuesTable, testRequestsTable, testRequestTestersTable, usersTable } from "@workspace/db";
+import { db, andonIssuesTable, improvementSubmissionsTable, testRequestsTable, testRequestTestersTable, usersTable } from "@workspace/db";
 import { and, eq, isNull } from "drizzle-orm";
 import { validate, validateQuery } from "../middleware/validate";
 import { requireManagerOrAdmin, resolveRole } from "../middleware/roles";
@@ -30,7 +32,6 @@ import {
   TEST_ANSWERS,
   answerNoteProblem,
   answerVerdict,
-  snoozeUntil,
   type TestAnswer,
 } from "../lib/test-request-rules";
 import {
@@ -38,7 +39,9 @@ import {
   createTestRequestFields,
   loadRequestViews,
   myOpenRequests,
+  putTestOnTodoList,
   recordAnswerSideEffects,
+  removeOpenTodosFor,
 } from "../lib/test-requests-data";
 
 const router: IRouter = Router();
@@ -73,20 +76,32 @@ router.post("/:id/start", validate(z.object({}).passthrough()), async (req: Requ
   const v = answerVerdict(r, t);
   if (!v.ok) { res.status(v.status).json({ error: v.error }); return; }
   if (!t!.startedAt) {
-    await db.update(testRequestTestersTable).set({ startedAt: new Date(), snoozedUntil: null }).where(eq(testRequestTestersTable.id, t!.id));
+    await db.update(testRequestTestersTable).set({ startedAt: new Date(), promptedAt: t!.promptedAt ?? new Date() }).where(eq(testRequestTestersTable.id, t!.id));
   }
   res.json({ ok: true });
 });
 
-router.post("/:id/snooze", validate(z.object({}).passthrough()), async (req: Request, res: Response) => {
+router.post("/:id/prompted", validate(z.object({}).passthrough()), async (req: Request, res: Response) => {
   const id = parseId(req.params.id);
   if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
   const { r, t } = await loadMine(id, req.session.userId!);
   const v = answerVerdict(r, t);
   if (!v.ok) { res.status(v.status).json({ error: v.error }); return; }
-  const until = snoozeUntil(new Date());
-  await db.update(testRequestTestersTable).set({ snoozedUntil: until, snoozeCount: t!.snoozeCount + 1 }).where(eq(testRequestTestersTable.id, t!.id));
-  res.json({ ok: true, snoozedUntil: until.toISOString() });
+  if (!t!.promptedAt) {
+    await db.update(testRequestTestersTable).set({ promptedAt: new Date() }).where(eq(testRequestTestersTable.id, t!.id));
+  }
+  res.json({ ok: true });
+});
+
+router.post("/:id/later", validate(z.object({}).passthrough()), async (req: Request, res: Response) => {
+  const id = parseId(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
+  const userId = req.session.userId!;
+  const { r, t } = await loadMine(id, userId);
+  const v = answerVerdict(r, t);
+  if (!v.ok) { res.status(v.status).json({ error: v.error }); return; }
+  const todoTaskId = await putTestOnTodoList(r!, t!, await userName(userId));
+  res.json({ ok: true, todoTaskId });
 });
 
 const answerBody = z.object({
@@ -107,13 +122,13 @@ router.post("/:id/answer", validate(answerBody), async (req: Request, res: Respo
   const now = new Date();
   // Guarded on answer IS NULL so two devices can't both answer.
   const updated = await db.update(testRequestTestersTable)
-    .set({ answer, note: note || null, answeredAt: now, startedAt: t!.startedAt ?? now, snoozedUntil: null })
+    .set({ answer, note: note || null, answeredAt: now, startedAt: t!.startedAt ?? now, promptedAt: t!.promptedAt ?? now })
     .where(and(eq(testRequestTestersTable.id, t!.id), isNull(testRequestTestersTable.answer)))
     .returning({ id: testRequestTestersTable.id });
   if (updated.length === 0) { res.status(409).json({ error: "You've already answered this one" }); return; }
   await db.update(testRequestsTable).set({ updatedAt: now }).where(eq(testRequestsTable.id, r!.id));
   try {
-    await recordAnswerSideEffects(r!, { userId, name: await userName(userId) }, answer as TestAnswer, note || null);
+    await recordAnswerSideEffects(r!, { userId, name: await userName(userId), todoTaskId: t!.todoTaskId }, answer as TestAnswer, note || null);
   } catch (err) {
     // The answer is saved; a failed follow-up must not lose it — but say so in the logs.
     console.error("[test-requests] answer side effects failed:", err instanceof Error ? err.message : String(err));
@@ -176,6 +191,20 @@ router.get("/issue/:issueId", requireManagerOrAdmin, async (req: Request, res: R
   res.json(i);
 });
 
+router.get("/improvement/:id", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const id = parseId(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
+  const [i] = await db.select({
+    id: improvementSubmissionsTable.id,
+    title: improvementSubmissionsTable.title,
+    station: improvementSubmissionsTable.station,
+    submittedBy: improvementSubmissionsTable.submittedBy,
+    submittedByName: improvementSubmissionsTable.submittedByName,
+  }).from(improvementSubmissionsTable).where(eq(improvementSubmissionsTable.id, id));
+  if (!i) { res.status(404).json({ error: `Improvement #${id} not found` }); return; }
+  res.json(i);
+});
+
 router.post("/", requireManagerOrAdmin, validate(z.object(createTestRequestFields)), async (req: Request, res: Response) => {
   const userId = req.session.userId!;
   const out = await createTestRequest(req.body, { userId, name: await userName(userId), source: "person" });
@@ -194,6 +223,12 @@ router.post("/:id/close", requireManagerOrAdmin, validate(closeBody), async (req
     .set({ closedAt: now, closedByName: name, closeNote: (req.body as z.infer<typeof closeBody>).note || null, updatedAt: now })
     .where(eq(testRequestsTable.id, id)).returning({ id: testRequestsTable.id });
   if (!rows.length) { res.status(404).json({ error: "Test request not found" }); return; }
+  // Closed = nobody needs to do it: take it off their to-do lists.
+  try {
+    await removeOpenTodosFor(id);
+  } catch (err) {
+    console.error("[test-requests] removing to-dos failed:", err instanceof Error ? err.message : String(err));
+  }
   res.json({ ok: true });
 });
 
