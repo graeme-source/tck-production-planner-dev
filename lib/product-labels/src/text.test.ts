@@ -43,19 +43,19 @@ describe("wordDiff", () => {
 
 describe("fillTemplate — the default step 2: one line per appliance, turn in the middle, halves", () => {
   const values = cookingPlaceholderValues(DEFAULT_TEMPLATE.cooking);
-  it("both appliances, times halved (oven 18–22 → 9–11 + 9–11; air fryer 16–19 → 8–9 + 8–10)", () => {
+  it("both appliances, raw fill-ins (oven 18–22 → 10 then 8–12; air fryer 16–19 → 9 then 7–10; the label collapses 10–10 to 10)", () => {
     expect(fillTemplate(DEFAULT_TEMPLATE.text.steps[1], values).text).toBe(
-      "**OVEN** 210°C (190°C fan): 9–11 min ➜ **TURN OVER** ➜ 9–11 min\n**AIR FRYER** 180°C: 8–9 min ➜ **TURN OVER** ➜ 8–10 min",
+      "**OVEN** 210°C (190°C fan): 10–10 min ➜ **TURN OVER** ➜ 8–12 min\n**AIR FRYER** 180°C: 9–9 min ➜ **TURN OVER** ➜ 7–10 min",
     );
   });
   it("a blank appliance drops its whole line", () => {
     const noAir = cookingPlaceholderValues({ ...DEFAULT_TEMPLATE.cooking, airFryerTempC: null });
     expect(fillTemplate(DEFAULT_TEMPLATE.text.steps[1], noAir).text.trim()).toBe(
-      "**OVEN** 210°C (190°C fan): 9–11 min ➜ **TURN OVER** ➜ 9–11 min",
+      "**OVEN** 210°C (190°C fan): 10–10 min ➜ **TURN OVER** ➜ 8–12 min",
     );
     const noOven = cookingPlaceholderValues({ ...DEFAULT_TEMPLATE.cooking, ovenMinMinutes: null });
     expect(fillTemplate(DEFAULT_TEMPLATE.text.steps[1], noOven).text.trim()).toBe(
-      "**AIR FRYER** 180°C: 8–9 min ➜ **TURN OVER** ➜ 8–10 min",
+      "**AIR FRYER** 180°C: 9–9 min ➜ **TURN OVER** ➜ 7–10 min",
     );
   });
   it("placeholder names may contain digits ({ovenHalf2Min})", () => {

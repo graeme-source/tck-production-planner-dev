@@ -7,7 +7,7 @@
 import type { LabelDates } from "./dates";
 import { formatLabelDate } from "./dates";
 import { checkEan13 } from "./ean13";
-import { cookingPlaceholderValues } from "./cooking";
+import { collapseEqualRanges, cookingPlaceholderValues } from "./cooking";
 import type { LabelSnapshot } from "./snapshot";
 import type { FieldKey } from "./template";
 import { fillTemplate, mayContainParagraph, mergeRuns, parseBold, type Paragraph } from "./text";
@@ -74,7 +74,8 @@ export function buildLabelContent(s: LabelSnapshot, dates: LabelDates): LabelCon
     }
     // A line break in the wording starts a new line on the label (step 2:
     // one line per appliance); lines left empty by a blank appliance drop.
-    return stepLines(r.text);
+    // "10–10 min" (a fixed first half written as a range) prints "10 min".
+    return stepLines(collapseEqualRanges(r.text));
   }).filter(lines => lines.length > 0);
   if (c.ovenMinMinutes != null && c.ovenMaxMinutes != null && c.ovenMinMinutes > c.ovenMaxMinutes) {
     problems.push(`Oven minutes run backwards (${c.ovenMinMinutes}–${c.ovenMaxMinutes}).`);

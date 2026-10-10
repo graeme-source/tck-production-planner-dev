@@ -3,7 +3,7 @@
  * (halving + fill-ins + line handling from @workspace/product-labels), shown
  * next to the cooking times so the halves are visible while typing.
  */
-import { cookingPlaceholderValues, fillTemplate, stepLines, type CookingValues } from "@workspace/product-labels";
+import { collapseEqualRanges, cookingPlaceholderValues, fillTemplate, stepLines, type CookingValues } from "@workspace/product-labels";
 import { cn } from "@/lib/utils";
 
 /** The step that uses the cooking times (the first with an oven or air-fryer
@@ -19,7 +19,7 @@ export function StepPreview({ steps, cooking, className }: { steps: string[]; co
   const step = cookingStep(steps);
   if (!step) return null;
   const filled = fillTemplate(step.wording, cookingPlaceholderValues(cooking));
-  const lines = stepLines(filled.text);
+  const lines = stepLines(collapseEqualRanges(filled.text));
   return (
     <div className={cn("rounded-xl border-2 border-primary/40 bg-primary/5 p-3 space-y-1", className)}>
       <p className="text-xs font-bold uppercase tracking-wide text-primary">Step {step.index + 1} will print</p>

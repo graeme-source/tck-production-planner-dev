@@ -25,8 +25,8 @@ describe("label content", () => {
     // Step 2: two lines, kept whole (non-breaking spaces), times halved.
     const nb = (s: string) => s.replace(/ /g, " ");
     expect(c.steps[1].map(p => nb(plainText(p)))).toEqual([
-      "OVEN 210°C (190°C fan): 9–11 min ➜ TURN OVER ➜ 9–11 min",
-      "AIR FRYER 180°C: 8–9 min ➜ TURN OVER ➜ 8–10 min",
+      "OVEN 210°C (190°C fan): 10 min ➜ TURN OVER ➜ 8–12 min",
+      "AIR FRYER 180°C: 9 min ➜ TURN OVER ➜ 7–10 min",
     ]);
     // OVEN / AIR FRYER / TURN OVER are bold.
     const bold = c.steps[1].flatMap(p => p.filter(r => r.bold).map(r => nb(r.text)));
@@ -47,7 +47,7 @@ describe("label content", () => {
   it("no air fryer → only the oven line", () => {
     const s = content({ airFryerOn: false }).steps[1];
     expect(s).toHaveLength(1);
-    expect(plainText(s[0]).replace(/ /g, " ")).toBe("OVEN 210°C (190°C fan): 9–11 min ➜ TURN OVER ➜ 9–11 min");
+    expect(plainText(s[0]).replace(/ /g, " ")).toBe("OVEN 210°C (190°C fan): 10 min ➜ TURN OVER ➜ 8–12 min");
   });
 
   it("blank steps aren't drawn and the numbering closes up; a third step can come back", () => {
