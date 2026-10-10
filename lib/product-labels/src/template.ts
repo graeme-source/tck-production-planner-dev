@@ -25,11 +25,15 @@ export const WIDTH_LABEL: Record<WidthVariant, string> = {
 export type BodyWeight = 400 | 500 | 700;
 export const BODY_WEIGHTS: BodyWeight[] = [400, 500, 700];
 
-export type FieldKey = "title" | "steps" | "storage" | "dates" | "ingredients" | "allergenInfo" | "address";
-export const FIELD_KEYS: FieldKey[] = ["title", "steps", "storage", "dates", "ingredients", "allergenInfo", "address"];
+export type FieldKey = "title" | "steps" | "headings" | "storage" | "dates" | "ingredients" | "allergenInfo" | "address";
+export const FIELD_KEYS: FieldKey[] = ["title", "steps", "headings", "storage", "dates", "ingredients", "allergenInfo", "address"];
 export const FIELD_LABEL: Record<FieldKey, string> = {
   title: "Title",
   steps: "Cooking steps",
+  // "STORAGE INSTRUCTIONS:" and "THE INGREDIENTS:" — ONE style so they can't
+  // drift apart, printed at a FIXED size (its biggest): only the text under
+  // them shrinks to fit (Graeme, 2026-10-11).
+  headings: "Section headings (storage & ingredients)",
   storage: "Storage instructions",
   dates: "Use-by dates & batch",
   ingredients: "Ingredients",
@@ -188,6 +192,8 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     ingredients: field({ maxPt: 10 }),
     allergenInfo: field({ maxPt: 10 }),
     address: field({ maxPt: 9 }),
+    // Fixed size: printed at maxPt, never shrunk or narrowed.
+    headings: field({ weight: 700, bold: true, caps: true, minPt: 10, maxPt: 10, lineHeight: 1.1, allowNarrower: false }),
   },
   text: {
     title: "{name} - {packSize} PACK",

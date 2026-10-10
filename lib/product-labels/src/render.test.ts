@@ -128,9 +128,9 @@ describe("the default template with a real deck", () => {
     const layout = layoutLabel(s.template, buildLabelContent(s, dates), fonts);
     expect(layout.fits).toBe(false);
     const ing = layout.fields.find(f => f.key === "ingredients")!;
-    // Every character of the heading + deck is placed, in order.
+    // Every character of the deck is placed, in order (the heading is its own block).
     const placed = ing.runs.map(r => r.text).join("");
-    const expected = ("THE INGREDIENTS: " + long.replace(/\*\*/g, "")).replace(/\s+/g, "");
+    const expected = long.replace(/\*\*/g, "").replace(/\s+/g, "");
     expect(placed).toBe(expected);
     // Renders anyway: the print-size bitmap, and a taller one showing the overflow.
     expect(renderLabel(layout, fonts).height).toBe(751);
@@ -258,6 +258,41 @@ describe("step 2 on the default label", () => {
     const runs2 = steps.runs.filter(r => !r.white && r.x >= box2.x && r.x < box2.x + box2.w);
     expect(new Set(runs2.map(r => Math.round(r.y))).size).toBe(2);
     expect(steps.sizePt).toBeGreaterThanOrEqual(steps.legalMinPt);
+  });
+});
+
+describe("section headings", () => {
+  const when = { printDate: "2026-10-10", productionDate: "2026-10-10" };
+  const headingRuns = (p: ReturnType<typeof proofLabel>) => p.layout.fields.find(f => f.key === "headings")!;
+
+  it("STORAGE INSTRUCTIONS: and THE INGREDIENTS: look exactly the same", () => {
+    const h = headingRuns(proofLabel(snapshot(), when, fonts));
+    expect(h.boxes).toHaveLength(2);
+    expect(h.runs.map(r => r.text).join(" ")).toBe("STORAGE INSTRUCTIONS: THE INGREDIENTS:");
+    const styles = new Set(h.runs.map(r => `${r.face.width}/${r.face.weight}/${r.sizeDots}`));
+    expect(styles.size).toBe(1);
+    expect(h.runs[0].face.weight).toBe(700);
+    expect(h.sizePt).toBe(DEFAULT_TEMPLATE.fields.headings.maxPt);
+  });
+
+  it("stay at their fixed size however far the deck shrinks", () => {
+    const short = proofLabel(snapshot(), when, fonts);
+    const squeezed = proofLabel(snapshot(`${DECK} ${DECK}`), when, fonts);
+    const ing = (p: typeof short) => p.layout.fields.find(f => f.key === "ingredients")!;
+    expect(squeezed.layout.fits).toBe(true);
+    expect(ing(squeezed).sizePt).toBeLessThan(ing(short).sizePt); // the deck shrank…
+    const a = headingRuns(short), b = headingRuns(squeezed);
+    expect(b.sizePt).toBe(a.sizePt); // …the headings didn't
+    expect(b.runs.map(r => [r.face.width, r.sizeDots, Math.round(r.y)])).toEqual(a.runs.map(r => [r.face.width, r.sizeDots, Math.round(r.y)]));
+  });
+
+  it("their height is reserved: the text underneath starts below them", () => {
+    const p = proofLabel(snapshot(), when, fonts);
+    const h = headingRuns(p);
+    const ingBox = p.layout.fields.find(f => f.key === "ingredients")!.boxes[0];
+    const storageBox = p.layout.fields.find(f => f.key === "storage")!.boxes[0];
+    expect(storageBox.y).toBeGreaterThanOrEqual(h.boxes[0].y + h.boxes[0].h);
+    expect(ingBox.y).toBeGreaterThanOrEqual(h.boxes[1].y + h.boxes[1].h);
   });
 });
 

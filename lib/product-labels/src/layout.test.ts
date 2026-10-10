@@ -20,6 +20,8 @@ function content(deck: string): LabelContent {
   return {
     title: [parseBold("TEST - 2 PACK")],
     steps: [[parseBold("One.")], [parseBold("Two.")], [parseBold("Three.")]],
+    storageHeading: [],
+    ingredientsHeading: [],
     storage: [parseBold("Keep cold.")],
     dates: [parseBold("USE BY: 01/01/27")],
     ingredients: [parseBold(deck)],

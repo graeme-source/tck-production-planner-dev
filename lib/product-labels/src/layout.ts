@@ -22,7 +22,7 @@
  * stacked in a column shrink together, level by level.
  */
 import { dotsToMm, mmToDots, ptToDots } from "@workspace/units";
-import type { LabelContent } from "./content";
+import { fieldParagraphs, type LabelContent } from "./content";
 import { barcodeModuleDots, type ModuleChoice } from "./ean13";
 import { legalMinPt, PT_STEP, xHeightMmAt } from "./legal";
 import type { BodyWeight, FieldKey, FieldStyle, LabelTemplate, WidthVariant } from "./template";
@@ -436,7 +436,9 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
 
   // Missing glyphs anywhere = can't print that character.
   const allParas: Array<[FieldKey, Paragraph[]]> = [
-    ["title", content.title], ["steps", content.steps.flat()], ["storage", content.storage], ["dates", content.dates],
+    ["title", content.title], ["steps", content.steps.flat()],
+    ["headings", [...content.storageHeading, ...content.ingredientsHeading]],
+    ["storage", content.storage], ["dates", content.dates],
     ["ingredients", content.ingredients], ["allergenInfo", content.allergenInfo], ["address", content.address],
   ];
   for (const [key, paras] of allParas) {
@@ -478,7 +480,7 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
   // `bottomKey` sits at the foot of the column when everything fits (the
   // address, bottom right, as on Graeme's label).
   const stackColumn = (keys: FieldKey[], box: Rect, bottomKey?: FieldKey) => {
-    const specs = keys.map(k => spec(k, [box], [content[k] as Paragraph[]]));
+    const specs = keys.map(k => spec(k, [box], [fieldParagraphs(content, k)]));
     const g = fitGroup(specs, box.h, true, fieldGap, t, m);
     let y = box.y;
     let overflowField: FieldKey | null = null;
@@ -504,8 +506,33 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
       }
     }
   };
-  stackColumn(["storage", "dates"], leftText);
-  stackColumn(["ingredients", "allergenInfo", "address"], right, "address");
+  // Section headings — one shared style at a FIXED size (level 0 = its
+  // biggest, never narrowed), placed first at the top of each column; their
+  // height is reserved and only the text underneath shrinks to fit.
+  const headingGap = d(0.8);
+  const headingBoxes: Rect[] = [];
+  const headingRuns: PlacedRun[] = [];
+  let headingTrial: Trial | null = null;
+  let headingsFit = true;
+  const placeHeading = (paras: Paragraph[], col: Rect): number => {
+    if (paras.length === 0) return 0;
+    const tr = trial(spec("headings", [col], [paras]), 0, 0, t, m);
+    headingTrial = tr;
+    const box: Rect = { x: col.x, y: col.y, w: col.w, h: tr.height };
+    headingBoxes.push(box);
+    headingRuns.push(...fieldLayout(tr, [box], col.y, true, t, m).runs);
+    if (tr.wraps.some(w => w.tooWide)) { headingsFit = false; problems.push(overflowProblem(tr, col.h, mm1)); }
+    return tr.height + headingGap;
+  };
+  const leftHead = placeHeading(content.storageHeading, leftText);
+  const rightHead = placeHeading(content.ingredientsHeading, right);
+  if (headingTrial) {
+    const hl = fieldLayout(headingTrial, headingBoxes, -1, headingsFit, t, m);
+    fields.push({ ...hl, boxes: headingBoxes, runs: headingRuns, lines: headingBoxes.length, usedHeight: Math.max(...headingBoxes.map(b => b.h)) });
+  }
+
+  stackColumn(["storage", "dates"], { ...leftText, y: leftText.y + leftHead, h: Math.max(0, leftText.h - leftHead) });
+  stackColumn(["ingredients", "allergenInfo", "address"], { ...right, y: right.y + rightHead, h: Math.max(0, right.h - rightHead) }, "address");
 
   // Step numbers ride along with the steps field's runs.
   const steps = fields.find(f => f.key === "steps");

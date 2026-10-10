@@ -98,6 +98,8 @@ describe("areasForChange", () => {
     expect(areasForChange("cooking.airFryerTempC")).toEqual(["steps"]);
     expect(areasForChange("template.text.step2")).toEqual(["steps"]);
     expect(areasForChange("template.fields.address")).toEqual(["address"]);
+    expect(areasForChange("template.text.ingredientsHeading")).toEqual(["headings"]);
+    expect(areasForChange("template.fields.headings")).toEqual(["headings"]);
     expect(areasForChange("barcode")).toEqual(["barcode"]);
     expect(areasForChange("template.page")).toEqual(["all"]);
   });

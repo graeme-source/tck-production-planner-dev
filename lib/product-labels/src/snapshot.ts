@@ -154,8 +154,8 @@ export function areasForChange(key: string): Array<FieldKey | "barcode" | "all">
   if (key === "barcode") return ["barcode"];
   if (key.startsWith("template.fields.")) return [key.slice("template.fields.".length) as FieldKey];
   const text: Record<string, FieldKey> = {
-    title: "title", step1: "steps", step2: "steps", step3: "steps", storageHeading: "storage", storage: "storage",
-    chilledLabel: "dates", frozenLabel: "dates", batchLabel: "dates", ingredientsHeading: "ingredients",
+    title: "title", step1: "steps", step2: "steps", step3: "steps", storageHeading: "headings", storage: "storage",
+    chilledLabel: "dates", frozenLabel: "dates", batchLabel: "dates", ingredientsHeading: "headings",
     allergenNote: "allergenInfo", warning: "allergenInfo", address: "address",
   };
   if (key.startsWith("template.text.")) {

@@ -16,8 +16,12 @@ export interface LabelContent {
   title: Paragraph[];
   /** Three steps, each its own box with a numbered circle. */
   steps: Paragraph[][];
+  /** "STORAGE INSTRUCTIONS:" / "THE INGREDIENTS:" — the shared, fixed-size
+   *  "headings" style; laid out on their own above each column's text. */
+  storageHeading: Paragraph[];
   storage: Paragraph[];
   dates: Paragraph[];
+  ingredientsHeading: Paragraph[];
   ingredients: Paragraph[];
   allergenInfo: Paragraph[];
   address: Paragraph[];
@@ -99,9 +103,11 @@ export function buildLabelContent(s: LabelSnapshot, dates: LabelDates): LabelCon
   return {
     title: nonEmpty([parseBold(title.text.trim())]),
     steps,
-    storage: nonEmpty([heading(t.storageHeading), parseBold(t.storage.trim())]),
+    storageHeading: nonEmpty([heading(t.storageHeading)]),
+    storage: nonEmpty([parseBold(t.storage.trim())]),
     dates: dateLines,
-    ingredients: nonEmpty([heading(t.ingredientsHeading), parseBold(s.deckText.trim())]),
+    ingredientsHeading: nonEmpty([heading(t.ingredientsHeading)]),
+    ingredients: nonEmpty([parseBold(s.deckText.trim())]),
     allergenInfo: nonEmpty(allergenInfo),
     address: nonEmpty([parseBold(t.address.trim())]),
     barcode: s.barcode && checkEan13(s.barcode).ok ? s.barcode : null,
@@ -111,5 +117,7 @@ export function buildLabelContent(s: LabelSnapshot, dates: LabelDates): LabelCon
 
 /** Field → its paragraphs (steps flattened), for the layout. */
 export function fieldParagraphs(c: LabelContent, key: FieldKey): Paragraph[] {
-  return key === "steps" ? c.steps.flat() : c[key];
+  if (key === "steps") return c.steps.flat();
+  if (key === "headings") return [...c.storageHeading, ...c.ingredientsHeading];
+  return c[key];
 }
