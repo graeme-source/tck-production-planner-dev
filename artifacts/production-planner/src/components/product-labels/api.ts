@@ -52,7 +52,7 @@ export interface Proof {
   contentProblems: string[];
   fields: ProofField[];
   columns: { left: Rect; right: Rect; leftText: Rect };
-  barcode: { box: Rect; module: { ok: boolean; moduleDots?: number; magnificationPct?: number; reason?: string } };
+  barcode: { box: Rect; module: { ok: boolean; moduleDots?: number; moduleMm?: number; magnificationPct?: number; widthDots?: number; reason?: string } };
   dates: LabelDates;
 }
 

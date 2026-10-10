@@ -123,7 +123,8 @@ function FitTable({ proof }: { proof: Proof }) {
       </table>
       {proof.barcode.module.ok && (
         <p className="px-3 py-2 text-xs text-muted-foreground border-t border-border">
-          Barcode bars {proof.barcode.module.moduleDots} printer dots wide ({proof.barcode.module.magnificationPct}% of standard size).
+          Barcode: {proof.barcode.module.magnificationPct}% of standard size — bars {proof.barcode.module.moduleDots} printer dots wide,
+          {" "}{proof.barcode.module.widthDots ? `${((proof.barcode.module.widthDots / proof.dpi) * 25.4).toFixed(1)} mm across with its clear space` : ""}.
         </p>
       )}
     </div>

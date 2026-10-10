@@ -14,7 +14,7 @@ import { Link } from "wouter";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Info, Loader2, Type, Ruler, Flame, CalendarClock, PenLine, ShieldCheck } from "lucide-react";
 import {
-  BODY_WEIGHTS, FIELD_KEYS, FIELD_LABEL, PERIOD_UNITS, TEMPLATE_PLACEHOLDERS, WIDTH_LABEL, WIDTH_ORDER,
+  BODY_WEIGHTS, EAN13_MIN_BAR_HEIGHT_MM, FIELD_KEYS, FIELD_LABEL, PERIOD_UNITS, TEMPLATE_PLACEHOLDERS, WIDTH_LABEL, WIDTH_ORDER,
   type CookingValues, type FieldKey, type FieldStyle, type LabelTemplate, type PeriodUnit, type TemplateText, type WidthVariant,
 } from "@workspace/product-labels";
 import { PageHeader } from "@/components/page-header";
@@ -166,8 +166,20 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
               <Num label="Gap between bands" unit="mm" value={draft.page.bandGapMm} step={0.5} min={0} max={20} onChange={v => v != null && setPage("bandGapMm", v)} />
               <Num label="Gap between blocks" unit="mm" value={draft.page.fieldGapMm} step={0.5} min={0} max={20} onChange={v => v != null && setPage("fieldGapMm", v)} />
               <Num label="Step number circle" unit="mm" value={draft.page.stepCircleMm} step={0.2} min={2} max={20} onChange={v => v != null && setPage("stepCircleMm", v)} />
-              <Num label="Barcode bar height" unit="mm" value={draft.page.barcodeHeightMm} step={0.5} min={5} max={40} onChange={v => v != null && setPage("barcodeHeightMm", v)} />
             </div>
+            <p className="text-sm text-muted-foreground">Nothing is ever printed inside the margin — keep it at least 4 mm on rounded labels, or the edges can get cut off.</p>
+          </Card>
+
+          {/* Barcode */}
+          <Card icon={<Ruler className="w-5 h-5" />} title="Barcode (EAN-13)">
+            <div className="grid grid-cols-2 gap-4">
+              <Num label="Size" unit="% of standard" value={draft.page.barcodeSizePct} step={1} min={80} max={200} onChange={v => v != null && setPage("barcodeSizePct", v)} />
+              <Num label="Bar height" unit="mm" value={draft.page.barcodeHeightMm} step={0.5} min={EAN13_MIN_BAR_HEIGHT_MM} max={60} onChange={v => v != null && setPage("barcodeHeightMm", v)} />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Standard size is 100% (bars 0.33 mm, 22.85 mm tall). The bars are snapped to whole printer dots so they scan, so the printed size is the nearest dot size — the live proof shows it.
+              Never smaller than 80% ({EAN13_MIN_BAR_HEIGHT_MM} mm bars). Clear space is kept either side (11 bars' width on the left, 7 on the right) and the digits sit underneath.
+            </p>
           </Card>
 
           {/* Typography */}
@@ -331,6 +343,7 @@ function FieldCard({ field, style, legal, onChange }: { field: FieldKey; style: 
         <Toggle on={style.allowNarrower} onChange={v => onChange({ allowNarrower: v })} label="Go narrower before smaller" />
         <Toggle on={style.bold} onChange={v => onChange({ bold: v })} label="All bold" />
         <Toggle on={style.caps} onChange={v => onChange({ caps: v })} label="CAPITALS" />
+        <Toggle on={style.align === "center"} onChange={v => onChange({ align: v ? "center" : "left" })} label="Centred" />
       </div>
     </div>
   );
