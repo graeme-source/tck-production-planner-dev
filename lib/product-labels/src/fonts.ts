@@ -45,9 +45,11 @@ function arrowGlyph(f: Face): Glyph {
   const hit = arrowCache.get(key);
   if (hit) return hit;
   const wf = WIDTH_FACTOR[f.width];
-  const half = f.weight >= 700 ? 70 : f.weight >= 500 ? 60 : 52; // half the shaft thickness
+  // Heavy at every weight: the arrow is the cue to turn the calzones over,
+  // and a hairline arrow at 8 pt on a 203 dpi printer is barely 1 dot thick.
+  const half = f.weight >= 700 ? 85 : 75; // half the shaft thickness
   const axis = 265; // just above half the x-height — where a hyphen sits
-  const head = 215; // half the head's height
+  const head = 235; // half the head's height
   const left = 50 * wf, neck = 430 * wf, tip = 720 * wf;
   const pts: Array<[number, number]> = [
     [left, axis - half], [neck, axis - half], [neck, axis - head], [tip, axis],
