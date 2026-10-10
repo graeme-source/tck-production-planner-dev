@@ -267,6 +267,17 @@ describe("steps: any number, widths worked out automatically", () => {
     expect(last.x + last.w).toBeCloseTo(p.layout.widthDots - mmToDots(DEFAULT_TEMPLATE.page.marginMm, 203), 0);
     expect(steps.sizePt).toBeGreaterThan(10); // bigger than when there were three
   });
+  it("step 1 sits on two lines (not three), the bold phrase intact, still bigger than the body text", () => {
+    const p = proofLabel(snapshot(), when, fonts);
+    const steps = p.layout.fields.find(f => f.key === "steps")!;
+    const box1 = steps.boxes[0];
+    const runs1 = steps.runs.filter(r => !r.white && r.x >= box1.x && r.x < box1.x + box1.w);
+    expect(new Set(runs1.map(r => Math.round(r.y))).size).toBe(2);
+    expect(runs1.filter(r => r.face.weight === 700).map(r => r.text).join(" ")).toBe("leave the calzones in the wooden tray");
+    const storage = p.layout.fields.find(f => f.key === "storage")!;
+    expect(steps.sizePt).toBeGreaterThanOrEqual(10);
+    expect(steps.sizePt).toBeGreaterThanOrEqual(storage.sizePt);
+  });
   it("a third step added back still lays out, numbered 1–3; a blank one closes up", () => {
     const three = withSteps([...DEFAULT_TEMPLATE.text.steps, "Enjoy."]);
     expect(three.layout.circles).toHaveLength(3);

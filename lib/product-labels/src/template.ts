@@ -176,7 +176,10 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     // clear all round (rounded corners; ink closer to the edge gets cut off).
     widthMm: 140, heightMm: 94, dpi: 203, marginMm: 4.5,
     columnSplitPct: 44, columnGapMm: 4,
-    titleBandMm: 9, stepsBandMm: 13, bandGapMm: 2, fieldGapMm: 2,
+    // Steps band 9 mm (2026-10-12, was 13): room for exactly two lines at
+    // ~10.75 pt, so step 1 sits on two lines instead of three, and the
+    // 4 mm saved goes to the storage / ingredients / barcode columns.
+    titleBandMm: 9, stepsBandMm: 9, bandGapMm: 2, fieldGapMm: 2,
     stepCircleMm: 5.5,
     // Step widths are worked out automatically (layout.ts): a step written as
     // whole lines (step 2's cooking lines) gets just the width its longest
