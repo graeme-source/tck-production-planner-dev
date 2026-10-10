@@ -5,7 +5,7 @@
  */
 import { useState } from "react";
 import { Link, useRoute } from "wouter";
-import { AlertTriangle, ArrowLeft, CheckCircle2, ChefHat, Info, Loader2, ShieldCheck, XCircle } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CheckCircle2, ChefHat, Info, Loader2, Printer, ShieldCheck, XCircle } from "lucide-react";
 import { areasForChange, FIELD_LABEL, WIDTH_LABEL } from "@workspace/product-labels";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/contexts/auth-context";
@@ -14,6 +14,8 @@ import { fmtDateTime, fmtDay, STATUS_TONE, useRecipeLabel, type Proof } from "@/
 import { ProofImage, type Area } from "@/components/product-labels/proof-image";
 import { PublishDialog, ChangeRow } from "@/components/product-labels/publish-dialog";
 import { RecipeLabelSettings } from "@/components/product-labels/recipe-label-settings";
+import { BackLabelsDialog } from "@/components/product-labels/back-labels-dialog";
+import { useFounderArea } from "@/hooks/use-founder-area";
 
 export default function ProductLabelRecipePage() {
   const [, params] = useRoute("/labels/:id");
@@ -23,6 +25,9 @@ export default function ProductLabelRecipePage() {
   const canEdit = role === "admin" || role === "manager";
   const { data, isLoading, error, isFetching } = useRecipeLabel(Number.isFinite(id) ? id : null);
   const [publishing, setPublishing] = useState(false);
+  // Test print: same feature gate as the wrapping station's back labels.
+  const { canPrintBackLabels } = useFounderArea();
+  const [testPrinting, setTestPrinting] = useState(false);
 
   if (isLoading) return <div className="flex items-center gap-2 text-muted-foreground py-10"><Loader2 className="w-5 h-5 animate-spin" /> Building the label…</div>;
   if (error || !data) return <p className="text-destructive">Couldn't load this label — {(error as Error | null)?.message ?? "not found"}</p>;
@@ -38,6 +43,15 @@ export default function ProductLabelRecipePage() {
         <Link href="/labels" className="inline-flex items-center gap-2 h-11 px-4 rounded-xl border-2 border-border bg-card font-semibold hover:bg-secondary"><ArrowLeft className="w-5 h-5" /> All labels</Link>
         <Link href={`/recipes?edit=${data.recipe.id}`} className="inline-flex items-center gap-2 h-11 px-4 rounded-xl border-2 border-border bg-card font-semibold hover:bg-secondary"><ChefHat className="w-5 h-5" /> {data.recipe.name} recipe</Link>
         {isFetching && <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />}
+        {canPrintBackLabels && (
+          <button
+            type="button"
+            onClick={() => setTestPrinting(true)}
+            className="ml-auto inline-flex items-center gap-2 h-11 px-4 rounded-xl border-2 border-border bg-card font-semibold hover:bg-secondary"
+          >
+            <Printer className="w-5 h-5" /> Test print
+          </button>
+        )}
       </div>
 
       {/* Status */}
@@ -98,6 +112,9 @@ export default function ProductLabelRecipePage() {
       <RecipeLabelSettings key={data.recipe.id} data={data} canEdit={canEdit} />
 
       {publishing && <PublishDialog data={data} onClose={() => setPublishing(false)} />}
+      {testPrinting && (
+        <BackLabelsDialog mode="test" recipeId={data.recipe.id} recipeName={data.recipe.name} onClose={() => setTestPrinting(false)} />
+      )}
     </div>
   );
 }

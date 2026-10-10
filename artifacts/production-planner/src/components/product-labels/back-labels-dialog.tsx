@@ -29,23 +29,35 @@ interface Preview {
   dates: { printDate: string; productionDate: string; chilledUseBy?: string | null; frozenUseBy?: string | null; batchCode?: string };
   png: string | null;
   labelSize: { widthMm: number; heightMm: number } | null;
+  /** Test prints: what prints — the live label, or today's proof stamped TEST. */
+  source?: "live" | "current-stamped";
+  liveMatchesRecipe?: boolean;
 }
 
 const day = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 
-export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, onClose }: {
-  recipeId: number; recipeName: string; planItemId: number; netPacks: number; onClose: () => void;
+/** mode "production" (wrapping station, the default): count from the item's
+ *  net packs, production day from the plan, live label only. mode "test"
+ *  (label review page): count 1, dated today, live label — or, with no live
+ *  label, today's proof stamped TEST — NOT FOR SALE; recorded as a test. */
+export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, mode = "production", onClose }: {
+  recipeId: number; recipeName: string; planItemId?: number; netPacks?: number; mode?: "production" | "test"; onClose: () => void;
 }) {
-  const [count, setCount] = useState(() => initialPrintCount(netPacks));
-  const [countText, setCountText] = useState(() => String(initialPrintCount(netPacks)));
+  const test = mode === "test";
+  const startCount = test ? 1 : initialPrintCount(netPacks);
+  const [count, setCount] = useState(startCount);
+  const [countText, setCountText] = useState(() => String(startCount));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [made, setMade] = useState<{ count: number; url: string } | null>(null);
 
   const q = useQuery({
-    queryKey: ["back-labels-preview", recipeId, planItemId],
+    queryKey: ["back-labels-preview", recipeId, planItemId ?? null, mode],
     queryFn: async () => {
-      const res = await fetch(`${BASE}/api/product-label-print/${recipeId}/preview?planItemId=${planItemId}`, { credentials: "include" });
+      const params = new URLSearchParams();
+      if (planItemId && !test) params.set("planItemId", String(planItemId));
+      if (test) params.set("test", "1");
+      const res = await fetch(`${BASE}/api/product-label-print/${recipeId}/preview?${params}`, { credentials: "include" });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? `Couldn't load (${res.status})`);
       return body as Preview;
@@ -70,7 +82,7 @@ export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, o
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ count, planItemId }),
+        body: JSON.stringify(test ? { count, test: true } : { count, planItemId }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -82,7 +94,7 @@ export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, o
       else {
         const a = document.createElement("a");
         a.href = url;
-        a.download = `back-labels-${recipeName}.pdf`;
+        a.download = `${test ? "TEST-" : ""}back-labels-${recipeName}.pdf`;
         a.click();
       }
       setMade({ count, url });
@@ -100,13 +112,15 @@ export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, o
       <div
         className="bg-card border-2 border-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92dvh] flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}
-        role="dialog" aria-modal="true" aria-label="Back labels"
+        role="dialog" aria-modal="true" aria-label={test ? "Test print" : "Back labels"}
       >
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
           <Printer className="w-6 h-6 text-primary shrink-0" />
           <div className="flex-1 min-w-0">
-            <h2 className="font-bold text-xl leading-tight truncate">Back labels — {recipeName}</h2>
-            <p className="text-sm text-muted-foreground">A print-ready PDF of the live label, one label per page.</p>
+            <h2 className="font-bold text-xl leading-tight truncate">{test ? "Test print" : "Back labels"} — {recipeName}</h2>
+            <p className="text-sm text-muted-foreground">
+              {test ? "Try the printer: same PDF as the wrapping station, dated today, recorded as a test." : "A print-ready PDF of the live label, one label per page."}
+            </p>
           </div>
           <button onClick={onClose} className="p-3 rounded-xl hover:bg-secondary" aria-label="Close"><X className="w-6 h-6" /></button>
         </div>
@@ -124,11 +138,21 @@ export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, o
                   <p>{p.refusalText}</p>
                   <Link href={`/labels/${p.recipeId}`} className="inline-block font-semibold text-primary underline underline-offset-2">Open the {p.recipeName} label</Link>
                 </div>
+              ) : p.source === "current-stamped" ? (
+                <div className="rounded-xl border-2 border-rose-300 bg-rose-50 dark:bg-rose-950/20 p-4 space-y-1">
+                  <p className="font-bold">No live label yet — this prints today's proof stamped “TEST — NOT FOR SALE”.</p>
+                  <p className="text-sm">Good for trying the printer. It can't go on packs: the stamp crosses the label and the barcode.</p>
+                </div>
               ) : (
-                <p className="text-base">
-                  Prints the <Link href={`/labels/${p.recipeId}`} className="font-semibold text-primary underline underline-offset-2">live label</Link>, version {p.live?.versionNo}
-                  {p.live?.publishedByName ? ` (checked by ${p.live.publishedByName})` : ""}.
-                </p>
+                <div className="space-y-1">
+                  <p className="text-base">
+                    Prints the <Link href={`/labels/${p.recipeId}`} className="font-semibold text-primary underline underline-offset-2">live label</Link>, version {p.live?.versionNo}
+                    {p.live?.publishedByName ? ` (checked by ${p.live.publishedByName})` : ""}.
+                  </p>
+                  {test && p.liveMatchesRecipe === false && (
+                    <p className="text-sm text-amber-700 dark:text-amber-400">The recipe has changed since — this test prints the live version, not the change.</p>
+                  )}
+                </div>
               )}
 
               {p.canPrint && (
@@ -150,16 +174,20 @@ export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, o
                         aria-label="Number of labels"
                       />
                       <button type="button" onClick={() => setTo(count + 1)} className="w-14 h-14 rounded-xl border-2 border-border flex items-center justify-center hover:bg-secondary" aria-label="One more"><Plus className="w-6 h-6" /></button>
-                      {count !== initialPrintCount(netPacks) && (
-                        <button type="button" onClick={() => setTo(netPacks)} className="text-sm font-semibold text-primary underline">Back to {initialPrintCount(netPacks)}</button>
+                      {count !== startCount && (
+                        <button type="button" onClick={() => setTo(startCount)} className="text-sm font-semibold text-primary underline">Back to {startCount}</button>
                       )}
                     </div>
-                    <p className="text-sm text-muted-foreground">Starts at the {initialPrintCount(netPacks)} net 2-packs from the chiller (8-pack bags, wonkies and dog bins already taken off).</p>
+                    <p className="text-sm text-muted-foreground">
+                      {test
+                        ? "A test print starts at 1 label."
+                        : `Starts at the ${startCount} net 2-packs from the chiller (8-pack bags, wonkies and dog bins already taken off).`}
+                    </p>
                   </div>
 
                   <div className="grid grid-cols-2 gap-3 text-base">
                     <Fact label="Printed" value={day(p.dates.printDate)} />
-                    <Fact label="Made (production day)" value={day(p.dates.productionDate)} />
+                    <Fact label={test ? "Made (today, for the test)" : "Made (production day)"} value={day(p.dates.productionDate)} />
                     {p.dates.chilledUseBy && <Fact label="Chilled use by" value={formatLabelDate(p.dates.chilledUseBy)} />}
                     {p.dates.frozenUseBy && <Fact label="Frozen use by" value={formatLabelDate(p.dates.frozenUseBy)} />}
                     {p.dates.batchCode && <Fact label="Batch number" value={p.dates.batchCode} />}
@@ -174,7 +202,7 @@ export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, o
 
               {made && (
                 <div className="rounded-xl border-2 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/20 p-4 space-y-1">
-                  <p className="font-bold">{made.count} labels made — the PDF opened in a new tab.</p>
+                  <p className="font-bold">{made.count} {test ? "test " : ""}label{made.count === 1 ? "" : "s"} made — the PDF opened in a new tab.</p>
                   <p className="text-sm">Print it to the label printer at <b>Actual size / 100%</b> (no “fit to page”). <a href={made.url} target="_blank" rel="noreferrer" className="underline font-semibold">Open it again</a></p>
                 </div>
               )}
@@ -190,7 +218,7 @@ export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, o
             disabled={!p?.canPrint || count < 1 || busy}
             className={cn("h-12 px-6 rounded-xl bg-primary text-primary-foreground font-bold inline-flex items-center gap-2 disabled:opacity-40")}
           >
-            {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Printer className="w-5 h-5" />} Make {count} label{count === 1 ? "" : "s"}
+            {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Printer className="w-5 h-5" />} {test ? "Test print" : "Make"} {count} label{count === 1 ? "" : "s"}
           </button>
         </div>
       </div>
