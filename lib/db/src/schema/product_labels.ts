@@ -72,7 +72,8 @@ export const productLabelPrintsTable = pgTable("product_label_prints", {
   recipeId: integer("recipe_id").references(() => recipesTable.id, { onDelete: "set null" }),
   recipeName: text("recipe_name").notNull(),
   labelVersionId: integer("label_version_id").references(() => productLabelVersionsTable.id, { onDelete: "set null" }),
-  versionNo: integer("version_no").notNull(),
+  // Null for a test print of the current (never-published) proof (0167).
+  versionNo: integer("version_no"),
   snapshotHash: text("snapshot_hash").notNull(),
   count: integer("count").notNull(),
   printDate: date("print_date").notNull(),
@@ -83,6 +84,8 @@ export const productLabelPrintsTable = pgTable("product_label_prints", {
   planId: integer("plan_id"),
   planItemId: integer("plan_item_id"),
   format: text("format").notNull().default("pdf"),
+  // 'production' (wrapping station) or 'test' (label review page) — 0167.
+  kind: text("kind").notNull().default("production"),
   printedById: integer("printed_by_id").references(() => usersTable.id, { onDelete: "set null" }),
   printedByName: text("printed_by_name"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
