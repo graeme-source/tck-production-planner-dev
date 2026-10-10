@@ -20,6 +20,7 @@ import { normaliseTemplate } from "./template";
 export { LabelFontSet, FONT_FILES } from "./fonts";
 export { Bitmap } from "./raster";
 export { encodePng, pngDataUrl } from "./png";
+export { labelsPdf } from "./pdf";
 
 function drawRun(bm: Bitmap, fonts: LabelFontSet, run: PlacedRun): void {
   const shaped = fonts.shapeText(run.text, run.face, run.sizeDots, run.letterSpacingEm);
