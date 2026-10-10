@@ -62,7 +62,9 @@ export function NotificationBell() {
   function handleNavigate(n: AppNotification) {
     if (!n.read) markRead.mutate(n.id);
     setOpen(false);
-    if (n.andonIssueId) {
+    if (n.type === "test_request") {
+      navigate("/test-requests?tab=problems");
+    } else if (n.andonIssueId) {
       navigate(`/reports?tab=issues&issueId=${n.andonIssueId}`);
     } else if (n.improvementId) {
       navigate(`/improvements?open=${n.improvementId}`);

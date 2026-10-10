@@ -65,6 +65,8 @@ import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assistant";
 import { TodoSheet, TodoInterstitial, useMyOpenTodoCount } from "@/components/todo-lists";
 import { FixedNoticeInterstitial } from "@/components/fixed-notice-interstitial";
+import { TestRequestCard } from "@/components/test-request-card";
+import { ClipboardCheck } from "lucide-react";
 import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
 import { AlertOctagon, Banknote, BookOpen, BookUser, Bot, GraduationCap, ChevronLeft, ChevronRight, HeartPulse, ListTodo, ScanLine } from "lucide-react";
 import { StationPinnedContacts, StationContactsButton, StationContactsDialog } from "@/components/contacts/station-contacts";
@@ -125,7 +127,7 @@ export const bottomNavItems: NavItem[] = [
 
 // Analytics becomes a group for managers/admins so its analytics pages sit
 // under it. Team efficiency lives here only for now (Graeme, 2026-09-25).
-const ANALYTICS_PATHS = ["/reports", "/analytics/efficiency", "/analytics/defects", "/finance"];
+const ANALYTICS_PATHS = ["/reports", "/analytics/efficiency", "/analytics/defects", "/test-requests", "/finance"];
 export const analyticsSubItems: NavItem[] = [
   { name: "Analytics", href: "/reports", icon: BarChart2 },
   { name: "Team efficiency", href: "/analytics/efficiency", icon: Gauge },
@@ -133,6 +135,7 @@ export const analyticsSubItems: NavItem[] = [
   // defect or waste from the quick-actions panel; the page sits with the
   // other analytics.
   { name: "Defects & waste", href: "/analytics/defects", icon: AlertOctagon },
+  { name: "Test requests", href: "/test-requests", icon: ClipboardCheck },
   // Finance moved under Analytics (Graeme, 2026-10-07). Admins and
   // bookkeepers only — filtered where the group is drawn.
   { name: "Finance", href: "/finance", icon: Banknote },
@@ -998,6 +1001,7 @@ export function QuickActionsDock() {
           dismiss a message before the station saw it (Graeme, 2026-09-29).
           Everywhere else they're in the Messages panel (top bar). */}
       <FixedNoticeInterstitial />
+      <TestRequestCard />
     </>
   );
 }

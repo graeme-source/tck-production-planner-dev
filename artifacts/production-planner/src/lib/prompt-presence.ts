@@ -26,12 +26,13 @@ export function useReportPromptShowing(key: string, on: boolean): void {
   }, [key, on]);
 }
 
-export function useAnyPromptShowing(): boolean {
+/** `except`: a prompt that reports itself asking about everyone else. */
+export function useAnyPromptShowing(except?: string): boolean {
   useSyncExternalStore(
     cb => { listeners.add(cb); return () => listeners.delete(cb); },
     () => version,
   );
-  return showing.size > 0;
+  return [...showing].some(k => k !== except);
 }
 
 /**
