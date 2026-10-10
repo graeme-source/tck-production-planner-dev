@@ -17,6 +17,7 @@ import { checkLabel, proofLabel, type LabelProof } from "@workspace/product-labe
 import { loadBundledFonts } from "@workspace/product-labels/node";
 import { buildRecipeIngredientDeck } from "./recipe-ingredient-deck";
 import { londonDateString } from "./london-time";
+import { packBarcodeFor } from "./barcode-store";
 
 export const fonts = () => loadBundledFonts();
 
@@ -107,6 +108,8 @@ export type RecipeRow = typeof recipesTable.$inferSelect;
 
 export interface CurrentLabel {
   recipe: RecipeRow;
+  /** The pack listings hold different barcodes (none is printed). */
+  barcodeMixed: boolean;
   settings: RecipeLabelSettings;
   settingsRow: SettingsRow | undefined;
   template: LoadedTemplate;
@@ -122,7 +125,7 @@ export async function loadRecipe(recipeId: number): Promise<RecipeRow | undefine
 
 /** The label as it would be if published now. `templateOverride` renders a
  *  template that isn't saved yet (the settings page's live preview). */
-export async function buildCurrentLabel(recipe: RecipeRow, opts: { templateOverride?: LabelTemplate; templateCache?: Map<number | "default", LoadedTemplate> } = {}): Promise<CurrentLabel> {
+export async function buildCurrentLabel(recipe: RecipeRow, opts: { templateOverride?: LabelTemplate; templateCache?: Map<number | "default", LoadedTemplate>; packBarcodes?: Map<number, { barcode: string | null; mixed: boolean }> } = {}): Promise<CurrentLabel> {
   const settingsRow = await loadSettingsRow(recipe.id);
   const key = settingsRow?.templateId ?? "default";
   let template = opts.templateCache?.get(key);
@@ -132,7 +135,11 @@ export async function buildCurrentLabel(recipe: RecipeRow, opts: { templateOverr
   }
   if (opts.templateOverride) template = { ...template, template: opts.templateOverride };
   const deck = await buildRecipeIngredientDeck(recipe.id);
-  const settings = settingsFromRow(settingsRow);
+  // The barcode is NOT a label setting any more: it is the one the recipe's
+  // pack listings scan with (lib/barcode-store.ts), so the printed label and
+  // the packing scanner can never disagree. Mixed numbers = none printed.
+  const pack = opts.packBarcodes?.get(recipe.id) ?? (opts.packBarcodes ? { barcode: null, mixed: false } : await packBarcodeFor(recipe.id));
+  const settings = { ...settingsFromRow(settingsRow), barcode: pack.barcode };
   const snapshot = buildSnapshot({
     recipe: { name: recipe.name, packSize: recipe.packSize, shelfLifeDays: recipe.shelfLifeDays },
     deck: { deckText: deck.deckText, mayContainStatement: deck.mayContainStatement },
@@ -140,7 +147,7 @@ export async function buildCurrentLabel(recipe: RecipeRow, opts: { templateOverr
     templateId: template.id,
     template: template.template,
   });
-  return { recipe, settings, settingsRow, template, deck, snapshot, hash: snapshotHash(snapshot) };
+  return { recipe, barcodeMixed: pack.mixed, settings, settingsRow, template, deck, snapshot, hash: snapshotHash(snapshot) };
 }
 
 /** Proof dates: today (London) for both print and production day — a sample,

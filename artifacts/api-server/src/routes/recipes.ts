@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
-import { db, recipesTable, recipeIngredientsTable, recipeSubRecipesTable, recipeMeatMarinadesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, appSettingsTable, kanbanItemsTable, productionPlansTable, productionPlanItemsTable, productSpecificationsTable, companyProfileTable, skuBarcodesTable, usersTable } from "@workspace/db";
+import { db, recipesTable, recipeIngredientsTable, recipeSubRecipesTable, recipeMeatMarinadesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, appSettingsTable, kanbanItemsTable, productionPlansTable, productionPlanItemsTable, productSpecificationsTable, companyProfileTable, usersTable } from "@workspace/db";
 import { eq, inArray, ne, and, gte } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
@@ -12,6 +12,7 @@ import { londonDateString } from "../lib/london-time";
 import { toGrams } from "@workspace/units";
 import { buildRecipeIngredientDeck } from "../lib/recipe-ingredient-deck";
 import { linkVariantToRecipe } from "../lib/recipe-shopify-mapping";
+import { packBarcodeFor } from "../lib/barcode-store";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { parseOvenOverride } from "../lib/recipe-oven-override";
 import { decideCreateStage, decideMenuTick } from "../lib/recipe-archive-rules";
@@ -1435,24 +1436,11 @@ router.get("/:id/spec-sheet.pdf", requireAdmin, async (req, res) => {
     const [specRow] = await db.select().from(productSpecificationsTable).where(eq(productSpecificationsTable.recipeId, recipeId));
     const [company] = await db.select().from(companyProfileTable).where(eq(companyProfileTable.id, 1));
 
-    // Barcode: prefer the recipe's mapped Shopify variants — that link is by
-    // id, so renaming the recipe in the app can't lose the barcode. Fall back
-    // to the old best-effort product-title match for unmapped recipes.
-    const mappedBarcodeRes = await db.execute<{ barcode: string }>(sql`
-      SELECT sb.barcode
-      FROM recipe_shopify_mappings m
-      JOIN sku_barcodes sb ON sb.variant_id = m.shopify_variant_id
-      WHERE m.recipe_id = ${recipeId} AND COALESCE(sb.barcode, '') <> ''
-      LIMIT 1
-    `);
-    let [barcodeRow] = mappedBarcodeRes.rows as Array<{ barcode: string | null }>;
-    if (!barcodeRow) {
-      [barcodeRow] = await db
-        .select({ barcode: skuBarcodesTable.barcode })
-        .from(skuBarcodesTable)
-        .where(sql`lower(${skuBarcodesTable.productTitle}) = lower(${recipe.name.trim()})`)
-        .limit(1);
-    }
+    // Barcode: the one the recipe's pack listings scan with — the single
+    // source (lib/barcode-store.ts), keyed by variant id, so renaming the
+    // recipe can't lose it and the spec sheet matches the label and scanner.
+    const pack = await packBarcodeFor(recipeId);
+    const barcodeRow = pack.barcode ? { barcode: pack.barcode } : undefined;
 
     // Cook CCPs: any ingredient used by this recipe (directly, via a
     // sub-recipe, or as a marinaded raw meat) that carries a minimum cooking
