@@ -68,8 +68,16 @@ export const EAN13_NOMINAL_MODULE_MM = 0.33;
 export const EAN13_NOMINAL_BAR_HEIGHT_MM = 22.85;
 export const EAN13_MIN_MODULE_MM = 0.264;
 export const EAN13_MAX_MODULE_MM = 0.66;
-/** 80% of nominal bar height — the shortest bars the settings allow. */
-export const EAN13_MIN_BAR_HEIGHT_MM = 18.3;
+/** 80% of nominal bar height — GS1's recommended minimum. Shorter bars are
+ *  allowed (handheld scanners read them) but the settings warn. */
+export const EAN13_GS1_MIN_BAR_HEIGHT_MM = 18.3;
+/** The shortest bars the settings allow at all (Graeme, 2026-10-12). */
+export const EAN13_MIN_BAR_HEIGHT_MM = 12;
+
+/** Shorter than GS1's recommended bar height? (Shown as a warning.) */
+export function barsShorterThanGs1(heightMm: number): boolean {
+  return heightMm < EAN13_GS1_MIN_BAR_HEIGHT_MM;
+}
 
 export type ModuleChoice =
   | { ok: true; moduleDots: number; moduleMm: number; magnificationPct: number; widthDots: number }

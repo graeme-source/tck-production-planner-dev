@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { barcodeModuleDots, checkEan13, ean13CheckDigit, encodeEan13 } from "./ean13";
+import { barcodeModuleDots, barsShorterThanGs1, checkEan13, ean13CheckDigit, encodeEan13 } from "./ean13";
+import { DEFAULT_TEMPLATE, normaliseTemplate } from "./template";
 
 describe("EAN-13 check digit", () => {
   it("accepts Graeme's Chicken & Chorizo barcode 5065018206009", () => {
@@ -40,6 +41,17 @@ describe("EAN-13 encoding", () => {
   });
   it("refuses to encode an invalid number", () => {
     expect(() => encodeEan13("5065018206008")).toThrow();
+  });
+});
+
+describe("bar height limits", () => {
+  it("12 mm is the floor; under GS1's 18.3 mm the settings warn", () => {
+    expect(normaliseTemplate({ page: { barcodeHeightMm: 8 } }).page.barcodeHeightMm).toBe(12);
+    expect(normaliseTemplate({ page: { barcodeHeightMm: 15 } }).page.barcodeHeightMm).toBe(15);
+    expect(barsShorterThanGs1(15)).toBe(true);
+    expect(barsShorterThanGs1(18.3)).toBe(false);
+    expect(DEFAULT_TEMPLATE.page.barcodeHeightMm).toBe(15);
+    expect(DEFAULT_TEMPLATE.page.barcodeSizePct).toBe(151);
   });
 });
 

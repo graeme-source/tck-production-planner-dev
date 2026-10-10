@@ -14,7 +14,7 @@ import { Link } from "wouter";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Info, Loader2, Type, Ruler, Flame, CalendarClock, PenLine, ShieldCheck } from "lucide-react";
 import {
-  BODY_WEIGHTS, EAN13_MIN_BAR_HEIGHT_MM, FIELD_KEYS, MAX_STEPS, FIELD_LABEL, PERIOD_UNITS, TEMPLATE_PLACEHOLDERS, WIDTH_LABEL, WIDTH_ORDER,
+  barsShorterThanGs1, BODY_WEIGHTS, EAN13_GS1_MIN_BAR_HEIGHT_MM, EAN13_MIN_BAR_HEIGHT_MM, FIELD_KEYS, MAX_STEPS, FIELD_LABEL, PERIOD_UNITS, TEMPLATE_PLACEHOLDERS, WIDTH_LABEL, WIDTH_ORDER,
   type CookingValues, type FieldKey, type FieldStyle, type LabelTemplate, type PeriodUnit, type TemplateText, type WidthVariant,
 } from "@workspace/product-labels";
 import { PageHeader } from "@/components/page-header";
@@ -177,9 +177,14 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
               <Num label="Size" unit="% of standard" value={draft.page.barcodeSizePct} step={1} min={80} max={200} onChange={v => v != null && setPage("barcodeSizePct", v)} />
               <Num label="Bar height" unit="mm" value={draft.page.barcodeHeightMm} step={0.5} min={EAN13_MIN_BAR_HEIGHT_MM} max={60} onChange={v => v != null && setPage("barcodeHeightMm", v)} />
             </div>
+            {barsShorterThanGs1(draft.page.barcodeHeightMm) && (
+              <p className="rounded-xl border-2 border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-3 text-sm font-semibold">
+                Shorter than GS1's recommended height — fine for handheld scanners; check it scans before going live.
+              </p>
+            )}
             <p className="text-sm text-muted-foreground">
               Standard size is 100% (bars 0.33 mm, 22.85 mm tall). The bars are snapped to whole printer dots so they scan, so the printed size is the nearest dot size — the live proof shows it.
-              Never smaller than 80% ({EAN13_MIN_BAR_HEIGHT_MM} mm bars). Clear space is kept either side (11 bars' width on the left, 7 on the right) and the digits sit underneath.
+              Width never under 80%; bars never under {EAN13_MIN_BAR_HEIGHT_MM} mm (GS1 recommends at least {EAN13_GS1_MIN_BAR_HEIGHT_MM} mm). Clear space is kept either side (11 bars' width on the left, 7 on the right) and the digits sit underneath.
             </p>
           </Card>
 

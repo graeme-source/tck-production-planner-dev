@@ -77,8 +77,9 @@ export interface PageSettings {
   /** Space between stacked fields inside a column. */
   fieldGapMm: number;
   stepCircleMm: number;
-  /** Height of the barcode BARS (digits sit underneath). At least 80% of
-   *  the EAN-13 nominal 22.85 mm — EAN13_MIN_BAR_HEIGHT_MM. */
+  /** Height of the barcode BARS (digits sit underneath). At least
+   *  EAN13_MIN_BAR_HEIGHT_MM (12 mm); under GS1's recommended 18.3 mm the
+   *  settings warn. */
   barcodeHeightMm: number;
   /** Barcode width as a % of EAN-13 nominal size (0.33 mm bars), 80–200.
    *  The bars are then snapped to whole printer dots, so the printed size is
@@ -183,8 +184,10 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     // Graeme 2026-10-10: 21 mm looked too tall, 11 mm too short — "wider
     // but shorter, somewhere in the middle". 151% = whole 4-dot modules at
     // 203 dpi (bars 47.5 mm wide, ~56.5 mm with quiet zones, like his current
-    // ~47 mm barcode) with bars at 18.5 mm, just above the 80% minimum.
-    barcodeHeightMm: 18.5, barcodeSizePct: 151,
+    // ~47 mm barcode). Bars 15 mm (2026-10-12: 18.5 was still too tall) —
+    // under GS1's recommended 18.3 mm, which handheld scanners read fine;
+    // the settings say so.
+    barcodeHeightMm: 15, barcodeSizePct: 151,
     smallPack: false,
   },
   fields: {
