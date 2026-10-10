@@ -1,4 +1,4 @@
-import { pgTable, serial, integer, text, timestamp, boolean, jsonb, unique, index } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, text, timestamp, boolean, jsonb, unique, index, date } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 import { recipesTable } from "./recipes";
 
@@ -65,3 +65,27 @@ export const productLabelVersionsTable = pgTable("product_label_versions", {
 export type ProductLabelTemplate = typeof productLabelTemplatesTable.$inferSelect;
 export type ProductLabelSettingsRow = typeof productLabelSettingsTable.$inferSelect;
 export type ProductLabelVersion = typeof productLabelVersionsTable.$inferSelect;
+
+// Back-label print runs (migration 0166) — traceability of every run.
+export const productLabelPrintsTable = pgTable("product_label_prints", {
+  id: serial("id").primaryKey(),
+  recipeId: integer("recipe_id").references(() => recipesTable.id, { onDelete: "set null" }),
+  recipeName: text("recipe_name").notNull(),
+  labelVersionId: integer("label_version_id").references(() => productLabelVersionsTable.id, { onDelete: "set null" }),
+  versionNo: integer("version_no").notNull(),
+  snapshotHash: text("snapshot_hash").notNull(),
+  count: integer("count").notNull(),
+  printDate: date("print_date").notNull(),
+  productionDate: date("production_date").notNull(),
+  batchCode: text("batch_code").notNull(),
+  chilledUseBy: date("chilled_use_by"),
+  frozenUseBy: date("frozen_use_by"),
+  planId: integer("plan_id"),
+  planItemId: integer("plan_item_id"),
+  format: text("format").notNull().default("pdf"),
+  printedById: integer("printed_by_id").references(() => usersTable.id, { onDelete: "set null" }),
+  printedByName: text("printed_by_name"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type ProductLabelPrint = typeof productLabelPrintsTable.$inferSelect;
