@@ -406,8 +406,6 @@ export default function Orders() {
   // ingredient assigned to that supplier so operators can add one-off
   // manual lines without waiting for an auto-calc.
   const [addItemDialog, setAddItemDialog] = useState<{ supplierId: number; supplierName: string } | null>(null);
-  const [addItemSearch, setAddItemSearch] = useState("");
-  const debouncedAddItemSearch = useDebouncedValue(addItemSearch);
 
   // Operator-dismissed supplier cards for the current plan. Persisted in
   // sessionStorage so a refresh doesn't re-surface them; cleared when the
@@ -1165,9 +1163,9 @@ export default function Orders() {
     retry: false,
   });
 
-  const filteredAddItemIngredients = debouncedAddItemSearch.trim()
-    ? addItemIngredients.filter(i => i.name.toLowerCase().includes(debouncedAddItemSearch.toLowerCase()))
-    : addItemIngredients;
+  // No search box in an order (Graeme, 2026-10-10: "there are never enough
+  // items to search them") — the whole list shows.
+  const filteredAddItemIngredients = addItemIngredients;
 
   // Miscellaneous one-off line — operator types a description + qty instead
   // of picking a real ingredient. Used for samples, packaging trials, etc.
@@ -1217,7 +1215,7 @@ export default function Orders() {
     setExpandedSuppliers(prev => new Set([...prev, supplierId]));
     setMiscForm({ description: "", quantity: "1", unit: "each" });
     setAddItemDialog(null);
-    setAddItemSearch("");
+   
   };
 
   const handleAddManualItem = (ingredient: SupplierIngredient) => {
@@ -1267,7 +1265,7 @@ export default function Orders() {
     });
     setExpandedSuppliers(prev => new Set([...prev, supplierId]));
     setAddItemDialog(null);
-    setAddItemSearch("");
+   
   };
 
   const placeMutation = useMutation({
@@ -2108,14 +2106,17 @@ export default function Orders() {
                     </thead>
                     <tbody>
                       {/* Items you'd find with the same search on the
-                          supplier's website sit together under "Search: onion"
-                          (Graeme, 2026-10-01). Pulled kanbans / manual / misc
-                          adds keep their added-at-the-bottom order. */}
+                          supplier's website sit next to each other — red,
+                          white and spring onions in a row (Graeme,
+                          2026-10-01). No "Search:" heading or icon and no
+                          search box in the orders (Graeme, 2026-10-10: just
+                          the grouping). Pulled kanbans / manual / misc adds
+                          keep their added-at-the-bottom order. */}
                       {orderForSupplierSearch(
                         lines,
                         l => l.ingredientName || l.description || "",
                         l => !!(l.isKanban || l.isManual || l.isMisc),
-                      ).map(({ item: line, searchWord }) => {
+                      ).map(({ item: line }) => {
                         // Find the real index in the full allLines array so
                         // toggleLineCheck/updatePacks/updateStock continue to
                         // mutate the correct row when the view is filtered.
@@ -2123,16 +2124,6 @@ export default function Orders() {
                         const isNonOrderable = !!line.belowRequirement && !line.isKanban && !line.isManual;
                         return (
                         <Fragment key={line.ingredientId}>
-                        {searchWord && (
-                          <tr className="bg-primary/5">
-                            <td colSpan={lines.some(l => l.costPerPack > 0) ? 11 : 10} className="px-3 pt-2 pb-1">
-                              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                                <Search className="w-3.5 h-3.5" />
-                                Search: <span className="font-semibold text-foreground">{searchWord}</span>
-                              </span>
-                            </td>
-                          </tr>
-                        )}
                         <DraggableLineRow
                           dragId={`line-${so.supplier.id}-${line.ingredientId}`}
                           dragDisabled={isNonOrderable}
@@ -2335,7 +2326,7 @@ export default function Orders() {
                         <td colSpan={lines.some(l => l.costPerPack > 0) ? 11 : 10} className="p-2">
                           <button
                             type="button"
-                            onClick={() => { setAddItemDialog({ supplierId: so.supplier.id, supplierName: so.supplier.name }); setAddItemSearch(""); }}
+                            onClick={() => { setAddItemDialog({ supplierId: so.supplier.id, supplierName: so.supplier.name }); }}
                             className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/60 border border-dashed border-border hover:border-primary/40 transition-colors"
                           >
                             <Plus className="w-4 h-4" />
@@ -2725,7 +2716,7 @@ export default function Orders() {
             <div className="flex-1 overflow-y-auto space-y-1 -mx-1 px-1 min-h-0">
               {filteredKanbanIngredients.length === 0 && (
                 <p className="text-center py-8 text-sm text-muted-foreground">
-                  {kanbanIngredients.length === 0 ? "No kanban-enabled ingredients found." : "No ingredients match your search."}
+                  {kanbanIngredients.length === 0 ? "No kanban-enabled ingredients found." : "No ingredients to add."}
                 </p>
               )}
               {/* Pulled items float to the top so the operator can scan what
@@ -2854,7 +2845,7 @@ export default function Orders() {
       {/* Issue 4: per-supplier Add Item picker */}
       <Dialog
         open={!!addItemDialog}
-        onOpenChange={open => { if (!open) { setAddItemDialog(null); setAddItemSearch(""); setMiscForm({ description: "", quantity: "1", unit: "each" }); } }}
+        onOpenChange={open => { if (!open) { setAddItemDialog(null); setMiscForm({ description: "", quantity: "1", unit: "each" }); } }}
       >
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -2864,22 +2855,6 @@ export default function Orders() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <input
-                type="text"
-                value={addItemSearch}
-                onChange={e => setAddItemSearch(e.target.value)}
-                placeholder="Search ingredient…"
-                autoFocus
-                className="w-full pl-9 pr-4 py-2.5 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-              />
-              {addItemSearch && (
-                <button onClick={() => setAddItemSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                  <X className="w-4 h-4" />
-                </button>
-              )}
-            </div>
 
             {/* Miscellaneous one-off item — collapsed by default so the search
                 stays the primary flow; expands on click for the rare case
@@ -2954,7 +2929,7 @@ export default function Orders() {
               )}
               {!addItemLoading && !addItemError && filteredAddItemIngredients.length === 0 && (
                 <p className="text-center py-8 text-sm text-muted-foreground">
-                  {addItemIngredients.length === 0 ? "This supplier has no ingredients assigned." : "No ingredients match your search."}
+                  {addItemIngredients.length === 0 ? "This supplier has no ingredients assigned." : "No ingredients to add."}
                 </p>
               )}
               {!addItemLoading && filteredAddItemIngredients.map(ing => {

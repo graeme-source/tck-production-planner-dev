@@ -5,7 +5,8 @@
  * Graeme, 2026-10-01: on AB Fruits we type "onions" into their search bar,
  * but "Diced white onions" sat near the top of our list and "Red Onions"
  * near the bottom, so one got missed or needed a second search. Items that
- * share a significant word now sit together under "Search: onion".
+ * share a significant word now sit next to each other (no heading — Graeme,
+ * 2026-10-10: just the grouping, no search).
  *
  * No ingredient names are hard-coded: the grouping comes purely from the
  * words in the names on the one card. Weak words (colours, prep styles,
