@@ -4,6 +4,7 @@ import { eq, sql, inArray, isNull, isNotNull } from "drizzle-orm";
 import { CreateIngredientBody, UpdateIngredientBody } from "@workspace/api-zod";
 import { detectAllergens, ALLERGEN_DISPLAY } from "@workspace/allergens";
 import { validate } from "../middleware/validate";
+import { reconcileRecipesUsing } from "../lib/quid-store";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { generateQrCode } from "../lib/qr-code";
 import * as z from "zod";
@@ -543,6 +544,11 @@ router.put("/:id", validate(UpdateIngredientBodyWithSecondaryPrice), async (req,
   }).where(eq(ingredientsTable.id, id)).returning();
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.json(mapRow(row));
+
+  // Automatic QUID: a renamed ingredient (or new declaration / category)
+  // may now be — or no longer be — what a recipe's name names.
+  reconcileRecipesUsing({ ingredientId: id }, "Automatic QUID").catch(err =>
+    console.error(`Automatic QUID recheck after ingredient ${id} update failed:`, err));
 });
 
 // Set just a raw meat's cook and/or process minutes — the "Use suggested"

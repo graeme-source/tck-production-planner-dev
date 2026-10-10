@@ -3,6 +3,7 @@ import { db, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTabl
 import { eq, and } from "drizzle-orm";
 import { CreateSubRecipeBody, UpdateSubRecipeBody } from "@workspace/api-zod";
 import { validate, rawBody } from "../middleware/validate";
+import { reconcileRecipesUsing } from "../lib/quid-store";
 import { computeSubRecipeCosts, getCyclicIds, wouldCreateCycle } from "../lib/sub-recipe-costs";
 import { generateQrCode } from "../lib/qr-code";
 import { kgOrNull } from "@workspace/units";
@@ -287,6 +288,11 @@ router.put("/:id", validate(UpdateSubRecipeBody), async (req, res) => {
     yieldPercent,
     createdAt: updated.createdAt.toISOString(),
   });
+
+  // Automatic QUID: the recipes using this sub-recipe recheck what their
+  // names name (its name or what's inside may have changed).
+  reconcileRecipesUsing({ subRecipeId: id }, "Automatic QUID").catch(err =>
+    console.error(`Automatic QUID recheck after sub-recipe ${id} update failed:`, err));
 });
 
 router.delete("/:id", async (req, res) => {

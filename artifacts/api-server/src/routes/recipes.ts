@@ -4,7 +4,9 @@ import { eq, inArray, ne, and, gte } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { CreateRecipeBody, UpdateRecipeBody } from "@workspace/api-zod";
-import { validate } from "../middleware/validate";
+import { validate, rawBody } from "../middleware/validate";
+import { reconcileRecipeQuid, snapshotLineQuid } from "../lib/quid-store";
+import { carryQuid, sentQuid } from "../lib/quid-plan";
 import { computeSubRecipeCosts } from "../lib/sub-recipe-costs";
 import { generateQrCode } from "../lib/qr-code";
 import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
@@ -258,6 +260,8 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
   const oven = parseOvenOverride(req.body);
   if (!oven.ok) { res.status(400).json({ error: oven.error }); return; }
 
+  const rawLines = rawBody<{ ingredients?: unknown[]; subRecipes?: unknown[] }>(req);
+
   // Start as a draft (migration 0142)? Omitted = on the menu, as before.
   const extras = lifecycleExtras(req.body);
   if (!extras) { res.status(400).json({ error: "isDraft must be true or false" }); return; }
@@ -304,32 +308,40 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
     const inserted = await tx.insert(recipesTable).values(insertValues).returning();
     const created = inserted[0];
 
+    // QUID: a tick sent on a new line is a person's decision; the rest is
+    // decided by the recipe's name (reconcileRecipeQuid below).
     if (ingredients?.length) {
       await tx.insert(recipeIngredientsTable).values(
-        ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
+        ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }, idx: number) => {
+          const q = carryQuid(sentQuid(rawLines.ingredients?.[idx]), undefined);
+          return {
           recipeId: created.id, ingredientId: i.ingredientId, quantity: String(i.quantity),
           marinadeForIngredientId: i.marinadeForIngredientId ?? null,
           marinadeAddAtCooking: i.marinadeAddAtCooking ?? false,
           includeInFillingMix: i.includeInFillingMix ?? false,
-          quid: i.quid ?? false,
+          quid: q.quid,
+          quidSource: q.source,
           isTopping: i.isTopping ?? false,
           showInPrep: i.showInPrep ?? false,
           mixingOverage: String(i.mixingOverage ?? 0),
-        }))
+        }; })
       );
     }
     if (subRecipes?.length) {
       await tx.insert(recipeSubRecipesTable).values(
-        subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
+        subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }, idx: number) => {
+          const q = carryQuid(sentQuid(rawLines.subRecipes?.[idx]), undefined);
+          return {
           recipeId: created.id, subRecipeId: s.subRecipeId, quantity: String(s.quantity),
           marinadeForIngredientId: s.marinadeForIngredientId ?? null,
           marinadeAddAtCooking: s.marinadeAddAtCooking ?? false,
           includeInFillingMix: s.includeInFillingMix ?? false,
-          quid: s.quid ?? false,
+          quid: q.quid,
+          quidSource: q.source,
           isTopping: s.isTopping ?? false,
           showInPrep: s.showInPrep ?? false,
           mixingOverage: String(s.mixingOverage ?? 0),
-        }))
+        }; })
       );
     }
     if (marinades?.length) {
@@ -343,6 +355,9 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
         }))
       );
     }
+
+    // Automatic QUID: tick what the name names (lib/quid-store.ts).
+    await reconcileRecipeQuid(tx, created.id, { apply: true, actorName: "Automatic QUID" });
 
     return inserted;
   });
@@ -574,6 +589,7 @@ router.get("/:id", async (req, res) => {
 router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
   const id = Number(req.params.id);
   const { name, description, servings, servingUnit, category, notes, packSize, rrp, packagingCost, labourCost, portionsPerBatch, targetBuildSeconds, shelfLifeDays, tinSize, maxBatchesPerTin, sopUrl, fillWeightGrams, baseType, baseWeightGrams, isCoreMenu, isCurrentSpecial, color, cookingLossPercent, builderFillingDeductionGrams, dietaryCategory, tags, ingredients, subRecipes, marinades } = req.body as Omit<z.infer<typeof UpdateRecipeBody>, "marinades"> & RecipeBodyExtras;
+  const rawLines = rawBody<{ ingredients?: unknown[]; subRecipes?: unknown[] }>(req);
 
   if (marinades?.length) {
     const recipeIngIds = (ingredients ?? []).map(i => i.ingredientId);
@@ -656,6 +672,10 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
     }).from(recipeSubRecipesTable).where(eq(recipeSubRecipesTable.recipeId, id));
     const subOrderMap = new Map(existingSubOrders.map(r => [r.subRecipeId, r.assemblyOrder]));
 
+    // QUID ticks (and who set them) survive the delete-and-re-insert below;
+    // a client that sends a different tick is a person deciding.
+    const prevQuid = await snapshotLineQuid(tx, id);
+
     // Delete and re-insert ingredients/sub-recipes inside the transaction
     // so a failed insert cannot leave the recipe with no ingredients
     await tx.delete(recipeIngredientsTable).where(eq(recipeIngredientsTable.recipeId, id));
@@ -667,32 +687,38 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
 
     if (ingredients?.length) {
       await tx.insert(recipeIngredientsTable).values(
-        ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
+        ingredients.map((i: { ingredientId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }, idx: number) => {
+          const q = carryQuid(sentQuid(rawLines.ingredients?.[idx]), prevQuid.ing.get(i.ingredientId));
+          return {
           recipeId: id, ingredientId: i.ingredientId, quantity: String(i.quantity),
           marinadeForIngredientId: i.marinadeForIngredientId ?? null,
         marinadeAddAtCooking: i.marinadeAddAtCooking ?? false,
           includeInFillingMix: i.includeInFillingMix ?? false,
-          quid: i.quid ?? false,
+          quid: q.quid,
+          quidSource: q.source,
           isTopping: i.isTopping ?? false,
           showInPrep: i.showInPrep ?? false,
           mixingOverage: String(i.mixingOverage ?? 0),
           assemblyOrder: ingOrderMap.get(i.ingredientId) ?? null,
-        }))
+        }; })
       );
     }
     if (subRecipes?.length) {
       await tx.insert(recipeSubRecipesTable).values(
-        subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }) => ({
+        subRecipes.map((s: { subRecipeId: number; quantity: number; marinadeForIngredientId?: number | null; marinadeAddAtCooking?: boolean; includeInFillingMix?: boolean; quid?: boolean; isTopping?: boolean; showInPrep?: boolean; mixingOverage?: number }, idx: number) => {
+          const q = carryQuid(sentQuid(rawLines.subRecipes?.[idx]), prevQuid.sub.get(s.subRecipeId));
+          return {
           recipeId: id, subRecipeId: s.subRecipeId, quantity: String(s.quantity),
           marinadeForIngredientId: s.marinadeForIngredientId ?? null,
         marinadeAddAtCooking: s.marinadeAddAtCooking ?? false,
           includeInFillingMix: s.includeInFillingMix ?? false,
-          quid: s.quid ?? false,
+          quid: q.quid,
+          quidSource: q.source,
           isTopping: s.isTopping ?? false,
           showInPrep: s.showInPrep ?? false,
           mixingOverage: String(s.mixingOverage ?? 0),
           assemblyOrder: subOrderMap.get(s.subRecipeId) ?? null,
-        }))
+        }; })
       );
     }
     if (marinades?.length) {
@@ -706,6 +732,10 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
         }))
       );
     }
+
+    // Automatic QUID: renamed or lines changed → recheck what the name
+    // names; a person's tick or untick is never overwritten.
+    await reconcileRecipeQuid(tx, id, { apply: true, actorName: "Automatic QUID" });
 
     return [row];
   });

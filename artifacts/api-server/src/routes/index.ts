@@ -11,6 +11,7 @@ import userToursRouter from "./user-tours";
 import testRequestsRouter from "./test-requests";
 import recipesRouter from "./recipes";
 import recipeArchiveRouter from "./recipe-archive";
+import recipeQuidRouter from "./recipe-quid";
 import productionPlansRouter from "./production-plans";
 import buildingTablesRouter from "./building-tables";
 import buildingTargetFinishRouter from "./building-target-finish";
@@ -208,6 +209,8 @@ router.use("/upf", upfRouter);
 router.use("/sub-recipes", subRecipePrepTimeRouter);
 router.use("/sub-recipes", subRecipesRouter);
 router.use("/recipes", recipeArchiveRouter);
+// Automatic QUID: /recipes/:id/quid, /quid-terms, /quid-backfill.
+router.use(recipeQuidRouter);
 router.use("/recipes", recipesRouter);
 router.use("/recipe-collections", recipeCollectionsRouter);
 router.use("/queued-production", queuedProductionRouter);
