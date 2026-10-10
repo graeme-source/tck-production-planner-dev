@@ -19,6 +19,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { RecipeLabelLink } from "@/components/product-labels/recipe-label-link";
+import { RecipeBarcodes } from "@/components/barcodes/recipe-barcodes";
 import { activeRecipes, archivedRecipes, archivedLabel, draftRecipes, draftMenuTickNotice, isDraftRecipe, recipeStageCounts } from "@/lib/recipe-archive";
 import { ArchiveRecipeDialog, ArchivedRecipesPanel, DraftRecipesPanel, MoveToDraftDialog, RecipeArchiveFooter, RecipeDraftBadge } from "@/components/recipe-archive";
 
@@ -1527,6 +1528,9 @@ function EditRecipeDialog({
                 )}
                 {shopifyError && <p className="text-xs text-destructive mt-1">{shopifyError}</p>}
               </div>
+
+              {/* Barcodes per linked listing — components/barcodes. */}
+              <RecipeBarcodes recipeId={id} active={open} canEdit={canEditShopify} />
 
               {/* Live ingredient deck — reflects the currently SAVED recipe.
                   Unsaved ingredient edits show after you Save and reopen. */}
