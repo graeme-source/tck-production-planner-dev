@@ -53,3 +53,4 @@ export * from "./apc_postcode_overrides";
 export * from "./apc_booking_issues";
 export * from "./staff_emergency_contacts";
 export * from "./user_tours";
+export * from "./product_labels";
