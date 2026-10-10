@@ -1,6 +1,8 @@
 /**
- * The one-off "the orange tab now swipes out" walkthrough (Graeme,
- * 2026-10-09; Objective H). Pure; tested in swipe-tour.test.ts.
+ * The one-off "swipe left from the right of the screen" walkthrough
+ * (Graeme, 2026-10-09; reworked 2026-10-10 when the panel started opening
+ * from anywhere on the right half; Objective H). Pure; tested in
+ * swipe-tour.test.ts.
  *
  *   intro  → "Try it now"           → try
  *   try    → the panel is pulled out → swipe_away
@@ -14,7 +16,10 @@
  */
 import { promptHiddenOnPath } from "./emergency-contacts";
 
-export const SWIPE_TOUR_KEY = "swipe_panel";
+/** Bumped from "swipe_panel" on 2026-10-10: the gesture changed, so everyone
+ *  (including those who finished the old walkthrough) sees the new one once.
+ *  Server keys must match /^[a-z0-9_]{1,40}$/. */
+export const SWIPE_TOUR_KEY = "swipe_panel_v2";
 
 export type TourStep = "intro" | "try" | "swipe_away" | "done";
 
@@ -22,6 +27,10 @@ export type TourEvent = "start" | "panel_opened" | "panel_closed";
 
 export function nextTourStep(step: TourStep, event: TourEvent): TourStep {
   if (step === "intro" && event === "start") return "try";
+  // Swiped it open straight from the intro card (the swipe works anywhere
+  // on the right now): skip ahead — leaving the intro card over the open
+  // panel hid the buttons.
+  if (step === "intro" && event === "panel_opened") return "swipe_away";
   if (step === "try" && event === "panel_opened") return "swipe_away";
   // If they shut it some other way mid-"try" nothing changes; from
   // "swipe_away", any close completes it — the X or a tap outside still

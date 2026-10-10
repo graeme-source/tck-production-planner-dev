@@ -7,6 +7,7 @@ import { PullKanbanModal } from "@/components/pull-kanban-modal";
 import { RecordDefectModal, REPORT_DEFECT_LABEL } from "@/components/record-defect-modal";
 import { SwipePanel } from "@/components/swipe-panel";
 import { SwipePanelTourCard, useSwipePanelTour } from "@/components/swipe-panel-tour";
+import { useAnyPromptShowing } from "@/lib/prompt-presence";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { useIsRtwManager } from "@/hooks/use-rtw-manager";
@@ -66,7 +67,7 @@ import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assista
 import { TodoSheet, TodoInterstitial, useMyOpenTodoCount } from "@/components/todo-lists";
 import { FixedNoticeInterstitial } from "@/components/fixed-notice-interstitial";
 import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
-import { AlertOctagon, Banknote, BookOpen, BookUser, Bot, GraduationCap, ChevronLeft, ChevronRight, HeartPulse, ListTodo, ScanLine } from "lucide-react";
+import { AlertOctagon, Banknote, BookOpen, BookUser, Bot, GraduationCap, ChevronRight, HeartPulse, ListTodo, ScanLine } from "lucide-react";
 import { StationPinnedContacts, StationContactsButton, StationContactsDialog } from "@/components/contacts/station-contacts";
 import { PAGE_STATION_KEYS } from "@/components/contacts/contacts-api";
 
@@ -1002,10 +1003,12 @@ export function QuickActionsDock() {
   );
 }
 
-// The quick actions, in a panel that swipes out from the orange tab on the
-// right (Graeme, 2026-10-09 — it was a small stack of pills). Grab the tab
-// and drag it left; swipe it right, tap the X, tap the dimmed strip or press
-// Escape to put it away. A tap on the tab still opens it. ALWAYS starts
+// The quick actions, in a panel that swipes out from the right (Graeme,
+// 2026-10-09 — it was a small stack of pills; 2026-10-10 — swipe left from
+// anywhere on the right half, a slim dotted handle instead of the big
+// orange tab, and a LONG swipe right, buttons and all, to put it away).
+// The X, the dimmed strip and Escape also close it; a tap on the handle
+// opens it. ALWAYS starts
 // shut: a shared iPad must never greet the next person with it open
 // (Graeme, 2026-08-22). The swipe rules: lib/swipe-snap.ts.
 function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpenImprovement, onOpenIssue, onOpenKanban, onOpenDefect }: {
@@ -1021,6 +1024,11 @@ function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpen
   const openTodoCount = useMyOpenTodoCount();
   const tour = useSwipePanelTour(open);
   const onOpenChange = useCallback((next: boolean) => setOpen(next), []);
+  // Swiping it open from the right is off while the PIN lock or a
+  // must-answer prompt is up (other pop-ups are caught at the swipe itself).
+  const { pinLocked, peoplePinPrompt, peoplePinSetupPrompt } = useAuth();
+  const promptShowing = useAnyPromptShowing();
+  const swipeAllowed = !pinLocked && !peoplePinPrompt && !peoplePinSetupPrompt && !promptShowing;
   // Choosing an action puts the panel away, then opens the action.
   const run = (action: () => void) => () => { setOpen(false); action(); };
 
@@ -1043,19 +1051,10 @@ function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpen
         open={open}
         onOpenChange={onOpenChange}
         title="Quick actions"
-        tabLabel={`Quick actions — drag left (or tap) to open: My to-dos, Improvement, Report issue, ${REPORT_DEFECT_LABEL}, Pull kanban, Ask ${ASSISTANT_NAME}`}
+        tabLabel={`Quick actions — swipe left from the right of the screen (or tap here) to open: My to-dos, Improvement, Report issue, ${REPORT_DEFECT_LABEL}, Pull kanban, Ask ${ASSISTANT_NAME}`}
         highlightTab={tour.active && tour.step === "try"}
-        tab={
-          <>
-            <ChevronLeft className="w-5 h-5" />
-            <span className="w-1 h-8 rounded-full bg-white/70" />
-            {openTodoCount > 0 && (
-              <span className="absolute -top-2 -left-2 min-w-[20px] h-[20px] px-1 rounded-full bg-primary text-primary-foreground text-[11px] font-bold flex items-center justify-center tabular-nums shadow">
-                {openTodoCount}
-              </span>
-            )}
-          </>
-        }
+        badge={openTodoCount}
+        edgeSwipeEnabled={swipeAllowed}
       >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {actions.filter(a => !a.hidden).map(a => (

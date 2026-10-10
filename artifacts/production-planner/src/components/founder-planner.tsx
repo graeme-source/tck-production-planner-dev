@@ -1931,6 +1931,7 @@ function DayTimeline({ items, pillarById, recurringByBlockId, tasksByBlockId, sh
               <div className="flex items-start gap-1.5 px-1.5 py-1 h-full min-h-0">
                 {/* Drag handle */}
                 <button
+                  data-no-swipe=""
                   onPointerDown={e => startDrag(e, b, "move")}
                   className="flex-shrink-0 p-0.5 mt-0.5 text-muted-foreground/60 hover:text-foreground cursor-grab active:cursor-grabbing"
                   style={{ touchAction: "none" }}
@@ -2168,6 +2169,7 @@ function DayTimeline({ items, pillarById, recurringByBlockId, tasksByBlockId, sh
               {/* Resize handle */}
               {b.status === "planned" && (
                 <div
+                  data-no-swipe=""
                   onPointerDown={e => startDrag(e, b, "resize")}
                   className="absolute bottom-0 inset-x-0 h-2.5 cursor-ns-resize flex items-center justify-center group"
                   style={{ touchAction: "none" }}
