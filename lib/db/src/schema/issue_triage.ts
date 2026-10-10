@@ -28,6 +28,11 @@ export const issueTriageTable = pgTable("issue_triage", {
   noActionNeeded: boolean("no_action_needed").notNull().default(false),
   /** Snoozed off To review until this moment (migration 0122). */
   snoozedUntil: timestamp("snoozed_until", { withTimezone: true }),
+  /** "Dismiss — no action" (migration 0160): out of the queue silently, never
+   *  picked up by the reviewer again; restorable from "Dismissed". */
+  noActionAt: timestamp("no_action_at", { withTimezone: true }),
+  noActionBy: text("no_action_by"),
+  noActionByUserId: integer("no_action_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
   /** The day the fix/feature went live — the credited improvement's done date. */
   completedOn: date("completed_on"),
   /** The improvement credited to the reporter when this closed. */
