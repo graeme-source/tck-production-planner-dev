@@ -132,6 +132,7 @@ import issuePipelineRouter from "./issue-pipeline";
 import peopleAccessRouter from "./people-access";
 import personDocumentsRouter from "./person-documents";
 import productLabelsRouter from "./product-labels";
+import productLabelPrintRouter from "./product-label-print";
 import barcodesRouter from "./barcodes";
 import { runBackup } from "../lib/backup";
 
@@ -380,6 +381,8 @@ router.use("/people-access", peopleAccessRouter);
 // Product labels Stage 1 — template, per-recipe settings, live versions.
 // Reads for anyone signed in; writes manager/admin (guarded inside).
 router.use("/product-labels", productLabelsRouter);
+// Back-label printing (PDF from the live label) — founder feature, guarded inside.
+router.use("/product-label-print", productLabelPrintRouter);
 router.use("/fried-chicken", friedChickenRouter);
 router.use("/risk-assessments", riskAssessmentsRouter);
 router.use("/compliance-actions", complianceActionsRouter);
