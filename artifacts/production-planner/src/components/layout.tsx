@@ -107,6 +107,8 @@ export const productNavItems: NavItem[] = [
   { name: "Sub-Recipes", href: "/sub-recipes", icon: ClipboardList },
   { name: "Ingredients", href: "/inventory?tab=ingredients", icon: Carrot },
   { name: "Product Hub", href: "/product-hub", icon: Beaker },
+  // Pack labels — live versions + proofs (Stage 1 of replacing Label LIVE).
+  { name: "Labels", href: "/labels", icon: Tag },
   { name: "Surveys", href: "/surveys", icon: MessagesSquare },
 ];
 
@@ -136,7 +138,7 @@ export const analyticsSubItems: NavItem[] = [
   { name: "Finance", href: "/finance", icon: Banknote },
 ];
 
-const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory", "/product-hub", "/surveys"];
+const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory", "/product-hub", "/labels", "/surveys"];
 const DISPATCH_PATHS = ["/dispatches", "/locations", "/fulfilment", "/case-orders"];
 // Module-level so the top bar's page name can find these pages too.
 const DISPATCH_SUB_ITEMS = [
@@ -286,7 +288,7 @@ export function NavLinks({
   const fullPath = location + (search ? search : "");
   const unseenImprovements = useUnseenImprovementCount();
   const isRtwManager = useIsRtwManager();
-  const isOnProductPage = PRODUCT_PATHS.includes(location);
+  const isOnProductPage = PRODUCT_PATHS.includes(location) || location.startsWith("/labels/");
   const isOnDispatchPage = DISPATCH_PATHS.includes(location);
   const isOnInventoryPage = isInventoryRoute(location);
   const isOnAnalyticsPage = ANALYTICS_PATHS.includes(location);

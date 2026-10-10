@@ -27,6 +27,9 @@ import LabelPrinterPage from "@/pages/label-printer";
 import LabelStockCheck from "@/pages/label-stock-check";
 import SubRecipes from "@/pages/sub-recipes";
 import Recipes from "@/pages/recipes";
+import ProductLabelsPage from "@/pages/product-labels";
+import ProductLabelSettingsPage from "@/pages/product-label-settings";
+import ProductLabelRecipePage from "@/pages/product-label-recipe";
 import ProductionPlans from "@/pages/production-plans";
 import QueuedProductionPage from "@/pages/queued-production";
 import StationPage from "@/pages/station";
@@ -203,6 +206,10 @@ function Router() {
               <Route path="/ingredients">{() => <Redirect to="/inventory?tab=ingredients" />}</Route>
               <Route path="/sub-recipes" component={SubRecipes} />
               <Route path="/recipes" component={Recipes} />
+              {/* Product labels (Stage 1 — proofs, live versions; no printing yet) */}
+              <Route path="/labels" component={ProductLabelsPage} />
+              <Route path="/labels/settings" component={ProductLabelSettingsPage} />
+              <Route path="/labels/:id" component={ProductLabelRecipePage} />
               <Route path="/plans" component={ProductionPlans} />
               <Route path="/plans/queued" component={QueuedProductionPage} />
               <Route path="/improvements" component={Improvements} />
