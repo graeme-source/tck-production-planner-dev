@@ -339,6 +339,7 @@ function LivePreview({ template }: { template: LabelTemplate }) {
 
 function FieldCard({ field, style, legal, onChange }: { field: FieldKey; style: FieldStyle; legal: number; onChange: (p: Partial<FieldStyle>) => void }) {
   const belowLegal = style.minPt < legal;
+  const fixed = field === "headings";
   return (
     <div className="rounded-xl border-2 border-border p-3 space-y-3">
       <p className="font-bold text-base">{FIELD_LABEL[field]}</p>
@@ -355,15 +356,24 @@ function FieldCard({ field, style, legal, onChange }: { field: FieldKey; style: 
             {BODY_WEIGHTS.map(w => <option key={w} value={w}>{WEIGHT_LABEL[w]}</option>)}
           </select>
         </label>
-        <Num label="Smallest" unit="pt" value={style.minPt} step={0.25} min={legal} max={72}
-          onChange={v => v != null && onChange({ minPt: Math.max(v, legal), maxPt: Math.max(style.maxPt, Math.max(v, legal)) })} />
-        <Num label="Biggest" unit="pt" value={style.maxPt} step={0.25} min={style.minPt} max={72} onChange={v => v != null && onChange({ maxPt: Math.max(v, style.minPt) })} />
+        {fixed ? (
+          // Section headings print at one fixed size — never shrunk.
+          <Num label="Size (fixed)" unit="pt" value={style.maxPt} step={0.25} min={legal} max={72}
+            onChange={v => v != null && onChange({ minPt: Math.max(v, legal), maxPt: Math.max(v, legal) })} />
+        ) : (
+          <>
+            <Num label="Smallest" unit="pt" value={style.minPt} step={0.25} min={legal} max={72}
+              onChange={v => v != null && onChange({ minPt: Math.max(v, legal), maxPt: Math.max(style.maxPt, Math.max(v, legal)) })} />
+            <Num label="Biggest" unit="pt" value={style.maxPt} step={0.25} min={style.minPt} max={72} onChange={v => v != null && onChange({ maxPt: Math.max(v, style.minPt) })} />
+          </>
+        )}
         <Num label="Letter spacing" unit="em" value={style.letterSpacingEm} step={0.01} min={-0.05} max={0.2} onChange={v => v != null && onChange({ letterSpacingEm: v })} />
         <Num label="Line height" unit="×" value={style.lineHeight} step={0.02} min={0.8} max={2} onChange={v => v != null && onChange({ lineHeight: v })} />
       </div>
       <p className={cn("text-xs", belowLegal ? "text-destructive font-semibold" : "text-muted-foreground")}>Legal minimum for this block: {legal} pt.</p>
+      {fixed && <p className="text-sm text-muted-foreground">One style for “STORAGE INSTRUCTIONS:” and “THE INGREDIENTS:”, so they always match. They stay this size — only the text under them shrinks to fit.</p>}
       <div className="flex flex-wrap gap-2">
-        <Toggle on={style.allowNarrower} onChange={v => onChange({ allowNarrower: v })} label="Go narrower before smaller" />
+        {!fixed && <Toggle on={style.allowNarrower} onChange={v => onChange({ allowNarrower: v })} label="Go narrower before smaller" />}
         <Toggle on={style.bold} onChange={v => onChange({ bold: v })} label="All bold" />
         <Toggle on={style.caps} onChange={v => onChange({ caps: v })} label="CAPITALS" />
         <Toggle on={style.align === "center"} onChange={v => onChange({ align: v ? "center" : "left" })} label="Centred" />
