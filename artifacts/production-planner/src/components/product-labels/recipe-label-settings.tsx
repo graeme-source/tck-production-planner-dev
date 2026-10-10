@@ -1,12 +1,15 @@
 /**
- * A recipe's label settings — barcode, label name, cooking values, bones
- * warning, use-by periods. Every field autosaves with a visible save state
+ * A recipe's label settings — label name, cooking values, bones warning,
+ * use-by periods. The barcode is shown here but SET on the recipe page: it
+ * is the one the packing scanner uses (components/barcodes), so the label
+ * and the scanner can never disagree. Every field autosaves with a visible save state
  * (charter rule 5). Saving never changes the LIVE label: it changes the
  * current one, which then shows "Update needed" until someone checks it.
  */
 import { useEffect, useRef, useState } from "react";
-import { Barcode, Flame, Snowflake, Thermometer, AlertTriangle } from "lucide-react";
-import { checkEan13, COOKING_KEYS, PERIOD_UNITS, type CookingValues, type PeriodUnit, type ShelfPeriod } from "@workspace/product-labels";
+import { Link } from "wouter";
+import { Barcode, ChevronRight, Flame, Snowflake, Thermometer, AlertTriangle } from "lucide-react";
+import { COOKING_KEYS, PERIOD_UNITS, type CookingValues, type PeriodUnit, type ShelfPeriod } from "@workspace/product-labels";
 import { StepPreview } from "./step-preview";
 import { useAutosave } from "@/hooks/use-autosave";
 import { SaveChip } from "@/components/save-chip";
@@ -42,13 +45,11 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
   const s = data.settings;
   const t = data.template;
   const [loaded, setLoaded] = useState(false);
-  const [barcode, setBarcode] = useState("");
   const [labelName, setLabelName] = useState("");
   const [nums, setNums] = useState<Record<string, string>>({});
   const [flags, setFlags] = useState({ ovenOn: data.settings.ovenOn, airFryerOn: data.settings.airFryerOn, warningOn: data.settings.warningOn, frozenOn: data.settings.frozenOn });
   useEffect(() => {
     if (loaded) return;
-    setBarcode(s.barcode ?? "");
     setLabelName(s.labelName ?? "");
     const n: Record<string, string> = {};
     for (const [k, v] of Object.entries(s.cooking)) n[k] = v == null ? "" : String(v);
@@ -63,15 +64,6 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
     const own = parseWhole(nums[k] ?? "", 400);
     return [k, !on ? null : own ?? t.cooking[k]];
   })) as unknown as CookingValues;
-
-  const bc = barcode.trim() === "" ? null : checkEan13(barcode);
-  const changeBarcode = (v: string) => {
-    const clean = v.replace(/[^\d ]/g, "").slice(0, 17);
-    setBarcode(clean);
-    const c = clean.trim() === "" ? null : checkEan13(clean);
-    if (c === null) save({ barcode: null });
-    else if (c.ok) save({ barcode: c.digits });
-  };
 
   const numField = (key: keyof RecipeLabel["settings"]["cooking"], label: string, unit: string, max: number, disabled: boolean) => {
     const text = nums[key] ?? "";
@@ -124,21 +116,13 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
         {canEdit ? <SaveChip state={auto.state} error={auto.error} onRetry={() => void auto.flush()} /> : <span className="text-sm text-muted-foreground">View only — managers can change these</span>}
       </div>
 
-      {/* Barcode */}
+      {/* Barcode — set on the recipe page, the one the packing scanner uses. */}
       <div className="space-y-2">
-        <label htmlFor="label-barcode" className="flex items-center gap-2 text-base font-bold"><Barcode className="w-5 h-5 text-primary" /> Barcode number (EAN-13)</label>
-        <input
-          id="label-barcode"
-          inputMode="numeric"
-          value={barcode}
-          disabled={!canEdit}
-          onChange={e => changeBarcode(e.target.value)}
-          onBlur={() => void auto.flush()}
-          placeholder="13 digits, e.g. 5065018206009"
-          className={cn(inputCls, "w-full max-w-sm font-mono tracking-wider", bc && !bc.ok && "border-destructive")}
-        />
-        {bc && !bc.ok && <p className="text-sm text-destructive font-semibold">Not saved — {bc.reason}.</p>}
-        {bc?.ok && <p className="text-sm text-emerald-700 dark:text-emerald-400">Check digit correct. The barcode is drawn by the app — no image needed.</p>}
+        <p className="flex items-center gap-2 text-base font-bold"><Barcode className="w-5 h-5 text-primary" /> Barcode</p>
+        <p className="text-lg font-mono font-semibold tracking-wider">{s.barcode ?? "None yet"}</p>
+        <Link href={`/recipes?edit=${data.recipe.id}`} className="inline-flex items-center gap-1 text-sm font-semibold text-primary">
+          Set it on the recipe page — the packing scanner uses the same number <ChevronRight className="w-4 h-4" />
+        </Link>
       </div>
 
       {/* Label name */}

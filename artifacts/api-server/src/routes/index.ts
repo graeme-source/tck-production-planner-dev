@@ -131,6 +131,7 @@ import issuePipelineRouter from "./issue-pipeline";
 import peopleAccessRouter from "./people-access";
 import personDocumentsRouter from "./person-documents";
 import productLabelsRouter from "./product-labels";
+import barcodesRouter from "./barcodes";
 import { runBackup } from "../lib/backup";
 
 const router: IRouter = Router();
@@ -252,6 +253,9 @@ router.use("/reports", reportsRouter);
 router.use("/fulfilment", fulfilmentRouter);
 router.use("/fulfilment", fulfilmentAvailabilityRouter);
 router.use("/fulfilment", apcBookingIssuesRouter);
+// Barcodes: set in the app, our table is the source of truth for scanning
+// (Shopify only read). lib/barcode-store.ts.
+router.use("/barcodes", barcodesRouter);
 router.use("/dpt-suggestions", dptSuggestionsRouter);
 router.use("/temperature-records", temperatureRecordsRouter);
 router.use("/oven-events", ovenEventsRouter);

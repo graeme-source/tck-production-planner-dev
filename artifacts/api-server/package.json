@@ -17,6 +17,7 @@
     "@replit/connectors-sdk": "^0.3.0",
     "@types/multer": "^2.1.0",
     "@workspace/allergens": "workspace:*",
+    "@workspace/barcodes": "workspace:*",
     "@workspace/api-zod": "workspace:*",
     "@workspace/building-edit": "workspace:*",
     "@workspace/business-days": "workspace:*",

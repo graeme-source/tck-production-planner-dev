@@ -13,6 +13,7 @@
  * Pure map-building lives here so it can be tested without the network.
  */
 import type { ShopifyProduct } from "../services/shopify";
+import { BAG_TITLE_MARKER } from "@workspace/barcodes";
 
 /** variantId → current Shopify inventory quantity, for variants Shopify is
  *  actually tracking (`inventory_management === "shopify"`). Untracked
@@ -36,7 +37,7 @@ export function trackedVariantMap(products: ShopifyProduct[]): Record<string, nu
 /** The marker an 8-pack bag variant carries in its variant title. The same
  *  convention wholesale-bags.ts keys on — eight_pack_variant_id was never
  *  populated in recipe_shopify_mappings, so bags are recognised by title. */
-export const EIGHT_PACK_TITLE_MARKER = "8 pack bag";
+export const EIGHT_PACK_TITLE_MARKER = BAG_TITLE_MARKER;
 
 /** lower-cased Shopify product title → recipeId, from mapping rows. The
  *  8-pack bag is a VARIANT of the same Shopify product as the mapped 2-pack,

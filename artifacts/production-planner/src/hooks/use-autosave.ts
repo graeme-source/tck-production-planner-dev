@@ -49,11 +49,20 @@ export function useAutosave<T>(save: (value: T) => Promise<unknown>, delay = 800
     timer.current = setTimeout(() => void flush(), delay);
   }, [flush, delay]);
 
+  /** Drop what's waiting without saving it — for a save the person has
+   *  cancelled (e.g. declined a confirmation). `as` = the state to show. */
+  const discard = useCallback((as: AutosaveState = "idle") => {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    pending.current = null;
+    setError(null);
+    setState(as);
+  }, []);
+
   useEffect(() => () => {
     if (timer.current) clearTimeout(timer.current);
     const p = pending.current;
     if (p) saveRef.current(p.value).catch(err => console.error("[autosave] save on leave failed:", err));
   }, []);
 
-  return { state, error, schedule, flush, hasPending: () => pending.current != null };
+  return { state, error, schedule, flush, discard, hasPending: () => pending.current != null };
 }

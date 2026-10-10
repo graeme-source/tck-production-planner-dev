@@ -6,7 +6,8 @@ import { postcodeServiceFor, postcodeServiceView, postcodeRefusalAdvice } from "
 import { rescheduleDateWarnings } from "../services/apc-postcode-overrides";
 import { loadPostcodeContext } from "../lib/apc-postcode-context";
 import { recordBookingRun, rescheduleRulesForOrder, appendIssueAction, type RescheduleRules } from "../lib/apc-booking-issues-db";
-import { removeTagFromOrder, shopifyAdminOrderUrl, shopifyAdminOrderBase, getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProducts, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, getVariantBarcodes, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
+import { loadOwnership, reconcileBarcodes, scanQueueBarcodes } from "../lib/barcode-store";
+import { removeTagFromOrder, shopifyAdminOrderUrl, shopifyAdminOrderBase, getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
 import { nextAvailableDeliveryDate, deliveryDateChoices, isSaturdayDate, rescheduleTags, withDeliveryDate, friendlyDate, firstNameOf, toZapietDate } from "../lib/order-reschedule";
 import { rescheduleEmailFor, CUSTOMER_EMAIL_BCC } from "../lib/apc-issue-emails";
 import { validate } from "../middleware/validate";
@@ -398,10 +399,11 @@ router.get("/orders", requireFulfilmentAccess, async (req: Request, res: Respons
         : await getUnfulfilledOrdersByTag(tag),
     );
 
-    const [allLocations, allVariantLocations, allBarcodes, recipeMappings] = await Promise.all([
+    const [allLocations, allVariantLocations, allBarcodes, ownership, recipeMappings] = await Promise.all([
       db.select().from(skuLocationsTable),
       db.select().from(variantLocationsTable),
       db.select().from(skuBarcodesTable),
+      loadOwnership(),
       // recipe_shopify_mappings has no Drizzle schema — raw SQL. Pull
       // every mapping row joined to its recipe colour, then build lookup
       // maps by both variant id and SKU so a line item can be coloured
@@ -427,6 +429,11 @@ router.get("/orders", requireFulfilmentAccess, async (req: Request, res: Respons
     // to a line item — a mis-scan the packer has no way to catch. A missing
     // variant row means no barcode (manual SKU/title entry still works)
     // rather than a wrong one.
+    //
+    // The barcode itself comes from the SAME resolved map the live scan map
+    // serves (lib/barcode-store.ts): one code = one product, retired
+    // products never claim one — so a clashing code can never tick the
+    // wrong line. The row is still read for the image.
     const barcodeRowByVariantId = new Map(allBarcodes.map(b => [b.variantId, b]));
     const colorByVariantId = new Map<string, string>();
     const colorBySku = new Map<string, string>();
@@ -450,7 +457,8 @@ router.get("/orders", requireFulfilmentAccess, async (req: Request, res: Respons
             (variantKey ? locationByVariantId.get(variantKey) : undefined)
             ?? (item.sku ? locationBySku.get(item.sku) : undefined)
             ?? null,
-          barcode: barcodeRow?.barcode ?? null,
+          barcode: variantKey ? (ownership.ownership.barcodeOf.get(variantKey) ?? null) : null,
+          identityKey: variantKey ? (ownership.identities.get(variantKey)?.key ?? null) : null,
           imageUrl: barcodeRow?.imageUrl ?? null,
           recipeColor,
         };
@@ -467,9 +475,9 @@ router.get("/orders", requireFulfilmentAccess, async (req: Request, res: Respons
 
 // GET /scan-queue — returns dispatch-tagged unfulfilled orders for a date,
 // optionally filtered by box category, along with a variantId→barcode map
-// covering every line-item variant in the queue. The packing-cycle scan
-// view uses this to verify scans against the order without needing a local
-// barcode mapping table — Shopify variant.barcode is the source of truth.
+// covering every line-item variant in the queue. Barcodes come from OUR
+// table (the source of truth for scanning — lib/barcode-store.ts); Shopify
+// is read only for a variant we have never seen, and that answer is stored.
 router.get("/scan-queue", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const { tag, category } = req.query as { tag?: string; category?: string };
   if (!tag) {
@@ -504,9 +512,7 @@ router.get("/scan-queue", requireFulfilmentAccess, async (req: Request, res: Res
       queue.flatMap(o => o.line_items.map(li => li.variant_id).filter((v): v is number => v != null))
     )).map(String);
 
-    const barcodeMap = await getVariantBarcodes(variantIds);
-    const barcodes: Record<string, string> = {};
-    for (const [vid, bc] of barcodeMap) barcodes[vid] = bc;
+    const barcodes = await scanQueueBarcodes(variantIds);
 
     res.json({ tag, orders: queue, barcodes });
   } catch (err: unknown) {
@@ -3176,59 +3182,29 @@ router.get("/sku-barcodes", requireAdmin, async (_req: Request, res: Response) =
   }
 });
 
-// Pulls every variant from Shopify and caches one row per VARIANT ID with
-// its barcode, SKU, titles and image. The fulfilment scanner reads this
-// cache to attach a barcode/image to each order line item (matched by
-// variant id — SKUs are shelf labels shared across products, so they can't
-// identify one). Safe to re-run — variants with empty barcodes are skipped,
-// variants with new/changed barcodes overwrite. Variants with no SKU still
-// sync: they have no bin location, but their barcode must scan (e.g. the
-// first-order insert).
-router.post("/sync-barcodes", requireAdmin, async (_req: Request, res: Response) => {
+// "Check Shopify now" on the Bin Locations page — kept as a fallback for the
+// hourly check (lib/barcode-check-scheduler.ts). It READS every Shopify
+// variant and runs the same rule as the hourly check: titles, SKUs and
+// images refreshed for every variant (the bin map's catalogue); unlinked
+// products' barcodes follow Shopify; a recipe's barcode is never changed
+// (a difference shows as "Different in Shopify" on the Barcodes page);
+// retired products stop claiming codes. Nothing is written to Shopify.
+router.post("/sync-barcodes", requireAdmin, async (req: Request, res: Response) => {
   try {
-    const products = await getProducts();
-
-    let synced = 0;
-    let skippedNoBarcode = 0;
-
-    for (const product of products) {
-      // Variant.image_id points at one of product.images. Fall back to the
-      // featured product image if the variant has no specific image — the
-      // packing thumbnail just needs to look like the product on the label.
-      const imageById = new Map(product.images.map(img => [img.id, img.src]));
-      const fallbackImage = product.image?.src ?? null;
-      for (const variant of product.variants) {
-        const barcode = (variant.barcode ?? "").trim();
-        if (!barcode) { skippedNoBarcode++; continue; }
-
-        const imageUrl = (variant.image_id && imageById.get(variant.image_id)) || fallbackImage;
-
-        await db
-          .insert(skuBarcodesTable)
-          .values({
-            variantId: String(variant.id),
-            sku: variant.sku || null,
-            barcode,
-            productTitle: product.title,
-            variantTitle: variant.title,
-            imageUrl,
-          })
-          .onConflictDoUpdate({
-            target: skuBarcodesTable.variantId,
-            set: {
-              sku: variant.sku || null,
-              barcode,
-              productTitle: product.title,
-              variantTitle: variant.title,
-              imageUrl,
-              updatedAt: new Date(),
-            },
-          });
-        synced++;
-      }
-    }
-
-    res.json({ synced, skippedNoBarcode, skippedNoSku: 0, totalProducts: products.length });
+    const [u] = req.session.userId
+      ? await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, req.session.userId))
+      : [];
+    const report = await reconcileBarcodes({ mode: "check", dryRun: false, actor: { id: req.session.userId ?? null, name: u?.name ?? null } });
+    res.json({
+      synced: report.followed + report.counts.filled,
+      followed: report.followed,
+      differentInShopify: report.counts.conflict + report.counts.shopifyOnly,
+      clashes: report.clashes.length,
+      retiredCleared: report.retiredCleared,
+      skippedNoBarcode: 0,
+      skippedNoSku: 0,
+      totalProducts: null,
+    });
   } catch (err: any) {
     console.error("[Fulfilment] sync-barcodes error:", err.message);
     res.status(502).json({ error: err.message });

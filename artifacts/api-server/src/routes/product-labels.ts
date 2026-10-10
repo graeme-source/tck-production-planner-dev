@@ -6,7 +6,8 @@
  *   POST /template/preview            render a recipe with an UNSAVED design
  *   GET  /recipes                     every recipe's label status
  *   GET  /recipes/:id                 live + current proof, status, changes
- *   PUT  /recipes/:id/settings        barcode, overrides (manager/admin; autosaved)
+ *   PUT  /recipes/:id/settings        label name, overrides (manager/admin; autosaved) —
+ *                                     the barcode is set on the recipe page (routes/barcodes.ts)
  *   POST /recipes/:id/publish         "I've checked it — update live"
  *
  * The live (published) label is a frozen snapshot; recipe edits never touch
@@ -18,12 +19,13 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { db, pool, recipesTable, usersTable, productLabelTemplatesTable, productLabelSettingsTable } from "@workspace/db";
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
-  checkEan13, decideStatus, enforceLegalMinimums, legalMinimums, normaliseTemplate, publishBlockers,
+  decideStatus, enforceLegalMinimums, legalMinimums, normaliseTemplate, publishBlockers,
   STATUS_LABEL, WIDTH_ORDER, type LabelSnapshot,
 } from "@workspace/product-labels";
 import { requireManagerOrAdmin } from "../middleware/roles";
+import { loadPackBarcodes } from "../lib/barcode-store";
 import { rawBody, validate } from "../middleware/validate";
 import {
   buildCurrentLabel, changesSinceLive, checkFit, deckBlockers, deckWarnings, fitSummary, fonts, loadAllLiveVersions,
@@ -140,10 +142,11 @@ router.get("/recipes", async (_req, res) => {
     const recipes = await db.select().from(recipesTable).orderBy(recipesTable.name);
     const live = await loadAllLiveVersions();
     const templateCache = new Map<number | "default", LoadedTemplate>();
+    const packBarcodes = await loadPackBarcodes();
     const out = [];
     for (const r of recipes) {
       if (r.archivedAt && !live.has(r.id)) continue;
-      const current = await buildCurrentLabel(r, { templateCache });
+      const current = await buildCurrentLabel(r, { templateCache, packBarcodes });
       const lv = live.get(r.id);
       const checked = checkFit(current.snapshot);
       const status = decideStatus({
@@ -190,13 +193,6 @@ router.get("/recipes/:id", async (req, res) => {
       archived: recipe.archivedAt != null, fits: currentProof.layout.fits, fitProblems: currentProof.layout.problems.map(x => x.message),
       contentProblems: currentProof.content.problems, deckBlockers: deckBlockers(current.deck),
     });
-    // The same barcode on another recipe is almost always a typing slip.
-    const dupes = current.snapshot.barcode
-      ? await db.select({ id: recipesTable.id, name: recipesTable.name })
-        .from(productLabelSettingsTable)
-        .innerJoin(recipesTable, eq(recipesTable.id, productLabelSettingsTable.recipeId))
-        .where(and(eq(productLabelSettingsTable.barcode, current.snapshot.barcode), ne(productLabelSettingsTable.recipeId, recipe.id)))
-      : [];
     res.json({
       recipe: {
         id: recipe.id, name: recipe.name, packSize: current.snapshot.packSize, shelfLifeDays: recipe.shelfLifeDays,
@@ -215,7 +211,8 @@ router.get("/recipes/:id", async (req, res) => {
       blockers,
       warnings: [
         ...deckWarnings(current.deck),
-        ...dupes.map(d => `The same barcode is on ${d.name} — check it's the right number.`),
+        ...(current.barcodeMixed ? ["This recipe's Shopify listings have different barcodes, so no barcode is printed — set one on the recipe page."] : []),
+        ...(!current.snapshot.barcode && !current.barcodeMixed ? ["No barcode — set the pack barcode on the recipe page (it is the one the packing scanner uses)."] : []),
       ],
       sample: sampleDates(),
       current: { hash: current.hash, snapshot: current.snapshot, proof: proofPayload(currentProof) },
@@ -230,8 +227,9 @@ router.get("/recipes/:id", async (req, res) => {
 const nullableInt = (max: number) => z.number().int().min(0).max(max).nullable().optional();
 const Period = z.object({ amount: z.number().int().min(1).max(999), unit: z.enum(["days", "weeks", "months", "years"]) }).nullable().optional();
 
+// The barcode is set on the recipe page (routes/barcodes.ts) — one number
+// for the label and the packing scanner. A "barcode" sent here is ignored.
 const SettingsBody = z.object({
-  barcode: z.string().max(40).nullable().optional(),
   labelName: z.string().max(200).nullable().optional(),
   ovenOn: z.boolean().optional(),
   airFryerOn: z.boolean().optional(),
@@ -255,18 +253,8 @@ router.put("/recipes/:id/settings", requireManagerOrAdmin, validate(SettingsBody
   try {
     const recipe = await loadRecipe(p.data.id);
     if (!recipe) { res.status(404).json({ error: "Recipe not found" }); return; }
-    let barcode: string | null | undefined = body.barcode;
-    if (barcode !== undefined && barcode !== null) {
-      barcode = barcode.replace(/\s+/g, "");
-      if (barcode === "") barcode = null;
-      else {
-        const c = checkEan13(barcode);
-        if (!c.ok) { res.status(400).json({ error: `Barcode not saved — ${c.reason}.` }); return; }
-      }
-    }
     const who = await userName(req);
     const set: Partial<typeof productLabelSettingsTable.$inferInsert> = { updatedAt: new Date(), updatedByName: who.name };
-    if (barcode !== undefined) set.barcode = barcode;
     if (body.labelName !== undefined) set.labelName = body.labelName?.trim() || null;
     for (const k of ["ovenOn", "airFryerOn", "warningOn", "frozenOn"] as const) if (body[k] !== undefined) set[k] = body[k];
     for (const k of ["ovenTempC", "fanTempC", "ovenMinMinutes", "ovenMaxMinutes", "airFryerTempC", "airFryerMinMinutes", "airFryerMaxMinutes"] as const) {

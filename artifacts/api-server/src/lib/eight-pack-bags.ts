@@ -9,14 +9,16 @@
  * despatch decrement is applied without ever going below zero. The database
  * writes live in inventory-sync.ts and go through adjustFridgeStock.
  */
+import { BAG_TITLE_MARKER } from "@workspace/barcodes";
 
 /** Stock-entry / fridge_stock_batches pack size used for 8-pack bags. */
 export const EIGHT_PACK_SIZE = 8;
 
 /** An 8-pack bag is detected by its Shopify variant title — the bag is a
  *  variant ("8 Pack Bag") of the same product as the 2-pack. Shared with the
- *  wholesale-bags queue so both paths agree on what a bag line is. */
-export const EIGHT_PACK_VARIANT_MATCH = "8 pack bag";
+ *  wholesale-bags queue and the barcode links (@workspace/barcodes) so every
+ *  path agrees on what a bag line is. */
+export const EIGHT_PACK_VARIANT_MATCH = BAG_TITLE_MARKER;
 
 export function isEightPackLine(line: { variant_title?: string | null }): boolean {
   return (line.variant_title ?? "").toLowerCase().includes(EIGHT_PACK_VARIANT_MATCH);

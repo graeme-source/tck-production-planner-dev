@@ -28,6 +28,7 @@ import LabelStockCheck from "@/pages/label-stock-check";
 import SubRecipes from "@/pages/sub-recipes";
 import Recipes from "@/pages/recipes";
 import ProductLabelsPage from "@/pages/product-labels";
+import BarcodesPage from "@/pages/barcodes";
 import ProductLabelSettingsPage from "@/pages/product-label-settings";
 import ProductLabelRecipePage from "@/pages/product-label-recipe";
 import ProductionPlans from "@/pages/production-plans";
@@ -211,6 +212,8 @@ function Router() {
               <Route path="/labels" component={ProductLabelsPage} />
               <Route path="/labels/settings" component={ProductLabelSettingsPage} />
               <Route path="/labels/:id" component={ProductLabelRecipePage} />
+              {/* Barcodes: set in the app, the scanner's source of truth */}
+              <Route path="/barcodes" component={BarcodesPage} />
               <Route path="/plans" component={ProductionPlans} />
               <Route path="/plans/queued" component={QueuedProductionPage} />
               <Route path="/improvements" component={Improvements} />

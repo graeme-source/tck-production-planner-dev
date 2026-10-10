@@ -50,6 +50,7 @@
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
     "@workspace/allergens": "workspace:*",
+    "@workspace/barcodes": "workspace:*",
     "@workspace/api-client-react": "workspace:*",
     "@workspace/building-edit": "workspace:*",
     "@workspace/business-days": "workspace:*",
