@@ -11,7 +11,9 @@
 // Specials rotate and have been taken off one-off orders, so a 30-day window
 // would misattribute their history and skew every other recipe's share.
 
-export const SPECIAL_TITLE_LC = "calzone club special";
+import { CLUB_SPECIAL_TITLE_LC } from "@workspace/barcodes";
+// One copy of the title rule, shared with the barcode identity (lib/barcodes).
+export const SPECIAL_TITLE_LC = CLUB_SPECIAL_TITLE_LC;
 
 export interface SuggestionOrder {
   cancelled_at?: string | null;

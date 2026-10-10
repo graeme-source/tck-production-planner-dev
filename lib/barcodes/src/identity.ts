@@ -51,9 +51,15 @@ export function identitiesFor(
   sameAs: Map<string, string>,
   names: Map<string, string>,
   packSizes: Map<number, number | null> = new Map(),
+  /** The Calzone Club Special's listings and the recipe flagged
+   *  is_current_special: those listings ARE that recipe's pack (copies.ts). */
+  special: { variantIds: Set<string>; recipeId: number; recipeName: string } | null = null,
 ): Map<string, Identity> {
   const linkOf = new Map(links.map(l => [l.variantId, l]));
   const own = (id: string): Identity | null => {
+    if (special?.variantIds.has(id)) {
+      return { key: `r${special.recipeId}:pack`, name: `${special.recipeName} · ${kindLabel("pack", packSizes.get(special.recipeId))}` };
+    }
     const l = linkOf.get(id);
     if (!l) return null;
     const k = identityKind(l.kind);

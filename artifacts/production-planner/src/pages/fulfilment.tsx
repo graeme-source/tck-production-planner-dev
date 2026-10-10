@@ -2386,6 +2386,8 @@ export default function Fulfilment() {
       sku: g.sku || null,
       title: g.title,
       remaining: g.totalQty - (pickedCounts.get(g._groupKey) ?? 0),
+      // The Calzone Club Special during a changeover: also the incoming special.
+      alsoAccepts: g.variantId ? map?.alsoAccepts?.[g.variantId] : undefined,
     }));
     const first = decideScan(code, linesFor(scanMap), scanMap?.known ?? {});
     if (first.kind === "tick") {

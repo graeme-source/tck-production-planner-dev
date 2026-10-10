@@ -13,6 +13,8 @@
  *   GET  /scan-map                       live variant → barcode map for the packing screen
  *   POST /scan-rejections                log a refused / unmatched scan (packing screen)
  *   GET  /scan-rejections                recent refused scans (manager/admin)
+ *   GET  /f2f-links                      F2F copies to mark "same product as" their recipe's pack (dry run)
+ *   POST /f2f-links                      apply the chosen ones (admin) — barcodes only, no recipe mapping
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
@@ -23,7 +25,7 @@ import { requireAdmin, requireManagerOrAdmin } from "../middleware/roles";
 import { validate, validateQuery } from "../middleware/validate";
 import { requireFulfilmentAccess } from "../lib/fulfilment-access";
 import {
-  BarcodeRefused, loadEvents, loadGroups, loadOverview, loadScanRejections, logScanRejection, reconcileBarcodes, scanMap,
+  BarcodeRefused, applyF2fLinks, f2fSuggestions, loadOwnership, loadEvents, loadGroups, loadOverview, loadScanRejections, logScanRejection, reconcileBarcodes, scanMap,
   setGroupBarcode, setSameProductAs, useShopifyBarcode, type Actor,
 } from "../lib/barcode-store";
 
@@ -133,6 +135,19 @@ const RejectionsQuery = z.object({ limit: z.coerce.number().int().min(1).max(500
 router.get("/scan-rejections", requireManagerOrAdmin, validateQuery(RejectionsQuery), async (_req, res) => {
   try { res.json(await loadScanRejections((res.locals["query"] as z.infer<typeof RejectionsQuery>).limit)); }
   catch (err) { fail(res, err, "GET /scan-rejections"); }
+});
+
+router.get("/f2f-links", requireManagerOrAdmin, async (_req, res) => {
+  try { res.json({ links: f2fSuggestions(await loadOwnership()) }); } catch (err) { fail(res, err, "GET /f2f-links"); }
+});
+
+const F2fBody = z.object({ variantIds: z.array(z.string().regex(/^\d{1,20}$/)).min(1).max(500) });
+
+router.post("/f2f-links", requireAdmin, validate(F2fBody), async (req, res) => {
+  try {
+    const applied = await applyF2fLinks((req.body as z.infer<typeof F2fBody>).variantIds, await actor(req));
+    res.json({ applied });
+  } catch (err) { fail(res, err, "POST /f2f-links"); }
 });
 
 export default router;

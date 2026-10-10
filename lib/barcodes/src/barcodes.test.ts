@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   barcodeFor, checkGtin, countOutcomes, decidePull, decideScan, deriveLinkedVariants, describeClash, gtinCheckDigit, gtinKey,
   groupBarcode, identitiesFor, isDifferentInShopify, kindLabel, planAssignment, planScanBarcodes, rankOf, resolveOwnership,
-  scanMessage, shouldRefreshOnMiss, type BarcodeHolder, type Holding, type KnownCodes, type MappingRow, type ScanLine,
+  scanMessage, shouldRefreshOnMiss, clubSpecialScan, isClubSpecialTitle, CLUB_SPECIAL_TITLE_LC, suggestF2fLinks,
+  type CopyCandidate, type PackListing, type BarcodeHolder, type Holding, type KnownCodes, type MappingRow, type ScanLine,
 } from "./index";
 
 describe("GTIN validation", () => {
@@ -327,5 +328,80 @@ describe("packing scan — safety", () => {
     expect(shouldRefreshOnMiss("5065018206207", 0, 2500)).toBe(true);
     expect(shouldRefreshOnMiss("marg", null, 1000)).toBe(false);
     expect(shouldRefreshOnMiss("123", null, 1000)).toBe(false);
+  });
+});
+
+describe("Calzone Club Special — follows the current special", () => {
+  const known: KnownCodes = {
+    [gtinKey("5065018206399")]: { identityKey: "r26:pack", name: "Philly Cheesesteak 2.0 · 2-pack" },
+    [gtinKey("5065018206467")]: { identityKey: "r25:pack", name: "The Benji · 2-pack" },
+    [gtinKey("5065018206146")]: { identityKey: "r3:bag", name: "BBQ Pulled Pork · 8-pack bag" },
+  };
+  it("recognises the Club Special by its product title, one copy of the rule", () => {
+    expect(isClubSpecialTitle(" Calzone Club Special ")).toBe(true);
+    expect(isClubSpecialTitle("Calzone Club Special Box")).toBe(false);
+    expect(CLUB_SPECIAL_TITLE_LC).toBe("calzone club special");
+  });
+  it("its identity IS the current special's pack", () => {
+    const ids = identitiesFor(["cs", "26"], [{ variantId: "26", recipeId: 26, recipeName: "Philly Cheesesteak 2.0", kind: "pack" }], new Map(), new Map(),
+      new Map([[26, 2]]), { variantIds: new Set(["cs"]), recipeId: 26, recipeName: "Philly Cheesesteak 2.0" });
+    expect(ids.get("cs")).toEqual({ key: "r26:pack", name: "Philly Cheesesteak 2.0 · 2-pack" });
+    expect(ids.get("cs")!.key).toBe(ids.get("26")!.key);
+  });
+  it("scans with the special's barcode; in step with Shopify = nothing to flag", () => {
+    expect(clubSpecialScan("5065018206399", "r26:pack", "5065018206399", known)).toEqual({ barcode: "5065018206399", alsoAccepts: [], changing: false, unexpected: false });
+  });
+  it("changeover: Shopify already has the INCOMING special's code — expected, and accepted too", () => {
+    const s = clubSpecialScan("5065018206399", "r26:pack", "5065018206467", known);
+    expect(s).toEqual({ barcode: "5065018206399", alsoAccepts: [{ code: "5065018206467", identityKey: "r25:pack", name: "The Benji · 2-pack" }], changing: true, unexpected: false });
+  });
+  it("a code that is no recipe's pack is never accepted (a bag, or unknown)", () => {
+    expect(clubSpecialScan("5065018206399", "r26:pack", "5065018206146", known)).toMatchObject({ alsoAccepts: [], changing: false, unexpected: true });
+    expect(clubSpecialScan("5065018206399", "r26:pack", "5065018209994", known)).toMatchObject({ alsoAccepts: [], unexpected: true });
+  });
+  it("no special set: nothing to scan with", () => {
+    expect(clubSpecialScan(null, null, null, known)).toMatchObject({ barcode: null, alsoAccepts: [] });
+  });
+  it("the scanner ticks the Club Special line with either special during a changeover, and refuses anything else", () => {
+    const club: ScanLine = { key: "cs", barcode: "5065018206399", identityKey: "r26:pack", name: "Calzone Club Special", sku: null, title: "Calzone Club Special", remaining: 1,
+      alsoAccepts: [{ code: "5065018206467", identityKey: "r25:pack", name: "The Benji · 2-pack" }] };
+    expect(decideScan("5065018206399", [club], known)).toEqual({ kind: "tick", key: "cs" });
+    expect(decideScan("5065018206467", [club], known)).toEqual({ kind: "tick", key: "cs" });
+    expect(decideScan("5065018206146", [club], known)).toEqual({ kind: "wrong-item", product: "BBQ Pulled Pork · 8-pack bag" });
+  });
+  it("Club Special next to the incoming special's own 2-pack: same product, so no 'ambiguous'", () => {
+    const club: ScanLine = { key: "cs", barcode: "5065018206399", identityKey: "r26:pack", name: "Calzone Club Special", sku: null, title: null, remaining: 1,
+      alsoAccepts: [{ code: "5065018206467", identityKey: "r25:pack", name: "The Benji · 2-pack" }] };
+    const benji: ScanLine = { key: "b", barcode: "5065018206467", identityKey: "r25:pack", name: "The Benji · 2-pack", sku: null, title: null, remaining: 1 };
+    expect(decideScan("5065018206467", [club, benji], known)).toEqual({ kind: "tick", key: "cs" });
+  });
+});
+
+describe("F2F copies — the same pack, marked once", () => {
+  const packs: PackListing[] = [
+    { variantId: "11", recipeId: 2, name: "Chicken & Chorizo · 2 Pack", productName: "Chicken and Chorizo · 2-pack", barcode: "5065018206009" },
+    { variantId: "12", recipeId: 2, name: "Chicken & Chorizo (old) · 2 Pack", productName: "Chicken and Chorizo · 2-pack", barcode: "5065018206009" },
+    { variantId: "21", recipeId: 3, name: "BBQ Pulled Pork · 2 Pack", productName: "BBQ Pulled Pork · 2-pack", barcode: "5065018206016" },
+    { variantId: "31", recipeId: 4, name: "A", productName: "A · 2-pack", barcode: "5065018206054" },
+    { variantId: "32", recipeId: 5, name: "B", productName: "B · 2-pack", barcode: "5065018206054" },
+  ];
+  const c = (variantId: string, productTitle: string, barcode: string | null, extra: Partial<CopyCandidate> = {}): CopyCandidate =>
+    ({ variantId, name: productTitle, productTitle, current: true, linked: false, sameProductAs: null, barcode, ...extra });
+
+  it("links each current F2F copy to the recipe pack with the same barcode", () => {
+    const r = suggestF2fLinks([c("f1", "F2F - Chicken & Chorizo", "5065018206009"), c("f2", "F2F - BBQ Pulled Pork", "5065018206016")], packs);
+    expect(r.map(x => [x.variantId, x.sameAs, x.sameAsName])).toEqual([["f2", "21", "BBQ Pulled Pork · 2-pack"], ["f1", "11", "Chicken and Chorizo · 2-pack"]]);
+  });
+  it("leaves alone: non-F2F titles, retired, already marked, linked, no/unknown barcode, a code shared by two recipes", () => {
+    expect(suggestF2fLinks([
+      c("x1", "Yangnyeom Strips + Rice", "5065018206009"),
+      c("x2", "F2F - Chicken & Chorizo", "5065018206009", { current: false }),
+      c("x3", "F2F - Chicken & Chorizo", "5065018206009", { sameProductAs: "11" }),
+      c("x4", "F2F - Chicken & Chorizo", "5065018206009", { linked: true }),
+      c("x5", "F2F - Mystery", null),
+      c("x6", "F2F - Mystery", "5065018209994"),
+      c("x7", "F2F - Ambiguous", "5065018206054"),
+      c("x8", "Chicken no Chorizo (F2F)", "5065018206009"),
+    ], packs)).toEqual([]);
   });
 });
