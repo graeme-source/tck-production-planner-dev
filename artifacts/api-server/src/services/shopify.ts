@@ -1264,3 +1264,29 @@ export async function getCollectionProducts(collectionId: number): Promise<Array
   } while (pageInfo);
   return products;
 }
+
+// ── Variant barcodes — READ only ────────────────────────────────────────────
+// Barcodes are set in the app; our database is the source of truth for
+// scanning and nothing writes barcodes to Shopify (Graeme, 2026-10-10).
+// Callers: lib/barcode-store.ts.
+
+const variantGid = (id: string) => `gid://shopify/ProductVariant/${id}`;
+const numericGid = (gid: string) => gid.slice(gid.lastIndexOf("/") + 1);
+
+/** Barcode + product of each variant, live from Shopify (READ). A variant
+ *  missing from the result no longer exists. Throws on a failed call. */
+export async function getVariantBarcodeDetails(variantIds: string[]): Promise<Map<string, { productId: string; barcode: string | null }>> {
+  const out = new Map<string, { productId: string; barcode: string | null }>();
+  const ids = Array.from(new Set(variantIds));
+  for (let i = 0; i < ids.length; i += 100) {
+    const r = await shopifyGraphQL<{ nodes: Array<{ id?: string; barcode?: string | null; product?: { id: string } } | null> }>(
+      `query($ids: [ID!]!) { nodes(ids: $ids) { ... on ProductVariant { id barcode product { id } } } }`,
+      { ids: ids.slice(i, i + 100).map(variantGid) },
+    );
+    for (const n of r.nodes) {
+      if (n?.id && n.product) out.set(numericGid(n.id), { productId: numericGid(n.product.id), barcode: n.barcode ?? null });
+    }
+  }
+  return out;
+}
+
