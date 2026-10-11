@@ -291,13 +291,18 @@ export type MergeVerdict =
  * — including a row a person typed over a previously synced figure, which is
  * how a day gets pinned. Equal figures are skipped so re-running a sync
  * changes nothing at all.
+ *
+ * `syncedSource` is the source value the automatic feed writes: 'meta' for
+ * the Meta sync, 'google_ads_script' for the Google Ads Script (one rule for
+ * every channel — anything not written by that feed is a person's figure).
  */
 export function mergeVerdict(
   existing: ExistingSpendRow | null | undefined,
   incomingAmount: number,
+  syncedSource: string = "meta",
 ): MergeVerdict {
   if (!existing) return { action: "insert", reason: "no row for this day yet" };
-  if (existing.source !== "meta") {
+  if (existing.source !== syncedSource) {
     return { action: "skip", reason: "hand-entered — a person's figure always wins" };
   }
   if (round2(existing.amount) === round2(incomingAmount)) {
@@ -317,10 +322,11 @@ export interface MergePlan {
 export function planMerge(
   incoming: DailySpend[],
   existingByDate: Map<string, ExistingSpendRow>,
+  syncedSource: string = "meta",
 ): MergePlan {
   const plan: MergePlan = { inserts: [], updates: [], skippedManual: [], unchanged: [] };
   for (const row of incoming) {
-    const verdict = mergeVerdict(existingByDate.get(row.date), row.amount);
+    const verdict = mergeVerdict(existingByDate.get(row.date), row.amount, syncedSource);
     if (verdict.action === "insert") plan.inserts.push(row);
     else if (verdict.action === "update") plan.updates.push(row);
     else if (verdict.reason === "unchanged since the last sync") plan.unchanged.push(row.date);
