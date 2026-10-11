@@ -36,7 +36,6 @@ export function TargetsProgress({
     thisMonth.stretch,
   );
   const { bar } = pace;
-  const toneText = pace.tone === "stretch" ? "text-primary" : pace.tone === "minimum" ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
   const fill = pace.tone === "stretch" ? "bg-primary" : pace.tone === "minimum" ? "bg-amber-500" : "bg-red-500";
 
   return (
@@ -60,7 +59,13 @@ export function TargetsProgress({
         <b>{formatGbp(monthToDate)}</b> of {formatGbp(thisMonth.minimum)} minimum
         {thisMonth.stretch != null && <> · {formatGbp(thisMonth.stretch)} stretch</>}
       </p>
-      <p className={cn("font-semibold", compact ? "text-sm" : "text-base", toneText)}>{pace.headline}</p>
+      {/* Against today's tick first (Graeme, 2026-10-11), then where the
+          month ends up at this pace (the chips below). */}
+      <p className={cn("font-semibold", compact ? "text-sm" : "text-base",
+        pace.today.ahead ? "text-primary" : "text-red-600 dark:text-red-400")}>
+        {pace.today.headline}
+        <span className="font-normal text-muted-foreground"> · {formatGbp(Math.round(pace.today.expected))} by today</span>
+      </p>
       <div className={cn("flex flex-wrap gap-1.5", compact ? "text-xs" : "text-sm")}>
         <span className="text-muted-foreground self-center">Projected {formatGbp(projected)}:</span>
         <GapChip label="minimum" pace={pace.minimum} />

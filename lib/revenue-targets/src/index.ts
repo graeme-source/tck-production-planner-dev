@@ -275,6 +275,10 @@ export interface TwoTargetPace {
   /** Plain English: "On pace for the minimum, £8k short of stretch". */
   headline: string;
   tone: "stretch" | "minimum" | "behind";
+  /** Against the faint "where we should be by today" tick on the bar
+   *  (Graeme, 2026-10-11: "how short I am of where I should be right now"):
+   *  expected = minimum × days so far ÷ days in month; gap = sales − expected. */
+  today: { expected: number; gap: number; ahead: boolean; headline: string };
   /** Where on a 0–100 bar each thing sits. The bar's full width is the
    *  larger of the stretch and month-to-date, so both markers fit. */
   bar: {
@@ -313,11 +317,18 @@ export function paceAgainstTargets(input: PaceInput, minimum: number, stretch: n
   const scale = Math.max(minimum, stretch ?? 0, input.monthToDate, 1);
   const pct = (n: number) => Math.min(100, Math.max(0, (n / scale) * 100));
   const shareOfMonth = input.daysInMonth > 0 ? Math.min(1, input.dayOfMonth / input.daysInMonth) : 0;
+  const expected = minimum * shareOfMonth;
+  const gap = input.monthToDate - expected;
+  const ahead = gap >= 0;
+  const todayHeadline = Math.abs(gap) < 500
+    ? "Right on where you should be today"
+    : `${formatGbp(Math.round(Math.abs(gap)))} ${ahead ? "ahead of" : "behind"} where you should be today`;
   return {
     minimum: min,
     stretch: str,
     headline,
     tone,
+    today: { expected, gap, ahead, headline: todayHeadline },
     bar: {
       scale,
       fillPct: pct(input.monthToDate),

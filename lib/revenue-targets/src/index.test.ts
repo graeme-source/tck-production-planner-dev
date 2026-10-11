@@ -124,6 +124,17 @@ describe("pace against minimum and stretch", () => {
     expect(p.headline).toBe("£20k short of the minimum at this pace");
   });
 
+  it("says how far ahead or behind today's minimum mark we are", () => {
+    // Day 10 of 31 on a £120k minimum → £38,710 by today; £40,000 sold.
+    const p = paceAgainstTargets(input, 120000, 150000);
+    expect(p.today.expected).toBeCloseTo((120000 * 10) / 31);
+    expect(p.today.ahead).toBe(true);
+    expect(p.today.headline).toBe("£1,290 ahead of where you should be today");
+    const behind = paceAgainstTargets({ ...input, monthToDate: 30000 }, 120000, 150000);
+    expect(behind.today.ahead).toBe(false);
+    expect(behind.today.headline).toBe("£8,710 behind where you should be today");
+  });
+
   it("works with no stretch set", () => {
     const p = paceAgainstTargets(input, 120000, null);
     expect(p.stretch).toBeNull();
