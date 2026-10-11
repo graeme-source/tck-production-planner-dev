@@ -121,6 +121,7 @@ import testBoxesRouter from "./test-boxes";
 import testBoxShopifyRouter from "./test-box-shopify";
 import testBoxProductionRouter from "./test-box-production";
 import founderNumbersRouter from "./founder-numbers";
+import adEfficiencyRouter from "./ad-efficiency";
 import surveysRouter from "./surveys";
 import financeRouter from "./finance";
 import featuresRouter from "./features";
@@ -330,6 +331,9 @@ router.use("/test-boxes", testBoxProductionRouter);
 router.use("/test-boxes", testBoxesRouter);
 // Numbers page trend graphs — founder account only, gated inside the router.
 router.use("/founder-numbers", founderNumbersRouter);
+// At a Glance ROAS card targets (Numbers): read by founder.numbers grantees,
+// changed by the founder only — guarded inside.
+router.use("/ad-efficiency", adEfficiencyRouter);
 router.use("/improvements", improvementsRouter);
 router.use("/andon", andonRouter);
 // Issue pipeline people side: Graeme's Fix queue (founder-gated per route)
