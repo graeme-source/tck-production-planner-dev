@@ -9,7 +9,7 @@
  * Hammersley rule. Maths: lib/ad-efficiency.ts (pure, tested). Figures:
  * the Numbers trend series by the day — the same data as Order Analysis.
  */
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 import { ArrowDownRight, ArrowUpRight, HelpCircle, Megaphone, Minus } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -48,7 +48,10 @@ const SPARK_CLASS: Record<KpiBand, string> = {
   neutral: "text-stone-400",
 };
 
-function Sparkline({ points, target, band, caption }: { points: SparkPoint[]; target: number; band: KpiBand; caption: string }) {
+/** Hex per band for the line's colour bands (same colours as SPARK_CLASS). */
+const SPARK_HEX = { green: "#7cb342", amber: "#eab308", red: "#e11d48" } as const;
+
+function Sparkline({ points, target, band, caption, amberWidthPct }: { points: SparkPoint[]; target: number; band: KpiBand; caption: string; amberWidthPct: number }) {
   const W = 300;
   const H = 56;
   const values = points.map((p) => p.percent).filter((v): v is number => v != null);
@@ -69,15 +72,35 @@ function Sparkline({ points, target, band, caption }: { points: SparkPoint[]; ta
   if (current.length) segments.push(current.join(" "));
   const lastIdx = points.map((p) => p.percent != null).lastIndexOf(true);
   const last = points[lastIdx]!;
+  // Colour the line by where it sits against the target, like the green
+  // shading in Graeme's sheet (2026-10-11): green on/above target, yellow in
+  // the "just under" band, red below that. A hard-stop vertical gradient in
+  // the chart's own coordinates, so each stretch of the line takes the colour
+  // of its height.
+  const gradId = useId().replace(/:/g, "");
+  const toOffset = (v: number) => Math.min(1, Math.max(0, y(v) / H));
+  const targetOff = toOffset(target);
+  const amberOff = toOffset(target * (1 - amberWidthPct / 100));
+  const dotBand = last.percent! >= target ? "green" : last.percent! >= target * (1 - amberWidthPct / 100) ? "amber" : "red";
   return (
     <figure className="space-y-1">
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className={cn("w-full h-14 overflow-visible", SPARK_CLASS[band])} role="img"
         aria-label={`${caption}: from ${values[0]}% to ${values[values.length - 1]}%, target ${target}%`}>
+        <defs>
+          <linearGradient id={gradId} gradientUnits="userSpaceOnUse" x1={0} y1={0} x2={0} y2={H}>
+            <stop offset={0} stopColor={SPARK_HEX.green} />
+            <stop offset={targetOff} stopColor={SPARK_HEX.green} />
+            <stop offset={targetOff} stopColor={SPARK_HEX.amber} />
+            <stop offset={amberOff} stopColor={SPARK_HEX.amber} />
+            <stop offset={amberOff} stopColor={SPARK_HEX.red} />
+            <stop offset={1} stopColor={SPARK_HEX.red} />
+          </linearGradient>
+        </defs>
         <line x1={0} x2={W} y1={y(target)} y2={y(target)} className="stroke-muted-foreground/50" strokeWidth={1.5} strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />
         {segments.map((s, i) => (
-          <polyline key={i} points={s} fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+          <polyline key={i} points={s} fill="none" stroke={`url(#${gradId})`} strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
         ))}
-        <circle cx={x(lastIdx)} cy={y(last.percent!)} r={3.5} fill="currentColor" />
+        <circle cx={x(lastIdx)} cy={y(last.percent!)} r={3.5} fill={SPARK_HEX[dotBand]} />
       </svg>
       <figcaption className="text-xs text-muted-foreground flex justify-between gap-2">
         <span>{caption}</span>
@@ -130,7 +153,7 @@ function RoasCard({
             <p className="text-2xl font-display font-bold tabular-nums">{pctText(target)}</p>
           </div>
         </div>
-        <Sparkline points={spark} target={target} band={band} caption={sparkCaption} />
+        <Sparkline points={spark} target={target} band={band} caption={sparkCaption} amberWidthPct={settings.amberWidthPct} />
         {result.available && (
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-xl bg-secondary/50 px-3 py-2">
