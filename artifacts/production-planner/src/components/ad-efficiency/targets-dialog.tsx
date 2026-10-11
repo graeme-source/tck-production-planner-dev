@@ -4,6 +4,9 @@
  * (Objective I). Every field autosaves (~0.8s after typing, or on leaving
  * the field) with a visible Saving / Saved / Couldn't save chip.
  *
+ * Also holds the "Google Ads spend" card (google-ads-link.tsx): the key and
+ * script that send Google Ads' daily spend in.
+ *
  * Only rendered for the founder (canEdit); the server refuses anyone else.
  * Closable (X / backdrop), max-h-[92dvh] with internal scrolling.
  */
@@ -15,6 +18,7 @@ import { useAutosave } from "@/hooks/use-autosave";
 import { SaveChip } from "@/components/save-chip";
 import type { AdEfficiencySettings } from "@/lib/ad-efficiency";
 import { useAdEfficiencySettings, useSaveAdEfficiencySettings } from "./api";
+import { GoogleAdsLinkSection } from "./google-ads-link";
 
 type Field = keyof AdEfficiencySettings;
 
@@ -111,6 +115,10 @@ function RoasTargetsDialog({ onClose }: { onClose: () => void }) {
           {data.updatedByName && (
             <p className="text-xs text-muted-foreground">Last changed by {data.updatedByName}.</p>
           )}
+          <section className="space-y-4 border-t border-border pt-5">
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Google Ads spend</h3>
+            <GoogleAdsLinkSection />
+          </section>
         </div>
       </div>
     </div>,
