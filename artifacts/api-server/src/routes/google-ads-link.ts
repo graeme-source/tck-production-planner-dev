@@ -39,8 +39,10 @@ const iso = (v: Date | string | null) => (v ? new Date(v).toISOString() : null);
 async function status() {
   const [link, first] = await Promise.all([
     db.execute<LinkRow>(sql`
-      SELECT token_hash, token_hint, token_created_at, token_created_by_name,
-             last_received_at, last_day_count, last_from::text AS last_from, last_to::text AS last_to,
+      -- TIMESTAMP columns hold UTC (sessions are pinned to UTC). Say so, so
+      -- the instant is right whatever timezone the Node process runs in.
+      SELECT token_hash, token_hint, (token_created_at AT TIME ZONE 'UTC') AS token_created_at, token_created_by_name,
+             (last_received_at AT TIME ZONE 'UTC') AS last_received_at, last_day_count, last_from::text AS last_from, last_to::text AS last_to,
              last_account_id, last_time_zone
         FROM ad_spend_ingest_links WHERE channel = ${GOOGLE_CHANNEL} LIMIT 1
     `),

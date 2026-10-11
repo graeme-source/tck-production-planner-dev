@@ -162,14 +162,18 @@ export function GoogleAdsLinkSection() {
 
       {/* The steps */}
       <ol className="space-y-2 text-sm list-decimal pl-5">
-        <li><span className="font-semibold">Copy the script</span> (button below){freshKey ? " — your new key is already in it." : ". Make a key first so it's filled in."}</li>
+        <li><span className="font-semibold">Copy the script</span> (button below){freshKey
+          ? " — your new key is already in it."
+          : data.hasKey
+            ? ". Keys are only shown once, so make a new key first if you're pasting it again."
+            : ". Make a key first so it's filled in."}</li>
         <li>In Google Ads go to <span className="font-semibold">Tools → Bulk actions → Scripts</span>, tap <span className="font-semibold">+</span> for a new script, clear what's there and <span className="font-semibold">paste</span>.</li>
         <li>Tap <span className="font-semibold">Authorise</span> and allow it with your Google account. It only reads your spend and sends it here.</li>
-        <li>Tap <span className="font-semibold">Preview</span>. The log should end with <span className="font-mono">200 {"{"}"ok":true…</span> and the box above turns green. Then <span className="font-semibold">Save</span>.</li>
+        <li>Tap <span className="font-semibold">Preview</span>. The log should end with <span className="font-mono whitespace-nowrap">200 {"{"}"ok":true…</span> and the box above turns green. Then <span className="font-semibold">Save</span>.</li>
         <li>Set <span className="font-semibold">Frequency</span> to <span className="font-semibold">Daily</span> (or Hourly for fresher figures). Done — each run sends the last 8 days, so late changes in Google are picked up.</li>
       </ol>
       <p className="text-sm text-muted-foreground">
-        To fill past days: change <span className="font-mono">DAYS = 8</span> to <span className="font-mono">DAYS = 30</span>, tap Run once, then set it back to 8.
+        To fill past days: change <span className="font-mono whitespace-nowrap">DAYS = 8</span> to <span className="font-mono whitespace-nowrap">DAYS = 30</span>, tap Run once, then set it back to 8.
       </p>
 
       <div className="space-y-2">
