@@ -106,10 +106,9 @@ function RoasCard({
     <div className="glass-panel rounded-2xl overflow-hidden flex flex-col">
       <div className={cn("px-5 py-3", BAND_HEADER_CLASS[band], BAND_TEXT_CLASS[band])}>
         <p className="text-lg font-display font-bold leading-tight">{title}</p>
-        <p className="text-sm font-semibold opacity-90 flex justify-between gap-2 flex-wrap">
-          <span>{qualifier}</span>
-          <span>{ROAS_BAND_WORDS[band]}</span>
-        </p>
+        {/* The window lives in the title ("7-day new customer ROAS") so it
+            reads at a glance (Graeme, 2026-10-11); this line is the verdict. */}
+        <p className="text-sm font-semibold opacity-90">{ROAS_BAND_WORDS[band]}</p>
       </div>
       <div className="p-5 flex flex-col gap-4 flex-1">
         <div className="flex items-end justify-between gap-3 flex-wrap">
@@ -223,7 +222,7 @@ export function AdEfficiencyRow() {
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <RoasCard
-              title="New customer ROAS"
+              title="7-day new customer ROAS"
               qualifier="Last 7 days"
               result={view.last7}
               target={settings.ncRoas7dTargetPct}
@@ -234,7 +233,7 @@ export function AdEfficiencyRow() {
               revenueLabel="New customers"
             />
             <RoasCard
-              title="New customer ROAS"
+              title="New customer ROAS this month"
               qualifier="This month"
               result={view.mtd}
               target={settings.ncRoasMtdTargetPct}
@@ -245,7 +244,7 @@ export function AdEfficiencyRow() {
               revenueLabel="New customers"
             />
             <RoasCard
-              title="ROAS on total sales"
+              title="30-day ROAS on total sales"
               qualifier="Last 30 days"
               result={view.total30}
               target={settings.totalRoas30dTargetPct}
